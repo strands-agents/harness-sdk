@@ -19,7 +19,7 @@ export const DevPanelFrame = ({
   onElement?: (element: DOMElement | null) => void
 }): ReactElement => {
   const { border } = useTheme()
-  const { view: View, close } = panel
+  const { view: View, close, openCommand } = panel
   return (
     <Box
       {...(onElement ? { ref: onElement } : {})}
@@ -32,7 +32,12 @@ export const DevPanelFrame = ({
       paddingX={1}
       overflow="hidden"
     >
-      <View width={Math.max(1, width - FRAME_COLUMNS)} height={Math.max(1, height - FRAME_ROWS)} close={close} />
+      <View
+        width={Math.max(1, width - FRAME_COLUMNS)}
+        height={Math.max(1, height - FRAME_ROWS)}
+        close={close}
+        openCommand={openCommand}
+      />
     </Box>
   )
 }

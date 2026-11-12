@@ -63,7 +63,7 @@ const show = async (element: ReactElement, rows = 20) => {
   return { text, press, instance }
 }
 
-const panelProps = { width: 96, height: 18, close: vi.fn() }
+const panelProps = { width: 96, height: 18, close: vi.fn(), openCommand: vi.fn(() => true) }
 
 const drafted: DatasetState = {
   step: 'draft',

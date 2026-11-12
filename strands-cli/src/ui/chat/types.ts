@@ -71,14 +71,33 @@ export interface DevChatPanelProps {
   readonly width: number
   readonly height: number
   readonly close: () => void
+  readonly openCommand: (name: string) => boolean
 }
 
 export type DevChatPanelView = ComponentType<DevChatPanelProps>
+
+export interface DevChatJob {
+  readonly id: string
+  readonly label: string
+  readonly done?: number
+  readonly total?: number
+}
+
+export interface DevChatJobs {
+  subscribe(listener: () => void): () => void
+  snapshot(): readonly DevChatJob[]
+}
+
+export interface DevChatJobGroup {
+  readonly command: string
+  readonly jobs: readonly DevChatJob[]
+}
 
 export interface DevChatCommand {
   spec: LocalCommandSpec
   open(context: DevChatCommandContext): DevChatPanelView
   attach?(context: DevChatCommandContext): void
+  jobs?: DevChatJobs
 }
 
 export interface ChatPanelRow {
@@ -201,6 +220,7 @@ export type NewChatPanel =
       kind: 'dev'
       view: DevChatPanelView
       close: () => void
+      openCommand: (name: string) => boolean
     })
 
 export type ChatPanel = NewChatPanel & { id: string }
@@ -271,6 +291,7 @@ export interface ChatSnapshot {
   permissionPreset?: ChatPermissionPreset
   settings: ChatSettings
   voice?: VoiceSessionSnapshot
+  devJobs?: readonly DevChatJobGroup[]
   exitCode?: number
 }
 
@@ -348,4 +369,5 @@ export interface ChatControllerApi {
   retryMcpServer(name: string): Promise<boolean>
   openModelPanel(): Promise<void>
   openContextPanel(): void
+  openDevCommand?(name: string): boolean
 }

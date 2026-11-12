@@ -106,6 +106,7 @@ import {
   type ChatSnapshot,
   type DevChatCommand,
   type DevChatCommandContext,
+  type DevChatJobGroup,
   type DevChatNotice,
   type NewChatPanel,
 } from './types.js'
@@ -170,6 +171,7 @@ export class ChatController implements ChatControllerApi {
   private readonly _workspaceAction: ChatControllerOptions['workspaceAction']
   private readonly _devCommands: readonly DevChatCommand[]
   private readonly _devCommandAbort = new AbortController()
+  private _stopWatchingDevJobs: readonly (() => void)[] = []
   private readonly _awsProfile: ChatControllerOptions['awsProfile']
   private readonly _builtinTools: ChatControllerOptions['builtinTools']
   private _builtinToolSelection = new Set<string>()
@@ -284,6 +286,15 @@ export class ChatController implements ChatControllerApi {
     }
     this._snapshot = this._createSnapshot()
     for (const command of this._devCommands) command.attach?.(this._devCommandContext())
+    this._stopWatchingDevJobs = this._devCommands.flatMap(({ jobs }) =>
+      jobs
+        ? [
+            jobs.subscribe(() => {
+              if (!this._closed) this._emit()
+            }),
+          ]
+        : []
+    )
     this._stopWatchingTasks = this._backend.watchTasks?.((tasks) => {
       if (this._closed) {
         return
@@ -528,7 +539,7 @@ export class ChatController implements ChatControllerApi {
     }
     if (
       attachments.length === 0 &&
-      isLiveLocalCommand(prompt) &&
+      (isLiveLocalCommand(prompt) || this._isDevCommandPrompt(prompt)) &&
       !this._resourceChanging &&
       (this._panel?.kind !== 'permission' ||
         ['settings', 'permissions'].includes(parseCommandInvocation(prompt)?.name.toLowerCase() ?? ''))
@@ -927,6 +938,7 @@ export class ChatController implements ChatControllerApi {
     this._closed = true
     this._sessionNaming?.abort()
     this._devCommandAbort.abort()
+    this._stopDevJobs()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
     const interrupted = this._execution !== undefined
@@ -947,6 +959,7 @@ export class ChatController implements ChatControllerApi {
     this._closed = true
     this._sessionNaming?.abort()
     this._devCommandAbort.abort()
+    this._stopDevJobs()
     this._stopWatchingUsage()
     if (this._execution) {
       this._execution.presentationAbort.abort()
@@ -1368,6 +1381,7 @@ export class ChatController implements ChatControllerApi {
 
   private _createSnapshot(): ChatSnapshot {
     const activeTurn = this._activeProjector?.snapshot()
+    const devJobs = this._devJobs()
     return {
       completedTurns: [...this._completedTurns],
       ...(activeTurn ? { activeTurn } : {}),
@@ -1404,6 +1418,7 @@ export class ChatController implements ChatControllerApi {
       ...(this._permissionMode ? { permissionMode: this._permissionMode } : {}),
       ...(this._permissionPreset ? { permissionPreset: this._permissionPreset } : {}),
       settings: globalThis.structuredClone(this._settings),
+      ...(devJobs.length > 0 ? { devJobs } : {}),
       ...(this._exitCode !== undefined ? { exitCode: this._exitCode } : {}),
     }
   }
@@ -1504,15 +1519,7 @@ export class ChatController implements ChatControllerApi {
       default: {
         const devCommand = this._devCommand(command)
         if (devCommand) {
-          const opened = this._openPanel({
-            kind: 'dev',
-            title: `/${devCommand.spec.name}`,
-            rows: [],
-            view: devCommand.open(this._devCommandContext()),
-            close: () => {
-              if (this._panel?.id === opened.id) this.dismissPanel()
-            },
-          })
+          this._openDevPanel(devCommand)
           break
         }
         const turn = await this._activateSkillAndRun(command, prompt)
@@ -2954,6 +2961,43 @@ export class ChatController implements ChatControllerApi {
       (notice) => notice.status !== 'success' || !notice.taskId || !this._deliveredBackgroundTaskIds.has(notice.taskId)
     )
     this._deliveredBackgroundTaskIds.clear()
+  }
+
+  private _stopDevJobs(): void {
+    for (const stop of this._stopWatchingDevJobs) stop()
+    this._stopWatchingDevJobs = []
+  }
+
+  openDevCommand(name: string): boolean {
+    const devCommand = this._devCommand(name)
+    if (!devCommand || this._closed || this._panel?.kind === 'permission') return false
+    this._openDevPanel(devCommand)
+    return true
+  }
+
+  private _openDevPanel(devCommand: DevChatCommand): void {
+    const opened = this._openPanel({
+      kind: 'dev',
+      title: `/${devCommand.spec.name}`,
+      rows: [],
+      view: devCommand.open(this._devCommandContext()),
+      close: () => {
+        if (this._panel?.id === opened.id) this.dismissPanel()
+      },
+      openCommand: (name) => this.openDevCommand(name),
+    })
+  }
+
+  private _devJobs(): DevChatJobGroup[] {
+    return this._devCommands.flatMap(({ spec, jobs }) => {
+      const running = jobs?.snapshot() ?? []
+      return running.length > 0 ? [{ command: spec.name, jobs: running.map((job) => ({ ...job })) }] : []
+    })
+  }
+
+  private _isDevCommandPrompt(prompt: string): boolean {
+    const invocation = parseCommandInvocation(prompt)
+    return invocation?.prefix === '/' && this._devCommand(invocation.name) !== undefined
   }
 
   private _devCommand(name: string): DevChatCommand | undefined {

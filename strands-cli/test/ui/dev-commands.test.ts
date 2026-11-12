@@ -6,6 +6,8 @@ import {
   type DevChatCommandContext,
   type DevChatPanelView,
 } from '../../src/ui/chat/controller.js'
+import { ConversationManager } from '../../src/ui/chat/conversations.js'
+import type { DevChatJob, DevChatJobs } from '../../src/ui/chat/types.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 
 const EmptyPanel: DevChatPanelView = () => null
@@ -164,5 +166,114 @@ describe('dev chat commands', () => {
     controller.close()
 
     expect(context().signal.aborted).toBe(true)
+  })
+})
+
+const jobStore = (): DevChatJobs & { set: (jobs: readonly DevChatJob[]) => void; listeners: () => number } => {
+  let jobs: readonly DevChatJob[] = []
+  const listeners = new Set<() => void>()
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    snapshot: () => jobs,
+    set: (next) => {
+      jobs = next
+      for (const listener of listeners) listener()
+    },
+    listeners: () => listeners.size,
+  }
+}
+
+const named = (name: string): DevChatCommand => ({
+  ...devCommand(),
+  spec: { name, usage: `/${name}`, description: name },
+})
+
+describe('dev command jobs and panels', () => {
+  it.each([
+    ['optimize', true, 'dev'],
+    ['missing', false, undefined],
+  ])('shouldOpenThePanelOf%sOnlyWhenTheCommandExists', (name, opened, kind) => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+
+    const result = controller.openDevCommand(name)
+
+    expect(result).toBe(opened)
+    expect(controller.getSnapshot().panel?.kind).toBe(kind)
+  })
+
+  it('shouldOpenAnotherDevPanelWhenAPanelAsksForIt', async () => {
+    const controller = new ChatController(idleBackend(), { devCommands: [named('test'), named('experiment')] })
+    await controller.submit('/test')
+    const panel = controller.getSnapshot().panel
+
+    const opened = panel?.kind === 'dev' ? panel.openCommand('experiment') : false
+
+    expect(opened).toBe(true)
+    expect(controller.getSnapshot().panel?.title).toBe('/experiment')
+  })
+
+  it('shouldListOnlyTheCommandsWithRunningJobsWhenJobsChange', () => {
+    const experiment = jobStore()
+    const commands = [
+      { ...named('experiment'), jobs: experiment },
+      { ...named('test'), jobs: jobStore() },
+    ]
+    const controller = new ChatController(idleBackend(), { devCommands: commands })
+
+    experiment.set([{ id: 'g1', label: 'refunds', done: 3, total: 20 }])
+    const running = controller.getSnapshot().devJobs
+    experiment.set([])
+
+    expect(running).toEqual([{ command: 'experiment', jobs: [{ id: 'g1', label: 'refunds', done: 3, total: 20 }] }])
+    expect(controller.getSnapshot().devJobs).toBeUndefined()
+  })
+
+  it('shouldStopListeningForJobsWhenTheControllerIsDisposed', async () => {
+    const jobs = jobStore()
+    const controller = new ChatController(idleBackend(), { devCommands: [{ ...devCommand(), jobs }] })
+
+    await controller.dispose()
+
+    expect(jobs.listeners()).toBe(0)
+  })
+
+  it('shouldOpenTheDevPanelAtOnceWhenTheUserTypesItDuringATurn', async () => {
+    let finish: () => void = () => undefined
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          await finished
+          yield* []
+          return { stopReason: 'endTurn', context: {} }
+        },
+      }),
+      { devCommands: [devCommand()] }
+    )
+    const turn = controller.submit('a long question')
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
+
+    await controller.submit('/optimize')
+
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' })
+    expect(controller.getSnapshot().queuedPrompts).toEqual([])
+    finish()
+    await turn
+  })
+
+  it('shouldOpenTheDevPanelOfTheActiveConversationWhenTheManagerIsAsked', () => {
+    const manager = new ConversationManager(new ChatController(idleBackend(), { devCommands: [devCommand()] }), {
+      fork: async () => new ChatController(idleBackend()),
+    })
+
+    const opened = manager.openDevCommand('optimize')
+
+    expect(opened).toBe(true)
+    expect(manager.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' })
   })
 })

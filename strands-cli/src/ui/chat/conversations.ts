@@ -425,6 +425,12 @@ export class ConversationManager implements ChatControllerApi {
     this._active.controller.openContextPanel()
   }
 
+  openDevCommand(name: string): boolean {
+    if (this._taskOwnerId && !this.dismissPanel()) return false
+    this._panel = undefined
+    return this._active.controller.openDevCommand(name)
+  }
+
   openTask(taskId: string, ownerId = this._activeId): boolean {
     if (this._snapshot.panel?.kind === 'permission') return false
     const delegate = this._agentMessaging
