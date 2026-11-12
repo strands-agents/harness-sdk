@@ -9,6 +9,7 @@ import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
 import { InvokeModelStage, type ExecuteToolContext } from '../middleware/index.js'
 import type { Plugin } from '../plugins/plugin.js'
+import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { tool } from '../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../tools/tool.js'
@@ -35,11 +36,17 @@ import { isTaskStatusTerminal, type BackgroundTask, type BackgroundTasksConfig }
 
 const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 const BACKGROUND_PROPERTY = '_background_execution'
-const MANAGE_TOOL_NAME = 'strands_manage_background_task'
+/**
+ * Name of the tool a model calls to manage its background tasks.
+ *
+ * @internal
+ */
+export const MANAGE_TOOL_NAME = 'strands_manage_background_task'
 const COMPOSITE_SCHEMA_KEYS = ['$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'] as const
 const FOREGROUND_TOOL_NAMES = new Set([
   MANAGE_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
+  LOAD_TOOLS_TOOL_NAME,
   'summarize_context',
   'truncate_context',
   'pin_context',

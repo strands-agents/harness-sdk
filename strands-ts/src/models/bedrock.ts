@@ -1519,6 +1519,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           switch (content.type) {
             case 'unknownBlock':
               return []
+            // ModelProxy sends references as text unless a modelInfo override reports native deferral, which Converse
+            // lacks. Converse then gets every full spec, so the tool only needs naming.
+            case 'toolReferenceBlock':
+              return [{ text: `Loaded ${content.name}.` }]
             case 'textBlock':
               return [{ text: content.text }]
             case 'jsonBlock':

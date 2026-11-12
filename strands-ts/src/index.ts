@@ -81,6 +81,7 @@ export type {
   GuardImageFormat,
   GuardImageSource,
   InjectedBlockData,
+  ToolReferenceBlockData,
   ContentBlock,
   ContentBlockData,
   MessageData,
@@ -101,6 +102,7 @@ export {
   GuardContentBlock,
   InjectedBlock,
   SummaryBlock,
+  ToolReferenceBlock,
   UnknownBlock,
   Message,
   JsonBlock,
@@ -214,7 +216,7 @@ export type {
   CacheConfig,
 } from './models/model.js'
 export type { SummarizeResult } from './models/summarize.js'
-export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
+export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching, DeferredTools } from './models/model-info.js'
 
 export { Model } from './models/model.js'
 

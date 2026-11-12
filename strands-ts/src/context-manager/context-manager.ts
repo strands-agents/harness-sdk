@@ -86,9 +86,9 @@ export class ContextManager implements Plugin {
   private readonly _strategies: ContextStrategy[]
   private readonly _stashStorage: Storage | false | undefined
   private readonly _enableRetrievalTool: boolean
+  private _tools: Tool[] = []
   private _stash: Stash | undefined
   private _stashIsDurable = false
-  private _retrievalTool: Tool | undefined
 
   constructor(config?: ContextManagerConfig) {
     const userStrategies = config?.strategies ? resolveStrategies(config.strategies) : PRESET_STRATEGIES.auto()
@@ -120,12 +120,7 @@ export class ContextManager implements Plugin {
   }
 
   getTools(): Tool[] {
-    if (!this._enableRetrievalTool) return []
-    if (!this._stash) return []
-    if (!this._retrievalTool) {
-      this._retrievalTool = createRetrievalTool(this._stash)
-    }
-    return [this._retrievalTool]
+    return [...this._tools]
   }
 
   async initAgent(agent: LocalAgent): Promise<void> {
@@ -155,6 +150,10 @@ export class ContextManager implements Plugin {
     for (const strategy of this._strategies) {
       strategy.init?.(agent, this._stash)
     }
+
+    const retrievalTools = this._enableRetrievalTool && this._stash ? [createRetrievalTool(this._stash)] : []
+    const strategyTools = this._strategies.flatMap((strategy) => strategy.getTools?.() ?? [])
+    this._tools = [...retrievalTools, ...strategyTools]
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
       await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)

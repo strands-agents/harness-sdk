@@ -1,6 +1,8 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
 import { latestUserIndex } from './model.js'
+import { hasToolReferences, withToolReferenceText } from './tool-references.js'
+import type { ToolSpec } from '../tools/types.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
 
@@ -15,7 +17,9 @@ import type { ModelStreamEvent } from './streaming.js'
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
- * of the earlier ones. A tool result whose content is all `UnknownBlock`s gets a placeholder text, since
+ * of the earlier ones. A `ToolReferenceBlock` reaches a model whose `modelInfo.capabilities.deferredTools` is
+ * `'native'` as it is stored, and that provider sends it its API's way. Every other model gets the parameters of the
+ * call's tool with that name as text. A tool result whose content is all `UnknownBlock`s gets a placeholder text, since
  * providers skip unknown blocks and some reject an empty tool result.
  *
  * @internal
@@ -42,7 +46,7 @@ export class ModelProxy {
     options?: StreamOptions,
     invocationContext?: InvocationContext
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
-    const { messages: prepared, dynamicTrailingBlocks } = this._prepare(messages)
+    const { messages: prepared, dynamicTrailingBlocks } = this._prepare(messages, options?.toolSpecs)
     // The cache point stays ahead of injected text, which the next call no longer sends.
     const keepsCachePoint = dynamicTrailingBlocks > (options?.dynamicTrailingBlocks ?? 0)
     const result = yield* this._model.streamAggregated(
@@ -61,11 +65,11 @@ export class ModelProxy {
    * @returns The wrapped model's count
    */
   countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    return this._model.countTokens(this._prepare(messages).messages, options)
+    return this._model.countTokens(this._prepare(messages, options?.toolSpecs).messages, options)
   }
 
-  private _prepare(messages: Message[]): RenderedMessages {
-    messages = withUnknownOnlyToolResultsFilled(this._withSummaryText(messages))
+  private _prepare(messages: Message[], toolSpecs: ToolSpec[] = []): RenderedMessages {
+    messages = withUnknownOnlyToolResultsFilled(this._withToolReferenceText(this._withSummaryText(messages), toolSpecs))
     if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
@@ -85,6 +89,12 @@ export class ModelProxy {
           ...(message.metadata !== undefined && { metadata: message.metadata }),
         })
     )
+  }
+
+  /** Sends tool references as text to a model that doesn't defer tools natively; a native provider sends them. */
+  private _withToolReferenceText(messages: Message[], toolSpecs: ToolSpec[]): Message[] {
+    if (!hasToolReferences(messages) || this._model.modelInfo.capabilities?.deferredTools === 'native') return messages
+    return withToolReferenceText(messages, toolSpecs, false)
   }
 
   /** Adds a completed call's reported usage to the request. */

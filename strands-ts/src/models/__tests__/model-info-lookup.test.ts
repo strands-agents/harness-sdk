@@ -36,6 +36,7 @@ describe('shared model info data', () => {
         nativeStructuredOutput: true,
         serverSideSummary: true,
         temporaryMessages: true,
+        deferredTools: 'native',
       },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
@@ -48,7 +49,7 @@ describe('shared model info data', () => {
 
   it('returns the entry facts and nothing for unknown ids', () => {
     expect(lookupModelInfo('eu.anthropic.claude-sonnet-4-6')).toEqual({
-      capabilities: { promptCaching: 'cachePoints' },
+      capabilities: { promptCaching: 'cachePoints', deferredTools: 'native' },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
     for (const modelId of ['anthropic.claude-opus-5-5', 'global.anthropic.claude-fable-5-2', 'claude-mythos-5-2']) {
@@ -59,6 +60,7 @@ describe('shared model info data', () => {
           nativeStructuredOutput: true,
           serverSideSummary: true,
           temporaryMessages: true,
+          deferredTools: 'native',
         },
         limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       })
@@ -97,6 +99,7 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
+        else if (key === 'deferredTools') expect(['unsupported', 'native'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         // Read by another consumer (the harness), not typed by the SDK.

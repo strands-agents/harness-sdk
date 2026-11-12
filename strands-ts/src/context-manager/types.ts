@@ -3,6 +3,7 @@
  */
 
 import type { Storage } from '../storage/storage.js'
+import type { Tool } from '../tools/tool.js'
 import type { Stash } from './stash.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { Message } from '../types/messages.js'
@@ -27,6 +28,13 @@ export interface ContextStrategy {
    * Strategies can use this to register hooks (e.g., eager offloading on message arrival).
    */
   init?(agent: LocalAgent, stash?: Stash): void
+
+  /**
+   * Tools required by this strategy. The context manager collects them after {@link init} runs.
+   *
+   * @returns Tools to register with the agent
+   */
+  getTools?(): Tool[]
 
   /**
    * Attempt to reduce context. Returns true if it made changes, false if it
