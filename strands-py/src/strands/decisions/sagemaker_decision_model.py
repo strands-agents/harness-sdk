@@ -80,8 +80,8 @@ class SageMakerDecisionModel(DecisionModel):
             region_name: AWS region of the endpoint. Takes precedence over ``boto_client_config``'s
                 region. Cannot be combined with ``boto_session`` or ``client``.
             boto_session: Boto session used to create the ``sagemaker-runtime`` client, for example
-                one with a named profile or assumed-role credentials. Its region is used. Cannot be
-                combined with ``region_name`` or ``client``.
+                one with a named profile or assumed-role credentials. Its region is used unless
+                ``boto_client_config`` sets one. Cannot be combined with ``region_name`` or ``client``.
             boto_client_config: ``botocore`` configuration for the ``sagemaker-runtime`` client.
                 Defaults to a 120-second read timeout; a provided config is used as is, so set
                 ``read_timeout`` on it to keep that bound. Cannot be combined with ``client``.
