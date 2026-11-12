@@ -326,7 +326,7 @@ class TestAsk:
         client = _fake_client({"error": "request too large"}, status=413, captured=captured)
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
-        # The body is sent now (no client-side size check); only the server's 413 maps it.
+        # The body is sent without a client-side size check; only the server's 413 maps it.
         with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large"):
             await decision.ask("x" * (64 * 1024), {"q": {"question": "ok?", "choices": "boolean"}})
         assert len(captured) == 1
