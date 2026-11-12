@@ -1,5 +1,6 @@
 """Tests for the Todos plugin."""
 
+import copy
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,6 +9,7 @@ from strands import Agent
 from strands.middleware.stages import InvokeModelStage
 from strands.vended_plugins.todos import TodoItem, Todos
 from strands.vended_plugins.todos.plugin import _DEFAULT_NAME
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 @pytest.fixture
@@ -38,6 +40,24 @@ def _injection_context(agent):
     return context
 
 
+def _capture_requests(model: MockedModelProvider) -> list[list[dict]]:
+    """Record a copy of the messages each model call receives, as the provider receives them."""
+    requests: list[list[dict]] = []
+    original_stream = model.stream
+
+    async def stream(messages, *args, **kwargs):
+        requests.append(copy.deepcopy(messages))
+        async for event in original_stream(messages, *args, **kwargs):
+            yield event
+
+    model.stream = stream
+    return requests
+
+
+def _has_reminder(request: list[dict]) -> bool:
+    return any("Your current todo list" in block.get("text", "") for message in request for block in message["content"])
+
+
 def test_todo_write_persists_the_list_and_reports_what_is_left(agent, todos):
     plugin = Todos()
 
@@ -47,13 +67,12 @@ def test_todo_write_persists_the_list_and_reports_what_is_left(agent, todos):
     assert tru_result == "2 todos remaining\n  [completed] Read code\n  [in_progress] Writing tests\n  [pending] Ship"
 
 
-def test_todo_write_renders_the_active_form_only_while_in_progress(agent, todos):
-    """The active form is what the list is for: it says what is happening right now."""
+def test_an_in_progress_item_without_an_active_form_falls_back_to_its_content(agent):
+    todos = [{"content": "Ship", "activeForm": "", "status": "in_progress"}]
+
     tru_result = Todos().todo_write._tool_func(todos=todos, tool_context=_tool_context(agent))
 
-    assert "[in_progress] Writing tests" in tru_result
-    assert "[completed] Read code" in tru_result
-    assert "Reading code" not in tru_result
+    assert tru_result == "1 todos remaining\n  [in_progress] Ship"
 
 
 def test_todo_write_with_an_empty_list_clears_the_state(agent, todos):
@@ -130,3 +149,34 @@ def test_init_agent_registers_the_injector_as_model_input_middleware():
 def test_the_plugin_name_is_configurable():
     assert Todos(name="plan").name == "plan"
     assert Todos().name == _DEFAULT_NAME
+
+
+def test_the_tool_validates_the_model_facing_schema():
+    """Calling ``_tool_func`` skips validation, so drive the registered tool to exercise the schema."""
+    agent = Agent(model=MagicMock(), callback_handler=None, plugins=[Todos()])
+    item = {"content": "Ship", "activeForm": "Shipping", "status": "pending"}
+
+    accepted = agent.tool.todo_write(todos=[item], record_direct_tool_call=False)
+    rejected = agent.tool.todo_write(todos=[{**item, "status": "nope"}], record_direct_tool_call=False)
+
+    assert accepted["status"] == "success"
+    assert rejected["status"] == "error"
+
+
+def test_the_list_is_resurfaced_on_the_next_model_call_in_the_same_invocation():
+    """The everyTurn trigger exists for this: under userTurn the mid-loop call carries no reminder."""
+    todos = [{"content": "Run tests", "activeForm": "Running tests", "status": "in_progress"}]
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "t1", "name": "todo_write", "input": {"todos": todos}}}],
+            },
+            {"role": "assistant", "content": [{"text": "Done"}]},
+        ]
+    )
+    requests = _capture_requests(model)
+
+    Agent(model=model, callback_handler=None, plugins=[Todos()])("go")
+
+    assert [_has_reminder(request) for request in requests] == [False, True]

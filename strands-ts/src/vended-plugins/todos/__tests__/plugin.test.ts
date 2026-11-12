@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Todos } from '../plugin.js'
 import type { TodoItem } from '../plugin.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { InvokeModelStage } from '../../../middleware/index.js'
+import { Agent } from '../../../agent/agent.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import type { MockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { InjectionContext } from '../../../injection/types.js'
 import type { InvokableTool, ToolContext } from '../../../tools/tool.js'
+import type { MessageData } from '../../../types/messages.js'
 
 function sampleTodos(): TodoItem[] {
   return [
@@ -28,6 +31,12 @@ async function write(plugin: Todos, agent: MockAgent, todos: TodoItem[]): Promis
   return todoWrite.invoke({ todos }, toolContext(agent))
 }
 
+function hasReminder(request: MessageData[]): boolean {
+  return request.some((message) =>
+    message.content.some((block) => (block as { text?: string }).text?.includes('Your current todo list') ?? false)
+  )
+}
+
 function renderReminder(plugin: Todos, agent: MockAgent): string | undefined {
   return (plugin as unknown as { _renderReminder(context: InjectionContext): string | undefined })._renderReminder(
     injectionContext(agent)
@@ -44,13 +53,12 @@ describe('Todos', () => {
     expect(result).toBe('2 todos remaining\n  [completed] Read code\n  [in_progress] Writing tests\n  [pending] Ship')
   })
 
-  it('renders the active form only while an item is in progress', async () => {
-    // The active form is what the list is for: it says what is happening right now.
-    const result = await write(new Todos(), createMockAgent(), sampleTodos())
+  it('falls back to the content of an in-progress item with no active form', async () => {
+    const todos: TodoItem[] = [{ content: 'Ship', activeForm: '', status: 'in_progress' }]
 
-    expect(result).toContain('[in_progress] Writing tests')
-    expect(result).toContain('[completed] Read code')
-    expect(result).not.toContain('Reading code')
+    const result = await write(new Todos(), createMockAgent(), todos)
+
+    expect(result).toBe('1 todos remaining\n  [in_progress] Ship')
   })
 
   it('clears the state when given an empty list', async () => {
@@ -126,5 +134,33 @@ describe('Todos', () => {
   it('takes a configurable plugin name', () => {
     expect(new Todos({ name: 'plan' }).name).toBe('plan')
     expect(new Todos().name).toBe('strands:todos')
+  })
+
+  it('validates its input against the model-facing schema', async () => {
+    const plugin = new Todos()
+    const agent = createMockAgent()
+    const badStatus = [{ content: 'Ship', activeForm: 'Shipping', status: 'nope' }] as unknown as TodoItem[]
+
+    await expect(write(plugin, agent, badStatus)).rejects.toThrow()
+    await expect(write(plugin, agent, sampleTodos())).resolves.toContain('2 todos remaining')
+  })
+
+  it('re-surfaces the list on the next model call in the same invocation', async () => {
+    // The everyTurn trigger exists for this: under userTurn the mid-loop call carries no reminder.
+    const todos: TodoItem[] = [{ content: 'Run tests', activeForm: 'Running tests', status: 'in_progress' }]
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'todo_write', toolUseId: 't1', input: { todos } })
+      .addTurn({ type: 'textBlock', text: 'Done' })
+    const agent = new Agent({ model, printer: false, plugins: [new Todos()] })
+    const requests: MessageData[][] = []
+    const originalStream = model.stream.bind(model)
+    vi.spyOn(model, 'stream').mockImplementation(async function* (messages, streamOptions) {
+      requests.push(messages.map((message) => message.toJSON()))
+      yield* originalStream(messages, streamOptions)
+    })
+
+    await agent.invoke('go')
+
+    expect(requests.map(hasReminder)).toStrictEqual([false, true])
   })
 })
