@@ -141,8 +141,16 @@ describe('Todos', () => {
     const agent = createMockAgent()
     const badStatus = [{ content: 'Ship', activeForm: 'Shipping', status: 'nope' }] as unknown as TodoItem[]
 
-    await expect(write(plugin, agent, badStatus)).rejects.toThrow()
+    await expect(write(plugin, agent, badStatus)).rejects.toThrow(/status/)
     await expect(write(plugin, agent, sampleTodos())).resolves.toContain('2 todos remaining')
+  })
+
+  it('rejects a second instance even under a different plugin name', async () => {
+    // The registry's duplicate check is on `name`, so renaming must not get a second tool in.
+    const plugins = [new Todos({ name: 'first' }), new Todos({ name: 'second', stateKey: 'other' })]
+    const agent = new Agent({ model: new MockMessageModel(), printer: false, plugins })
+
+    await expect(agent.initialize()).rejects.toThrow(/todo_write/)
   })
 
   it('re-surfaces the list on the next model call in the same invocation', async () => {

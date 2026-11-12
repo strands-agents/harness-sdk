@@ -151,6 +151,14 @@ def test_the_plugin_name_is_configurable():
     assert Todos().name == _DEFAULT_NAME
 
 
+def test_a_second_instance_is_rejected_even_under_a_different_plugin_name():
+    """The registry's duplicate check is on ``name``, so renaming must not get a second tool in."""
+    plugins = [Todos(name="first"), Todos(name="second", state_key="other")]
+
+    with pytest.raises(ValueError, match="tool_name=<todo_write>"):
+        Agent(model=MagicMock(), callback_handler=None, plugins=plugins)
+
+
 def test_the_tool_validates_the_model_facing_schema():
     """Calling ``_tool_func`` skips validation, so drive the registered tool to exercise the schema."""
     agent = Agent(model=MagicMock(), callback_handler=None, plugins=[Todos()])
@@ -161,6 +169,7 @@ def test_the_tool_validates_the_model_facing_schema():
 
     assert accepted["status"] == "success"
     assert rejected["status"] == "error"
+    assert "todos.0.status" in rejected["content"][0]["text"]
 
 
 def test_the_list_is_resurfaced_on_the_next_model_call_in_the_same_invocation():
