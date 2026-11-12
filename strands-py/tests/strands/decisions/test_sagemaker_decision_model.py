@@ -123,6 +123,15 @@ class TestAsk:
         assert config.read_timeout == 5
         assert "strands-agents" in config.user_agent_extra
 
+    def test_defaults_the_client_read_timeout(self, mock_client):
+        mock_boto_client, _ = mock_client
+
+        SageMakerDecisionModel(_ENDPOINT_NAME)
+
+        config = mock_boto_client.call_args.kwargs["config"]
+        assert config.read_timeout == 120
+        assert config.user_agent_extra == "strands-agents"
+
     @pytest.mark.asyncio
     async def test_appends_the_sdk_user_agent_to_an_existing_one(self, mock_client):
         mock_boto_client, client = mock_client

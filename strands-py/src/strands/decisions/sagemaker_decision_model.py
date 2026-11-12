@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 
 _SAGEMAKER_PROVIDER_NAME = "sagemaker"
 _SAGEMAKER_DEFAULT_MIN_CONFIDENCE = 0.5
+# Seconds. The boto3 call runs in a worker thread that a cancelled ``ask`` cannot interrupt, so this
+# bounds how long an abandoned call keeps running.
+_DEFAULT_READ_TIMEOUT = 120
 
 
 class SageMakerDecisionModel(DecisionModel):
@@ -37,6 +40,10 @@ class SageMakerDecisionModel(DecisionModel):
     ``ContextWindowOverflowException`` when the container reports a context overflow (HTTP 413, or
     422 whose message names the context window), and ``StructuredOutputException`` for a malformed
     provider response. Any other SageMaker runtime error propagates unchanged.
+
+    The blocking boto3 call runs in a worker thread, so cancelling ``ask`` (for example on a caller
+    timeout) stops waiting for it but cannot stop the in-flight request; the client's read timeout
+    bounds how long it keeps running.
 
     Example:
         ```python
@@ -64,7 +71,7 @@ class SageMakerDecisionModel(DecisionModel):
             region_name: AWS region of the endpoint. Takes precedence over ``boto_client_config``'s
                 region. Cannot be combined with ``client``.
             boto_client_config: ``botocore`` configuration for the ``sagemaker-runtime`` client.
-                Cannot be combined with ``client``.
+                Defaults to a 120-second read timeout. Cannot be combined with ``client``.
             client: Pre-built ``sagemaker-runtime`` client, for example one shared with other
                 components or configured with custom credentials or an endpoint override. Used as
                 is. Cannot be combined with ``region_name`` or ``boto_client_config``.
@@ -124,7 +131,7 @@ class SageMakerDecisionModel(DecisionModel):
 
 
 def _build_client(region_name: str | None, boto_client_config: BotocoreConfig | None) -> "SageMakerRuntimeClient":
-    config = boto_client_config or BotocoreConfig()
+    config = boto_client_config or BotocoreConfig(read_timeout=_DEFAULT_READ_TIMEOUT)
     existing_user_agent = getattr(config, "user_agent_extra", None)
     user_agent = f"{existing_user_agent} strands-agents" if existing_user_agent else "strands-agents"
     config = config.merge(BotocoreConfig(user_agent_extra=user_agent))
