@@ -793,6 +793,7 @@ export class ChatController implements ChatControllerApi {
       this._context = contextBeforeTurn
       const recovery = mode === 'shell' ? undefined : this._failureRecoveryHint(error)
       projector.fail(error, recovery)
+      if (mode === 'model') this._offerDevFix(projector.snapshot())
     } finally {
       clearTimeout(toolOutputEmitTimer)
       clearTimeout(responseDelayTimer)
@@ -817,6 +818,11 @@ export class ChatController implements ChatControllerApi {
     }
 
     return projector.snapshot()
+  }
+
+  private _offerDevFix(turn: ChatTurn): void {
+    if (turn.status !== 'error' || !this._runtime.devWorkspace) return
+    this._openError('Agent turn failed', '', turn.error ?? '', this._runtime.cwd)
   }
 
   private _failureRecoveryHint(error: unknown): string {

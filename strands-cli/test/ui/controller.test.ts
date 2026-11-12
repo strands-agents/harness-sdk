@@ -1880,6 +1880,53 @@ describe('ChatController', () => {
     await controller.dispose()
   })
 
+  it('shouldOpenAFixPanelWhenATurnFailsInADevChat', async () => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('Python agent exited (1). Traceback: boom')
+      },
+    })
+    const controller = new ChatController(backend, {
+      streamPresentation: {},
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.py',
+          boundEntrypoint: '/project/agent.py',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+    })
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'error',
+      title: 'Agent turn failed',
+      fixDirectory: '/project',
+      rows: [{ description: 'Python agent exited (1). Traceback: boom' }],
+    })
+    await controller.dispose()
+  })
+
+  it('shouldNotOpenAFixPanelWhenATurnFailsOutsideADevChat', async () => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('The security token included in the request is expired')
+      },
+    })
+    const controller = new ChatController(backend, { streamPresentation: {}, runtime: { cwd: '/project' } })
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().completedTurns[0]?.status).toBe('error')
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    await controller.dispose()
+  })
+
   it('marks a silent response as delayed, clears on progress, and allows exit while cancellation is stuck', async () => {
     vi.useFakeTimers()
     let respond!: () => void
