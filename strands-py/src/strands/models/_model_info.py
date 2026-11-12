@@ -31,8 +31,8 @@ class ModelCapabilities:
         stateful: Whether the model keeps conversation state server-side;
             :attr:`strands.models.Model.stateful` reads it.
         prompt_caching: Whether and how the model caches prompts.
-        forced_tool_choice: Whether the model accepts a tool choice that forces a tool call
-            (``any`` or a named tool).
+        forced_tool_choice: Whether Strands forces a tool call (``any`` or a named tool) on this model. False
+            when the model rejects forcing, or when Strands uses native structured output instead.
         native_structured_output: Whether the provider can make the model's text output conform to a
             JSON schema.
         server_side_summary: Whether the model summarizes history server-side through

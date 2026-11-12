@@ -27,7 +27,10 @@ export interface ModelCapabilities {
   readonly stateful?: boolean | undefined
   /** Whether and how the model caches prompts. */
   readonly promptCaching?: PromptCaching | undefined
-  /** Whether the model accepts a `toolChoice` that forces a tool call (`any` or a named tool). */
+  /**
+   * Whether Strands forces a tool call (`any` or a named tool) on this model. False when the model rejects forcing,
+   * or when Strands uses native structured output instead.
+   */
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
