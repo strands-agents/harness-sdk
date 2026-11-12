@@ -127,6 +127,9 @@ def _normalize_builtin_tools(
                 normalized[name] = setting
             else:
                 raise ValueError(f"builtin_tools[{name!r}] must be a bool or a config mapping, got {setting!r}.")
+        # A delegation depth of 0 means no subagent tool at all (same as TS's resolveBuiltinTools).
+        if isinstance(normalized["subagent"], Mapping) and normalized["subagent"].get("max_depth") == 0:
+            normalized["subagent"] = False
         return normalized
     if isinstance(value, (str, bool)) or not isinstance(value, Sequence):
         raise ValueError(

@@ -277,10 +277,8 @@ def create_harness(
             as a tool, wrap it with ``Agent.as_tool()`` and pass it here. A tool name must be unique
             across all sources (built-in tools, ``tools``, plugins); a collision raises at
             construction. To replace a built-in, drop it first via ``builtin_tools`` so the name is
-            free. A connected ``MCPClient`` passed here is offered to delegates on the ``subagent``
-            tool's ``mcp_servers`` axis under its ``client_name`` (set ``application_name``), like the
-            servers loaded from ``mcp_servers``; an unnamed or same-named client is warned about and
-            left off that axis.
+            free. A connected ``MCPClient`` passed here is always handed to ``subagent`` delegates
+            (shared, not reconnected), like the servers loaded from ``mcp_servers``.
         plugins: Consumer SDK plugins, added alongside the built-in plugins (consumer plugins run
             first). Tools a plugin vends take part in the name-collision check, and the plugins reach
             ``subagent`` children too. An ``AgentSkills`` passed here replaces the one the harness

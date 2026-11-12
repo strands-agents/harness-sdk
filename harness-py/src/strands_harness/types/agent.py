@@ -96,7 +96,7 @@ class SubagentConfig(TypedDict, total=False):
     """Per-tool configuration for ``subagent``.
 
     Attributes:
-        max_depth: How many levels of delegation a child may itself open (default 2).
+        max_depth: How many levels of delegation a child may itself open (default 2); 0 removes the tool.
     """
 
     max_depth: int
