@@ -254,10 +254,17 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
   async createExperiment(settings: GenerationSettings): Promise<TemporaryCreatedExperiment> {
     await this.reload()
     const named = { ...settings, name: settings.name.trim(), task: settings.task.trim() }
-    const problem = this.problemWith(named, undefined)
+    const stopped = [...this.jobs.values()].find(
+      ({ generation }) => generation.name === named.name && generation.phase === 'failed'
+    )?.generation.id
+    const problem = this.problemWith(named, stopped)
     if (problem) throw new Error(problem)
+    if (stopped) this.forget(stopped)
     const job = this.start(named)
-    if (!(await this.draft(job)) || !job.draft) throw new Error(this.failureText(job))
+    if (!(await this.draft(job)) || !job.draft) {
+      this.announceDraft(job, false)
+      throw new Error(this.failureText(job))
+    }
     return this.saveDraft(job, job.draft)
   }
 

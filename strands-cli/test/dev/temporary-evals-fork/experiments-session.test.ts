@@ -126,7 +126,7 @@ const onlyGeneration = (experiments: Awaited<ReturnType<typeof setup>>['experime
   experiments.snapshot().generations[0]!
 
 describe('TEMPORARY experiment generation session', () => {
-  it('shouldSuggestAFreeNameTheChatModelAndTheAgentContextForANewExperiment', async () => {
+  it('shouldSuggestAFreeNameTheChatModelAndTheAgentContextWhenANewExperimentStarts', async () => {
     const { experiments } = await setup()
 
     const settings = experiments.suggested()
@@ -431,6 +431,25 @@ describe('TEMPORARY experiment generation session', () => {
     )
   })
 
+  it('shouldReplaceAFailedChatGenerationWhenTheChatRetriesTheSameName', async () => {
+    const { experiments, generator, notices } = await setup()
+    const first = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 1 })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    await generator.runs[0]!.finish([], 3)
+    await expect(first).rejects.toThrow('The generation of refunds stopped')
+
+    const second = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 1 })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(2))
+    await generator.runs[1]!.finish(['c0'])
+
+    await expect(second).resolves.toMatchObject({ name: 'refunds', caseCount: 1 })
+    expect(experiments.snapshot().generations).toEqual([])
+    expect(notices).toEqual([
+      { status: 'error', text: expect.stringMatching(/^experiment · refunds stopped: .* · \/experiment shows why$/u) },
+      { status: 'success', text: expect.stringContaining('experiment · refunds · 1 case saved') },
+    ])
+  })
+
   it('shouldStartTheCreateExperimentSkillInTheChatWhenTheUserAsksForANewExperiment', async () => {
     const { experiments, context } = await setup()
 
@@ -441,7 +460,13 @@ describe('TEMPORARY experiment generation session', () => {
 
   it('shouldDismissTheFailureAndSendItsCauseAndSettingsToTheChatWhenTheUserAsksForAFix', async () => {
     const { experiments, generator, context, start } = await setup()
-    start({ name: 'refunds', cases: 3, model: 'openai.gpt-6.1-sol' })
+    start({
+      name: 'refunds',
+      cases: 3,
+      model: 'openai.gpt-6.1-sol',
+      evaluators: [{ name: 'OutputEvaluator' }, { name: 'ToolCalled', settings: { tool_name: 'lookup_order' } }],
+      expectedTrajectory: true,
+    })
     await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
     await generator.runs[0]!.progress({ event: 'failed', error: 'ValidationException: model identifier is invalid' })
     await generator.runs[0]!.finish([], 1)
@@ -452,8 +477,10 @@ describe('TEMPORARY experiment generation session', () => {
     expect(experiments.snapshot().generations).toEqual([])
     expect(context.submit).toHaveBeenCalledWith(
       '$create-experiment The experiment refunds stopped: Bedrock cannot use openai.gpt-6.1-sol. ' +
-        'Its settings were: task "Answers refund questions", 3 cases, evaluators OutputEvaluator, ' +
-        'model openai.gpt-6.1-sol, 4 at once. Help me fix the settings, then generate it again.'
+        'Its settings were: task "Answers refund questions", 3 cases, 0 topics, ' +
+        'evaluators OutputEvaluator and ToolCalled {"tool_name":"lookup_order"}, expected output on, ' +
+        'expected trajectory on, expected interactions off, metadata off, model openai.gpt-6.1-sol, 4 at once. ' +
+        'Help me fix the settings, then generate it again.'
     )
   })
 })

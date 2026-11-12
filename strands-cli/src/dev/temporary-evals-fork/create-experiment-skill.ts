@@ -1,5 +1,5 @@
 import type { AgentExtensionSkill } from '../../agent/extension.js'
-import type { GenerationError, GenerationSettings } from '../panels/model.js'
+import type { EvaluatorChoice, GenerationError, GenerationSettings } from '../panels/model.js'
 
 export const TEMPORARY_CREATE_EXPERIMENT_SKILL = 'create-experiment'
 
@@ -42,13 +42,22 @@ export const temporaryCreateExperimentSkill = (): AgentExtensionSkill => ({
   instructions: INSTRUCTIONS,
 })
 
+const onOff = (value: boolean): string => (value ? 'on' : 'off')
+
+const evaluatorSummary = ({ name, settings }: EvaluatorChoice): string =>
+  settings && Object.keys(settings).length > 0 ? `${name} ${JSON.stringify(settings)}` : name
+
 const settingsSummary = (settings: GenerationSettings): string =>
   [
     `task "${settings.task}"`,
     ...(settings.context.trim() ? [`context "${settings.context.trim()}"`] : []),
     `${settings.cases} cases`,
-    ...(settings.topics > 0 ? [`${settings.topics} topics`] : []),
-    `evaluators ${settings.evaluators.map(({ name }) => name).join(' and ')}`,
+    `${settings.topics} topics`,
+    `evaluators ${settings.evaluators.map(evaluatorSummary).join(' and ')}`,
+    `expected output ${onOff(settings.expectedOutput)}`,
+    `expected trajectory ${onOff(settings.expectedTrajectory)}`,
+    `expected interactions ${onOff(settings.expectedInteractions)}`,
+    `metadata ${onOff(settings.metadata)}`,
     `model ${settings.model || 'the strands default'}`,
     `${settings.parallel} at once`,
   ].join(', ')

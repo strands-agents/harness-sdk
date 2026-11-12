@@ -189,13 +189,13 @@ const setup = (evaluators = vi.fn(async () => CATALOG)) => {
 }
 
 describe('TEMPORARY dev chat part', () => {
-  it('shouldOfferTheCreateExperimentSkillAndMarkOnlyTheLookupsReadOnly', () => {
+  it('shouldOfferTheSkillAndLetOnlyTheStatusSkipThePromptWhenThePartIsBuilt', () => {
     const { part } = setup()
 
     expect(part.skills.map(({ name }) => name)).toEqual(['create-experiment'])
     expect(part.tools.map(({ name, readOnly }) => [name, readOnly === true])).toEqual([
       ['strands_dev_status', true],
-      ['strands_dev_evaluators', true],
+      ['strands_dev_evaluators', false],
       ['strands_dev_create_experiment', false],
       ['strands_dev_test', false],
       ['strands_dev_optimize', false],
@@ -357,6 +357,21 @@ describe('TEMPORARY dev chat part', () => {
     expect(sessions.test.rerunFailed).toHaveBeenCalledWith(REFUNDS.path)
   })
 
+  it('shouldRunTheFailedCasesOfARunFromAnEarlierSessionWhenTheDeveloperAsksForThem', async () => {
+    const { tool, test, sessions } = setup()
+    sessions.test.show.mockImplementation(async () => {
+      test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+    })
+    sessions.test.rerunFailed.mockImplementation(() =>
+      setTimeout(() => test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] }), 0)
+    )
+
+    const report = JSON.parse(await tool('strands_dev_test').run({ experiment: 'refunds', failedOnly: true }))
+
+    expect(sessions.test.rerunFailed).toHaveBeenCalledWith(REFUNDS.path)
+    expect(report).toMatchObject({ passed: 1, total: 2 })
+  })
+
   it('shouldNameTheSavedExperimentsWhenTheRequestedOneDoesNotExist', async () => {
     const { tool, sessions } = setup()
 
@@ -394,16 +409,18 @@ describe('TEMPORARY dev chat part', () => {
     [
       'an iteration count it does not offer',
       { experiment: 'refunds', iterations: 3 },
-      'iterations must be one of 2, 4, 8.',
+      'iterations must be one of 1, 2, 4, 6, 8.',
     ],
-  ])('shouldRefuseToOptimizeWhenTheRequestHas%s', async (_case, input, message) => {
-    const { tool, sessions } = setup()
+  ])('shouldKeepTheLastReviewAndRefuseToOptimizeWhenTheRequestHas%s', async (_case, input, message) => {
+    const { tool, optimize, sessions } = setup()
+    optimize.set({ step: 'review', review: review() })
 
     await expect(tool('strands_dev_optimize').run(input)).rejects.toThrow(message)
-    expect(sessions.optimize.start).not.toHaveBeenCalled()
+    expect(sessions.optimize.reset).not.toHaveBeenCalled()
+    expect(optimize.snapshot().step).toBe('review')
   })
 
-  it('shouldRefuseToStartASecondOptimizationWhileOneRuns', async () => {
+  it('shouldRefuseToStartASecondOptimizationWhenOneIsRunning', async () => {
     const { tool, optimize } = setup()
     optimize.set({ step: 'running', progress: progress() })
 

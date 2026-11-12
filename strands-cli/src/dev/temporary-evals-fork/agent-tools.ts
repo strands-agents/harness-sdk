@@ -17,6 +17,7 @@ import type {
 import { temporaryCreateExperimentSkill } from './create-experiment-skill.js'
 import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
+import { TEMPORARY_ITERATION_CHOICES } from './plan.js'
 import type { TemporaryDevSessions } from './sessions.js'
 
 type Input = Readonly<Record<string, JSONValue>>
@@ -270,7 +271,6 @@ const statusTool = (sessions: Sessions): DevChatTool => ({
 
 const evaluatorsTool = (evaluators: Evaluators): DevChatTool => ({
   name: 'strands_dev_evaluators',
-  readOnly: true,
   description:
     'List the strands-evals evaluators that can score this agent, with what each one checks and its settings. ' +
     'The first call can take a minute while strands dev prepares the evals environment.',
@@ -358,6 +358,7 @@ const testTool = (sessions: Sessions): DevChatTool => ({
   run: async (input): Promise<string> => {
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
     const { test } = sessions()
+    await test.show()
     const ofExperiment = (): TestRun | undefined =>
       test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
     const before = ofExperiment()
@@ -399,7 +400,11 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
         items: { type: 'string', enum: [...TUNABLE] },
         description: 'What to tune. Default: instructions.',
       },
-      iterations: { type: 'integer', description: 'How many optimizer steps to run. Default: 4.' },
+      iterations: {
+        type: 'integer',
+        enum: [...TEMPORARY_ITERATION_CHOICES],
+        description: 'How many optimizer steps to run. Default: 4.',
+      },
     },
     required: ['experiment'],
     additionalProperties: false,
@@ -412,6 +417,9 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
         `The optimization ${current.progress.run} is still running. Wait for it, or stop it in /optimize.`
       )
     const tune = tuneFrom(input)
+    const iterations = whole(input, 'iterations', 1, Number.MAX_SAFE_INTEGER)
+    if (iterations !== undefined && !TEMPORARY_ITERATION_CHOICES.includes(iterations))
+      throw new Error(`iterations must be one of ${TEMPORARY_ITERATION_CHOICES.join(', ')}.`)
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
     optimize.reset()
     optimize.plan(experiment)
@@ -420,9 +428,6 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     )
     if (planned.step === 'failed') throw new Error(planned.message)
     if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
-    const iterations = whole(input, 'iterations', 1, Number.MAX_SAFE_INTEGER)
-    if (iterations !== undefined && !planned.plan.iterationChoices.includes(iterations))
-      throw new Error(`iterations must be one of ${planned.plan.iterationChoices.join(', ')}.`)
     for (const knob of planned.plan.knobs)
       if (!knob.unavailable && knob.enabled !== tune.includes(knob.key)) optimize.toggleKnob(knob.key)
     if (iterations !== undefined) optimize.setIterations(iterations)
