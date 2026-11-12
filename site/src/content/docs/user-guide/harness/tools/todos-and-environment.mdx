@@ -5,6 +5,8 @@ sourceLinks:
   - path: harness-py/src/strands_harness/plugins/todos.py
   - path: harness-py/src/strands_harness/plugins/environment.py
   - path: harness-ts/src/plugins/todos.ts
+  - path: strands-py/src/strands/vended_plugins/todos/plugin.py
+  - path: strands-ts/src/vended-plugins/todos/plugin.ts
 sidebar:
   label: "Task tracking and environment"
 ---
@@ -16,20 +18,28 @@ default; `todos` is opt-in.
 
 ## todos
 
+:::caution[Moving to the SDK]
+The harness `todos` built-in is deprecated. The plugin now ships in the SDK as
+`Todos`, so construct it yourself and pass it in `plugins` — see the SDK tab below.
+Constructing the harness built-in warns, and it is removed in a later harness minor.
+[Track the move](https://github.com/strands-agents/harness-sdk/issues/5279).
+:::
+
 The `todos` plugin gives the agent a `todo_write` tool and keeps the current task list in
 view. When the agent writes a list, the plugin re-surfaces it to the model before each
 step, so on a longer task the agent keeps its plan in front of it without restating it.
 
-The list lives in agent state, not durable history: it is injected fresh before each step
-and never written into the conversation, so a constantly-changing plan does not stack stale
-copies in the transcript. Each item has a `content` (the task, imperative), an
+The list lives in agent state. Each rendered copy is injected into the conversation as an
+`injected` block, and only the latest user message's injected blocks are sent to the model
+— older ones are dropped from the request, so a constantly-changing plan never reaches the
+model as a stack of stale copies. Each item has a `content` (the task, imperative), an
 `activeForm` (shown while it is in progress), and a `status` of `pending`, `in_progress`,
 or `completed`. The agent is guided to keep one item in progress at a time and clear the
 list when the work is done.
 
-`todos` is opt-in. Because it re-injects the list on every turn, it costs tokens and breaks
-the cached prefix on providers without explicit cache points, so enable it where the task
-tracking earns that.
+`todos` is opt-in. Because it re-injects the list on every turn, it costs tokens and moves
+the cached prefix boundary on providers without explicit cache points, so enable it where
+the task tracking earns that.
 
 ## environment
 
@@ -78,25 +88,18 @@ todos, or pass an empty list to turn both off:
         ```python
         # pip install strands-agents
         from strands import Agent
-        from strands.vended_tools import file_editor
+        from strands.vended_plugins.todos import Todos
 
-        # No notebook tool; use file_editor for a plan file
-        agent = Agent(
-            tools=[file_editor],
-            system_prompt="Track the task in a plan file and update it as you work.",
-        )
+        agent = Agent(plugins=[Todos()])
         ```
       </Tab>
       <Tab label="TypeScript">
         ```typescript
         // npm install @strands-agents/sdk
         import { Agent } from '@strands-agents/sdk'
-        import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
+        import { Todos } from '@strands-agents/sdk/vended-plugins/todos'
 
-        const agent = new Agent({
-          tools: [notebook],
-          systemPrompt: 'Create a notebook checklist and update it as you work.',
-        })
+        const agent = new Agent({ plugins: [new Todos()] })
         ```
       </Tab>
     </Tabs>

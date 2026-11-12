@@ -5,6 +5,7 @@ from strands.middleware.stages import InvokeModelStage
 
 from strands_harness import create_harness
 from strands_harness.plugins import Todos
+from strands_harness.plugins.todos import _DEPRECATION_MESSAGE
 from strands_harness.plugins.todos import Todos as TodosClass
 
 
@@ -97,3 +98,13 @@ def test_registers_a_context_injector_on_init_agent():
     TodosClass().init_agent(agent)
 
     assert [call.args[0] for call in agent.add_middleware.call_args_list] == [InvokeModelStage.Input]
+
+
+def test_constructing_todos_warns_that_it_is_moving_to_the_sdk():
+    with pytest.deprecated_call(match="strands.vended_plugins.todos"):
+        Todos()
+
+
+def test_the_deprecation_message_matches_the_pep_702_literal():
+    # The decorator takes a literal, so the constant is a second copy; keep them identical.
+    assert TodosClass.__deprecated__ == _DEPRECATION_MESSAGE
