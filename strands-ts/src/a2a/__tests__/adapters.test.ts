@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { partsToContentBlocks, contentBlocksToParts } from '../adapters.js'
-import { TextBlock, ToolUseBlock, ReasoningBlock } from '../../types/messages.js'
+import { TextBlock, ToolUseBlock, ReasoningBlock, OffloadedBlock } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import { ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../../types/media.js'
 import type { Part } from '@a2a-js/sdk'
@@ -100,6 +100,14 @@ describe('adapters', () => {
         { kind: 'text', text: 'Hello' },
         { kind: 'text', text: 'World' },
       ])
+    })
+
+    it('converts an offloaded block to the text the model receives', () => {
+      const blocks: ContentBlock[] = [
+        new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' }),
+      ]
+
+      expect(contentBlocksToParts(blocks)).toStrictEqual([{ kind: 'text', text: '[Dropped] [ref: tu-1]' }])
     })
 
     it.each([
