@@ -132,6 +132,19 @@ class TestAsk:
         assert config.read_timeout == 120
         assert config.user_agent_extra == "strands-agents"
 
+    def test_creates_the_client_from_a_provided_boto_session_with_the_sdk_defaults(self, mock_client):
+        mock_boto_client, _ = mock_client
+        session = unittest.mock.Mock()
+
+        SageMakerDecisionModel(_ENDPOINT_NAME, boto_session=session)
+
+        mock_boto_client.assert_not_called()
+        session.client.assert_called_once()
+        call = session.client.call_args
+        assert call.args == ("sagemaker-runtime",)
+        assert call.kwargs["config"].read_timeout == 120
+        assert call.kwargs["config"].user_agent_extra == "strands-agents"
+
     @pytest.mark.asyncio
     async def test_appends_the_sdk_user_agent_to_an_existing_one(self, mock_client):
         mock_boto_client, client = mock_client
@@ -296,7 +309,20 @@ class TestConstruction:
         with pytest.raises(ValueError, match=r"default_min_confidence must be in \[0.0, 1.0\]"):
             SageMakerDecisionModel(_ENDPOINT_NAME, default_min_confidence=threshold)
 
-    @pytest.mark.parametrize("kwargs", [{"region_name": "us-east-1"}, {"boto_client_config": BotocoreConfig()}])
-    def test_rejects_a_provided_client_combined_with_region_name_or_boto_client_config(self, kwargs: dict[str, Any]):
-        with pytest.raises(ValueError, match="Cannot specify both client and region_name/boto_client_config"):
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"region_name": "us-east-1"},
+            {"boto_session": unittest.mock.Mock()},
+            {"boto_client_config": BotocoreConfig()},
+        ],
+    )
+    def test_rejects_a_provided_client_combined_with_client_creation_options(self, kwargs: dict[str, Any]):
+        with pytest.raises(
+            ValueError, match="Cannot specify both client and region_name/boto_session/boto_client_config"
+        ):
             SageMakerDecisionModel(_ENDPOINT_NAME, client=unittest.mock.Mock(), **kwargs)
+
+    def test_rejects_region_name_combined_with_boto_session(self):
+        with pytest.raises(ValueError, match="Cannot specify both region_name and boto_session"):
+            SageMakerDecisionModel(_ENDPOINT_NAME, region_name="us-east-1", boto_session=unittest.mock.Mock())
