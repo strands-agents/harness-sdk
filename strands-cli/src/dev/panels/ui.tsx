@@ -6,6 +6,7 @@ import { graphemes, sanitizeTerminalText } from '../../terminal/text.js'
 import { EditableText } from '../../ui/text-input.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
+import { useDevPanelClicks } from '../../ui/panels/dev.js'
 
 export type Tone = 'success' | 'error' | 'warning' | 'muted'
 
@@ -193,22 +194,32 @@ export const ItemList = ({
   selected,
   capacity,
   labelWidth,
+  onClick,
 }: {
   items: readonly ListItem[]
   selected: number
   capacity: number
   labelWidth: number
+  onClick?: (index: number) => void
 }): ReactElement => {
   const { accent, selection } = useTheme()
   const toneColor = useToneColor()
+  const clicks = useDevPanelClicks()
   const { start, end } = listWindow(selected, items.length, Math.max(1, capacity))
   const hidden = items.length - (end - start)
   return (
     <Box flexDirection="column" flexShrink={0}>
       {items.slice(start, end).map((item, offset) => {
-        const active = start + offset === selected
+        const index = start + offset
+        const active = index === selected
         return (
-          <Box key={item.key} height={1} width="100%" {...(active ? { backgroundColor: selection } : {})}>
+          <Box
+            key={item.key}
+            height={1}
+            width="100%"
+            {...(active ? { backgroundColor: selection } : {})}
+            {...(clicks && onClick ? { ref: clicks.target(() => onClick(index)) } : {})}
+          >
             <Box flexShrink={0}>
               <Text color={accent}>{active ? '› ' : '  '}</Text>
               {item.mark ? <Text {...toneColor(item.mark.tone)}>{`${item.mark.text} `}</Text> : null}

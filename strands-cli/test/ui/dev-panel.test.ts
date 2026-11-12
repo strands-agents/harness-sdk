@@ -1,5 +1,5 @@
 import { createElement, useState, type ReactElement } from 'react'
-import { Text, useInput, type Instance } from 'ink'
+import { Box, Text, useInput, type Instance } from 'ink'
 import stringWidth from 'string-width'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,6 +13,7 @@ import {
 } from '../../src/ui/chat/controller.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
+import { useDevPanelClicks } from '../../src/ui/panels/dev.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
@@ -146,6 +147,34 @@ describe('dev command panels', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
     await vi.waitFor(() => expect(screen()).not.toContain('probe panel'))
     expect(screen()).not.toContain('xy')
+  })
+})
+
+describe('dev panel clicks', () => {
+  it('shouldRunTheClickTargetAndKeepThePanelOpenWhenTheUserClicksInsideADevPanel', async () => {
+    const clicked = vi.fn()
+    const ClickPanel = (): ReactElement => {
+      const clicks = useDevPanelClicks()
+      return createElement(
+        Box,
+        { flexDirection: 'column' },
+        createElement(Text, null, 'panel heading'),
+        createElement(Box, clicks ? { ref: clicks.target(clicked) } : {}, createElement(Text, null, 'clickable row'))
+      )
+    }
+    const command: DevChatCommand = {
+      spec: { name: 'probe', usage: '/probe', description: 'Probe' },
+      open: () => ClickPanel,
+    }
+    const { controller, instance, click } = await mount(command)
+    await controller.submit('/probe')
+    await instance.waitUntilRenderFlush()
+
+    await click('panel heading')
+    await click('clickable row')
+
+    expect(clicked).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/probe' })
   })
 })
 

@@ -111,6 +111,7 @@ import {
 } from '../panels/configuration.js'
 import type { ChatPanel, ChatPanelRow, ChatPanelSlider } from './types.js'
 import { ThemeProvider } from '../theme.js'
+import { DevPanelClicks } from '../panels/dev.js'
 import { UpdatePrompt } from '../update.js'
 
 type PendingInput = { kind: 'key'; text: string; key: Key } | { kind: 'paste'; text: string }
@@ -251,6 +252,7 @@ export function ChatApp({
   const statusElement = useRef<DOMElement | undefined>(undefined)
   const backgroundTaskElement = useRef<DOMElement | undefined>(undefined)
   const devJobElements = useRef(new Map<string, DOMElement>())
+  const [devPanelClicks] = useState(() => new DevPanelClicks())
   const [toolGroupElements, registerToolGroupElement] = useElementMap<string>()
   const frogElement = useRef<DOMElement | undefined>(undefined)
   const jumpToBottomElement = useRef<DOMElement | undefined>(undefined)
@@ -1061,6 +1063,7 @@ export function ChatApp({
           : false
       const toolGroupTarget = !snapshot.panel ? elementAtMouse(toolGroupElements, mouse) : undefined
       const devJobTarget = snapshot.devJobs?.length ? elementAtMouse(devJobElements.current, mouse) : undefined
+      const devPanelClick = snapshot.panel?.kind === 'dev' ? devPanelClicks.at(mouse) : undefined
       const sliderElement =
         snapshot.panel?.kind === 'effort' || snapshot.panel?.kind === 'permissions' || snapshot.panel?.kind === 'voice'
           ? panelSliderElement.current
@@ -1238,6 +1241,8 @@ export function ChatApp({
       }
       if (devJobTarget) {
         controller.openDevCommand?.(devJobTarget)
+      } else if (devPanelClick) {
+        devPanelClick()
       } else if (jumpToBottomHit) {
         setTranscriptScroll(0)
       } else if (panelFilterId) {
@@ -1330,6 +1335,7 @@ export function ChatApp({
       availableUpdate,
       copyText,
       controller,
+      devPanelClicks,
       dispatchPrompt,
       footerElements,
       metadataElements,
@@ -2262,6 +2268,7 @@ export function ChatApp({
       onQueuedPromptElement={registerQueuedPromptElement}
       onBackgroundTaskElement={registerBackgroundTaskElement}
       onDevJobElement={registerDevJobElement}
+      devPanelClicks={devPanelClicks}
       onStatusElement={registerStatusElement}
       onFrogElement={registerFrogElement}
       onJumpToBottomElement={registerJumpToBottomElement}

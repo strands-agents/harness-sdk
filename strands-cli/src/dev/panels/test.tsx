@@ -137,6 +137,18 @@ const rowItem = (row: TestRow, chosen: ReadonlySet<string>): ListItem => {
 
 const selectable = (row: TestRow | undefined): boolean => row !== undefined && row.kind !== 'waiting'
 
+const OPEN_HINTS: Record<TestRun['status'], string> = {
+  running: 'Enter show progress',
+  done: 'Enter open report',
+  failed: 'Enter show why it stopped',
+}
+
+const enterHint = (chosen: number, row: TestRow | undefined): string => {
+  if (chosen > 0) return `Enter run ${chosen}`
+  if (row?.kind === 'new') return 'Enter open /experiment'
+  return row?.kind === 'experiment' && row.run ? OPEN_HINTS[row.run.status] : 'Enter run'
+}
+
 const TestList = ({
   session,
   tests,
@@ -163,6 +175,16 @@ const TestList = ({
     }
   }
   const ready = rows.flatMap((row) => (row.kind === 'experiment' ? [row.experiment] : []))
+  const activate = (row: TestRow | undefined): void => {
+    if (row?.kind === 'new') openCommand('experiment')
+    else if (row?.kind === 'experiment' && row.run) onOpen(row.experiment.path)
+    else if (row?.kind === 'experiment') session.run([row.experiment])
+  }
+  const click = (index: number): void => {
+    if (!selectable(rows[index])) return
+    cursor.set(index)
+    activate(rows[index])
+  }
   useInput((input, key) => {
     const typed = shortcut(input, key)
     const row = rows[cursor.current()]
@@ -183,8 +205,7 @@ const TestList = ({
       if (picked.length > 0) {
         session.run(picked)
         chosen.set(new Set())
-      } else if (row?.kind === 'experiment') session.run([row.experiment])
-      else if (row?.kind === 'new') openCommand('experiment')
+      } else activate(row)
     }
   })
   const running = tests.runs.filter(({ run }) => run.status === 'running').length
@@ -209,20 +230,13 @@ const TestList = ({
           rows.map((row) => rowItem(row, chosen.value).label),
           width
         )}
+        onClick={click}
       />
       <Fill />
       {waiting ? (
         <Line tone="muted">{'  Grey experiments are still generating, or wait for review in /experiment.'}</Line>
       ) : null}
-      <KeyHints
-        hints={[
-          'Space select',
-          'a all',
-          chosen.value.size > 0 ? `Enter run ${chosen.value.size}` : 'Enter run',
-          ...(current?.kind === 'experiment' && current.run ? ['→ results'] : []),
-          'Esc close',
-        ]}
-      />
+      <KeyHints hints={['Space select', 'a all', enterHint(chosen.value.size, current), 'Esc close']} />
     </>
   )
 }
@@ -338,6 +352,7 @@ const ResultsView = ({
           ordered.map(({ name }) => name),
           width
         )}
+        onClick={cursor.set}
       />
       <Rule width={width} />
       {current?.verdicts.map((verdict) => (

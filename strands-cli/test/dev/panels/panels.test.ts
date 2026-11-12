@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import stringWidth from 'string-width'
 import { describe, expect, it, vi } from 'vitest'
 
 import type {
@@ -12,6 +13,7 @@ import type {
 import { OptimizePanel } from '../../../src/dev/panels/optimize.js'
 import { TestPanel } from '../../../src/dev/panels/test.js'
 import { listWindow } from '../../../src/dev/panels/ui.js'
+import { DevPanelClicks, DevPanelFrame } from '../../../src/ui/panels/dev.js'
 import { experimentsSession, generation, panelProps as freshProps, show, store } from './fixtures.js'
 
 const DOWN_KEY = '\u001b[B'
@@ -74,6 +76,35 @@ const withRuns = (): TestState['runs'] => [
   },
   { experiment: refunds, run: { status: 'done', results: finishedResults } },
 ]
+
+const withStoppedRun = (): TestState['runs'] => [
+  ...withRuns(),
+  { experiment: cities, run: { status: 'failed', message: 'All case names must be unique.' } },
+]
+
+const showInFrame = async (session: TestSession, clicks: DevPanelClicks) => {
+  const props = freshProps()
+  const panel = {
+    id: 'panel-1',
+    kind: 'dev' as const,
+    command: 'test',
+    title: '/test',
+    rows: [],
+    view: (viewProps: typeof props) => createElement(TestPanel, { ...viewProps, session }),
+    close: props.close,
+    openCommand: props.openCommand,
+  }
+  const shown = await show(createElement(DevPanelFrame, { panel, width: 100, height: 22, clicks }), 24)
+  const click = async (target: string): Promise<void> => {
+    const lines = shown.text().split('\n')
+    const row = lines.findIndex((line) => line.includes(target))
+    expect(row, `Visible target: ${target}`).toBeGreaterThanOrEqual(0)
+    const column = stringWidth(lines[row]!.slice(0, lines[row]!.indexOf(target))) + 1
+    clicks.at({ button: 0, action: 'release', column, row: row + 1 })?.()
+    await shown.instance.waitUntilRenderFlush()
+  }
+  return { ...shown, click }
+}
 
 describe('TestPanel', () => {
   it('shouldListEveryExperimentWithItsLastResultWhenItOpens', async () => {
@@ -170,14 +201,92 @@ describe('TestPanel', () => {
     expect(panelProps.close).not.toHaveBeenCalled()
   })
 
-  it('shouldShowTheProgressWhenTheUserOpensARunningExperiment', async () => {
+  it.each([
+    ['Enter', '\r'],
+    ['→', RIGHT_KEY],
+  ])('shouldShowTheProgressWhenTheUserPresses%sOnARunningExperiment', async (_key, key) => {
     const { session } = testSession(withRuns())
     const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
 
-    await press(RIGHT_KEY)
+    await press(key)
 
     expect(text()).toContain('test · capital · 4 cases · 1 evaluator')
     expect(text()).toContain('2/4')
+    expect(session.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldOpenTheReportAndNotRunAgainWhenTheUserPressesEnterOnAFinishedExperiment', async () => {
+    const { session } = testSession(withRuns())
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    const list = text()
+    await press('\r')
+
+    expect(list).toContain('Enter open report')
+    expect(text()).toContain('test · refunds · 2 cases · 1 evaluator')
+    expect(text()).toContain('✗ refund-window')
+    expect(session.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldShowWhyTheRunStoppedWhenTheUserPressesEnterOnAStoppedExperiment', async () => {
+    const { session } = testSession(withStoppedRun())
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    await press(DOWN_KEY)
+    const list = text()
+    await press('\r')
+
+    expect(list).toContain('Enter show why it stopped')
+    expect(text()).toContain('test · cities · stopped')
+    expect(text()).toContain('All case names must be unique.')
+    expect(session.run).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['capital', 0, 'Enter show progress'],
+    ['cities', 2, 'Enter run'],
+    ['Generate a new experiment', 3, 'Enter open /experiment'],
+  ])('shouldSayWhatEnterDoesWhenTheCursorIsOn%s', async (_row, downs, hint) => {
+    const { session } = testSession(withRuns())
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    for (let step = 0; step < downs; step++) await press(DOWN_KEY)
+
+    expect(text()).toContain(`a all · ${hint} · Esc close`)
+  })
+
+  it('shouldOpenTheReportWhenTheUserClicksAFinishedExperiment', async () => {
+    const { session } = testSession(withRuns())
+    const { click, text } = await showInFrame(session, new DevPanelClicks())
+
+    await click('refunds')
+
+    await vi.waitFor(() => expect(text()).toContain('test · refunds · 2 cases · 1 evaluator'))
+    expect(text()).toContain('issued refund without checking delivery date')
+    expect(session.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldRunTheExperimentWhenTheUserClicksOneThatHasNotRun', async () => {
+    const { session } = testSession(withRuns())
+    const { click } = await showInFrame(session, new DevPanelClicks())
+
+    await click('cities')
+
+    expect(session.run).toHaveBeenCalledWith([cities])
+  })
+
+  it('shouldShowACaseVerdictsWhenTheUserClicksTheCaseInTheReport', async () => {
+    const { session } = testSession(withRuns())
+    const { click, text } = await showInFrame(session, new DevPanelClicks())
+    await click('refunds')
+    await vi.waitFor(() => expect(text()).toContain('standard-refund'))
+
+    await click('standard-refund')
+
+    await vi.waitFor(() => expect(text()).toContain('› ✓ standard-refund'))
+    expect(text()).toMatch(/OutputEvaluator\s+✓ 1\.00\s+Refunded correctly/u)
   })
 })
 

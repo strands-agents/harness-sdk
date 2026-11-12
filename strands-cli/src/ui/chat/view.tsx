@@ -37,7 +37,7 @@ import {
 } from '../interaction.js'
 import { PromptEditor, promptContentSize, CommandPalette } from './prompt.js'
 import { ResourcePanel } from '../panels/panel.js'
-import { DevPanelFrame } from '../panels/dev.js'
+import { DevPanelFrame, type DevPanelClicks } from '../panels/dev.js'
 import { AgentsPanel, agentGridLayout, clampAgentGridViewport } from '../panels/agents.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant, VOICE_FROG_HEIGHT, VoiceFrog } from '../frog.js'
 import { StartupContentRows, StartupView, startupHeaderLayout, useBrandAnimation } from '../startup.js'
@@ -121,6 +121,7 @@ function ChatViewContent({
   hoveredBackgroundTask,
   hoveredDevJob,
   onDevJobElement,
+  devPanelClicks,
   onMetadataElement,
   onPanelElement,
   onDockElement,
@@ -195,6 +196,7 @@ function ChatViewContent({
   hoveredBackgroundTask?: boolean
   hoveredDevJob?: string
   onDevJobElement?: (command: string, element: DOMElement | null) => void
+  devPanelClicks?: DevPanelClicks
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
   onDockElement?: (element: DOMElement | null) => void
@@ -554,6 +556,7 @@ function ChatViewContent({
                 width={editorWidth}
                 height={devPanelRows}
                 {...(onPanelElement ? { onElement: onPanelElement } : {})}
+                {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
               />
             ) : null}
             {statusLayout.maxScroll > 0 ? (
