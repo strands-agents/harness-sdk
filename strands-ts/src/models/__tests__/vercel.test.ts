@@ -1449,7 +1449,7 @@ describe('VercelModel', () => {
         )
       })
 
-      it('keeps the Nova conversation cache point off a trailing tool result', async () => {
+      it('keeps the Nova conversation cache point on the prompt that started a tool loop', async () => {
         const messages = [
           new Message({ role: 'user', content: [new TextBlock('What is 6 x 7?')] }),
           new Message({
@@ -1475,6 +1475,50 @@ describe('VercelModel', () => {
         expect(tool[0]?.providerOptions?.bedrock).toBeUndefined()
         expect(tool[0]?.content.map((part) => part.providerOptions?.bedrock)).toStrictEqual([undefined])
         expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default' })
+      })
+
+      describe('Nova with media at the end of the last user message', () => {
+        const bytes = new Uint8Array([1])
+        const image = new ImageBlock({ format: 'png', source: { bytes } })
+        const pdf = new DocumentBlock({ format: 'pdf', name: 'order', source: { bytes } })
+        const txt = new DocumentBlock({ format: 'txt', name: 'notes', source: { bytes } })
+        const video = new VideoBlock({ format: 'mp4', source: { bytes } })
+        const cachePoints = (args: LanguageModelV3CallOptions): unknown[] => {
+          const lastUser = [...args.prompt].reverse().find((message) => message.role === 'user')
+          if (lastUser?.role !== 'user') return []
+          return lastUser.content.map((part) => part.providerOptions?.bedrock?.cachePoint)
+        }
+
+        it.each([
+          ['an image', [image]],
+          ['a PDF', [pdf]],
+          ['an image then a txt document', [image, txt]],
+          ['a video', [video]],
+        ])('marks the text part, not %s', async (_name, media) => {
+          const messages = [new Message({ role: 'user', content: [new TextBlock('Describe'), ...media] })]
+          const { collect, callArgs } = setupCaptureTest(
+            minimalParts,
+            { cacheConfig: {} },
+            'amazon-bedrock',
+            'us.amazon.nova-lite-v1:0'
+          )
+          await collect(messages)
+
+          expect(cachePoints(callArgs())).toStrictEqual([{ type: 'default' }, ...media.map(() => undefined)])
+        })
+
+        it('marks the trailing image on Claude', async () => {
+          const messages = [new Message({ role: 'user', content: [new TextBlock('Describe'), image] })]
+          const { collect, callArgs } = setupCaptureTest(
+            minimalParts,
+            { cacheConfig: {} },
+            'amazon-bedrock',
+            CACHING_MODEL_ID
+          )
+          await collect(messages)
+
+          expect(cachePoints(callArgs())).toStrictEqual([undefined, { type: 'default' }])
+        })
       })
 
       it('never marks tool definitions, since bedrock caches them as part of the prefix', async () => {
@@ -1747,6 +1791,7 @@ describe('VercelModel', () => {
 
         expect(model.modelInfo.capabilities?.promptCaching).toBe('auto')
         expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+        expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
         expect(warnOnce).not.toHaveBeenCalledWith(
           expect.anything(),
           expect.stringContaining('is not known to support automatic caching')
@@ -1765,6 +1810,7 @@ describe('VercelModel', () => {
 
         expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
         expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+        expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
         expect(warnOnce).toHaveBeenCalledWith(
           expect.anything(),
           `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`

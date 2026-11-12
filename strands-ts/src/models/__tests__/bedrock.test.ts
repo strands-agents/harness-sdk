@@ -524,6 +524,7 @@ describe('BedrockModel', () => {
 
         expect(provider.modelInfo.capabilities?.promptCaching).toBe('auto')
         expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+        expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].messages?.[0]?.content).toEqual([{ text: 'Hello' }])
         expect(warnOnce).not.toHaveBeenCalledWith(
           expect.anything(),
           expect.stringContaining('does not support automatic caching')
@@ -541,6 +542,7 @@ describe('BedrockModel', () => {
 
         expect(provider.modelInfo.capabilities?.promptCaching).toBeUndefined()
         expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+        expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].messages?.[0]?.content).toEqual([{ text: 'Hello' }])
         expect(warnOnce).toHaveBeenCalledWith(
           expect.anything(),
           `model_id=<${modelId}> | cache_config is enabled but this model does not support automatic caching`
@@ -3862,27 +3864,45 @@ describe('BedrockModel', () => {
         expect(lastContent()).toStrictEqual([formattedToolResult])
       })
 
-      it('skips the conversation cache point when the last user message ends in a tool result', () => {
+      it('keeps the conversation cache point on the prompt that started a tool loop', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
-        const messages = [...toolTurn, new Message({ role: 'user', content: [toolResult] })]
+        const messages = [
+          ...toolTurn,
+          new Message({ role: 'user', content: [toolResult] }),
+          new Message({
+            role: 'assistant',
+            content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'id-2', input: {} })],
+          }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'id-2', status: 'success', content: [new TextBlock('84')] })],
+          }),
+        ]
 
         collectIterator(provider.stream(messages, { toolSpecs }))
 
-        expect(lastContent()).toStrictEqual([formattedToolResult])
-        expect(allCachePoints()).toStrictEqual([])
+        expect(request()?.messages?.[0]?.content).toStrictEqual([
+          { text: 'What is 6 x 7?' },
+          { cachePoint: { type: 'default' } },
+        ])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
-      it('skips the conversation cache point when a per-call tail follows a tool result', () => {
+      it('keeps the conversation cache point on the prompt when a per-call tail follows a tool result', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
         const messages = [...toolTurn, new Message({ role: 'user', content: [toolResult, new TextBlock('per-call')] })]
 
         collectIterator(provider.stream(messages, { toolSpecs, dynamicTrailingBlocks: 1 }))
 
+        expect(request()?.messages?.[0]?.content).toStrictEqual([
+          { text: 'What is 6 x 7?' },
+          { cachePoint: { type: 'default' } },
+        ])
         expect(lastContent()).toStrictEqual([formattedToolResult, { text: 'per-call' }])
-        expect(allCachePoints()).toStrictEqual([])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
-      it('skips a caller-placed cache point that steps back over a document onto a tool result', () => {
+      it('moves a caller-placed cache point with no text ahead of it to the prompt', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: {} })
         const document = new DocumentBlock({ name: 'notes', format: 'txt', source: { bytes: new Uint8Array([1]) } })
         const messages = [
@@ -3896,7 +3916,79 @@ describe('BedrockModel', () => {
           formattedToolResult,
           { document: { name: 'notes', format: 'txt', source: { bytes: new Uint8Array([1]) } } },
         ])
-        expect(allCachePoints()).toStrictEqual([])
+        expect(request()?.messages?.[0]?.content).toStrictEqual([
+          { text: 'What is 6 x 7?' },
+          { cachePoint: { type: 'default' } },
+        ])
+      })
+
+      describe('media at the end of the last user message', () => {
+        const bytes = new Uint8Array([1])
+        const image = new ImageBlock({ format: 'png', source: { bytes } })
+        const pdf = new DocumentBlock({ name: 'order', format: 'pdf', source: { bytes } })
+        const txt = new DocumentBlock({ name: 'notes', format: 'txt', source: { bytes } })
+        const video = new VideoBlock({ format: 'mp4', source: { bytes } })
+        const cachePoint = { cachePoint: { type: 'default' } }
+
+        it.each([
+          ['an image', [image]],
+          ['a PDF', [pdf]],
+          ['an image then a txt document', [image, txt]],
+          ['a video', [video]],
+        ])('places the cache point directly after the text, ahead of %s', (_name, media) => {
+          const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
+          const messages = [new Message({ role: 'user', content: [new TextBlock('Describe'), ...media] })]
+
+          collectIterator(provider.stream(messages))
+
+          const content = lastContent()
+          expect(content).toHaveLength(media.length + 2)
+          expect(content.slice(0, 2)).toStrictEqual([{ text: 'Describe' }, cachePoint])
+        })
+
+        it('moves a caller-placed cache point after an image back to the text', () => {
+          const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
+          const messages = [
+            new Message({
+              role: 'user',
+              content: [new TextBlock('Describe'), image, new CachePointBlock({ cacheType: 'default' })],
+            }),
+          ]
+
+          collectIterator(provider.stream(messages))
+
+          expect(lastContent()).toStrictEqual([
+            { text: 'Describe' },
+            cachePoint,
+            expect.objectContaining({ image: expect.anything() }),
+          ])
+        })
+
+        it('keeps the cache point after an image on Claude', () => {
+          const provider = new BedrockModel({
+            modelId: 'global.anthropic.claude-sonnet-4-6',
+            cacheConfig: { strategy: 'auto' },
+          })
+          const messages = [new Message({ role: 'user', content: [new TextBlock('Describe'), image] })]
+
+          collectIterator(provider.stream(messages))
+
+          expect(lastContent().at(-1)).toStrictEqual(cachePoint)
+        })
+      })
+
+      it('places no conversation cache point when the only user text is wrapped in guardContent', () => {
+        const provider = new BedrockModel({
+          modelId: NOVA,
+          cacheConfig: { strategy: 'auto' },
+          guardrailConfig: { guardrailIdentifier: 'g', guardrailVersion: '1', guardLatestUserMessage: true },
+        })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+        expect(lastContent()).toStrictEqual([{ guardContent: { text: { text: 'Hello' } } }])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
       it('moves a caller-placed cache point off a tool result to the end of the message', () => {

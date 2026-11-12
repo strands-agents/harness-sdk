@@ -416,14 +416,9 @@ function applyBedrockCache(
   const messages = bedrockCacheSection(cacheConfig.messagesTTL, cacheConfig, modelId)
   if (messages.enabled) {
     cacheLastUserMessage(callOptions.prompt, (userMessage) => {
-      // Bedrock rejects a cache point directly after a non-PDF document, so scan back past those parts.
-      const part = durableCachePart(
-        userMessage.content,
-        dynamicTrailingBlocks,
-        (candidate) => !blocksCachePoint(candidate)
-      )
+      const part = durableCachePart(userMessage.content, dynamicTrailingBlocks, bedrockAcceptsCachePointAfter(modelId))
       if (part) setBedrockCachePoint(part, messages.ttl)
-      else logger.debug('last user message has no durable non-document content, skipped conversation cache point')
+      else logger.debug('last user message has no durable part to cache after, skipped conversation cache point')
     })
   }
 }
@@ -479,9 +474,23 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
 }
 
 /**
- * Reports whether Bedrock forbids a cache point directly after this part. The adapter turns every
- * non-image file part into a document, and Bedrock rejects a cache point after a non-PDF document (a
- * PDF document is fine).
+ * Picks which parts the wrapped Bedrock model takes a cache point directly after: text only on Nova, anything but a
+ * non-PDF document otherwise (the Claude rule).
+ *
+ * @param modelId - The wrapped Bedrock model id
+ * @internal
+ */
+function bedrockAcceptsCachePointAfter(
+  modelId: string
+): (part: LanguageModelV3TextPart | LanguageModelV3FilePart) => boolean {
+  if (bedrockLimitsCachePoints(modelId)) return (part) => part.type === 'text'
+  return (part) => !blocksCachePoint(part)
+}
+
+/**
+ * Reports whether Claude on Bedrock forbids a cache point directly after this part. The adapter turns every
+ * non-image file part into a document, and Claude rejects a cache point after a non-PDF document (a PDF
+ * document is fine). Nova follows a stricter rule, text only.
  *
  * @internal
  */

@@ -408,8 +408,8 @@ export interface BedrockModelOptions extends BedrockModelConfig {
 }
 
 /**
- * Steps a cache point index back over the adjacent run of non-PDF documents directly ahead of it. Bedrock only
- * rejects a cache point *directly* preceded by a non-PDF document; moving further would evict durable content -
+ * Steps a cache point index back over the adjacent run of non-PDF documents directly ahead of it. Claude on Bedrock
+ * only rejects a cache point *directly* preceded by a non-PDF document; moving further would evict durable content -
  * usually the document itself, the expensive part - from the cached prefix for no reason.
  *
  * @param content - Content blocks of the message
@@ -426,6 +426,49 @@ function stepBackOverDocuments(content: BedrockContentBlock[], idx: number): num
     targetIdx--
   }
   return targetIdx
+}
+
+/**
+ * Steps a cache point index back to directly after the nearest text block ahead of it, for a model that takes a
+ * cache point only directly after text.
+ *
+ * @param content - Content blocks of the message
+ * @param idx - Index of the cache point
+ * @returns The index the cache point may legally sit at, or 0 when no text block precedes it
+ */
+function stepBackToText(content: BedrockContentBlock[], idx: number): number {
+  for (let targetIdx = idx; targetIdx > 0; targetIdx--) {
+    const previous = content[targetIdx - 1]
+    if (previous && 'text' in previous) return targetIdx
+  }
+  return 0
+}
+
+/**
+ * Where a Nova conversation cache point goes: directly after the last text block of the last user message that has
+ * one, ahead of the final message's per-call blocks. Nova takes a cache point only directly after text and reads an
+ * entry only when a point repeats the previous call's position, so in a tool loop, whose user messages hold tool
+ * results, the point stays on the prompt that started the loop.
+ *
+ * @param messages - Formatted messages
+ * @param lastUserIdx - Index of the last user message
+ * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message, kept out of the prefix
+ * @returns The message and block index to insert the point at, or undefined when no user message has text
+ */
+function novaCachePointPosition(
+  messages: BedrockMessage[],
+  lastUserIdx: number,
+  dynamicTrailingBlocks: number
+): { msgIdx: number; blockIdx: number } | undefined {
+  for (let msgIdx = lastUserIdx; msgIdx >= 0; msgIdx--) {
+    const message = messages[msgIdx]
+    if (message?.role !== 'user') continue
+    const content = message.content ?? []
+    const end = msgIdx === lastUserIdx ? Math.max(0, content.length - dynamicTrailingBlocks) : content.length
+    const blockIdx = stepBackToText(content, end)
+    if (blockIdx > 0) return { msgIdx, blockIdx }
+  }
+  return undefined
 }
 
 /**
@@ -616,8 +659,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Whether Converse limits where this model takes cache points (no tools cache point, no TTL, none directly after a
-   * tool result).
+   * Whether Converse limits where this model takes cache points (no tools cache point, no TTL, only directly after
+   * text).
    *
    * @returns True for a Nova model that takes cache points
    */
@@ -683,16 +726,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         `model_id=<${this._config.modelId}> | ttl is not supported by this model, using the default cache duration`
       )
     }
-  }
-
-  /**
-   * Whether Bedrock rejects a cache point directly after this block for this model.
-   *
-   * @param block - The block the cache point would follow
-   * @returns True for a `toolResult` on a model that rejects a cache point after one
-   */
-  private _rejectsCachePointAfter(block: BedrockContentBlock | undefined): boolean {
-    return block !== undefined && 'toolResult' in block && this._limitsCachePoints()
   }
 
   /**
@@ -1283,7 +1316,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param msgIdx - Index of the message, for logging
    * @param ttl - TTL for the honored cache point. Falsy leaves the Bedrock default.
    * @returns True when the point was kept, possibly relocated. False when nothing cacheable precedes
-   *   it, or it would directly follow a tool result the model rejects it after, so the point was
+   *   it, or, on a model that takes a cache point only after text, no text precedes it, so the point was
    *   removed: Bedrock rejects a cache point with no content ahead of it ("There is nothing available
    *   to cache"). The caller then retries automatic placement, which lands a point only if the
    *   remaining content allows one - for a leading document it declines too.
@@ -1320,16 +1353,15 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       placed.cachePoint.ttl = ttl as BedrockSdkCacheTTL
     }
 
-    const targetIdx = stepBackOverDocuments(content, placedIdx)
-
-    if (this._rejectsCachePointAfter(content[targetIdx - 1])) {
-      content.splice(placedIdx, 1)
-      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point directly after a tool result`)
-      return false
-    }
+    const novaRules = this._limitsCachePoints()
+    const targetIdx = novaRules ? stepBackToText(content, placedIdx) : stepBackOverDocuments(content, placedIdx)
 
     if (targetIdx !== placedIdx) {
       content.splice(placedIdx, 1)
+      if (targetIdx === 0 && novaRules) {
+        logger.debug(`msg_idx=<${msgIdx}> | dropped cache point with no text ahead of it`)
+        return false
+      }
       if (targetIdx === 0) {
         // Nothing precedes the documents, so there is no prefix to cache.
         logger.warn(`msg_idx=<${msgIdx}> | dropped cache point ahead of a leading document`)
@@ -1353,7 +1385,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * the cached prefix, so every request would write a new entry and none would ever read one.
    *
    * Cache points in earlier messages are still removed, so they cannot accumulate one per turn
-   * against the provider's cache-point budget.
+   * against the provider's cache-point budget. Nova is the exception: its point may land on an earlier
+   * user message (see `novaCachePointPosition`).
    *
    * @param messages - List of messages to inject cache point into (modified in place)
    * @param ttl - TTL for the injected cache point. Falsy leaves the Bedrock default.
@@ -1430,6 +1463,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           // The point could not legally stay, so fall through to automatic placement below.
         }
 
+        if (this._limitsCachePoints()) {
+          this._injectNovaCachePoint(messages, lastUserIdx, dynamicTrailingBlocks)
+          return
+        }
+
         const cachePoint: BedrockCachePointBlock = { type: 'default' }
         if (ttl) {
           // Bedrock validates TTL values server-side, so accept any string here.
@@ -1468,7 +1506,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    *
    * @param content - Content blocks of the last user message
    * @param msgIdx - Index of the message, for logging
-   * @returns The insertion index, or undefined when Bedrock would reject a point at it
+   * @returns The insertion index, or undefined when a leading document leaves nothing to cache
    */
   private _autoCachePointIdx(content: BedrockContentBlock[], msgIdx: number): number | undefined {
     const firstNonPdfDocIdx = content.findIndex((block) => 'document' in block && block.document?.format !== 'pdf')
@@ -1476,12 +1514,24 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       logger.debug(`msg_idx=<${msgIdx}> | skipped cache point for leading non-PDF document`)
       return undefined
     }
-    const insertIdx = firstNonPdfDocIdx === -1 ? content.length : firstNonPdfDocIdx
-    if (this._rejectsCachePointAfter(content[insertIdx - 1])) {
-      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point directly after a tool result`)
-      return undefined
+    return firstNonPdfDocIdx === -1 ? content.length : firstNonPdfDocIdx
+  }
+
+  /**
+   * Places the Nova conversation cache point, which takes no TTL, at `novaCachePointPosition`.
+   *
+   * @param messages - Formatted messages (modified in place)
+   * @param lastUserIdx - Index of the last user message
+   * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   */
+  private _injectNovaCachePoint(messages: BedrockMessage[], lastUserIdx: number, dynamicTrailingBlocks: number): void {
+    const position = novaCachePointPosition(messages, lastUserIdx, dynamicTrailingBlocks)
+    if (!position) {
+      logger.debug('no user message has text to follow, skipped conversation cache point')
+      return
     }
-    return insertIdx
+    messages[position.msgIdx]?.content?.splice(position.blockIdx, 0, { cachePoint: { type: 'default' } })
+    logger.debug(`msg_idx=<${position.msgIdx}>, block_idx=<${position.blockIdx}> | added cache point after text`)
   }
 
   /**

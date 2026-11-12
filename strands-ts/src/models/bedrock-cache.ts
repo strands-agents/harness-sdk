@@ -23,8 +23,9 @@ const IMPLICIT_CACHE: ModelInfo = Object.freeze({ capabilities: { promptCaching:
 const CACHE_POINTS: ModelInfo = Object.freeze({ capabilities: { promptCaching: 'cachePoints' as const } })
 
 /**
- * Whether Converse limits where this model takes cache points. Nova rejects a cache point after the tool definitions,
- * directly after a `toolResult` or `toolUse` block, and any `ttl` (each a ValidationException, measured on Converse).
+ * Whether Converse limits where this model takes cache points. Nova takes a cache point only directly after text: it
+ * rejects one after the tool definitions or directly after an image, PDF, video, `toolResult` or `toolUse` block, and
+ * rejects any `ttl` (each a ValidationException, measured on Converse).
  *
  * @internal
  * @param modelId - A Bedrock model id, inference profile id, or ARN
@@ -38,7 +39,7 @@ export function bedrockLimitsCachePoints(modelId: string): boolean {
 /**
  * How Converse caches this model, where it differs from the shared model info. The shared info lists cache points
  * for the OpenAI models' own APIs, but Converse caches OpenAI GPT (not gpt-oss, which it does not cache) and xAI
- * implicitly and rejects cache points on them. The shared info lists no caching for Nova, which takes cache points.
+ * implicitly, so they need no cache points. The shared info lists no caching for Nova, which takes cache points.
  *
  * @internal
  * @param modelId - A Bedrock model id, inference profile id, or ARN
