@@ -29,8 +29,8 @@ export interface ModelCapabilities {
   readonly promptCaching?: PromptCaching | undefined
   /**
    * Whether the Bedrock and Anthropic providers force the structured output tool (`any` or a named tool) on the
-   * structured output retry. False when the model rejects forcing, or when Strands uses native structured output
-   * instead.
+   * structured output retry. False when the model rejects forcing, or when a forced call degrades the response (for
+   * example, it skips thinking).
    */
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
