@@ -255,6 +255,16 @@ class TestAsk:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
     @pytest.mark.asyncio
+    async def test_rejects_a_response_body_with_non_standard_json_constants(self, mock_client):
+        _, client = mock_client
+        body = b'{"model":"m","answers":{"q":{"type":"noul","noul":1}},"usage":{"inputTokens":NaN}}'
+        client.invoke_endpoint.return_value = {"Body": _FakeBody(body)}
+        decision = SageMakerDecisionModel(_ENDPOINT_NAME)
+
+        with pytest.raises(StructuredOutputException, match="non-JSON response"):
+            await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    @pytest.mark.asyncio
     async def test_rejects_an_empty_response_body_as_a_non_object_response(self, mock_client):
         _, client = mock_client
         client.invoke_endpoint.return_value = {"Body": _FakeBody(b"")}

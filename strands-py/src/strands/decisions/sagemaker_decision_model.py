@@ -13,7 +13,12 @@ from ..types.exceptions import (
     ModelThrottledException,
     StructuredOutputException,
 )
-from ._system_one_http_adapter import _ask_system_one, _resolve_default_min_confidence, _SystemOneRequestConfig
+from ._system_one_http_adapter import (
+    _ask_system_one,
+    _reject_json_constant,
+    _resolve_default_min_confidence,
+    _SystemOneRequestConfig,
+)
 from .decision_model import DecisionModel
 from .types import DecisionInput, DecisionResult, Question
 
@@ -127,7 +132,7 @@ class SageMakerDecisionModel(DecisionModel):
         if not text:
             return None
         try:
-            return json.loads(text)
+            return json.loads(text, parse_constant=_reject_json_constant)
         except ValueError as error:
             raise StructuredOutputException("decision provider returned a non-JSON response") from error
 
