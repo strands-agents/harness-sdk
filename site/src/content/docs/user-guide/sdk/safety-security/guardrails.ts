@@ -1,6 +1,7 @@
 import {
   Agent,
   BedrockModel,
+  InterruptError,
   InterventionActions,
   InterventionHandler,
   InterruptResponseContent,
@@ -22,7 +23,7 @@ import {
   BedrockRuntimeClient,
 } from '@aws-sdk/client-bedrock-runtime'
 import { realpath, rm } from 'node:fs/promises'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { resolve, sep } from 'node:path'
 import { z } from 'zod'
 
 // =====================
@@ -42,11 +43,10 @@ const deleteFiles = tool({
   callback: async (input) => {
     const root = await realpath(SCRATCH_DIR)
     for (const requested of input.paths) {
-      // Canonicalize immediately before acting. realpath follows symlinks and
-      // collapses '..', so 'logs/../../etc/passwd' resolves to /etc/passwd here
+      // Canonicalize immediately before acting. resolve collapses '..' and
+      // realpath follows symlinks, so target is where the delete would land
       const target = await realpath(resolve(root, requested))
-      const inside = relative(root, target)
-      if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+      if (!target.startsWith(root + sep)) {
         throw new Error(`${requested} is outside ${SCRATCH_DIR}`)
       }
       await rm(target)
@@ -73,11 +73,11 @@ class EmailRules extends InterventionHandler {
     if (event.toolUse.name !== 'send_email') return InterventionActions.proceed()
 
     // Interventions run before schema validation, so treat input as unvalidated
-    const { to, subject } = event.toolUse.input as { to?: string; subject?: string }
-    if (!to?.endsWith('@example.com')) {
+    const input = event.toolUse.input as { to?: unknown; subject?: unknown } | null
+    if (typeof input?.to !== 'string' || !input.to.endsWith('@example.com')) {
       return InterventionActions.deny('Email may only go to example.com addresses')
     }
-    if (!subject) {
+    if (!input.subject) {
       return InterventionActions.guide('All emails must include a subject line.')
     }
     return InterventionActions.proceed()
@@ -212,7 +212,7 @@ class DeleteApproval extends InterventionHandler {
 
     // Interventions run before schema validation, so a malformed call reaches
     // this code. Narrow the input and hand the model a correctable answer.
-    const { paths } = event.toolUse.input as { paths?: unknown }
+    const paths = (event.toolUse.input as { paths?: unknown } | null)?.paths
     if (!Array.isArray(paths)) {
       return InterventionActions.guide('paths must be a list of file paths.')
     }
@@ -323,22 +323,34 @@ class Audited extends InterventionHandler {
         this.record(event, 'guided', action.feedback)
         return action
       case 'confirm': {
-        // The call is on hold. The answer arrives through evaluate, after resume.
-        this.record(event, 'pending', action.prompt)
-        const check = action.evaluate
-        if (!check) return action
-        return {
-          ...action,
-          evaluate: (response: JSONValue) => {
-            const approved = check(response)
-            this.record(event, approved ? 'approved' : 'denied', action.prompt)
-            return approved
-          },
-        }
+        const answer = this.answerOrPause(event, action.prompt, action.response)
+        const approved = action.evaluate ? action.evaluate(answer) : answer === true
+        this.record(event, approved ? 'approved' : 'denied', action.prompt)
+        if (approved) return InterventionActions.proceed()
+        return InterventionActions.deny(`Not approved: ${action.prompt}`)
       }
       default:
         this.record(event, 'allowed')
         return action
+    }
+  }
+
+  // interrupt() throws to stop the agent until a person answers. Resuming runs
+  // this stage again, and interrupt() returns the answer instead of throwing.
+  private answerOrPause(
+    event: BeforeToolCallEvent,
+    prompt: string,
+    response?: JSONValue
+  ): JSONValue {
+    try {
+      return event.interrupt<JSONValue>({
+        name: this.name,
+        reason: prompt,
+        ...(response !== undefined && { response }),
+      })
+    } catch (error) {
+      if (error instanceof InterruptError) this.record(event, 'pending', prompt)
+      throw error
     }
   }
 
@@ -410,6 +422,12 @@ class RetrievalBoundary extends InterventionHandler {
 // Compose the layers
 // =====================
 
+// --8<-- [start:compose_stubs]
+// Your own services: the policy store and the audit log
+declare function loadTenantPolicy(tenantId: string): Promise<TenantPolicy>
+declare function writeAuditRecord(record: AuditRecord): void
+// --8<-- [end:compose_stubs]
+
 async function composeExample() {
   // --8<-- [start:compose]
   const search = tool({
@@ -426,7 +444,6 @@ async function composeExample() {
     callback: (input) => `Sent to ${input.to}`,
   })
 
-  // Every other class here is defined in the section of this page named for it
   async function createAgent(tenantId: string): Promise<Agent> {
     const policy = await loadTenantPolicy(tenantId)
 
@@ -468,7 +485,3 @@ void classifierUseExample
 void modelBoundaryExample
 void confirmResumeExample
 void composeExample
-
-// Stand-ins for your own services
-declare function loadTenantPolicy(tenantId: string): Promise<TenantPolicy>
-declare function writeAuditRecord(record: AuditRecord): void

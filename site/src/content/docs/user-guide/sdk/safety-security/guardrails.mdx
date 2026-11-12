@@ -213,10 +213,11 @@ does not exist yet. Wrap the handler instead and log the action it returns:
 
 Each record names its source. Wrapped around the Cedar handler it logs `allowed` and
 `denied` with the policy version that produced them. Wrapped around a confirmation
-handler it logs `pending` when the call stops for a person and `approved` or `denied`
-when the answer comes back, because the answer passes through the action's `evaluate`
-function on resume. Resuming runs the `beforeToolCall` stage again, so a Cedar record
-appears on both sides of the approval.
+handler it raises the interrupt itself. `event.interrupt` throws when the call stops
+for a person, and that is the one moment the wrapper logs `pending`. Once the
+invocation resumes it returns the answer, which the wrapper logs as `approved` or
+`denied`. Resuming runs the `beforeToolCall` stage again, so a Cedar record appears on
+both sides of the approval.
 
 These are decisions, not executions. A Cedar `allowed` can still be denied by a later
 handler or wait on an approver. If you need a record that the tool ran, log it from
@@ -248,12 +249,12 @@ reads it:
 
 Escape the text and the attribute. Retrieved content that contains its own closing tag
 would otherwise end the untrusted block early and leave whatever follows it looking
-like your text. The block is framing, not enforcement: it tells the model how to read
-what follows, and a model can be talked out of that. Authorization and confirmation
-remain the boundary. Never let a tool result set `invocationState`, append to the
-system prompt, or register a tool. Each of those turns retrieved text into an
-instruction with authority. For history you load from a source you do not control, see
-[trusted message history](./trusted-message-history.mdx).
+like your text. The block is defense in depth, not enforcement: it tells the model how
+to read what follows, and a model can be talked out of that. Authorization and
+confirmation remain the boundary. Never let a tool result set `invocationState`,
+append to the system prompt, or register a tool. Each of those turns retrieved text
+into an instruction with authority. For history you load from a source you do not
+control, see [trusted message history](./trusted-message-history.mdx).
 
 ## Compose the layers
 
@@ -266,17 +267,34 @@ handlers in the order the table at the top prescribes:
 ```typescript
 --8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:compose_imports"
 
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:schema_validation"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:deterministic_rules"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:classifier"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:confirm_high_impact"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy_type"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:audit_record"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:retrieval_boundary"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:compose_stubs"
+
 --8<-- "user-guide/sdk/safety-security/guardrails.ts:compose"
 ```
 </Tab>
 </Tabs>
 
-This block composes the classes defined above, so it is the one on this page that does
-not stand alone. The [full source file][guardrails-source] does. Each handler needs a
-unique name, and the agent refuses duplicates at construction. Wrap only the handlers
-whose decisions you need on record. The classifier screens on `beforeModelCall` and the
-retrieval boundary transforms on `afterToolCall`, so their position in the list is not
-an ordering choice.
+The block repeats the definitions from the sections above so that it runs on its own.
+Only `createAgent` at the end is new. Each handler needs a unique name, and the agent
+refuses duplicates at construction. Wrap only the handlers whose decisions you need on
+record. The classifier screens on `beforeModelCall` and the retrieval boundary
+transforms on `afterToolCall`, so their position in the list is not an ordering choice.
 
 ## Related topics
 
@@ -295,4 +313,3 @@ an ordering choice.
   examples
 
 [bedrock-guardrails]: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
-[guardrails-source]: https://github.com/strands-agents/harness-sdk/blob/main/site/src/content/docs/user-guide/sdk/safety-security/guardrails.ts
