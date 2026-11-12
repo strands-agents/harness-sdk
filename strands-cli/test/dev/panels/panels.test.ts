@@ -1,195 +1,21 @@
-import { createElement, type ReactElement } from 'react'
+import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { DatasetPanel } from '../../../src/dev/panels/dataset.js'
-import type {
-  DatasetSession,
-  DatasetState,
-  OptimizeSession,
-  OptimizeState,
-  TestSession,
-  TestState,
-} from '../../../src/dev/panels/model.js'
+import type { OptimizeSession, OptimizeState, TestSession, TestState } from '../../../src/dev/panels/model.js'
 import { OptimizePanel } from '../../../src/dev/panels/optimize.js'
 import { TestPanel } from '../../../src/dev/panels/test.js'
 import { listWindow } from '../../../src/dev/panels/ui.js'
-import { captureFrame, render, ttyInput, ttyOutput } from '../../fixtures/terminal.js'
+import { experimentsSession, panelProps as freshProps, show, store } from './fixtures.js'
 
-const store = <State>(initial: State) => {
-  let state = initial
-  const listeners = new Set<() => void>()
-  return {
-    subscribe: (listener: () => void): (() => void) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
-    snapshot: (): State => state,
-    set: (next: State): void => {
-      state = next
-      for (const listener of listeners) listener()
-    },
-  }
-}
-
-const datasetSession = (initial: DatasetState) => {
-  const states = store(initial)
-  return {
-    states,
-    session: {
-      subscribe: states.subscribe,
-      snapshot: states.snapshot,
-      refresh: vi.fn(),
-      open: vi.fn(),
-      generate: vi.fn(),
-      toggle: vi.fn(),
-      drop: vi.fn(),
-      keepAll: vi.fn(),
-      save: vi.fn(async () => ({ name: 'starter', path: '/w/starter.json', caseCount: 2 })),
-    } satisfies DatasetSession,
-  }
-}
-
-const show = async (element: ReactElement, rows = 20) => {
-  const input = ttyInput()
-  const output = ttyOutput(100, rows)
-  const frame = captureFrame(output)
-  const instance = render(element, { stdin: input, stdout: output })
-  await instance.waitUntilRenderFlush()
-  const text = (): string => frame().join('\n')
-  const press = async (key: string): Promise<void> => {
-    input.write(key)
-    await instance.waitUntilRenderFlush()
-  }
-  return { text, press, instance }
-}
-
-const panelProps = { width: 96, height: 18, close: vi.fn(), openCommand: vi.fn(() => true) }
-
-const drafted: DatasetState = {
-  step: 'draft',
-  name: 'starter',
-  drafted: 3,
-  cases: [
-    {
-      name: 'standard-refund',
-      input: 'Refund order 2001, wrong size',
-      expected: 'Refund it',
-      kept: true,
-      saved: false,
-    },
-    { name: 'late-refund', input: 'Refund order 1094, 41 days ago', expected: 'Decline', kept: false, saved: false },
-    { name: 'gift-card', input: 'Refund my gift card', kept: false, saved: false },
-  ],
-}
-
-describe('DatasetPanel', () => {
-  it('shouldOfferToGenerateAStarterSetWhenTheWorkspaceHasNoExperiments', async () => {
-    const { session } = datasetSession({ step: 'empty', folder: 'strands-dev/tmp/experiments' })
-    const { text, press } = await show(createElement(DatasetPanel, { ...panelProps, session, command: 'test' }))
-
-    await press('\r')
-
-    expect(text()).toContain('test · no cases in strands-dev/tmp/experiments')
-    expect(text()).toContain('Generate a starter set')
-    expect(session.generate).toHaveBeenCalledTimes(1)
-  })
-
-  it.each([
-    ['use', true],
-    ['open', false],
-  ])('shouldNotLoadOrChooseAnythingWhenItRendersAndTheCallerCanAlso%s', async (_case, using) => {
-    const only = { name: 'refunds', path: '/w/refunds.json', caseCount: 4 }
-    const { session } = datasetSession({ step: 'pick', experiments: [only] })
-    const onUse = vi.fn()
-
-    const { text } = await show(
-      createElement(DatasetPanel, { ...panelProps, session, command: 'test', ...(using ? { onUse } : {}) })
-    )
-
-    expect(text()).toContain('1 experiment in this workspace')
-    expect(onUse).not.toHaveBeenCalled()
-    expect(session.open).not.toHaveBeenCalled()
-    expect(session.refresh).not.toHaveBeenCalled()
-  })
-
-  it('shouldIgnoreLetterShortcutsWhenCtrlIsHeld', async () => {
-    const { session } = datasetSession(drafted)
-    const { press } = await show(createElement(DatasetPanel, { ...panelProps, session, command: 'experiment' }))
-
-    await press('\u0001')
-    await press('\u0004')
-
-    expect(session.keepAll).not.toHaveBeenCalled()
-    expect(session.drop).not.toHaveBeenCalled()
-  })
-
-  it('shouldDraftAgainWhenEveryStarterCaseWasDropped', async () => {
-    const { session } = datasetSession({ step: 'draft', name: 'starter', drafted: 20, cases: [] })
-    const { text, press } = await show(createElement(DatasetPanel, { ...panelProps, session, command: 'experiment' }))
-
-    await press('g')
-
-    expect(text()).toContain('g draft more')
-    expect(session.generate).toHaveBeenCalledTimes(1)
-  })
-
-  it('shouldUseThePickedExperimentWhenThereAreSeveral', async () => {
-    const experiments = [
-      { name: 'capital', path: '/w/capital.json', caseCount: 4 },
-      { name: 'refunds', path: '/w/refunds.json', caseCount: 12 },
-    ]
-    const { session } = datasetSession({ step: 'pick', experiments })
-    const onUse = vi.fn()
-    const { text, press } = await show(createElement(DatasetPanel, { ...panelProps, session, command: 'test', onUse }))
-
-    await press('\u001b[B')
-    await press('\r')
-
-    expect(text()).toContain('2 experiments in this workspace')
-    expect(onUse).toHaveBeenCalledWith(experiments[1])
-  })
-
-  it('shouldShowTheDraftCountsAndTheSelectedCaseWhenADraftIsReady', async () => {
-    const { session } = datasetSession(drafted)
-    const { text } = await show(createElement(DatasetPanel, { ...panelProps, session, command: 'experiment' }))
-
-    expect(text()).toContain('starter set · 3 drafted · 1 kept · generated by strands-evals')
-    expect(text()).toContain('☑ standard-refund')
-    expect(text()).toContain('expected  Refund it')
-  })
-
-  it.each<[string, string, keyof DatasetSession, unknown[]]>([
-    ['Space', ' ', 'toggle', [1]],
-    ['d', 'd', 'drop', [1]],
-    ['a', 'a', 'keepAll', []],
-  ])('shouldCallTheSessionWhenTheUserPresses%sOnADraft', async (_key, key, action, args) => {
-    const { session } = datasetSession(drafted)
-    const { press } = await show(createElement(DatasetPanel, { ...panelProps, session, command: 'experiment' }))
-
-    await press('\u001b[B')
-    await press(key)
-
-    expect(session[action]).toHaveBeenCalledWith(...args)
-  })
-
-  it('shouldUseTheSavedExperimentWhenTheUserSavesADraftForATest', async () => {
-    const { session } = datasetSession(drafted)
-    const onUse = vi.fn()
-    const { press } = await show(createElement(DatasetPanel, { ...panelProps, session, command: 'test', onUse }))
-
-    await press('\r')
-
-    await vi.waitFor(() => expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ name: 'starter' })))
-  })
-})
+const panelProps = freshProps()
 
 const testSession = (initial: TestState) => {
   const states = store(initial)
-  const { session: dataset } = datasetSession({ step: 'loading' })
+  const { session: experiments } = experimentsSession()
   return {
     states,
     session: {
-      dataset,
+      experiments,
       subscribe: states.subscribe,
       snapshot: states.snapshot,
       run: vi.fn(),
@@ -279,11 +105,11 @@ describe('TestPanel', () => {
 
 const optimizeSession = (initial: OptimizeState) => {
   const states = store(initial)
-  const { session: dataset } = datasetSession({ step: 'loading' })
+  const { session: experiments } = experimentsSession()
   return {
     states,
     session: {
-      dataset,
+      experiments,
       subscribe: states.subscribe,
       snapshot: states.snapshot,
       plan: vi.fn(),

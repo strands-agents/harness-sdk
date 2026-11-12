@@ -6,7 +6,7 @@ import { createDiffPreview } from '../../agent/file-changes.js'
 import type { ChatDiffLine } from '../../agent/types.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
-import { DatasetPanel, FailedView } from './dataset.js'
+import { ExperimentPicker } from './picker.js'
 import type {
   CandidateResult,
   ExperimentSummary,
@@ -33,6 +33,8 @@ import {
   shortcut,
   signed,
   SplitLine,
+  StoppedView,
+  useCursor,
   useElapsed,
   type ListItem,
 } from './ui.js'
@@ -54,8 +56,8 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
   const state = useSyncExternalStore(session.subscribe, session.snapshot)
   const use = useCallback((experiment: ExperimentSummary) => session.plan(experiment), [session])
   switch (state.step) {
-    case 'dataset':
-      return <DatasetPanel {...props} session={session.dataset} command={COMMAND} onUse={use} />
+    case 'pick':
+      return <ExperimentPicker {...props} experiments={session.experiments} command={COMMAND} onUse={use} />
     case 'setup':
       return <SetupView {...props} plan={state.plan} />
     case 'running':
@@ -64,7 +66,7 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
       return <ReviewView {...props} review={state.review} />
     case 'failed':
       return (
-        <FailedView
+        <StoppedView
           {...props}
           command={COMMAND}
           message={state.record ? `${state.message}\nRecord: ${state.record}` : state.message}
@@ -113,18 +115,18 @@ const SetupView = ({
   height,
   plan,
 }: OptimizePanelProps & { plan: OptimizePlan }): ReactElement => {
-  const [selected, setSelected] = useState(0)
-  const index = Math.min(selected, plan.knobs.length - 1)
+  const cursor = useCursor(plan.knobs.length)
+  const index = cursor.index
   const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable)
   const compact = height < FULL_SETUP_ROWS
   useInput((input, key) => {
     if (key.escape) {
       session.reset()
       close()
-    } else if (key.upArrow) setSelected(Math.max(0, index - 1))
-    else if (key.downArrow) setSelected(Math.min(plan.knobs.length - 1, index + 1))
+    } else if (key.upArrow) cursor.move(-1)
+    else if (key.downArrow) cursor.move(1)
     else if (shortcut(input, key) === ' ') {
-      const knob = plan.knobs[index]
+      const knob = plan.knobs[cursor.current()]
       if (knob && !knob.unavailable) session.toggleKnob(knob.key)
     } else if (key.leftArrow || key.rightArrow) {
       const position = plan.iterationChoices.indexOf(plan.iterations)
@@ -396,14 +398,13 @@ const ReviewView = ({
   height,
   review,
 }: OptimizePanelProps & { review: OptimizeReview }): ReactElement => {
-  const [selected, setSelected] = useState(0)
+  const cursor = useCursor(review.edits.length)
   const diffs = useMemo(
     () => review.edits.map((edit) => createDiffPreview(edit.label, edit.before, edit.after, DIFF_CONTEXT_LINES).lines),
     [review.edits]
   )
   const [offset, setOffset] = useState(0)
-  const index = Math.min(selected, Math.max(0, review.edits.length - 1))
-  const current = review.edits[index]
+  const index = cursor.index
   const accepted = review.edits.filter((edit) => edit.accepted && !edit.unavailable).length
   const writable = review.edits.some((edit) => !edit.unavailable)
   const applied = review.applied !== undefined
@@ -412,8 +413,8 @@ const ReviewView = ({
   const rows = useMemo(() => wrapDiff(diffs[index] ?? [], width), [diffs, index, width])
   const page = Math.max(1, diffHeight - 1)
   const lastOffset = Math.max(0, rows.length - page)
-  const choose = (next: number): void => {
-    setSelected(next)
+  const choose = (step: number): void => {
+    cursor.move(step)
     setOffset(0)
   }
   useInput((input, key) => {
@@ -423,13 +424,15 @@ const ReviewView = ({
       close()
     } else if (applied) return
     else if (typed === 'n') session.reset()
-    else if (key.upArrow) choose(Math.max(0, index - 1))
-    else if (key.downArrow) choose(Math.min(review.edits.length - 1, index + 1))
+    else if (key.upArrow) choose(-1)
+    else if (key.downArrow) choose(1)
     else if (key.pageDown) setOffset(Math.min(lastOffset, offset + page))
     else if (key.pageUp) setOffset(Math.max(0, offset - page))
-    else if (typed === 'a' && current && !current.unavailable) session.accept(index, true)
-    else if (typed === 'x' && current) session.accept(index, false)
-    else if (key.return && accepted > 0) session.apply()
+    else if (typed === 'a' || typed === 'x') {
+      const at = cursor.current()
+      const edit = review.edits[at]
+      if (edit && (typed === 'x' || !edit.unavailable)) session.accept(at, typed === 'a')
+    } else if (key.return && accepted > 0) session.apply()
   })
   const gain = `${review.baseline.toFixed(2)} → ${review.best.toFixed(2)} on ${review.measuredOn} (${signed(review.best - review.baseline)})`
   const title = (

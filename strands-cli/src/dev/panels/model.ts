@@ -22,32 +22,104 @@ export interface DraftCase extends EvalCase {
   readonly saved: boolean
 }
 
-export type DatasetState =
-  | { readonly step: 'loading' }
-  | { readonly step: 'empty'; readonly folder: string }
-  | { readonly step: 'pick'; readonly experiments: readonly ExperimentSummary[] }
-  | { readonly step: 'drafting'; readonly startedAt: number; readonly count: number; readonly into?: string }
-  | {
-      readonly step: 'draft'
-      readonly name: string
-      readonly path?: string
-      readonly cases: readonly DraftCase[]
-      readonly drafted: number
-      readonly notice?: { readonly text: string; readonly tone: 'success' | 'error' }
-    }
-  | { readonly step: 'failed'; readonly message: string }
+export type EvaluatorKind = 'OutputEvaluator' | 'TrajectoryEvaluator' | 'InteractionsEvaluator'
 
-export interface DatasetSession {
+export interface GenerationSettings {
+  readonly name: string
+  readonly task: string
+  readonly context: string
+  readonly cases: number
+  readonly topics: number
+  readonly evaluator: EvaluatorKind
+  readonly model: string
+  readonly parallel: number
+  readonly expectedOutput: boolean
+  readonly expectedTrajectory: boolean
+  readonly expectedInteractions: boolean
+  readonly metadata: boolean
+}
+
+export interface GenerationForm {
+  readonly settings: GenerationSettings
+  readonly agentContext: string
+  readonly choices: {
+    readonly cases: readonly number[]
+    readonly topics: readonly number[]
+    readonly parallel: readonly number[]
+    readonly evaluators: readonly EvaluatorKind[]
+  }
+}
+
+export type GenerationPhase = 'preparing' | 'planning' | 'cases' | 'rubric' | 'ready' | 'failed'
+
+export interface GenerationError {
+  readonly summary: string
+  readonly detail: string
+}
+
+export interface Generation {
+  readonly id: string
+  readonly name: string
+  readonly settings: GenerationSettings
+  readonly phase: GenerationPhase
+  readonly made: number
+  readonly failed: number
+  readonly total: number
+  readonly startedAt: number
+  readonly endedAt?: number
+  readonly status: string
+  readonly log: string
+  readonly caseError?: string
+  readonly error?: GenerationError
+}
+
+export interface Notice {
+  readonly text: string
+  readonly tone: 'success' | 'error'
+}
+
+export interface Review {
+  readonly key: string
+  readonly name: string
+  readonly path?: string
+  readonly cases: readonly DraftCase[]
+  readonly notice?: Notice
+}
+
+export interface ExperimentsState {
+  readonly loaded: boolean
+  readonly folder: string
+  readonly saved: readonly ExperimentSummary[]
+  readonly generations: readonly Generation[]
+  readonly review?: Review
+  readonly error?: string
+}
+
+export interface CaseChange {
+  readonly input?: string
+  readonly expected?: string
+}
+
+export interface ExperimentSession {
   subscribe(listener: () => void): () => void
-  snapshot(): DatasetState
+  snapshot(): ExperimentsState
   refresh(): void
+  form(): GenerationForm
+  generate(settings: GenerationSettings, replace?: string): string | undefined
+  cancel(id: string): void
+  dismiss(id: string): void
+  review(id: string): void
   open(experiment: ExperimentSummary): void
-  generate(): void
+  closeReview(): void
   toggle(index: number): void
   drop(index: number): void
   keepAll(): void
+  edit(index: number, change: CaseChange): void
+  add(change: CaseChange): void
   save(): Promise<ExperimentSummary | undefined>
 }
+
+export const isGenerating = ({ phase }: Generation): boolean => phase !== 'ready' && phase !== 'failed'
 
 export interface EvaluatorVerdict {
   readonly evaluator: string
@@ -75,7 +147,7 @@ export interface TestResults {
 }
 
 export type TestState =
-  | { readonly step: 'dataset' }
+  | { readonly step: 'pick' }
   | {
       readonly step: 'running'
       readonly experiment: string
@@ -89,7 +161,7 @@ export type TestState =
   | { readonly step: 'failed'; readonly message: string }
 
 export interface TestSession {
-  readonly dataset: DatasetSession
+  readonly experiments: ExperimentSession
   subscribe(listener: () => void): () => void
   snapshot(): TestState
   run(experiment: ExperimentSummary): void
@@ -173,14 +245,14 @@ export interface OptimizeReview {
 }
 
 export type OptimizeState =
-  | { readonly step: 'dataset' }
+  | { readonly step: 'pick' }
   | { readonly step: 'setup'; readonly plan: OptimizePlan }
   | { readonly step: 'running'; readonly progress: OptimizeProgress }
   | { readonly step: 'review'; readonly review: OptimizeReview }
   | { readonly step: 'failed'; readonly message: string; readonly record?: string }
 
 export interface OptimizeSession {
-  readonly dataset: DatasetSession
+  readonly experiments: ExperimentSession
   subscribe(listener: () => void): () => void
   snapshot(): OptimizeState
   plan(experiment: ExperimentSummary): void

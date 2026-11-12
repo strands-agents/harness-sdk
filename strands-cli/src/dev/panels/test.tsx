@@ -3,7 +3,7 @@ import { useInput } from 'ink'
 
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { useSpinner } from '../../ui/animation.js'
-import { DatasetPanel, FailedView } from './dataset.js'
+import { ExperimentPicker } from './picker.js'
 import type { CaseResult, ExperimentSummary, TestResults, TestSession, TestState } from './model.js'
 import {
   Field,
@@ -20,6 +20,7 @@ import {
   Rule,
   shortcut,
   SplitLine,
+  StoppedView,
   useElapsed,
   type ListItem,
 } from './ui.js'
@@ -38,14 +39,14 @@ export const TestPanel = (props: TestPanelProps): ReactElement => {
   const state = useSyncExternalStore(session.subscribe, session.snapshot)
   const use = useCallback((experiment: ExperimentSummary) => session.run(experiment), [session])
   switch (state.step) {
-    case 'dataset':
-      return <DatasetPanel {...props} session={session.dataset} command={COMMAND} onUse={use} />
+    case 'pick':
+      return <ExperimentPicker {...props} experiments={session.experiments} command={COMMAND} onUse={use} />
     case 'running':
       return <RunningView {...props} state={state} />
     case 'results':
       return <ResultsView {...props} results={state.results} />
     case 'failed':
-      return <FailedView {...props} command={COMMAND} message={state.message} retry={() => session.reset()} />
+      return <StoppedView {...props} command={COMMAND} message={state.message} retry={() => session.reset()} />
   }
 }
 

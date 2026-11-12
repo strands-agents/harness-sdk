@@ -1,8 +1,11 @@
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
-import type { Key } from 'ink'
+import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { useInput, type Key } from 'ink'
 
-import { sanitizeTerminalText } from '../../terminal/text.js'
+import { emptyEditor, reduceInputSequence, type EditorState } from '../../terminal/composer.js'
+import { graphemes, sanitizeTerminalText } from '../../terminal/text.js'
+import { EditableText } from '../../ui/text-input.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
+import type { DevChatPanelProps } from '../../ui/chat/types.js'
 
 export type Tone = 'success' | 'error' | 'warning' | 'muted'
 
@@ -232,3 +235,118 @@ export const ItemList = ({
 
 export const labelWidthFor = (labels: readonly string[], width: number): number =>
   Math.min(Math.max(8, ...labels.map((label) => oneLine(label).length)), Math.max(8, Math.floor(width / 3)))
+
+export type TextValue = EditorState
+
+export const textValue = (text: string): TextValue => ({
+  ...emptyEditor(),
+  input: text,
+  cursor: graphemes(text).length,
+})
+
+export const editText = (value: TextValue, input: string, key: Key): TextValue =>
+  reduceInputSequence(value, input.replace(/\r?\n/gu, ' '), key, 'idle').state
+
+export const pasteText = (value: TextValue, text: string): TextValue =>
+  reduceInputSequence(value, text.replace(/\r?\n/gu, ' '), {}, 'idle').state
+
+export const TextField = ({
+  label,
+  value,
+  active,
+  labelWidth,
+  width,
+  placeholder,
+  tone,
+}: {
+  label: string
+  value: TextValue
+  active: boolean
+  labelWidth: number
+  width: number
+  placeholder: string
+  tone?: Tone
+}): ReactElement => {
+  const { accent, selection } = useTheme()
+  const toneColor = useToneColor()
+  return (
+    <Box height={1} flexShrink={0} overflow="hidden" {...(active ? { backgroundColor: selection } : {})}>
+      <Box flexShrink={0}>
+        <Text color={accent}>{active ? '› ' : '  '}</Text>
+      </Box>
+      <Box width={labelWidth} flexShrink={0}>
+        <Text bold={active} {...toneColor(tone)}>
+          {label}
+        </Text>
+      </Box>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">
+        <EditableText
+          value={value.input}
+          cursor={value.cursor}
+          width={Math.max(1, width - labelWidth - 2)}
+          active={active}
+          placeholder={placeholder}
+        />
+      </Box>
+    </Box>
+  )
+}
+
+export const StoppedView = ({
+  command,
+  close,
+  height,
+  message,
+  retry,
+}: DevChatPanelProps & { command: string; message: string; retry: () => void }): ReactElement => {
+  useInput((_input, key) => {
+    if (key.escape) close()
+    else if (key.return) retry()
+  })
+  return (
+    <>
+      <PanelTitle name={command} parts={['stopped']} />
+      <Paragraph rows={Math.max(1, height - 2)} tone="error">
+        {message}
+      </Paragraph>
+      <Fill />
+      <KeyHints hints={['Enter try again', 'Esc close']} />
+    </>
+  )
+}
+
+type Update<Value> = Value | ((current: Value) => Value)
+
+export interface SyncedState<Value> {
+  readonly value: Value
+  readonly current: () => Value
+  readonly set: (next: Update<Value>) => void
+}
+
+export const useSyncedState = <Value,>(initial: Value | (() => Value)): SyncedState<Value> => {
+  const [value, setValue] = useState(initial)
+  const latest = useRef(value)
+  const set = useCallback((next: Update<Value>): void => {
+    latest.current = next instanceof Function ? next(latest.current) : next
+    setValue(latest.current)
+  }, [])
+  return { value, current: () => latest.current, set }
+}
+
+export interface Cursor {
+  readonly index: number
+  readonly current: () => number
+  readonly move: (step: number) => void
+  readonly set: (index: number) => void
+}
+
+export const useCursor = (count: number, initial = 0): Cursor => {
+  const state = useSyncedState(initial)
+  const clamp = (index: number): number => Math.max(0, Math.min(index, count - 1))
+  return {
+    index: clamp(state.value),
+    current: () => clamp(state.current()),
+    move: (step) => state.set((index) => clamp(clamp(index) + step)),
+    set: (index) => state.set(clamp(index)),
+  }
+}
