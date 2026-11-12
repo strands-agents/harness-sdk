@@ -1814,6 +1814,47 @@ describe('BedrockModel', () => {
       })
     })
 
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5498.
+    describe('when Bedrock streams two signed reasoning blocks under one content block index', () => {
+      it('sends both blocks with their own signatures on the next request', async () => {
+        setupMockSend(async function* () {
+          yield { messageStart: { role: 'assistant' } }
+          yield { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'first' } } } }
+          yield { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'SIG1' } } } }
+          yield { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'second' } } } }
+          yield { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'SIG2' } } } }
+          yield { contentBlockStop: { contentBlockIndex: 0 } }
+          yield { contentBlockDelta: { contentBlockIndex: 1, delta: { text: 'Looking up.' } } }
+          yield { contentBlockStop: { contentBlockIndex: 1 } }
+          yield {
+            contentBlockStart: { contentBlockIndex: 2, start: { toolUse: { toolUseId: 'tool-1', name: 'say' } } },
+          }
+          yield { contentBlockDelta: { contentBlockIndex: 2, delta: { toolUse: { input: '{"input":"world"}' } } } }
+          yield { contentBlockStop: { contentBlockIndex: 2 } }
+          yield { messageStop: { stopReason: 'tool_use' } }
+        })
+        const provider = new BedrockModel({ modelId: 'anthropic.claude-test' })
+        const userMessage = new Message({ role: 'user', content: [new TextBlock('Look it up.')] })
+
+        const { result } = await collectGenerator(provider.streamAggregated([userMessage]))
+        const toolResult = new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('world')] })],
+        })
+        await collectIterator(provider.stream([userMessage, result.message, toolResult]))
+
+        expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].messages?.[1]).toEqual({
+          role: 'assistant',
+          content: [
+            { reasoningContent: { reasoningText: { text: 'first', signature: 'SIG1' } } },
+            { reasoningContent: { reasoningText: { text: 'second', signature: 'SIG2' } } },
+            { text: 'Looking up.' },
+            { toolUse: { toolUseId: 'tool-1', name: 'say', input: { input: 'world' } } },
+          ],
+        })
+      })
+    })
+
     describe('structured output enforcement', () => {
       const forcedRejection = new ValidationException({
         message:

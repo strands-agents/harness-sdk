@@ -625,6 +625,16 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                 accumulatedToolInput += event.delta.input
                 break
               case 'reasoningContentDelta':
+                // A new reasoning payload after a signature starts a block, even under the same index.
+                if (
+                  accumulatedReasoning.signature !== undefined &&
+                  (event.delta.text !== undefined || event.delta.redactedContent !== undefined)
+                ) {
+                  const block = new ReasoningBlock({ ...accumulatedReasoning })
+                  accumulatedReasoning = {}
+                  contentBlocks.push(block)
+                  yield block
+                }
                 if (event.delta.text) accumulatedReasoning.text = (accumulatedReasoning.text ?? '') + event.delta.text
                 if (event.delta.signature) accumulatedReasoning.signature = event.delta.signature
                 if (event.delta.redactedContent) accumulatedReasoning.redactedContent = event.delta.redactedContent
