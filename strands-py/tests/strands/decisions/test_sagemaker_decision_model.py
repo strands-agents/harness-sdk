@@ -275,7 +275,7 @@ class TestConstruction:
         with pytest.raises(ValueError, match=r"default_min_confidence must be in \[0.0, 1.0\]"):
             SageMakerDecisionModel(_ENDPOINT_NAME, default_min_confidence=threshold)
 
-    @pytest.mark.parametrize("options", [{"region_name": "us-east-1"}, {"boto_client_config": BotocoreConfig()}])
-    def test_rejects_a_provided_client_combined_with_region_name_or_boto_client_config(self, options: dict[str, Any]):
+    @pytest.mark.parametrize("kwargs", [{"region_name": "us-east-1"}, {"boto_client_config": BotocoreConfig()}])
+    def test_rejects_a_provided_client_combined_with_region_name_or_boto_client_config(self, kwargs: dict[str, Any]):
         with pytest.raises(ValueError, match="Cannot specify both client and region_name/boto_client_config"):
-            SageMakerDecisionModel(_ENDPOINT_NAME, client=unittest.mock.Mock(), **options)
+            SageMakerDecisionModel(_ENDPOINT_NAME, client=unittest.mock.Mock(), **kwargs)

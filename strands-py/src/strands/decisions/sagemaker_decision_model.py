@@ -122,8 +122,7 @@ class SageMakerDecisionModel(DecisionModel):
                 raise mapped from error
             raise
 
-        # Lenient decode (like the TS TextDecoder): invalid bytes surface as a non-JSON response,
-        # never a raw UnicodeDecodeError.
+        # Invalid bytes surface as a non-JSON response, never a raw UnicodeDecodeError.
         text = response["Body"].read().decode("utf-8", errors="replace")
         if not text:
             return None
