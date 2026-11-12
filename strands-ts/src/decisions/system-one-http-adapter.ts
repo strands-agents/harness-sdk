@@ -21,6 +21,11 @@ export interface SystemOneRequestConfig {
   maxQuestions?: number
   /** Builds the request body for APIs that differ from the System One `{ state, model, questions }` shape. */
   buildRequestBody?: (state: DecisionInput, questions: Record<string, Question>) => unknown
+  /**
+   * Whether Noul answers carry the API's own `confidence`. That value is reported in metadata, while
+   * `Uncertain` is still decided on the shared `|2p - 1|` scale.
+   */
+  noulConfidenceFromProvider?: boolean
 }
 
 /** @internal */
@@ -113,7 +118,10 @@ type WireQuestion = WireNoulQuestion | WireChoiceQuestion
 interface ParsedAnswer {
   answer: boolean | string
   probabilities: Readonly<Record<string, number>>
+  /** Reported in metadata. */
   confidence: number
+  /** Compared with `minConfidence`; defaults to `confidence`. */
+  thresholdConfidence?: number
 }
 
 class SystemOneHttpError extends Error {
@@ -156,7 +164,7 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
   const startedAt = globalThis.performance.now()
   const payload = await transport(body, cancelSignal)
 
-  const result = parseResult(payload, questions, config.defaultMinConfidence, config.modelId)
+  const result = parseResult(payload, questions, config)
   return {
     answers: result.answers,
     ...(result.usage !== undefined && { usage: result.usage }),
@@ -286,8 +294,7 @@ function errorDetail(body: unknown): string | undefined {
 function parseResult<const Q extends Record<string, Question>>(
   payload: unknown,
   questions: Q,
-  defaultMinConfidence: number,
-  requestModelId: string | undefined
+  config: SystemOneRequestConfig
 ): {
   modelId: string
   answers: { [K in keyof Q]: AnswerOf<Q[K]> }
@@ -297,7 +304,7 @@ function parseResult<const Q extends Record<string, Question>>(
 } {
   const response = requireRecord(payload, 'decision provider response')
   // Some APIs, such as Gemini Decisions, do not echo the model, so fall back to the requested one.
-  const modelId = requireNonEmptyString(response['model'] ?? requestModelId, 'decision provider model')
+  const modelId = requireNonEmptyString(response['model'] ?? config.modelId, 'decision provider model')
   const rawAnswers = requireRecord(response['answers'], 'decision provider answers')
   const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
   const probabilities = {} as { [K in keyof Q]: Readonly<Record<string, number>> }
@@ -308,10 +315,11 @@ function parseResult<const Q extends Record<string, Question>>(
     const rawAnswer = rawAnswers[String(id)]
     if (rawAnswer === undefined)
       throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
-    const parsed = parseAnswer(rawAnswer, question, String(id))
-    const minConfidence = resolveMinConfidence(question, defaultMinConfidence)
+    const parsed = parseAnswer(rawAnswer, question, String(id), config.noulConfidenceFromProvider === true)
+    const minConfidence = resolveMinConfidence(question, config.defaultMinConfidence)
+    const thresholdConfidence = parsed.thresholdConfidence ?? parsed.confidence
     answers[id] = (
-      minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
+      minConfidence !== undefined && thresholdConfidence < minConfidence ? new Uncertain() : parsed.answer
     ) as AnswerOf<Q[typeof id]>
     probabilities[id] = parsed.probabilities
     confidence[id] = parsed.confidence
@@ -321,21 +329,36 @@ function parseResult<const Q extends Record<string, Question>>(
   return { modelId, answers, probabilities, confidence, ...(usage !== undefined && { usage }) }
 }
 
-function parseAnswer(rawAnswer: unknown, question: Question, id: string): ParsedAnswer {
+function parseAnswer(
+  rawAnswer: unknown,
+  question: Question,
+  id: string,
+  noulConfidenceFromProvider: boolean
+): ParsedAnswer {
   const answer = requireRecord(rawAnswer, `answer for question id=<${id}>`)
-  if (question.choices === 'boolean') return parseNoulAnswer(answer, id)
+  if (question.choices === 'boolean') return parseNoulAnswer(answer, id, noulConfidenceFromProvider)
   return parseChoiceAnswer(answer, question.choices, id)
 }
 
-function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAnswer {
+function parseNoulAnswer(
+  answer: Record<string, unknown>,
+  id: string,
+  noulConfidenceFromProvider: boolean
+): ParsedAnswer {
   if (answer['type'] !== 'noul') {
     throw new ModelError(`answer for boolean question id=<${id}> must have type 'noul'`)
   }
   const probability = requireProbability(answer['noul'], `noul for question id=<${id}>`)
+  const normalizedConfidence = Math.abs(2 * probability - 1)
   return {
     answer: probability >= 0.5,
     probabilities: { true: probability, false: 1 - probability },
-    confidence: Math.abs(2 * probability - 1),
+    ...(noulConfidenceFromProvider
+      ? {
+          confidence: requireProbability(answer['confidence'], `confidence for question id=<${id}>`),
+          thresholdConfidence: normalizedConfidence,
+        }
+      : { confidence: normalizedConfidence }),
   }
 }
 

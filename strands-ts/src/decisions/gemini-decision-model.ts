@@ -32,6 +32,10 @@ export interface GeminiDecisionModelOptions {
  * String state is sent as the request input. Content block and message state is sent as JSON text,
  * because the API does not accept conversation history.
  *
+ * Boolean answers report Gemini's own confidence, `max(p, 1 - p)`, in `metadata.confidence`. Whether
+ * an answer is `Uncertain` is still decided on the `|2p - 1|` scale every System One provider shares,
+ * so a `minConfidence` means the same thing across providers.
+ *
  * @example
  * ```typescript
  * const decisions = new GeminiDecisionModel()
@@ -61,6 +65,7 @@ export class GeminiDecisionModel extends DecisionModel {
     })
     this._providerConfig = {
       ...providerConfig,
+      noulConfidenceFromProvider: true,
       buildRequestBody: (state, questions): Record<string, unknown> => ({
         model: providerConfig.modelId,
         input: toGeminiInput(state),

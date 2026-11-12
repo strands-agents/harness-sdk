@@ -546,9 +546,19 @@ describe('GeminiDecisionModel', () => {
           urgent: { true: 0.9, false: 0.09999999999999998 },
           department: { billing: 0.7, support: 0.3 },
         },
-        confidence: { urgent: 0.8, department: 0.7 },
+        confidence: { urgent: 0.9, department: 0.7 },
       },
     })
+  })
+
+  it('reports Gemini Noul confidence but thresholds on the normalized scale', async () => {
+    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.74, confidence: 0.74 } } })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+    expect(result.answers.q).toEqual(new Uncertain())
+    expect(result.metadata.confidence).toEqual({ q: 0.74 })
   })
 
   it('sends message state as JSON text input', async () => {
