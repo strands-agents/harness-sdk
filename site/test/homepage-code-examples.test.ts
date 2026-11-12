@@ -1,59 +1,45 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { initHomepageCodeExamples, setHomepageCodeExampleOpen } from '../src/util/homepage-code-examples'
 import { LANGUAGE_STORAGE_KEY } from '../src/util/language-preference'
 
-function exampleMarkup(productName: string, group?: string): string {
-  const groupAttribute = group ? ` data-example-group="${group}"` : ''
-  return `
-    <div data-example-container>
-      <div
-        data-example-card
-        data-product-name="${productName}"
-        data-example-closed-label="View code"
-        ${groupAttribute}
-      >
-        <button
-          type="button"
-          aria-expanded="false"
-          aria-label="View code example for ${productName}"
-          data-example-toggle
-        >
-          <span data-example-toggle-label>View code</span>
-        </button>
-        <div data-example-panel hidden></div>
-      </div>
-    </div>
-  `
-}
+const homepageHtml = readFileSync(path.resolve('dist/index.html'), 'utf8')
+let clipboardDescriptor: PropertyDescriptor | undefined
 
-function mount(markup: string): HTMLElement {
+function mountHomepage(): HTMLElement {
+  const homepage = new DOMParser().parseFromString(homepageHtml, 'text/html')
   const root = document.createElement('div')
-  root.innerHTML = markup
+  root.innerHTML = homepage.body.innerHTML
   document.body.append(root)
   return root
 }
 
 beforeEach(() => {
+  clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
   localStorage.clear()
 })
 
 afterEach(() => {
   document.body.replaceChildren()
+  if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
+  else Reflect.deleteProperty(navigator, 'clipboard')
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
 
 describe('homepage code examples', () => {
   it('keeps disclosure state, labels, and the containing card in sync', () => {
-    const root = mount(exampleMarkup('Strands Box'))
-    const example = root.querySelector<HTMLElement>('[data-example-card]')!
-    const container = root.querySelector<HTMLElement>('[data-example-container]')!
-    const toggle = root.querySelector<HTMLButtonElement>('[data-example-toggle]')!
-    const label = root.querySelector<HTMLElement>('[data-example-toggle-label]')!
-    const panel = root.querySelector<HTMLElement>('[data-example-panel]')!
+    const root = mountHomepage()
+    const example = root.querySelector<HTMLElement>('[data-product-name="Strands Box"]')!
+    const container = example.closest<HTMLElement>('[data-example-container]')!
+    const toggle = example.querySelector<HTMLButtonElement>('[data-example-toggle]')!
+    const label = example.querySelector<HTMLElement>('[data-example-toggle-label]')!
+    const panel = example.querySelector<HTMLElement>('[data-example-panel]')!
 
     setHomepageCodeExampleOpen(example, true)
     expect(example.classList.contains('is-open')).toBe(true)
@@ -73,19 +59,21 @@ describe('homepage code examples', () => {
   })
 
   it('treats examples in the same group as an accordion', () => {
-    const root = mount(exampleMarkup('Strands Box', 'tools') + exampleMarkup('Strands Decider', 'tools'))
-    const examples = [...root.querySelectorAll<HTMLElement>('[data-example-card]')]
+    const root = mountHomepage()
+    const toolkit = root.querySelector<HTMLElement>('.toolkit')!
+    const box = toolkit.querySelector<HTMLElement>('[data-product-name="Strands Box"]')!
+    const decider = toolkit.querySelector<HTMLElement>('[data-product-name="Strands Decider"]')!
 
-    initHomepageCodeExamples(root)
-    examples[0]?.querySelector<HTMLButtonElement>('[data-example-toggle]')?.click()
-    examples[1]?.querySelector<HTMLButtonElement>('[data-example-toggle]')?.click()
+    initHomepageCodeExamples(toolkit)
+    box.querySelector<HTMLButtonElement>('[data-example-toggle]')?.click()
+    decider.querySelector<HTMLButtonElement>('[data-example-toggle]')?.click()
 
-    expect(examples[0]?.classList.contains('is-open')).toBe(false)
-    expect(examples[0]?.querySelector<HTMLElement>('[data-example-panel]')?.hidden).toBe(true)
-    expect(examples[0]?.querySelector('[data-example-toggle]')?.getAttribute('aria-expanded')).toBe('false')
-    expect(examples[1]?.classList.contains('is-open')).toBe(true)
-    expect(examples[1]?.querySelector<HTMLElement>('[data-example-panel]')?.hidden).toBe(false)
-    expect(examples[1]?.querySelector('[data-example-toggle]')?.getAttribute('aria-expanded')).toBe('true')
+    expect(box.classList.contains('is-open')).toBe(false)
+    expect(box.querySelector<HTMLElement>('[data-example-panel]')?.hidden).toBe(true)
+    expect(box.querySelector('[data-example-toggle]')?.getAttribute('aria-expanded')).toBe('false')
+    expect(decider.classList.contains('is-open')).toBe(true)
+    expect(decider.querySelector<HTMLElement>('[data-example-panel]')?.hidden).toBe(false)
+    expect(decider.querySelector('[data-example-toggle]')?.getAttribute('aria-expanded')).toBe('true')
   })
 
   it('syncs hero languages and copies the active code with feedback', async () => {
@@ -97,25 +85,15 @@ describe('homepage code examples', () => {
     })
     localStorage.setItem(LANGUAGE_STORAGE_KEY, 'Python')
 
-    const root = mount(`
-      <div data-example-card data-code-language-sync>
-        <div data-code-terminal>
-          <span data-terminal-language>TypeScript</span>
-          <button type="button" data-code-copy>
-            <span data-code-copy-label>copy</span>
-          </button>
-          <div data-example-language="Python" data-code-value="python_code" hidden></div>
-          <div data-example-language="TypeScript" data-code-value="typescript_code"></div>
-        </div>
-      </div>
-    `)
-    const python = root.querySelector<HTMLElement>('[data-example-language="Python"]')!
-    const typescript = root.querySelector<HTMLElement>('[data-example-language="TypeScript"]')!
-    const terminalLabel = root.querySelector<HTMLElement>('[data-terminal-language]')!
-    const copy = root.querySelector<HTMLButtonElement>('[data-code-copy]')!
-    const copyLabel = root.querySelector<HTMLElement>('[data-code-copy-label]')!
+    const root = mountHomepage()
+    const hero = root.querySelector<HTMLElement>('.banner')!
+    const python = hero.querySelector<HTMLElement>('[data-example-language="Python"]')!
+    const typescript = hero.querySelector<HTMLElement>('[data-example-language="TypeScript"]')!
+    const terminalLabel = hero.querySelector<HTMLElement>('[data-terminal-language]')!
+    const copy = hero.querySelector<HTMLButtonElement>('[data-code-copy]')!
+    const copyLabel = hero.querySelector<HTMLElement>('[data-code-copy-label]')!
 
-    initHomepageCodeExamples(root)
+    initHomepageCodeExamples(hero)
     expect(python.hidden).toBe(false)
     expect(typescript.hidden).toBe(true)
     expect(terminalLabel.textContent).toBe('Python')
@@ -128,7 +106,7 @@ describe('homepage code examples', () => {
     copy.click()
     await Promise.resolve()
 
-    expect(writeText).toHaveBeenCalledWith('typescript_code')
+    expect(writeText).toHaveBeenCalledWith(typescript.dataset.codeValue)
     expect(copy.classList.contains('is-copied')).toBe(true)
     expect(copyLabel.textContent).toBe('copied!')
 

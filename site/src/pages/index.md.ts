@@ -1,7 +1,16 @@
 import type { APIRoute } from 'astro'
-import { siteLink } from '@util/links'
+import { getSiteOrigin, siteLink } from '@util/links'
+import { homepageProductGroups } from '../config/navbar'
+import { homepageTools } from '../config/homepage'
+
+function markdownPageLink(href: string): string {
+  return `${getSiteOrigin()}${href}index.md`
+}
 
 export const GET: APIRoute = () => {
+  const sdkQuickstart = homepageProductGroups.foundation.sdk.pages?.find((page) => page.label === 'Quickstart')
+  if (!sdkQuickstart) throw new Error('Missing Harness SDK quickstart')
+
   const lines = [
     '# Strands Agents',
     '',
@@ -10,15 +19,16 @@ export const GET: APIRoute = () => {
     '## Start here',
     '',
     `- [Harness quickstart](${siteLink('/docs/user-guide/harness/quickstart/index.md')}): The recommended path to a fully assembled agent.`,
+    `- [SDK quickstart](${markdownPageLink(sdkQuickstart.href)}): Build an agent harness from the ground up with composable primitives.`,
     `- [Build with AI coding agents](${siteLink('/docs/user-guide/build-with-ai/index.md')}): Install the Strands plugin for Claude Code, Codex, or Cursor.`,
     `- [Examples](${siteLink('/examples/')}): Explore complete agent examples.`,
     `- [Frequently asked questions](${siteLink('/faq/index.md')}): Get practical answers about choosing, building, evaluating, and deploying with Strands.`,
     '',
     '## Focused tools',
     '',
-    `- [Strands Box](${siteLink('/docs/user-guide/box/quickstart/index.md')}): Isolate the agent and set policy for the resources it can reach.`,
-    `- [Strands Decider](${siteLink('/docs/labs/strands-decider/overview/index.md')}): Classify and route work with yes/no, choice, and score answers plus calibrated confidence.`,
-    `- [Strands Evals](${siteLink('/docs/user-guide/evals-sdk/index.md')}): Evaluate outputs and trajectories, diagnose failures, and simulate users and tools.`,
+    ...homepageTools.map(
+      (tool) => `- [${tool.product.name}](${markdownPageLink(tool.product.href)}): ${tool.description}`
+    ),
     '',
     '## Official packages',
     '',

@@ -4,8 +4,6 @@ import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
-import { homepageProducts } from '../src/config/navbar'
-
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
   const normalizedValue = value.startsWith('/') ? value : `/${value}`
@@ -70,25 +68,11 @@ describe('homepage machine-readable metadata', () => {
     expect(alternate?.getAttribute('href')).toBe(configuredPathWithBase('/index.md'))
   })
 
-  it('includes the shared base schemas and product nodes as JSON-LD', () => {
+  it('publishes the shared homepage structured data graph', () => {
     const script = homepage.querySelector('script[type="application/ld+json"]')
     const structuredData = JSON.parse(script?.innerHTML ?? '{}')
 
     expect(structuredData['@context']).toBe('https://schema.org')
-    expect(structuredData['@graph'].map((schema: { '@type': string }) => schema['@type'])).toEqual([
-      'Organization',
-      'WebSite',
-      'SoftwareApplication',
-      'SoftwareApplication',
-      'SoftwareApplication',
-      'SoftwareApplication',
-      'SoftwareApplication',
-    ])
-    expect(
-      structuredData['@graph']
-        .filter((schema: { '@type': string }) => schema['@type'] === 'SoftwareApplication')
-        .map((schema: { name: string }) => schema.name)
-    ).toEqual(homepageProducts.map((product) => product.name))
     expect(structuredData['@graph'][0].sameAs).toContain('https://github.com/strands-agents')
     expect(JSON.stringify(structuredData)).not.toContain('SearchAction')
   })
@@ -233,7 +217,9 @@ describe('homepage machine-readable metadata', () => {
 
     expect(markdown).toContain('# Strands Agents')
     expect(markdown).toContain('Harness quickstart')
-    expect(markdown).not.toContain('SDK quickstart')
+    expect(markdown).toContain('SDK quickstart')
+    expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
+    expect(markdown).toContain('/docs/user-guide/box/index.md')
     expect(markdown).toContain('/docs/labs/strands-decider/overview/index.md')
     expect(markdown).toContain('/examples/')
     expect(markdown).toContain('/faq/index.md')

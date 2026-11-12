@@ -5,7 +5,7 @@ import { getCollection } from 'astro:content'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { LANGUAGE_META, PRODUCT_RELEASE_STREAM, SDK_META } from '../src/config/changelog'
-import { homepageProducts, products } from '../src/config/navbar'
+import { products } from '../src/config/navbar'
 import { getPublishedPosts, resolveAuthors } from '../src/util/blog'
 import { sortEntries, toCardModel } from '../src/util/catalog'
 import { releaseSlug } from '../src/util/changelog'
@@ -162,9 +162,16 @@ describe('structured data per page type', () => {
   })
 
   it('describes the products featured on the homepage', () => {
+    const homepageProductLabels = ['Harness', 'Harness SDK', 'Box', 'Decider', 'Evals']
+
     expect(page('/')).toEqual([
       ...baseSchemas(site),
-      ...homepageProducts.map((product) => productSchema(product, site)),
+      ...homepageProductLabels.map((label) =>
+        productSchema(
+          products.find((product) => product.label === label)!,
+          site
+        )
+      ),
     ])
   })
 

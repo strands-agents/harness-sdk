@@ -1,15 +1,12 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
 import CodeExample from './CodeExample.astro'
-import { homepageProductGroups } from '../config/navbar'
+import { homepageTools } from '../config/homepage'
 import { highlightHomepageCode } from '../util/homepage-highlighter'
 
 const moduleContent: Record<
   string,
   {
-    category: string
-    title: string
-    description: string
     cta: string
     exampleLabel: string
     syntax: string
@@ -17,10 +14,6 @@ const moduleContent: Record<
   }
 > = {
   Box: {
-    category: 'Agent sandbox',
-    title: 'Contain the agent.',
-    description:
-      'Isolate the agent and set policies for files, programs, network requests, and MCP tool calls.',
     cta: 'Explore Box',
     exampleLabel: 'Policy',
     syntax: 'dogwood',
@@ -36,10 +29,6 @@ when {
 };`,
   },
   Decider: {
-    category: 'Decision model',
-    title: 'Make focused decisions.',
-    description:
-      'Classify and route work with yes/no, choice, and score answers plus calibrated confidence.',
     cta: 'Explore Decider',
     exampleLabel: 'CLI',
     syntax: 'shellscript',
@@ -49,10 +38,6 @@ when {
   --choice "Which team should handle this?=billing,technical,sales"`,
   },
   Evals: {
-    category: 'Evaluation toolkit',
-    title: 'Find failures before deployment.',
-    description:
-      'Evaluate outputs and trajectories, diagnose failures, and simulate users and tools.',
     cta: 'Explore Evals',
     exampleLabel: 'Python',
     syntax: 'python',
@@ -81,12 +66,12 @@ report.display()`,
 }
 
 const modules = await Promise.all(
-  homepageProductGroups.tools.map(async (product) => {
-    const module = moduleContent[product.label]
-    if (!module) throw new Error(`Missing homepage module content: ${product.label}`)
+  homepageTools.map(async (tool) => {
+    const module = moduleContent[tool.product.label]
+    if (!module) throw new Error(`Missing homepage module content: ${tool.product.label}`)
     return {
+      ...tool,
       ...module,
-      product,
       highlightedCode: await highlightHomepageCode(module.code, module.syntax),
     }
   }),
