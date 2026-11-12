@@ -3,7 +3,14 @@ import type { DOMElement } from 'ink'
 import { isRecord } from '../../values.js'
 
 import type { ChatAttachmentSummary, ChatConfigurationLanguage, ChatTask } from '../../agent/types.js'
-import type { ChatMcpStartup, ChatPanel, ChatSnapshot, ChatVoiceStore } from './controller.js'
+import type {
+  ChatMcpStartup,
+  ChatPanel,
+  ChatSnapshot,
+  ChatVoiceStore,
+  DevChatJob,
+  DevChatJobGroup,
+} from './controller.js'
 import { isActiveTask, isConfigurationTool } from './state.js'
 import {
   commandAssistance as commandAssistanceForInput,
@@ -112,6 +119,8 @@ function ChatViewContent({
   focusedQueuedPrompt,
   focusedBackgroundTask,
   hoveredBackgroundTask,
+  hoveredDevJob,
+  onDevJobElement,
   onMetadataElement,
   onPanelElement,
   onDockElement,
@@ -184,6 +193,8 @@ function ChatViewContent({
   focusedQueuedPrompt?: QueuedPromptTarget
   focusedBackgroundTask?: string
   hoveredBackgroundTask?: boolean
+  hoveredDevJob?: string
+  onDevJobElement?: (command: string, element: DOMElement | null) => void
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
   onDockElement?: (element: DOMElement | null) => void
@@ -657,6 +668,14 @@ function ChatViewContent({
                 {...(onBackgroundTaskElement ? { onElement: onBackgroundTaskElement } : {})}
               />
             ) : null}
+            {snapshot.devJobs?.length ? (
+              <DevJobsStatus
+                groups={snapshot.devJobs}
+                animate={settings.animations}
+                {...(hoveredDevJob ? { hovered: hoveredDevJob } : {})}
+                {...(onDevJobElement ? { onElement: onDevJobElement } : {})}
+              />
+            ) : null}
           </Box>
           <ComposerFooter
             snapshot={snapshot}
@@ -773,6 +792,47 @@ function McpStartupStatus({ startup, spinner }: { startup: ChatMcpStartup; spinn
       </Text>
     </Box>
   )
+}
+
+function DevJobsStatus({
+  groups,
+  animate,
+  hovered,
+  onElement,
+}: {
+  groups: readonly DevChatJobGroup[]
+  animate: boolean
+  hovered?: string
+  onElement?: (command: string, element: DOMElement | null) => void
+}): ReactElement {
+  const { accent, selection } = useTheme()
+  const spinner = useSpinner(true, animate)
+  return (
+    <Box height={1} flexShrink={0} paddingX={1} overflow="hidden">
+      {groups.map(({ command, jobs }) => (
+        <Box
+          key={command}
+          ref={(element) => onElement?.(command, element)}
+          flexShrink={1}
+          marginRight={2}
+          overflow="hidden"
+          {...(hovered === command ? { backgroundColor: selection } : {})}
+        >
+          <Text wrap="truncate-end">
+            <Text color={accent}>{spinner}</Text> /{command} {jobs.map(devJobText).join(' · ')}
+          </Text>
+        </Box>
+      ))}
+      <Box flexGrow={1} />
+      <Box flexShrink={0}>
+        <Text dimColor>click to open</Text>
+      </Box>
+    </Box>
+  )
+}
+
+function devJobText({ label, done, total }: DevChatJob): string {
+  return total === undefined ? label : `${label} ${done ?? 0}/${total}`
 }
 
 function BackgroundTaskStatus({

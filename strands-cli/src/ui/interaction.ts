@@ -180,7 +180,11 @@ export function composerStatusLayout(
     snapshot.tasks.some((task) => task.source === 'background' && isActiveTask(task.status))
   )
   return {
-    height: height + backgroundHeight + Number(snapshot.parentAgent !== undefined),
+    height:
+      height +
+      backgroundHeight +
+      Number(snapshot.parentAgent !== undefined) +
+      Number((snapshot.devJobs?.length ?? 0) > 0),
     viewportHeight,
     maxScroll: rows - viewportHeight,
   }

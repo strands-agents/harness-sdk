@@ -2991,7 +2991,9 @@ export class ChatController implements ChatControllerApi {
   private _devJobs(): DevChatJobGroup[] {
     return this._devCommands.flatMap(({ spec, jobs }) => {
       const running = jobs?.snapshot() ?? []
-      return running.length > 0 ? [{ command: spec.name, jobs: running.map((job) => ({ ...job })) }] : []
+      return running.length > 0
+        ? [{ command: spec.name, jobs: running.map((job) => ({ ...job, label: sanitizeTerminalText(job.label) })) }]
+        : []
     })
   }
 

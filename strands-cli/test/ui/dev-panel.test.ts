@@ -1,11 +1,14 @@
 import { createElement, useState, type ReactElement } from 'react'
 import { Text, useInput, type Instance } from 'ink'
+import stringWidth from 'string-width'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   ChatController,
   type ChatControllerApi,
   type DevChatCommand,
+  type DevChatJob,
+  type DevChatJobs,
   type DevChatPanelProps,
 } from '../../src/ui/chat/controller.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
@@ -40,11 +43,11 @@ const probe = (): { command: DevChatCommand; sizes: { width: number; height: num
   }
 }
 
-const mount = async (command: DevChatCommand, rows = 40) => {
+const mount = async (command: DevChatCommand | readonly DevChatCommand[], rows = 40) => {
   const controller = new ChatController(idleBackend(), {
     settings: { animations: false },
     runtime: { model: 'model-00', cwd: '/work' },
-    devCommands: [command],
+    devCommands: [command].flat(),
   })
   const input = ttyInput()
   const output = ttyOutput(120, rows)
@@ -68,7 +71,40 @@ const mount = async (command: DevChatCommand, rows = 40) => {
     await instance.waitUntilRenderFlush()
   }
   const row = (text: string): number => frame.split('\n').findIndex((line) => line.includes(text))
-  return { controller, instance, press, screen: (): string => frame, row }
+  const click = async (text: string): Promise<void> => {
+    const lines = frame.split('\n')
+    const line = row(text)
+    expect(line, `Visible target: ${text}`).toBeGreaterThanOrEqual(0)
+    const column = stringWidth(lines[line]!.slice(0, lines[line]!.indexOf(text))) + 1
+    await press(`\u001b[<0;${column};${line + 1}M`)
+    await press(`\u001b[<0;${column};${line + 1}m`)
+  }
+  return { controller, instance, press, click, screen: (): string => frame, row }
+}
+
+const jobFeed = (): DevChatJobs & { set: (jobs: readonly DevChatJob[]) => void } => {
+  let jobs: readonly DevChatJob[] = []
+  const listeners = new Set<() => void>()
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    snapshot: () => jobs,
+    set: (next) => {
+      jobs = next
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
+const experimentWithJobs = (): { command: DevChatCommand; jobs: ReturnType<typeof jobFeed> } => {
+  const { command } = probe()
+  const jobs = jobFeed()
+  return {
+    command: { ...command, spec: { name: 'experiment', usage: '/experiment', description: 'Experiments' }, jobs },
+    jobs,
+  }
 }
 
 describe('dev command panels', () => {
@@ -110,5 +146,63 @@ describe('dev command panels', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
     await vi.waitFor(() => expect(screen()).not.toContain('probe panel'))
     expect(screen()).not.toContain('xy')
+  })
+})
+
+describe('dev jobs row', () => {
+  it('shouldShowRunningJobsBelowThePromptWhenADevCommandReportsThem', async () => {
+    const { command, jobs } = experimentWithJobs()
+    const { instance, row } = await mount(command)
+
+    jobs.set([
+      { id: 'a', label: 'refunds', done: 3, total: 20 },
+      { id: 'b', label: 'edge-cases', done: 0, total: 10 },
+    ])
+    await instance.waitUntilRenderFlush()
+
+    expect(row('/experiment refunds 3/20 · edge-cases 0/10')).toBeGreaterThan(row('Enter to send'))
+    expect(row('click to open')).toBe(row('/experiment refunds 3/20'))
+  })
+
+  it('shouldHideTheRowWhenNoJobRuns', async () => {
+    const { command, jobs } = experimentWithJobs()
+    const { instance, screen } = await mount(command)
+    jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
+    await instance.waitUntilRenderFlush()
+
+    jobs.set([])
+    await instance.waitUntilRenderFlush()
+
+    expect(screen()).not.toContain('click to open')
+  })
+
+  it.each([
+    ['no panel', undefined],
+    ['another panel', '/help'],
+  ])('shouldOpenTheCommandPanelWhenTheUserClicksItsJobOver%s', async (_case, before) => {
+    const { command, jobs } = experimentWithJobs()
+    const { controller, instance, click, screen } = await mount(command)
+    jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
+    if (before) await controller.submit(before)
+    await instance.waitUntilRenderFlush()
+
+    await click('/experiment refunds')
+
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/experiment' }))
+    await vi.waitFor(() => expect(screen()).toContain('probe panel'))
+  })
+
+  it.each([40, 24])('shouldFitTheScreenWithTheRowAndAnOpenPanelAt%iRows', async (rows) => {
+    const { command, jobs } = experimentWithJobs()
+    const { controller, instance, screen } = await mount(command, rows)
+    jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
+    await controller.submit('/experiment')
+    await instance.waitUntilRenderFlush()
+
+    const lines = screen().trimEnd().split('\n')
+
+    expect(lines.length).toBeLessThanOrEqual(rows)
+    expect(screen()).toContain('probe panel')
+    expect(screen()).toContain('click to open')
   })
 })

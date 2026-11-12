@@ -190,6 +190,7 @@ export function ChatApp({
   const [focusedQueuedPrompt, setFocusedQueuedPrompt] = useState<QueuedPromptTarget>()
   const [focusedBackgroundTask, setFocusedBackgroundTask] = useState<string>()
   const [hoveredBackgroundTask, setHoveredBackgroundTask] = useState(false)
+  const [hoveredDevJob, setHoveredDevJob] = useState<string | undefined>(undefined)
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
   const [screenSelection, setScreenSelection] = useState<readonly ScreenSelectionSegment[]>([])
   const { copyText, clipboardNotice } = useClipboard()
@@ -249,6 +250,7 @@ export function ChatApp({
   const [queuedPromptElements, registerQueuedPromptElement] = useElementMap<QueuedPromptTarget>()
   const statusElement = useRef<DOMElement | undefined>(undefined)
   const backgroundTaskElement = useRef<DOMElement | undefined>(undefined)
+  const devJobElements = useRef(new Map<string, DOMElement>())
   const [toolGroupElements, registerToolGroupElement] = useElementMap<string>()
   const frogElement = useRef<DOMElement | undefined>(undefined)
   const jumpToBottomElement = useRef<DOMElement | undefined>(undefined)
@@ -447,6 +449,7 @@ export function ChatApp({
     setHoveredJumpToBottom(false)
     setHoveredMetadata(undefined)
     setHoveredBackgroundTask(false)
+    setHoveredDevJob(undefined)
   }, [])
   const resetPressed = useCallback((): void => {
     setPressedMetadata(undefined)
@@ -556,6 +559,7 @@ export function ChatApp({
     attachments,
     ...(focusedBackgroundTask ? { focusedBackgroundTask } : {}),
     hoveredBackgroundTask,
+    ...(hoveredDevJob ? { hoveredDevJob } : {}),
   }
   const viewPropsRef = useRef(viewProps)
   viewPropsRef.current = viewProps
@@ -570,6 +574,10 @@ export function ChatApp({
   }, [])
   const registerBackgroundTaskElement = useCallback((element: DOMElement | null): void => {
     backgroundTaskElement.current = element ?? undefined
+  }, [])
+  const registerDevJobElement = useCallback((command: string, element: DOMElement | null): void => {
+    if (element) devJobElements.current.set(command, element)
+    else devJobElements.current.delete(command)
   }, [])
   const registerPanelSearchElement = useCallback((element: DOMElement | null): void => {
     panelSearchElement.current = element ?? undefined
@@ -1052,6 +1060,7 @@ export function ChatApp({
           ? elementContainsMouse(backgroundTaskElement.current, mouse)
           : false
       const toolGroupTarget = !snapshot.panel ? elementAtMouse(toolGroupElements, mouse) : undefined
+      const devJobTarget = snapshot.devJobs?.length ? elementAtMouse(devJobElements.current, mouse) : undefined
       const sliderElement =
         snapshot.panel?.kind === 'effort' || snapshot.panel?.kind === 'permissions' || snapshot.panel?.kind === 'voice'
           ? panelSliderElement.current
@@ -1079,6 +1088,7 @@ export function ChatApp({
         setHoveredJumpToBottom(jumpToBottomHit)
         setHoveredMetadata(metadataTarget)
         setHoveredBackgroundTask(backgroundTaskHit)
+        setHoveredDevJob(devJobTarget)
       }
       if (mouse.action === 'press' && button === 0) {
         resetHover()
@@ -1093,6 +1103,7 @@ export function ChatApp({
           toolGroupTarget ||
           queuedPromptTarget ||
           backgroundTaskHit ||
+          devJobTarget ||
           jumpToBottomHit
             ? undefined
             : {
@@ -1225,7 +1236,9 @@ export function ChatApp({
       if (mouse.action !== 'release' || (!leftRelease && button !== 0)) {
         return
       }
-      if (jumpToBottomHit) {
+      if (devJobTarget) {
+        controller.openDevCommand?.(devJobTarget)
+      } else if (jumpToBottomHit) {
         setTranscriptScroll(0)
       } else if (panelFilterId) {
         if (snapshot.panel?.kind === 'models' && panelFilterId.startsWith('aws-profile:')) {
@@ -2248,6 +2261,7 @@ export function ChatApp({
       {...(clipboardNotice ? { clipboardNotice } : {})}
       onQueuedPromptElement={registerQueuedPromptElement}
       onBackgroundTaskElement={registerBackgroundTaskElement}
+      onDevJobElement={registerDevJobElement}
       onStatusElement={registerStatusElement}
       onFrogElement={registerFrogElement}
       onJumpToBottomElement={registerJumpToBottomElement}
