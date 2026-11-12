@@ -50,10 +50,10 @@ def _sent_input(client: unittest.mock.Mock) -> dict[str, Any]:
     return {**kwargs, "Body": json.loads(kwargs["Body"].decode("utf-8"))}
 
 
-async def _ask_error(decision: SageMakerDecisionModel) -> BaseException | None:
+async def _ask_error(decision: SageMakerDecisionModel) -> Exception | None:
     try:
         await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
-    except BaseException as caught:  # noqa: BLE001
+    except Exception as caught:
         return caught
     return None
 
