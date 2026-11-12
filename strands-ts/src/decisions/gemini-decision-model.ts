@@ -79,9 +79,11 @@ export class GeminiDecisionModel extends DecisionModel {
     questions: Q,
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
+    const transport = httpTransport(this._providerConfig)
     return askSystemOne(
       this._providerConfig,
-      httpTransport(this._providerConfig),
+      async (body, cancelSignal) =>
+        toSystemOneResponse(await transport(body, cancelSignal), this._providerConfig.modelId),
       state,
       questions,
       options.cancelSignal
@@ -91,4 +93,22 @@ export class GeminiDecisionModel extends DecisionModel {
 
 function toGeminiInput(state: DecisionInput): string {
   return typeof state === 'string' ? state : JSON.stringify(toWireState(state))
+}
+
+/**
+ * Maps a Gemini response to the System One shape: Gemini does not echo the model and reports usage as
+ * `total_input_tokens` and `total_output_tokens`. Anything else passes through for the shared parser to validate.
+ */
+function toSystemOneResponse(payload: unknown, modelId: string): unknown {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return payload
+  const response = payload as Record<string, unknown>
+  const usage = response['usage'] as Record<string, unknown> | undefined
+  return {
+    ...response,
+    model: response['model'] ?? modelId,
+    ...(typeof usage === 'object' &&
+      usage !== null && {
+        usage: { input_tokens: usage['total_input_tokens'], output_tokens: usage['total_output_tokens'] },
+      }),
+  }
 }

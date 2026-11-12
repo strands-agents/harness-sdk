@@ -303,8 +303,7 @@ function parseResult<const Q extends Record<string, Question>>(
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
 } {
   const response = requireRecord(payload, 'decision provider response')
-  // Some APIs, such as Gemini Decisions, do not echo the model, so fall back to the requested one.
-  const modelId = requireNonEmptyString(response['model'] ?? config.modelId, 'decision provider model')
+  const modelId = requireNonEmptyString(response['model'], 'decision provider model')
   const rawAnswers = requireRecord(response['answers'], 'decision provider answers')
   const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
   const probabilities = {} as { [K in keyof Q]: Readonly<Record<string, number>> }
@@ -417,9 +416,8 @@ function resolveMinConfidence(question: Question, providerDefault: number): numb
 function parseUsage(value: unknown): { inputTokens: number; outputTokens: number; totalTokens: number } | undefined {
   if (value === undefined || value === null) return undefined
   const usage = requireRecord(value, 'decision provider usage')
-  // Gemini Decisions reports `total_input_tokens` and `total_output_tokens`.
-  const inputTokens = usage['input_tokens'] ?? usage['total_input_tokens']
-  const outputTokens = usage['output_tokens'] ?? usage['total_output_tokens']
+  const inputTokens = usage['input_tokens']
+  const outputTokens = usage['output_tokens']
   if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
     return undefined
   }
