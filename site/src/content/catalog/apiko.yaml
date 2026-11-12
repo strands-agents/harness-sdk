@@ -1,0 +1,9 @@
+name: APIKO
+description: Runs Strands agents on Claude, GPT, Gemini and DeepSeek chat models through APIKO's OpenAI-compatible gateway with one API key.
+integrationType: model-provider
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/tong0619453646-dev/apiko-ai-api-examples
+docsUrl: https://apiko.app/docs/integration-guide/strands-agents
+addedDate: 2026-11-12
