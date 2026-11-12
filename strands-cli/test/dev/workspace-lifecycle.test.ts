@@ -11,7 +11,14 @@ type RenderApp = NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['rend
 
 const createController = (name: string): ChatController =>
   new ChatController(idleBackend({ name }), {
-    runtime: { devWorkspace: { root: '/workspace', entrypoint: '/workspace/agent.ts', origin: 'created' } },
+    runtime: {
+      devWorkspace: {
+        root: '/workspace',
+        entrypoint: '/workspace/agent.ts',
+        boundEntrypoint: '/workspace/agent.ts',
+        origin: 'created',
+      },
+    },
   })
 
 describe('workspace replacement lifecycle', () => {

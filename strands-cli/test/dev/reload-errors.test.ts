@@ -22,7 +22,7 @@ describe('dev reload failures', () => {
     const backend = idleBackend({ captureConversation: async () => snapshot })
     const previous = new ChatController(backend, {
       runtime: {
-        devWorkspace: { root: '/workspace', entrypoint: path, origin: 'discovered' },
+        devWorkspace: { root: '/workspace', entrypoint: path, boundEntrypoint: path, origin: 'discovered' },
         session: 'existing-session',
       },
     })

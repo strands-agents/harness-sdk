@@ -140,7 +140,12 @@ describe('error panel input', () => {
 })
 
 describe('dev error panel fix', () => {
-  const devWorkspace = { root: '/project/strands-dev', entrypoint: '/project/agent.ts', origin: 'discovered' }
+  const devWorkspace = {
+    root: '/project/strands-dev',
+    entrypoint: '/project/agent.ts',
+    boundEntrypoint: '/project/agent.ts',
+    origin: 'discovered',
+  }
 
   const renderChat = (controller: ChatControllerApi) => {
     const input = ttyInput()

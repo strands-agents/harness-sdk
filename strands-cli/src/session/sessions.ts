@@ -66,21 +66,28 @@ export interface ResumeSession {
   sessionDirectory: string
   workspace: string
   agentProject?: string
+  devWorkspace?: string
 }
+
+const SCRIPT_FILE = /\.[cm]?[jt]s$/iu
+
+const startedCommand = (entry = process.argv[1]): string =>
+  entry && !SCRIPT_FILE.test(entry) ? basename(entry) : 'strands'
 
 export function sessionResumeCommand(
   session: ResumeSession,
-  options: { cwd?: string; platform?: NodeJS.Platform } = {}
+  options: { cwd?: string; platform?: NodeJS.Platform; command?: string } = {}
 ): string {
   const platform = options.platform ?? process.platform
   const paths = platform === 'win32' ? win32 : posix
   const workspace = paths.resolve(session.workspace)
   const directory = paths.resolve(workspace, session.sessionDirectory)
   const quote = (value: string): string => quoteArgument(value, platform)
-  const command = ['strands']
+  const command = [quote(options.command ?? startedCommand())]
+  if (session.devWorkspace) command.push('dev', '--workspace', quote(paths.resolve(session.devWorkspace)))
   if (session.agentProject) command.push('--agent', quote(session.agentProject))
   command.push('--session-id', quote(session.sessionId))
-  command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
+  if (!session.devWorkspace) command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
   const resume = command.join(' ')
   if (workspace === paths.resolve(options.cwd ?? process.cwd())) return resume
   const changeDirectory =

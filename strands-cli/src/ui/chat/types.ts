@@ -192,7 +192,7 @@ export interface ChatRuntimeInfo {
   cwd: string
   tools: readonly ChatToolInfo[]
   configuration?: readonly { label: string; value: string }[]
-  devWorkspace?: { root: string; entrypoint: string; origin: string }
+  devWorkspace?: { root: string; entrypoint: string; boundEntrypoint: string; origin: string }
   sourceWatching?: boolean
   reloadStatus?: string
 }

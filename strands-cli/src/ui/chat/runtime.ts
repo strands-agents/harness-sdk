@@ -119,6 +119,7 @@ export async function createTypescriptChat(
                 devWorkspace: {
                   root: devWorkspace.directory ?? devWorkspace.root,
                   entrypoint: project.entrypoint,
+                  boundEntrypoint: devWorkspace.entrypoint,
                   origin: devWorkspace.config.origin.kind,
                 },
               }
@@ -326,6 +327,7 @@ export async function createPythonChat(
               devWorkspace: {
                 root: devWorkspace.directory ?? devWorkspace.root,
                 entrypoint: project.entrypoint,
+                boundEntrypoint: devWorkspace.entrypoint,
                 origin: devWorkspace.config.origin.kind,
               },
             }
