@@ -62,7 +62,7 @@ import {
   resolveConfigMetadata,
   resolveMaxTokens,
 } from '../models/model.js'
-import { lookupModelInfo, mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
+import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -528,23 +528,18 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Turns `serverSideSummary` off, reports OpenAI models as implicitly cached, and reports Claude models whose own API
-   * defers tools as taking stubs; a `modelInfo` override still wins over all three. The shared model info lists cache
-   * points for their OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points. Converse
-   * can't defer a tool, but without `strictTools` it doesn't hold Claude to a tool's schema, so Claude can take a
-   * deferred tool as a stub with an open schema.
+   * Turns `serverSideSummary` off, reports OpenAI models as implicitly cached, and turns deferred tools off under
+   * `strictTools`; a `modelInfo` override still wins over all three. The shared model info lists cache points for
+   * their OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points. Converse can't defer
+   * a tool natively, and strict mode holds the model to a stub's open schema, so it can only send `{}`.
    */
   override get modelInfo(): ModelInfo {
-    const modelId = this.modelId?.toLowerCase() ?? ''
-    const takesStubs =
-      modelId.includes('anthropic.') &&
-      lookupModelInfo(modelId).capabilities?.deferredTools === 'native' &&
-      this._config.strictTools !== true
+    const openai = this.modelId?.toLowerCase().includes('openai.')
     return mergeModelInfo(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
-      modelId.includes('openai.') ? { capabilities: { promptCaching: 'auto' } } : undefined,
-      takesStubs ? { capabilities: { deferredTools: 'stubs' } } : undefined,
+      openai ? { capabilities: { promptCaching: 'auto' } } : undefined,
+      this._config.strictTools === true ? { capabilities: { deferredTools: 'unsupported' } } : undefined,
       this._config.modelInfo
     )
   }

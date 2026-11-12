@@ -289,7 +289,7 @@ describe('DynamicToolLoadingStrategy', () => {
 
   it('sends every spec without the loader on a model that can not defer', async () => {
     using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const { agent, model } = makeAgent()
+    const { agent, model } = makeAgent('unsupported')
     model.addTurn({ type: 'textBlock', text: 'ok' })
 
     await agent.invoke('Hi.')
@@ -315,7 +315,7 @@ describe('DynamicToolLoadingStrategy', () => {
 
   it('defers on a later call whose model can defer, after a first call on a model that can not', async () => {
     using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const { agent, model } = makeAgent()
+    const { agent, model } = makeAgent('unsupported')
     model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
 
     await agent.invoke('First.')

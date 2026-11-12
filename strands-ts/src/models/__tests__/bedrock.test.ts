@@ -1012,8 +1012,9 @@ describe('BedrockModel', () => {
     describe('deferred tools', () => {
       it.each([
         ['Claude', { modelId: 'us.anthropic.claude-opus-5-5' }, 'stubs'],
-        ['Claude with strictTools', { modelId: 'us.anthropic.claude-opus-5-5', strictTools: true }, 'unsupported'],
-        ['a model whose own API does not defer tools', { modelId: 'us.amazon.nova-pro-v1:0' }, 'unsupported'],
+        ['another model', { modelId: 'qwen.qwen3-235b-a22b-2507-v1:0' }, 'stubs'],
+        ['a model with strictTools', { modelId: 'us.anthropic.claude-opus-5-5', strictTools: true }, 'unsupported'],
+        ['a model that can not take stubs', { modelId: 'us.amazon.nova-pro-v1:0' }, 'unsupported'],
       ])('reports deferredTools for %s', (_name, config, expected) => {
         expect(new BedrockModel(config).modelInfo.capabilities?.deferredTools).toBe(expected)
       })

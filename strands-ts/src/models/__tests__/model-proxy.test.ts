@@ -391,7 +391,7 @@ describe('ModelProxy', () => {
 
     /** Sends the history through the proxy and returns the tool result content the model received. */
     async function sentContent(
-      deferredTools?: 'native' | 'stubs',
+      deferredTools?: 'native' | 'stubs' | 'unsupported',
       toolSpecs: ToolSpec[] = [definition]
     ): Promise<ToolResultBlock['content']> {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
@@ -402,7 +402,7 @@ describe('ModelProxy', () => {
     }
 
     /** Sends one deferred spec and one pinned spec through the proxy and returns the specs the model received. */
-    async function sentToolSpecs(deferredTools?: 'native' | 'stubs'): Promise<ToolSpec[] | undefined> {
+    async function sentToolSpecs(deferredTools?: 'native' | 'stubs' | 'unsupported'): Promise<ToolSpec[] | undefined> {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
       model.updateConfig({ modelInfo: { capabilities: { deferredTools } } })
       const streamSpy = vi.spyOn(model, 'stream')
@@ -428,7 +428,7 @@ describe('ModelProxy', () => {
 
     it.each([
       ['a model that defers natively', 'native' as const],
-      ['a model without deferred tools', undefined],
+      ['a model without deferred tools', 'unsupported' as const],
     ])('sends the deferred spec as it is to %s', async (_name, deferredTools) => {
       expect(await sentToolSpecs(deferredTools)).toEqual([{ ...definition, deferLoading: true }, pinned])
     })
@@ -439,7 +439,7 @@ describe('ModelProxy', () => {
 
     it.each([
       ['a model that takes stubs', 'stubs' as const],
-      ['a model without deferred tools', undefined],
+      ['a model without deferred tools', 'unsupported' as const],
     ])("sends the call's parameters for the tool as text to %s", async (_name, deferredTools) => {
       const changed = { ...definition, inputSchema: { type: 'object' as const, properties: {} } }
 

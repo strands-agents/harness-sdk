@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Agent, InvokeModelStage, tool } from '@strands-agents/sdk'
 import type { Model } from '@strands-agents/sdk'
 import { z } from 'zod'
-import { anthropic, bedrock } from '../__fixtures__/model-providers.js'
+import { anthropic, bedrock, gemini, openai, vercelBedrock } from '../__fixtures__/model-providers.js'
 
 describe.each([
   {
@@ -12,10 +12,34 @@ describe.each([
     delivery: 'native',
   },
   {
-    name: 'Bedrock Converse',
+    name: 'Bedrock Converse with Claude',
     provider: bedrock,
     createModel: (): Model =>
       bedrock.createModel({ modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokens: 1024 }),
+    delivery: 'stubs',
+  },
+  {
+    name: 'Bedrock Converse with Qwen',
+    provider: bedrock,
+    createModel: (): Model => bedrock.createModel({ modelId: 'qwen.qwen3-next-80b-a3b', maxTokens: 1024 }),
+    delivery: 'stubs',
+  },
+  {
+    name: 'Gemini',
+    provider: gemini,
+    createModel: (): Model => gemini.createModel({ modelId: 'gemini-2.5-flash' }),
+    delivery: 'stubs',
+  },
+  {
+    name: 'OpenAI Chat Completions',
+    provider: openai,
+    createModel: (): Model => openai.createModel({ modelId: 'gpt-5.4' }),
+    delivery: 'stubs',
+  },
+  {
+    name: 'Vercel AI SDK on Bedrock',
+    provider: vercelBedrock,
+    createModel: (): Model => vercelBedrock.createModel(),
     delivery: 'stubs',
   },
 ])('dynamic tool loading on $name', ({ provider, createModel, delivery }) => {

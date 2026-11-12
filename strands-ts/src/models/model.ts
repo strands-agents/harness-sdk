@@ -417,8 +417,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
   /**
    * Everything the SDK knows about the configured model, resolved on each read. Layers, later
-   * ones winning: the shared model info for `modelId`, `temporaryMessages` and `deferredTools` off (a provider that
-   * supports them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override.
+   * ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that sends them turns
+   * them back on), `deferredTools` as `'stubs'` unless the shared info says `'unsupported'` (a provider that defers
+   * natively says `'native'`), the `contextWindowLimit` config value, and the `modelInfo` config override.
    * Each read returns a new record, so do not compare reads by reference.
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
@@ -428,10 +429,12 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   get modelInfo(): ModelInfo {
     const config = this.getConfig()
+    const shared = lookupModelInfo(this.modelId ?? '')
+    const deferredTools = shared.capabilities?.deferredTools === 'unsupported' ? 'unsupported' : 'stubs'
     return mergeModelInfo(
-      lookupModelInfo(this.modelId ?? ''),
+      shared,
       {
-        capabilities: { temporaryMessages: false, deferredTools: 'unsupported' },
+        capabilities: { temporaryMessages: false, deferredTools },
         limits: { contextWindow: config.contextWindowLimit },
       },
       config.modelInfo

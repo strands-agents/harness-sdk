@@ -66,7 +66,7 @@ describe('shared model info data', () => {
       })
     }
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
-      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
+      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false, deferredTools: 'unsupported' },
       limits: { contextWindow: 300_000 },
     })
     expect(lookupModelInfo('claude-future-9')).toEqual({})

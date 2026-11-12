@@ -219,8 +219,8 @@ describe('AnthropicModel', () => {
     it.each([
       ['claude-haiku-4-5-20251001', 'native'],
       ['claude-opus-5-5', 'native'],
-      ['claude-opus-4-1', 'unsupported'],
-      ['claude-3-5-haiku-20241022', 'unsupported'],
+      ['claude-opus-4-1', 'stubs'],
+      ['claude-3-5-haiku-20241022', 'stubs'],
     ])('reports deferred tools from the shared model info for %s: %s', (modelId, expected) => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
       expect(model.modelInfo.capabilities?.deferredTools).toBe(expected)
