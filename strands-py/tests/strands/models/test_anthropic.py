@@ -9,6 +9,7 @@ import unittest.mock
 import warnings
 
 import anthropic
+import httpx
 import pydantic
 import pytest
 
@@ -1302,6 +1303,91 @@ async def test_stream_maps_retry_error_to_sdk_exception(anthropic_client, alist,
         await alist(model.stream(messages))
 
     assert anthropic_client.messages.stream.call_count == 2
+
+
+def _mid_stream_error(error_type, message="Too many requests"):
+    response = httpx.Response(200, request=httpx.Request("POST", "https://bedrock-runtime.us-west-2.amazonaws.com"))
+    body = {"type": "error", "error": {"type": error_type, "message": message}}
+    return anthropic.APIStatusError(str(body), response=response, body=body)
+
+
+@pytest.mark.parametrize(
+    ("error", "exp_exception"),
+    [
+        (_mid_stream_error("throttlingException"), ModelThrottledException),
+        (_mid_stream_error("serviceUnavailableException"), ModelThrottledException),
+        (
+            _mid_stream_error("validationException", "Input is too long for requested model."),
+            ContextWindowOverflowException,
+        ),
+        (ValueError("throttlingException: Too many requests"), ModelThrottledException),
+        (
+            ValueError("validationException: prompt is too long: 260024 tokens > 200000 maximum"),
+            ContextWindowOverflowException,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_maps_a_mid_stream_bedrock_error_to_sdk_exception(
+    anthropic_client, alist, messages, error, exp_exception
+):
+    anthropic_client.messages.stream.side_effect = error
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(exp_exception) as raised:
+        await alist(model.stream(messages))
+    assert raised.value.__cause__ is error
+
+
+@pytest.mark.asyncio
+async def test_stream_reraises_other_mid_stream_errors(anthropic_client, alist, messages):
+    error = _mid_stream_error("validationException")
+    anthropic_client.messages.stream.side_effect = error
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(anthropic.APIStatusError) as raised:
+        await alist(model.stream(messages))
+    assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_stream_reraises_an_unrelated_value_error(anthropic_client, alist, messages):
+    error = ValueError("something else")
+    anthropic_client.messages.stream.side_effect = error
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(ValueError) as raised:
+        await alist(model.stream(messages))
+    assert raised.value is error
+
+
+@pytest.mark.parametrize(
+    ("client", "params", "exp_version"),
+    [
+        (anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"), {}, "bedrock-2023-05-31"),
+        (
+            anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"),
+            {"extra_body": {"anthropic_version": "bedrock-2099-01-01"}},
+            "bedrock-2099-01-01",
+        ),
+        (anthropic.AsyncAnthropic(api_key="k"), {}, None),
+        pytest.param(
+            "mantle",
+            {},
+            None,
+            marks=pytest.mark.skipif(
+                not hasattr(anthropic, "AsyncAnthropicBedrockMantle"),
+                reason="anthropic before 0.91 has no Mantle client",
+            ),
+        ),
+    ],
+)
+def test_format_request_pins_the_invoke_model_api_version_on_a_bedrock_client(messages, client, params, exp_version):
+    if client == "mantle":
+        client = anthropic.AsyncAnthropicBedrockMantle(aws_region="us-west-2")
+    model = AnthropicModel(model_id="m1", max_tokens=1, params=params, client=client)
+
+    assert model.format_request(messages).get("extra_body", {}).get("anthropic_version") == exp_version
 
 
 @pytest.mark.asyncio

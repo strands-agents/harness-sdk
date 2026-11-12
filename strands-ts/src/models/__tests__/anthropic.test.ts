@@ -595,6 +595,86 @@ describe('AnthropicModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('Rate limit exceeded')
     })
+
+    it.each(['throttlingException', 'serviceUnavailableException'])(
+      'maps a mid-stream Bedrock %s to ModelThrottledError',
+      async (type) => {
+        const mockClient = createMockClient(async function* () {
+          yield { type: 'ping' }
+          throw Object.assign(new Error('Too many tokens'), { type })
+        })
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+      }
+    )
+  })
+
+  describe('Bedrock InvokeModel API version', () => {
+    // Stands in for @anthropic-ai/bedrock-sdk's client, which the provider recognizes by class name.
+    class AnthropicBedrock {}
+    const bedrockClient = (): Anthropic =>
+      Object.assign(
+        Object.create(AnthropicBedrock.prototype),
+        createMockClient(async function* () {})
+      ) as Anthropic
+    const sentBody = async (provider: AnthropicModel, client: Anthropic): Promise<Record<string, unknown>> => {
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      return vi.mocked(client.messages.stream).mock.calls[0]![0] as unknown as Record<string, unknown>
+    }
+
+    it('pins bedrock-2023-05-31 on an AnthropicBedrock client, keeping the sampling params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(new AnthropicModel({ client, temperature: 0.2 }), client)
+      expect(body).toMatchObject({ anthropic_version: 'bedrock-2023-05-31', temperature: 0.2 })
+    })
+
+    it('keeps an anthropic_version set in params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(
+        new AnthropicModel({ client, params: { anthropic_version: 'bedrock-2099-01-01' } }),
+        client
+      )
+      expect(body.anthropic_version).toBe('bedrock-2099-01-01')
+    })
+
+    it('pins the version on a subclass, and on a renamed class with a bedrock-runtime base URL', async () => {
+      class Subclass extends AnthropicBedrock {}
+      const subclass = Object.assign(
+        Object.create(Subclass.prototype),
+        createMockClient(async function* () {})
+      )
+      expect((await sentBody(new AnthropicModel({ client: subclass }), subclass)).anthropic_version).toBe(
+        'bedrock-2023-05-31'
+      )
+      const renamed = Object.assign(
+        createMockClient(async function* () {}),
+        {
+          baseURL: 'https://bedrock-runtime.us-west-2.amazonaws.com',
+        }
+      )
+      expect((await sentBody(new AnthropicModel({ client: renamed }), renamed)).anthropic_version).toBe(
+        'bedrock-2023-05-31'
+      )
+    })
+
+    it('sends no anthropic_version on the Mantle client', async () => {
+      class AnthropicBedrockMantle {}
+      const mantle = Object.assign(
+        Object.create(AnthropicBedrockMantle.prototype),
+        createMockClient(async function* () {}),
+        {
+          baseURL: 'https://bedrock-mantle.us-west-2.api.aws/anthropic',
+        }
+      )
+      expect(await sentBody(new AnthropicModel({ client: mantle }), mantle)).not.toHaveProperty('anthropic_version')
+    })
+
+    it('sends no anthropic_version on another client', async () => {
+      const client = createMockClient(async function* () {})
+      expect(await sentBody(new AnthropicModel({ client }), client)).not.toHaveProperty('anthropic_version')
+    })
   })
 
   describe('stale thinking recovery', () => {
