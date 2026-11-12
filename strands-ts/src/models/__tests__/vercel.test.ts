@@ -18,6 +18,7 @@ import {
   ToolResultBlock,
   ReasoningBlock,
   JsonBlock,
+  OffloadedBlock,
   UnknownBlock,
 } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
@@ -701,6 +702,27 @@ describe('VercelModel', () => {
         const userMsg = callArgs().prompt[0] as any
         expect(userMsg.role).toBe('user')
         expect(userMsg.content[0]).toEqual({ type: 'text', text: 'Hello' })
+      })
+
+      it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+        const { collect, callArgs } = setupCaptureTest()
+        const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+        await collect([
+          new Message({ role: 'user', content: [placeholder] }),
+          new Message({ role: 'assistant', content: [placeholder] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+          }),
+        ])
+
+        const [user, assistant, tool] = callArgs().prompt as any[]
+        expect(user.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(assistant.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(tool.content[0].output).toEqual({
+          type: 'content',
+          value: [{ type: 'text', text: '[Dropped] [ref: tu-1]' }],
+        })
       })
 
       it('formats image blocks with bytes and URL sources', async () => {

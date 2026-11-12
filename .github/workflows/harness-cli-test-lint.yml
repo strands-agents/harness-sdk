@@ -72,7 +72,7 @@ jobs:
           package-manager-cache: false
 
       - name: Setup Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
 

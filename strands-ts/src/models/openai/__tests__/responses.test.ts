@@ -4,7 +4,14 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, MaxTokensError, ModelThrottledError } from '../../../errors.js'
 import { collectGenerator, collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock, UnknownBlock } from '../../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  OffloadedBlock,
+  UnknownBlock,
+} from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
@@ -518,6 +525,25 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.input[1]).toEqual({ role: 'assistant', content: '4' })
       expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'What is 2+2?' }] })
       expect(req.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'What about 3+3?' }] })
+    })
+
+    it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      const messages = [
+        new Message({ role: 'user', content: [placeholder] }),
+        new Message({ role: 'assistant', content: [placeholder] }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: '[Dropped] [ref: tu-1]' }] })
+      expect(req.input[1]).toEqual({ role: 'assistant', content: '[Dropped] [ref: tu-1]' })
+      expect(req.input.find((item: any) => item.type === 'function_call_output')).toMatchObject({
+        call_id: 'tu-1',
+        output: '[Dropped] [ref: tu-1]',
+      })
     })
 
     it('joins multiple assistant text blocks with newlines', async () => {

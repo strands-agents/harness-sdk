@@ -115,8 +115,8 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 
 | Before | After |
 |--------|-------|
-| `new SummarizingConversationManager(...)` | `Offload.summarize("*").when({ utilization: 0.85, preserveRecent: 4 })` |
-| `new ContextOffloader({ maxResultTokens: 2500, previewTokens: 500 })` | `Offload.truncate("toolResults", { previewTokens: 500 }).when({ threshold: 2500 })` |
+| `new SummarizingConversationManager(...)` | `Offload.summarize("*").when({ contextUtilization: "85%", preserveRecent: 4 })` |
+| `new ContextOffloader({ maxResultTokens: 2500, previewTokens: 500 })` | `Offload.truncate("toolResults", { previewTokens: 500 }).when({ blockThreshold: 2500 })` |
 | `new SlidingWindowConversationManager(...)` | No exact equivalent. Use `Offload.drop` or `Offload.truncate` with utilization and preservation conditions. |
 | `contextManager: "auto"` | Unchanged |
 
