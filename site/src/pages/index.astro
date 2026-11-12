@@ -13,7 +13,7 @@ import NextSteps from '../components/NextSteps.astro';
 import Footer from '../components/Footer.astro';
 import SiteScripts from '../components/SiteScripts.astro';
 import Analytics from '../components/Analytics.astro';
-import { products } from '../config/navbar';
+import { homepageProducts } from '../config/navbar';
 import { baseSchemas, productSchema, serializeJsonLd } from '../util/structured-data';
 import '../styles/fonts.css';
 
@@ -32,8 +32,6 @@ const pageTitle = 'Strands Agents | Build production AI agents';
 const pageDescription =
   'Build production agents with an open source framework, a ready-to-use harness, and focused tools for decisions, security, and evaluation.';
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
-const homepageProductLabels = new Set(['Harness', 'Box', 'Evals', 'Decider']);
-const homepageProducts = products.filter((product) => homepageProductLabels.has(product.label));
 const structuredData = {
   '@context': 'https://schema.org',
   '@graph': [...baseSchemas(siteUrl), ...homepageProducts.map((product) => productSchema(product, siteUrl))],

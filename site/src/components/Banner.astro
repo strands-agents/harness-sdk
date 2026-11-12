@@ -1,23 +1,13 @@
 ---
-import { createShikiHighlighter } from '@astrojs/markdown-remark/shiki';
-
 import arrow from '../assets/banner/arrow.svg?raw';
 import halftone from '../assets/banner/halftone.svg?url';
-import plus from '../assets/toolkit/plus.svg?raw';
+import CodeExample from './CodeExample.astro';
 import InstallCommand from './InstallCommand.astro';
-import { products } from '../config/navbar';
-import { DEFAULT_LANGUAGE_LABEL } from '../util/language-preference';
+import { homepageProductGroups } from '../config/navbar';
+import { highlightHomepageCode } from '../util/homepage-highlighter';
 import { pathWithBase } from '../util/links';
 
-const harnessProduct = products.find((product) => product.label === 'Harness');
-if (!harnessProduct) throw new Error('Missing homepage product: Harness');
-
-const highlighter = await createShikiHighlighter({
-  themes: {
-    light: 'github-light-high-contrast',
-    dark: 'github-dark-high-contrast',
-  },
-});
+const harnessProduct = homepageProductGroups.foundation.harness;
 
 const harnessExamples = await Promise.all([
   {
@@ -36,10 +26,7 @@ await agent.invoke('Summarize this repository')`,
   },
 ].map(async (example) => ({
   ...example,
-  highlightedCode: await highlighter.codeToHtml(example.code, example.syntax, {
-    defaultColor: false,
-    attributes: { class: 'banner__highlighted-code' },
-  }),
+  highlightedCode: await highlightHomepageCode(example.code, example.syntax),
 })));
 ---
 
@@ -57,14 +44,21 @@ await agent.invoke('Summarize this repository')`,
       <div
         class="banner__start"
         style={`--accent: var(--card-accent-${harnessProduct.accent});`}
-        data-product-name={harnessProduct.name}
-        data-example-closed-label="Code example"
-        data-example-card
+        data-example-container
       >
-        <p class="banner__harness">/harness</p>
+        <p class="banner__harness">{harnessProduct.slug}</p>
 
-        <div class="banner__start-row">
-          <div class="banner__install">
+        <CodeExample
+          id="harness-code-example"
+          productName={harnessProduct.name}
+          panes={harnessExamples}
+          terminalLabel="TypeScript"
+          copyLabel="Copy Strands harness code example"
+          closedLabel="Code example"
+          variant="hero"
+          syncLanguage
+        >
+          <div slot="lead" class="banner__install">
             <InstallCommand
               pip="pip install strands-harness"
               npm="npm i @strands-agents/harness"
@@ -72,55 +66,14 @@ await agent.invoke('Summarize this repository')`,
             />
           </div>
           <a
+            slot="action"
             href={pathWithBase('/docs/user-guide/harness/quickstart/')}
             class="banner__action banner__action--primary"
           >
             Quickstart
             <span class="banner__arrow" set:html={arrow} />
           </a>
-        </div>
-
-        <button
-          type="button"
-          class="banner__example-toggle"
-          aria-expanded="false"
-          aria-controls="harness-code-example"
-          aria-label="View code example for Strands harness"
-          data-example-toggle
-        >
-          <span data-example-toggle-label>Code example</span>
-          <span class="banner__example-icon" aria-hidden="true" set:html={plus} />
-        </button>
-
-        <div id="harness-code-example" class="banner__code-drawer" data-example-panel hidden>
-          <div class="banner__terminal" data-code-terminal data-switchable-code>
-            <header class="banner__terminal-header">
-              <span class="banner__terminal-language" data-terminal-language>
-                {DEFAULT_LANGUAGE_LABEL}
-              </span>
-              <button
-                type="button"
-                class="banner__terminal-copy"
-                aria-label="Copy Strands harness code example"
-                data-code-copy
-              >
-                <span role="status" aria-live="polite" data-code-copy-label>copy</span>
-              </button>
-            </header>
-            {
-              harnessExamples.map((example) => (
-                <div
-                  class="banner__terminal-code"
-                  data-example-language={example.language}
-                  data-code-value={example.code}
-                  hidden={example.language !== DEFAULT_LANGUAGE_LABEL}
-                >
-                  <Fragment set:html={example.highlightedCode} />
-                </div>
-              ))
-            }
-          </div>
-        </div>
+        </CodeExample>
       </div>
     </div>
   </div>
@@ -221,7 +174,7 @@ await agent.invoke('Summarize this repository')`,
     font-size: clamp(22px, 2.1vw, 28px);
     font-weight: 700;
     line-height: 1.2;
-    color: var(--card-accent-orange);
+    color: var(--accent);
   }
 
   .banner__start {
@@ -230,34 +183,19 @@ await agent.invoke('Summarize this repository')`,
     margin-top: 20px;
   }
 
-  .banner__start-row {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-  }
-
   .banner__install {
-    width: fit-content;
+    width: 100%;
     max-width: 100%;
     margin: 0;
     text-align: left;
   }
 
   .banner__install :global(.install) {
-    width: auto;
+    width: 100%;
   }
 
   .banner__install :global(.install__cmd) {
     font-size: 14px;
-  }
-
-  .banner__action,
-  .banner__example-toggle {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1.3;
   }
 
   .banner__action {
@@ -269,6 +207,10 @@ await agent.invoke('Summarize this repository')`,
     gap: 8px;
     color: var(--fg);
     text-decoration: none;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.3;
     border: 1px solid transparent;
     border-radius: 999px;
     transition:
@@ -302,153 +244,6 @@ await agent.invoke('Summarize this repository')`,
   .banner__arrow :global(svg) {
     width: 100%;
     height: 100%;
-  }
-
-  .banner__example-toggle {
-    display: inline-flex;
-    min-height: 38px;
-    margin-top: 9px;
-    padding: 7px 0;
-    align-items: center;
-    gap: 9px;
-    background: transparent;
-    border: 0;
-    color: var(--fg);
-    cursor: pointer;
-    transition: opacity 0.15s ease;
-  }
-
-  .banner__example-toggle:hover {
-    opacity: 0.76;
-  }
-
-  .banner__example-toggle:focus-visible,
-  .banner__terminal-copy:focus-visible {
-    outline: 3px solid var(--accent-green);
-    outline-offset: 3px;
-    border-radius: 4px;
-  }
-
-  .banner__example-icon {
-    position: relative;
-    display: inline-flex;
-    width: 13px;
-    height: 13px;
-    color: var(--accent);
-  }
-
-  .banner__example-icon :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-
-  .banner__start.is-open .banner__example-icon :global(svg) {
-    display: none;
-  }
-
-  .banner__start.is-open .banner__example-icon::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 0;
-    width: 13px;
-    height: 2px;
-    background: var(--accent);
-    border-radius: 2px;
-    transform: translateY(-50%);
-  }
-
-  .banner__code-drawer {
-    width: 100%;
-    max-width: 480px;
-    margin: 14px auto 0;
-    animation: reveal-banner-code 0.2s ease both;
-  }
-
-  .banner__code-drawer[hidden] {
-    display: none;
-  }
-
-  @keyframes reveal-banner-code {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .banner__terminal {
-    min-width: 0;
-    overflow: hidden;
-    text-align: left;
-    background: var(--terminal-bg);
-    border: 1px solid var(--toggle-inactive-border);
-    border-radius: 8px;
-  }
-
-  .banner__terminal-header {
-    display: flex;
-    min-height: 30px;
-    padding: 6px 8px 6px 12px;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    border-bottom: 1px solid var(--toggle-inactive-border);
-  }
-
-  .banner__terminal-language,
-  .banner__terminal-copy {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1.2;
-    letter-spacing: 0.06em;
-  }
-
-  .banner__terminal-language {
-    color: var(--toggle-inactive-fg);
-    text-transform: uppercase;
-  }
-
-  .banner__terminal-copy {
-    margin-left: auto;
-    padding: 4px 7px;
-    background: transparent;
-    border: 0;
-    color: var(--toggle-inactive-fg);
-    cursor: pointer;
-  }
-
-  .banner__terminal-copy.is-copied {
-    color: var(--strands-green);
-  }
-
-  .banner__terminal-code {
-    margin: 0;
-    background: transparent;
-  }
-
-  .banner__terminal-code :global(.astro-code) {
-    margin: 0;
-    padding: 12px 14px 14px;
-    overflow-x: auto;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
-    line-height: 1.5;
-    background: transparent;
-    color: var(--shiki-light);
-  }
-
-  .banner__terminal-code :global(.astro-code span) {
-    color: var(--shiki-light);
-  }
-
-  :global([data-theme='dark']) .banner__terminal-code :global(.astro-code),
-  :global([data-theme='dark']) .banner__terminal-code :global(.astro-code span) {
-    color: var(--shiki-dark);
   }
 
   @media (max-width: 767px) {
@@ -489,13 +284,6 @@ await agent.invoke('Summarize this repository')`,
       margin-top: 22px;
     }
 
-    .banner__start-row {
-      display: grid;
-      width: 100%;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 9px;
-    }
-
     .banner__install {
       width: 100%;
       min-width: 0;
@@ -519,112 +307,17 @@ await agent.invoke('Summarize this repository')`,
     }
 
     .banner__action {
-      width: 100%;
       font-size: 13px;
-    }
-
-    .banner__example-toggle {
-      width: fit-content;
-      margin-top: 5px;
-      font-size: 11px;
-    }
-
-    .banner__terminal-code :global(.astro-code) {
-      padding: 11px 12px 13px;
-      font-size: 10px;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .banner__action,
-    .banner__example-toggle {
+    .banner__action {
       transition: none;
     }
 
     .banner__action:hover {
       transform: none;
     }
-
-    .banner__code-drawer {
-      animation: none;
-    }
   }
 </style>
-
-<script>
-  import { attachCopyButton } from '../util/clipboard'
-  import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../util/language-preference'
-
-  const banner = document.querySelector<HTMLElement>('.banner')
-  const harnessCard = banner?.querySelector<HTMLElement>('[data-example-card]')
-
-  function setExampleOpen(card: HTMLElement, willOpen: boolean) {
-    card.classList.toggle('is-open', willOpen)
-
-    const toggle = card.querySelector<HTMLButtonElement>('[data-example-toggle]')
-    const panel = card.querySelector<HTMLElement>('[data-example-panel]')
-    const label = toggle?.querySelector<HTMLElement>('[data-example-toggle-label]')
-    const productName = card.dataset.productName ?? 'this product'
-
-    toggle?.setAttribute('aria-expanded', willOpen ? 'true' : 'false')
-    toggle?.setAttribute(
-      'aria-label',
-      `${willOpen ? 'Hide' : 'View'} code example for ${productName}`,
-    )
-    if (panel) panel.hidden = !willOpen
-    if (label) {
-      label.textContent = willOpen
-        ? 'Hide code'
-        : (card.dataset.exampleClosedLabel ?? 'View code example')
-    }
-  }
-
-  harnessCard
-    ?.querySelector<HTMLButtonElement>('[data-example-toggle]')
-    ?.addEventListener('click', () => {
-      setExampleOpen(harnessCard, !harnessCard.classList.contains('is-open'))
-    })
-
-  const terminal = banner?.querySelector<HTMLElement>('[data-code-terminal]')
-  const copyButton = terminal?.querySelector<HTMLButtonElement>('[data-code-copy]')
-  if (terminal && copyButton) {
-    attachCopyButton(copyButton, {
-      label: copyButton.querySelector<HTMLElement>('[data-code-copy-label]'),
-      getText: () =>
-        terminal.querySelector<HTMLElement>('.banner__terminal-code:not([hidden])')?.dataset
-          .codeValue ?? '',
-      track: {
-        surface: 'code:homepage',
-        detail: () =>
-          terminal.querySelector<HTMLElement>('[data-terminal-language]')?.textContent?.trim(),
-      },
-    })
-  }
-
-  function currentLanguage() {
-    try {
-      return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python'
-        ? 'Python'
-        : DEFAULT_LANGUAGE_LABEL
-    } catch {
-      return DEFAULT_LANGUAGE_LABEL
-    }
-  }
-
-  function applyHarnessLanguage(language: string) {
-    const activeLanguage = language === 'Python' ? 'Python' : 'TypeScript'
-
-    banner?.querySelectorAll<HTMLElement>('[data-switchable-code]').forEach((codeBlock) => {
-      codeBlock.querySelectorAll<HTMLElement>('[data-example-language]').forEach((example) => {
-        example.hidden = example.dataset.exampleLanguage !== activeLanguage
-      })
-      const label = codeBlock.querySelector<HTMLElement>('[data-terminal-language]')
-      if (label) label.textContent = activeLanguage
-    })
-  }
-
-  applyHarnessLanguage(currentLanguage())
-  window.addEventListener('lang-change', (event: Event) => {
-    applyHarnessLanguage((event as CustomEvent<string>).detail)
-  })
-</script>

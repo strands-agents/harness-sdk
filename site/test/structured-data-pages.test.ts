@@ -5,7 +5,7 @@ import { getCollection } from 'astro:content'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { LANGUAGE_META, PRODUCT_RELEASE_STREAM, SDK_META } from '../src/config/changelog'
-import { products } from '../src/config/navbar'
+import { homepageProducts, products } from '../src/config/navbar'
 import { getPublishedPosts, resolveAuthors } from '../src/util/blog'
 import { sortEntries, toCardModel } from '../src/util/catalog'
 import { releaseSlug } from '../src/util/changelog'
@@ -152,8 +152,6 @@ describe('structured data on every built page', () => {
 
 describe('structured data per page type', () => {
   const sdk = products.find((product) => product.label === 'Harness SDK')!
-  const homepageProductLabels = new Set(['Harness', 'Box', 'Evals', 'Decider'])
-  const homepageProducts = products.filter((product) => homepageProductLabels.has(product.label))
   const routeUrl = (route: string) => `${site}${base}${route}`
 
   it('configures every product with a source repository and languages', () => {

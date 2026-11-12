@@ -1,65 +1,22 @@
 ---
-import {
-  createShikiHighlighter,
-  type CreateShikiHighlighterOptions,
-} from '@astrojs/markdown-remark/shiki'
-
 import arrow from '../assets/banner/arrow.svg?raw'
-import plus from '../assets/toolkit/plus.svg?raw'
-import { products } from '../config/navbar'
+import CodeExample from './CodeExample.astro'
+import { homepageProductGroups } from '../config/navbar'
+import { highlightHomepageCode } from '../util/homepage-highlighter'
 
-function getProduct(label: string) {
-  const product = products.find((candidate) => candidate.label === label)
-  if (!product) throw new Error(`Missing homepage product: ${label}`)
-  return product
-}
-
-const dogwoodLanguage: NonNullable<CreateShikiHighlighterOptions['langs']>[number] = {
-  name: 'dogwood',
-  scopeName: 'source.dogwood',
-  patterns: [
-    {
-      name: 'comment.line.double-slash.dogwood',
-      begin: '//',
-      end: '$',
-    },
-    {
-      name: 'meta.annotation.dogwood',
-      match: '@[A-Za-z_][A-Za-z0-9_]*',
-    },
-    {
-      name: 'keyword.control.dogwood',
-      match: '\\b(?:permit|forbid|when)\\b',
-    },
-    {
-      name: 'support.type.dogwood',
-      match: '\\bBox(?=::)',
-    },
-    {
-      name: 'string.quoted.double.dogwood',
-      begin: '"',
-      end: '"',
-      patterns: [
-        {
-          name: 'constant.character.escape.dogwood',
-          match: '\\\\.',
-        },
-      ],
-    },
-  ],
-}
-
-const highlighter = await createShikiHighlighter({
-  langs: [dogwoodLanguage],
-  themes: {
-    light: 'github-light-high-contrast',
-    dark: 'github-dark-high-contrast',
-  },
-})
-
-const moduleDefinitions = [
+const moduleContent: Record<
+  string,
   {
-    product: getProduct('Box'),
+    category: string
+    title: string
+    description: string
+    cta: string
+    exampleLabel: string
+    syntax: string
+    code: string
+  }
+> = {
+  Box: {
     category: 'Agent sandbox',
     title: 'Contain the agent.',
     description:
@@ -78,8 +35,7 @@ when {
   context.input.path == "~/project/.env"
 };`,
   },
-  {
-    product: getProduct('Decider'),
+  Decider: {
     category: 'Decision model',
     title: 'Make focused decisions.',
     description:
@@ -92,8 +48,7 @@ when {
   --state "Help! My payouts have been failing for 3 days." \
   --choice "Which team should handle this?=billing,technical,sales"`,
   },
-  {
-    product: getProduct('Evals'),
+  Evals: {
     category: 'Evaluation toolkit',
     title: 'Find failures before deployment.',
     description:
@@ -123,24 +78,25 @@ report = Experiment(
 ).run_evaluations(get_response)
 report.display()`,
   },
-]
+}
 
 const modules = await Promise.all(
-  moduleDefinitions.map(async (module) => ({
-    ...module,
-    highlightedCode: await highlighter.codeToHtml(module.code, module.syntax, {
-      defaultColor: false,
-      attributes: { class: 'code-terminal__highlighted-code' },
-    }),
-  })),
+  homepageProductGroups.tools.map(async (product) => {
+    const module = moduleContent[product.label]
+    if (!module) throw new Error(`Missing homepage module content: ${product.label}`)
+    return {
+      ...module,
+      product,
+      highlightedCode: await highlightHomepageCode(module.code, module.syntax),
+    }
+  }),
 )
 ---
 
 <section id="tools" class="toolkit" aria-labelledby="tools-title">
   <div class="toolkit__inner">
     <header class="toolkit__header">
-      <p class="section-eyebrow">Extend your agent</p>
-      <h2 id="tools-title" class="toolkit__title">Add focused tools when you need them.</h2>
+      <h2 id="tools-title" class="toolkit__title">Extend your agent.</h2>
     </header>
 
     <div class="toolkit__modules" role="list" aria-label="Focused Strands tools">
@@ -154,9 +110,7 @@ const modules = await Promise.all(
               class="module-card"
               role="listitem"
               style={`--accent: ${accent};`}
-              data-product-name={module.product.name}
-              data-example-closed-label="View code"
-              data-example-card
+              data-example-container
             >
               <div class="module-card__topline">
                 <p class="module-card__slug">{module.product.slug}</p>
@@ -166,8 +120,22 @@ const modules = await Promise.all(
               <h3 class="module-card__title">{module.title}</h3>
               <p class="module-card__description">{module.description}</p>
 
-              <div class="card-actions card-actions--module">
+              <CodeExample
+                id={exampleId}
+                productName={module.product.name}
+                panes={[
+                  {
+                    code: module.code,
+                    highlightedCode: module.highlightedCode,
+                  },
+                ]}
+                terminalLabel={module.exampleLabel}
+                copyLabel={`Copy ${module.product.name} code example`}
+                closedLabel="View code"
+                accordionGroup="homepage-tools"
+              >
                 <a
+                  slot="action"
                   class="card-action card-action--text"
                   href={module.product.href}
                   aria-label={`${module.cta}: ${module.product.name}`}
@@ -175,37 +143,7 @@ const modules = await Promise.all(
                   {module.cta}
                   <span class="card-action__arrow" set:html={arrow} />
                 </a>
-                <button
-                  type="button"
-                  class="example-toggle example-toggle--compact"
-                  aria-expanded="false"
-                  aria-controls={exampleId}
-                  aria-label={`View code example for ${module.product.name}`}
-                  data-example-toggle
-                >
-                  <span data-example-toggle-label>View code</span>
-                  <span class="example-toggle__icon" aria-hidden="true" set:html={plus} />
-                </button>
-              </div>
-
-              <div id={exampleId} class="code-drawer" data-example-panel hidden>
-                <div class="code-terminal" data-code-terminal>
-                  <header class="code-terminal__header">
-                    <span class="code-terminal__language">{module.exampleLabel}</span>
-                    <button
-                      type="button"
-                      class="code-terminal__copy"
-                      aria-label={`Copy ${module.product.name} code example`}
-                      data-code-copy
-                    >
-                      <span role="status" aria-live="polite" data-code-copy-label>copy</span>
-                    </button>
-                  </header>
-                  <div class="code-terminal__source" data-code-value={module.code}>
-                    <Fragment set:html={module.highlightedCode} />
-                  </div>
-                </div>
-              </div>
+              </CodeExample>
             </article>
           )
         })
@@ -223,17 +161,6 @@ const modules = await Promise.all(
   .toolkit__inner {
     max-width: 1332px;
     margin: 0 auto;
-  }
-
-  .section-eyebrow {
-    margin: 0 0 10px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1.3;
-    color: var(--eyebrow);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
   }
 
   .module-card {
@@ -290,25 +217,6 @@ const modules = await Promise.all(
     white-space: nowrap;
   }
 
-  .card-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .card-actions--module {
-    margin-top: auto;
-    padding-top: 16px;
-    justify-content: space-between;
-  }
-
-  .card-action,
-  .example-toggle {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 700;
-    line-height: 1.3;
-  }
-
   .card-action {
     display: inline-flex;
     width: fit-content;
@@ -316,16 +224,16 @@ const modules = await Promise.all(
     gap: 8px;
     color: var(--fg);
     text-decoration: none;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    line-height: 1.3;
   }
 
-  .card-action:hover,
-  .example-toggle:hover {
+  .card-action:hover {
     opacity: 0.78;
   }
 
-  .card-action:focus-visible,
-  .example-toggle:focus-visible,
-  .code-terminal__copy:focus-visible {
+  .card-action:focus-visible {
     outline: 3px solid var(--accent-green);
     outline-offset: 3px;
     border-radius: 4px;
@@ -344,148 +252,6 @@ const modules = await Promise.all(
   .card-action__arrow :global(svg) {
     width: 100%;
     height: 100%;
-  }
-
-  .example-toggle {
-    display: inline-flex;
-    min-height: 38px;
-    padding: 8px 0;
-    align-items: center;
-    gap: 9px;
-    background: transparent;
-    border: 0;
-    color: var(--fg);
-    font-size: 12px;
-    cursor: pointer;
-  }
-
-  .example-toggle--compact {
-    min-height: 32px;
-    padding: 5px 0;
-    font-size: 11px;
-  }
-
-  .example-toggle__icon {
-    position: relative;
-    display: inline-flex;
-    width: 13px;
-    height: 13px;
-    color: var(--accent);
-  }
-
-  .example-toggle__icon :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-
-  .is-open .example-toggle__icon :global(svg) {
-    display: none;
-  }
-
-  .is-open .example-toggle__icon::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 0;
-    width: 13px;
-    height: 2px;
-    background: var(--accent);
-    border-radius: 2px;
-    transform: translateY(-50%);
-  }
-
-  .code-drawer {
-    margin-top: 18px;
-    padding-top: 18px;
-    border-top: 1px solid color-mix(in srgb, var(--card-border) 70%, transparent);
-    animation: reveal-code 0.2s ease both;
-  }
-
-  .code-drawer[hidden] {
-    display: none;
-  }
-
-  @keyframes reveal-code {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .code-terminal {
-    min-width: 0;
-    overflow: hidden;
-    background: var(--terminal-bg);
-    border: 1px solid var(--toggle-inactive-border);
-    border-radius: 8px;
-  }
-
-  .code-terminal__header {
-    display: flex;
-    min-height: 36px;
-    padding: 8px 10px 8px 13px;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    border-bottom: 1px solid var(--toggle-inactive-border);
-  }
-
-  .code-terminal__language,
-  .code-terminal__copy {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1.2;
-    letter-spacing: 0.06em;
-  }
-
-  .code-terminal__language {
-    color: var(--toggle-inactive-fg);
-    text-transform: uppercase;
-  }
-
-  .code-terminal__copy {
-    margin-left: auto;
-    padding: 4px 7px;
-    background: transparent;
-    border: 0;
-    color: var(--toggle-inactive-fg);
-    cursor: pointer;
-  }
-
-  .code-terminal__copy.is-copied {
-    color: var(--strands-green);
-  }
-
-  .code-terminal__source {
-    margin: 0;
-    min-width: 0;
-    background: transparent;
-  }
-
-  .code-terminal__source :global(.astro-code) {
-    margin: 0;
-    padding: 15px 17px 17px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 12px;
-    line-height: 1.55;
-    background: transparent;
-    white-space: pre;
-    tab-size: 2;
-    color: var(--shiki-light);
-  }
-
-  .code-terminal__source :global(.astro-code span) {
-    color: var(--shiki-light);
-  }
-
-  :global([data-theme='dark']) .code-terminal__source :global(.astro-code),
-  :global([data-theme='dark']) .code-terminal__source :global(.astro-code span) {
-    color: var(--shiki-dark);
   }
 
   .toolkit {
@@ -560,7 +326,7 @@ const modules = await Promise.all(
     color: var(--fg);
   }
 
-  @media (max-width: 1023px) {
+  @media (max-width: 1119px) {
     .toolkit__modules {
       grid-template-columns: 1fr;
     }
@@ -571,21 +337,6 @@ const modules = await Promise.all(
   }
 
   @media (max-width: 767px) {
-    .section-eyebrow {
-      margin-bottom: 12px;
-      font-size: 10px;
-    }
-
-    .card-actions--module {
-      align-items: center;
-      gap: 12px;
-    }
-
-    .code-terminal__source :global(.astro-code) {
-      padding: 13px 14px 15px;
-      font-size: 11px;
-    }
-
     .toolkit {
       padding: 58px 19px 64px;
     }
@@ -616,65 +367,5 @@ const modules = await Promise.all(
     .toolkit__modules {
       transition: none;
     }
-
-    .code-drawer {
-      animation: none;
-    }
   }
 </style>
-
-<script>
-  import { attachCopyButton } from '../util/clipboard'
-
-  const toolkit = document.querySelector<HTMLElement>('.toolkit')
-
-  function setExampleOpen(card: HTMLElement, willOpen: boolean) {
-    card.classList.toggle('is-open', willOpen)
-
-    const toggle = card.querySelector<HTMLButtonElement>('[data-example-toggle]')
-    const panel = card.querySelector<HTMLElement>('[data-example-panel]')
-    const label = toggle?.querySelector<HTMLElement>('[data-example-toggle-label]')
-
-    toggle?.setAttribute('aria-expanded', willOpen ? 'true' : 'false')
-    if (toggle) {
-      const productName = card.dataset.productName ?? 'this product'
-      toggle.setAttribute(
-        'aria-label',
-        `${willOpen ? 'Hide' : 'View'} code example for ${productName}`,
-      )
-    }
-    if (panel) panel.hidden = !willOpen
-    if (label) {
-      label.textContent = willOpen
-        ? 'Hide code'
-        : (card.dataset.exampleClosedLabel ?? 'View code')
-    }
-  }
-
-  toolkit?.querySelectorAll<HTMLElement>('[data-example-card]').forEach((card) => {
-    card.querySelector<HTMLButtonElement>('[data-example-toggle]')?.addEventListener('click', () => {
-      const willOpen = !card.classList.contains('is-open')
-      if (willOpen) {
-        toolkit.querySelectorAll<HTMLElement>('[data-example-card].is-open').forEach((openCard) => {
-          if (openCard !== card) setExampleOpen(openCard, false)
-        })
-      }
-      setExampleOpen(card, willOpen)
-    })
-  })
-
-  toolkit?.querySelectorAll<HTMLElement>('[data-code-terminal]').forEach((terminal) => {
-    const button = terminal.querySelector<HTMLButtonElement>('[data-code-copy]')
-    if (!button) return
-
-    attachCopyButton(button, {
-      label: button.querySelector<HTMLElement>('[data-code-copy-label]'),
-      getText: () => terminal.querySelector<HTMLElement>('[data-code-value]')?.dataset.codeValue ?? '',
-      track: {
-        surface: 'code:homepage',
-        detail: () =>
-          terminal.querySelector<HTMLElement>('.code-terminal__language')?.textContent?.trim(),
-      },
-    })
-  })
-</script>

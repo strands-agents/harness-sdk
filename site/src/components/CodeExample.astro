@@ -1,0 +1,341 @@
+---
+import plus from '../assets/toolkit/plus.svg?raw'
+import { DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
+
+export interface CodeExamplePane {
+  code: string
+  highlightedCode: string
+  language?: string
+}
+
+interface Props {
+  id: string
+  productName: string
+  panes: CodeExamplePane[]
+  terminalLabel: string
+  copyLabel: string
+  closedLabel?: string
+  variant?: 'card' | 'hero'
+  accordionGroup?: string
+  syncLanguage?: boolean
+}
+
+const {
+  id,
+  productName,
+  panes,
+  terminalLabel,
+  copyLabel,
+  closedLabel = 'View code',
+  variant = 'card',
+  accordionGroup,
+  syncLanguage = false,
+} = Astro.props
+const hasLead = Astro.slots.has('lead')
+const hasAction = Astro.slots.has('action')
+---
+
+<div
+  class:list={['code-example', `code-example--${variant}`]}
+  data-product-name={productName}
+  data-example-closed-label={closedLabel}
+  data-example-group={accordionGroup}
+  data-code-language-sync={syncLanguage ? 'true' : undefined}
+  data-example-card
+>
+  {hasLead && <div class="code-example__lead"><slot name="lead" /></div>}
+
+  <div class="code-example__controls">
+    {hasAction && <slot name="action" />}
+    <button
+      type="button"
+      class="code-example__toggle"
+      aria-expanded="false"
+      aria-controls={id}
+      aria-label={`View code example for ${productName}`}
+      data-example-toggle
+    >
+      <span data-example-toggle-label>{closedLabel}</span>
+      <span class="code-example__icon" aria-hidden="true" set:html={plus} />
+    </button>
+  </div>
+
+  <div id={id} class="code-example__drawer" data-example-panel hidden>
+    <div class="code-example__terminal" data-code-terminal>
+      <header class="code-example__terminal-header">
+        <span class="code-example__terminal-language" data-terminal-language>
+          {syncLanguage ? DEFAULT_LANGUAGE_LABEL : terminalLabel}
+        </span>
+        <button
+          type="button"
+          class="code-example__copy"
+          aria-label={copyLabel}
+          data-code-copy
+        >
+          <span role="status" aria-live="polite" data-code-copy-label>copy</span>
+        </button>
+      </header>
+      {
+        panes.map((pane) => (
+          <div
+            class="code-example__source"
+            data-example-language={pane.language}
+            data-code-value={pane.code}
+            hidden={syncLanguage && pane.language !== DEFAULT_LANGUAGE_LABEL}
+          >
+            <Fragment set:html={pane.highlightedCode} />
+          </div>
+        ))
+      }
+    </div>
+  </div>
+</div>
+
+<style>
+  .code-example {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .code-example__lead {
+    width: 100%;
+  }
+
+  .code-example__controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .code-example--card .code-example__controls {
+    margin-top: auto;
+    padding-top: 16px;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .code-example--hero .code-example__controls {
+    margin-top: 9px;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  .code-example__toggle {
+    display: inline-flex;
+    min-height: 32px;
+    padding: 5px 0;
+    align-items: center;
+    gap: 9px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--fg);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+
+  .code-example--hero .code-example__toggle {
+    min-height: 44px;
+    padding: 10px 0;
+    font-size: 14px;
+  }
+
+  .code-example__toggle:hover {
+    opacity: 0.76;
+  }
+
+  .code-example__toggle:focus-visible,
+  .code-example__copy:focus-visible {
+    outline: 3px solid var(--accent-green);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  .code-example__icon {
+    position: relative;
+    display: inline-flex;
+    width: 13px;
+    height: 13px;
+    color: var(--accent);
+  }
+
+  .code-example__icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .code-example.is-open .code-example__icon :global(svg) {
+    display: none;
+  }
+
+  .code-example.is-open .code-example__icon::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 13px;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 2px;
+    transform: translateY(-50%);
+  }
+
+  .code-example__drawer {
+    animation: reveal-code-example 0.2s ease both;
+  }
+
+  .code-example--card .code-example__drawer {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid color-mix(in srgb, var(--card-border) 70%, transparent);
+  }
+
+  .code-example--hero .code-example__drawer {
+    width: 100%;
+    max-width: 480px;
+    margin: 14px auto 0;
+  }
+
+  .code-example__drawer[hidden] {
+    display: none;
+  }
+
+  @keyframes reveal-code-example {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .code-example__terminal {
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+    background: var(--terminal-bg);
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 8px;
+  }
+
+  .code-example__terminal-header {
+    display: flex;
+    min-height: 36px;
+    padding: 8px 10px 8px 13px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 1px solid var(--toggle-inactive-border);
+  }
+
+  .code-example--hero .code-example__terminal-header {
+    min-height: 30px;
+    padding: 6px 8px 6px 12px;
+  }
+
+  .code-example__terminal-language,
+  .code-example__copy {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.06em;
+  }
+
+  .code-example__terminal-language {
+    color: var(--terminal-lineno);
+    text-transform: uppercase;
+  }
+
+  .code-example__copy {
+    margin-left: auto;
+    padding: 4px 7px;
+    color: var(--terminal-lineno);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+  }
+
+  .code-example__copy.is-copied {
+    color: var(--accent-green);
+  }
+
+  .code-example__source {
+    min-width: 0;
+    margin: 0;
+    background: transparent;
+  }
+
+  .code-example__source :global(.astro-code) {
+    margin: 0;
+    padding: 15px 17px 17px;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--shiki-light);
+    white-space: pre;
+    tab-size: 2;
+    background: transparent;
+  }
+
+  .code-example--hero .code-example__source :global(.astro-code) {
+    padding: 12px 14px 14px;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .code-example__source :global(.astro-code span) {
+    color: var(--shiki-light);
+  }
+
+  :global([data-theme='dark']) .code-example__source :global(.astro-code),
+  :global([data-theme='dark']) .code-example__source :global(.astro-code span) {
+    color: var(--shiki-dark);
+  }
+
+  @media (max-width: 767px) {
+    .code-example--card .code-example__source :global(.astro-code) {
+      padding: 13px 14px 15px;
+      font-size: 11px;
+    }
+
+    .code-example--hero .code-example__controls {
+      margin-top: 5px;
+      gap: 14px;
+    }
+
+    .code-example--hero .code-example__toggle {
+      font-size: 13px;
+    }
+
+    .code-example--hero .code-example__source :global(.astro-code) {
+      padding: 11px 12px 13px;
+      font-size: 10px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .code-example__toggle {
+      transition: none;
+    }
+
+    .code-example__drawer {
+      animation: none;
+    }
+  }
+</style>
+
+<script>
+  import { initHomepageCodeExamples } from '../util/homepage-code-examples'
+
+  initHomepageCodeExamples()
+</script>

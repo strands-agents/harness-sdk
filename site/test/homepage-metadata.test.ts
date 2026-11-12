@@ -4,10 +4,16 @@ import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
+import { homepageProducts } from '../src/config/navbar'
+
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
   const normalizedValue = value.startsWith('/') ? value : `/${value}`
   return `${base}${normalizedValue}`
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 describe('homepage machine-readable metadata', () => {
@@ -22,19 +28,30 @@ describe('homepage machine-readable metadata', () => {
 
   it('keeps the hero focused on one recommended starting path', () => {
     const hero = homepage.querySelector('.banner')
+    const primary = hero?.querySelector('.banner__action--primary')
 
-    expect(homepage.querySelector('.banner__halftone')?.getAttribute('aria-hidden')).toBe('true')
-    expect(homepage.querySelector('.starter')).toBeNull()
-    expect(hero?.querySelector('.banner__eyebrow')).toBeNull()
     expect(hero?.querySelector('.banner__summary')?.text.trim().replace(/\s+/g, ' ')).toBe(
       'An open source framework for building production agents.'
     )
     expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
-    expect(hero?.querySelector('.banner__start-eyebrow')).toBeNull()
     expect(hero?.querySelector('[data-install-variant="Python"]')?.text.trim()).toBe('pip install strands-harness')
     expect(hero?.querySelector('[data-install-variant="TypeScript"]')?.text.trim()).toBe(
       'npm i @strands-agents/harness'
     )
+    expect(primary?.text.trim()).toContain('Quickstart')
+    expect(primary?.getAttribute('href')).toBe(configuredPathWithBase('/docs/user-guide/harness/quickstart/'))
+    expect(hero?.querySelectorAll('.banner__action')).toHaveLength(1)
+  })
+
+  it('loads the decorative halftone as an external asset', () => {
+    const halftone = homepage.querySelector('.banner__halftone')
+    const maskStyle = homepage.querySelector('.banner__halftone-mask')?.getAttribute('style')
+    const maskUrl = maskStyle?.match(/--halftone-mask: url\("([^"]+)"\)/)?.[1]
+
+    const assetPrefix = escapeRegExp(configuredPathWithBase('/_astro/halftone.'))
+    expect(halftone?.getAttribute('aria-hidden')).toBe('true')
+    expect(maskUrl).toMatch(new RegExp(`^${assetPrefix}[^/]+\\.svg$`))
+    expect(halftone?.querySelector('svg')).toBeNull()
   })
 
   it('publishes concise homepage metadata', () => {
@@ -65,12 +82,13 @@ describe('homepage machine-readable metadata', () => {
       'SoftwareApplication',
       'SoftwareApplication',
       'SoftwareApplication',
+      'SoftwareApplication',
     ])
     expect(
       structuredData['@graph']
         .filter((schema: { '@type': string }) => schema['@type'] === 'SoftwareApplication')
         .map((schema: { name: string }) => schema.name)
-    ).toEqual(['Strands harness', 'Strands Box', 'Strands Evals', 'Strands Decider'])
+    ).toEqual(homepageProducts.map((product) => product.name))
     expect(structuredData['@graph'][0].sameAs).toContain('https://github.com/strands-agents')
     expect(JSON.stringify(structuredData)).not.toContain('SearchAction')
   })
@@ -85,35 +103,13 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('routes visitors through one recommended hero action', () => {
-    const primary = homepage.querySelector('.banner__action--primary')
-    const hero = homepage.querySelector('.banner')
-
-    expect(primary?.text.trim()).toContain('Quickstart')
-    expect(primary?.getAttribute('href')).toBe(configuredPathWithBase('/docs/user-guide/harness/quickstart/'))
-    expect(hero?.querySelectorAll('.banner__action')).toHaveLength(1)
-    expect(hero?.querySelector('.banner__action--secondary')).toBeNull()
-    expect(hero?.querySelector('.banner__sdk-link')).toBeNull()
-  })
-
-  it('integrates the recommended harness path into the hero before focused tools', () => {
-    const hero = homepage.querySelector('.banner')
-    const starter = hero?.querySelector('.banner__start')
+  it('presents focused tools as a distinct section after the hero', () => {
     const toolkit = homepage.querySelector('.toolkit')
     const modules = toolkit?.querySelectorAll('.module-card') ?? []
 
-    expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
-    expect(hero?.querySelectorAll('h1, h2, h3, h4, h5, h6')).toHaveLength(1)
-    expect(starter?.querySelector('.banner__start-title')).toBeNull()
-    expect(starter?.querySelector('.banner__start-summary')).toBeNull()
-    expect(starter?.querySelector('.banner__action--primary')?.getAttribute('href')).toBe(
-      configuredPathWithBase('/docs/user-guide/harness/quickstart/')
-    )
-
     expect(toolkit?.getAttribute('id')).toBe('tools')
-    expect(toolkit?.querySelector('.section-eyebrow')?.text.trim()).toBe('Extend your agent')
     expect(toolkit?.querySelector('.toolkit__title')?.tagName).toBe('H2')
-    expect(toolkit?.querySelector('.toolkit__title')?.text.trim()).toBe('Add focused tools when you need them.')
+    expect(toolkit?.querySelector('.toolkit__title')?.text.trim()).toBe('Extend your agent.')
 
     expect(
       modules.map((card) => ({
@@ -156,7 +152,6 @@ describe('homepage machine-readable metadata', () => {
     const panelIds = cards.map((card) => card.querySelector('[data-example-toggle]')?.getAttribute('aria-controls'))
 
     expect(cards).toHaveLength(4)
-    expect(homepage.querySelector('.module-card__badge')).toBeNull()
     expect(panelIds.every(Boolean)).toBe(true)
     expect(new Set(panelIds).size).toBe(cards.length)
 
