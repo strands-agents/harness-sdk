@@ -13,6 +13,7 @@ import type {
 import { OptimizePanel } from '../../../src/dev/panels/optimize.js'
 import { TestPanel } from '../../../src/dev/panels/test.js'
 import { listWindow } from '../../../src/dev/panels/ui.js'
+import type { DevChatPanelProps } from '../../../src/ui/chat/types.js'
 import { DevPanelClicks, DevPanelFrame } from '../../../src/ui/panels/dev.js'
 import { experimentsSession, generation, panelProps as freshProps, show, store } from './fixtures.js'
 
@@ -90,7 +91,7 @@ const showInFrame = async (session: TestSession, clicks: DevPanelClicks) => {
     command: 'test',
     title: '/test',
     rows: [],
-    view: (viewProps: typeof props) => createElement(TestPanel, { ...viewProps, session }),
+    view: (viewProps: DevChatPanelProps) => createElement(TestPanel, { ...viewProps, session }),
     close: props.close,
     openCommand: props.openCommand,
   }
