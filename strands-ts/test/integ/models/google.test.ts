@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk'
+import { z } from 'zod'
+import {
+  Agent,
+  DocumentBlock,
+  ImageBlock,
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  tool,
+} from '@strands-agents/sdk'
 import type { ModelStreamEvent } from '$/sdk/models/streaming.js'
 
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 
 import { gemini } from '../__fixtures__/model-providers.js'
+import { loadFixture } from '../__fixtures__/test-helpers.js'
+import yellowPngUrl from '../__resources__/yellow.png?url'
+import letterPdfUrl from '../__resources__/letter.pdf?url'
 
 /**
  * Gemini-specific integration tests.
@@ -161,6 +174,33 @@ describe.skipIf(gemini.skip)('GoogleModel Integration Tests', () => {
         expect(usage!.outputTokens).toBeGreaterThan(0)
         expect(usage!.totalTokens).toBe(usage!.inputTokens + usage!.outputTokens)
       })
+    })
+  })
+
+  describe('Tool results', () => {
+    it('reads images and documents a tool returns', async () => {
+      const imageBytes = await loadFixture(yellowPngUrl)
+      const pdfBytes = await loadFixture(letterPdfUrl)
+      const fetchAttachments = tool({
+        name: 'fetch_attachments',
+        description: 'Fetch the attached photo and letter.',
+        inputSchema: z.object({}),
+        callback: () => [
+          new ImageBlock({ format: 'png', source: { bytes: imageBytes } }),
+          new DocumentBlock({ name: 'letter', format: 'pdf', source: { bytes: pdfBytes } }),
+        ],
+      })
+      // Only Gemini 3 and later models read media in function responses.
+      const model = gemini.createModel({ modelId: 'gemini-3.1-flash-lite', params: { temperature: 0.15 } })
+      const agent = new Agent({ model, tools: [fetchAttachments], printer: false })
+
+      const result = await agent.invoke(
+        'Call fetch_attachments. What color is the photo, and who is the letter addressed to?'
+      )
+      const text = result.toString().toLowerCase()
+
+      expect(text).toContain('yellow')
+      expect(text).toContain('shareholder')
     })
   })
 

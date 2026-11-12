@@ -1253,8 +1253,8 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      // Image goes to separate parts, not into response.output
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      // Image goes to separate parts; response.output keeps a $ref to it
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'image.png' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'iVBORw==', mimeType: 'image/png', displayName: 'image.png' } },
       ])
@@ -1277,13 +1277,17 @@ describe('GoogleModel', () => {
 
       const contents = formatMessages(messages)
 
-      const resultPart = contents[1]!.parts![0]! as {
-        functionResponse: { parts?: Array<{ inlineData: { displayName: string } }> }
-      }
-      const displayNames = resultPart.functionResponse.parts!.map((p) => p.inlineData.displayName)
+      const resultPart = contents[1]!.parts![0]! as { functionResponse: unknown }
       // Gemini rejects duplicate part names within one function_response.parts.
-      expect(new Set(displayNames).size).toBe(displayNames.length)
-      expect(displayNames).toEqual(['image.png', 'image-1.png'])
+      expect(resultPart.functionResponse).toEqual(
+        expect.objectContaining({
+          response: { output: [{ $ref: 'image.png' }, { $ref: 'image-1.png' }] },
+          parts: [
+            { inlineData: { data: 'iVBORw==', mimeType: 'image/png', displayName: 'image.png' } },
+            { inlineData: { data: 'iVBOSA==', mimeType: 'image/png', displayName: 'image-1.png' } },
+          ],
+        })
+      )
     })
 
     it('disambiguates displayName for documents sharing a name in one tool result', () => {
@@ -1303,12 +1307,63 @@ describe('GoogleModel', () => {
 
       const contents = formatMessages(messages)
 
-      const resultPart = contents[1]!.parts![0]! as {
-        functionResponse: { parts?: Array<{ inlineData: { displayName: string } }> }
+      const resultPart = contents[1]!.parts![0]! as { functionResponse: unknown }
+      expect(resultPart.functionResponse).toEqual(
+        expect.objectContaining({
+          response: { output: [{ $ref: 'report.pdf' }, { $ref: 'report-1.pdf' }] },
+          parts: [
+            { inlineData: { data: 'JVA=', mimeType: 'application/pdf', displayName: 'report.pdf' } },
+            { inlineData: { data: 'JVE=', mimeType: 'application/pdf', displayName: 'report-1.pdf' } },
+          ],
+        })
+      )
+    })
+
+    it.each([
+      { source: { bytes: new Uint8Array([0x68]) }, kind: 'bytes' },
+      { source: { text: 'h' }, kind: 'text' },
+    ])('names an unnamed tool-result document after its format ($kind source)', ({ source }) => {
+      const toolResultBlock = new ToolResultBlock({
+        toolUseId: 'test-id',
+        status: 'success',
+        content: [new DocumentBlock({ name: '', format: 'txt', source })],
+      })
+
+      const contents = formatMessages([new Message({ role: 'user', content: [toolResultBlock] })])
+
+      const resultPart = contents[0]!.parts![0]! as { functionResponse: unknown }
+      expect(resultPart.functionResponse).toEqual(
+        expect.objectContaining({
+          response: { output: [{ $ref: 'document.txt' }] },
+          parts: [{ inlineData: { data: 'aA==', mimeType: 'text/plain', displayName: 'document.txt' } }],
+        })
+      )
+    })
+
+    it('skips a location-source image in a tool result without a $ref', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const toolResultBlock = new ToolResultBlock({
+        toolUseId: 'test-id',
+        status: 'success',
+        content: [
+          new TextBlock('clip'),
+          new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/key.png' } } }),
+        ],
+      })
+
+      try {
+        const contents = formatMessages([new Message({ role: 'user', content: [toolResultBlock] })])
+
+        const resultPart = contents[0]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
+        expect(resultPart.functionResponse.response).toEqual({ output: [{ text: 'clip' }] })
+        expect(resultPart.functionResponse.parts).toBeUndefined()
+        expect(warnSpy).toHaveBeenCalledWith(
+          'source_type=<%s> | only bytes sources supported in gemini tool results',
+          'imageSourceS3Location'
+        )
+      } finally {
+        warnSpy.mockRestore()
       }
-      const displayNames = resultPart.functionResponse.parts!.map((p) => p.inlineData.displayName)
-      expect(new Set(displayNames).size).toBe(displayNames.length)
-      expect(displayNames).toEqual(['report.pdf', 'report-1.pdf'])
     })
 
     it('formats document block with bytes source in tool result as inlineData', () => {
@@ -1327,7 +1382,7 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'report.pdf' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'JVBERg==', mimeType: 'application/pdf', displayName: 'report.pdf' } },
       ])
@@ -1348,7 +1403,7 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'notes.txt' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'SGVsbG8=', mimeType: 'text/plain', displayName: 'notes.txt' } },
       ])
@@ -1396,7 +1451,9 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [{ text: 'Analysis complete' }] })
+      expect(resultPart.functionResponse.response).toEqual({
+        output: [{ text: 'Analysis complete' }, { $ref: 'image.jpeg' }],
+      })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'AQI=', mimeType: 'image/jpeg', displayName: 'image.jpeg' } },
       ])
