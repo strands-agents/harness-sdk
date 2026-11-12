@@ -62,10 +62,10 @@ export class GeminiDecisionModel extends DecisionModel {
       modelId: GEMINI_DEFAULT_MODEL_ID,
       defaultMinConfidence: GEMINI_DEFAULT_MIN_CONFIDENCE,
       maxQuestions: GEMINI_MAX_QUESTIONS,
+      noulConfidenceFromProvider: true,
     })
     this._providerConfig = {
       ...providerConfig,
-      noulConfidenceFromProvider: true,
       buildRequestBody: (state, questions): Record<string, unknown> => ({
         model: providerConfig.modelId,
         input: toGeminiInput(state),

@@ -99,6 +99,9 @@ export function resolveSystemOneProviderConfig(
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
     ...(defaults.apiKeyHeader !== undefined && { apiKeyHeader: defaults.apiKeyHeader }),
+    ...(defaults.noulConfidenceFromProvider !== undefined && {
+      noulConfidenceFromProvider: defaults.noulConfidenceFromProvider,
+    }),
   }
 }
 
