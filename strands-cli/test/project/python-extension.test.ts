@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentExtensionHost } from '../../src/agent/extension.js'
 import type { ChatEvent } from '../../src/agent/types.js'
 import { CliConfigStore } from '../../src/config/store.js'
-import { PythonBackend } from '../../src/project/python.js'
+import { PythonBackend, type PythonOptions } from '../../src/project/python.js'
 import { pythonExecutable as python } from '../fixtures/python-runtime.js'
 
 const source = `from strands_harness import create_harness
@@ -30,12 +30,23 @@ class EchoSystemModel(SourceReloadModel):
         yield {"metadata": {"usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}}}
 
 
-agent = create_harness(
-    model=EchoSystemModel(), effort="off", caching=False, instructions="You answer refund questions.",
-    builtin_tools=[], builtin_plugins=[], memory=False, session=False, skills=False,
-    context_manager=False, background_tasks=False,
-)
+def create_agent(**overrides):
+    options = dict(
+        model=EchoSystemModel(), effort="off", caching=False, instructions="You answer refund questions.",
+        builtin_tools=[], builtin_plugins=[], memory=False, session=False, skills=False,
+        context_manager=False, background_tasks=False,
+    )
+    options.update(overrides)
+    return create_harness(**options)
+
+
+agent = create_agent()
 `
+
+const withInstructions = (host: AgentExtensionHost, instructions: string): AgentExtensionHost => ({
+  ...host,
+  extension: { ...host.extension, instructions },
+})
 
 const extensionHost = (calls: [string, JSONValue][]): AgentExtensionHost => ({
   extension: {
@@ -79,15 +90,20 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  const open = async (calls: [string, JSONValue][]): Promise<PythonBackend> => {
+  const open = async (
+    calls: [string, JSONValue][],
+    options: PythonOptions = {},
+    authored = source,
+    host = extensionHost(calls)
+  ): Promise<PythonBackend> => {
     const entrypoint = join(root, 'agent.py')
-    await writeFile(entrypoint, source)
+    await writeFile(entrypoint, authored)
     const backend = await PythonBackend.open(
       { root, entrypoint, language: 'python' },
       CliConfigStore.memory(),
-      { cwd: root, interactive: true },
+      { cwd: root, interactive: true, ...options },
       AbortSignal.timeout(15_000),
-      extensionHost(calls)
+      host
     )
     backends.push(backend)
     return backend
@@ -166,5 +182,30 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
         content: [{ type: 'text', text: 'There is no experiment named refunds.' }],
       })
     )
+  })
+
+  it('shouldKeepOnlyTheNewInstructionsWhenASavedSessionHoldsOlderOnes', { timeout: 30_000 }, async () => {
+    const resumable = source.replace('session=False', 'session=True')
+    const first = await open(
+      [],
+      { sessionId: 'saved-session' },
+      resumable,
+      withInstructions(extensionHost([]), '<strands_dev>\nold workspace\n</strands_dev>')
+    )
+    await turn(first, 'echo system')
+    await first.dispose()
+
+    const resumed = await open(
+      [],
+      { sessionId: 'saved-session', resume: true },
+      resumable,
+      withInstructions(extensionHost([]), '<strands_dev>\nnew workspace\n</strands_dev>')
+    )
+    const prompt = text(await turn(resumed, 'echo system'))
+
+    expect(prompt).toContain('You answer refund questions.')
+    expect(prompt).toContain('new workspace')
+    expect(prompt).not.toContain('old workspace')
+    expect(prompt.match(/<strands_dev>/gu)).toHaveLength(1)
   })
 })

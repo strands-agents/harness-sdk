@@ -181,11 +181,12 @@ def host_tool(spec):
     )
 
 
-def append_instructions(agent, instructions):
-    content = agent.system_prompt_content or []
-    if not instructions or any(block.get("text") == instructions for block in content):
+def replace_instructions(agent, instructions):
+    if not instructions:
         return
-    agent.system_prompt = [*content, {"text": instructions}]
+    heading = instructions.split("\n", 1)[0]
+    kept = [block for block in agent.system_prompt_content or [] if not block.get("text", "").startswith(heading)]
+    agent.system_prompt = [*kept, {"text": instructions}]
 
 
 async def permission(request):
@@ -561,7 +562,7 @@ class Runtime:
                 await skills.init_agent(agent)
             else:
                 agent._plugin_registry.add_and_init(AgentSkills(skills=added))
-        append_instructions(agent, self.extension.get("instructions", ""))
+        replace_instructions(agent, self.extension.get("instructions", ""))
 
     def attach_context_capture(self, agent):
         # Python exposes effective model requests only through the optional middleware registry.
