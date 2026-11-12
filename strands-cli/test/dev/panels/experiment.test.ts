@@ -3,11 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ExperimentPanel, generationSummary } from '../../../src/dev/panels/experiment.js'
 import { ExperimentPicker } from '../../../src/dev/panels/picker.js'
-import { experimentsSession, generation, generationForm, panelProps, show } from './fixtures.js'
+import { experimentsSession, generation, panelProps, show } from './fixtures.js'
 
 const ENTER = '\r'
 const DOWN = '\u001b[B'
-const RIGHT = '\u001b[C'
 const ESC = '\u001b'
 
 const saved = { name: 'capital', path: '/w/strands-dev/tmp/experiments/capital.json', caseCount: 12 }
@@ -143,74 +142,37 @@ describe('ExperimentPanel home', () => {
   })
 })
 
-describe('ExperimentPanel form', () => {
-  const openForm = async () => {
-    const { session } = experimentsSession({}, generationForm({ task: '' }))
-    const view = await show(createElement(ExperimentPanel, { ...panelProps(), height: 20, session }), 26)
-    await view.press(ENTER)
-    return { session, ...view }
-  }
+describe('ExperimentPanel new experiment', () => {
+  it.each([
+    ['Enter', ENTER],
+    ['n', 'n'],
+  ])('shouldCloseThePanelAndStartTheSkillInTheChatWhenTheUserPresses%s', async (_key, key) => {
+    const { session } = experimentsSession()
+    const props = panelProps()
+    const { press, text } = await show(createElement(ExperimentPanel, { ...props, session }), 24)
+    const home = text()
 
-  it('shouldShowEveryGeneratorSettingWhenTheFormOpens', async () => {
-    const { text } = await openForm()
+    await press(key)
 
-    for (const label of [
-      'Name',
-      'Task',
-      'More context',
-      'Cases',
-      'Topics',
-      'Evaluator',
-      'Expected output',
-      'Model',
-      'Parallel',
-    ])
-      expect(text()).toContain(label)
-    expect(text()).toContain('context: agent.py · 3 tools · instructions.md')
+    expect(home).toMatch(/\+ New experiment\s+describe it to the agent in the chat/u)
+    expect(props.close).toHaveBeenCalledOnce()
+    expect(session.startInChat).toHaveBeenCalledOnce()
+    expect(session.generate).not.toHaveBeenCalled()
   })
 
-  it('shouldGenerateWithTheTypedAndChosenSettingsWhenTheUserPressesEnter', async () => {
-    const { session, press } = await openForm()
-
-    for (const key of 'Refunds') await press(key)
-    await press(DOWN)
-    await press(DOWN)
-    await press(RIGHT)
-    await press(DOWN)
-    await press(RIGHT)
+  it('shouldAskTheAgentToFixAFailedGenerationWhenTheUserPressesEnterOnIt', async () => {
+    const { session } = mixed()
+    const props = panelProps()
+    const { press, text } = await show(createElement(ExperimentPanel, { ...props, session }), 24)
     for (let step = 0; step < 3; step++) await press(DOWN)
-    await press(' ')
     await press(ENTER)
-
-    expect(session.generate).toHaveBeenCalledWith(
-      expect.objectContaining({ task: 'Refunds', cases: 20, topics: 2, expectedTrajectory: true }),
-      undefined
-    )
-  })
-
-  it('shouldApplyEveryKeyWhenKeysArriveInOneBurst', async () => {
-    const { session, press } = await openForm()
-
-    await press('Refunds')
-    await press('\u001b[A')
-    await press('\u007f'.repeat('experiment-1'.length))
-    await press('billing')
-    await press(ENTER)
-
-    expect(session.generate).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'billing', task: 'Refunds' }),
-      undefined
-    )
-  })
-
-  it('shouldShowTheProblemAndStayOpenWhenTheSettingsAreRefused', async () => {
-    const { session, press, text } = await openForm()
-    session.generate.mockReturnValue('Describe the task of the agent.')
+    const detail = text()
 
     await press(ENTER)
 
-    expect(text()).toContain('Describe the task of the agent.')
-    expect(text()).toContain('Enter generate')
+    expect(detail).toContain('Enter fix it in the chat')
+    expect(props.close).toHaveBeenCalledOnce()
+    expect(session.retryInChat).toHaveBeenCalledWith('generation-3')
   })
 })
 

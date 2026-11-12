@@ -36,7 +36,8 @@ import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
 import type { AgentExtensionHost } from '../../agent/extension.js'
 import { devChatExtension } from '../../dev/chat-extension.js'
-import { temporaryDevCommands } from '../../dev/temporary-evals-fork/command.js'
+import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/agent-context.js'
+import { temporaryDevChatPart, temporaryDevCommands } from '../../dev/temporary-evals-fork/command.js'
 import { readDevWorkspace, type DevWorkspace } from '../../dev/workspace.js'
 import {
   createInteractiveRuntime,
@@ -68,8 +69,10 @@ async function restoreSessionNames(
 
 const devExtension = (
   workspace: DevWorkspace | undefined,
-  project: ImportedAgentProject
-): AgentExtensionHost | undefined => (workspace ? devChatExtension(workspace, project, []) : undefined)
+  project: ImportedAgentProject,
+  agent: () => TemporaryAgentFacts
+): AgentExtensionHost | undefined =>
+  workspace ? devChatExtension(workspace, project, [temporaryDevChatPart(workspace, project, agent)]) : undefined
 
 const nestedWorkspace = (project: ImportedAgentProject, workspace: DevWorkspace | undefined): string[] =>
   workspace?.directory && workspace.directory !== project.root && containsPath(project.root, workspace.directory)
@@ -87,7 +90,8 @@ export async function createTypescriptChat(
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
   const devWorkspace = options.args.dev?.workspace ? await readDevWorkspace(options.args.dev.workspace) : undefined
-  const extension = devExtension(devWorkspace, project)
+  let devAgent = (): TemporaryAgentFacts => ({})
+  const extension = devExtension(devWorkspace, project, () => devAgent())
   const messaging = new AgentMessaging()
   const catalog = await SessionRootCatalog.load(
     options.args.dev?.workspace ? resolve(options.args.dev.workspace, '.strands/state/catalog') : undefined
@@ -110,6 +114,7 @@ export async function createTypescriptChat(
       signal,
       extension
     )
+    devAgent = (): TemporaryAgentFacts => backend.info?.() ?? {}
     try {
       signal.throwIfAborted()
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
@@ -322,8 +327,10 @@ export async function createPythonChat(
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
   const devWorkspace = options.devWorkspace ? await readDevWorkspace(options.devWorkspace) : undefined
-  const extension = devExtension(devWorkspace, project)
+  let devAgent = (): TemporaryAgentFacts => ({})
+  const extension = devExtension(devWorkspace, project, () => devAgent())
   const createController = async (backend: PythonBackend, conversation?: ChatConversation): Promise<ChatController> => {
+    devAgent = (): TemporaryAgentFacts => backend.info?.() ?? {}
     const snapshot = config.snapshot()
     const sessions = new FileSessionRuntime(backend, backend.sessionDirectory, {
       workspace: backend.cwd,

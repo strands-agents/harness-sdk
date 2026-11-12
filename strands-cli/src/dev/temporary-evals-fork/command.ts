@@ -5,8 +5,11 @@ import type { DevChatCommand, DevChatCommandContext, DevChatJob, DevChatPanelVie
 import { ExperimentPanel } from '../panels/experiment.js'
 import { OptimizePanel } from '../panels/optimize.js'
 import { TestPanel } from '../panels/test.js'
+import type { DevChatPart } from '../chat-extension.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryAgentFacts } from './agent-context.js'
+import { temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
+import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
 import {
@@ -99,6 +102,18 @@ const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject)
   entrypoint: project.entrypoint,
   config: { ...workspace.config, language: project.language },
 })
+
+export const temporaryDevChatPart = (
+  workspace: DevWorkspace,
+  project: ImportedAgentProject,
+  agent: () => TemporaryAgentFacts
+): DevChatPart => {
+  const target = targetWorkspace(workspace, project)
+  return temporaryAgentTools({
+    sessions: () => temporaryDevSessions({ workspace: target, agent }),
+    evaluators: () => readTemporaryEvaluators(target),
+  })
+}
 
 export const temporaryDevCommands = (
   workspace: DevWorkspace,

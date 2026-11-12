@@ -42,17 +42,6 @@ export interface GenerationSettings {
   readonly metadata: boolean
 }
 
-export interface GenerationForm {
-  readonly settings: GenerationSettings
-  readonly agentContext: string
-  readonly choices: {
-    readonly cases: readonly number[]
-    readonly topics: readonly number[]
-    readonly parallel: readonly number[]
-    readonly evaluators: readonly string[]
-  }
-}
-
 export type GenerationPhase = 'preparing' | 'planning' | 'cases' | 'rubric' | 'ready' | 'failed'
 
 export interface GenerationError {
@@ -107,7 +96,8 @@ export interface ExperimentSession {
   subscribe(listener: () => void): () => void
   snapshot(): ExperimentsState
   refresh(): void
-  form(): GenerationForm
+  startInChat(): void
+  retryInChat(id: string): void
   generate(settings: GenerationSettings, replace?: string): string | undefined
   cancel(id: string): void
   dismiss(id: string): void

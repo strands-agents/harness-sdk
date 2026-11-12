@@ -1,0 +1,416 @@
+import type { JSONValue } from '@strands-agents/sdk'
+import { describe, expect, it, vi } from 'vitest'
+
+import type { DevChatTool } from '../../../src/dev/chat-extension.js'
+import type {
+  ExperimentsState,
+  ExperimentSummary,
+  GenerationSettings,
+  Knob,
+  OptimizePlan,
+  OptimizeReview,
+  OptimizeState,
+  TestResults,
+  TestState,
+} from '../../../src/dev/panels/model.js'
+import { temporaryDevChatPart } from '../../../src/dev/temporary-evals-fork/agent-tools.js'
+import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/evaluators.js'
+import type { TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
+import { generationSettings } from '../panels/fixtures.js'
+
+const REFUNDS: ExperimentSummary = {
+  name: 'refunds',
+  path: '/w/strands-dev/tmp/experiments/refunds.json',
+  caseCount: 2,
+}
+
+const state = <State>(initial: State) => {
+  let current = initial
+  const listeners = new Set<() => void>()
+  return {
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    snapshot: (): State => current,
+    set: (next: State): void => {
+      current = next
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
+const results = (): TestResults => ({
+  experiment: 'refunds',
+  overall: 0.5,
+  report: '/w/strands-dev/tmp/reports/20261112-120000-refunds.json',
+  seconds: 12.4,
+  evaluators: ['OutputEvaluator'],
+  cases: [
+    { name: 'late-refund', input: 'Refund an order from May?', passed: true, verdicts: [] },
+    {
+      name: 'no-receipt',
+      input: 'Refund without a receipt?',
+      expected: 'Ask for the order number',
+      actual: 'Refund approved',
+      passed: false,
+      verdicts: [{ evaluator: 'OutputEvaluator', score: 0, passed: false, reason: 'It skipped the receipt rule.' }],
+    },
+  ],
+})
+
+const KNOBS: readonly Knob[] = [
+  { key: 'instructions', label: 'instructions', detail: '', enabled: true },
+  { key: 'effort', label: 'effort', detail: '', enabled: false },
+  { key: 'tools', label: 'tool descriptions', detail: '', enabled: false, unavailable: 'not yet' },
+]
+
+const plan = (): OptimizePlan => ({
+  experiment: REFUNDS,
+  knobs: KNOBS,
+  split: { train: 1, validation: 1, test: 0 },
+  repetitions: 1,
+  width: 4,
+  iterations: 4,
+  iterationChoices: [2, 4, 8],
+  rollouts: 10,
+  judgeCalls: 10,
+})
+
+const review = (): OptimizeReview => ({
+  run: '20261112-130000-refunds',
+  record: '/w/strands-dev/tmp/optimization/20261112-130000-refunds',
+  baseline: 0.5,
+  best: 0.9,
+  measuredOn: 'validation cases',
+  edits: [
+    { knob: 'instructions', label: 'instructions', target: 'agent.py', before: 'Old.', after: 'New.', accepted: true },
+    { knob: 'effort', label: 'effort', before: 'low', after: 'high', accepted: false, unavailable: 'set in code' },
+  ],
+})
+
+const fakeSessions = () => {
+  const experiments = state<ExperimentsState>({
+    loaded: true,
+    folder: 'strands-dev/tmp/experiments',
+    saved: [REFUNDS],
+    generations: [],
+  })
+  const test = state<TestState>({ runs: [] })
+  const optimize = state<OptimizeState>({ step: 'pick' })
+  const sessions = {
+    experiments: {
+      ...experiments,
+      reload: vi.fn(async () => experiments.snapshot().saved),
+      suggested: vi.fn(() => generationSettings({ name: 'experiment-2', task: 'Answer refund questions' })),
+      agentSummary: vi.fn(() => 'agent.py · 1 tool'),
+      createExperiment: vi.fn(async (settings: GenerationSettings) => ({
+        name: settings.name,
+        path: `/w/strands-dev/tmp/experiments/${settings.name}.json`,
+        caseCount: 2,
+        failed: 0,
+        cases: [
+          { name: 'c0', input: 'question 0', kept: true, saved: true },
+          { name: 'c1', input: 'question 1', kept: true, saved: true },
+        ],
+      })),
+    },
+    test: {
+      ...test,
+      show: vi.fn(),
+      run: vi.fn((chosen: readonly ExperimentSummary[]) =>
+        test.set({
+          runs: chosen.map((experiment) => ({
+            experiment,
+            run: { status: 'running', cases: 2, evaluators: [], done: 0, startedAt: 0, rerun: false },
+          })),
+        })
+      ),
+      rerunFailed: vi.fn(),
+    },
+    optimize: {
+      ...optimize,
+      reset: vi.fn(() => optimize.set({ step: 'pick' })),
+      plan: vi.fn(() => setTimeout(() => optimize.set({ step: 'setup', plan: plan() }), 0)),
+      toggleKnob: vi.fn(),
+      setIterations: vi.fn(),
+      start: vi.fn(() => optimize.set({ step: 'running', progress: progress() })),
+      accept: vi.fn(),
+      apply: vi.fn(() => {
+        const current = optimize.snapshot()
+        if (current.step === 'review')
+          setTimeout(() => optimize.set({ step: 'review', review: { ...current.review, applied: ['agent.py'] } }), 0)
+      }),
+    },
+  }
+  return { sessions, experiments, test, optimize }
+}
+
+const progress = () => ({
+  run: '20261112-130000-refunds',
+  record: '',
+  metric: '',
+  iterations: 4,
+  planned: 17,
+  candidates: [],
+  startedAt: 0,
+  stopping: false,
+})
+
+const CATALOG: readonly TemporaryEvaluator[] = [
+  { name: 'OutputEvaluator', kind: 'rubric', description: 'Judges the answer', settings: [], available: true },
+  {
+    name: 'ToolCalled',
+    kind: 'check',
+    description: 'Checks that a tool ran',
+    settings: [{ name: 'tool_name', type: 'string', required: true, description: 'The tool' }],
+    available: true,
+  },
+  {
+    name: 'InteractionsEvaluator',
+    kind: 'rubric',
+    description: 'Judges interactions',
+    settings: [],
+    available: false,
+    limit: 'A dev run records no interactions.',
+  },
+]
+
+const setup = (evaluators = vi.fn(async () => CATALOG)) => {
+  const fake = fakeSessions()
+  const part = temporaryDevChatPart({
+    sessions: () => fake.sessions as unknown as TemporaryDevSessions,
+    evaluators,
+  })
+  const tool = (name: string): DevChatTool => part.tools.find((candidate) => candidate.name === name)!
+  const call = async (name: string, input: Record<string, JSONValue> = {}): Promise<unknown> =>
+    JSON.parse(await tool(name).run(input))
+  return { ...fake, part, tool, call, evaluators }
+}
+
+describe('TEMPORARY dev chat part', () => {
+  it('shouldOfferTheCreateExperimentSkillAndMarkOnlyTheLookupsReadOnly', () => {
+    const { part } = setup()
+
+    expect(part.skills.map(({ name }) => name)).toEqual(['create-experiment'])
+    expect(part.tools.map(({ name, readOnly }) => [name, readOnly === true])).toEqual([
+      ['strands_dev_status', true],
+      ['strands_dev_evaluators', true],
+      ['strands_dev_create_experiment', false],
+      ['strands_dev_test', false],
+      ['strands_dev_optimize', false],
+      ['strands_dev_apply_optimization', false],
+    ])
+    expect(part.instructions).toContain('wait for the developer to agree')
+  })
+
+  it('shouldListTheExperimentsTheirLastTestAndTheSuggestedSettingsWhenItShowsTheStatus', async () => {
+    const { call, test } = setup()
+    test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+
+    const status = await call('strands_dev_status')
+
+    expect(status).toMatchObject({
+      experimentsFolder: 'strands-dev/tmp/experiments',
+      experiments: [
+        {
+          name: 'refunds',
+          cases: 2,
+          file: REFUNDS.path,
+          lastTest: { status: 'done', passed: 1, total: 2, score: 0.5 },
+        },
+      ],
+      generations: [],
+      optimization: { step: 'idle' },
+      newExperiment: { name: 'experiment-2', task: 'Answer refund questions', agentContext: 'agent.py · 1 tool' },
+    })
+  })
+
+  it('shouldListTheUsableEvaluatorsAndReadTheCatalogOnceWhenItIsAskedTwice', async () => {
+    const { call, evaluators } = setup()
+
+    const first = await call('strands_dev_evaluators')
+    await call('strands_dev_evaluators')
+
+    expect(first).toEqual({
+      available: [
+        { name: 'OutputEvaluator', kind: 'rubric', description: 'Judges the answer', settings: [] },
+        {
+          name: 'ToolCalled',
+          kind: 'check',
+          description: 'Checks that a tool ran',
+          settings: [{ name: 'tool_name', type: 'string', required: true, description: 'The tool' }],
+        },
+      ],
+      unavailable: [{ name: 'InteractionsEvaluator', limit: 'A dev run records no interactions.' }],
+    })
+    expect(evaluators).toHaveBeenCalledOnce()
+  })
+
+  it('shouldReadTheCatalogAgainWhenTheFirstReadFailed', async () => {
+    const evaluators = vi.fn().mockRejectedValueOnce(new Error('no venv')).mockResolvedValue(CATALOG)
+    const { tool } = setup(evaluators)
+
+    await expect(tool('strands_dev_evaluators').run({})).rejects.toThrow('no venv')
+    await tool('strands_dev_evaluators').run({})
+
+    expect(evaluators).toHaveBeenCalledTimes(2)
+  })
+
+  it('shouldFillTheMissingSettingsWithTheSuggestedOnesWhenItCreatesAnExperiment', async () => {
+    const { call, sessions } = setup()
+
+    const created = await call('strands_dev_create_experiment', {
+      name: 'refunds-v2',
+      task: 'Answer refund questions',
+      context: 'Customers without a receipt',
+      cases: 5,
+      evaluators: [{ name: 'ToolCalled', settings: { tool_name: 'lookup_order' } }],
+      expectedTrajectory: true,
+    })
+
+    expect(sessions.experiments.createExperiment).toHaveBeenCalledWith({
+      ...generationSettings({ name: 'experiment-2', task: 'Answer refund questions' }),
+      name: 'refunds-v2',
+      context: 'Customers without a receipt',
+      cases: 5,
+      evaluators: [{ name: 'ToolCalled', settings: { tool_name: 'lookup_order' } }],
+      expectedTrajectory: true,
+    })
+    expect(created).toEqual({
+      name: 'refunds-v2',
+      file: '/w/strands-dev/tmp/experiments/refunds-v2.json',
+      cases: 2,
+      failedCases: 0,
+      inputs: [
+        { name: 'c0', input: 'question 0' },
+        { name: 'c1', input: 'question 1' },
+      ],
+    })
+  })
+
+  it.each<[string, Record<string, JSONValue>, string]>([
+    ['no task', { name: 'refunds-v2' }, 'task is required.'],
+    ['zero cases', { name: 'refunds-v2', task: 'Refunds', cases: 0 }, 'cases must be a whole number from 1 to 50.'],
+    ['no evaluator', { name: 'refunds-v2', task: 'Refunds', evaluators: [] }, 'at least one evaluator'],
+    ['a nameless evaluator', { name: 'refunds-v2', task: 'Refunds', evaluators: [{}] }, 'Each evaluator needs a name'],
+  ])('shouldRefuseToCreateAnExperimentWhenTheInputHas%s', async (_case, input, message) => {
+    const { tool, sessions } = setup()
+
+    await expect(tool('strands_dev_create_experiment').run(input)).rejects.toThrow(message)
+    expect(sessions.experiments.createExperiment).not.toHaveBeenCalled()
+  })
+
+  it('shouldWaitForTheRunAndReportWhyEachCaseFailedWhenItTestsAnExperiment', async () => {
+    const { tool, test, sessions } = setup()
+
+    const running = tool('strands_dev_test').run({ experiment: 'Refunds' })
+    await vi.waitFor(() => expect(sessions.test.run).toHaveBeenCalledWith([REFUNDS]))
+    test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+    const report = JSON.parse(await running)
+
+    expect(report).toMatchObject({ experiment: 'refunds', passed: 1, total: 2, score: 0.5, seconds: 12 })
+    expect(report.cases).toEqual([
+      { name: 'late-refund', passed: true },
+      {
+        name: 'no-receipt',
+        passed: false,
+        input: 'Refund without a receipt?',
+        expected: 'Ask for the order number',
+        actual: 'Refund approved',
+        reasons: ['OutputEvaluator: It skipped the receipt rule.'],
+      },
+    ])
+  })
+
+  it('shouldRunOnlyTheFailedCasesWhenTheDeveloperAsksForThem', async () => {
+    const { tool, test, sessions } = setup()
+    test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+    sessions.test.rerunFailed.mockImplementation(() =>
+      setTimeout(() => test.set({ runs: [{ experiment: REFUNDS, run: { status: 'failed', message: 'boom' } }] }), 0)
+    )
+
+    await expect(tool('strands_dev_test').run({ experiment: 'refunds', failedOnly: true })).rejects.toThrow('boom')
+    expect(sessions.test.rerunFailed).toHaveBeenCalledWith(REFUNDS.path)
+  })
+
+  it('shouldNameTheSavedExperimentsWhenTheRequestedOneDoesNotExist', async () => {
+    const { tool, sessions } = setup()
+
+    await expect(tool('strands_dev_test').run({ experiment: 'billing' })).rejects.toThrow(
+      'There is no experiment named billing. Saved experiments: refunds.'
+    )
+    expect(sessions.test.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldTuneTheChosenSettingsAndReportTheProposedEditsWhenItOptimizes', async () => {
+    const { tool, optimize, sessions } = setup()
+
+    const running = tool('strands_dev_optimize').run({ experiment: 'refunds', tune: ['effort'], iterations: 8 })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
+    optimize.set({ step: 'review', review: review() })
+    const result = JSON.parse(await running)
+
+    expect(sessions.optimize.plan).toHaveBeenCalledWith(REFUNDS)
+    expect(sessions.optimize.toggleKnob.mock.calls).toEqual([['instructions'], ['effort']])
+    expect(sessions.optimize.setIterations).toHaveBeenCalledWith(8)
+    expect(result).toEqual({
+      run: '20261112-130000-refunds',
+      baseline: 0.5,
+      best: 0.9,
+      measuredOn: 'validation cases',
+      edits: [
+        { index: 0, knob: 'instructions', target: 'agent.py', before: 'Old.', after: 'New.' },
+        { index: 1, knob: 'effort', unavailable: 'set in code', before: 'low', after: 'high' },
+      ],
+    })
+  })
+
+  it.each<[string, Record<string, JSONValue>, string]>([
+    ['an unknown setting', { experiment: 'refunds', tune: ['tools'] }, 'tune must list instructions, effort, or both.'],
+    [
+      'an iteration count it does not offer',
+      { experiment: 'refunds', iterations: 3 },
+      'iterations must be one of 2, 4, 8.',
+    ],
+  ])('shouldRefuseToOptimizeWhenTheRequestHas%s', async (_case, input, message) => {
+    const { tool, sessions } = setup()
+
+    await expect(tool('strands_dev_optimize').run(input)).rejects.toThrow(message)
+    expect(sessions.optimize.start).not.toHaveBeenCalled()
+  })
+
+  it('shouldRefuseToStartASecondOptimizationWhileOneRuns', async () => {
+    const { tool, optimize } = setup()
+    optimize.set({ step: 'running', progress: progress() })
+
+    await expect(tool('strands_dev_optimize').run({ experiment: 'refunds' })).rejects.toThrow('is still running')
+  })
+
+  it('shouldWriteOnlyTheAcceptedEditsWhenTheDeveloperApproves', async () => {
+    const { call, optimize, sessions } = setup()
+    optimize.set({ step: 'review', review: review() })
+
+    const applied = await call('strands_dev_apply_optimization', { edits: [0] })
+
+    expect(sessions.optimize.accept.mock.calls).toEqual([
+      [0, true],
+      [1, false],
+    ])
+    expect(applied).toEqual({
+      applied: ['agent.py'],
+      next: 'Run strands_dev_test on the experiment to check the change.',
+    })
+  })
+
+  it.each<[string, Record<string, JSONValue>, string]>([
+    ['an edit that does not exist', { edits: [4] }, 'There is no edit 4.'],
+    ['an edit that cannot be written', { edits: [1] }, 'Edit 1 cannot be written: set in code'],
+  ])('shouldRefuseToApplyWhenTheDeveloperChooses%s', async (_case, input, message) => {
+    const { tool, optimize, sessions } = setup()
+    optimize.set({ step: 'review', review: review() })
+
+    await expect(tool('strands_dev_apply_optimization').run(input)).rejects.toThrow(message)
+    expect(sessions.optimize.apply).not.toHaveBeenCalled()
+  })
+})

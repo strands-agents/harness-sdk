@@ -12,13 +12,13 @@ import {
   type ExperimentsState,
   type ExperimentSummary,
   type Generation,
-  type GenerationForm,
   type GenerationPhase,
   type GenerationSettings,
   type Notice,
   type Review,
 } from '../panels/model.js'
 import { temporaryAgentContext } from './agent-context.js'
+import { temporaryCreateExperimentPrompt, temporaryRetryExperimentPrompt } from './create-experiment-skill.js'
 import { temporaryExperimentsFolder, temporaryWorkspaceDirectory } from './evals-process.js'
 import {
   generateTemporaryExperiment,
@@ -42,13 +42,6 @@ import {
 } from './experiment-files.js'
 import { announce, plural, shownPath, type TemporaryHost } from './host.js'
 import { Store } from './jobs.js'
-
-const CHOICES: GenerationForm['choices'] = {
-  cases: [5, 10, 20, 30, 50],
-  topics: [0, 2, 3, 5, 8],
-  parallel: [1, 2, 4, 8, 10],
-  evaluators: ['OutputEvaluator', 'TrajectoryEvaluator', 'InteractionsEvaluator'],
-}
 
 const DEFAULT_CASES = 10
 const DEFAULT_PARALLEL = 4
@@ -76,8 +69,14 @@ interface Job {
   readonly files: TemporaryGenerationFiles
   readonly abort: AbortController
   reported?: string
+  cause?: string
   draft?: TemporaryExperimentDocument
   cases?: readonly ReviewCase[]
+}
+
+export interface TemporaryCreatedExperiment extends ExperimentSummary {
+  readonly failed: number
+  readonly cases: readonly DraftCase[]
 }
 
 interface OpenReview {
@@ -221,8 +220,25 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     return this.saved
   }
 
-  form(): GenerationForm {
-    return { settings: this.defaults(), agentContext: this.summary, choices: CHOICES }
+  suggested(): GenerationSettings {
+    return this.defaults()
+  }
+
+  agentSummary(): string {
+    return this.summary
+  }
+
+  startInChat(): void {
+    this.host().context?.submit(temporaryCreateExperimentPrompt())
+  }
+
+  retryInChat(id: string): void {
+    const job = this.jobs.get(id)
+    if (!job || isGenerating(job.generation)) return
+    const { name, settings, error } = job.generation
+    this.forget(id)
+    this.publish()
+    this.host().context?.submit(temporaryRetryExperimentPrompt(name, settings, error))
   }
 
   generate(settings: GenerationSettings, replace?: string): string | undefined {
@@ -230,10 +246,19 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     const problem = this.problemWith(named, replace)
     if (problem) return problem
     if (replace) this.forget(replace)
-    const job = this.track(named, temporaryGenerationFiles(this.directory(), named.name, new Date()))
-    this.publish()
-    void this.run(job)
+    const job = this.start(named)
+    void this.draft(job).then((drafted) => this.announceDraft(job, drafted))
     return undefined
+  }
+
+  async createExperiment(settings: GenerationSettings): Promise<TemporaryCreatedExperiment> {
+    await this.reload()
+    const named = { ...settings, name: settings.name.trim(), task: settings.task.trim() }
+    const problem = this.problemWith(named, undefined)
+    if (problem) throw new Error(problem)
+    const job = this.start(named)
+    if (!(await this.draft(job)) || !job.draft) throw new Error(this.failureText(job))
+    return this.saveDraft(job, job.draft)
   }
 
   cancel(id: string): void {
@@ -410,6 +435,12 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     return undefined
   }
 
+  private start(settings: GenerationSettings): Job {
+    const job = this.track(settings, temporaryGenerationFiles(this.directory(), settings.name, new Date()))
+    this.publish()
+    return job
+  }
+
   private track(settings: GenerationSettings, files: TemporaryGenerationFiles): Job {
     const id = `generation-${this.nextId++}`
     const job: Job = {
@@ -477,7 +508,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     }
   }
 
-  private async run(job: Job): Promise<void> {
+  private async draft(job: Job): Promise<boolean> {
     const { workspace, agent, dependencies } = this.host()
     const { settings } = job.generation
     try {
@@ -498,34 +529,74 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       )
       if (this.jobs.get(job.generation.id) !== job) {
         this.discardDraft(job)
-        return
+        return false
       }
       const { raw } = await readTemporaryExperimentFile(outcome.path)
       job.draft = raw
       this.update(job, { phase: 'ready', made: raw.cases.length, endedAt: Date.now() })
-      const failed = job.generation.failed > 0 ? `, ${job.generation.failed} failed` : ''
-      if (this.jobs.has(job.generation.id))
-        announce(
-          this.host(),
-          'success',
-          `experiment · ${settings.name} · ${plural(raw.cases.length, 'case')} drafted${failed} · /experiment to review`
-        )
+      return this.jobs.get(job.generation.id) === job
     } catch (error) {
       if (job.abort.signal.aborted || this.jobs.get(job.generation.id) !== job) {
         this.discardDraft(job)
-        return
+        return false
       }
+      job.cause = job.reported ?? errorMessage(error)
       const failure = temporaryGenerationError(error, {
         settings,
         ...(job.reported ? { reported: job.reported } : {}),
         log: job.generation.log,
       })
       this.update(job, { phase: 'failed', error: failure, endedAt: Date.now() })
+      return false
+    }
+  }
+
+  private announceDraft(job: Job, drafted: boolean): void {
+    const { name } = job.generation.settings
+    if (drafted) {
+      const failed = job.generation.failed > 0 ? `, ${job.generation.failed} failed` : ''
+      announce(
+        this.host(),
+        'success',
+        `experiment · ${name} · ${plural(job.generation.made, 'case')} drafted${failed} · /experiment to review`
+      )
+    } else if (job.generation.phase === 'failed' && this.jobs.get(job.generation.id) === job) {
       announce(
         this.host(),
         'error',
-        `experiment · ${settings.name} stopped: ${failure.summary} · /experiment shows why`
+        `experiment · ${name} stopped: ${job.generation.error?.summary ?? 'generation failed'} · /experiment shows why`
       )
+    }
+  }
+
+  private failureText(job: Job): string {
+    const { name, phase, error, log } = job.generation
+    if (phase !== 'failed') return `The generation of ${name} was cancelled.`
+    return [
+      `The generation of ${name} stopped: ${error?.summary ?? 'unknown error'}.`,
+      ...(job.cause ? [`strands-evals said: ${job.cause}`] : []),
+      `Log: ${log}`,
+    ].join('\n')
+  }
+
+  private async saveDraft(job: Job, draft: TemporaryExperimentDocument): Promise<TemporaryCreatedExperiment> {
+    const { name } = job.generation
+    const path = join(this.folder(), `${name}.json`)
+    const shown = shownPath(this.host().workspace, path)
+    if (existsSync(path)) {
+      throw new Error(`${shown} exists already, so the cases stay a draft. Open /experiment to review and save them.`)
+    }
+    const cases = reviewCases(draft, false)
+    await createTemporaryExperimentCases(path, draft, cases.map(rawOf))
+    this.forget(job.generation.id)
+    await this.reload()
+    announce(this.host(), 'success', `experiment · ${name} · ${plural(cases.length, 'case')} saved to ${shown}`)
+    return {
+      name,
+      path,
+      caseCount: cases.length,
+      failed: job.generation.failed,
+      cases: cases.map(({ draft: item }) => ({ ...item, kept: true, saved: true })),
     }
   }
 

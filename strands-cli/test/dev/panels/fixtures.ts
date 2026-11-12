@@ -5,7 +5,6 @@ import type {
   ExperimentSession,
   ExperimentsState,
   Generation,
-  GenerationForm,
   GenerationSettings,
 } from '../../../src/dev/panels/model.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../../fixtures/terminal.js'
@@ -72,21 +71,7 @@ export const generation = (overrides: Partial<Generation> = {}): Generation => (
   ...overrides,
 })
 
-export const generationForm = (overrides: Partial<GenerationSettings> = {}): GenerationForm => ({
-  settings: generationSettings(overrides),
-  agentContext: 'agent.py · 3 tools · instructions.md',
-  choices: {
-    cases: [5, 10, 20, 30, 50],
-    topics: [0, 2, 3, 5, 8],
-    parallel: [1, 2, 4, 8, 10],
-    evaluators: ['OutputEvaluator', 'TrajectoryEvaluator', 'InteractionsEvaluator'],
-  },
-})
-
-export const experimentsSession = (
-  initial: Partial<ExperimentsState> = {},
-  form: GenerationForm = generationForm()
-) => {
+export const experimentsSession = (initial: Partial<ExperimentsState> = {}) => {
   const states = store<ExperimentsState>({
     loaded: true,
     folder: 'strands-dev/tmp/experiments',
@@ -98,7 +83,8 @@ export const experimentsSession = (
     subscribe: states.subscribe,
     snapshot: states.snapshot,
     refresh: vi.fn(),
-    form: vi.fn(() => form),
+    startInChat: vi.fn(),
+    retryInChat: vi.fn(),
     generate: vi.fn((_settings: GenerationSettings, _replace?: string): string | undefined => undefined),
     cancel: vi.fn(),
     dismiss: vi.fn(),

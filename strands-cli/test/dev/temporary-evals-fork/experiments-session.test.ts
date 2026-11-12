@@ -97,6 +97,7 @@ const chat = () => {
       return { update: vi.fn() }
     },
     fail: vi.fn(),
+    submit: vi.fn(),
   }
   return { context, notices }
 }
@@ -117,27 +118,27 @@ const setup = async (model = 'bedrock/us.anthropic.claude-test') => {
   })
   await experiments.reload()
   const start = (overrides: Partial<GenerationSettings> = {}): string | undefined =>
-    experiments.generate({ ...experiments.form().settings, ...overrides })
-  return { workspace, experiments, generator, notices, start }
+    experiments.generate({ ...experiments.suggested(), ...overrides })
+  return { workspace, experiments, generator, notices, start, context }
 }
 
 const onlyGeneration = (experiments: Awaited<ReturnType<typeof setup>>['experiments']) =>
   experiments.snapshot().generations[0]!
 
 describe('TEMPORARY experiment generation session', () => {
-  it('shouldSuggestAFreeNameTheChatModelAndTheAgentContextWhenTheFormOpens', async () => {
+  it('shouldSuggestAFreeNameTheChatModelAndTheAgentContextForANewExperiment', async () => {
     const { experiments } = await setup()
 
-    const form = experiments.form()
+    const settings = experiments.suggested()
 
-    expect(form.settings).toMatchObject({
+    expect(settings).toMatchObject({
       name: 'experiment-1',
       task: 'Answers refund questions',
       model: 'us.anthropic.claude-test',
       cases: 10,
       evaluators: [{ name: 'OutputEvaluator' }],
     })
-    expect(form.agentContext).toBe('agent.py · 1 tool · instructions.md')
+    expect(experiments.agentSummary()).toBe('agent.py · 1 tool · instructions.md')
   })
 
   it('shouldSuggestATaskFromTheAgentNameWhenTheAgentHasNoDescription', async () => {
@@ -145,7 +146,7 @@ describe('TEMPORARY experiment generation session', () => {
     const { experiments } = temporaryDevSessions({ workspace, agent: () => ({}) })
     await experiments.reload()
 
-    expect(experiments.form().settings.task).toBe(
+    expect(experiments.suggested().task).toBe(
       'Handle user requests as the desk agent, with its instructions and tools.'
     )
   })
@@ -158,7 +159,7 @@ describe('TEMPORARY experiment generation session', () => {
   ])('shouldSuggestTheChatModel%sOnlyWhenBedrockCanRunIt', async (model, suggested) => {
     const { experiments } = await setup(model)
 
-    expect(experiments.form().settings.model).toBe(suggested)
+    expect(experiments.suggested().model).toBe(suggested)
   })
 
   it('shouldShowLiveProgressAndThenADraftToReviewWhenAGenerationRuns', async () => {
@@ -215,7 +216,7 @@ describe('TEMPORARY experiment generation session', () => {
     ['a name with a space', { name: 'my cases' }, 'letters, numbers, dots, dashes, and underscores'],
     ['a saved name', { name: 'capital' }, 'An experiment named capital exists already'],
     ['no task', { task: '  ' }, 'Describe the task of the agent'],
-  ])('shouldRefuseToStartWhenTheFormHas%s', async (_case, overrides, message) => {
+  ])('shouldRefuseToStartWhenTheSettingsHave%s', async (_case, overrides, message) => {
     const { workspace, experiments, generator, start } = await setup()
     await writeFileAt(
       join(workspace.directory!, 'tmp/experiments/capital.json'),
@@ -376,5 +377,83 @@ describe('TEMPORARY experiment generation session', () => {
     await vi.waitFor(() => expect(existsSync(draft)).toBe(false))
     await experiments.reload()
     expect(experiments.snapshot().generations).toEqual([])
+  })
+
+  it('shouldSaveEveryGeneratedCaseAsTheExperimentAndDropTheDraftWhenTheChatCreatesIt', async () => {
+    const { workspace, experiments, generator, notices } = await setup()
+
+    const created = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 2 })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    const draft = flagValue(generator.runs[0]!.args, '--output')
+    await generator.runs[0]!.finish(['c0', 'c1'])
+    const result = await created
+
+    const path = join(workspace.directory!, 'tmp/experiments/refunds.json')
+    expect(result).toMatchObject({ name: 'refunds', path, caseCount: 2, failed: 0 })
+    expect(result.cases.map(({ name, input }) => [name, input])).toEqual([
+      ['c0', 'question c0'],
+      ['c1', 'question c1'],
+    ])
+    expect(JSON.parse(await readFile(path, 'utf8')).cases).toHaveLength(2)
+    expect(existsSync(draft)).toBe(false)
+    expect(experiments.snapshot().generations).toEqual([])
+    expect(experiments.snapshot().saved).toEqual([{ name: 'refunds', path, caseCount: 2 }])
+    expect(notices.at(-1)).toEqual({
+      status: 'success',
+      text: 'experiment · refunds · 2 cases saved to strands-dev/tmp/experiments/refunds.json',
+    })
+  })
+
+  it('shouldRejectTheChatRequestWithoutGeneratingWhenTheNameIsTaken', async () => {
+    const { workspace, experiments, generator } = await setup()
+    await writeFileAt(
+      join(workspace.directory!, 'tmp/experiments/capital.json'),
+      JSON.stringify(experimentDocument(['c0']))
+    )
+
+    await expect(experiments.createExperiment({ ...experiments.suggested(), name: 'capital' })).rejects.toThrow(
+      'An experiment named capital exists already'
+    )
+    expect(generator.spawn).not.toHaveBeenCalled()
+  })
+
+  it('shouldGiveTheCauseAndTheLogToTheChatWhenTheGenerationFails', async () => {
+    const { experiments, generator } = await setup()
+    const denied = 'AccessDeniedException: You do not have access to the model with the specified model ID.'
+
+    const created = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 1 })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    await generator.runs[0]!.progress({ event: 'case', ok: false, done: 0, failed: 1, total: 1, error: denied })
+    await generator.runs[0]!.finish([])
+
+    await expect(created).rejects.toThrow(
+      /stopped: Bedrock denied access to us\.anthropic\.claude-test\.\nstrands-evals said: AccessDeniedException.*\nLog: strands-dev\/tmp\/experiments\/drafts\/\d{8}-\d{6}-refunds\.log/su
+    )
+  })
+
+  it('shouldStartTheCreateExperimentSkillInTheChatWhenTheUserAsksForANewExperiment', async () => {
+    const { experiments, context } = await setup()
+
+    experiments.startInChat()
+
+    expect(context.submit).toHaveBeenCalledWith('$create-experiment')
+  })
+
+  it('shouldDismissTheFailureAndSendItsCauseAndSettingsToTheChatWhenTheUserAsksForAFix', async () => {
+    const { experiments, generator, context, start } = await setup()
+    start({ name: 'refunds', cases: 3, model: 'openai.gpt-6.1-sol' })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    await generator.runs[0]!.progress({ event: 'failed', error: 'ValidationException: model identifier is invalid' })
+    await generator.runs[0]!.finish([], 1)
+    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('failed'))
+
+    experiments.retryInChat(onlyGeneration(experiments).id)
+
+    expect(experiments.snapshot().generations).toEqual([])
+    expect(context.submit).toHaveBeenCalledWith(
+      '$create-experiment The experiment refunds stopped: Bedrock cannot use openai.gpt-6.1-sol. ' +
+        'Its settings were: task "Answers refund questions", 3 cases, evaluators OutputEvaluator, ' +
+        'model openai.gpt-6.1-sol, 4 at once. Help me fix the settings, then generate it again.'
+    )
   })
 })

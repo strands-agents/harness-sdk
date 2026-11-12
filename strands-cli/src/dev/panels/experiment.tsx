@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactElement } from 're
 import { useInput, usePaste } from 'ink'
 
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
-import { Box, Text, useTheme } from '../../ui/theme.js'
+import { Box, Text } from '../../ui/theme.js'
 import {
   isGenerating,
   type CaseChange,
@@ -11,8 +11,6 @@ import {
   type ExperimentsState,
   type ExperimentSummary,
   type Generation,
-  type GenerationForm,
-  type GenerationSettings,
   type Review,
 } from './model.js'
 import {
@@ -24,7 +22,6 @@ import {
   KeyHints,
   labelWidthFor,
   Line,
-  listWindow,
   PanelTitle,
   Paragraph,
   pasteText,
@@ -46,24 +43,19 @@ export interface ExperimentPanelProps extends DevChatPanelProps {
   readonly session: ExperimentSession
 }
 
-type View =
-  | { readonly kind: 'home' }
-  | { readonly kind: 'form'; readonly settings?: GenerationSettings; readonly replace?: string }
-  | { readonly kind: 'detail'; readonly id: string }
+type View = { readonly kind: 'home' } | { readonly kind: 'detail'; readonly id: string }
 
 const COMMAND = 'experiment'
 const SECOND_MS = 1000
 const ROOMY_HEIGHT = 14
-const FORM_LABEL_WIDTH = 23
 const DETAIL_LABEL_WIDTH = 10
 
 export const ExperimentPanel = (props: ExperimentPanelProps): ReactElement => {
-  const { session } = props
+  const { session, close } = props
   const state = useSyncExternalStore(session.subscribe, session.snapshot)
   const [view, setView] = useState<View>({ kind: 'home' })
   const home = (): void => setView({ kind: 'home' })
   if (state.review) return <ReviewView {...props} review={state.review} />
-  if (view.kind === 'form') return <FormView {...props} {...view} onDone={home} />
   const shown = view.kind === 'detail' ? state.generations.find(({ id }) => id === view.id) : undefined
   if (shown)
     return (
@@ -71,14 +63,20 @@ export const ExperimentPanel = (props: ExperimentPanelProps): ReactElement => {
         {...props}
         generation={shown}
         onBack={home}
-        onEdit={(settings) => setView({ kind: 'form', settings, replace: shown.id })}
+        onFixInChat={() => {
+          close()
+          session.retryInChat(shown.id)
+        }}
       />
     )
   return (
     <HomeView
       {...props}
       state={state}
-      onNew={() => setView({ kind: 'form' })}
+      onNew={() => {
+        close()
+        session.startInChat()
+      }}
       onDetail={(id) => setView({ kind: 'detail', id })}
     />
   )
@@ -133,7 +131,7 @@ const homeItem = (row: HomeRow, now: number): ListItem => {
     return {
       key: 'new',
       label: 'New experiment',
-      detail: 'generate cases with ExperimentGenerator',
+      detail: 'describe it to the agent in the chat',
       mark: { text: '+' },
       tone: 'muted',
     }
@@ -155,7 +153,8 @@ const homeItem = (row: HomeRow, now: number): ListItem => {
 }
 
 const homeNote = (row: HomeRow | undefined): string => {
-  if (!row || row.kind === 'new') return 'Opens a form with every ExperimentGenerator setting. Several can run at once.'
+  if (!row || row.kind === 'new')
+    return 'The agent asks what to test, confirms the settings, then runs ExperimentGenerator.'
   if (row.kind === 'saved') return `${row.experiment.path} · Enter opens it in the editor`
   const { generation } = row
   if (generation.phase === 'failed') return 'Enter shows why it stopped and how to fix it.'
@@ -237,224 +236,6 @@ const HomeView = ({
         <Line tone="muted">{`  ${homeNote(current)}`}</Line>
       )}
       <KeyHints hints={['↑↓', 'Enter open', 'n new', ...actions, 'Esc close']} />
-    </>
-  )
-}
-
-type TextKey = 'name' | 'task' | 'context' | 'model'
-type ChoiceKey = 'cases' | 'topics' | 'evaluator' | 'parallel'
-type ToggleKey = 'expectedOutput' | 'expectedTrajectory' | 'expectedInteractions' | 'metadata'
-
-type FormField =
-  | { readonly kind: 'text'; readonly key: TextKey; readonly label: string; readonly placeholder: string }
-  | { readonly kind: 'choice'; readonly key: ChoiceKey; readonly label: string }
-  | { readonly kind: 'toggle'; readonly key: ToggleKey; readonly label: string }
-  | { readonly kind: 'button'; readonly key: 'start'; readonly label: string }
-
-const FORM_FIELDS: readonly FormField[] = [
-  { kind: 'text', key: 'name', label: 'Name', placeholder: 'refunds-v1' },
-  {
-    kind: 'text',
-    key: 'task',
-    label: 'Task',
-    placeholder: 'what the agent does, for example "Answer refund questions"',
-  },
-  {
-    kind: 'text',
-    key: 'context',
-    label: 'More context',
-    placeholder: 'optional facts, rules, or tools the cases must use',
-  },
-  { kind: 'choice', key: 'cases', label: 'Cases' },
-  { kind: 'choice', key: 'topics', label: 'Topics' },
-  { kind: 'choice', key: 'evaluator', label: 'Evaluator' },
-  { kind: 'toggle', key: 'expectedOutput', label: 'Expected output' },
-  { kind: 'toggle', key: 'expectedTrajectory', label: 'Expected trajectory' },
-  { kind: 'toggle', key: 'expectedInteractions', label: 'Expected interactions' },
-  { kind: 'toggle', key: 'metadata', label: 'Metadata' },
-  { kind: 'text', key: 'model', label: 'Model', placeholder: 'the strands default Bedrock model' },
-  { kind: 'choice', key: 'parallel', label: 'Parallel' },
-  { kind: 'button', key: 'start', label: 'Generate' },
-]
-
-const choiceLabel = (key: ChoiceKey, value: number | string): string => {
-  if (key === 'topics') return value === 0 ? 'off' : `${value} topics`
-  if (key === 'parallel') return `${value} at once`
-  return String(value)
-}
-
-const firstEvaluator = ({ evaluators }: GenerationSettings): string => evaluators[0]?.name ?? ''
-
-const choiceValue = (settings: GenerationSettings, key: ChoiceKey): number | string =>
-  key === 'evaluator' ? firstEvaluator(settings) : settings[key]
-
-const cycled = <Value,>(values: readonly Value[], current: Value, step: number): Value => {
-  const position = Math.max(0, values.indexOf(current))
-  return values[(position + step + values.length) % values.length] ?? current
-}
-
-const withChoice = (
-  settings: GenerationSettings,
-  { choices }: GenerationForm,
-  key: ChoiceKey,
-  step: number
-): GenerationSettings => {
-  switch (key) {
-    case 'cases':
-      return { ...settings, cases: cycled(choices.cases, settings.cases, step) }
-    case 'topics':
-      return { ...settings, topics: cycled(choices.topics, settings.topics, step) }
-    case 'parallel':
-      return { ...settings, parallel: cycled(choices.parallel, settings.parallel, step) }
-    case 'evaluator':
-      return { ...settings, evaluators: [{ name: cycled(choices.evaluators, firstEvaluator(settings), step) }] }
-  }
-}
-
-const flipped = (settings: GenerationSettings, key: ToggleKey): GenerationSettings => {
-  switch (key) {
-    case 'expectedOutput':
-      return { ...settings, expectedOutput: !settings.expectedOutput }
-    case 'expectedTrajectory':
-      return { ...settings, expectedTrajectory: !settings.expectedTrajectory }
-    case 'expectedInteractions':
-      return { ...settings, expectedInteractions: !settings.expectedInteractions }
-    case 'metadata':
-      return { ...settings, metadata: !settings.metadata }
-  }
-}
-
-const FormRow = ({
-  field,
-  active,
-  settings,
-  texts,
-  width,
-}: {
-  field: FormField
-  active: boolean
-  settings: GenerationSettings
-  texts: Record<TextKey, TextValue>
-  width: number
-}): ReactElement => {
-  const { accent, selection } = useTheme()
-  if (field.kind === 'text')
-    return (
-      <TextField
-        label={field.label}
-        value={texts[field.key]}
-        active={active}
-        labelWidth={FORM_LABEL_WIDTH}
-        width={width}
-        placeholder={field.placeholder}
-      />
-    )
-  const value =
-    field.kind === 'choice'
-      ? active
-        ? `‹ ${choiceLabel(field.key, choiceValue(settings, field.key))} ›`
-        : choiceLabel(field.key, choiceValue(settings, field.key))
-      : field.kind === 'toggle'
-        ? settings[field.key]
-          ? '☑ on'
-          : '☐ off'
-        : ''
-  return (
-    <Box height={1} flexShrink={0} overflow="hidden" {...(active ? { backgroundColor: selection } : {})}>
-      <Box flexShrink={0}>
-        <Text color={accent}>{active ? '› ' : '  '}</Text>
-      </Box>
-      {field.kind === 'button' ? (
-        <Text {...(active ? { color: accent, bold: true } : {})}>{`[ ${field.label} ]`}</Text>
-      ) : (
-        <>
-          <Box width={FORM_LABEL_WIDTH} flexShrink={0}>
-            <Text bold={active}>{field.label}</Text>
-          </Box>
-          <Text>{value}</Text>
-        </>
-      )}
-    </Box>
-  )
-}
-
-const FormView = ({
-  session,
-  settings: initial,
-  replace,
-  width,
-  height,
-  onDone,
-}: ExperimentPanelProps & { settings?: GenerationSettings; replace?: string; onDone: () => void }): ReactElement => {
-  const [form] = useState(() => session.form())
-  const first = initial ?? form.settings
-  const settings = useSyncedState<GenerationSettings>(first)
-  const texts = useSyncedState<Record<TextKey, TextValue>>(() => ({
-    name: textValue(first.name),
-    task: textValue(first.task),
-    context: textValue(first.context),
-    model: textValue(first.model),
-  }))
-  const cursor = useCursor(FORM_FIELDS.length, first.task ? 0 : 1)
-  const [problem, setProblem] = useState<string | undefined>()
-  const editField = (key: TextKey, change: (value: TextValue) => TextValue): void =>
-    texts.set((current) => ({ ...current, [key]: change(current[key]) }))
-  const start = (): void => {
-    const typed = texts.current()
-    const next = {
-      ...settings.current(),
-      name: typed.name.input,
-      task: typed.task.input,
-      context: typed.context.input,
-      model: typed.model.input.trim(),
-    }
-    const failure = session.generate(next, replace)
-    if (failure) setProblem(failure)
-    else onDone()
-  }
-  useInput((input, key) => {
-    const field = FORM_FIELDS[cursor.current()]!
-    if (key.escape) onDone()
-    else if (key.upArrow || (key.tab && key.shift)) cursor.move(-1)
-    else if (key.downArrow || key.tab) cursor.move(1)
-    else if (key.return) start()
-    else if (field.kind === 'choice' && (key.leftArrow || key.rightArrow))
-      settings.set((current) => withChoice(current, form, field.key, key.rightArrow ? 1 : -1))
-    else if (field.kind === 'toggle' && (shortcut(input, key) === ' ' || key.leftArrow || key.rightArrow))
-      settings.set((current) => flipped(current, field.key))
-    else if (field.kind === 'text') editField(field.key, (value) => editText(value, input, key))
-  })
-  usePaste((text) => {
-    const field = FORM_FIELDS[cursor.current()]!
-    if (field.kind === 'text') editField(field.key, (value) => pasteText(value, text))
-  })
-  const active = cursor.index
-  const { start: top, end } = listWindow(active, FORM_FIELDS.length, Math.max(1, height - 3))
-  return (
-    <>
-      <PanelTitle
-        name={COMMAND}
-        parts={[replace ? 'retry' : 'new', `context: ${form.agentContext || 'the agent source file'}`]}
-      />
-      {problem ? (
-        <Line tone="error">{`  ${problem}`}</Line>
-      ) : (
-        <Line tone="muted">
-          {'  strands-evals ExperimentGenerator gets these settings. Drafts wait for your review.'}
-        </Line>
-      )}
-      {FORM_FIELDS.slice(top, end).map((row, offset) => (
-        <FormRow
-          key={row.key}
-          field={row}
-          active={top + offset === active}
-          settings={settings.value}
-          texts={texts.value}
-          width={width}
-        />
-      ))}
-      <Fill />
-      <KeyHints hints={['↑↓ field', '←→ change', 'Space toggle', 'Enter generate', 'Esc back']} />
     </>
   )
 }
@@ -604,11 +385,11 @@ const DetailView = ({
   generation,
   height,
   onBack,
-  onEdit,
+  onFixInChat,
 }: ExperimentPanelProps & {
   generation: Generation
   onBack: () => void
-  onEdit: (settings: GenerationSettings) => void
+  onFixInChat: () => void
 }): ReactElement => {
   const running = isGenerating(generation)
   const ready = generation.phase === 'ready'
@@ -626,7 +407,7 @@ const DetailView = ({
       const failure = session.generate(generation.settings, generation.id)
       if (failure) setProblem(failure)
       else onBack()
-    } else if (!running && (typed === 'e' || key.return)) onEdit(generation.settings)
+    } else if (!running && (typed === 'e' || key.return)) onFixInChat()
     else if (!running && typed === 'd') {
       session.dismiss(generation.id)
       onBack()
@@ -673,7 +454,7 @@ const DetailView = ({
             ? ['Enter review', 'Esc back']
             : running
               ? ['x cancel', 'Esc back']
-              : ['r retry', 'Enter change settings and retry', 'd dismiss', 'Esc back']
+              : ['r retry', 'Enter fix it in the chat', 'd dismiss', 'Esc back']
         }
       />
     </>
