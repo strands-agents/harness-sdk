@@ -98,11 +98,10 @@ Discovery reads the current folder and any explicit search roots. It does not ex
 It skips dependency folders, build output, private state, and copied harness libraries.
 It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example the copies in `strands-dev/tmp/`.
 
-When the launch directory has no workspace, the picker asks for the workspace folder after you select an existing harness.
-When the suggested folder already contains the workspace of the selected harness, the heading is **Select a workspace**.
-The field shows the full path after `Detected workspace:`, for example `~/agents/support/strands-dev`. Enter opens that workspace.
+When the launch directory has no workspace, select an existing harness in the picker.
+When the suggested folder already holds the workspace of that harness, dev opens it. Dev does not ask for a folder.
 
-When that folder does not contain the workspace of the harness, the heading is **Create a workspace**.
+When that folder does not hold the workspace of the harness, the picker asks for a folder under **Create a workspace**.
 The folder field starts with the folder that contains the harness file. Dev creates `strands-dev/` in that folder.
 For example, `~/agents/support/agent.py` gives the field `~/agents/support` and the workspace `~/agents/support/strands-dev/`.
 The rule is the same when the file is in a source folder: `~/repo/src/agent.ts` gives `~/repo/src/strands-dev/`.
@@ -115,7 +114,7 @@ When that folder does not contain the Base CLI workspace, the field starts with 
 This rule also applies when the Base CLI has a saved project.
 That folder holds the Base CLI workspace only when dev made it from the current project or config of the CLI.
 
-You can edit the path before you continue. When you change a detected path, the heading changes to **Create a workspace**.
+You can edit the path before you continue.
 When the path that you type ends in `strands-dev` or `strands-dev-N`, the note names that folder.
 A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
 
@@ -276,16 +275,15 @@ In a dev session, `/settings` includes **Strands dev workspace**. This section s
 - **Import a different agent** opens the startup agent selector. The selector scans the same folders and hides the current agent.
 
 In the selector, you can select the Base CLI, a local project, or **Create a new harness** for a new TypeScript or Python project.
-When the current agent is a Base CLI copy, the selector does not show the Base CLI.
-The selector also does not show projects that contain the workspace folder or are inside it.
-A warning in the selector tells you that a selection deletes your current agent in strands dev.
+When the current workspace is the Base CLI workspace, the selector does not show the Base CLI.
+The selection uses the same workspace folders as startup. The current workspace stays in its folder.
 
-After you select an agent, a separate confirmation shows the folder. Type `DELETE` to confirm, or press Esc to select a different agent.
-Replacement deletes the old workspace contents, including temporary agents, reports, state, and any agent stored inside that folder.
-Agent projects outside the workspace remain untouched. A new chat starts after a successful replacement.
+When the selected agent already has its workspace, dev opens that workspace. Otherwise, dev asks for a folder under **Create a workspace**.
+When that folder holds the workspace of another agent, dev asks you to type DELETE first.
+Dev does not replace the open workspace. To replace it, restart strands dev and select the agent there.
 
-The CLI keeps a backup until the replacement agent starts. If setup fails, it restores the previous workspace and session.
-These actions do not change the default agent for plain `strands`.
+A new chat starts in the selected workspace. If the new chat cannot start, dev returns to the previous workspace and chat.
+Press Esc in the selector to keep the current chat. These actions do not change the default agent for plain `strands`.
 
 ### Temporary candidate infrastructure
 

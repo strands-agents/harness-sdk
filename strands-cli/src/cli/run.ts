@@ -289,64 +289,22 @@ async function runInteractive(
     const prepare =
       args.dev && !suppliedConfig
         ? async (screen: StartupScreen): Promise<boolean> => {
-            const { prepareDevRun } = await import('../dev/prepare.js')
-            for (;;) {
-              process.chdir(launchDirectory)
-              const selectionArgs = rejected
-                ? {
-                    ...requestedArgs,
-                    agent: undefined,
-                    dev: {
-                      init: requestedArgs.dev!.init,
-                      searchRoots: requestedArgs.dev!.searchRoots,
-                      ...(requestedArgs.dev!.workspace ? { workspace: requestedArgs.dev!.workspace } : {}),
-                    },
-                  }
-                : requestedArgs
-              const prepared = await prepareDevRun(selectionArgs, {
-                config,
-                savedConfig,
-                screen,
-                deferPreparation: true,
-                ...(rejected ? { rejected } : {}),
-              })
-              if (!prepared) return false
-              if (screen.signal.aborted) {
-                await prepared.discard()
-                return false
-              }
-              const result = await setupSession!.prepare(
-                {
-                  root: prepared.workspace.root,
-                  entrypoint: prepared.workspace.entrypoint,
-                  language: prepared.workspace.config.language,
-                },
-                screen,
-                async (install): Promise<void> => {
-                  screen.show(undefined, 'Initializing developer workspace…')
-                  const { ensureInitialCandidate } = await import('../dev/initialize.js')
-                  const { planProjectPreparation } = await import('../project/preparation-plan.js')
-                  const { executePreparation } = await import('../project/preparation.js')
-                  await ensureInitialCandidate(prepared.workspace, screen.signal, async (candidate): Promise<void> => {
-                    if (install)
-                      await executePreparation(await planProjectPreparation(candidate), { signal: screen.signal })
-                  })
-                }
-              )
-              if (result === 'cancel') {
-                await prepared.discard()
-                return false
-              }
-              if (result === 'back') {
-                rejected = prepared
-                continue
-              }
-              opened = prepared
-              args = { ...prepared.args, dev: { ...prepared.args.dev!, prepared: true } }
-              initialWorkspace = prepared.workspace.root
-              process.chdir(initialWorkspace)
-              return true
-            }
+            const { openDevRun } = await import('../dev/open.js')
+            const prepared = await openDevRun({
+              args: requestedArgs,
+              config,
+              savedConfig,
+              launchDirectory,
+              screen,
+              setup: setupSession!,
+              ...(rejected ? { rejected } : {}),
+            })
+            if (!prepared) return false
+            opened = prepared
+            args = prepared.args
+            initialWorkspace = prepared.workspace.root
+            process.chdir(initialWorkspace)
+            return true
           }
         : undefined
     let pinged = false

@@ -25,6 +25,7 @@ export interface FolderSuggestion {
   path: string
   detected: boolean
   occupiedBy?: string
+  open?: true
 }
 
 export interface BaseCliOption {
@@ -63,11 +64,15 @@ interface PickerRow {
 }
 
 const FOLDER_LABEL = 'Workspace folder: '
-const DETECTED_LABEL = 'Detected workspace: '
-const prefilledFolder = ({ path, detected }: FolderSuggestion): string => (detected ? path : dirname(path))
+const prefilledFolder = ({ path }: FolderSuggestion): string => dirname(path)
+const opensAtOnce = (
+  suggested: FolderSuggestion | undefined
+): suggested is undefined | (FolderSuggestion & { detected: true }) => suggested === undefined || suggested.detected
 const createdNote = (name: string, place: 'in' | 'at'): string =>
   `A ${name} folder will be created ${place} this path for .config, tmp/, reports, and state.`
 const folderNote = (typed: string, suggested: FolderSuggestion): string => {
+  if (typed === prefilledFolder(suggested) && suggested.open)
+    return `${basename(suggested.path)} in this path is the open workspace. Choose another folder, or restart strands dev to replace it.`
   if (typed === prefilledFolder(suggested) && suggested.occupiedBy)
     return `${basename(suggested.path)} in this path holds the workspace of ${sanitizeTerminalText(suggested.occupiedBy)}. Enter asks you to confirm before it is replaced.`
   if (typed === prefilledFolder(suggested)) return createdNote(basename(suggested.path), 'in')
@@ -242,7 +247,7 @@ export const HarnessPicker = ({
   }
   const choose = (choice: HarnessChoice): void => {
     const suggested = folderOf(choice)
-    if (suggested === undefined) return submit(choice)
+    if (opensAtOnce(suggested)) return submit(choice, suggested?.path)
     setFailure(undefined)
     const value = prefilledFolder(suggested)
     setFolder({ value, cursor: graphemes(value).length, suggested })
@@ -267,9 +272,8 @@ export const HarnessPicker = ({
       return { ...current, value: state.input, cursor: state.cursor }
     })
   }
-  const unchangedFolder = (): boolean => folder.value.trim() === prefilledFolder(folder.suggested)
-  const chosenFolder = (): string => (unchangedFolder() ? folder.suggested.path : folder.value.trim())
-  const detected = folder.suggested.detected && unchangedFolder()
+  const chosenFolder = (): string =>
+    folder.value.trim() === prefilledFolder(folder.suggested) ? folder.suggested.path : folder.value.trim()
   const editForm = (input: string, key: Key): void => {
     if (key.tab) return setLanguage(otherLanguage)
     if (key.return && name && name !== '.' && name !== '..') return choose({ kind: 'create', name, language })
@@ -321,10 +325,10 @@ export const HarnessPicker = ({
   const detailNoteRows = (showsFolder: boolean): number =>
     Number(showsFolder) + (cli ? lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice))
   const step = placing ? 'folder' : creating ? 'name' : 'list'
-  const createsInPlace = folderOf({ kind: 'create', name, language }) === undefined
+  const createsInPlace = opensAtOnce(folderOf({ kind: 'create', name, language }))
   const languageModelNotice = modelNotice?.(language)
   const next = {
-    list: folderOf(selected.choice) === undefined ? 'open' : 'continue',
+    list: opensAtOnce(folderOf(selected.choice)) ? 'open' : 'continue',
     name: createsInPlace ? 'create' : 'continue',
     folder: 'open',
   }[step]
@@ -340,7 +344,7 @@ export const HarnessPicker = ({
       hint: `↑↓ field · ←→ or Tab language · Enter ${next}`,
     },
     folder: {
-      heading: detected ? 'Select a workspace' : 'Create a workspace',
+      heading: 'Create a workspace',
       context: placing?.kind === 'create' ? `New project · ${placing.name}` : selected.label,
       hint: 'Enter continue',
     },
@@ -358,8 +362,7 @@ export const HarnessPicker = ({
     lineCount(hint) -
     1 -
     SOURCE_DETAIL_HEIGHT
-  const folderLabel = detected ? DETECTED_LABEL : FOLDER_LABEL
-  const notes = detected ? [] : [folderNote(folder.value.trim(), folder.suggested)]
+  const notes = [folderNote(folder.value.trim(), folder.suggested)]
   const folderHeight =
     2 +
     (notice ? lineCount(notice) + 1 : 0) +
@@ -424,11 +427,11 @@ export const HarnessPicker = ({
       {placing ? (
         <Box flexDirection="column" gap={1}>
           <Box>
-            <Text>{folderLabel}</Text>
+            <Text>{FOLDER_LABEL}</Text>
             <EditableText
               value={folder.value}
               cursor={folder.cursor}
-              width={Math.max(1, detailWidth - folderLabel.length)}
+              width={Math.max(1, detailWidth - FOLDER_LABEL.length)}
               active={!busy}
             />
           </Box>

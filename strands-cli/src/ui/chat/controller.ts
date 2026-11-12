@@ -2632,7 +2632,7 @@ export class ChatController implements ChatControllerApi {
             },
             {
               label: 'Import a different agent',
-              description: 'Select or create an agent. Type DELETE to replace this workspace.',
+              description: 'Select or create another agent, then its workspace folder. This workspace stays.',
               value: 'workspace:import',
             },
           ]
