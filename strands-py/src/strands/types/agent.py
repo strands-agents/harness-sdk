@@ -113,7 +113,8 @@ class LocalAgent(Protocol):
             message: Optional terminal assistant message appended to history on exit.
             after_current_tools: If True, defer cancellation until the current tool
                 batch finishes; the loop exits before the next model call.
-            cancel_background_tasks: If True, also cancel the agent's outstanding background tasks.
+            cancel_background_tasks: If True, also cancel the agent's outstanding background tasks (on an
+                idle agent, only those).
         """
         ...
 

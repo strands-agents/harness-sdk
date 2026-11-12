@@ -1015,11 +1015,11 @@ async def _wait_for_task_statuses(agent: Agent, statuses: list[str]) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("cancel_background_tasks", "exp_statuses"),
-    [(False, ["completed", "completed"]), (True, ["cancelled", "cancelled"])],
+    ("cancel_background_tasks", "exp_statuses", "exp_stop_reason"),
+    [(False, ["completed", "completed"], "cancelled"), (True, ["cancelled", "cancelled"], "end_turn")],
 )
-async def test_cancel_background_tasks_cancels_queued_and_working_tasks_only_when_requested(
-    cancel_background_tasks: bool, exp_statuses: list[str]
+async def test_cancel_background_tasks_on_an_idle_agent_cancels_only_the_tasks(
+    cancel_background_tasks: bool, exp_statuses: list[str], exp_stop_reason: str
 ) -> None:
     released = threading.Event()
 
@@ -1052,7 +1052,7 @@ async def test_cancel_background_tasks_cancels_queued_and_working_tasks_only_whe
     await asyncio.wait_for(_wait_for_task_statuses(agent, exp_statuses), timeout=5)
 
     continued = await agent.invoke_async("Continue.")
-    assert continued.stop_reason == "cancelled"  # on an idle agent, cancel() also cancels the next invocation
+    assert continued.stop_reason == exp_stop_reason
     tru_delivered_statuses = [
         _tool_result(agent, delivery["toolUseId"])["content"][0]["json"]["status"]
         for delivery in _deliveries(agent.messages)
@@ -1084,14 +1084,14 @@ async def test_cancel_background_tasks_cancels_input_required_task_and_drops_its
     assert tru_status == exp_status
 
 
-def test_cancel_background_tasks_without_background_tasks_only_cancels_the_invocation() -> None:
+def test_cancel_background_tasks_on_an_idle_agent_without_background_tasks_is_a_no_op() -> None:
     agent = Agent(model=MockedModelProvider([_assistant_text("Hi.")]), callback_handler=None)
 
-    agent.cancel(cancel_background_tasks=True)
+    agent.cancel(message="Stopped.", cancel_background_tasks=True)
 
-    tru_stop_reason = agent("Hello.").stop_reason
-    exp_stop_reason = "cancelled"
-    assert tru_stop_reason == exp_stop_reason
+    tru_result = agent("Hello.")
+    assert tru_result.stop_reason == "end_turn"
+    assert tru_result.message["content"] == [{"text": "Hi."}]
 
 
 @pytest.mark.asyncio
