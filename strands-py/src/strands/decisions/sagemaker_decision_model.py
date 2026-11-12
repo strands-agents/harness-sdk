@@ -37,9 +37,12 @@ class SageMakerDecisionModel(DecisionModel):
 
     ``ask`` raises ``ModelThrottledException`` on SageMaker throttling (``ThrottlingException``,
     ``ModelNotReadyException``, ``ServiceUnavailable``) and on a container or proxy 429/503/529,
-    ``ContextWindowOverflowException`` when the container reports a context overflow (HTTP 413, or
-    422 whose message names the context window), and ``StructuredOutputException`` for a malformed
-    provider response. Any other SageMaker runtime error propagates unchanged.
+    ``ContextWindowOverflowException`` when the request exceeds the context window or payload limit
+    (HTTP 413, or a container 422 whose message names the context window), ``ValueError`` for
+    request-level violations (too many choices, binary content, state that is not JSON-serializable
+    or contains NaN/infinity), and ``StructuredOutputException`` for a malformed provider response.
+    Any other SageMaker runtime error (e.g. ``botocore.exceptions.ClientError``) propagates
+    unchanged.
 
     The blocking boto3 call runs in a worker thread, so cancelling ``ask`` (for example on a caller
     timeout) stops waiting for it but cannot stop the in-flight request; the client's read timeout
