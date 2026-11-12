@@ -27,6 +27,8 @@ export interface TemporaryTestRequest {
   onProgress?: (line: string) => void
   prepare?: () => Promise<void>
   now?: () => Date
+  onStart?: (files: { report: string; cases: string }) => void
+  background?: boolean
 }
 
 export interface TemporaryTestOutcome {
@@ -55,6 +57,7 @@ const TEST_OWNED_FLAGS = [
   '--exit-zero',
   '--display',
   '--interactive',
+  '--data-store',
 ]
 
 interface ReportScores {
@@ -78,8 +81,8 @@ const testNextStep = (code: number, log: string): string =>
 const assertCases = (experiment: string, cases: number): void => {
   if (cases === 0)
     throw new Error(
-      `${experiment} has no cases, so there is nothing to test. Add cases to it, or make a new one with ` +
-        '/experiment <name> <what the agent does>, then run the test again.'
+      `${experiment} has no cases, so there is nothing to test. Add cases to it, or draft cases with ` +
+        '/experiment, then run the test again.'
     )
 }
 
@@ -110,11 +113,13 @@ export const runTemporaryTest = async (
   const name = temporaryRunName(experiment, request.now?.() ?? new Date())
   const report = join(folder, `${name}.json`)
   const log = join(folder, `${name}.log`)
+  const caseStore = join(folder, `${name}.cases`)
   if (existsSync(report)) throw new Error(`The report ${report} already exists. Wait a second, then try again.`)
   await mkdir(folder, { recursive: true })
   onProgress(`Testing ${workspace.entrypoint} on the ${cases} cases of ${experiment}`)
   onProgress(`Report: ${report}`)
   onProgress('Running the cases. The summary appears when every case has finished.')
+  request.onStart?.({ report, cases: caseStore })
   const exit = await (dependencies.spawnTests ?? spawnTemporaryEvals)({
     command: python,
     args: [
@@ -129,11 +134,14 @@ export const runTemporaryTest = async (
       report,
       '--fail-on',
       'none',
+      '--data-store',
+      caseStore,
       ...forkArguments,
     ],
     cwd: workspace.root,
     env: temporaryEvalsEnvironment(python, environment),
     ...(signal ? { signal } : {}),
+    ...(request.background ? { background: true } : {}),
     log,
     onLine: onProgress,
   })

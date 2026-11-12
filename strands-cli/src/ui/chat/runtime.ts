@@ -148,7 +148,7 @@ export async function createTypescriptChat(
         ...(devWorkspace
           ? {
               workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
-              devCommands: temporaryDevCommands(devWorkspace, project),
+              devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
             }
           : {}),
         awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
@@ -352,7 +352,7 @@ export async function createPythonChat(
       ...(devWorkspace
         ? {
             workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
-            devCommands: temporaryDevCommands(devWorkspace, project),
+            devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
           }
         : {}),
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),

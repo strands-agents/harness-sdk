@@ -99,14 +99,18 @@ describe('TEMPORARY dev optimization', () => {
   })
 
   it.each([
-    { experiments: [], requested: undefined, message: 'Create one with /experiment <name> <what the agent does>' },
-    { experiments: ['billing.json', 'support.json'], requested: undefined, message: 'for example /optimize billing' },
+    { experiments: [], requested: undefined, message: 'Draft cases with /experiment in a strands dev chat' },
+    {
+      experiments: ['billing.json', 'support.json'],
+      requested: undefined,
+      message: 'for example strands dev optimize billing',
+    },
     {
       experiments: ['support.json'],
       requested: 'refunds',
-      message: 'Use one of support, or create it with /experiment refunds',
+      message: 'Use one of support, or draft cases with /experiment',
     },
-    { experiments: [], requested: 'refunds', message: 'Create it with /experiment refunds <what the agent does>' },
+    { experiments: [], requested: 'refunds', message: 'then run strands dev optimize again' },
     {
       experiments: ['support.json'],
       requested: './missing/refunds.json',

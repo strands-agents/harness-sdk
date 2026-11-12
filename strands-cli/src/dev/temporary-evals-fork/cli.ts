@@ -2,9 +2,8 @@ import type { ParsedArgs } from '../../cli/arguments.js'
 import { errorMessage } from '../../terminal/text.js'
 import type { PreparedDevRun } from '../prepare.js'
 import type { DevWorkspace } from '../workspace.js'
-import { temporaryTestSummary } from './command.js'
 import { runTemporaryOptimization, type TemporaryOptimizationDependencies } from './optimize.js'
-import { runTemporaryTest, type TemporaryTestDependencies } from './test.js'
+import { runTemporaryTest, type TemporaryTestDependencies, type TemporaryTestOutcome } from './test.js'
 
 export interface TemporaryDevCommandDependencies extends TemporaryOptimizationDependencies, TemporaryTestDependencies {
   openWorkspace?: (args: ParsedArgs) => Promise<PreparedDevRun | undefined>
@@ -24,6 +23,14 @@ interface Shared {
   onProgress: (line: string) => void
   prepare: () => Promise<void>
 }
+
+export const temporaryTestSummary = (outcome: TemporaryTestOutcome, optimize: string): string[] => [
+  `${outcome.passed} of ${outcome.checks} checks passed (overall score ${outcome.overall.toFixed(2)})`,
+  `Report: ${outcome.report}`,
+  outcome.passed < outcome.checks
+    ? `The report gives each failing check its reason. Run ${optimize} ${outcome.name} to improve the agent on them.`
+    : 'Every check passed.',
+]
 
 const openWorkspace = async (args: ParsedArgs): Promise<PreparedDevRun | undefined> => {
   const { prepareDevRun } = await import('../prepare.js')

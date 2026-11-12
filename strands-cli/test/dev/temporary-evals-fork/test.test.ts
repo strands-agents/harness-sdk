@@ -58,9 +58,16 @@ describe('TEMPORARY /test', () => {
     const workspace = await workspaceFixture()
     const spawnTests = reporting([true, false], 0.5)
     const progress: string[] = []
+    const onStart = vi.fn()
 
     const outcome = await runTemporaryTest(
-      { workspace, forkArguments: ['--max-workers', '2'], now: () => NOW, onProgress: (line) => progress.push(line) },
+      {
+        workspace,
+        forkArguments: ['--max-workers', '2'],
+        now: () => NOW,
+        onProgress: (line) => progress.push(line),
+        onStart,
+      },
       { run: environmentRunner(workspace), spawnTests }
     )
 
@@ -85,9 +92,15 @@ describe('TEMPORARY /test', () => {
       report,
       '--fail-on',
       'none',
+      '--data-store',
+      join(workspace.directory!, 'tmp/reports/20261111-150405-support.cases'),
       '--max-workers',
       '2',
     ])
+    expect(onStart).toHaveBeenCalledWith({
+      report,
+      cases: join(workspace.directory!, 'tmp/reports/20261111-150405-support.cases'),
+    })
     expect(log).toBe(join(workspace.directory!, 'tmp/reports/20261111-150405-support.log'))
     expect(progress).toContain(`Testing ${workspace.entrypoint} on the 2 cases of ${outcome.experiment}`)
   })
@@ -103,8 +116,8 @@ describe('TEMPORARY /test', () => {
 
   it.each([
     { experiments: [], requested: undefined, message: 'There is no experiment to test yet' },
-    { experiments: [], requested: 'refunds', message: 'then run /test refunds' },
-    { experiments: ['a.json', 'b.json'], requested: undefined, message: 'for example /test a in a chat' },
+    { experiments: [], requested: 'refunds', message: 'then run strands dev test again' },
+    { experiments: ['a.json', 'b.json'], requested: undefined, message: 'for example strands dev test a' },
   ])('shouldGuideTheUserToAnExperimentWhen$message', async ({ experiments, requested, message }) => {
     const workspace = await workspaceFixture(experiments)
     const spawnTests = reporting([true], 1)
@@ -147,7 +160,7 @@ describe('TEMPORARY /test', () => {
   it.each([
     {
       content: '{"cases": [',
-      message: /is not a usable Experiment file \(.+\)\. Fix the file, or make a new one with \/experiment/u,
+      message: /is not a usable Experiment file \(.+\)\. Fix the file, or draft new cases with \/experiment/u,
     },
     { content: JSON.stringify({ cases: [], evaluators: [] }), message: /has no cases, so there is nothing to test/u },
   ])('shouldExplainWhatToFixWhenTheExperimentFileCannotBeTested', async ({ content, message }) => {

@@ -27,6 +27,8 @@ export interface TemporaryOptimizationRequest {
   onProgress?: (line: string) => void
   prepare?: () => Promise<void>
   now?: () => Date
+  onStart?: (record: string) => void
+  background?: boolean
 }
 
 export interface TemporaryOptimizationOutcome {
@@ -70,6 +72,7 @@ export const runTemporaryOptimization = async (
   onProgress(`Optimizing ${workspace.entrypoint} against ${experiment}`)
   onProgress(`Record: ${record}`)
   onProgress('Measuring the baseline. The optimizer reports each candidate when it finishes.')
+  request.onStart?.(record)
   const exit = await (dependencies.spawnOptimizer ?? spawnTemporaryEvals)({
     command: python,
     args: [
@@ -88,6 +91,7 @@ export const runTemporaryOptimization = async (
     cwd: workspace.root,
     env: temporaryEvalsEnvironment(python, environment),
     ...(signal ? { signal } : {}),
+    ...(request.background ? { background: true } : {}),
     log,
     onLine: onProgress,
   })

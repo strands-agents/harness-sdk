@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
-import { createTemporaryExperiment } from '../../../src/dev/temporary-evals-fork/experiment.js'
+import { draftTemporaryExperiment } from '../../../src/dev/temporary-evals-fork/experiment.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
@@ -49,66 +49,36 @@ const generating = (cases = 3) =>
     return { code: 0, stdout: '', stderrTail: [] }
   })
 
-describe('TEMPORARY /experiment generation', () => {
-  it('shouldGenerateCasesIntoTheExperimentsFolderWhenANameAndDescriptionAreGiven', async () => {
+describe('TEMPORARY starter set drafting', () => {
+  const now = (): Date => new Date('2026-11-12T15:30:12Z')
+
+  it('shouldDraftTheRequestedCasesIntoTheDraftsFolderFromTheAgentContext', async () => {
     const workspace = await workspaceFixture()
     const spawnGenerator = generating(3)
 
-    const outcome = await createTemporaryExperiment(
-      { workspace, name: 'refunds', description: 'Answers refund questions', forkArguments: ['--num-cases', '3'] },
+    const outcome = await draftTemporaryExperiment(
+      { workspace, context: 'An agent that answers refund questions', count: 20, now },
       { run: environmentRunner(workspace), spawnGenerator }
     )
 
-    const path = join(workspace.directory!, 'tmp/experiments/refunds.json')
+    const path = join(workspace.directory!, 'tmp/experiments/drafts/20261112-153012-draft.json')
     expect(outcome).toEqual({ path, cases: 3 })
     expect(spawnGenerator.mock.calls[0]![0].args).toEqual([
       '-m',
       'strands_evals.cli',
       'generate',
       '--context',
-      'Answers refund questions',
+      'An agent that answers refund questions',
+      '--num-cases',
+      '20',
       '--evaluator',
       'OutputEvaluator',
-      '--num-cases',
-      '3',
       '--output',
       path,
     ])
   })
 
-  it.each([
-    { name: 'refunds', description: '', experiments: [], message: 'say what the agent does. Usage: /experiment' },
-    { name: '../refunds', description: 'Answers refunds', experiments: [], message: 'is not a usable experiment name' },
-    {
-      name: 'refunds',
-      description: 'Answers refunds',
-      experiments: ['refunds.json'],
-      message: 'Pick another name, or delete that file to replace it',
-    },
-  ])('shouldExplainWhatToChangeWhen$message', async ({ name, description, experiments, message }) => {
-    const workspace = await workspaceFixture(experiments)
-    const spawnGenerator = generating()
-
-    await expect(
-      createTemporaryExperiment({ workspace, name, description }, { run: environmentRunner(workspace), spawnGenerator })
-    ).rejects.toThrow(message)
-    expect(spawnGenerator).not.toHaveBeenCalled()
-  })
-
-  it('shouldRejectFlagsThatExperimentSetsItselfWhenTheyArePassed', async () => {
-    const workspace = await workspaceFixture()
-
-    await expect(
-      createTemporaryExperiment({
-        workspace,
-        name: 'refunds',
-        description: 'Answers refunds',
-        forkArguments: ['--output', 'x'],
-      })
-    ).rejects.toThrow('/experiment sets --output itself')
-  })
-
-  it('shouldReportTheGeneratorErrorAndTheNextStepWhenGenerationFails', async () => {
+  it('shouldReportTheGeneratorErrorAndTheNextStepWhenDraftingFails', async () => {
     const workspace = await workspaceFixture()
     const spawnGenerator = vi.fn(async () => ({
       code: 3,
@@ -117,8 +87,8 @@ describe('TEMPORARY /experiment generation', () => {
     }))
 
     await expect(
-      createTemporaryExperiment(
-        { workspace, name: 'refunds', description: 'Answers refunds' },
+      draftTemporaryExperiment(
+        { workspace, context: 'refunds', count: 20 },
         { run: environmentRunner(workspace), spawnGenerator }
       )
     ).rejects.toThrow(
@@ -126,23 +96,7 @@ describe('TEMPORARY /experiment generation', () => {
     )
   })
 
-  it('shouldPointToTheFlagsWhenTheGeneratorRejectsThem', async () => {
-    const workspace = await workspaceFixture()
-    const spawnGenerator = vi.fn(async () => ({
-      code: 2,
-      stdout: '',
-      stderrTail: ["strands-evals generate: error: argument --num-cases: invalid int value: 'abc'"],
-    }))
-
-    await expect(
-      createTemporaryExperiment(
-        { workspace, name: 'refunds', description: 'Answers refunds', forkArguments: ['--num-cases', 'abc'] },
-        { run: environmentRunner(workspace), spawnGenerator }
-      )
-    ).rejects.toThrow(/exit code 2: argument --num-cases: invalid int value: 'abc'\nFix the flags after --/u)
-  })
-
-  it('shouldRemoveTheFileAndSayWhatToTryWhenTheGeneratorWritesNoCases', async () => {
+  it('shouldRemoveTheDraftAndSayWhatToTryWhenTheGeneratorWritesNoCases', async () => {
     const workspace = await workspaceFixture()
     const spawnGenerator = vi.fn(async (process: TemporaryEvalsProcess) => {
       await generating(0)(process)
@@ -150,31 +104,11 @@ describe('TEMPORARY /experiment generation', () => {
     })
 
     await expect(
-      createTemporaryExperiment(
-        { workspace, name: 'refunds', description: 'Answers refunds' },
+      draftTemporaryExperiment(
+        { workspace, context: 'refunds', count: 20, now },
         { run: environmentRunner(workspace), spawnGenerator }
       )
-    ).rejects.toThrow(/wrote no cases for refunds[\s\S]+the model refused\nDescribe the agent in more detail/u)
-    expect(existsSync(join(workspace.directory!, 'tmp/experiments/refunds.json'))).toBe(false)
-  })
-
-  it('shouldRefuseTheSameNameWhileItIsBeingGenerated', async () => {
-    const workspace = await workspaceFixture()
-    let release: () => void = () => {}
-    const spawnGenerator = vi.fn(async (process: TemporaryEvalsProcess) => {
-      await new Promise<void>((resolve) => {
-        release = resolve
-      })
-      return generating(1)(process)
-    })
-    const dependencies = { run: environmentRunner(workspace), spawnGenerator }
-    const request = { workspace, name: 'refunds', description: 'Answers refunds' }
-
-    const first = createTemporaryExperiment(request, dependencies)
-    await vi.waitFor(() => expect(spawnGenerator).toHaveBeenCalled())
-
-    await expect(createTemporaryExperiment(request, dependencies)).rejects.toThrow('or is being generated')
-    release()
-    await expect(first).resolves.toMatchObject({ cases: 1 })
+    ).rejects.toThrow(/wrote no cases[\s\S]+the model refused\nGive your agent clearer instructions/u)
+    expect(existsSync(join(workspace.directory!, 'tmp/experiments/drafts/20261112-153012-draft.json'))).toBe(false)
   })
 })

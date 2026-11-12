@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { basename, delimiter, dirname, join } from 'node:path'
+import type { Socket } from 'node:net'
 import { createInterface } from 'node:readline'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -14,6 +15,7 @@ export interface TemporaryEvalsProcess {
   env: NodeJS.ProcessEnv
   signal?: AbortSignal
   log?: string
+  background?: boolean
   onLine: (line: string) => void
 }
 
@@ -88,7 +90,20 @@ export const temporaryEvalsFailure = (
   )
 }
 
-export const spawnTemporaryEvals: TemporaryEvalsSpawner = ({ command, args, cwd, env, signal, log, onLine }) =>
+const releaseEventLoop = (streams: readonly unknown[]): void => {
+  for (const stream of streams) (stream as Partial<Pick<Socket, 'unref'>>).unref?.()
+}
+
+export const spawnTemporaryEvals: TemporaryEvalsSpawner = ({
+  command,
+  args,
+  cwd,
+  env,
+  signal,
+  log,
+  background,
+  onLine,
+}) =>
   new Promise((resolveExit, rejectExit) => {
     const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     const output = log ? createWriteStream(log, { flags: 'a' }) : undefined
@@ -97,6 +112,10 @@ export const spawnTemporaryEvals: TemporaryEvalsSpawner = ({ command, args, cwd,
     const abort = (): void => void child.kill('SIGTERM')
     signal?.addEventListener('abort', abort, { once: true })
     process.once('exit', abort)
+    if (background) {
+      child.unref()
+      releaseEventLoop([child.stdout, child.stderr])
+    }
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => stdout.push(chunk))
     createInterface({ input: child.stderr }).on('line', (line) => {
       output?.write(`${line}\n`)
