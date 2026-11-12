@@ -307,6 +307,47 @@ describe('OptimizePanel', () => {
     expect(text()).toContain('Could not change agent.py')
   })
 
+  it('shouldNotApplyWhenTheOnlyAcceptedEditIsRejectedInTheSameBurstAsEnter', async () => {
+    const reviewState: OptimizeState = {
+      step: 'review',
+      review: {
+        run: 'r1',
+        record: '/w/record',
+        baseline: 0.5,
+        best: 0.8,
+        measuredOn: 'test cases',
+        edits: [
+          {
+            knob: 'instructions',
+            label: 'instructions',
+            target: 'instructions.md',
+            before: 'Be quick.',
+            after: 'Check the date.',
+            accepted: true,
+          },
+        ],
+      },
+    }
+    const { session, states } = optimizeSession(reviewState)
+    session.accept.mockImplementation((index: number, accepted: boolean) => {
+      const state = states.snapshot()
+      if (state.step !== 'review') return
+      states.set({
+        step: 'review',
+        review: {
+          ...state.review,
+          edits: state.review.edits.map((edit, position) => (position === index ? { ...edit, accepted } : edit)),
+        },
+      })
+    })
+    const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    await press('x\u001b[A\r')
+
+    expect(session.accept).toHaveBeenCalledWith(0, false)
+    expect(session.apply).not.toHaveBeenCalled()
+  })
+
   it('shouldShowTheDiffAndApplyTheAcceptedEditsWhenTheReviewOpens', async () => {
     const { session } = optimizeSession({
       step: 'review',

@@ -103,6 +103,31 @@ describe('ExperimentPanel home', () => {
     expect(wrapped.every((line) => line.startsWith('  '))).toBe(true)
   })
 
+  it('shouldOfferTheReviewAndNoDeleteKeysWhenTheOpenGenerationFinishes', async () => {
+    const { session, states } = mixed()
+    const { press, text } = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
+    await press(DOWN)
+    await press(ENTER)
+
+    states.set({
+      ...states.snapshot(),
+      generations: states
+        .snapshot()
+        .generations.map((item) =>
+          item.id === 'generation-1' ? { ...item, phase: 'ready' as const, made: 19 } : item
+        ),
+    })
+    await vi.waitFor(() => expect(text()).toContain('Enter reviews the cases'))
+    await press('d')
+    await press('r')
+    await press(ENTER)
+
+    expect(text()).not.toContain('stopped')
+    expect(session.dismiss).not.toHaveBeenCalled()
+    expect(session.generate).not.toHaveBeenCalled()
+    expect(session.review).toHaveBeenCalledWith('generation-1')
+  })
+
   it('shouldShowWhyAndRetryWhenTheUserOpensAFailedGeneration', async () => {
     const { session } = mixed()
     const { press, text } = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
@@ -191,7 +216,7 @@ describe('ExperimentPanel form', () => {
 
 describe('ExperimentPanel review', () => {
   const reviewing = async () => {
-    const { session } = experimentsSession({
+    const { session, states } = experimentsSession({
       review: {
         key: 'generation-2',
         name: 'billing',
@@ -202,7 +227,7 @@ describe('ExperimentPanel review', () => {
       },
     })
     const view = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
-    return { session, ...view }
+    return { session, states, ...view }
   }
 
   it('shouldShowTheDraftsAndTheirExpectedOutcomesWhenTheReviewOpens', async () => {
@@ -222,7 +247,7 @@ describe('ExperimentPanel review', () => {
     for (const key of 'refund it') await press(key)
     await press(ENTER)
 
-    expect(session.edit).toHaveBeenCalledWith(0, { input: 'question c0', expected: 'refund it' })
+    expect(session.edit).toHaveBeenCalledWith(0, { expected: 'refund it' })
   })
 
   it('shouldSendTheNextKeysToTheEditorWhenTheyArriveInTheSameBurstAsE', async () => {
@@ -232,7 +257,26 @@ describe('ExperimentPanel review', () => {
     await press('X')
     await press(ENTER)
 
-    expect(session.edit).toHaveBeenCalledWith(0, { input: 'question c0', expected: 'answer cX' })
+    expect(session.edit).toHaveBeenCalledWith(0, { expected: 'answer cX' })
+  })
+
+  it('shouldPutTheCursorOnTheNewCaseWhenTheUserAddsOne', async () => {
+    const { session, states, press, text } = await reviewing()
+    session.add.mockImplementation(({ input = '', expected = '' }) => {
+      const review = states.snapshot().review!
+      states.set({
+        ...states.snapshot(),
+        review: { ...review, cases: [...review.cases, { name: 'case-3', input, expected, kept: true, saved: false }] },
+      })
+    })
+
+    await press('n')
+    await press('third')
+    await press(ENTER)
+
+    await vi.waitFor(() => expect(text()).toContain('3/3'))
+    await press(' ')
+    expect(session.toggle).toHaveBeenCalledWith(2)
   })
 
   it('shouldAddABlankCaseWhenTheUserWritesANewOne', async () => {

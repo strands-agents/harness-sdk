@@ -36,6 +36,7 @@ import {
   StoppedView,
   useCursor,
   useElapsed,
+  useSyncedState,
   type ListItem,
 } from './ui.js'
 
@@ -403,7 +404,7 @@ const ReviewView = ({
     () => review.edits.map((edit) => createDiffPreview(edit.label, edit.before, edit.after, DIFF_CONTEXT_LINES).lines),
     [review.edits]
   )
-  const [offset, setOffset] = useState(0)
+  const scroll = useSyncedState(0)
   const index = cursor.index
   const accepted = review.edits.filter((edit) => edit.accepted && !edit.unavailable).length
   const writable = review.edits.some((edit) => !edit.unavailable)
@@ -415,7 +416,11 @@ const ReviewView = ({
   const lastOffset = Math.max(0, rows.length - page)
   const choose = (step: number): void => {
     cursor.move(step)
-    setOffset(0)
+    scroll.set(0)
+  }
+  const acceptedNow = (): number => {
+    const state = session.snapshot()
+    return state.step === 'review' ? state.review.edits.filter((edit) => edit.accepted && !edit.unavailable).length : 0
   }
   useInput((input, key) => {
     const typed = shortcut(input, key)
@@ -426,13 +431,13 @@ const ReviewView = ({
     else if (typed === 'n') session.reset()
     else if (key.upArrow) choose(-1)
     else if (key.downArrow) choose(1)
-    else if (key.pageDown) setOffset(Math.min(lastOffset, offset + page))
-    else if (key.pageUp) setOffset(Math.max(0, offset - page))
+    else if (key.pageDown) scroll.set((offset: number) => Math.min(lastOffset, offset + page))
+    else if (key.pageUp) scroll.set((offset: number) => Math.max(0, offset - page))
     else if (typed === 'a' || typed === 'x') {
       const at = cursor.current()
       const edit = review.edits[at]
       if (edit && (typed === 'x' || !edit.unavailable)) session.accept(at, typed === 'a')
-    } else if (key.return && accepted > 0) session.apply()
+    } else if (key.return && acceptedNow() > 0) session.apply()
   })
   const gain = `${review.baseline.toFixed(2)} → ${review.best.toFixed(2)} on ${review.measuredOn} (${signed(review.best - review.baseline)})`
   const title = (
@@ -493,7 +498,7 @@ const ReviewView = ({
         )}
       />
       <Rule width={width} />
-      <DiffLines rows={rows} height={diffHeight} offset={Math.min(offset, lastOffset)} />
+      <DiffLines rows={rows} height={diffHeight} offset={Math.min(scroll.value, lastOffset)} />
       <Fill />
       <KeyHints
         hints={[

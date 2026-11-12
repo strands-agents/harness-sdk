@@ -5,6 +5,7 @@ import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
 import {
   isGenerating,
+  type CaseChange,
   type DraftCase,
   type ExperimentSession,
   type ExperimentsState,
@@ -465,7 +466,21 @@ interface CaseEditor {
   readonly field: 'input' | 'expected'
   readonly input: TextValue
   readonly expected: TextValue
+  readonly opened: { readonly input: string; readonly expected: string }
 }
+
+const editorFor = (field: CaseEditor['field'], input: string, expected: string, index?: number): CaseEditor => ({
+  ...(index === undefined ? {} : { index }),
+  field,
+  input: textValue(input),
+  expected: textValue(expected),
+  opened: { input, expected },
+})
+
+const changedFields = ({ input, expected, opened }: CaseEditor): CaseChange => ({
+  ...(input.input === opened.input ? {} : { input: input.input }),
+  ...(expected.input === opened.expected ? {} : { expected: expected.input }),
+})
 
 const reviewTitle = (review: Review): { name: string; parts: string[] } => {
   const kept = review.cases.filter(({ kept }) => kept).length
@@ -484,12 +499,12 @@ const ReviewView = ({ session, width, height, review }: ExperimentPanelProps & {
   const capacity = Math.max(1, height - 4 - Number(Boolean(review.notice)) - detailRows * 2)
   const typeInto = (change: (value: TextValue) => TextValue): void =>
     editing.set((open) => open && { ...open, [open.field]: change(open[open.field]) })
-  const saveEdit = ({ index: at, input, expected }: CaseEditor): void => {
-    const change = { input: input.input, expected: expected.input }
-    if (at === undefined) {
-      session.add(change)
+  const saveEdit = (open: CaseEditor): void => {
+    const change = changedFields(open)
+    if (open.index === undefined) {
+      session.add({ input: open.input.input, expected: open.expected.input })
       cursor.set(review.cases.length)
-    } else session.edit(at, change)
+    } else if (Object.keys(change).length > 0) session.edit(open.index, change)
     editing.set(undefined)
   }
   useInput((input, key) => {
@@ -511,14 +526,8 @@ const ReviewView = ({ session, width, height, review }: ExperimentPanelProps & {
     else if (typed === ' ' && item) session.toggle(at)
     else if (typed === 'd' && item) session.drop(at)
     else if (typed === 'a') session.keepAll()
-    else if (typed === 'e' && item)
-      editing.set({
-        index: at,
-        field: 'expected',
-        input: textValue(item.input),
-        expected: textValue(item.expected ?? ''),
-      })
-    else if (typed === 'n') editing.set({ field: 'input', input: textValue(''), expected: textValue('') })
+    else if (typed === 'e' && item) editing.set(editorFor('expected', item.input, item.expected ?? '', at))
+    else if (typed === 'n') editing.set(editorFor('input', '', ''))
     else if (key.return) void session.save()
   })
   usePaste((text) => typeInto((value) => pasteText(value, text)))
@@ -597,12 +606,15 @@ const DetailView = ({
   onEdit: (settings: GenerationSettings) => void
 }): ReactElement => {
   const running = isGenerating(generation)
+  const ready = generation.phase === 'ready'
   const now = useNow(running)
   const [problem, setProblem] = useState<string | undefined>()
   useInput((input, key) => {
     const typed = shortcut(input, key)
     if (key.escape) onBack()
-    else if (running && typed === 'x') {
+    else if (ready) {
+      if (key.return) session.review(generation.id)
+    } else if (running && typed === 'x') {
       session.cancel(generation.id)
       onBack()
     } else if (!running && typed === 'r') {
@@ -619,10 +631,16 @@ const DetailView = ({
     <>
       <PanelTitle
         name={COMMAND}
-        parts={[generation.name, running ? generation.phase : 'stopped']}
+        parts={[generation.name, running || ready ? generation.phase : 'stopped']}
         right={<Text dimColor>{formatSeconds(((generation.endedAt ?? now) - generation.startedAt) / SECOND_MS)}</Text>}
       />
-      {running ? (
+      {ready ? (
+        <>
+          <Line tone="success">{`  ✓ ${generationSummary(generation, now)}`}</Line>
+          <Line>{'  Enter reviews the cases. Nothing joins the experiment until you save it.'}</Line>
+          <Line tone="muted">{`  Log: ${generation.log}`}</Line>
+        </>
+      ) : running ? (
         <>
           <SplitLine
             left={<Text>{`  ${madeText(generation)}`}</Text>}
@@ -646,7 +664,11 @@ const DetailView = ({
       <Fill />
       <KeyHints
         hints={
-          running ? ['x cancel', 'Esc back'] : ['r retry', 'Enter change settings and retry', 'd dismiss', 'Esc back']
+          ready
+            ? ['Enter review', 'Esc back']
+            : running
+              ? ['x cancel', 'Esc back']
+              : ['r retry', 'Enter change settings and retry', 'd dismiss', 'Esc back']
         }
       />
     </>

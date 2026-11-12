@@ -347,6 +347,6 @@ export const useCursor = (count: number, initial = 0): Cursor => {
     index: clamp(state.value),
     current: () => clamp(state.current()),
     move: (step) => state.set((index) => clamp(clamp(index) + step)),
-    set: (index) => state.set(clamp(index)),
+    set: (index) => state.set(Math.max(0, index)),
   }
 }
