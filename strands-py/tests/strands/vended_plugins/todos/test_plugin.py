@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands import Agent
+from strands.middleware.stages import InvokeModelStage
 from strands.vended_plugins.todos import TodoItem, Todos
 from strands.vended_plugins.todos.plugin import _DEFAULT_NAME
 
@@ -111,16 +112,23 @@ def test_the_state_key_is_configurable(agent, todos):
     assert agent.state.get("todos") is None
 
 
-def test_the_plugin_registers_the_tool_and_an_injector(agent):
+def test_the_plugin_registers_its_tool():
     agent = Agent(model=MagicMock(), callback_handler=None, plugins=[Todos()])
 
     assert "todo_write" in agent.tool_registry.registry
-    tru_names = {plugin.name for plugin in agent._plugin_registry._plugins.values()}
-    assert {_DEFAULT_NAME, f"{_DEFAULT_NAME}:injector"} <= tru_names
+    assert _DEFAULT_NAME in {plugin.name for plugin in agent._plugin_registry._plugins.values()}
+
+
+def test_init_agent_registers_the_injector_as_model_input_middleware():
+    agent = MagicMock()
+
+    Todos().init_agent(agent)
+
+    assert [call.args[0] for call in agent.add_middleware.call_args_list] == [InvokeModelStage.Input]
 
 
 def test_the_name_is_configurable_so_two_instances_can_coexist():
-    """The injector name derives from the plugin name; duplicate names fail registration."""
+    """Plugin registration is keyed on the name, so two instances must be nameable apart."""
     agent = Agent(
         model=MagicMock(),
         callback_handler=None,
@@ -128,4 +136,4 @@ def test_the_name_is_configurable_so_two_instances_can_coexist():
     )
 
     tru_names = {plugin.name for plugin in agent._plugin_registry._plugins.values()}
-    assert {"plan:a", "plan:a:injector", "plan:b", "plan:b:injector"} <= tru_names
+    assert {"plan:a", "plan:b"} <= tru_names

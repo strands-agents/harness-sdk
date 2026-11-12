@@ -5,7 +5,7 @@ import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { InvokeModelStage } from '../../../middleware/index.js'
 import type { MockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { InjectionContext } from '../../../injection/types.js'
-import type { ToolContext } from '../../../tools/tool.js'
+import type { InvokableTool, ToolContext } from '../../../tools/tool.js'
 
 function sampleTodos(): TodoItem[] {
   return [
@@ -24,8 +24,8 @@ function injectionContext(agent: MockAgent): InjectionContext {
 }
 
 async function write(plugin: Todos, agent: MockAgent, todos: TodoItem[]): Promise<string> {
-  const [todoWrite] = plugin.getTools()
-  return (await todoWrite!.invoke({ todos }, toolContext(agent))) as string
+  const todoWrite = plugin.getTools()[0] as InvokableTool<{ todos: TodoItem[] }, string>
+  return todoWrite.invoke({ todos }, toolContext(agent))
 }
 
 function renderReminder(plugin: Todos, agent: MockAgent): string | undefined {
