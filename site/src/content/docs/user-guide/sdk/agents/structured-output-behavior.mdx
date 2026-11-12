@@ -220,10 +220,11 @@ Claude Opus 5.5, Claude Sonnet 5.5, Claude Fable 5.1, Claude Fable 5.2, and Clau
 Mythos 5.2 reject a forced tool call. Claude Haiku 5.5 accepts one, but a forced call
 skips thinking, so Strands doesn't force it. For these models the retry instead asks
 the provider to make the model's reply match your schema (native structured output).
-If the model rejects that too, the retry offers the structured output tool without
-requiring it, so the result is best effort. A schema that native structured output
-can't represent, such as one with dict, tuple, or untyped fields, goes straight to
-that best-effort retry, and Strands warns about it.
+If native structured output isn't available or rejects your schema, the retry offers
+the structured output tool without requiring it, so the result is best effort. A
+schema that native structured output can't represent, such as one with
+<Syntax py="dict" ts="record" plain />, tuple, or untyped fields, goes straight to that
+best-effort retry, and Strands warns about it.
 
 <Tabs>
 <Tab label="Python">
