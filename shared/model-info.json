@@ -716,7 +716,7 @@
     },
     "mistral-large-latest": {
       "limits": {
-        "contextWindow": 262144
+        "contextWindow": 1048576
       }
     },
     "mistral-large-2512": {
