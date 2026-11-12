@@ -41,9 +41,7 @@ describe('Todos', () => {
     const result = await write(new Todos(), agent, sampleTodos())
 
     expect(agent.appState.get('todos')).toEqual(sampleTodos())
-    expect(result).toBe(
-      '2 todos remaining\n  [completed] Read code\n  [in_progress] Writing tests\n  [pending] Ship'
-    )
+    expect(result).toBe('2 todos remaining\n  [completed] Read code\n  [in_progress] Writing tests\n  [pending] Ship')
   })
 
   it('renders the active form only while an item is in progress', async () => {
