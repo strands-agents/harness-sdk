@@ -105,6 +105,7 @@ describe('homepage machine-readable metadata', () => {
     expect(hero?.querySelector('.banner__harness')?.text.trim()).toBe('/harness')
     expect(starter?.querySelector('.banner__start-title')?.tagName).toBe('H2')
     expect(starter?.querySelector('.banner__start-title')?.text.trim()).toBe('/harness')
+    expect(starter?.querySelector('[data-hero-frog]')?.getAttribute('aria-hidden')).toBe('true')
     expect(starter?.querySelector('.banner__start-summary')?.text.trim()).toBe(
       'A ready-to-use agent with tools, memory, sessions, and context management assembled.'
     )

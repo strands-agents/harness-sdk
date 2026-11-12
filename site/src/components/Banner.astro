@@ -2,6 +2,7 @@
 import { createShikiHighlighter } from '@astrojs/markdown-remark/shiki';
 
 import arrow from '../assets/banner/arrow.svg?raw';
+import frog from '../assets/nav/frog-hop.svg?raw';
 import plus from '../assets/toolkit/plus.svg?raw';
 import InstallCommand from './InstallCommand.astro';
 import { products } from '../config/navbar';
@@ -57,9 +58,12 @@ await agent.invoke('Summarize this repository')`,
         data-example-card
       >
         <div class="banner__start-heading">
-          <h2 class="banner__start-title">
-            <span class="banner__harness">/harness</span>
-          </h2>
+          <div class="banner__start-title-wrap">
+            <h2 class="banner__start-title">
+              <span class="banner__harness">/harness</span>
+            </h2>
+            <span class="banner__frog" data-hero-frog aria-hidden="true" set:html={frog} />
+          </div>
           <p class="banner__start-summary">
             A ready-to-use agent with tools, memory, sessions, and context management assembled.
           </p>
@@ -200,12 +204,41 @@ await agent.invoke('Summarize this repository')`,
     align-items: center;
   }
 
+  .banner__start-title-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+
   .banner__start-title {
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 32px;
     font-weight: 700;
     line-height: 1.15;
+  }
+
+  .banner__frog {
+    position: absolute;
+    top: -22px;
+    right: -43px;
+    width: 38px;
+    height: 38px;
+    color: var(--strands-green);
+    pointer-events: none;
+    transform: rotate(7deg);
+    transform-origin: bottom left;
+    transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .banner__frog :global(svg) {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .banner__start:hover .banner__frog,
+  .banner__start:focus-within .banner__frog {
+    transform: translateY(-6px) rotate(-3deg);
   }
 
   .banner__start-summary {
@@ -471,6 +504,13 @@ await agent.invoke('Summarize this repository')`,
       font-size: 28px;
     }
 
+    .banner__frog {
+      top: -17px;
+      right: -34px;
+      width: 30px;
+      height: 30px;
+    }
+
     .banner__start-summary {
       margin-top: 8px;
       font-size: 16px;
@@ -524,6 +564,15 @@ await agent.invoke('Summarize this repository')`,
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .banner__frog {
+      transition: none;
+    }
+
+    .banner__start:hover .banner__frog,
+    .banner__start:focus-within .banner__frog {
+      transform: rotate(7deg);
+    }
+
     .banner__action,
     .banner__example-toggle {
       transition: none;
