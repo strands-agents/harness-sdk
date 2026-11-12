@@ -140,6 +140,16 @@ describe('TEMPORARY experiment generation session', () => {
     expect(form.agentContext).toBe('agent.py · 1 tool · instructions.md')
   })
 
+  it('shouldSuggestATaskFromTheAgentNameWhenTheAgentHasNoDescription', async () => {
+    const workspace = await workspaceFixture()
+    const { experiments } = temporaryDevSessions({ workspace, agent: () => ({}) })
+    await experiments.reload()
+
+    expect(experiments.form().settings.task).toBe(
+      'Handle user requests as the desk agent, with its instructions and tools.'
+    )
+  })
+
   it.each([
     ['global.anthropic.claude-sonnet-4-5-20250929-v1:0', 'global.anthropic.claude-sonnet-4-5-20250929-v1:0'],
     ['amazon.nova-pro-v1:0', 'amazon.nova-pro-v1:0'],

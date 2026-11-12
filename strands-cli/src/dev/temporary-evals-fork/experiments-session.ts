@@ -96,6 +96,9 @@ const generatorModel = (model: string | undefined): string => {
   return BEDROCK_MODEL.test(bare) ? bare : ''
 }
 
+const defaultTask = (name: string): string =>
+  `Handle user requests as the ${name} agent, with its instructions and tools.`
+
 const reviewCases = (raw: TemporaryExperimentDocument, saved: boolean): ReviewCase[] =>
   raw.cases.map((rawCase, index) => {
     const expected = temporaryCaseText(rawCase.expected_output)
@@ -365,7 +368,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     const facts = this.host().agent()
     return {
       name: this.freeName(),
-      task: facts.description?.trim() ?? '',
+      task: facts.description?.trim() || defaultTask(this.host().workspace.config.name),
       context: '',
       cases: DEFAULT_CASES,
       topics: 0,
