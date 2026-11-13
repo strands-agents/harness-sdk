@@ -4,8 +4,8 @@
  * The harness enables caching by default. This pins that the default wiring actually caches end to end, so
  * a change that silently disables it (a flipped default, a broken `caching` -> `resolveModel`
  * handoff, a provider flag regression) fails here instead of shipping as a quiet cost/latency loss.
- * The default injector plugins (`todos`, `environment`) are enabled so the configuration matches
- * the real default that first surfaced the caching/injection interaction.
+ * Both injector plugins (`todos`, `environment`) are enabled explicitly to exercise the
+ * caching/injection interaction.
  *
  * The signal is wire-level and no offline test can observe it: cumulative cache reads reported by
  * the model must grow turn over turn. With caching off they stay flat at zero, so the margin is

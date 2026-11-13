@@ -419,6 +419,9 @@ class BaseOffloadStrategy(ABC):
             return False
         if "reasoningContent" in block or "cachePoint" in block:
             return False
+        # Injected text is written after its message was stashed, so a ref to it would point at nothing.
+        if "injected" in block:
+            return False
         if is_text_block(block):
             return _target_matches_message(self._target, message)
         if is_tool_result_block(block):

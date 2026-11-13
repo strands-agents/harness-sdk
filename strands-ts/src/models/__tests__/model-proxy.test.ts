@@ -407,4 +407,26 @@ describe('ModelProxy', () => {
       expect(streamSpy.mock.calls[0]![0]).toBe(messages)
     })
   })
+
+  // https://github.com/strands-agents/harness-sdk/issues/5937: a lone surrogate must never reach a provider
+  describe('lone surrogates', () => {
+    it('sends and counts well-formed text and leaves the messages it was given unchanged', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const streamSpy = vi.spyOn(model, 'stream')
+      const countSpy = vi.spyOn(model, 'countTokens')
+      const messages = [new Message({ role: 'user', content: [new TextBlock('a\ud83d')], trackingId: 'msg-1' })]
+      const proxy = new ModelProxy(model)
+
+      await drain(proxy.streamAggregated(messages, { systemPrompt: 's\ud83d' }))
+      await proxy.countTokens(messages, { systemPrompt: 's\ud83d' })
+
+      const wellFormed = [
+        [new Message({ role: 'user', content: [new TextBlock('a\ufffd')], trackingId: 'msg-1' })],
+        { systemPrompt: 's\ufffd' },
+      ]
+      expect(streamSpy.mock.calls[0]).toEqual(wellFormed)
+      expect(countSpy.mock.calls[0]).toEqual(wellFormed)
+      expect(messages[0]!.content).toEqual([new TextBlock('a\ud83d')])
+    })
+  })
 })

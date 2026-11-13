@@ -24,7 +24,9 @@ from ._engine_test_helpers import (
 
 
 @pytest.mark.asyncio
-async def test_admission_and_updates_prevent_callbacks_from_mutating_engine_state() -> None:
+async def test_admission_and_updates_prevent_callbacks_from_mutating_engine_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     statuses: list[str] = []
 
     async def execute(context: InProcessTaskExecutionContext) -> InProcessTaskExecutionOutcome:
@@ -52,6 +54,10 @@ async def test_admission_and_updates_prevent_callbacks_from_mutating_engine_stat
     tru_statuses = statuses
     exp_statuses = ["queued", "working", "completed"]
     assert tru_statuses == exp_statuses
+    assert (
+        f"task_id=<{admitted['task_id']}>, error=<notification failed> | background task update notification failed"
+        in caplog.messages
+    )
 
     assert completed is not None
     completed["status"] = "cancelled"

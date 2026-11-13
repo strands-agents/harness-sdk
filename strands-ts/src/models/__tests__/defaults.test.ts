@@ -58,6 +58,7 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('gpt-oss-120b')).toBe(131_072)
     expect(getContextWindowLimit('gpt-oss-20b')).toBe(131_072)
     // Gemini
+    expect(getContextWindowLimit('gemini-4-hydrogen')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-4-argon')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-3.8-flash')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-3.7-flash')).toBe(1_048_576)

@@ -9,6 +9,8 @@ export type ProductNavItem =
   | { type: 'link'; label: string; href: string; external?: boolean }
   | { type: 'group'; label: string; items: ProductNavItem[] }
 
+type SidebarGroup = Extract<StarlightSidebarItem, { items: StarlightSidebarItem[] }>
+
 /** Convert Starlight's normalized route sidebar into the mobile navigation shape. */
 export function normalizedSidebarToProductNav(sidebar: StarlightRouteData['sidebar']): ProductNavItem[] {
   return sidebar.map((entry) =>
@@ -64,15 +66,45 @@ function hasSlugAtOrBelow(item: StarlightSidebarItem, slug: string): boolean {
   return 'slug' in item && (item.slug === slug || item.slug.startsWith(`${slug}/`))
 }
 
+function findGroupByLabel(
+  items: StarlightSidebarItem[],
+  labels: Set<string>,
+  matches: (group: SidebarGroup) => boolean
+): SidebarGroup | undefined {
+  for (const item of items) {
+    if (!('items' in item)) continue
+    if (labels.has(item.label) && matches(item)) return item
+    const nested = findGroupByLabel(item.items, labels, matches)
+    if (nested) return nested
+  }
+  return undefined
+}
+
+export function findProductNavGroup(
+  sidebar: StarlightSidebarItem[],
+  hubSlug: string,
+  groupLabels: string[] = []
+): SidebarGroup | undefined {
+  const labels = new Set(groupLabels)
+  const labeledGroup =
+    labels.size > 0 ? findGroupByLabel(sidebar, labels, (group) => hasSlugAtOrBelow(group, hubSlug)) : undefined
+
+  return (
+    labeledGroup ?? sidebar.find((item): item is SidebarGroup => 'items' in item && hasSlugAtOrBelow(item, hubSlug))
+  )
+}
+
 /**
  * The full sidebar tree of the product whose hub page is `hubHref`, for the
- * mobile menu. Matched by hub page rather than label because product and
- * sidebar group labels differ (e.g. "Evals" vs "Evals SDK").
+ * mobile menu. Prefer an explicit product or navigation label so a product
+ * nested inside a broader section can still own its mobile tree. Fall back to
+ * the hub route because some product and sidebar labels differ (for example,
+ * "Evals" and "Evals SDK").
  */
-export async function getProductNav(hubHref: string): Promise<ProductNavItem[]> {
+export async function getProductNav(hubHref: string, groupLabels: string[] = []): Promise<ProductNavItem[]> {
   const [sidebar, labels] = await Promise.all([getSidebar(), getLabels()])
   const hubSlug = hubHref.replace(pathWithBase('/'), '').replace(/\/$/, '')
-  const group = sidebar.find((item) => 'items' in item && hasSlugAtOrBelow(item, hubSlug))
-  if (!group || !('items' in group)) return []
+  const group = findProductNavGroup(sidebar, hubSlug, groupLabels)
+  if (!group) return []
   return group.items.map((item) => toNavItem(item, labels)).filter((i) => i !== null)
 }

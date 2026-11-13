@@ -37,9 +37,11 @@ import {
   type BaseModelConfig,
   type CacheConfig,
   type CacheTTL,
+  type ResolvedCacheSection,
   type StreamOptions,
 } from './model.js'
 import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
+import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -169,17 +171,15 @@ export class VercelModel extends Model<VercelModelConfig> {
   }
 
   /**
-   * Turns `serverSideSummary` off, and reports OpenAI models on Bedrock as implicitly cached; a `modelInfo`
-   * override still wins over both. The shared model info lists cache points for their OpenAI-compatible APIs, but
-   * Converse caches them implicitly and rejects cache points.
+   * Turns `serverSideSummary` off, and on Bedrock reports how Converse caches the model where that differs from the
+   * shared model info; a `modelInfo` override still wins over both.
    */
   override get modelInfo(): ModelInfo {
     const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
-    const implicitCache = bedrock && this.modelId.toLowerCase().includes('openai.')
     return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
-      implicitCache ? { capabilities: { promptCaching: 'auto' } } : undefined,
+      bedrock ? bedrockCacheModelInfo(this.modelId) : undefined,
       this._config.modelInfo
     )
   }
@@ -407,25 +407,40 @@ function applyBedrockCache(
     )
   }
 
-  const systemPrompt = resolveCacheSection(cacheConfig.systemPromptTTL, cacheConfig.ttl)
+  const systemPrompt = bedrockCacheSection(cacheConfig.systemPromptTTL, cacheConfig, modelId)
   if (systemPrompt.enabled) {
     const system = callOptions.prompt.find((message) => message.role === 'system')
     if (system) setBedrockCachePoint(system, systemPrompt.ttl)
   }
 
-  const messages = resolveCacheSection(cacheConfig.messagesTTL, cacheConfig.ttl)
+  const messages = bedrockCacheSection(cacheConfig.messagesTTL, cacheConfig, modelId)
   if (messages.enabled) {
     cacheLastUserMessage(callOptions.prompt, (userMessage) => {
-      // Bedrock rejects a cache point directly after a non-PDF document, so scan back past those parts.
-      const part = durableCachePart(
-        userMessage.content,
-        dynamicTrailingBlocks,
-        (candidate) => !blocksCachePoint(candidate)
-      )
+      const part = durableCachePart(userMessage.content, dynamicTrailingBlocks, bedrockAcceptsCachePointAfter(modelId))
       if (part) setBedrockCachePoint(part, messages.ttl)
-      else logger.debug('last user message has no durable non-document content, skipped conversation cache point')
+      else logger.debug('last user message has no durable part to cache after, skipped conversation cache point')
     })
   }
+}
+
+/**
+ * Resolves a Bedrock cache section against `cacheConfig.ttl`, dropping the TTL with a one-time warning when the
+ * wrapped model rejects one (matching `BedrockModel`).
+ *
+ * @param section - The section's own setting
+ * @param cacheConfig - The caller's cache configuration
+ * @param modelId - The wrapped Bedrock model id
+ * @internal
+ */
+function bedrockCacheSection(
+  section: boolean | CacheTTL | undefined,
+  cacheConfig: CacheConfig,
+  modelId: string
+): ResolvedCacheSection {
+  const resolved = resolveCacheSection(section, cacheConfig.ttl)
+  if (!resolved.ttl || !bedrockLimitsCachePoints(modelId)) return resolved
+  warnOnce(logger, `model_id=<${modelId}> | ttl is not supported by this model, using the default cache duration`)
+  return { enabled: resolved.enabled }
 }
 
 /**
@@ -448,7 +463,8 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
     promptCaching === undefined
       ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
       : promptCaching === 'cachePoints'
-  if (!supported) {
+  // A model the provider caches implicitly needs no cache points, so it gets no warning.
+  if (!supported && promptCaching !== 'auto') {
     warnOnce(
       logger,
       `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
@@ -458,9 +474,23 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
 }
 
 /**
- * Reports whether Bedrock forbids a cache point directly after this part. The adapter turns every
- * non-image file part into a document, and Bedrock rejects a cache point after a non-PDF document (a
- * PDF document is fine).
+ * Picks which parts the wrapped Bedrock model takes a cache point directly after: text only on Nova, anything but a
+ * non-PDF document otherwise (the Claude rule).
+ *
+ * @param modelId - The wrapped Bedrock model id
+ * @internal
+ */
+function bedrockAcceptsCachePointAfter(
+  modelId: string
+): (part: LanguageModelV3TextPart | LanguageModelV3FilePart) => boolean {
+  if (bedrockLimitsCachePoints(modelId)) return (part) => part.type === 'text'
+  return (part) => !blocksCachePoint(part)
+}
+
+/**
+ * Reports whether Claude on Bedrock forbids a cache point directly after this part. The adapter turns every
+ * non-image file part into a document, and Claude rejects a cache point after a non-PDF document (a PDF
+ * document is fine). Nova follows a stricter rule, text only.
  *
  * @internal
  */

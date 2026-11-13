@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
-import { BLOCK_SUMMARY_INSTRUCTIONS, formatSummarized, toolResultToContentBlocks } from '../offload/summarize.js'
+import { BLOCK_SUMMARY_INSTRUCTIONS } from '../offload/summarize.js'
+import { formatOffloaded, formatSummarized, offloadPlaceholder, REMOVED_MESSAGES } from '../../placeholder.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import {
-  JsonBlock,
   Message,
+  OffloadedBlock,
   ReasoningBlock,
   SummaryBlock,
   TextBlock,
@@ -16,13 +17,19 @@ import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { TestModelProvider } from '../../../__fixtures__/model-test-helpers.js'
+import {
+  heuristicCountTokens,
+  makeContext as makeBaseContext,
+  makeToolResultMessage,
+  placeholdersIn,
+} from '../../../__fixtures__/context-manager-helpers.js'
 import { DEFAULT_SUMMARIZE_INSTRUCTIONS, SUMMARIZE_GUARD, type SummarizeResult } from '../../../models/summarize.js'
 import type { ModelStreamEvent, Usage } from '../../../models/streaming.js'
-import type { Model } from '../../../models/model.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import type { ToolRegistry } from '../../../registry/tool-registry.js'
+import type { Model } from '../../../models/model.js'
 
 const summaryResult = (text: string, provider?: string): SummarizeResult => ({
   content: [new SummaryBlock({ text, ...(provider && { provider }) })],
@@ -32,56 +39,12 @@ const summaryResult = (text: string, provider?: string): SummarizeResult => ({
 const mockSummarize = () =>
   vi.fn(async (_messages: Message[], _options?: unknown) => summaryResult('Summary of multimodal content'))
 
-function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
-  return new Message({
-    role: 'user',
-    content: [
-      new ToolResultBlock({
-        toolUseId,
-        status: 'success',
-        content: [new TextBlock(text)],
-      }),
-    ],
-  })
-}
-
-function heuristicCountTokens(messages: Message[]): number {
-  let total = 0
-  for (const message of messages) {
-    for (const block of message.content) {
-      if (block instanceof TextBlock) {
-        total += Math.ceil(block.text.length / 4)
-      } else if (block instanceof ToolResultBlock) {
-        for (const content of block.content) {
-          if (content instanceof TextBlock) total += Math.ceil(content.text.length / 4)
-          else total += Math.ceil(JSON.stringify(content).length / 2)
-        }
-      } else {
-        total += Math.ceil(JSON.stringify(block).length / 2)
-      }
-    }
-  }
-  return total
-}
-
+/** A context whose model is `model` over a {@link mockSummarize} default; no `model` leaves the agent without one. */
 function makeContext(messages: Message[], utilization = 0.5, model?: unknown): ContextState {
-  const resolvedModel = model
-    ? {
-        countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs),
-        modelInfo: {},
-        summarize: mockSummarize(),
-        ...(model as object),
-      }
-    : undefined
-  const mockData = resolvedModel
-    ? { messages, extra: { model: resolvedModel } as unknown as Partial<Agent> }
-    : { messages }
-  const agent = createMockAgent(mockData)
-  return {
-    messages,
-    agent,
+  return makeBaseContext(messages, {
     utilization,
-  }
+    model: model ? { modelInfo: {}, summarize: mockSummarize(), ...(model as object) } : null,
+  })
 }
 
 describe('Offload.summarize', () => {
@@ -91,7 +54,7 @@ describe('Offload.summarize', () => {
   })
 
   it('creates a strategy with .when() conditions', () => {
-    const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
+    const strategy = Offload.summarize('toolResults').when({ contextUtilization: '85%' })
     expect(strategy.name).toBe('offload:summarize')
   })
 
@@ -111,7 +74,7 @@ describe('Offload.summarize', () => {
       const smallText = 'short result'
       const messages = [makeToolResultMessage(smallText)]
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('toolResults').when({ threshold: 2500 })
+      const strategy = Offload.summarize('toolResults').when({ blockThreshold: 2500 })
       const context = makeContext(messages, 0.9, mockModel)
 
       const result = await strategy.apply(context)
@@ -192,7 +155,7 @@ describe('Offload.summarize', () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]
       const mockModel = { stream: vi.fn() }
-      const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
+      const strategy = Offload.summarize('toolResults').when({ contextUtilization: '85%' })
       const context = makeContext(messages, 0.5, mockModel)
 
       const result = await strategy.apply(context)
@@ -207,7 +170,7 @@ describe('Offload.summarize', () => {
       const latest = new Message({ role: 'assistant', content: [new TextBlock('latest')] })
       const messages = [firstMessage, toolResultMessage, latest]
       const mockModel = { stream: vi.fn(), countTokens: vi.fn(async () => 5000) }
-      const strategy = Offload.summarize('toolResults').when({ utilization: 0.85 })
+      const strategy = Offload.summarize('toolResults').when({ contextUtilization: '85%' })
       const context = makeContext(messages, 0.9, mockModel)
 
       const result = await strategy.apply(context)
@@ -244,7 +207,14 @@ describe('Offload.summarize', () => {
         new ToolResultBlock({
           toolUseId: 'tool-123',
           status: 'success',
-          content: [new TextBlock('[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output')],
+          content: [
+            offloadPlaceholder(
+              'summarize',
+              '[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output',
+              undefined,
+              2525
+            ),
+          ],
         }),
       ])
       expect(invocationContext.usage).toEqual({ turnsTaken: 5, inputTokens: 4, outputTokens: 5, totalTokens: 9 })
@@ -274,18 +244,21 @@ describe('summarizer errors', () => {
     const model = new MockMessageModel()
     const summarize = vi.spyOn(model, 'summarize')
     const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
       new Message({
         role: 'user',
         content: [new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array(4000) } })],
       }),
+      new Message({ role: 'assistant', content: [new TextBlock('latest')] }),
     ]
-    const strategy = Offload.summarize('*', { model }).when({ threshold: 10 })
+    const strategy = Offload.summarize('media', { model }).when({ contextUtilization: '50%', blockThreshold: 10 })
+    const tokens = heuristicCountTokens([messages[1]!])
 
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
     expect(result).toBe(true)
-    expect(messages[0]!.content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
+    expect(messages[1]!.content).toEqual([
+      offloadPlaceholder('summarize', formatOffloaded(tokens, 'video'), undefined, tokens),
     ])
     expect(summarize).not.toHaveBeenCalled()
   })
@@ -295,18 +268,21 @@ describe('summarizer errors', () => {
     vi.spyOn(model, 'summarize').mockRejectedValueOnce(new Error('images unsupported'))
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
       new Message({
         role: 'user',
         content: [new ImageBlock({ format: 'png', source: { bytes: new Uint8Array(4000) } })],
       }),
+      new Message({ role: 'assistant', content: [new TextBlock('latest')] }),
     ]
-    const strategy = Offload.summarize('*', { model }).when({ threshold: 10 })
+    const strategy = Offload.summarize('media', { model }).when({ contextUtilization: '50%', blockThreshold: 10 })
+    const tokens = heuristicCountTokens([messages[1]!])
 
     const result = await strategy.apply(makeContext(messages, 0.9, { stream: vi.fn() }))
 
     expect(result).toBe(true)
-    expect(messages[0]!.content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/^\[Offloaded: ~\d+ tokens\]/) }),
+    expect(messages[1]!.content).toEqual([
+      offloadPlaceholder('summarize', formatOffloaded(tokens, 'image'), undefined, tokens),
     ])
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<images unsupported>'))
     warnSpy.mockRestore()
@@ -316,7 +292,7 @@ describe('summarizer errors', () => {
 describe('repeated summarization', () => {
   // Regression test for https://github.com/strands-agents/harness-sdk/issues/4685
   it('keeps summaries out of a pinned message 0', async () => {
-    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 4 })
+    const strategy = Offload.summarize('*').when({ contextUtilization: '70%', preserveRecent: 4 })
     const mockModel = { stream: vi.fn() }
     const task = () =>
       new Message({ role: 'user', content: [new TextBlock('task')], metadata: { custom: { pinned: true } } })
@@ -333,10 +309,7 @@ describe('repeated summarization', () => {
     }
     expect(messages[0]!.content).toEqual(task().content)
     expect(messages[0]!.metadata).toEqual(task().metadata)
-    const summaries = messages
-      .flatMap((message) => message.content)
-      .filter((block) => block instanceof TextBlock && block.text.startsWith('[Summarized:'))
-    expect(summaries).toHaveLength(1)
+    expect(placeholdersIn(messages)).toEqual([expect.objectContaining({ method: 'summarize' })])
   })
 })
 
@@ -409,8 +382,9 @@ const turns = (messages: Message[]): { role: string; content: unknown[]; pinned?
     ...(message.metadata?.custom?.pinned === true && { pinned: true }),
   }))
 
-const marker = (count: number, summary: string): TextBlock =>
-  new TextBlock(`[Summarized: ${count} messages, ~5,000 tokens]\n\n${summary}`)
+/** The placeholder a summarized run leaves, over the 5,000 tokens the mocked count reports. */
+const marker = (summary: string, tokens = 5000): OffloadedBlock =>
+  offloadPlaceholder('summarize', formatSummarized(REMOVED_MESSAGES, tokens, summary), undefined, tokens)
 
 const serverSideMessages = (): Message[] => [
   new Message({ role: 'user', content: [new TextBlock('task')] }),
@@ -434,7 +408,7 @@ const summarizedToolResult = (summary: string): { role: string; content: unknown
     new ToolResultBlock({
       toolUseId: 't1',
       status: 'success',
-      content: [new TextBlock(`[Summarized: tool result, ~5,000 tokens]\n\n${summary}`)],
+      content: [offloadPlaceholder('summarize', formatSummarized('tool result', 5000, summary), undefined, 5000)],
     }),
   ],
 })
@@ -442,9 +416,71 @@ const summarizedToolResult = (summary: string): { role: string; content: unknown
 const pinned = (text: string): Message =>
   new Message({ role: 'user', content: [new TextBlock(text)], metadata: { custom: { pinned: true } } })
 
-const perMessage = () => Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+const perMessage = () => Offload.summarize('*').when({ contextUtilization: '80%', preserveRecent: 1 })
 const perBlock = (config?: { systemPrompt: string }) =>
-  Offload.summarize('toolResults', config).when({ threshold: 100 })
+  Offload.summarize('toolResults', config).when({ blockThreshold: 100 })
+
+describe('summarizing message runs', () => {
+  it('summarizes each contiguous run separately, around pinned messages', async () => {
+    const summarize = mockSummarize()
+      .mockResolvedValueOnce(summaryResult('late run'))
+      .mockResolvedValueOnce(summaryResult('early run'))
+    const pin = { metadata: { custom: { pinned: true } } }
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')], ...pin }),
+      ...['u2', 'a3', 'u4'].map(
+        (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
+      ),
+      new Message({ role: 'assistant', content: [new TextBlock('a5')], ...pin }),
+      ...['u6', 'a7', 'u8', 'a9', 'u10'].map(
+        (value, index) => new Message({ role: index % 2 ? 'assistant' : 'user', content: [new TextBlock(value)] })
+      ),
+    ]
+    const strategy = Offload.summarize('*').when({ contextUtilization: '50%', preserveRecent: 3 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { summarize }))).toBe(true)
+
+    expect(summarize).toHaveBeenCalledTimes(2)
+    expect(messages.map((message) => message.content.map((block) => (block as TextBlock).text))).toEqual([
+      ['task'],
+      [
+        'a1',
+        '[Summarized: earlier messages, ~3 tokens]\n\nearly run',
+        'a5',
+        '[Summarized: earlier messages, ~2 tokens]\n\nlate run',
+      ],
+      ['u8'],
+      ['a9'],
+      ['u10'],
+    ])
+  })
+
+  it('leaves a failed run intact and still summarizes the others', async () => {
+    const summarize = mockSummarize()
+      .mockResolvedValueOnce(summaryResult('late run'))
+      .mockRejectedValueOnce(new Error('throttled'))
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      ...['a1', 'u2', 'a3'].map(
+        (value, index) => new Message({ role: index % 2 ? 'user' : 'assistant', content: [new TextBlock(value)] })
+      ),
+      pinned('u4'),
+      ...['a5', 'u6', 'a7'].map(
+        (value, index) => new Message({ role: index % 2 ? 'user' : 'assistant', content: [new TextBlock(value)] })
+      ),
+    ]
+    const strategy = Offload.summarize('*').when({ contextUtilization: '50%', preserveRecent: 1 })
+
+    expect(await strategy.apply(makeContext(messages, 0.9, { summarize }))).toBe(true)
+
+    const texts = messages.map((message) => message.content.map((block) => (block as TextBlock).text))
+    expect(texts.slice(0, 5)).toEqual([['task'], ['a1'], ['u2'], ['a3'], ['u4']])
+    expect(texts[5]).toContain(formatSummarized(REMOVED_MESSAGES, 2, 'late run'))
+    warnSpy.mockRestore()
+  })
+})
 
 describe('per-block cancellation and placement', () => {
   it('stops sending requests after a cancel', async () => {
@@ -467,7 +503,7 @@ describe('per-block cancellation and placement', () => {
     warnSpy.mockRestore()
   })
 
-  it('skips a batch summary once cancelled', async () => {
+  it('skips a run summary once cancelled', async () => {
     const messages = serverSideMessages()
     const { agent, controller, stream } = mockAgent(messages)
     controller.abort()
@@ -491,7 +527,7 @@ describe('per-block cancellation and placement', () => {
   })
 })
 
-describe('batch summary replays the agent request', () => {
+describe('a summarized run replays the agent request', () => {
   const reasoning = () => new ReasoningBlock({ text: 'think', signature: 'sig' })
   const replayMessages = (): Message[] => [
     new Message({ role: 'user', content: [new TextBlock('task')] }),
@@ -517,7 +553,7 @@ describe('batch summary replays the agent request', () => {
       new Message({ role: 'user', content: [new TextBlock('next')] }),
     ]
     const { agent, stream } = mockAgent(messages)
-    const strategy = Offload.summarize('*').when({ utilization: 0.7, preserveRecent: 2 })
+    const strategy = Offload.summarize('*').when({ contextUtilization: '70%', preserveRecent: 2 })
 
     expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
@@ -547,7 +583,7 @@ describe('batch summary replays the agent request', () => {
     expect(options).toEqual(replayOptions(agent))
   })
 
-  it('sends only the replaced messages when a pin is kept', async () => {
+  it('summarizes each side of a kept pin on its own', async () => {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('task')] }),
       new Message({ role: 'assistant', content: [new TextBlock('old1')] }),
@@ -559,20 +595,28 @@ describe('batch summary replays the agent request', () => {
 
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
-    const [sent, options] = summarize.mock.calls[0]!
-    expect(turns(sent)).toEqual([
-      { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [new TextBlock('old1'), new TextBlock('old3')] },
+    // The later run goes first, so removing it leaves the earlier run's position unchanged.
+    expect(summarize.mock.calls.map(([sent]) => turns(sent))).toEqual([
+      [
+        { role: 'user', content: [new TextBlock('task')] },
+        { role: 'assistant', content: [new TextBlock('old3')] },
+      ],
+      [
+        { role: 'user', content: [new TextBlock('task')] },
+        { role: 'assistant', content: [new TextBlock('old1')] },
+      ],
     ])
-    expect(options).toEqual(replayOptions(agent))
+    expect(summarize.mock.calls[0]![1]).toEqual(replayOptions(agent))
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [marker(2, 'Summary of content.')] },
-      { role: 'user', content: [new TextBlock('pin'), new TextBlock('recent')], pinned: true },
+      { role: 'assistant', content: [marker('Summary of content.')] },
+      { role: 'user', content: [new TextBlock('pin')], pinned: true },
+      { role: 'assistant', content: [marker('Summary of content.')] },
+      { role: 'user', content: [new TextBlock('recent')] },
     ])
   })
 
-  it('sends only the replaced messages when a threshold skips some', async () => {
+  it('sends only the messages a blockThreshold selected', async () => {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('task')] }),
       new Message({ role: 'assistant', content: [new TextBlock('big1')] }),
@@ -588,20 +632,27 @@ describe('batch summary replays the agent request', () => {
         ? 5000
         : 10
     )
-    const strategy = Offload.summarize('*').when({ utilization: 0.8, threshold: 100 })
+    const strategy = Offload.summarize('*').when({ contextUtilization: '80%', blockThreshold: 100 })
 
     expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
-    const [sent, options] = summarize.mock.calls[0]!
-    expect(turns(sent)).toEqual([
-      { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [new TextBlock('big1'), new TextBlock('big2')] },
+    expect(summarize.mock.calls.map(([sent]) => turns(sent))).toEqual([
+      [
+        { role: 'user', content: [new TextBlock('task')] },
+        { role: 'assistant', content: [new TextBlock('big2')] },
+      ],
+      [
+        { role: 'user', content: [new TextBlock('task')] },
+        { role: 'assistant', content: [new TextBlock('big1')] },
+      ],
     ])
-    expect(options).toEqual(replayOptions(agent))
+    expect(summarize.mock.calls[0]![1]).toEqual(replayOptions(agent))
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [marker(2, 'Summary of content.')] },
-      { role: 'user', content: [new TextBlock('question'), new TextBlock('recent')] },
+      { role: 'assistant', content: [marker('Summary of content.')] },
+      { role: 'user', content: [new TextBlock('question')] },
+      { role: 'assistant', content: [marker('Summary of content.')] },
+      { role: 'user', content: [new TextBlock('recent')] },
     ])
   })
 
@@ -625,7 +676,7 @@ describe('batch summary replays the agent request', () => {
     expect(options).toEqual(replayOptions(agent))
   })
 
-  it('leaves reasoning out when a gap merges assistant turns', async () => {
+  it('leaves reasoning out of a run that is not the history prefix', async () => {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('task')] }),
       new Message({ role: 'assistant', content: [reasoning(), new TextBlock('old1')] }),
@@ -637,12 +688,16 @@ describe('batch summary replays the agent request', () => {
 
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
-    const [sent, options] = summarize.mock.calls[0]!
-    expect(turns(sent)).toEqual([
-      { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [new TextBlock('old1'), new TextBlock('old3')] },
+    expect(summarize.mock.calls.map(([sent]) => turns(sent))).toEqual([
+      [
+        { role: 'user', content: [new TextBlock('task')] },
+        { role: 'assistant', content: [new TextBlock('old3')] },
+      ],
+      [
+        { role: 'user', content: [new TextBlock('task')] },
+        { role: 'assistant', content: [reasoning(), new TextBlock('old1')] },
+      ],
     ])
-    expect(options).toEqual(replayOptions(agent))
   })
 
   it('sends no system prompt for an agent without one', async () => {
@@ -694,9 +749,40 @@ describe('batch summary replays the agent request', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('summary held no text'))
     warnSpy.mockRestore()
   })
+
+  it('sends an earlier server-side summary with the run that replaces it', async () => {
+    const earlier = new SummaryBlock({ provider: 'anthropic', text: 'fact' })
+    const history = (): Message[] => [
+      new Message({ role: 'user', content: [new TextBlock('task')] }),
+      new Message({ role: 'assistant', content: [earlier] }),
+      new Message({ role: 'user', content: [new TextBlock('old1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('old2')] }),
+      new Message({ role: 'user', content: [new TextBlock('recent')] }),
+    ]
+    const messages = history()
+    const { agent, summarize } = mockAgent(messages)
+
+    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(turns(summarize.mock.calls[0]![0])).toEqual(turns(history().slice(0, 4)))
+  })
 })
 
 describe('server-side summary', () => {
+  /** A history where only message 3 is over a 100-token `blockThreshold`. */
+  const sizeFilteredMessages = (): Message[] => [
+    new Message({ role: 'user', content: [new TextBlock('task')] }),
+    new Message({ role: 'assistant', content: [new TextBlock('small a1')] }),
+    new Message({ role: 'user', content: [new TextBlock('small u2')] }),
+    new Message({ role: 'assistant', content: [new TextBlock('BIG '.repeat(200))] }),
+    new Message({ role: 'user', content: [new TextBlock('small u4')] }),
+    new Message({ role: 'assistant', content: [new TextBlock('small a5')] }),
+    new Message({ role: 'user', content: [new TextBlock('last')] }),
+  ]
+
+  const sizeFiltered = () =>
+    Offload.summarize('*').when({ contextUtilization: '50%', blockThreshold: 100, preserveRecent: 1 })
+
   it('replaces the opening run with the server-side summary', async () => {
     const messages = serverSideMessages()
     const { agent, summarize } = mockAgent(messages, { serverSideSummary: true })
@@ -731,7 +817,7 @@ describe('server-side summary', () => {
     expect(turns(countTokens.mock.calls[0]![0])).toEqual(turns(serverSideMessages().slice(1, 4)))
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [new TextBlock('[Summarized: 3 messages, ~5,000 tokens]\n\nwritten client-side')] },
+      { role: 'assistant', content: [marker('written client-side')] },
       { role: 'user', content: [new TextBlock('recent')] },
     ])
     warnSpy.mockRestore()
@@ -754,7 +840,7 @@ describe('server-side summary', () => {
       toolRegistry: { list: () => [{ toolSpec }] } as unknown as ToolRegistry,
       extra: { model, systemPrompt: 'be terse' } as unknown as Partial<Agent>,
     })
-    const strategy = Offload.summarize('*', config).when({ utilization: 0.8, preserveRecent: 1 })
+    const strategy = Offload.summarize('*', config).when({ contextUtilization: '80%', preserveRecent: 1 })
 
     expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
@@ -766,36 +852,34 @@ describe('server-side summary', () => {
     })
   })
 
-  it.each<{ name: string; agentModel: () => Model }>([
-    {
-      name: 'a different model id',
-      agentModel: () => {
-        const { model } = baseModel(true)
-        model.updateConfig({ modelId: 'claude-opus-5-5' })
-        return model
-      },
-    },
-    {
-      name: 'a different provider',
-      agentModel: () => {
-        const model = new MockMessageModel()
-        model.updateConfig({ modelInfo: { capabilities: { serverSideSummary: true } } })
-        return model
-      },
-    },
-  ])('places a server-side summary when the agent model is $name', async ({ agentModel }) => {
-    const aux = baseModel(true)
-    const summary = new SummaryBlock({ provider: 'anthropic', text: 'compacted' })
-    aux.summarize.mockResolvedValue({ content: [summary] })
+  it.each<{ name: string; other: Record<string, unknown> }>([
+    { name: 'a different model id', other: { modelId: 'claude-opus-5-5' } },
+    { name: 'a different provider', other: { constructor: class OtherModel {} } },
+  ])('summarizes client-side when the agent model is $name', async ({ other }) => {
+    // The agent's model is the one that replays the summary block, so only its own provider may write it.
+    const serverSideModel = (overrides: Record<string, unknown> = {}) =>
+      ({
+        modelId: 'claude-haiku-5-5',
+        modelInfo: { capabilities: { serverSideSummary: true } },
+        countTokens: vi.fn(async () => 5000),
+        summarize: mockSummarize(),
+        ...overrides,
+      }) as unknown as Model
+    const auxModel = serverSideModel()
+    const agentModel = serverSideModel(other)
     const messages = serverSideMessages()
     const agent = createMockAgent({
       messages,
-      extra: { model: agentModel(), auxModel: aux.model } as unknown as Partial<Agent>,
+      extra: { model: agentModel, auxModel } as unknown as Partial<Agent>,
     })
 
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
-    expect(turns(messages)[1]).toEqual({ role: 'assistant', content: [summary] })
+    expect(turns(messages)).toEqual([
+      { role: 'user', content: [new TextBlock('task')] },
+      { role: 'assistant', content: [marker('Summary of multimodal content')] },
+      { role: 'user', content: [new TextBlock('recent')] },
+    ])
   })
 
   it('summarizes client-side when message 0 holds a tool use', async () => {
@@ -813,6 +897,46 @@ describe('server-side summary', () => {
     expect(messages.some((message) => message.content.some((block) => block instanceof SummaryBlock))).toBe(false)
   })
 
+  it('summarizes client-side when a blockThreshold selects messages by size', async () => {
+    const messages = sizeFilteredMessages()
+    const { agent, summarize, countTokens } = mockAgent(messages, { serverSideSummary: true })
+    summarize.mockResolvedValue(summaryResult('compacted', 'anthropic'))
+    countTokens.mockImplementation(async (counted: Message[]) => heuristicCountTokens(counted))
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const bigTokens = heuristicCountTokens([messages[3]!])
+
+    expect(await sizeFiltered().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    // A server-side summary covers the conversation's start, so it can't honour a per-message size filter.
+    expect(messages.flatMap((message) => message.content.map((block) => (block as TextBlock).text))).toEqual([
+      'task',
+      'small a1',
+      'small u2',
+      formatSummarized(REMOVED_MESSAGES, bigTokens, 'compacted'),
+      'small u4',
+      'small a5',
+      'last',
+    ])
+    warnSpy.mockRestore()
+  })
+
+  it('warns once that a blockThreshold rules out the server-side summary', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const strategy = sizeFiltered()
+    const first = sizeFilteredMessages()
+    const second = sizeFilteredMessages()
+    const { agent, summarize } = mockAgent(first, { serverSideSummary: true })
+    summarize.mockResolvedValue(summaryResult('compacted', 'anthropic'))
+
+    expect(await strategy.apply({ messages: first, agent, utilization: 0.9 })).toBe(true)
+    expect(await strategy.apply({ messages: second, agent, utilization: 0.9 })).toBe(true)
+
+    const skips = warnSpy.mock.calls.filter(([message]) => String(message).includes('cannot honour a blockThreshold'))
+    expect(skips).toHaveLength(1)
+    expect(skips[0]![0]).toContain('blockThreshold=<100> | a server-side summary covers the conversation')
+    warnSpy.mockRestore()
+  })
+
   it('falls back to client-side when message 0 is pinned', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const messages = serverSideMessages()
@@ -824,7 +948,7 @@ describe('server-side summary', () => {
 
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')], pinned: true },
-      { role: 'assistant', content: [marker(3, 'compacted')] },
+      { role: 'assistant', content: [marker('compacted')] },
       { role: 'user', content: [new TextBlock('recent')] },
     ])
     expect(warnSpy).toHaveBeenCalledWith(
@@ -847,20 +971,17 @@ describe('server-side summary', () => {
 
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
-    expect(summarize).toHaveBeenCalledTimes(1)
-    const [sent, options] = summarize.mock.calls[0]!
-    expect(turns(sent)).toEqual([
-      { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [new TextBlock('old1'), new TextBlock('old3')] },
-    ])
-    expect(options).toEqual(replayOptions(agent))
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('pinned=<1> | server-side summary does not support pinned messages')
     )
+    // The pin splits the removable messages into two runs, and each run gets its own summary.
+    expect(summarize).toHaveBeenCalledTimes(2)
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [marker(2, 'compacted')] },
-      { role: 'user', content: [new TextBlock('pin'), new TextBlock('recent')], pinned: true },
+      { role: 'assistant', content: [marker('compacted')] },
+      { role: 'user', content: [new TextBlock('pin')], pinned: true },
+      { role: 'assistant', content: [marker('compacted')] },
+      { role: 'user', content: [new TextBlock('recent')] },
     ])
     warnSpy.mockRestore()
   })
@@ -877,7 +998,7 @@ describe('server-side summary', () => {
 
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [marker(3, 'Summary of content.')] },
+      { role: 'assistant', content: [marker('Summary of content.')] },
       { role: 'user', content: [new TextBlock('recent')] },
     ])
   })
@@ -914,11 +1035,6 @@ describe('server-side summary', () => {
 
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
-    expect(turns(messages)).toEqual([
-      { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [marker(3, 'written client-side')] },
-      { role: 'user', content: [new TextBlock('recent')] },
-    ])
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('thinking blocks kept after it will be dropped'))
     warnSpy.mockRestore()
   })
@@ -993,16 +1109,13 @@ describe('client-side summaries use Model.summarize', () => {
   it('a failed per-message summary leaves the history unchanged', async () => {
     const messages = serverSideMessages()
     const { agent, summarize } = mockAgent(messages)
-    const error = new Error('throttled')
-    summarize.mockRejectedValue(error)
+    summarize.mockRejectedValue(new Error('throttled'))
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(false)
 
     expect(turns(messages)).toEqual(turns(serverSideMessages()))
-    const failure = warnSpy.mock.calls.find(([message]) => String(message).includes('summarization failed'))!
-    expect(failure[0]).toContain('error=<throttled>')
-    expect(failure[1]).toBe(error)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error=<throttled> | summarization failed'))
     warnSpy.mockRestore()
   })
 
@@ -1033,6 +1146,33 @@ describe('client-side summaries use Model.summarize', () => {
     ])
   })
 
+  it('a block summary labels a failed tool result with its status', async () => {
+    const failure = 'x'.repeat(10000)
+    const messages = [
+      new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'bash', toolUseId: 't1', input: {} })] }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock(failure)] })],
+      }),
+    ]
+    const { agent, summarize } = mockAgent(messages)
+    const strategy = Offload.summarize('toolResultErrors').when({ blockThreshold: 100 })
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.5 })).toBe(true)
+
+    expect(turns(summarize.mock.calls[0]![0])).toEqual([
+      {
+        role: 'user',
+        content: [
+          new TextBlock('<content>'),
+          new TextBlock('[tool result: bash (error)]'),
+          new TextBlock(failure),
+          new TextBlock('</content>'),
+        ],
+      },
+    ])
+  })
+
   it('a custom system prompt reaches client-side summaries', async () => {
     const messages = toolResultMessages()
     const { agent, summarize } = mockAgent(messages)
@@ -1043,12 +1183,12 @@ describe('client-side summaries use Model.summarize', () => {
     expect(summarize.mock.calls[0]![1]?.instructions).toBe('Be very brief.')
   })
 
-  it('a custom system prompt reaches batch summaries', async () => {
+  it('a custom system prompt reaches run summaries', async () => {
     const messages = serverSideMessages()
     const { agent, summarize } = mockAgent(messages)
     summarize.mockResolvedValue(summaryResult('provider summary'))
     const strategy = Offload.summarize('*', { systemPrompt: 'Be very brief.' }).when({
-      utilization: 0.8,
+      contextUtilization: '80%',
       preserveRecent: 1,
     })
 
@@ -1124,28 +1264,5 @@ describe('client-side summaries use Model.summarize', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('summary held no text'))
     expect(turns(messages)).toEqual(turns(toolResultMessages()))
     warnSpy.mockRestore()
-  })
-})
-
-describe('formatSummarized', () => {
-  it('uses the expected prefix', () => {
-    expect(formatSummarized('test', 100).startsWith('[Summarized:')).toBe(true)
-  })
-})
-
-describe('toolResultToContentBlocks', () => {
-  it('converts text content', () => {
-    expect(toolResultToContentBlocks([new TextBlock('hello')])).toEqual([new TextBlock('hello')])
-  })
-
-  it('passes through images', () => {
-    const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
-    expect(toolResultToContentBlocks([image])).toEqual([image])
-  })
-
-  it('converts json content to text', () => {
-    expect(
-      toolResultToContentBlocks([new TextBlock('plain text'), new JsonBlock({ json: { key: 'value', count: 42 } })])
-    ).toEqual([new TextBlock('plain text'), new TextBlock('{\n  "key": "value",\n  "count": 42\n}')])
   })
 })

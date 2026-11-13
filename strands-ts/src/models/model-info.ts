@@ -115,6 +115,35 @@ const data = modelInfoData as ModelInfoData
 /** Context window limit (in tokens) assumed for a model whose window is unknown. */
 export const DEFAULT_CONTEXT_WINDOW_LIMIT = data.defaults.limits.contextWindow
 
+const CAPABILITY_FIELDS = Object.keys({
+  stateful: true,
+  promptCaching: true,
+  forcedToolChoice: true,
+  nativeStructuredOutput: true,
+  serverSideSummary: true,
+  temporaryMessages: true,
+} satisfies Record<keyof ModelCapabilities, true>)
+const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
+  keyof ModelLimits,
+  true
+>)
+
+// Keeps the fields the SDK types and skips the rest, as the Python SDK does: the data file is shared
+// with other consumers (the harness), so it can carry fields the SDK doesn't read.
+function knownFields(entry: ModelInfo): ModelInfo {
+  const pick = (section: object | undefined, keys: readonly string[]): object | undefined => {
+    const picked = Object.fromEntries(Object.entries(section ?? {}).filter(([key]) => keys.includes(key)))
+    return Object.keys(picked).length > 0 ? picked : undefined
+  }
+  const capabilities = pick(entry.capabilities, CAPABILITY_FIELDS)
+  const limits = pick(entry.limits, LIMIT_FIELDS)
+  return { ...(capabilities ? { capabilities } : {}), ...(limits ? { limits } : {}) } as ModelInfo
+}
+
+const MODELS: Readonly<Record<string, ModelInfo>> = Object.fromEntries(
+  Object.entries(data.models).map(([id, entry]) => [id, Object.freeze(knownFields(entry))])
+)
+
 /**
  * Finds the entry for a model id. Tries the id as given, then without a trailing Bedrock version
  * suffix, then without a trailing date, then with each leading dot-separated segment removed in
@@ -131,7 +160,7 @@ export function lookupModel(modelId: string): ModelInfo | undefined {
   for (;;) {
     const unversioned = candidate.replace(VERSION_SUFFIX, '')
     for (const key of [candidate, unversioned, unversioned.replace(DATE_SUFFIX, '')]) {
-      if (Object.hasOwn(data.models, key)) return data.models[key]
+      if (Object.hasOwn(MODELS, key)) return MODELS[key]
     }
     const dotIndex = candidate.indexOf('.')
     if (dotIndex === -1) return undefined
