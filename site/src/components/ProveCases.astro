@@ -167,7 +167,7 @@ const total = String(testimonials.length).padStart(2, '0')
 
   .prove__eyebrow {
     margin: 0 0 12px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.11em;
@@ -179,11 +179,11 @@ const total = String(testimonials.length).padStart(2, '0')
   .prove__intro h2 {
     max-width: 820px;
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(38px, 4.2vw, 58px);
-    font-weight: 600;
-    letter-spacing: -0.045em;
-    line-height: 0.98;
+    font-family: var(--home-display-font);
+    font-size: var(--home-heading-size);
+    font-weight: 500;
+    letter-spacing: var(--home-heading-tracking);
+    line-height: var(--home-heading-line-height);
     color: var(--fg);
     text-wrap: balance;
   }
@@ -206,7 +206,7 @@ const total = String(testimonials.length).padStart(2, '0')
     display: flex;
     gap: 6px;
     margin: 0 3px 0 10px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -349,10 +349,10 @@ const total = String(testimonials.length).padStart(2, '0')
 
   .prove__quote :global(p) {
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(20px, 1.75vw, 25px);
+    font-family: var(--home-display-font);
+    font-size: clamp(17px, 1.35vw, 19px);
     font-weight: 400;
-    line-height: 1.45;
+    line-height: 1.55;
     color: var(--fg);
   }
 
@@ -412,7 +412,7 @@ const total = String(testimonials.length).padStart(2, '0')
   .prove__name,
   .prove__role {
     margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     line-height: 1.4;
     color: var(--fg);
   }
@@ -438,7 +438,7 @@ const total = String(testimonials.length).padStart(2, '0')
     padding: 8px 12px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--fg) 6%, transparent);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -479,7 +479,6 @@ const total = String(testimonials.length).padStart(2, '0')
 
     .prove__intro h2 {
       max-width: 520px;
-      font-size: clamp(32px, 10vw, 40px);
     }
 
     .prove__controls {
@@ -500,7 +499,7 @@ const total = String(testimonials.length).padStart(2, '0')
     }
 
     .prove__quote :global(p) {
-      font-size: 16px;
+      font-size: 15px;
       line-height: 1.5;
     }
 

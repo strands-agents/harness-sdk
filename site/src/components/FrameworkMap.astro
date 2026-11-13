@@ -88,11 +88,11 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
   .framework__intro h2 {
     max-width: 720px;
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(36px, 3.6vw, 50px);
-    font-weight: 600;
-    letter-spacing: -0.045em;
-    line-height: 1.02;
+    font-family: var(--home-display-font);
+    font-size: var(--home-heading-size);
+    font-weight: 500;
+    letter-spacing: var(--home-heading-tracking);
+    line-height: var(--home-heading-line-height);
     text-wrap: balance;
   }
 
@@ -161,11 +161,11 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 
   .framework__card-copy .framework__product-title {
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(28px, 2.8vw, 38px);
+    font-family: var(--home-display-font);
+    font-size: clamp(26px, 2.5vw, 34px);
     font-weight: 600;
-    letter-spacing: -0.035em;
-    line-height: 1;
+    letter-spacing: 0.025em;
+    line-height: 1.08;
     color: var(--framework-accent);
     text-transform: lowercase;
   }
@@ -173,7 +173,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
   .framework__card-copy > p:last-child {
     max-width: 52ch;
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-family: var(--home-body-font);
     font-size: 15px;
     line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 68%, transparent);
@@ -186,7 +186,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     gap: 9px;
     width: fit-content;
     min-height: 44px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
@@ -232,11 +232,11 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 
   .framework__capabilities-label {
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(22px, 2vw, 28px);
-    font-weight: 600;
-    letter-spacing: -0.03em;
-    line-height: 1.1;
+    font-family: var(--home-display-font);
+    font-size: clamp(20px, 1.8vw, 26px);
+    font-weight: 500;
+    letter-spacing: 0.055em;
+    line-height: 1.2;
     color: var(--fg);
   }
 
@@ -260,11 +260,11 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 
   .framework__capability .framework__product-title {
     margin: 0 0 10px;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(24px, 2vw, 30px);
+    font-family: var(--home-display-font);
+    font-size: clamp(22px, 1.8vw, 28px);
     font-weight: 600;
-    letter-spacing: -0.03em;
-    line-height: 1.05;
+    letter-spacing: 0.02em;
+    line-height: 1.12;
     color: var(--framework-accent);
     text-transform: lowercase;
   }
@@ -272,7 +272,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
   .framework__capability > p {
     max-width: 31ch;
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-family: var(--home-body-font);
     font-size: 13px;
     line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 65%, transparent);
@@ -286,10 +286,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
   @media (max-width: 720px) {
     .framework__inner {
       gap: 28px;
-    }
-
-    .framework__intro h2 {
-      font-size: clamp(36px, 10vw, 48px);
     }
 
     .framework__start-grid {
@@ -311,7 +307,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     }
 
     .framework__card-copy h3 {
-      font-size: 32px;
+      font-size: 28px;
     }
 
     .framework__card-link {

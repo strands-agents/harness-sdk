@@ -5,9 +5,8 @@
  * docs components readable while using the same brand surfaces and accents.
  */
 
-/* The Figtree web font is loaded via preconnect + <link rel="stylesheet"> in
-   src/components/SiteScripts.astro (included by Head.astro) rather than an
-   @import here, which would chain a render-blocking fetch. */
+/* Space Grotesk and JetBrains Mono are loaded via the direct stylesheet link
+   in src/components/SiteScripts.astro rather than a render-blocking @import. */
 
 /* Skip-to-content link. Starlight's SkipLink ships hide-until-focus styles in
    a component-scoped @layer; the custom PageFrame override drops that scoped

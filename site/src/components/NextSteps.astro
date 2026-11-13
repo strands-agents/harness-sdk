@@ -93,7 +93,7 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
 
   .next-steps__eyebrow {
     margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.11em;
@@ -104,17 +104,17 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
 
   .next-steps__title {
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(38px, 4.2vw, 58px);
-    font-weight: 600;
+    font-family: var(--home-display-font);
+    font-size: var(--home-heading-size);
+    font-weight: 500;
     letter-spacing: var(--home-heading-tracking);
-    line-height: 1.02;
+    line-height: var(--home-heading-line-height);
   }
 
   .next-steps__lede {
     max-width: 650px;
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-family: var(--home-body-font);
     font-size: var(--home-body-size);
     line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 72%, transparent);
@@ -146,7 +146,7 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
     padding: 10px 18px;
     border: 1px solid color-mix(in srgb, var(--fg) 40%, transparent);
     border-radius: 999px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 14px;
     font-weight: 700;
     line-height: 1.2;
@@ -162,18 +162,27 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
   }
 
   .next-steps__cta:focus-visible {
-    outline: 2px solid var(--strands-green);
+    outline: 2px solid var(--accent-green);
     outline-offset: 4px;
   }
 
   .next-steps__cta--primary {
-    border-color: var(--strands-green);
-    background: var(--strands-green);
-    color: var(--strands-black);
+    border-color: var(--accent-green);
+    background: var(--accent-green);
+    color: var(--bg);
+  }
+
+  .next-steps__cta--primary:hover {
+    background: color-mix(in srgb, var(--accent-green) 84%, var(--fg));
   }
 
   .next-steps__cta--secondary {
     background: transparent;
+  }
+
+  .next-steps__cta--secondary:hover {
+    border-color: var(--accent-green);
+    color: var(--accent-green);
   }
 
   .next-steps__cta-arrow {

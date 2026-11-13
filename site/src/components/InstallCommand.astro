@@ -26,7 +26,7 @@ const {
 ---
 
 <div class:list={['install', { 'install--compact': compact }]} data-install>
-  <code class="install__cmd">
+  <code class="install__cmd" role="region" tabindex="0" aria-label="Install command">
     <span class="install__prompt" aria-hidden="true">$</span>
     <span class="install__text">
       <span class="install__variant" data-install-variant="Python" aria-hidden="true">{PIP}</span>
@@ -66,6 +66,12 @@ const {
 
   .install__cmd::-webkit-scrollbar {
     display: none;
+  }
+
+  .install__cmd:focus-visible {
+    outline: 2px solid var(--accent-green, var(--strands-green));
+    outline-offset: 2px;
+    border-radius: 4px;
   }
 
   .install__prompt {

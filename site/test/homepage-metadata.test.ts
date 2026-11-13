@@ -59,7 +59,7 @@ describe('homepage machine-readable metadata', () => {
 
     expect(banner?.querySelectorAll('h1 > span').map((line) => line.text.trim())).toEqual([
       'Build agents.',
-      'Own every layer.',
+      'Control every layer.',
     ])
     expect(banner?.querySelector('.banner__intro')?.text).toContain('open-source toolkit')
     expect(banner?.querySelector('.banner__intro')?.text).not.toContain('Start with Harness')
@@ -84,7 +84,7 @@ describe('homepage machine-readable metadata', () => {
     expect(banner?.querySelector('.banner__actions + .banner__install')).not.toBeNull()
     expect(banner?.querySelector('.banner__dots')).not.toBeNull()
     expect(homepage.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe(
-      'Strands Agents: Build agents. Own every layer.'
+      'Strands Agents: Build agents. Control every layer.'
     )
   })
 
@@ -158,6 +158,15 @@ describe('homepage machine-readable metadata', () => {
     expect(homepageHtml.indexOf('class="logo-farm ')).toBeLessThan(homepageHtml.indexOf('class="use-cases '))
   })
 
+  it('keeps every scrollable install command keyboard accessible', () => {
+    const commands = homepage.querySelectorAll('.install__cmd')
+
+    expect(commands.length).toBeGreaterThan(0)
+    expect(commands.every((command) => command.getAttribute('role') === 'region')).toBe(true)
+    expect(commands.every((command) => command.getAttribute('tabindex') === '0')).toBe(true)
+    expect(commands.every((command) => command.getAttribute('aria-label') === 'Install command')).toBe(true)
+  })
+
   it('centers the customer proof label and leads with AWS', () => {
     const logoFarm = homepage.querySelector('.logo-farm')
     const logos = logoFarm?.querySelectorAll('.logo-farm__cell') ?? []
@@ -202,8 +211,12 @@ describe('homepage machine-readable metadata', () => {
     expect(variants).toHaveLength(8)
     expect(variants.filter((variant) => variant.getAttribute('data-code-variant') === 'TypeScript')).toHaveLength(4)
     expect(variants.filter((variant) => variant.getAttribute('data-code-variant') === 'Python')).toHaveLength(4)
+    expect(variants.every((variant) => variant.getAttribute('role') === 'region')).toBe(true)
+    expect(variants.every((variant) => variant.getAttribute('tabindex') === '0')).toBe(true)
+    expect(variants.every((variant) => variant.hasAttribute('aria-label'))).toBe(true)
     const codeBlocks = useCases?.querySelectorAll('pre') ?? []
     expect(codeBlocks).toHaveLength(8)
+    expect(codeBlocks.every((block) => block.getAttribute('tabindex') === '-1')).toBe(true)
     expect(codeBlocks.every((block) => block.classList.contains('astro-code-themes'))).toBe(true)
     expect(codeBlocks.every((block) => block.classList.contains('github-light'))).toBe(true)
     expect(codeBlocks.every((block) => block.classList.contains('github-dark'))).toBe(true)

@@ -58,7 +58,7 @@ const faqHref = pathWithBase('/faq/')
 
   .home-faq__eyebrow {
     margin: 0 0 18px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.11em;
@@ -70,18 +70,18 @@ const faqHref = pathWithBase('/faq/')
   .home-faq__header h2 {
     max-width: 380px;
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(34px, 3.7vw, 50px);
-    font-weight: 600;
-    letter-spacing: -0.04em;
-    line-height: 1.02;
+    font-family: var(--home-display-font);
+    font-size: var(--home-heading-size);
+    font-weight: 500;
+    letter-spacing: var(--home-heading-tracking);
+    line-height: var(--home-heading-line-height);
     text-wrap: balance;
   }
 
   .home-faq__lede {
     max-width: 31ch;
     margin: 18px 0 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-family: var(--home-body-font);
     font-size: 15px;
     line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 68%, transparent);
@@ -93,7 +93,7 @@ const faqHref = pathWithBase('/faq/')
     gap: 9px;
     min-height: 44px;
     margin-top: 18px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
@@ -141,7 +141,7 @@ const faqHref = pathWithBase('/faq/')
     padding: 14px clamp(20px, 2.5vw, 34px);
     cursor: pointer;
     list-style: none;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-family: var(--home-body-font);
     font-size: 17px;
     font-weight: 600;
     line-height: 1.35;
@@ -193,7 +193,7 @@ const faqHref = pathWithBase('/faq/')
     max-width: 65ch;
     margin: 0;
     padding: 0 clamp(56px, 5vw, 74px) 18px clamp(20px, 2.5vw, 34px);
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-family: var(--home-body-font);
     font-size: 15px;
     line-height: 1.55;
     color: color-mix(in srgb, var(--fg) 68%, transparent);
@@ -210,7 +210,6 @@ const faqHref = pathWithBase('/faq/')
 
     .home-faq__header h2 {
       max-width: 340px;
-      font-size: clamp(34px, 10vw, 44px);
     }
 
     .home-faq__lede {

@@ -55,7 +55,7 @@ const structuredData = {
     <meta property="og:image" content={ogImageHref} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Strands Agents: Build agents. Own every layer." />
+    <meta property="og:image:alt" content="Strands Agents: Build agents. Control every layer." />
     <meta name="twitter:card" content="summary_large_image" />
     {Astro.site?.origin !== 'https://strandsagents.com' && <meta name="robots" content="noindex, nofollow" />}
     <meta name="twitter:title" content={pageTitle} />
@@ -133,6 +133,14 @@ const structuredData = {
 
   /* Prevent horizontal scroll from off-canvas decorative elements on narrow viewports. */
   body {
+    font-family: var(--home-body-font);
     overflow-x: hidden;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font-family: inherit;
   }
 </style>

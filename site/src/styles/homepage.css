@@ -4,9 +4,16 @@
   --home-section-space: clamp(52px, 5.5vw, 76px);
   --home-section-space-compact: clamp(34px, 4vw, 48px);
   --home-radius-large: 24px;
-  --home-radius-medium: 18px;
-  --home-heading-size: clamp(40px, 4.2vw, 60px);
-  --home-heading-tracking: -0.052em;
+  --home-radius-medium: 16px;
+  --home-display-font: var(--sl-font-mono);
+  --home-body-font: var(--sl-font);
+  --home-control-font: var(--sl-font-mono);
+  --home-hero-size: clamp(40px, 4vw, 56px);
+  --home-hero-tracking: 0.07em;
+  --home-hero-line-height: 1.12;
+  --home-heading-size: clamp(34px, 3.4vw, 48px);
+  --home-heading-tracking: 0.075em;
+  --home-heading-line-height: 1.15;
   --home-body-size: clamp(16px, 1.3vw, 18px);
   --home-label: var(--eyebrow);
   --home-rule: var(--border);
@@ -16,7 +23,10 @@
   :root {
     --home-section-space: 48px;
     --home-section-space-compact: 32px;
-    --home-heading-size: clamp(36px, 10vw, 48px);
+    --home-hero-size: clamp(29px, 8.4vw, 40px);
+    --home-hero-tracking: 0.045em;
+    --home-heading-size: clamp(28px, 7.5vw, 34px);
+    --home-heading-tracking: 0.055em;
     --home-body-size: 16px;
   }
 }

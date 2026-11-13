@@ -81,11 +81,11 @@ if (!harness) throw new Error('Missing Harness homepage project')
     flex-direction: column;
     max-width: 1120px;
     margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(54px, 5.8vw, 82px);
-    font-weight: 620;
-    letter-spacing: -0.064em;
-    line-height: 0.94;
+    font-family: var(--home-display-font);
+    font-size: var(--home-hero-size);
+    font-weight: 500;
+    letter-spacing: var(--home-hero-tracking);
+    line-height: var(--home-hero-line-height);
     color: var(--fg);
     text-wrap: balance;
   }
@@ -97,7 +97,7 @@ if (!harness) throw new Error('Missing Harness homepage project')
   .banner__intro {
     max-width: 720px;
     margin: 22px 0 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-family: var(--home-body-font);
     font-size: clamp(17px, 1.4vw, 20px);
     line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 74%, transparent);
@@ -107,6 +107,7 @@ if (!harness) throw new Error('Missing Harness homepage project')
     position: relative;
     z-index: 1;
     display: inline-grid;
+    grid-template-columns: minmax(0, 1fr);
     justify-items: stretch;
     gap: 14px;
     width: fit-content;
@@ -117,10 +118,13 @@ if (!harness) throw new Error('Missing Harness homepage project')
   .banner__install {
     width: 100%;
     max-width: 100%;
+    min-width: 0;
   }
 
   .banner__install :global(.install) {
+    box-sizing: border-box;
     width: 100%;
+    min-width: 0;
   }
 
   .banner__actions {
@@ -128,6 +132,8 @@ if (!harness) throw new Error('Missing Harness homepage project')
     grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
     gap: 12px;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
     margin: 0;
   }
 
@@ -141,7 +147,7 @@ if (!harness) throw new Error('Missing Harness homepage project')
     padding: 12px 22px;
     border: 1px solid color-mix(in srgb, var(--fg) 32%, transparent);
     border-radius: 999px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-family: var(--home-control-font);
     font-size: 14px;
     font-weight: 700;
     line-height: 1.2;
@@ -163,13 +169,13 @@ if (!harness) throw new Error('Missing Harness homepage project')
   }
 
   .banner__cta--primary {
-    border-color: var(--strands-green);
-    background: var(--strands-green);
-    color: var(--strands-black);
+    border-color: var(--accent-green);
+    background: var(--accent-green);
+    color: var(--bg);
   }
 
   .banner__cta--primary:hover {
-    background: color-mix(in srgb, var(--strands-green) 84%, white);
+    background: color-mix(in srgb, var(--accent-green) 84%, var(--fg));
   }
 
   .banner__cta--secondary {
@@ -212,12 +218,6 @@ if (!harness) throw new Error('Missing Harness homepage project')
     opacity: 0.3;
   }
 
-  @media (max-width: 980px) {
-    .banner__headline {
-      font-size: clamp(56px, 8vw, 76px);
-    }
-  }
-
   @media (max-width: 767px) {
     .banner {
       padding: 14px var(--home-gutter) 0;
@@ -233,9 +233,9 @@ if (!harness) throw new Error('Missing Harness homepage project')
     }
 
     .banner__headline {
-      font-size: clamp(42px, 12vw, 56px);
-      letter-spacing: -0.058em;
-      line-height: 0.94;
+      font-size: var(--home-hero-size);
+      letter-spacing: var(--home-hero-tracking);
+      line-height: var(--home-hero-line-height);
     }
 
     .banner__intro {
@@ -246,6 +246,8 @@ if (!harness) throw new Error('Missing Harness homepage project')
 
     .banner__conversion {
       gap: 12px;
+      width: 100%;
+      max-width: 405px;
       margin-top: 24px;
     }
 
@@ -273,10 +275,6 @@ if (!harness) throw new Error('Missing Harness homepage project')
   @media (max-width: 360px) {
     .banner__inner {
       padding: 30px 0 28px;
-    }
-
-    .banner__headline {
-      font-size: 39px;
     }
 
     .banner__intro {

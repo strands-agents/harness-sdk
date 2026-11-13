@@ -14,7 +14,7 @@
 - [ ] `x-markdown-tokens` response header on markdown endpoints
 - [ ] Markdown sitemap (`/blog/sitemap.md`)
 - [ ] Newsletter signup integration
-- [ ] OG image custom font (currently uses system sans-serif, not Figtree)
+- [ ] OG image custom font (currently uses system sans-serif)
 - [ ] Author avatars (schema supports `avatar` field but no images seeded yet)
 - [ ] Cover images for posts (schema supports `coverImage` field)
 - [ ] Visual design review / polish pass on blog pages
