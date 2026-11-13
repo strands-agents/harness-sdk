@@ -1657,7 +1657,7 @@ class TestSnapshotStashIntegration:
         )
         resumed_agent("read it in full")
 
-        assert json.loads(_tool_result_text(resumed_agent, "tu-2")) == {"text": full_result}
+        assert _tool_result_text(resumed_agent, "tu-2") == full_result
         assert asyncio.run(resumed_agent.context_manager.stash.retrieve("tu-1_0")) == {"text": full_result}
 
 

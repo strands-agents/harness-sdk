@@ -15,6 +15,7 @@ from typing_extensions import NotRequired, TypedDict
 from .citations import CitationsContentBlock
 from .event_loop import Metrics, Usage
 from .media import AudioContent, DocumentContent, ImageContent, VideoContent
+from .offload import OffloadedBlock, OffloadMethod  # noqa: F401  (re-exported beside the blocks that carry it)
 from .tools import ToolResult, ToolUse
 
 
@@ -121,6 +122,7 @@ class ContentBlock(TypedDict, total=False):
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
         injected: Text the app adds to a user turn, kept apart from the user's own words.
+        offloaded: Where a placeholder's text came from, when a context manager's strategy offloaded the content.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
         summary: A summary of earlier conversation history.
         text: Text to include in the message.
@@ -136,6 +138,7 @@ class ContentBlock(TypedDict, total=False):
     guardContent: GuardContent
     image: ImageContent
     injected: InjectedBlock
+    offloaded: OffloadedBlock
     reasoningContent: ReasoningContentBlock
     summary: SummaryBlock
     text: str

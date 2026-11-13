@@ -469,8 +469,8 @@ agent = Agent(
     model=model,
     context_manager={
         "strategies": [
-            Offload.summarize("tool_results").when(threshold=2000),
-            Offload.summarize("*").when(utilization=0.85, preserve_recent=4),
+            Offload.summarize("tool_results").when(block_threshold=2000),
+            Offload.summarize("*").when(context_utilization="85%", preserve_recent=4),
         ],
     },
 )

@@ -22,7 +22,7 @@ Preset expansions are internal defaults and may change between releases as tunin
 |--------|------|-------------|
 | Proactive summarization | `"proactive_summarization"` | Summarizes the oldest 30% of messages when the context window reaches 70% capacity. |
 | Large tool offloading | `"large_tool_offloading"` | Truncates individual tool results over 2,500 tokens to a 1,000-token preview, eagerly on message arrival. |
-| Overflow protection | `"overflow_protection"` | Truncates the oldest messages when the context window is full, keeping the 4 most recent. |
+| Overflow protection | `"overflow_protection"` | Drops the oldest messages when the context window is full, keeping the 4 most recent. |
 | Stale tool cleanup | `"stale_tool_cleanup"` | Drops tool results more than 5 messages old. |
 
 </Tab>
@@ -86,7 +86,7 @@ agent = Agent(
         "strategies": [
             "large_tool_offloading",
             Offload.summarize("*").when(
-                utilization=0.9,
+                context_utilization="90%",
                 preserve_recent=2,
             ),
         ],

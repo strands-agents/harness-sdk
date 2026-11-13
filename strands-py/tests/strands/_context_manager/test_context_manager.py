@@ -5,8 +5,8 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.context_manager import ContextManager
-from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
+from strands._context_manager.placeholder import offload_placeholder
+from strands._context_manager.strategies.offload import EmergencyTruncateStrategy, Offload
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
@@ -46,7 +46,7 @@ class TestContextManagerInit:
         assert isinstance(cm._strategies[2], EmergencyTruncateStrategy)
 
     def test_custom_strategies(self):
-        custom = [Offload.drop("*").when(threshold=500)]
+        custom = [Offload.drop("*").when(block_threshold=500)]
         cm = ContextManager(strategies=custom)
         assert len(cm._strategies) == 2
         assert cm._strategies[0].name == "offload:drop"
@@ -255,7 +255,7 @@ class TestFromStrategy:
         assert ContextManager.from_strategy(cm) is cm
 
     def test_dict_config_returns_context_manager(self):
-        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(threshold=500)]})
+        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(block_threshold=500)]})
         assert isinstance(result, ContextManager)
 
     def test_unknown_string_raises(self):
@@ -414,8 +414,9 @@ class TestStashBackfill:
         assert await cm.stash.retrieve("seed_0") == {"text": "seed message"}
 
     @pytest.mark.asyncio
-    async def test_backfill_does_not_stash_previews_over_missing_originals(self, mock_agent):
-        """Restored previews are never stashed under their originals' keys (#5620)."""
+    async def test_backfill_does_not_stash_placeholders_over_missing_originals(self, mock_agent):
+        """Restored placeholders are never stashed under their originals' keys (#5620)."""
+        placeholder = offload_placeholder("truncate", "[Truncated: 1 block, ~7,500 tokens] preview", "pre-tu-1")
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
         mock_agent.messages = [
@@ -423,15 +424,7 @@ class TestStashBackfill:
             Message(
                 role="user",
                 content=[
-                    ContentBlock(
-                        toolResult=ToolResult(
-                            toolUseId="pre-tu-1",
-                            status="success",
-                            content=[
-                                {"text": "[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: pre-tu-1_0]"}
-                            ],
-                        )
-                    )
+                    ContentBlock(toolResult=ToolResult(toolUseId="pre-tu-1", status="success", content=[placeholder]))
                 ],
             ),
         ]
