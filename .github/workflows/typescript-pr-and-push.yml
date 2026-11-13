@@ -6,6 +6,7 @@ on:
     branches: [ main ]
     paths:
       - 'strands-ts/**'
+      - 'shared/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/typescript-*'
