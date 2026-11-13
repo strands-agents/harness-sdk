@@ -201,11 +201,18 @@ export const generateTemporaryExperiment = async (
 
 interface Diagnosis {
   readonly pattern: RegExp
-  readonly summary: (model: string) => string
+  readonly summary: (model: string, cause: string) => string
   readonly next: string
 }
 
+const REJECTED_FLAGS = /strands-evals generate stopped with exit code 2: (?:argument --[\w-]+: )?/u
+
 const DIAGNOSES: readonly Diagnosis[] = [
+  {
+    pattern: REJECTED_FLAGS,
+    summary: (_model, cause) => firstSentence(cause.replace(REJECTED_FLAGS, '')),
+    next: 'Press Enter to change the evaluators or their settings in the chat. The error below names the problem.',
+  },
   {
     pattern:
       /ExpiredToken|security token included in the request is (?:invalid|expired)|InvalidClientTokenId|UnrecognizedClientException|NoCredentialsError|Unable to locate credentials|CredentialRetrievalError|credentials? (?:have|has) expired/iu,
@@ -243,6 +250,8 @@ const firstLine = (text: string): string => {
   return line.length > SUMMARY_LIMIT ? `${line.slice(0, SUMMARY_LIMIT - 1)}…` : line
 }
 
+const firstSentence = (text: string): string => firstLine(text.split('. ')[0] ?? text).replace(/\.$/u, '')
+
 export const temporaryGenerationError = (
   error: unknown,
   { settings, reported, log }: { settings: GenerationSettings; reported?: string; log: string }
@@ -251,7 +260,7 @@ export const temporaryGenerationError = (
   const diagnosis = DIAGNOSES.find(({ pattern }) => pattern.test(cause))
   const model = settings.model || REFUSED_MODEL.exec(cause)?.[1] || 'the default model'
   return {
-    summary: diagnosis?.summary(model) ?? firstLine(cause),
+    summary: diagnosis?.summary(model, cause) ?? firstLine(cause),
     detail: [
       diagnosis?.next ?? 'Read the log for the cause, then press r to retry.',
       `Log: ${log}`,

@@ -277,6 +277,33 @@ describe('TEMPORARY experiment generation', () => {
     )
   })
 
+  it('shouldNameTheRejectedEvaluatorAndPointToTheChatWhenGenerateRejectsItsFlags', () => {
+    const error = new Error(
+      'strands-evals generate stopped with exit code 2: HelpfulnessEvaluator cannot score a TypeScript agent in ' +
+        'strands dev. It reads the agent trace, and strands dev records a trace only for Python agents.\n' +
+        'Change the evaluator or the setting that the error names, then try again.'
+    )
+
+    const failure = temporaryGenerationError(error, { settings: settings(), log: '/d/refunds.log' })
+
+    expect(failure.summary).toBe('HelpfulnessEvaluator cannot score a TypeScript agent in strands dev')
+    expect(failure.detail.split('\n')[0]).toBe(
+      'Press Enter to change the evaluators or their settings in the chat. The error below names the problem.'
+    )
+    expect(failure.detail).toContain('strands-evals said: strands-evals generate stopped with exit code 2')
+  })
+
+  it('shouldDropTheArgumentPrefixFromTheSummaryWhenArgparseRejectsAnEvaluator', () => {
+    const error = new Error(
+      'strands-evals generate stopped with exit code 2: argument --evaluator: ToolCalled needs tool_name. ' +
+        'Pass it as JSON: {"evaluator_type": "ToolCalled", "tool_name": "..."}'
+    )
+
+    expect(temporaryGenerationError(error, { settings: settings(), log: 'l' }).summary).toBe(
+      'ToolCalled needs tool_name'
+    )
+  })
+
   it.each<[string, TemporaryGenerationEvent | undefined]>([
     ['{"event":"topics"}', { event: 'topics' }],
     ['{"event":"cases","total":20}', { event: 'cases', total: 20 }],
