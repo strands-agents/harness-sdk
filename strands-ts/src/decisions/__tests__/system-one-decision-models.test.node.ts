@@ -645,7 +645,6 @@ describe('OpenAIDecisionModel', () => {
     const captured: CapturedRequest[] = []
     const fetch = fakeFetch(
       {
-        model: 'gpt-6-luna',
         answers: [
           { type: 'predicate', name: 'urgent', probability: 0.9 },
           {
@@ -705,13 +704,48 @@ describe('OpenAIDecisionModel', () => {
     })
   })
 
-  it('maps a refused question to ModelError', async () => {
-    const fetch = fakeFetch({ model: 'gpt-6-luna', answers: [{ type: 'refusal', name: 'q' }] })
+  it('reports a refused question as Uncertain and keeps the answers it did return', async () => {
+    const fetch = fakeFetch({
+      answers: [
+        { type: 'refusal', name: 'refused' },
+        { type: 'predicate', name: 'answered', probability: 0.99 },
+      ],
+    })
     const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
 
-    await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
-      new ModelError('openai refused to answer question id=<q>')
-    )
+    const result = await decision.ask('state', {
+      refused: { question: 'ok?', choices: 'boolean' },
+      answered: { question: 'also ok?', choices: 'boolean' },
+    })
+
+    expect(result.answers).toEqual({ refused: new Uncertain('openai declined to answer'), answered: true })
+    expect(result.metadata.probabilities).toEqual({
+      refused: {},
+      answered: { true: 0.99, false: 0.010000000000000009 },
+    })
+  })
+
+  it('throws when a refused question disabled uncertainty', async () => {
+    const fetch = fakeFetch({ answers: [{ type: 'refusal', name: 'q' }] })
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    await expect(
+      decision.ask('state', { q: { question: 'ok?', choices: 'boolean', uncertainty: false } })
+    ).rejects.toThrow(/question id=<q> \| decision provider declined to answer/)
+  })
+
+  it('ignores an answer naming a question that was not asked', async () => {
+    const fetch = fakeFetch({
+      answers: [
+        { type: 'refusal', name: 'never-asked' },
+        { type: 'predicate', name: 'q', probability: 0.99 },
+      ],
+    })
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+    expect(result.answers).toEqual({ q: true })
   })
 
   it('reads OPENAI_API_KEY', async () => {

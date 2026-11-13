@@ -1,8 +1,8 @@
-import { ModelError } from '../errors.js'
 import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
   httpTransport,
+  REFUSED_ANSWER_TYPE,
   resolveSystemOneProviderConfig,
   toWireQuestions,
   toWireState,
@@ -34,6 +34,9 @@ export interface OpenAIDecisionModelOptions {
  *
  * Boolean questions are sent as `predicate` questions. The API returns only a probability for them, so
  * their confidence is `|2p - 1|`, the scale every System One provider shares.
+ *
+ * The API can decline one question and answer the rest. A declined question is reported as `Uncertain`,
+ * so the remaining answers stay usable; it throws only for a question that set `uncertainty: false`.
  *
  * @example
  * ```typescript
@@ -79,7 +82,8 @@ export class OpenAIDecisionModel extends DecisionModel {
     const transport = httpTransport(this._providerConfig)
     return askSystemOne(
       this._providerConfig,
-      async (body, cancelSignal) => toSystemOneResponse(await transport(body, cancelSignal)),
+      async (body, cancelSignal) =>
+        toSystemOneResponse(await transport(body, cancelSignal), questions, this._providerConfig.modelId),
       state,
       questions,
       options.cancelSignal
@@ -106,22 +110,24 @@ function toOpenAIQuestions(questions: Record<string, Question>): Record<string, 
 }
 
 /**
- * Maps an OpenAI response to the System One shape: answers arrive as an array keyed by `name`,
- * `predicate` answers carry `probability`, and choice probabilities are a `{ value, probability }` list.
- * Anything else passes through for the shared parser to validate.
+ * Maps an OpenAI response to the System One shape: answers arrive as an array named by question id,
+ * the documented response omits `model`, `predicate` answers carry `probability`, and choice
+ * probabilities are a `{ value, probability }` list. Answers naming a question that was not asked are
+ * dropped. Anything else passes through for the shared parser to validate.
  */
-function toSystemOneResponse(payload: unknown): unknown {
+function toSystemOneResponse(payload: unknown, questions: Record<string, Question>, modelId: string): unknown {
   if (!isRecord(payload) || !Array.isArray(payload['answers'])) return payload
   const answers = Object.fromEntries(
-    payload['answers'].filter(isRecord).map((answer) => [String(answer['name']), toSystemOneAnswer(answer)])
+    payload['answers']
+      .filter(isRecord)
+      .filter((answer) => typeof answer['name'] === 'string' && Object.hasOwn(questions, answer['name']))
+      .map((answer) => [String(answer['name']), toSystemOneAnswer(answer)])
   )
-  return { ...payload, answers }
+  return { ...payload, model: payload['model'] ?? modelId, answers }
 }
 
 function toSystemOneAnswer(answer: Record<string, unknown>): unknown {
-  if (answer['type'] === 'refusal') {
-    throw new ModelError(`openai refused to answer question id=<${String(answer['name'])}>`)
-  }
+  if (answer['type'] === 'refusal') return { type: REFUSED_ANSWER_TYPE, reason: 'openai declined to answer' }
   if (answer['type'] === 'predicate') return { type: 'noul', noul: answer['probability'] }
   if (answer['type'] !== 'choice' || !Array.isArray(answer['probabilities'])) return answer
   return {
