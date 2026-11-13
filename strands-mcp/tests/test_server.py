@@ -408,3 +408,43 @@ class TestFetchDocErrors:
 
         with pytest.raises(ToolError, match="fetch failed"):
             fetch_doc(uri=catalog_url)
+
+
+@patch("strands_mcp_server.server.cache")
+class TestFetchDocNoSectionsBudget:
+    """The no_sections fallback is bounded by the small-doc budget (#3327)."""
+
+    def test_large_no_sections_doc_is_bounded(self, mock_cache):
+        """A large document with no parseable sections is bounded, not dumped whole."""
+        from strands_mcp_server.utils import text_processor
+
+        content = "# Title Only\n\n" + ("Lorem ipsum dolor sit amet. " * 1000)
+        assert len(content.encode("utf-8")) > text_processor.SMALL_DOC_THRESHOLD
+
+        mock_cache.ensure_page.return_value = Page(
+            url="https://strandsagents.com/no-h2-large.md",
+            title="No H2 Doc",
+            content=content,
+        )
+
+        tru_result = fetch_doc(uri="https://strandsagents.com/no-h2-large.md")
+
+        assert tru_result["reason"] == "no_sections"
+        assert tru_result["truncated"] is True
+        assert len(tru_result["content"].encode("utf-8")) <= text_processor.SMALL_DOC_THRESHOLD
+        assert "truncated" in tru_result["content"]
+
+    def test_small_no_sections_doc_is_returned_whole(self, mock_cache):
+        """A document under the threshold is returned whole and unchanged."""
+        content = "# Title Only\n\nShort body."
+        mock_cache.ensure_page.return_value = Page(
+            url="https://strandsagents.com/no-h2-small.md",
+            title="No H2 Small Doc",
+            content=content,
+        )
+
+        tru_result = fetch_doc(uri="https://strandsagents.com/no-h2-small.md")
+
+        assert tru_result["reason"] == "size"
+        assert tru_result["content"] == content
+        assert "truncated" not in tru_result
