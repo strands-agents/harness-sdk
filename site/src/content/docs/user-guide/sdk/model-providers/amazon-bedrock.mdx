@@ -577,6 +577,8 @@ agent([
 <Tab label="TypeScript">
 
 ```typescript
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock_imports.ts:guard_content_imports"
+
 --8<-- "user-guide/sdk/model-providers/amazon-bedrock.ts:guard_content"
 ```
 
@@ -598,7 +600,7 @@ Once any `guardContent` block is present in the messages, Bedrock evaluates only
 :::
 
 :::note[Automatic wrapping]
-With <Syntax py="guardrail_latest_message=True" ts="guardLatestUserMessage: true" />, the SDK wraps the text and image content of the latest user message in `guardContent` blocks for you, with no qualifiers. If you also add your own `guardContent` blocks to that message, its plain text blocks are wrapped too: in the example above, `Summarize the text above.` would also be evaluated.
+With <Syntax py="guardrail_latest_message=True" ts="guardLatestUserMessage: true" />, the SDK wraps the text and PNG/JPEG image content of the latest user message in `guardContent` blocks for you, with no qualifiers. Other image formats are sent unwrapped. If you also add your own `guardContent` blocks to that message, its plain text blocks are wrapped too: in the example above, `Summarize the text above.` would also be evaluated.
 :::
 
 ### Caching

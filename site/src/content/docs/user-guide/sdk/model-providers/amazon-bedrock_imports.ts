@@ -32,3 +32,8 @@ import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 import { Agent } from '@strands-agents/sdk'
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 // --8<-- [end:mantle_config_imports]
+
+// --8<-- [start:guard_content_imports]
+import { Agent } from '@strands-agents/sdk'
+import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+// --8<-- [end:guard_content_imports]
