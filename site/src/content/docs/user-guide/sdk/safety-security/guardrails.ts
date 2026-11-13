@@ -187,8 +187,7 @@ async function classifierUseExample() {
 
 async function modelBoundaryExample() {
   // --8<-- [start:model_boundary]
-  // Screens every prompt and every response, including text the model
-  // produces after reading a tool result
+  // Screens the conversation sent to the model and each model response
   const model = new BedrockModel({
     guardrailConfig: {
       guardrailIdentifier: 'your-guardrail-id',
@@ -216,7 +215,7 @@ class DeleteApproval extends InterventionHandler {
     if (!Array.isArray(paths)) {
       return InterventionActions.guide('paths must be a list of file paths.')
     }
-    // Small deletions go through. Large ones wait for a person.
+    // Five files or fewer run without approval
     if (paths.length <= 5) return InterventionActions.proceed()
     return InterventionActions.confirm(`Approve deleting ${paths.length} files? (y/n)`)
   }
@@ -292,7 +291,7 @@ interface AuditRecord {
   userId: string
   tool: string
   toolUseId: string
-  // The handler that decided, so a denial is never attributed to the wrong layer
+  // Name of the handler that made the decision
   source: string
   decision: Decision
   reason?: string
@@ -461,13 +460,13 @@ async function composeExample() {
         // Authorization before confirmation: never ask a person about a forbidden call
         new Audited(tenantAuthorization(policy), policy, writeAuditRecord),
         new Audited(new DeleteApproval(), policy, writeAuditRecord),
-        // beforeModelCall is a different stage: the order above does not apply to it
+        // Runs on beforeModelCall, so its position in this list has no effect
         new ContentScreen(new BedrockGuardrailClassifier('your-guardrail-id', '1'), {
           budgetMs: 400,
           onTimeout: 'block',
           mode: 'enforce',
         }),
-        // afterToolCall: sees results from calls the handlers above let through
+        // Runs on afterToolCall, on the results of tool calls that were not blocked
         new RetrievalBoundary(['search']),
       ],
     })
