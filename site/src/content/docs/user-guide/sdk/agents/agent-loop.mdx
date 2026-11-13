@@ -150,6 +150,8 @@ The `agent.cancel()` method provides a way to stop the loop from outside, such a
 
   The agent returns a result with `stop_reason="cancelled"`. `cancel()` is thread-safe and idempotent. Calling it multiple times or from different threads is safe.
 
+  [Background tasks](../../harness/configure/background-tasks.mdx) keep running after `cancel()`. Pass `cancel_background_tasks=True` to cancel this agent's queued, working, and input-required background tasks immediately as well. On an idle agent, `cancel(cancel_background_tasks=True)` cancels only the background tasks, while plain `cancel()` also cancels the next invocation.
+
   ```python
   import threading
   import time
@@ -232,6 +234,8 @@ The `agent.cancel()` method provides a way to stop the loop from outside, such a
   | After tool execution | The agent stops before the next model call | Sibling tools in the current batch finish before cancellation is observed; this is the checkpoint the `stop` vended tool uses via `cancel({ afterCurrentTools: true })` |
 
   The agent returns a result with `stopReason: 'cancelled'`. `cancel()` is idempotent: calling it multiple times is safe.
+
+  [Background tasks](../../harness/configure/background-tasks.mdx) keep running after `cancel()`. Pass `cancel({ cancelBackgroundTasks: true })` to cancel this agent's queued, working, and input-required background tasks too, whether or not an invocation is running.
 
   ```typescript
   --8<-- "user-guide/sdk/agents/agent-loop.ts:cancel_timeout"

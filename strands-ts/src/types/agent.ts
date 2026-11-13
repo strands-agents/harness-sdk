@@ -275,6 +275,15 @@ export interface CancelOptions {
    * returns its natural `stopReason`.
    */
   afterCurrentTools?: boolean
+
+  /**
+   * Also cancel every queued, working, or input-required background task of
+   * this agent immediately, even with `afterCurrentTools` and whether or not an
+   * invocation is running. Background tasks keep running by default, and a
+   * `cancelSignal` passed into an invocation never cancels them. Their cancelled
+   * results are delivered like a cancel requested by the model.
+   */
+  cancelBackgroundTasks?: boolean
 }
 
 /**

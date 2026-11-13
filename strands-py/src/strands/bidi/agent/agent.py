@@ -284,7 +284,9 @@ class BidiAgent(LocalAgent):
     def event_loop_metrics(self, value: "EventLoopMetrics") -> None:
         raise NotImplementedError("event_loop_metrics is not supported by bidirectional agents yet")
 
-    def cancel(self, *, message: str | None = None, after_current_tools: bool = False) -> None:
+    def cancel(
+        self, *, message: str | None = None, after_current_tools: bool = False, cancel_background_tasks: bool = False
+    ) -> None:
         """Request cancellation of the current conversation.
 
         Thread-safe and idempotent. Cancellation takes effect only after a tool
@@ -300,6 +302,8 @@ class BidiAgent(LocalAgent):
             after_current_tools: Accepted for signature parity with
                 ``Agent.cancel()``; BidiAgent cancellation is always deferred to
                 the end of the current tool group.
+            cancel_background_tasks: Accepted for signature parity with
+                ``Agent.cancel()``; BidiAgent has no background tasks.
         """
         if message is not None:
             self._cancel_message = message

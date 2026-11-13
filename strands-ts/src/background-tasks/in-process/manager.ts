@@ -118,6 +118,12 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     return toBackgroundTask(this._engine.cancel(taskId, { reason: 'Cancellation requested' }))
   }
 
+  cancelAll(): void {
+    for (const record of this._engine.list()) {
+      if (!isTaskStatusTerminal(record.status)) this._engine.cancel(record.taskId, { reason: 'Cancellation requested' })
+    }
+  }
+
   async wait(taskId: string): Promise<BackgroundTask> {
     const current = this._engine.get(taskId)
     if (!current) throw new BackgroundTaskNotFoundError(taskId)

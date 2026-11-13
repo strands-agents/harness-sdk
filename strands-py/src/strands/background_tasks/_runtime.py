@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
+import logging
 import threading
 from collections.abc import Awaitable, Callable
 from typing import TypeVar, cast
 
 _T = TypeVar("_T")
+
+logger = logging.getLogger(__name__)
 
 
 class _BackgroundTaskRuntime:
@@ -27,6 +31,26 @@ class _BackgroundTaskRuntime:
             return await self._invoke(operation)
         future = asyncio.run_coroutine_threadsafe(self._invoke(operation), loop)
         return await asyncio.wrap_future(future)
+
+    def call(self, operation: Callable[[], object], *, timeout: float = 5.0) -> None:
+        """Run a synchronous operation on the persistent loop and wait for the callbacks it schedules.
+
+        Safe from any thread. On the loop's own thread it runs inline and does not wait. Stops waiting
+        after ``timeout`` seconds and logs a warning; the operation still runs when the loop gets to it.
+        """
+        loop = self._ensure_started()
+        if threading.current_thread() is self._thread:
+            operation()
+            return
+
+        async def settle() -> None:
+            operation()
+            await asyncio.sleep(0)  # let the task-update notifications it queued run first
+
+        try:
+            asyncio.run_coroutine_threadsafe(settle(), loop).result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            logger.warning("timeout=<%s> | background task runtime did not settle in time", timeout)
 
     def _ensure_started(self) -> asyncio.AbstractEventLoop:
         existing_loop = self._loop
