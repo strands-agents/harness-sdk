@@ -1,0 +1,11 @@
+name: ClickHouse Loom
+description: Shared long-term memory for agents on a self-hosted Loom server; memories are stored in ClickHouse and found again by any agent on the namespace.
+integrationType: memory-store
+languages:
+  python:
+    package: clickhouse-loom
+  typescript:
+    package: "@clickhouse/loom"
+github: https://github.com/ClickHouse/loom
+docsUrl: https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md#strands-agents
+addedDate: 2026-11-13
