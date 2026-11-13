@@ -584,4 +584,57 @@ describe('GeminiDecisionModel', () => {
 
     expect(captured[0]?.headers['x-goog-api-key']).toBe('gemini-env-key')
   })
+
+  it('maps Gemini safety blocks to ModelError and throttling to ModelThrottledError', async () => {
+    const question = { q: { question: 'ok?', choices: 'boolean' } } as const
+    const blocked = new GeminiDecisionModel({
+      apiKey: 'test-key',
+      fetch: fakeFetch({ error: { code: 'safety', message: 'Request blocked' } }, { status: 400 }),
+    })
+    const throttled = new GeminiDecisionModel({
+      apiKey: 'test-key',
+      fetch: fakeFetch({ error: { code: 429, message: 'Resource exhausted' } }, { status: 429 }),
+    })
+
+    const blockedError = await blocked.ask('state', question).catch((error: unknown) => error)
+    expect(blockedError).toBeInstanceOf(ModelError)
+    expect(blockedError).not.toBeInstanceOf(ModelThrottledError)
+    expect((blockedError as Error).message).toMatch(/HTTP 400: Request blocked/)
+    await expect(throttled.ask('state', question)).rejects.toThrow(ModelThrottledError)
+  })
+
+  it('rejects a Noul answer without the Gemini confidence', async () => {
+    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.9 } } })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+      /confidence for question id=<q>/
+    )
+  })
+
+  it('caps the normalized Noul confidence at 0.98 for the threshold', async () => {
+    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.99, confidence: 0.99 } } })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    const passes = await decision.ask('state', {
+      q: { question: 'ok?', choices: 'boolean', uncertainty: { minConfidence: 0.98 } },
+    })
+    const blocked = await decision.ask('state', {
+      q: { question: 'ok?', choices: 'boolean', uncertainty: { minConfidence: 0.99 } },
+    })
+
+    expect(passes.answers.q).toBe(true)
+    expect(blocked.answers.q).toEqual(new Uncertain())
+  })
+
+  it('rejects binary content blocks before sending', async () => {
+    const fetch = fakeFetch({ answers: {} })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+    const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
+
+    await expect(decision.ask([image], { q: { question: 'What is shown?', choices: 'boolean' } })).rejects.toThrow(
+      /do not support binary ContentBlock state/
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
 })
