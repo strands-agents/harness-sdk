@@ -3,7 +3,13 @@
  * These examples demonstrate how to implement a custom model provider.
  */
 
-import { Agent, BedrockModel, Model, type BedrockModelConfig } from '@strands-agents/sdk'
+import {
+  Agent,
+  BedrockModel,
+  Model,
+  mergeModelInfo,
+  type BedrockModelConfig,
+} from '@strands-agents/sdk'
 import type {
   ModelInfo,
   BaseModelConfig,
@@ -256,16 +262,11 @@ class CustomModelInfoExample extends Model<BaseModelConfig> {
 
   // --8<-- [start:model_info]
   override get modelInfo(): ModelInfo {
-    const info = super.modelInfo
-    const user = Object.entries(this._config.modelInfo?.capabilities ?? {})
-    return {
-      ...info,
-      capabilities: {
-        ...info.capabilities,
-        serverSideSummary: false,
-        ...Object.fromEntries(user.filter(([, value]) => value !== undefined)),
-      },
-    }
+    return mergeModelInfo(
+      super.modelInfo,
+      { capabilities: { serverSideSummary: false } },
+      this._config.modelInfo
+    )
   }
   // --8<-- [end:model_info]
 

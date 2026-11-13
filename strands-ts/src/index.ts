@@ -213,6 +213,7 @@ export type {
 } from './models/model.js'
 export type { SummarizeResult } from './models/summarize.js'
 export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
+export { mergeModelInfo } from './models/model-info.js'
 
 export { Model } from './models/model.js'
 
