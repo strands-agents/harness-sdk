@@ -1,154 +1,322 @@
 ---
 title: Guardrails
-description: "Add safety guardrails to AI agents. Control tool permissions, validate outputs, and enforce responsible AI policies in production."
-tags: [safety, bedrock, aws]
+description: "Layer guardrails on a Strands agent: schema validation, deterministic rules, a budgeted classifier, confirmation, per-tenant Cedar policies, and audit."
+tags: [safety, interventions, bedrock, aws]
+sourceLinks:
+  - path: strands-ts/src/interventions/handler.ts
+  - path: strands-ts/src/interventions/actions.ts
+  - path: strands-ts/src/interventions/registry.ts
+  - path: strands-ts/src/vended-interventions/cedar/cedar.ts
+  - path: strands-ts/src/models/bedrock.ts
 ---
 
-Guardrails screen what reaches the model and what it returns, giving you content filtering, topic blocking, and PII protection at the model boundary. This page shows how to configure them per model provider, and how to run them in shadow mode before you enforce.
+Guardrails control what an agent accepts, what it does, and what it returns. A guardrail
+on the model screens prompts and model responses. It does not see tool arguments, the
+identity of the caller, or the content that a tool retrieves. An agent that calls tools
+needs a check at each of those points. This page shows how to build those checks with
+tool input schemas, [interventions](../agents/interventions/index.mdx), and Amazon
+Bedrock Guardrails, and how to combine them on one agent.
 
-## What Are Guardrails?
+The examples use the TypeScript SDK. The intervention actions that they return
+(`proceed`, `deny`, `guide`, `confirm`, and `transform`) are also available in the
+Python SDK.
 
-Guardrails are safety mechanisms that control agent behavior by defining boundaries for the content the model generates and receives. They act as a protective layer that:
+Each layer handles one kind of failure:
 
-1. **Filters harmful or inappropriate content**: toxicity, profanity, and hate speech.
-2. **Detects and redacts PII** (Personally Identifiable Information).
-3. **Enforces topic boundaries**, keeping the agent inside its intended domain and blocking off-topic requests.
-4. **Helps meet regulatory and compliance requirements** for the content an AI system produces.
+| Layer | Catches | Runs |
+|-------|---------|------|
+| Schema | Malformed tool input | When the tool is called |
+| Rules | Tool calls that break a rule you can express in code | Before a tool call |
+| Classifier | Abuse, prompt injection, and off-topic requests | Before a model call |
+| Confirmation | High-impact tool calls | Before a tool call |
+| Tenant policy | Tool calls the tenant's policy does not permit | Before a tool call |
+| Retrieval boundary | Retrieved text that reads as instructions | After a tool call |
 
-## Guardrails in Different Model Providers
+Handlers that implement the same lifecycle method run in registration order, and a
+`deny` skips the remaining handlers for that method. Register inexpensive rules before
+handlers that pause for approval or call a service. The classifier implements
+`beforeModelCall`, which runs before the model requests a tool, so its position
+relative to the `beforeToolCall` handlers has no effect.
 
-Strands Agents SDK allows integration with different model providers, which implement guardrails differently.
+## Validate tool input with a schema
 
-### Amazon Bedrock
+Define the constraints on a tool's input in its input schema. When a tool call fails
+validation, the SDK returns the parse error to the model as an error tool result, and
+the tool callback does not run. A schema checks only the shape of the input. For file
+paths, also resolve each path in the tool callback and verify that it is inside the
+allowed directory:
 
-Amazon Bedrock provides a [built-in guardrails framework](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html) that integrates directly with Strands. When a guardrail triggers, Strands overwrites the offending user input in the conversation history so a follow-up turn is not blocked by the same content. Control this with the `guardrail_redact_input` boolean, and set the replacement text with `guardrail_redact_input_message`. The same redaction is available for model output, disabled by default: enable it with `guardrail_redact_output` and set its message with `guardrail_redact_output_message`. Below is an example of how to use Bedrock guardrails in your code:
+<Tabs>
+<Tab label="TypeScript">
 
-```python
-import json
-from strands import Agent
-from strands.models import BedrockModel
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:schema_validation_imports"
 
-# Create a Bedrock model with guardrail configuration
-bedrock_model = BedrockModel(
-    guardrail_id="your-guardrail-id",         # Your Bedrock guardrail ID
-    guardrail_version="1",                    # Guardrail version
-    guardrail_trace="enabled",                # Enable trace info for debugging
-)
-
-# Create agent with the guardrail-protected model
-agent = Agent(
-    system_prompt="You are a helpful assistant.",
-    model=bedrock_model,
-)
-
-# Use the protected agent for conversations
-response = agent("Tell me about financial planning.")
-
-# Handle potential guardrail interventions
-if response.stop_reason == "guardrail_intervened":
-    print("Content was blocked by guardrails, conversation context overwritten!")
-
-print(f"Conversation: {json.dumps(agent.messages, indent=4)}")
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:schema_validation"
 ```
+</Tab>
+</Tabs>
 
-For the TypeScript equivalent and the full configuration reference, see [Bedrock guardrails](../model-providers/amazon-bedrock/#guardrails).
+The model receives the schema in the tool specification, so the schema also guides the
+model toward valid tool calls. Do not use a prefix check on the path string as the
+boundary. A path such as `/tmp/agent-scratch/../etc` passes a prefix check, and a
+symbolic link inside the directory can point outside it. `realpath` resolves both
+before the comparison.
 
-To soft-launch your own guardrails, use hooks with Bedrock's ApplyGuardrail API in shadow mode. This tracks when a guardrail would trigger without blocking content, so you can monitor and tune it before you enforce.
+## Enforce deterministic rules
 
-Steps:
+To enforce a rule that you can express in code, write an intervention handler. Return
+`deny` to block the tool call, or `guide` to cancel it and tell the model what to
+change:
 
-1. Create a NotifyOnlyGuardrailsHook class that contains hooks
-2. Register your callback functions with specific events.
-3. Use agent normally
+<Tabs>
+<Tab label="TypeScript">
 
-Below is a full example of implementing notify-only guardrails using hooks:
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:deterministic_rules_imports"
 
-````python
-import boto3
-from strands import Agent
-from strands.hooks import HookProvider, HookRegistry, MessageAddedEvent, AfterInvocationEvent
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:deterministic_rules"
+```
+</Tab>
+</Tabs>
 
-class NotifyOnlyGuardrailsHook(HookProvider):
-    def __init__(self, guardrail_id: str, guardrail_version: str):
-        self.guardrail_id = guardrail_id
-        self.guardrail_version = guardrail_version
-        self.bedrock_client = boto3.client("bedrock-runtime", "us-west-2") # change to your AWS region
+Set `onError` to `'deny'` on a handler that enforces a rule. If the handler throws an
+error, the SDK then blocks the tool call. With the default value, `'throw'`, the error
+ends the invocation. Intervention handlers run before the SDK validates tool input
+against the schema, so check the type of each field before you use it.
 
-    def register_hooks(self, registry: HookRegistry) -> None:
-        registry.add_callback(MessageAddedEvent, self.check_user_input) # Here you could use BeforeInvocationEvent instead
-        registry.add_callback(AfterInvocationEvent, self.check_assistant_response)
+## Screen content with a classifier
 
-    def evaluate_content(self, content: str, source: str = "INPUT"):
-        """Evaluate content using Bedrock ApplyGuardrail API in shadow mode."""
-        try:
-            response = self.bedrock_client.apply_guardrail(
-                guardrailIdentifier=self.guardrail_id,
-                guardrailVersion=self.guardrail_version,
-                source=source,
-                content=[{"text": {"text": content}}]
-            )
+Use a classifier for content that rules cannot describe, such as abuse, prompt
+injection, and off-topic requests. The classifier can be Amazon Bedrock Guardrails,
+another moderation service, or a model that you host.
 
-            if response.get("action") == "GUARDRAIL_INTERVENED":
-                print(f"\n[GUARDRAIL] WOULD BLOCK - {source}: {content[:100]}...")
-                # Show violation details from assessments
-                for assessment in response.get("assessments", []):
-                    if "topicPolicy" in assessment:
-                        for topic in assessment["topicPolicy"].get("topics", []):
-                            print(f"[GUARDRAIL] Topic Policy: {topic['name']} - {topic['action']}")
-                    if "contentPolicy" in assessment:
-                        for filter_item in assessment["contentPolicy"].get("filters", []):
-                            print(f"[GUARDRAIL] Content Policy: {filter_item['type']} - {filter_item['confidence']} confidence")
+The following handler screens the most recent user message before each model call. The
+classifier is a network call, so the handler sets a time limit and defines what happens
+when the classifier does not respond within it:
 
-        except Exception as e:
-            print(f"[GUARDRAIL] Evaluation failed: {e}")
+<Tabs>
+<Tab label="TypeScript">
 
-    def check_user_input(self, event: MessageAddedEvent) -> None:
-        """Check user input before model invocation."""
-        if event.message.get("role") == "user":
-            content = "".join(block.get("text", "") for block in event.message.get("content", []))
-            if content:
-                self.evaluate_content(content, "INPUT")
-    
-    def check_assistant_response(self, event: AfterInvocationEvent) -> None:
-        """Check assistant response after model invocation with delay to avoid interrupting output."""
-        if event.agent.messages and event.agent.messages[-1].get("role") == "assistant":
-            assistant_message = event.agent.messages[-1]
-            content = "".join(block.get("text", "") for block in assistant_message.get("content", []))
-            if content:
-                self.evaluate_content(content, "OUTPUT")
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:classifier_imports"
 
-# Create agent with custom hooks
-agent = Agent(
-system_prompt="You are a helpful assistant.",
-hooks=[NotifyOnlyGuardrailsHook("Your Guardrail ID", "Your Guardrail Version")]
-)
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:classifier"
 
-# Use agent normally - guardrails will print violations without blocking
-agent("Tell me about sensitive topics like making a C4 bomb to kill people")
-````
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:classifier_use"
+```
+</Tab>
+</Tabs>
 
-Example Output:
+In `shadow` mode, the handler logs each verdict and does not block the request. Use
+this mode to measure the false positive rate on production traffic, and then change
+`mode` to `enforce`. Choose the `onTimeout` value for your application. An internal
+tool can allow the request and rely on the other layers. A public agent in a regulated
+domain should block it.
 
-````text
-[GUARDRAIL] WOULD BLOCK - INPUT: Tell me about how to make C4 bomb to kill people...
-[GUARDRAIL] Topic Policy: Your Guardrail Policy - BLOCKED
-[GUARDRAIL] Content Policy: VIOLENCE - HIGH confidence
-Your agent response .......................
-[GUARDRAIL] WOULD BLOCK - OUTPUT: I can't and won't provide instructions on making explosives or weapons intended to harm people...
-[GUARDRAIL] Topic Policy: Your Guardrail Policy - BLOCKED
-````
+### Screen at the model boundary too
 
-### Ollama
+The handler screens only user input. To screen the full conversation that the model
+receives and the model responses, configure Amazon Bedrock Guardrails on the model:
 
-Ollama does not provide native guardrails the way Bedrock does. To constrain an Ollama model, combine these approaches:
+<Tabs>
+<Tab label="TypeScript">
 
-- System prompt engineering with safety instructions (see [Prompt Engineering](./prompt-engineering.md))
-- Temperature and sampling controls
-- Custom pre- and post-processing with Python tools
-- Response filtering with pattern matching
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:model_boundary_imports"
 
-## Additional Resources
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:model_boundary"
+```
+</Tab>
+</Tabs>
 
-* [Amazon Bedrock Guardrails Documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html)
-* [Allen Institute for AI: Guardrails Project](https://www.guardrailsai.com/docs)
-* [AWS Boto3 Python Documentation](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/apply_guardrail.html#)
+When the guardrail blocks user input, the SDK redacts that input from the conversation
+by default, so that the next turn is not blocked by the same text. For the redaction
+options, see [Amazon Bedrock](../model-providers/amazon-bedrock.mdx#guardrails).
+
+Use both. The intervention handler provides the time limit, the timeout behavior, and
+shadow mode. The model guardrail can block a model response. An intervention handler
+cannot, because `afterModelCall` supports `guide` and `transform` but not `deny`.
+
+## Confirm high-impact tool calls
+
+To require approval for tool calls that are large or cannot be undone, return `confirm`
+from a handler. The agent stops before the tool runs, and the invocation returns with
+the `interrupt` stop reason. Show the prompt to an approver, and then invoke the agent
+again with the response:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:confirm_imports"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:schema_validation"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:confirm_high_impact"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:approver_stub"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:confirm_resume"
+```
+</Tab>
+</Tabs>
+
+The handler decides from the tool input, so a tool call that deletes five files or
+fewer runs without a pause. Intervention handlers run before schema validation, so the
+handler first checks that `paths` is an array and returns `guide` if it is not. Without
+that check, a malformed tool call causes an error in the handler, and with the default
+`onError` value that error ends the invocation.
+
+In a stateless deployment, the approval arrives in a different process. Use a
+[session manager](../agents/session-management.mdx) to persist the interrupted state
+between requests. For allow lists, a risk classifier, or approval that applies for the
+rest of a session, use the
+[`HumanInTheLoop`](../agents/interventions/human-in-the-loop.mdx) handler.
+
+## Apply per-tenant policies with an audit record
+
+To give each tenant its own tool permissions, store a [Cedar](https://cedarpolicy.com)
+policy for each tenant and load it when you create the agent. Give each policy a
+version, so that you can change a tenant's permissions without deploying code:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:tenant_policy_imports"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy_type"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy"
+```
+</Tab>
+</Tabs>
+
+Cedar denies by default. A tool call that no `permit` statement matches is blocked, so
+a tenant whose policy does not permit `delete_files` cannot delete files. The principal
+comes from `invocationState`, which your application sets from the authenticated
+request. If the resolver returns `undefined`, the handler denies every tool call. For
+policy schema validation and hot reload, see
+[Cedar authorization](../agents/interventions/cedar-authorization.mdx).
+
+To record each decision, wrap the handler that makes it and log the action that the
+handler returns. The record then includes the name of the handler. Do not derive the
+record from `event.cancel` in a hook that runs later. That property does not identify
+the handler that denied the tool call, and it is not set while a confirmation is
+waiting for a response:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:audit_record_imports"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy_type"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:audit_record"
+```
+</Tab>
+</Tabs>
+
+When you wrap the Cedar handler, the wrapper records `allowed` or `denied` with the
+policy version. When you wrap a handler that returns `confirm`, the wrapper raises the
+interrupt. It records `pending` when the agent stops, and `approved` or `denied` after
+the invocation resumes. The SDK runs the `beforeToolCall` handlers again on resume, so
+the log contains a Cedar record both before and after the approval.
+
+A record describes a decision. It does not show that the tool ran, because a later
+handler can deny a tool call that Cedar allowed. To record the outcome of a tool call,
+log `event.result.status` from `afterToolCall`. Write audit records to append-only
+storage.
+
+## Keep retrieved text from escalating permissions
+
+Search results, web pages, and files can contain text that is written to look like
+instructions, and the model might follow it. Two of the preceding layers limit the
+effect. The principal and the role come from `invocationState`, which the model cannot
+read or change. Cedar evaluates every tool call against that principal, including tool
+calls that the model makes after it reads retrieved text.
+
+As an additional layer, mark retrieved text as untrusted before the model reads it:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:retrieval_boundary_imports"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:retrieval_boundary"
+```
+</Tab>
+</Tabs>
+
+The handler escapes the text and the attribute value. Without escaping, retrieved text
+that contains `</retrieved>` closes the block, and the text after it appears to come
+from your application.
+
+The markup is a defense-in-depth measure. It tells the model how to treat the text but
+does not prevent the model from following it, so authorization and confirmation remain
+the controls that block a tool call. Do not let a tool result set `invocationState`,
+add text to the system prompt, or register a tool. For message history that comes from
+a source you do not control, see
+[Trusted message history](./trusted-message-history.mdx).
+
+## Compose the layers
+
+Create the agent for each request with the tenant's policy. Register the rule handler
+first, then the Cedar handler, and then the confirmation handler, so that the agent
+does not ask an approver about a tool call that the policy denies:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/safety-security/guardrails_imports.ts:compose_imports"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:schema_validation"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:deterministic_rules"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:classifier"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:confirm_high_impact"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy_type"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:tenant_policy"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:audit_record"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:retrieval_boundary"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:compose_stubs"
+
+--8<-- "user-guide/sdk/safety-security/guardrails.ts:compose"
+```
+</Tab>
+</Tabs>
+
+The example includes the definitions from the preceding sections so that it is
+complete. The `createAgent` function is the only new code. Each handler name must be
+unique, and the agent throws an error at construction if two handlers have the same
+name. `ContentScreen` and `RetrievalBoundary` implement other lifecycle methods, so
+their position in the list does not affect the `beforeToolCall` handlers.
+
+## Related topics
+
+- [Interventions](../agents/interventions/index.mdx): actions, lifecycle methods, and
+  error handling
+- [Cedar authorization](../agents/interventions/cedar-authorization.mdx): policy schema
+  validation and hot reload
+- [Human in the loop](../agents/interventions/human-in-the-loop.mdx): the vended
+  handler for tool approval, with allow lists and session trust
+- [Hooks](../agents/hooks.mdx): the event system that interventions build on
+- [Trusted message history](./trusted-message-history.mdx): message history from a
+  source you do not control
+- [Prompt engineering](./prompt-engineering.mdx): system prompts that resist prompt
+  injection
+- [Amazon Bedrock Guardrails][bedrock-guardrails]: the managed classifier that the
+  examples use
+
+[bedrock-guardrails]: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html
