@@ -16,27 +16,21 @@ function productFor(slug: string): Product {
   return product
 }
 
-function productPage(product: Product, label: string): string {
-  const page = product.pages?.find((candidate) => candidate.label === label)
-  if (!page) throw new Error(`Missing ${product.label} ${label.toLowerCase()} page`)
-  return page.href
-}
-
 const harness = productFor('/harness')
 const harnessSdk = productFor('/harness-sdk')
 const box = productFor('/box')
-const shell = productFor('/shell')
 const evals = productFor('/evals')
 const decider = productFor('/decider')
 
 export const homepageStartProjects: HomepageProject[] = [
   {
     product: harness,
-    marker: 'Start here',
-    description: 'Start with a complete agent and tested defaults. Replace individual components as your needs grow.',
-    cta: 'Run the quickstart',
-    href: productPage(harness, 'Quickstart'),
-    markdownHref: '/docs/user-guide/harness/quickstart/index.md',
+    marker: 'Production-ready defaults',
+    description:
+      'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
+    cta: 'Build with Harness',
+    href: harness.href,
+    markdownHref: '/docs/user-guide/harness/index.md',
   },
   {
     product: harnessSdk,
@@ -57,14 +51,6 @@ export const homepageCapabilities: HomepageProject[] = [
     cta: 'Use Strands Box',
     href: box.href,
     markdownHref: '/docs/user-guide/box/quickstart/index.md',
-  },
-  {
-    product: shell,
-    marker: 'Execute',
-    description: 'Give agents an in-process shell that mediates filesystem, network, and credential access.',
-    cta: 'Use Strands Shell',
-    href: shell.href,
-    markdownHref: '/docs/user-guide/shell/index.md',
   },
   {
     product: evals,

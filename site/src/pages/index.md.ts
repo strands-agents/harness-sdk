@@ -6,9 +6,9 @@ export const GET: APIRoute = () => {
   const lines = [
     '# Strands Agents',
     '',
-    '> Strands Agents is an open-source framework for building, running, and improving agents in Python and TypeScript. Start with Strands harness for a complete agent. Use the Harness SDK for direct control of the agent loop and its components. Add Box for OS-isolated execution, Shell for mediated command access, Evals for evaluation, and Decider for focused decisions. Agents run in-process, with no hosted Strands control plane.',
+    '> Strands Agents is an open-source toolkit for building, running, and improving agents in Python and TypeScript. Harness provides a complete agent with tuned defaults for pilot through production. Use the Harness SDK for direct control of the agent loop and its components. Box provides OS-isolated execution, Evals measures agent behavior, and Decider routes, classifies, or scores known outcomes. Agents run in-process, with no hosted Strands control plane.',
     '',
-    '## Start here',
+    '## Build an agent',
     '',
     ...homepageStartProjects.map(
       ({ product, description, markdownHref }) => `- [${product.name}](${siteLink(markdownHref)}): ${description}`

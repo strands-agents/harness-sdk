@@ -5,31 +5,31 @@ import arrow from '../assets/banner/arrow.svg?raw'
 <section class="banner" aria-labelledby="hero-title">
   <div class="banner__inner">
     <div class="banner__content">
-      <p class="banner__eyebrow">Python + TypeScript</p>
-
       <h1 id="hero-title" class="banner__headline">
         <span>Build agents.</span>
         <span class="banner__headline-accent">Own every layer.</span>
       </h1>
 
-      <p class="banner__intro">
-        Strands is an open-source framework of composable tools for building, running, and improving AI agents.
-      </p>
+      <div class="banner__summary">
+        <p class="banner__intro">
+          Strands is an open-source toolkit for building, running, and improving AI agents.
+        </p>
 
-      <div class="banner__actions">
-        <a href="#framework" class="banner__cta banner__cta--primary">
-          Explore the framework
-          <span class="banner__arrow" set:html={arrow} />
-        </a>
-        <a
-          href="https://github.com/strands-agents"
-          class="banner__cta banner__cta--secondary"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          View on GitHub
-          <span class="banner__arrow" set:html={arrow} />
-        </a>
+        <div class="banner__actions">
+          <a href="#framework" class="banner__cta banner__cta--primary">
+            Build an agent
+            <span class="banner__arrow" set:html={arrow} />
+          </a>
+          <a
+            href="https://github.com/strands-agents"
+            class="banner__cta banner__cta--secondary"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View on GitHub
+            <span class="banner__arrow" set:html={arrow} />
+          </a>
+        </div>
       </div>
     </div>
 
@@ -64,18 +64,6 @@ import arrow from '../assets/banner/arrow.svg?raw'
     flex-direction: column;
     align-items: flex-start;
     width: 100%;
-    max-width: 1120px;
-  }
-
-  .banner__eyebrow {
-    margin: 0 0 18px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    line-height: 1.35;
-    text-transform: uppercase;
-    color: var(--home-label);
   }
 
   .banner__headline {
@@ -92,13 +80,23 @@ import arrow from '../assets/banner/arrow.svg?raw'
     text-wrap: balance;
   }
 
+  .banner__summary {
+    display: grid;
+    grid-template-columns: minmax(0, 720px) max-content;
+    align-items: end;
+    justify-content: space-between;
+    gap: clamp(28px, 4vw, 64px);
+    width: 100%;
+    margin-top: 22px;
+  }
+
   .banner__headline-accent {
     color: var(--accent-green);
   }
 
   .banner__intro {
     max-width: 720px;
-    margin: 20px 0 0;
+    margin: 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: clamp(17px, 1.4vw, 20px);
     line-height: 1.5;
@@ -109,7 +107,8 @@ import arrow from '../assets/banner/arrow.svg?raw'
     display: flex;
     flex-wrap: wrap;
     gap: 12px;
-    margin-top: 22px;
+    justify-content: flex-end;
+    margin: 0;
   }
 
   .banner__cta {
@@ -196,6 +195,16 @@ import arrow from '../assets/banner/arrow.svg?raw'
       font-size: clamp(56px, 8vw, 76px);
     }
 
+    .banner__summary {
+      grid-template-columns: minmax(0, 1fr) max-content;
+      gap: 24px;
+    }
+
+    .banner__actions {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
     .banner__dots {
       right: -72px;
       width: 34vw;
@@ -218,27 +227,29 @@ import arrow from '../assets/banner/arrow.svg?raw'
       width: 100%;
     }
 
-    .banner__eyebrow {
-      max-width: 230px;
-      margin-bottom: 16px;
-      font-size: 10px;
-    }
-
     .banner__headline {
       font-size: clamp(42px, 12vw, 56px);
       letter-spacing: -0.058em;
       line-height: 0.94;
     }
 
+    .banner__summary {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 20px;
+      margin-top: 18px;
+    }
+
     .banner__intro {
       max-width: 36rem;
-      margin-top: 18px;
       font-size: 16px;
     }
 
     .banner__actions {
+      align-items: center;
+      flex-direction: row;
       display: flex;
-      margin-top: 20px;
     }
 
     .banner__cta {
@@ -267,24 +278,22 @@ import arrow from '../assets/banner/arrow.svg?raw'
       padding: 30px 0 28px;
     }
 
-    .banner__eyebrow {
-      max-width: 190px;
-      margin-bottom: 14px;
-    }
-
     .banner__headline {
       font-size: 39px;
     }
 
-    .banner__intro {
+    .banner__summary {
+      gap: 18px;
       margin-top: 16px;
+    }
+
+    .banner__intro {
       font-size: 15px;
       line-height: 1.45;
     }
 
     .banner__actions {
       gap: 10px;
-      margin-top: 18px;
     }
 
     .banner__cta {

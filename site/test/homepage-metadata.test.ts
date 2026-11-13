@@ -54,22 +54,21 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('defines Strands clearly and keeps the hero focused on the open-source framework', () => {
+  it('defines Strands as an open-source toolkit and keeps the hero focused', () => {
     const banner = homepage.querySelector('.banner')
 
     expect(banner?.querySelectorAll('h1 > span').map((line) => line.text.trim())).toEqual([
       'Build agents.',
       'Own every layer.',
     ])
-    expect(banner?.querySelector('.banner__intro')?.text).toContain('open-source framework')
-    expect(banner?.querySelector('.banner__intro')?.text).toContain('composable tools')
+    expect(banner?.querySelector('.banner__intro')?.text).toContain('open-source toolkit')
     expect(banner?.querySelector('.banner__intro')?.text).not.toContain('Start with Harness')
     expect(banner?.querySelector('.banner__intro')?.text).not.toContain('in Python and TypeScript')
-    expect(banner?.querySelector('.banner__eyebrow')?.text.trim()).toBe('Python + TypeScript')
+    expect(banner?.querySelector('.banner__eyebrow')).toBeNull()
     expect(banner?.querySelector('h1')?.getAttribute('aria-label')).toBeUndefined()
     expect(banner?.querySelectorAll('.banner__cta')).toHaveLength(2)
     expect(banner?.querySelector('.banner__cta--primary')?.getAttribute('href')).toBe('#framework')
-    expect(banner?.querySelector('.banner__cta--primary')?.text.trim()).toBe('Explore the framework')
+    expect(banner?.querySelector('.banner__cta--primary')?.text.trim()).toBe('Build an agent')
     expect(banner?.querySelector('.banner__cta--secondary')?.getAttribute('href')).toBe(
       'https://github.com/strands-agents'
     )
@@ -81,14 +80,14 @@ describe('homepage machine-readable metadata', () => {
     )
   })
 
-  it('presents Strands as one connected framework rather than peer products', () => {
+  it('distinguishes the complete agent, composable SDK, and independent projects', () => {
     const framework = homepage.querySelector('.framework')
     const layers = framework?.querySelectorAll('.framework__layer') ?? []
     const capabilityItems = framework?.querySelectorAll('.framework__capability') ?? []
 
     expect(framework?.getAttribute('id')).toBe('framework')
-    expect(framework?.querySelector('.framework__intro h2')?.text.trim()).toBe('Build an Agent')
-    expect(framework?.querySelector('.framework__capabilities-label')?.text.trim()).toBe('Add capabilities')
+    expect(framework?.querySelector('.framework__intro h2')?.text.trim()).toBe('Build an agent')
+    expect(framework?.querySelector('.framework__capabilities-label')?.text.trim()).toBe('More Strands projects')
     expect(
       layers.map((layer) => ({
         marker: layer.querySelector('.framework__card-meta span')?.text.trim(),
@@ -101,14 +100,14 @@ describe('homepage machine-readable metadata', () => {
       }))
     ).toEqual([
       {
-        marker: 'Start here',
+        marker: 'Production-ready defaults',
         slug: '/harness',
         name: 'Harness',
         description:
-          'Start with a complete agent and tested defaults. Replace individual components as your needs grow.',
+          'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
         installCommands: ['pip install strands-harness', 'npm install @strands-agents/harness'],
-        href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
-        cta: 'Run the quickstart',
+        href: configuredPathWithBase('/docs/user-guide/harness/'),
+        cta: 'Build with Harness',
       },
       {
         marker: 'Build from primitives',
@@ -129,10 +128,10 @@ describe('homepage machine-readable metadata', () => {
       }))
     ).toEqual([
       { name: 'Box', slug: '/box', href: configuredPathWithBase('/docs/user-guide/box/') },
-      { name: 'Shell', slug: '/shell', href: configuredPathWithBase('/docs/user-guide/shell/') },
       { name: 'Evals', slug: '/evals', href: configuredPathWithBase('/docs/user-guide/evals-sdk/') },
       { name: 'Decider', slug: '/decider', href: configuredPathWithBase('/docs/labs/strands-decider/overview/') },
     ])
+    expect(framework?.text).not.toContain('Shell')
     expect(
       capabilityItems
         .find((item) => item.querySelector('h4')?.text.trim() === 'Decider')
@@ -228,7 +227,7 @@ describe('homepage machine-readable metadata', () => {
     expect(items.map((item) => item.hasAttribute('open'))).toEqual([true, false, false, false, false])
     expect(items.map((item) => item.querySelector('summary')?.text.trim())).toEqual([
       'What is Strands?',
-      'Should I start with Harness or the Harness SDK?',
+      'Should I use Harness or the Harness SDK?',
       'Can I customize Harness without starting over?',
       'How do Box, Shell, Evals, and Decider fit?',
       'Where can I run a Strands agent?',
@@ -241,18 +240,21 @@ describe('homepage machine-readable metadata', () => {
     const nextSteps = homepage.querySelector('.next-steps')
     const footer = homepage.querySelector('.footer')
 
-    expect(nextSteps?.querySelector('h2')?.text.trim()).toBe('Build your first agent.')
+    expect(nextSteps?.querySelector('.next-steps__eyebrow')?.text.trim()).toBe('Build with Harness')
+    expect(nextSteps?.querySelector('h2')?.text.trim()).toBe('Take an agent to production.')
     expect(nextSteps?.querySelector('.next-steps__shape--desktop')).not.toBeNull()
     expect(nextSteps?.querySelector('.next-steps__shape--mobile')).not.toBeNull()
     expect(nextSteps?.querySelector('.next-steps__cta--primary')?.getAttribute('href')).toBe(
-      configuredPathWithBase('/docs/user-guide/harness/quickstart/')
+      configuredPathWithBase('/docs/user-guide/harness/')
     )
+    expect(nextSteps?.querySelector('.next-steps__cta--primary')?.text.trim()).toBe('Build with Harness')
     expect(nextSteps?.text).toContain('npm install @strands-agents/harness')
     expect(nextSteps?.querySelector('.next-steps__cta--secondary')?.getAttribute('href')).toBe(
       'https://github.com/strands-agents/harness-sdk'
     )
     expect(footer?.querySelector('.footer__get-started')).toBeNull()
     expect(footer?.querySelector('.footer__columns')).not.toBeNull()
+    expect(footer?.classList.contains('footer--theme')).toBe(true)
   })
 
   it('promotes the latest blog post in the announcement', async () => {
@@ -273,13 +275,15 @@ describe('homepage machine-readable metadata', () => {
 
   it('publishes a concise Markdown homepage with official resources', () => {
     const markdown = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
-    const harnessQuickstart = markdown.indexOf('/docs/user-guide/harness/quickstart/index.md')
+    const harnessOverview = markdown.indexOf('/docs/user-guide/harness/index.md')
     const sdkQuickstart = markdown.indexOf('/docs/user-guide/sdk/quickstart/overview/index.md')
 
     expect(markdown).toContain('# Strands Agents')
-    expect(harnessQuickstart).toBeGreaterThan(-1)
+    expect(markdown).toContain('open-source toolkit')
+    expect(harnessOverview).toBeGreaterThan(-1)
     expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
-    expect(harnessQuickstart).toBeLessThan(sdkQuickstart)
+    expect(harnessOverview).toBeLessThan(sdkQuickstart)
+    expect(markdown).not.toContain('/docs/user-guide/shell/index.md')
     expect(markdown).toContain('/examples/')
     expect(markdown).toContain('/faq/index.md')
     expect(markdown).toContain('https://pypi.org/project/strands-agents/')

@@ -58,15 +58,15 @@ export const faqItems: FaqItem[] = [
     category: 'choose',
     question: 'What is Strands?',
     featuredSummary:
-      'Strands is an open-source framework for building and running AI agents in Python and TypeScript. Start with Harness, then add SDK components and specialized projects as needed.',
+      'Strands is an open-source toolkit for building, running, and improving AI agents. Harness provides a complete agent, and the Harness SDK gives direct control. Other Strands projects work independently or together.',
     answer: [
       paragraph(
-        'Strands is an open-source framework for building, running, and improving AI agents in Python and TypeScript. It brings the agent loop, tools, session management, memory, multi-agent patterns, evaluation, and deployment guidance into one framework.'
+        'Strands is an open-source toolkit for building, running, and improving AI agents in Python and TypeScript. Its projects cover the agent loop, tools, session management, memory, multi-agent patterns, evaluation, isolated execution, and focused decisions.'
       ),
       paragraph(
-        'Start with ',
+        'Use ',
         link('Strands harness', '/docs/user-guide/harness/'),
-        ' for a complete agent, or use the ',
+        ' for a complete agent with tuned defaults, or use the ',
         link('Harness SDK', '/docs/user-guide/sdk/quickstart/overview/'),
         ' to choose and wire the components yourself. Add ',
         link('Box', '/docs/user-guide/box/quickstart/'),
@@ -83,9 +83,9 @@ export const faqItems: FaqItem[] = [
   {
     id: 'harness-or-sdk',
     category: 'choose',
-    question: 'Should I start with Harness or the Harness SDK?',
+    question: 'Should I use Harness or the Harness SDK?',
     featuredSummary:
-      'Start with Harness for a complete agent with defaults for tools, context management, session management, memory, and the system prompt. Use the Harness SDK when you want to choose and wire those components yourself.',
+      'Use Harness for a complete agent with tuned defaults for tools, context management, session management, memory, and the system prompt. Use the Harness SDK when you want to choose and wire those components yourself.',
     answer: [
       paragraph(
         link('Strands harness', '/docs/user-guide/harness/'),

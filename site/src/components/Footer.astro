@@ -15,9 +15,12 @@ interface Props {
   // The homepage already ends with a dedicated Harness install action, so it
   // can hide the repeated footer command while docs pages keep it.
   showInstall?: boolean
+  // Match the page theme when the footer follows a dark standalone section.
+  // Docs pages keep the brand-green footer by default.
+  themeSurface?: boolean
 }
 
-const { topShape = true, showInstall = true } = Astro.props
+const { topShape = true, showInstall = true, themeSurface = false } = Astro.props
 
 const columns = [
   {
@@ -80,7 +83,7 @@ const columns = [
     </div>
   )
 }
-<footer class="footer">
+<footer class:list={['footer', { 'footer--theme': themeSurface }]}>
   <div class="footer__inner">
     {
       showInstall && (
@@ -197,10 +200,18 @@ const columns = [
   }
 
   .footer {
-    background: var(--surface-green);
-    color: var(--strands-black);
+    --footer-background: var(--surface-green);
+    --footer-foreground: var(--strands-black);
+
+    background: var(--footer-background);
+    color: var(--footer-foreground);
     padding: 60px 55px 32px;
     overflow: hidden;
+  }
+
+  .footer--theme {
+    --footer-background: var(--bg);
+    --footer-foreground: var(--fg);
   }
 
   .footer__inner {
@@ -222,7 +233,7 @@ const columns = [
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 14px;
     font-weight: 500;
-    color: var(--fg);
+    color: var(--footer-foreground);
   }
 
   .footer__columns {
@@ -244,7 +255,7 @@ const columns = [
     font-weight: 600;
     font-size: 15px;
     line-height: 1.3;
-    color: var(--strands-black);
+    color: var(--footer-foreground);
   }
 
   .footer__column-links {
@@ -261,14 +272,13 @@ const columns = [
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: 20px;
     line-height: 1.4;
-    color: var(--strands-black);
+    color: var(--footer-foreground);
     text-decoration: none;
   }
 
-  /* Keep the footer's dark text on hover — the global a:hover turns links
-     green, which is invisible against the green footer. Only underline. */
+  /* Preserve the footer's local foreground on hover; only underline. */
   .footer__link:hover {
-    color: var(--strands-black);
+    color: var(--footer-foreground);
     text-decoration: underline;
   }
 
@@ -282,7 +292,7 @@ const columns = [
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: 20px;
     line-height: 1.4;
-    color: var(--strands-black);
+    color: var(--footer-foreground);
   }
 
   .footer__pref-opt {
@@ -311,6 +321,7 @@ const columns = [
   .footer__wordmark {
     display: block;
     margin: 60px 0 40px;
+    color: var(--footer-foreground);
     line-height: 0;
   }
 
@@ -330,7 +341,12 @@ const columns = [
     display: inline-flex;
     width: 51px;
     height: 30px;
-    color: var(--strands-black);
+    color: var(--footer-foreground);
+  }
+
+  .footer__wordmark :global([fill='black']),
+  .footer__aws :global([fill='black']) {
+    fill: currentColor;
   }
 
   .footer__aws :global(svg) {
@@ -352,12 +368,12 @@ const columns = [
     font-weight: 600;
     font-size: 15px;
     line-height: 1.3;
-    color: var(--strands-black);
+    color: var(--footer-foreground);
     text-decoration: none;
   }
 
   .footer__legal-link:hover {
-    color: var(--strands-black);
+    color: var(--footer-foreground);
     text-decoration: underline;
   }
 
@@ -365,7 +381,7 @@ const columns = [
     margin: 24px 0 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 13px;
-    color: var(--strands-black);
+    color: var(--footer-foreground);
   }
 
   /* Below the desktop shape's aspect, swap to the slim corner-curve strip so

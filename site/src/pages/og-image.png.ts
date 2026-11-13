@@ -8,6 +8,6 @@ export const GET: APIRoute = async () => {
   return ogImageResponse({
     title: 'Build agents. Own every layer.',
     description:
-      'An open-source agent framework for Python and TypeScript. Start with Harness, then customize the agent loop with the Harness SDK.',
+      'An open-source agent toolkit for Python and TypeScript. Build with Harness or compose the agent loop with the Harness SDK.',
   })
 }

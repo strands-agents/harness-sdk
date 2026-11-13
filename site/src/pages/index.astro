@@ -28,9 +28,9 @@ const markdownHref = `${base.replace(/\/$/, '')}/index.md`;
 // Standalone pages don't inherit Starlight's head, so declare the shared
 // /og-image.png share card here too (docs/blog get theirs from Starlight).
 const ogImageHref = new URL('og-image.png', Astro.site ?? 'https://strandsagents.com').href;
-const pageTitle = 'Strands Agents | Open-source agent framework';
+const pageTitle = 'Strands Agents | Open-source agent toolkit';
 const pageDescription =
-  'Strands is an open-source framework for building, running, and improving AI agents in Python and TypeScript. Start with Harness, then customize the agent loop with the Harness SDK.';
+  'Strands is an open-source toolkit for building, running, and improving AI agents in Python and TypeScript. Build with Harness or compose the agent loop with the Harness SDK.';
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
 const structuredData = {
   '@context': 'https://schema.org',
@@ -98,8 +98,8 @@ const structuredData = {
       <HomeFaq />
       <NextSteps />
     </main>
-    {/* NextSteps already provides the green curved transition on the homepage. */}
-    <Footer topShape={false} showInstall={false} />
+    {/* NextSteps provides the curved transition into the theme-matched homepage footer. */}
+    <Footer topShape={false} showInstall={false} themeSurface />
   </body>
 </html>
 

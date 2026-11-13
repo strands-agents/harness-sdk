@@ -10,7 +10,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 <section class="framework" id="framework" aria-labelledby="framework-title">
   <div class="framework__inner">
     <header class="framework__intro">
-      <h2 id="framework-title">Build an Agent</h2>
+      <h2 id="framework-title">Build an agent</h2>
     </header>
 
     <div class="framework__start-grid">
@@ -56,7 +56,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     </div>
 
     <section class="framework__capabilities" aria-labelledby="framework-capabilities-title">
-      <h3 id="framework-capabilities-title" class="framework__capabilities-label">Add capabilities</h3>
+      <h3 id="framework-capabilities-title" class="framework__capabilities-label">More Strands projects</h3>
 
       <div class="framework__capability-grid">
         {
@@ -279,7 +279,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 
   .framework__capability-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     border-block: 1px solid var(--home-rule);
   }
 
@@ -330,21 +330,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     padding-top: 10px;
   }
 
-  @media (max-width: 980px) {
-    .framework__capability-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .framework__capability:nth-child(3) {
-      border-left: 0;
-      border-top: 1px solid var(--home-rule);
-    }
-
-    .framework__capability:nth-child(4) {
-      border-top: 1px solid var(--home-rule);
-    }
-  }
-
   @media (max-width: 720px) {
     .framework__inner {
       gap: 28px;
@@ -389,35 +374,26 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     }
 
     .framework__capability {
-      min-height: 210px;
+      min-height: 0;
       padding: 18px 16px;
     }
 
+    .framework__capability-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .framework__capability + .framework__capability {
+      border-top: 1px solid var(--home-rule);
+      border-left: 0;
+    }
+
     .framework__capability-meta {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 4px;
       margin-bottom: 16px;
     }
 
     .framework__capability > p {
       max-width: 46ch;
       font-size: 13px;
-    }
-  }
-
-  @media (max-width: 340px) {
-    .framework__capability-grid {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .framework__capability {
-      min-height: 0;
-    }
-
-    .framework__capability + .framework__capability {
-      border-top: 1px solid var(--home-rule);
-      border-left: 0;
     }
   }
 
