@@ -21,7 +21,7 @@ _shells: weakref.WeakKeyDictionary[Sandbox, _SandboxShell] = weakref.WeakKeyDict
 async def _shell_of(sandbox: Sandbox) -> _SandboxShell:
     """Return ``"powershell"`` or ``"sh"`` for ``sandbox``, probing it the first time."""
     if sandbox not in _shells:
-        result = await sandbox.execute(_SHELL_PROBE, timeout=10)
+        result = await sandbox.execute(_SHELL_PROBE, timeout=30)
         # A failed probe is inconclusive: answer ``sh`` for this call but probe again next time.
         if result.exit_code != 0:
             return "sh"
