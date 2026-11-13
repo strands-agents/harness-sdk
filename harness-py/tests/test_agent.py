@@ -1393,16 +1393,6 @@ class _ScriptedModel(Model):
         yield {"messageStop": {"stopReason": turn.get("stop", "end_turn")}}
 
 
-_executions: list[str] = []
-
-
-@tool
-def dangerous_action(target: str) -> str:
-    """Perform an action that requires confirmation."""
-    _executions.append(target)
-    return f"done: {target}"
-
-
 class _ConfirmDangerousAction(HookProvider):
     def register_hooks(self, registry: HookRegistry, **kwargs) -> None:
         registry.add_callback(BeforeToolCallEvent, self._confirm)
@@ -1412,13 +1402,21 @@ class _ConfirmDangerousAction(HookProvider):
             event.cancel_tool = "not approved"
 
 
-def _delegating_harness(child_turns: list[dict]) -> Agent:
+def _delegating_harness(child_turns: list[dict]) -> tuple[Agent, list[str]]:
+    executions: list[str] = []
+
+    @tool
+    def dangerous_action(target: str) -> str:
+        """Perform an action that requires confirmation."""
+        executions.append(target)
+        return f"done: {target}"
+
     model = _ScriptedModel(
         [{"tool": ("subagent", "t1", {"task": "do it", "tools": ["dangerous_action"]})}]
         + child_turns
         + [{"text": "parent done"}]
     )
-    return create_harness(
+    parent = create_harness(
         model=model,
         tools=[dangerous_action],
         hooks=[_ConfirmDangerousAction()],
@@ -1426,36 +1424,40 @@ def _delegating_harness(child_turns: list[dict]) -> Agent:
         session=False,
         memory=False,
     )
+    return parent, executions
+
+
+def _subagent_result(status: str, text: str) -> list[dict]:
+    return [{"toolResult": {"toolUseId": "t1", "status": status, "content": [{"text": text}]}}]
 
 
 def test_subagent_delegates_end_to_end_through_create_harness():
-    parent = _delegating_harness([{"text": "child done"}])
+    parent, _ = _delegating_harness([{"text": "child done"}])
     result = parent("go")
     assert str(result).strip() == "parent done"
-    tool_result = parent.messages[-2]["content"][0]["toolResult"]
-    assert tool_result["status"] == "success"
-    assert tool_result["content"] == [{"text": "child done\n"}]
+    assert parent.messages[-2]["content"] == _subagent_result("success", "child done\n")
 
 
 def test_subagent_child_interrupt_surfaces_on_the_parent_and_resumes():
-    _executions.clear()
-    parent = _delegating_harness([{"tool": ("dangerous_action", "c1", {"target": "prod"})}, {"text": "child done"}])
+    parent, executions = _delegating_harness(
+        [{"tool": ("dangerous_action", "c1", {"target": "prod"})}, {"text": "child done"}]
+    )
     result = parent("go")
     assert result.stop_reason == "interrupt"
     (interrupt,) = result.interrupts
     assert interrupt.id.startswith("v1:subagent:t1:")
-    assert _executions == []
+    assert executions == []
 
     result = parent([{"interruptResponse": {"interruptId": interrupt.id, "response": "APPROVE"}}])
     assert str(result).strip() == "parent done"
-    assert _executions == ["prod"]
-    assert parent.messages[-2]["content"][0]["toolResult"]["content"] == [{"text": "child done\n"}]
+    assert executions == ["prod"]
+    assert parent.messages[-2]["content"] == _subagent_result("success", "child done\n")
 
 
 def test_subagent_content_filtered_child_is_a_tool_error():
     # Pins the strands-agents>=1.65.0 floor: older SDKs report a filtered child as success.
-    parent = _delegating_harness([{"text": "partial", "stop": "content_filtered"}])
+    parent, _ = _delegating_harness([{"text": "partial", "stop": "content_filtered"}])
     parent("go")
-    tool_result = parent.messages[-2]["content"][0]["toolResult"]
-    assert tool_result["status"] == "error"
-    assert "stop_reason=content_filtered" in tool_result["content"][0]["text"]
+    assert parent.messages[-2]["content"] == _subagent_result(
+        "error", "Subagent stopped before finishing (stop_reason=content_filtered).\n\nPartial output:\npartial"
+    )
