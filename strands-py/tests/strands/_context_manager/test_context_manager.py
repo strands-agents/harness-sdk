@@ -13,7 +13,7 @@ from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, Mess
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
-from strands.types.tools import ToolResult, ToolUse
+from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 
 @pytest.fixture
@@ -231,6 +231,108 @@ class TestContextManagerRunStrategies:
 
         call_args = strategy2.apply.call_args[0][0]
         assert call_args.utilization == 0.4
+
+
+class TestTokenCounting:
+    """Tests for the inputs the utilization gates count."""
+
+    @staticmethod
+    def _capture_count_kwargs(agent):
+        """Record the keyword arguments of every count_tokens call on the agent's model."""
+        captured = []
+
+        async def count_tokens(messages, **kwargs):
+            captured.append(kwargs)
+            return 100
+
+        agent.model.count_tokens = count_tokens
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_counts_system_prompt_and_tool_specs_alongside_messages(self, mock_agent):
+        tool_spec = ToolSpec(name="lookup", description="stub lookup", inputSchema={"json": {"type": "object"}})
+        mock_agent.system_prompt = "be helpful"
+        mock_agent._system_prompt_content = [{"text": "be helpful"}]
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[tool_spec])
+        captured = self._capture_count_kwargs(mock_agent)
+
+        applied = False
+
+        async def apply(_context):
+            nonlocal applied
+            if applied:
+                return False
+            applied = True
+            return True
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "acts-once"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = apply
+        cm = ContextManager(strategies=[strategy], stash=False)
+        cm.init_agent(mock_agent)
+
+        # No projected_input_tokens, so the initial gate counts too — both counts must see the same inputs.
+        await mock_agent.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=mock_agent))
+
+        expected = {
+            "tool_specs": [tool_spec],
+            "system_prompt": "be helpful",
+            "system_prompt_content": [{"text": "be helpful"}],
+        }
+        assert captured == [expected, expected]
+
+    @pytest.mark.asyncio
+    async def test_passes_no_system_prompt_when_the_agent_has_none(self, mock_agent):
+        mock_agent.system_prompt = None
+        mock_agent._system_prompt_content = None
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[])
+        captured = self._capture_count_kwargs(mock_agent)
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "noop"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=False)
+        cm = ContextManager(strategies=[strategy], stash=False)
+        cm.init_agent(mock_agent)
+
+        await mock_agent.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=mock_agent))
+
+        assert captured == [{"tool_specs": [], "system_prompt": None, "system_prompt_content": None}]
+
+    @pytest.mark.asyncio
+    async def test_counts_system_prompt_and_tool_specs_in_the_emergency_truncate_gate(self, mock_agent):
+        tool_spec = ToolSpec(name="lookup", description="stub lookup", inputSchema={"json": {"type": "object"}})
+        mock_agent.system_prompt = "be helpful"
+        mock_agent._system_prompt_content = [{"text": "be helpful"}]
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[tool_spec])
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="a")]),
+            Message(role="assistant", content=[ContentBlock(text="b")]),
+            Message(role="user", content=[ContentBlock(text="c")]),
+            Message(role="assistant", content=[ContentBlock(text="d")]),
+        ]
+        captured = self._capture_count_kwargs(mock_agent)
+
+        # Only the emergency truncate appended by the constructor runs, and only its own gate counts.
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "noop"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=False)
+        cm = ContextManager(strategies=[strategy], stash=False)
+        cm.init_agent(mock_agent)
+
+        await mock_agent.hooks.invoke_callbacks_async(
+            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=100)
+        )
+
+        assert captured == [
+            {
+                "tool_specs": [tool_spec],
+                "system_prompt": "be helpful",
+                "system_prompt_content": [{"text": "be helpful"}],
+            }
+        ]
 
 
 class TestFromStrategy:

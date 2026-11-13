@@ -866,6 +866,55 @@ describe('insertMarker', () => {
 })
 
 describe('EmergencyTruncateStrategy', () => {
+  // Proactive gate: unlike makeContext, the caller controls both counts and the utilization estimate.
+  function makeProactiveContext(messages: Message[], countTokens: (messages: Message[]) => number): ContextState {
+    const agent = createMockAgent({
+      messages,
+      extra: {
+        id: 'test-agent',
+        model: {
+          countTokens: async (counted: Message[]) => countTokens(counted),
+          estimateUtilization: (tokens: number) => tokens / 100_000,
+        },
+      } as Partial<Agent>,
+    })
+    return { messages, agent, utilization: 1.1 }
+  }
+
+  function fiveMessages(): Message[] {
+    return [
+      text('user', 'pin'),
+      text('assistant', 'a1'),
+      text('user', 'u2'),
+      text('assistant', 'a2'),
+      text('user', 'u3'),
+    ]
+  }
+
+  it('truncates when the messages are what overrun the window', async () => {
+    const messages = fiveMessages()
+    const context = makeProactiveContext(messages, (counted) => (counted.length > 0 ? 110_000 : 1_000))
+    expect(await new EmergencyTruncateStrategy().apply(context)).toBe(true)
+    expect(messages.length).toBeLessThan(5)
+  })
+
+  it('skips when the system prompt and tool specs alone fill the window', async () => {
+    // Guards https://github.com/strands-agents/harness-sdk/issues/6065: dropping messages cannot bring a
+    // non-message overflow under the limit.
+    const messages = fiveMessages()
+    const context = makeProactiveContext(messages, () => 110_000)
+    expect(await new EmergencyTruncateStrategy().apply(context)).toBe(false)
+    expect(messages).toHaveLength(5)
+  })
+
+  it('truncates on overflow even when the overhead fills the window', async () => {
+    // An overflow signal is the provider's verdict on a request it refused, so it outranks the estimate.
+    const messages = fiveMessages()
+    const context = { ...makeProactiveContext(messages, () => 110_000), overflow: true }
+    expect(await new EmergencyTruncateStrategy().apply(context)).toBe(true)
+    expect(messages.length).toBeLessThan(5)
+  })
+
   it('leaves a marker on the assistant message after the cut', async () => {
     const messages = [
       text('user', 'pin'),
