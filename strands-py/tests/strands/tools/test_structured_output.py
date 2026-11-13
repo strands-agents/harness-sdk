@@ -608,3 +608,78 @@ def test_convert_pydantic_with_non_nullable_literal_default():
     }
 
     assert tool_spec == expected_spec
+
+
+def test_convert_pydantic_with_unions():
+    """Test that union fields keep every anyOf branch (#6094)."""
+
+    class Cat(BaseModel):
+        kind: Literal["cat"]
+        meows: int
+
+    class Dog(BaseModel):
+        kind: Literal["dog"]
+        barks: int
+
+    class Owner(BaseModel):
+        pet: Cat | Dog
+
+    class Pet(BaseModel):
+        pet: Cat | Dog
+        maybe_pet: Cat | Dog | None = None
+        id: int | str
+        owner: Owner | None = None
+        litter: list[Cat] | Dog
+
+    tru_spec = convert_pydantic_to_tool_spec(Pet)
+
+    cat_schema = {
+        "title": "Cat",
+        "type": "object",
+        "properties": {
+            "kind": {"const": "cat", "title": "Kind", "type": "string"},
+            "meows": {"title": "Meows", "type": "integer"},
+        },
+        "required": ["kind", "meows"],
+    }
+    dog_schema = {
+        "title": "Dog",
+        "type": "object",
+        "properties": {
+            "kind": {"const": "dog", "title": "Kind", "type": "string"},
+            "barks": {"title": "Barks", "type": "integer"},
+        },
+        "required": ["kind", "barks"],
+    }
+    exp_spec = {
+        "name": "Pet",
+        "description": "Pet structured output tool",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "pet": {"anyOf": [cat_schema, dog_schema], "title": "Pet"},
+                    "maybe_pet": {
+                        "anyOf": [cat_schema, dog_schema, {"type": "null"}],
+                        "default": None,
+                        "title": "Maybe Pet",
+                    },
+                    "id": {"anyOf": [{"type": "integer"}, {"type": "string"}], "title": "Id"},
+                    "owner": {
+                        "title": "Owner",
+                        "type": ["object", "null"],
+                        "properties": {"pet": {"anyOf": [cat_schema, dog_schema], "title": "Pet"}},
+                        "required": ["pet"],
+                    },
+                    "litter": {
+                        "anyOf": [{"items": cat_schema, "type": "array"}, dog_schema],
+                        "title": "Litter",
+                    },
+                },
+                "title": "Pet",
+                "required": ["pet", "id", "litter"],
+            }
+        },
+    }
+
+    assert tru_spec == exp_spec
