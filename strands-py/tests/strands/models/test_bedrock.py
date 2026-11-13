@@ -608,6 +608,38 @@ def test_format_request_explicit_none_max_tokens_opts_out_of_the_default(bedrock
     assert model.format_request(messages)["inferenceConfig"] == {}
 
 
+_APP_PROFILE_ARN = "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc123xyz"
+
+
+def test_init_warns_when_an_application_inference_profile_has_no_max_tokens(bedrock_client, messages):
+    """https://github.com/strands-agents/harness-sdk/issues/5754"""
+    _ = bedrock_client
+
+    with pytest.warns(UserWarning, match="application inference profile is not in the model info"):
+        model = BedrockModel(model_id=_APP_PROFILE_ARN)
+
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"model_id": _APP_PROFILE_ARN, "max_tokens": 1},
+        {"model_id": _APP_PROFILE_ARN, "max_tokens": None},
+        {"model_id": _APP_PROFILE_ARN, "model_info": ModelInfo(limits=ModelLimits(max_output_tokens=2_000))},
+        {"model_id": "arn:aws:bedrock:us-west-2:123456789012:inference-profile/global.anthropic.claude-sonnet-4-6"},
+        {"model_id": "unknown.model-v1:0"},
+    ],
+    ids=["explicit max_tokens", "explicit None", "model_info override", "system inference profile", "unknown model"],
+)
+def test_init_does_not_warn_about_application_inference_profiles_otherwise(bedrock_client, captured_warnings, config):
+    _ = bedrock_client
+
+    BedrockModel(**config)
+
+    assert all("application inference profile" not in str(w.message) for w in captured_warnings)
+
+
 @pytest.mark.parametrize(
     "config",
     [
@@ -3309,6 +3341,7 @@ UNSIGNED_REASONING = {"reasoningContent": {"reasoningText": {"text": "gpt-oss th
 REDACTED_REASONING = {"reasoningContent": {"redactedContent": b"opaque"}}
 
 
+@pytest.mark.filterwarnings("ignore:.*application inference profile is not in the model info")
 @pytest.mark.parametrize(
     ("model_id", "exp_reasoning"),
     [
@@ -5200,6 +5233,7 @@ def test_inject_cache_point_skipped_when_leading_non_pdf_document(bedrock_client
     ]
 
 
+@pytest.mark.filterwarnings("ignore:.*application inference profile is not in the model info")
 def test_inject_cache_point_anthropic_strategy_skips_model_check(bedrock_client):
     """Test that anthropic strategy injects cache point without model support check."""
     model = BedrockModel(
@@ -6534,6 +6568,7 @@ def test_format_request_no_cache_config_leaves_system_untouched(bedrock_client, 
     assert tru_request["system"] == [{"text": "static"}]
 
 
+@pytest.mark.filterwarnings("ignore:.*application inference profile is not in the model info")
 def test_format_request_anthropic_strategy_appends_system_cache_point(bedrock_client, messages):
     """Explicit anthropic strategy also appends a system cache point, mirroring auto."""
     model = BedrockModel(
