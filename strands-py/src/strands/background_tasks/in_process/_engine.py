@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from ._types import (
     InProcessTaskRecord,
     InterruptStateData,
 )
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_EXECUTION_FAILURE_MESSAGE = "Background task execution failed"
 
@@ -305,8 +308,10 @@ class InProcessTaskEngine:
     def _run_notification(self, task: InProcessTaskRecord) -> None:
         try:
             self._on_task_updated(task)
-        except Exception:
-            pass
+        except Exception as error:
+            logger.warning(
+                "task_id=<%s>, error=<%s> | background task update notification failed", task["task_id"], error
+            )
 
     def _wake_idle_waiters(self) -> None:
         for waiter in self._idle_waiters:
