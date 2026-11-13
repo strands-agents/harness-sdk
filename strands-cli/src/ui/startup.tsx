@@ -94,6 +94,8 @@ export function StartupView({
     availableHeight,
     reservedRightWidth
   )
+  const headerRows = Math.max(1, Math.min(headerHeight, maxHeight))
+  const lockupTop = Math.max(0, Math.min(paddingTop, headerRows - lockupHeight))
   const introElapsedMs = useStartupIntro(introStartedAt, animate && fullLockup)
   const frogHitbox = frogStartupHitbox(lockupWidth, lockupHeight)
   const brandElapsedMs = useBrandAnimationFrame(
@@ -103,11 +105,11 @@ export function StartupView({
   )
   const horizontalOffset = useLockupSlide(-reservedRightWidth / 2, animate)
   const lockupLeft = startupLockupLeft(maxWidth, lockupWidth, horizontalOffset)
-  const animationOrigin = frogBrandElapsedMs === undefined ? { x: 0, y: 0 } : { x: lockupLeft, y: paddingTop }
+  const animationOrigin = frogBrandElapsedMs === undefined ? { x: 0, y: 0 } : { x: lockupLeft, y: lockupTop }
   const brandProgress = animate ? brandElapsedMs / FROG_BRAND_EASTER_EGG_DURATION_MS : brandElapsedMs < 800 ? 0.54 : 1
   if (introElapsedMs < FROG_INTRO_DURATION_MS && frogBrandElapsedMs === undefined) {
     return (
-      <Box width="100%" height={Math.min(headerHeight, maxHeight)} flexShrink={0} overflow="hidden">
+      <Box width="100%" height={headerRows} flexShrink={0} overflow="hidden">
         <Text>
           {renderFrogSpiralFrame(
             maxWidth,
@@ -119,14 +121,14 @@ export function StartupView({
             frogOptions,
             lockupHeight,
             lockupLeft,
-            paddingTop
+            lockupTop
           )}
         </Text>
       </Box>
     )
   }
   return (
-    <Box height={headerHeight} width="100%" flexShrink={0} overflow="hidden" position="relative">
+    <Box height={headerRows} width="100%" flexShrink={0} overflow="hidden" position="relative">
       <Box
         width={lockupWidth + animationOrigin.x}
         height={lockupHeight + animationOrigin.y}
@@ -134,7 +136,7 @@ export function StartupView({
         overflow="hidden"
         position="absolute"
         marginLeft={lockupLeft - animationOrigin.x}
-        marginTop={paddingTop - animationOrigin.y}
+        marginTop={lockupTop - animationOrigin.y}
       >
         <Text>
           {frogBrandElapsedMs === undefined
