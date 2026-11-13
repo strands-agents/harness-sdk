@@ -45,20 +45,20 @@ describe('dev-only workflow skills', () => {
     }
   )
 
+  it.each(temporaryWorkflowSkills())('shouldTreatARequestAsAskingForTheScopeNotTheRunIn$name', ({ instructions }) => {
+    expect(instructions).toContain('Being asked to run, test, or improve something is not that approval')
+    expect(instructions).toContain('end that turn with the scope and wait for a separate answer')
+  })
+
   it.each(temporaryWorkflowSkills())(
-    'shouldTreatARequestAsAskingForTheScopeNotTheRunIn$name',
+    'shouldReadCurrentStateRatherThanRepeatAnEarlierAnswerIn$name',
     ({ instructions }) => {
-      expect(instructions).toContain('Being asked to run, test, or improve something is not that approval')
-      expect(instructions).toContain('end that turn with the scope and wait for a separate answer')
+      expect(instructions).toContain('call strands_dev_status again in every turn that asks what exists')
+      expect(instructions).toContain('including a repeated question')
+      expect(instructions).toContain('Reusing an earlier answer states a workspace that may no longer exist')
+      expect(instructions).toContain('saying you just checked when you did not is a false claim')
     }
   )
-
-  it.each(temporaryWorkflowSkills())('shouldReadCurrentStateRatherThanRepeatAnEarlierAnswerIn$name', ({ instructions }) => {
-    expect(instructions).toContain('call strands_dev_status again in every turn that asks what exists')
-    expect(instructions).toContain('including a repeated question')
-    expect(instructions).toContain('Reusing an earlier answer states a workspace that may no longer exist')
-    expect(instructions).toContain('saying you just checked when you did not is a false claim')
-  })
 
   it.each(temporaryWorkflowSkills())('shouldAnswerOnlyWhatWasAskedIn$name', ({ instructions }) => {
     expect(instructions).toContain('Answer the question that was asked and stop')

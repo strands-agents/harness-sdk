@@ -669,9 +669,7 @@ describe('plain-language dev chat guidance', () => {
     expect(part.instructions).toContain('call the tool only in a later turn, after the developer answered')
     expect(part.instructions).toContain('A scope that looks obvious is still not approval')
     expect(tool('strands_dev_test').description).toContain('Being asked to test the agent is not that answer')
-    expect(tool('strands_dev_optimize').description).toContain(
-      'Being asked to improve the agent is not that answer'
-    )
+    expect(tool('strands_dev_optimize').description).toContain('Being asked to improve the agent is not that answer')
   })
 
   it('shouldAnswerOnlyTheQuestionAskedWithoutVolunteeringSettingsOrAMenu', () => {
