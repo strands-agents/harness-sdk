@@ -148,6 +148,15 @@ async def test_run_builds_child_and_returns_output():
 
 
 @pytest.mark.asyncio
+async def test_async_builder_is_awaited():
+    async def builder(spec):
+        return _FakeChild(_FakeResult("built async"))
+
+    result = _result(await _events(make_subagent(builder=builder), {"task": "do it"}))
+    assert result == {"toolUseId": "t1", "status": "success", "content": [{"text": "built async"}]}
+
+
+@pytest.mark.asyncio
 async def test_preset_resolves_through_builder():
     specs = []
 
@@ -383,8 +392,8 @@ def _text_message(text):
     return {"role": "assistant", "content": [{"text": text}]}
 
 
-@pytest.fixture
-def confirming_parent(tmp_path):
+@pytest.fixture(params=["sync", "async"])
+def confirming_parent(tmp_path, request):
     """Build a parent that delegates a confirm-guarded action, sharing one session across rebuilds."""
     executions = []
 
@@ -404,11 +413,15 @@ def confirming_parent(tmp_path):
 
     def build(child_responses, parent_responses):
         child_model = MockedModelProvider(child_responses)
+
+        def child(spec):
+            return Agent(model=child_model, tools=[dangerous_action], hooks=[ConfirmHook()], callback_handler=None)
+
+        async def async_child(spec):
+            return child(spec)
+
         tool = make_subagent(
-            builder=lambda spec: Agent(
-                model=child_model, tools=[dangerous_action], hooks=[ConfirmHook()], callback_handler=None
-            ),
-            presets={"generalist": GENERALIST},
+            builder=async_child if request.param == "async" else child, presets={"generalist": GENERALIST}
         )
         return Agent(
             model=MockedModelProvider(parent_responses),
