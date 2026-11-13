@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import dataclasses
 import logging
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
+# Distinct from the session layer's bytes marker, which session restore decodes back into (non-JSON) bytes.
+_BYTES_KEY = "__strands_background_task_bytes__"
 _BACKGROUND_PROPERTY = "_background_execution"
 _MANAGE_TOOL_NAME = "strands_manage_background_task"
 _COMPOSITE_SCHEMA_KEYS = {"$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"}
@@ -264,7 +267,7 @@ class _BackgroundTasks(Plugin):
         Persisted work cannot resume in a new process, so non-terminal tasks are recorded as
         failed and their interrupts are dropped from the agent's interrupt state.
         """
-        stored: list[BackgroundTask] = self._agent.state.get(_BACKGROUND_TASKS_STATE_KEY) or []
+        stored: list[BackgroundTask] = _decode_bytes(self._agent.state.get(_BACKGROUND_TASKS_STATE_KEY) or [])
         recovered_interrupt_ids: set[str] = set()
         tasks: dict[str, BackgroundTask] = {}
         for task in stored:
@@ -478,7 +481,7 @@ class _BackgroundTasks(Plugin):
         with self._tasks_lock:
             tasks = list(self._tasks.values())
             if tasks:
-                self._agent.state.set(_BACKGROUND_TASKS_STATE_KEY, tasks)
+                self._agent.state.set(_BACKGROUND_TASKS_STATE_KEY, _encode_bytes(tasks))
             else:
                 self._agent.state.delete(_BACKGROUND_TASKS_STATE_KEY)
 
@@ -531,6 +534,26 @@ def _add_background_selection(tool_spec: ToolSpec) -> ToolSpec | None:
         },
     }
     return selectable
+
+
+def _encode_bytes(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {_BYTES_KEY: base64.b64encode(value).decode()}
+    if isinstance(value, dict):
+        return {key: _encode_bytes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_encode_bytes(item) for item in value]
+    return value
+
+
+def _decode_bytes(value: Any) -> Any:
+    if isinstance(value, dict):
+        if value.keys() == {_BYTES_KEY}:
+            return base64.b64decode(value[_BYTES_KEY])
+        return {key: _decode_bytes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_bytes(item) for item in value]
+    return value
 
 
 def _tool_error(tool_use: ToolUse, message: str) -> ToolResult:

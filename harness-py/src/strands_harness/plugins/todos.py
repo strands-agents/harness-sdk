@@ -22,7 +22,7 @@ from strands.plugins import Plugin
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext
 from strands.vended_plugins.context_injector import ContextInjector, InjectionContext
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 if TYPE_CHECKING:
     from strands import Agent
@@ -49,12 +49,35 @@ def _render_list(todos: list[TodoItem]) -> str:
     return "\n".join(_todo_line(t) for t in todos)
 
 
+# Repeated as a string literal below because PEP 702 checkers only honor @deprecated when its
+# argument is a literal. The test pins the two copies to each other.
+_DEPRECATION_MESSAGE = (
+    "The todos built-in plugin is deprecated in the harness and will be removed in a later minor "
+    "release. It now ships in the SDK as strands.vended_plugins.todos.Todos — construct it "
+    "yourself and pass plugins=[Todos()]. Tracked in "
+    "https://github.com/strands-agents/harness-sdk/issues/5279."
+)
+
+
+@deprecated(
+    "The todos built-in plugin is deprecated in the harness and will be removed in a later minor "
+    "release. It now ships in the SDK as strands.vended_plugins.todos.Todos — construct it "
+    "yourself and pass plugins=[Todos()]. Tracked in "
+    "https://github.com/strands-agents/harness-sdk/issues/5279.",
+    # UserWarning, not the default DeprecationWarning: ``builtin_plugins=["todos"]`` has the
+    # harness construct this plugin, so a DeprecationWarning is attributed to strands_harness and
+    # Python's default filter hides it before the user ever sees it.
+    category=UserWarning,
+)
 class Todos(Plugin):
     """Gives the agent a ``todo_write`` tool and keeps the current list in view.
 
     The tool persists the list to ``agent.state`` under ``state_key``; before each model call
     the plugin re-surfaces the list as a ``<system-reminder>``, and the model sees only the latest
     one. Sharing one instance across agents is safe: state is per-agent.
+
+    Deprecated in the harness; use :class:`strands.vended_plugins.todos.Todos` instead. See
+    https://github.com/strands-agents/harness-sdk/issues/5279.
 
     Args:
         name: Plugin name, for logging and duplicate detection. Defaults to ``"strands:todos"``.

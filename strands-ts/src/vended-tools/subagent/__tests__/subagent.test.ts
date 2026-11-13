@@ -152,7 +152,7 @@ function storedTurns(agent: Agent): Record<string, JSONValue> {
  * A parent that delegates a confirm-guarded action to a subagent. With `storage`, it persists to a session; a
  * `rebuilt` parent starts from the turns that follow the interrupted tool call.
  */
-function confirmingParent(storage?: MockSnapshotStorage, options: { rebuilt?: boolean } = {}) {
+function confirmingParent(storage?: MockSnapshotStorage, options: { rebuilt?: boolean; asyncBuilder?: boolean } = {}) {
   const executions: string[] = []
   const dangerousAction = createMockTool('dangerousAction', (context) => {
     if (context.interrupt({ name: 'confirm', reason: 'confirm?' }) !== 'APPROVE') return 'not approved'
@@ -165,7 +165,8 @@ function confirmingParent(storage?: MockSnapshotStorage, options: { rebuilt?: bo
     childModel.addTurn({ type: 'toolUseBlock', name: 'dangerousAction', toolUseId: 'c1', input: { target: 'prod' } })
   }
   childModel.addTurn({ type: 'textBlock', text: 'child done' })
-  const builder = vi.fn((): Agent => new Agent({ model: childModel, tools: [dangerousAction], printer: false }))
+  const build = (): Agent => new Agent({ model: childModel, tools: [dangerousAction], printer: false })
+  const builder = vi.fn(options.asyncBuilder ? async (): Promise<Agent> => build() : build)
   const parentModel = new MockMessageModel()
   if (!options.rebuilt) {
     parentModel.addTurn({ type: 'toolUseBlock', name: 'subagent', toolUseId: 't1', input: { task: 'do it' } })
@@ -302,6 +303,18 @@ describe('subagent tool', () => {
   })
 
   describe('resolution', () => {
+    it('awaits an async builder', async () => {
+      const child = new FakeChild(fakeResult('the answer'))
+      const tool = makeSubagent({ builder: async () => child.asAgent() })
+
+      const { result } = await run(tool, { task: 'do it' })
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('the answer')] })
+      )
+      expect(child.prompts).toEqual(['do it'])
+    })
+
     it('builds a child from the default preset and returns its output', async () => {
       const { builder, specs } = capturingBuilder(new FakeChild(fakeResult('the answer')))
       const tool = makeSubagent({ builder })
@@ -570,6 +583,12 @@ describe('subagent tool', () => {
     it.each([
       ['a missing child result', undefined, 'Subagent did not produce a result.'],
       ['a child stopped by a limit', fakeResult('partial', 'limitTurns'), limitStopMessage('subagent', 'limitTurns')],
+      [
+        'a content-filtered child',
+        fakeResult('partial', 'contentFiltered'),
+        'Subagent stopped before finishing (stopReason=contentFiltered).\n\nPartial output:\npartial',
+      ],
+      ['a refusing child', fakeResult('', 'refusal'), 'Subagent stopped before finishing (stopReason=refusal).'],
     ])('turns %s into an error result', async (_, childResult, message) => {
       const { builder } = capturingBuilder(new FakeChild(childResult))
 
@@ -636,16 +655,19 @@ describe('subagent tool', () => {
   })
 
   describe('interrupts', () => {
-    it('resumes the stored child turn after the parent is rebuilt', async () => {
+    it.each([
+      ['a sync', false],
+      ['an async', true],
+    ])('resumes the stored child turn after the parent is rebuilt, with %s builder', async (_, asyncBuilder) => {
       const storage = new MockSnapshotStorage()
-      const first = confirmingParent(storage)
+      const first = confirmingParent(storage, { asyncBuilder })
       const interrupted = await first.parent.invoke('go')
       const interruptId = interrupted.interrupts![0]!.id
       expect(interruptId).toBe('subagent:t1:tool:c1:confirm')
       expect(Object.keys(storedTurns(first.parent))).toEqual(['t1'])
 
       // Process boundary: every agent is rebuilt and only the session survives.
-      const second = confirmingParent(storage, { rebuilt: true })
+      const second = confirmingParent(storage, { rebuilt: true, asyncBuilder })
       const result = await second.parent.invoke([new InterruptResponseContent({ interruptId, response: 'APPROVE' })])
 
       expect(result.toString()).toBe('parent done')
