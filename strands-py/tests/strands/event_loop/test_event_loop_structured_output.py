@@ -439,16 +439,18 @@ async def test_structured_output_context_not_enabled(mock_agent, agenerator, ali
 
 
 @pytest.mark.parametrize(
-    ("model", "exp_tool_names", "exp_structured_output_model"),
+    ("model", "sort_tools", "exp_tool_names", "exp_structured_output_model"),
     [
-        (Mock(), ["ProductModel"], None),
-        (Mock(_supports_structured_output=True), ["lookup", "ProductModel"], ProductModel),
+        (Mock(), True, ["ProductModel"], None),
+        (Mock(), False, ["ProductModel"], None),
+        (Mock(_supports_structured_output=True), True, ["ProductModel", "lookup"], ProductModel),
+        (Mock(_supports_structured_output=True), False, ["lookup", "ProductModel"], ProductModel),
     ],
-    ids=["narrowed", "enforced_by_model"],
+    ids=["narrowed_sorted", "narrowed_unsorted", "enforced_by_model_sorted", "enforced_by_model_unsorted"],
 )
 @pytest.mark.asyncio
 async def test_structured_output_forced_mode(
-    mock_agent, agenerator, alist, model, exp_tool_names, exp_structured_output_model
+    mock_agent, agenerator, alist, model, sort_tools, exp_tool_names, exp_structured_output_model
 ):
     """Only a model that enforces structured output itself receives the full tool list on the forced retry."""
     structured_output_context = StructuredOutputContext(structured_output_model=ProductModel)
@@ -456,6 +458,7 @@ async def test_structured_output_forced_mode(
     mock_agent.tool_registry.register_tool(lookup)
     structured_output_context.register_tool(mock_agent.tool_registry)
     mock_agent.model = model
+    mock_agent._sort_tools = sort_tools
     model.stream.return_value = agenerator(
         [
             {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "t1", "name": "ProductModel"}}}},

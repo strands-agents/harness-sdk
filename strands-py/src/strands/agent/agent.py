@@ -250,6 +250,7 @@ class Agent(AgentBase, LocalAgent):
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
         baggage_attributes: Mapping[str, str] | None = None,
+        sort_tools: bool = True,
         aux_model: Model | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
@@ -303,6 +304,9 @@ class Agent(AgentBase, LocalAgent):
             system_prompt: System prompt to guide model behavior.
                 Can be a string or a list of SystemContentBlock objects for advanced features like caching.
                 If None, the model will behave according to its default settings.
+            sort_tools: Sort tool specifications by name after middleware, before each model call, to stabilize
+                prompt-cache prefixes. Defaults to True. Set False to preserve the outgoing order, including
+                middleware changes. Tool registration order is always preserved.
             structured_output_model: Pydantic model type(s) for structured output.
                 When specified, all agent calls will attempt to return structured output of this type.
                 This can be overridden on the agent invocation.
@@ -484,6 +488,7 @@ class Agent(AgentBase, LocalAgent):
 
         self.baggage_attributes: dict[str, str] = dict(baggage_attributes) if baggage_attributes else {}
         self.record_direct_tool_call = record_direct_tool_call
+        self._sort_tools = sort_tools
         self.load_tools_from_directory = load_tools_from_directory
 
         # Create internal cancel signal for graceful cancellation using threading.Event

@@ -1,7 +1,9 @@
 import asyncio
 import concurrent
+import copy
 import threading
 import unittest.mock
+from dataclasses import replace
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -27,6 +29,7 @@ from strands.hooks import (
     MessageAddedEvent,
 )
 from strands.interrupt import Interrupt, PendingToolExecution, _InterruptState
+from strands.middleware.stages import InvokeModelStage
 from strands.telemetry.metrics import EventLoopMetrics, Trace
 from strands.telemetry.tracer import Tracer
 from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
@@ -189,6 +192,80 @@ def mock_tracer():
     tracer.start_event_loop_cycle_span.return_value = MagicMock()
     tracer.start_model_invoke_span.return_value = MagicMock()
     return tracer
+
+
+@pytest.mark.parametrize("sort_tools", [None, True, False])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_model_call_tool_order(tool, tool_times_2, tool_times_5, sort_tools, reverse):
+    # Stable model-facing tool order without changing registration order (#5700).
+    tools = [tool, tool_times_5, tool_times_2]
+    if reverse:
+        tools.reverse()
+    options = {} if sort_tools is None else {"sort_tools": sort_tools}
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}])
+    agent = Agent(model=model, tools=tools, callback_handler=None, **options)
+    registered_specs = copy.deepcopy(agent.tool_registry.get_all_tool_specs())
+
+    with patch.object(model, "stream", wraps=model.stream) as stream:
+        agent("hello")
+
+    tru_specs = stream.call_args.args[1]
+    exp_specs = (
+        registered_specs if sort_tools is False else [tool_times_2.tool_spec, tool_times_5.tool_spec, tool.tool_spec]
+    )
+    assert tru_specs == exp_specs
+    tru_registered_specs = agent.tool_registry.get_all_tool_specs()
+    exp_registered_specs = registered_specs
+    assert tru_registered_specs == exp_registered_specs
+
+
+@pytest.mark.parametrize("sort_tools", [True, False])
+def test_model_call_tool_order_after_middleware(tool, tool_times_2, tool_times_5, sort_tools):
+    # Middleware additions participate in ordering without mutating its list or tool choice (#5700).
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}])
+    agent = Agent(model=model, tools=[tool_times_2, tool], sort_tools=sort_tools, callback_handler=None)
+    registered_specs = copy.deepcopy(agent.tool_registry.get_all_tool_specs())
+    middleware_specs = [tool.tool_spec, tool_times_5.tool_spec, tool_times_2.tool_spec]
+    original_specs = copy.deepcopy(middleware_specs)
+    choice = {"tool": {"name": tool.tool_name}}
+
+    async def modify_specs(context, next_fn):
+        async for event in next_fn(replace(context, tool_specs=middleware_specs, tool_choice=choice)):
+            yield event
+
+    agent.add_middleware(InvokeModelStage, modify_specs)
+    with patch.object(model, "stream", wraps=model.stream) as stream:
+        agent("hello")
+
+    tru_specs = stream.call_args.args[1]
+    exp_specs = [tool_times_2.tool_spec, tool_times_5.tool_spec, tool.tool_spec] if sort_tools else original_specs
+    assert tru_specs == exp_specs
+    tru_choice = stream.call_args.kwargs["tool_choice"]
+    exp_choice = choice
+    assert tru_choice == exp_choice
+    assert middleware_specs == original_specs
+    assert agent.tool_registry.get_all_tool_specs() == registered_specs
+
+
+def test_model_call_tool_order_on_retry(tool, tool_times_2, tool_times_5):
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}] * 2)
+    agent = Agent(model=model, tools=[tool, tool_times_5], callback_handler=None)
+
+    def retry_with_added_tool(event):
+        if model.index == 1:
+            agent.tool_registry.register_tool(tool_times_2)
+            event.retry = True
+
+    agent.add_hook(retry_with_added_tool, AfterModelCallEvent)
+    with patch.object(model, "stream", wraps=model.stream) as stream:
+        agent("hello")
+
+    tru_specs = [model_call.args[1] for model_call in stream.call_args_list]
+    exp_specs = [
+        [tool_times_5.tool_spec, tool.tool_spec],
+        [tool_times_2.tool_spec, tool_times_5.tool_spec, tool.tool_spec],
+    ]
+    assert tru_specs == exp_specs
 
 
 @pytest.mark.asyncio

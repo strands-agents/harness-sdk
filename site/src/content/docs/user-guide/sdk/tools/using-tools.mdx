@@ -3,7 +3,10 @@ title: Attach and invoke tools
 description: "Pass tools to a Strands agent at init or runtime, inspect what is loaded, and invoke them either through natural language or as direct method calls."
 tags: [tool-authoring]
 sourceLinks:
+  - path: strands-py/src/strands/agent/agent.py
+  - path: strands-py/src/strands/event_loop/event_loop.py
   - path: strands-py/src/strands/tools/registry.py
+  - path: strands-ts/src/agent/agent.ts
   - path: strands-ts/src/tools/tool.ts
   - path: strands-ts/src/tools/tool-factory.ts
 ---
@@ -68,6 +71,17 @@ console.log(agent.tools)
 </Tab>
 </Tabs>
 
+
+## Tool definition order
+
+To keep identical tool catalogs stable across requests, agents sort outgoing tool
+definitions by name before each model call. Sorting happens after middleware and
+preserves tool registration order. This helps avoid prompt-cache misses caused by
+MCP servers returning the same tools in different orders; it does not enable caching.
+
+If your application relies on outgoing tool order, disable sorting with
+<Syntax py="Agent(sort_tools=False)" ts="new Agent({ sortTools: false })" />.
+This preserves the order supplied by registration and any middleware changes.
 
 ## Loading Tools from Files
 

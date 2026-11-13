@@ -885,6 +885,8 @@ def _make_invoke_model_terminal(
 
         system_prompt_str, system_prompt_content = split_system_prompt(ctx.system_prompt)
         tool_specs, structured_output_model = _structured_output_request(ctx)
+        if agent._sort_tools:
+            tool_specs = sorted(tool_specs, key=lambda spec: spec["name"])
 
         model_id = ctx.model.config.get("model_id") if hasattr(ctx.model, "config") else None
         model_invoke_span = tracer.start_model_invoke_span(
