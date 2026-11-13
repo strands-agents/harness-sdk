@@ -91,6 +91,22 @@ def test_tool_spec(identity_tool):
     assert tru_spec == exp_spec
 
 
+def test_tool_spec_excludes_var_args_and_kwargs():
+    # GH#6096: *args and **kwargs are not tool inputs and must be excluded from the schema.
+    @strands.tool
+    def lookup(query: str, *args, **kwargs):
+        """Look something up.
+
+        Args:
+            query: What to look up.
+        """
+        return query
+
+    schema = lookup.tool_spec["inputSchema"]["json"]
+    assert set(schema["properties"]) == {"query"}
+    assert schema["required"] == ["query"]
+
+
 @pytest.mark.parametrize("identity_tool", ["identity_invoke", "identity_invoke_async"], indirect=True)
 def test_tool_type(identity_tool):
     tru_type = identity_tool.tool_type
