@@ -29,6 +29,7 @@ const rows: [SmokeProvider, string, number][] = [
   [smoke.anthropic, 'claude-opus-5-5', 1_000_000],
   [smoke.anthropic, 'claude-sonnet-5-5', 1_000_000],
   [smoke.anthropic, 'claude-haiku-5-5', 1_000_000],
+  [smoke.gemini, 'gemini-4-carbon', 1_048_576],
   [smoke.gemini, 'gemini-4-argon', 1_048_576],
   [smoke.gemini, 'gemini-3.8-flash', 1_048_576],
   [smoke.bedrock, 'us.xai.grok-4.7', 524_288],
