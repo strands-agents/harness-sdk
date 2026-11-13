@@ -451,6 +451,43 @@ def test_format_chunk_metadata(model):
     assert tru_chunk == exp_chunk
 
 
+@pytest.mark.parametrize(
+    ("eval_count", "prompt_eval_count", "total_duration", "input_tokens", "output_tokens", "latency_ms"),
+    [
+        (None, None, None, 0, 0, 0),
+        (100, None, 1000000, 0, 100, 1),
+        (None, 50, 1000000, 50, 0, 1),
+        (100, 50, None, 50, 100, 0),
+    ],
+    ids=["all-missing", "prompt-count-missing", "eval-count-missing", "duration-missing"],
+)
+def test_format_chunk_metadata_missing_counts(
+    model, eval_count, prompt_eval_count, total_duration, input_tokens, output_tokens, latency_ms
+):
+    event = {
+        "chunk_type": "metadata",
+        "data": unittest.mock.Mock(
+            eval_count=eval_count, prompt_eval_count=prompt_eval_count, total_duration=total_duration
+        ),
+    }
+
+    tru_chunk = model.format_chunk(event)
+    exp_chunk = {
+        "metadata": {
+            "usage": {
+                "inputTokens": input_tokens,
+                "outputTokens": output_tokens,
+                "totalTokens": input_tokens + output_tokens,
+            },
+            "metrics": {
+                "latencyMs": latency_ms,
+            },
+        },
+    }
+
+    assert tru_chunk == exp_chunk
+
+
 def test_format_chunk_other(model):
     event = {"chunk_type": "other"}
 
