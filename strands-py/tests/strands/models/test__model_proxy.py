@@ -193,3 +193,39 @@ def test_prepare_sends_summary_text_unless_the_model_summarizes_server_side(serv
     ]
     assert trailing_blocks == 1
     assert messages == original
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_lone_surrogates_as_the_replacement_character(alist):
+    # guards against a lone surrogate reaching a provider (#5937)
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}])
+    model.stream = unittest.mock.Mock(wraps=model.stream)
+    messages = [user({"text": "a\ud83d"})]
+    original = copy.deepcopy(messages)
+    tool_specs = [{"name": "lookup", "description": "d\udcff", "inputSchema": {"json": {}}}]
+
+    await alist(ModelProxy(model).stream(messages, tool_specs, "s\ud83d", system_prompt_content=[{"text": "s\ud83d"}]))
+
+    tru_call = model.stream.call_args
+    assert tru_call.args == (
+        [user({"text": "a\ufffd"})],
+        [{"name": "lookup", "description": "d\ufffd", "inputSchema": {"json": {}}}],
+        "s\ufffd",
+    )
+    assert tru_call.kwargs["system_prompt_content"] == [{"text": "s\ufffd"}]
+    assert messages == original
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_and_structured_output_send_lone_surrogates_as_the_replacement_character():
+    # guards against a lone surrogate reaching a provider (#5937)
+    model = unittest.mock.MagicMock()
+    model.count_tokens = unittest.mock.AsyncMock(return_value=7)
+    messages = [user({"text": "a\ud83d"})]
+    proxy = ModelProxy(model)
+
+    await proxy.count_tokens(messages, system_prompt="s\ud83d")
+    proxy.structured_output(dict, messages, system_prompt="s\ud83d")
+
+    model.count_tokens.assert_awaited_once_with([user({"text": "a\ufffd"})], system_prompt="s\ufffd")
+    model.structured_output.assert_called_once_with(dict, [user({"text": "a\ufffd"})], system_prompt="s\ufffd")

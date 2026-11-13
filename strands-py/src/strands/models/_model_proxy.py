@@ -6,7 +6,8 @@ history is turned into what the provider receives in one place.
 A ``summary`` block reaches a model whose ``model_info.capabilities.server_side_summary`` is True as it is stored;
 every other model gets its text. An ``injected`` block reaches a model whose ``temporary_messages`` is True as it is
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
-ones included, gets the latest user message's injected blocks as text and none of the earlier ones.
+ones included, gets the latest user message's injected blocks as text and none of the earlier ones. Lone surrogates in
+the messages, system prompt, and tool specs are sent as U+FFFD, since some providers reject a whole request over one.
 """
 
 import logging
@@ -20,6 +21,7 @@ from pydantic import BaseModel
 from ..event_loop.streaming import _normalize_messages, process_stream
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.tools import ToolSpec
+from ._well_formed_request import well_formed_request
 
 if TYPE_CHECKING:
     from ..agent.agent_metadata import AgentMetadata
@@ -84,6 +86,9 @@ class ModelProxy:
         # Only role and content reach the provider, so metadata and any future non-model fields never leak.
         messages = [Message(role=message["role"], content=message["content"]) for message in messages]
         messages, injected_trailing_blocks = self._prepare(messages)
+        messages, request = well_formed_request(
+            messages, tool_specs=tool_specs, system_prompt=system_prompt, system_prompt_content=system_prompt_content
+        )
         # The cache point stays ahead of injected text, which the next call no longer sends.
         dynamic_trailing_blocks = max(dynamic_trailing_blocks, injected_trailing_blocks)
         start_time = time.time()
@@ -97,10 +102,10 @@ class ModelProxy:
 
         chunks = self._model.stream(
             messages,
-            tool_specs if tool_specs else None,
-            system_prompt,
+            request["tool_specs"] if request["tool_specs"] else None,
+            request["system_prompt"],
             tool_choice=tool_choice,
-            system_prompt_content=system_prompt_content,
+            system_prompt_content=request["system_prompt_content"],
             invocation_state=invocation_state,
             model_state=model_state,
             cancel_signal=cancel_signal,
@@ -113,13 +118,12 @@ class ModelProxy:
     def structured_output(
         self, output_model: type[T], messages: Messages, system_prompt: str | None = None, **kwargs: Any
     ) -> AsyncGenerator[dict[str, T | Any], None]:
-        """Delegate to the model's ``structured_output``, with summary and injected blocks prepared."""
-        return self._model.structured_output(
-            output_model, self._prepare(messages)[0], system_prompt=system_prompt, **kwargs
-        )
+        """Delegate to the model's ``structured_output``, with the messages prepared as :meth:`stream` does."""
+        messages, request = well_formed_request(self._prepare(messages)[0], system_prompt=system_prompt)
+        return self._model.structured_output(output_model, messages, system_prompt=request["system_prompt"], **kwargs)
 
     async def count_tokens(self, messages: Messages, **kwargs: Any) -> int:
-        """Delegate to the model's ``count_tokens`` with summary and injected blocks prepared as :meth:`stream` does.
+        """Delegate to the model's ``count_tokens`` with the messages prepared as :meth:`stream` does.
 
         Args:
             messages: The messages to count.
@@ -128,7 +132,8 @@ class ModelProxy:
         Returns:
             The model's count.
         """
-        return await self._model.count_tokens(self._prepare(messages)[0], **kwargs)
+        messages, request = well_formed_request(self._prepare(messages)[0], **kwargs)
+        return await self._model.count_tokens(messages, **request)
 
     def _prepare(self, messages: Messages) -> tuple[Messages, int]:
         """Return the messages the model accepts, and the trailing blocks the cache point must stay ahead of."""
