@@ -8,18 +8,14 @@ on:
       - '.github/workflows/python-*'
   merge_group:
     types: [checks_requested]
-  # Nightly full run of main. Gives the CloudWatch dashboards a flakiness
-  # baseline that no PR's own breakage can pollute. Scheduled runs check out
-  # main's own code, so authorization-check is skipped for them.
-  schedule:
-    - cron: '17 6 * * *'
   # workflow_call entry — TRUST INVARIANT.
   #
   # Lets another workflow in this repo reuse the integ tests against an
   # arbitrary `ref` while keeping AWS_*. The authorization-check below is
   # skipped on this path because the only callers
-  # (release-python.yml / release-typescript.yml) are workflow_dispatch-
-  # gated, which already requires repo write access.
+  # (release-python.yml / release-typescript.yml, workflow_dispatch-gated,
+  # and integ-canary.yml, schedule or workflow_dispatch on this repo's own
+  # commit) cannot be started without repo write access.
   #
   # Before adding another caller, check all of:
   #   1. Cannot be triggered by an unauthenticated user or a fork
@@ -88,16 +84,15 @@ jobs:
         id: auth
         uses: strands-agents/devtools/authorization-check@main
         with:
-          # Skip on merge_group (gated by branch protection), on schedule
-          # (runs main's own code; there is no PR author to check) and on
-          # workflow_call (the caller — release.yml — is workflow_dispatch
-          # gated, see the trigger comment above).
-          # `github.event_name` can't identify the release here — inside a
+          # Skip on merge_group (gated by branch protection) and on
+          # workflow_call (the callers need repo write access, see the trigger
+          # comment above).
+          # `github.event_name` can't identify a caller here — inside a
           # reusable workflow it reports the caller's event, never
           # 'workflow_call' — so key off `inputs.ref`, which only a
           # workflow_call caller supplies (empty on pull_request_target /
-          # merge_group / schedule). Matches the validate-call-ref guard above.
-          skip-check: ${{ github.event_name == 'merge_group' || github.event_name == 'schedule' || inputs.ref != '' }}
+          # merge_group). Matches the validate-call-ref guard above.
+          skip-check: ${{ github.event_name == 'merge_group' || inputs.ref != '' }}
           username: ${{ github.event.pull_request.user.login || 'invalid' }}
           allowed-roles: 'maintain,triage,write,admin'
 
