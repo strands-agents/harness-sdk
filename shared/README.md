@@ -4,7 +4,7 @@ What both SDKs must agree on: data, constants and lists that exist in Python and
 
 ## `model-info.json`
 
-What the SDKs know about models: context windows, output ceilings, which models take cache points, which can be forced to call a tool, which have native structured output, which accept temporary messages, and the id rules that map a provider's model id to the entry that describes it. Each entry is a `ModelInfo`, the same type the SDK exposes, plus the few fields only the harness reads (`capabilities.defaultEffort`); every field is optional and a missing field means unknown.
+What the SDKs know about models: context windows, output ceilings, which models take cache points, which models Strands forces to call the structured output tool, which have native structured output, which accept temporary messages, and the id rules that map a provider's model id to the entry that describes it. Each entry is a `ModelInfo`, the same type the SDK exposes, plus the few fields only the harness reads (`capabilities.defaultEffort`); every field is optional and a missing field means unknown.
 
 Edit the file; each SDK copies it into its own package when it installs and builds, and does not commit the copy:
 
