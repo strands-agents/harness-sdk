@@ -3,7 +3,7 @@ import { link, lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, unlink } from '
 import type { FileHandle } from 'node:fs/promises'
 import { isAbsolute, join, parse, resolve, sep, win32 } from 'node:path'
 
-import { containsPath, expandHome } from '../paths.js'
+import { canonicalParentPath, containsPath, expandHome } from '../paths.js'
 import { isRecord } from '../values.js'
 
 export interface WorkspaceBinding {
@@ -26,8 +26,9 @@ const MAX_IGNORE_BYTES = 1024 * 1024
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 
 export async function readWorkspaceBinding(directory: string): Promise<BoundWorkspace | undefined> {
-  const root = resolve(expandHome(directory))
-  if (!(await optionalDetails(root))) return undefined
+  const requested = resolve(expandHome(directory))
+  if (!(await optionalDetails(requested))) return undefined
+  const root = await canonicalParentPath(requested)
   const path = join(root, '.config')
   const details = await optionalDetails(path)
   if (!details) return undefined
@@ -44,7 +45,7 @@ export async function readWorkspaceBinding(directory: string): Promise<BoundWork
 }
 
 export async function bindWorkspace(directory: string, binding: WorkspaceBinding): Promise<BoundWorkspace> {
-  const root = resolve(expandHome(directory))
+  const root = await canonicalParentPath(directory)
   const path = join(root, '.config')
   const requested = validateBinding(binding, path)
   const contents = `${JSON.stringify(requested, null, 2)}\n`

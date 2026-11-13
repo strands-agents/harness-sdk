@@ -360,6 +360,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     this.abort = abort
     this.stopping = false
     let record: string | undefined
+    let cancelled = false
     let reader: ReturnType<typeof temporaryStudyReader> | undefined
     let tail: TemporaryTail | undefined
     const progress = (): OptimizeProgress =>
@@ -400,26 +401,38 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       await tail?.stop()
     } catch (error) {
       await tail?.stop()
-      if (!this.stopping || !record) {
+      if (!this.stopping) {
         this.set({ step: 'failed', message: errorMessage(error), ...(record ? { record } : {}) })
         announce(this.host(), 'error', `optimize · ${plan.experiment.name} stopped · /optimize shows why`)
         return
       }
+      cancelled = true
     } finally {
       this.abort = undefined
     }
-    await this.finish(record!)
+    if (cancelled && !record) return this.reportCancelled(plan)
+    await this.finish(record!, plan, cancelled)
   }
 
-  private async finish(record: string): Promise<void> {
+  private async finish(record: string, plan: OptimizePlan, cancelled: boolean): Promise<void> {
     try {
       const review = await this.review(await readTemporaryStudy(record), record)
       this.set({ step: 'review', review })
       announce(this.host(), 'success', `optimize · run ${review.run} finished · /optimize opens the review`)
     } catch (error) {
+      if (cancelled) return this.reportCancelled(plan, record)
       this.set({ step: 'failed', message: errorMessage(error), record })
       announce(this.host(), 'error', `optimize · run ${basename(record)} could not be read · /optimize shows why`)
     }
+  }
+
+  private reportCancelled(plan: OptimizePlan, record?: string): void {
+    this.set({
+      step: 'cancelled',
+      experiment: plan.experiment.name,
+      ...(record ? { run: basename(record) } : {}),
+    })
+    announce(this.host(), 'success', `optimize · ${plan.experiment.name} cancelled · the agent source is unchanged`)
   }
 
   private async review(outcome: TemporaryStudyOutcome, record: string): Promise<OptimizeReview> {

@@ -65,6 +65,22 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
       return <RunningView {...props} progress={state.progress} />
     case 'review':
       return <ReviewView {...props} review={state.review} />
+    case 'cancelled':
+      return (
+        <StoppedView
+          {...props}
+          command={COMMAND}
+          outcome="cancelled"
+          tone="muted"
+          retryHint="Enter start again"
+          message={[
+            `You cancelled the optimization of ${state.experiment}.`,
+            'The agent source is unchanged.',
+            ...(state.run ? [`Run: ${state.run}`] : []),
+          ].join('\n')}
+          retry={() => session.reset()}
+        />
+      )
     case 'failed':
       return (
         <StoppedView

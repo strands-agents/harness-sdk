@@ -282,32 +282,49 @@ describe('invalid workspace bindings', () => {
     await expect(bindWorkspace(directory, binding)).rejects.toThrow('regular file')
   })
 
-  it.each(['root', 'ancestor', 'project', 'entrypoint', 'nested'])(
-    'rejects a symlink in the %s path',
-    async (target) => {
-      let root = directory
-      if (target === 'root') {
-        root = join(sandbox, 'linked-workspace')
-        await symlink(directory, root)
-      } else if (target === 'ancestor') {
-        await symlink(sandbox, join(sandbox, 'alias'))
-        root = join(sandbox, 'alias', 'workspace')
-      } else if (target === 'project') {
-        await symlink(agentRoot, join(directory, 'alias'))
-        binding.agent.path = 'alias'
-      } else if (target === 'entrypoint') {
-        await symlink(join(agentRoot, 'agent.ts'), join(agentRoot, 'alias.ts'))
-        binding.agent.entrypoint = 'alias.ts'
-      } else {
-        await symlink(agentRoot, join(agentRoot, 'alias'))
-        binding.agent.entrypoint = 'alias/agent.ts'
-      }
-      await expect(bindWorkspace(root, binding)).rejects.toThrow('symbolic link')
-      await store(binding)
-      await expect(readWorkspaceBinding(root)).rejects.toThrow('symbolic link')
-      expect(await readdir(directory)).not.toContain('tmp')
+  it.each(['root', 'project', 'entrypoint', 'nested'])('rejects a symlink in the %s path', async (target) => {
+    let root = directory
+    if (target === 'root') {
+      root = join(sandbox, 'linked-workspace')
+      await symlink(directory, root)
+    } else if (target === 'project') {
+      await symlink(agentRoot, join(directory, 'alias'))
+      binding.agent.path = 'alias'
+    } else if (target === 'entrypoint') {
+      await symlink(join(agentRoot, 'agent.ts'), join(agentRoot, 'alias.ts'))
+      binding.agent.entrypoint = 'alias.ts'
+    } else {
+      await symlink(agentRoot, join(agentRoot, 'alias'))
+      binding.agent.entrypoint = 'alias/agent.ts'
     }
-  )
+    await expect(bindWorkspace(root, binding)).rejects.toThrow('symbolic link')
+    await store(binding)
+    await expect(readWorkspaceBinding(root)).rejects.toThrow('symbolic link')
+    expect(await readdir(directory)).not.toContain('tmp')
+  })
+
+  it('shouldBindTheRealWorkspaceWhenAnAncestorDirectoryIsALinkSuchAsMacOsTmp', async () => {
+    await symlink(sandbox, join(sandbox, 'alias'))
+    const linked = join(sandbox, 'alias', 'workspace')
+
+    const bound = await bindWorkspace(linked, binding)
+
+    expect(bound.directory).toBe(directory)
+    expect(bound.entrypoint).toBe(join(agentRoot, 'agent.ts'))
+    expect(await readFile(join(directory, '.config'), 'utf8')).toContain('"version": 1')
+    await expect(readWorkspaceBinding(linked)).resolves.toMatchObject({ directory })
+    await expect(readWorkspaceBinding(directory)).resolves.toMatchObject({ directory })
+  })
+
+  it('shouldStillRefuseAnAgentOutsideTheWorkspaceWhenAnAncestorDirectoryIsALink', async () => {
+    await symlink(sandbox, join(sandbox, 'alias'))
+    await symlink(agentRoot, join(directory, 'escape'))
+
+    await expect(
+      bindWorkspace(join(sandbox, 'alias', 'workspace'), { ...binding, agent: { ...binding.agent, path: 'escape' } })
+    ).rejects.toThrow('symbolic link')
+    expect(await readdir(directory)).not.toContain('.config')
+  })
 
   it('refuses to append to a hard-linked ignore file', async () => {
     const external = join(sandbox, 'ignore')

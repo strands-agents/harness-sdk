@@ -340,6 +340,28 @@ describe('TEMPORARY dev sessions', () => {
     })
     expect(existsSync(join(workspace.root, 'instructions.md'))).toBe(true)
   })
+
+  it('shouldReportACancellationWhenTheUserStopsBeforeTheFirstResult', async () => {
+    const neverScored = vi.fn(async ({ signal }: TemporaryEvalsProcess) => {
+      await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))
+      return { code: 143, stdout: '', stderrTail: ['terminated'] }
+    })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: neverScored })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(neverScored).toHaveBeenCalled())
+
+    sessions.optimize.stop()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('cancelled'))
+    expect(sessions.optimize.snapshot()).toMatchObject({ step: 'cancelled', experiment: experiment.name })
+    expect(JSON.stringify(sessions.optimize.snapshot())).not.toContain('study.jsonl')
+    expect(notices.map(({ status, text }) => `${status} ${text}`)).toContain(
+      `success optimize · ${experiment.name} cancelled · the agent source is unchanged`
+    )
+  })
 })
 
 describe('TEMPORARY dev sessions on open', () => {

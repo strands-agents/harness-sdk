@@ -309,19 +309,29 @@ export const StoppedView = ({
   height,
   message,
   retry,
-}: DevChatPanelProps & { command: string; message: string; retry: () => void }): ReactElement => {
+  outcome = 'stopped',
+  tone = 'error',
+  retryHint = 'Enter try again',
+}: DevChatPanelProps & {
+  command: string
+  message: string
+  retry: () => void
+  outcome?: string
+  tone?: Tone
+  retryHint?: string
+}): ReactElement => {
   useInput((_input, key) => {
     if (key.escape) close()
     else if (key.return) retry()
   })
   return (
     <>
-      <PanelTitle name={command} parts={['stopped']} />
-      <Paragraph rows={Math.max(1, height - 2)} tone="error">
+      <PanelTitle name={command} parts={[outcome]} />
+      <Paragraph rows={Math.max(1, height - 2)} tone={tone}>
         {message}
       </Paragraph>
       <Fill />
-      <KeyHints hints={['Enter try again', 'Esc close']} />
+      <KeyHints hints={[retryHint, 'Esc close']} />
     </>
   )
 }

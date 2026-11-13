@@ -467,6 +467,29 @@ describe('TEMPORARY dev chat part', () => {
     expect(await run).toMatchObject({ edits: [] })
   })
 
+  it('shouldTellTheAgentTheRunWasCancelledInsteadOfFailingWhenTheDeveloperStopsIt', async () => {
+    const { call, optimize, sessions } = setup()
+    const run = call('strands_dev_optimize', { experiment: 'refunds' })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalledOnce())
+    optimize.set({ step: 'running', progress: progress() })
+    expect(await call('strands_dev_cancel_optimization')).toEqual({ status: 'stopping' })
+
+    optimize.set({ step: 'cancelled', experiment: 'refunds' })
+
+    expect(await run).toMatchObject({ status: 'cancelled', experiment: 'refunds' })
+    expect(JSON.stringify(await run)).not.toContain('study.jsonl')
+    expect(sessions.optimize.apply).not.toHaveBeenCalled()
+  })
+
+  it('shouldReportACancelledOptimizationInTheWorkspaceStatus', async () => {
+    const { call, optimize } = setup()
+    optimize.set({ step: 'cancelled', experiment: 'refunds', run: 'run-7' })
+
+    expect(await call('strands_dev_status')).toMatchObject({
+      optimization: { step: 'cancelled', experiment: 'refunds', run: 'run-7' },
+    })
+  })
+
   it('shouldStopOnlyAnActiveOptimizationAndNeverApplyOnStop', async () => {
     const { call, optimize, sessions } = setup()
     await expect(call('strands_dev_cancel_optimization')).rejects.toThrow('No optimization is running')

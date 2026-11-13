@@ -248,6 +248,7 @@ export type OptimizeState =
   | { readonly step: 'setup'; readonly plan: OptimizePlan }
   | { readonly step: 'running'; readonly progress: OptimizeProgress }
   | { readonly step: 'review'; readonly review: OptimizeReview }
+  | { readonly step: 'cancelled'; readonly experiment: string; readonly run?: string }
   | { readonly step: 'failed'; readonly message: string; readonly record?: string }
 
 export interface OptimizeSession {

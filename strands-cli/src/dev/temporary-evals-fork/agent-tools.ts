@@ -312,6 +312,8 @@ const optimizationStatus = (state: OptimizeState): object => {
       })
     case 'review':
       return { step: 'review', ...reviewReport(state.review) }
+    case 'cancelled':
+      return defined({ step: 'cancelled', experiment: state.experiment, run: state.run })
     case 'failed':
       return { step: 'failed', message: state.message }
   }
@@ -559,9 +561,18 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     optimize.start()
     if (optimize.snapshot().step !== 'running') throw new Error('The optimization did not start.')
     const finished = await until(optimize, (state) =>
-      state.step === 'review' || state.step === 'failed' ? state : undefined
+      state.step === 'review' || state.step === 'cancelled' || state.step === 'failed' ? state : undefined
     )
     if (finished.step === 'failed') throw new Error(finished.message)
+    if (finished.step === 'cancelled')
+      return reply(
+        defined({
+          status: 'cancelled',
+          experiment: finished.experiment,
+          run: finished.run,
+          detail: 'The developer cancelled this optimization. No source changes were proposed or written.',
+        })
+      )
     if (finished.step !== 'review') throw new Error('The optimization stopped without a review.')
     return reply(reviewReport(finished.review))
   },
