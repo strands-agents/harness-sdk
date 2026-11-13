@@ -180,6 +180,10 @@
       "types": "./dist/src/vended-plugins/goal/index.d.ts",
       "default": "./dist/src/vended-plugins/goal/index.js"
     },
+    "./vended-plugins/todos": {
+      "types": "./dist/src/vended-plugins/todos/index.d.ts",
+      "default": "./dist/src/vended-plugins/todos/index.js"
+    },
     "./vended-interventions/hitl": {
       "types": "./dist/src/vended-interventions/hitl/index.d.ts",
       "default": "./dist/src/vended-interventions/hitl/index.js"
