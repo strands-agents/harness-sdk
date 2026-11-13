@@ -595,6 +595,20 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
       for await (const event_data of this.stream(messages, options)) {
         const event = this._convert_to_class_event(event_data)
+
+        // A new reasoning payload after a signature starts a block, even under the same index.
+        if (
+          event.type === 'modelContentBlockDeltaEvent' &&
+          event.delta.type === 'reasoningContentDelta' &&
+          accumulatedReasoning.signature !== undefined &&
+          (event.delta.text || event.delta.redactedContent)
+        ) {
+          const block = new ReasoningBlock({ ...accumulatedReasoning })
+          accumulatedReasoning = {}
+          contentBlocks.push(block)
+          yield block
+        }
+
         yield event // Pass through immediately
 
         // Aggregation logic based on event type

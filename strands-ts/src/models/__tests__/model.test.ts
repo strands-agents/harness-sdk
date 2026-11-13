@@ -499,11 +499,11 @@ describe('Model', () => {
           yield { type: 'modelContentBlockStartEvent' }
           yield {
             type: 'modelContentBlockDeltaEvent',
-            delta: { type: 'reasoningContentDelta', text: 'Thinking about', signature: 'sig1' },
+            delta: { type: 'reasoningContentDelta', text: 'Thinking about' },
           }
           yield {
             type: 'modelContentBlockDeltaEvent',
-            delta: { type: 'reasoningContentDelta', text: ' the problem' },
+            delta: { type: 'reasoningContentDelta', text: ' the problem', signature: 'sig1' },
           }
           yield { type: 'modelContentBlockStopEvent' }
           yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
@@ -653,6 +653,149 @@ describe('Model', () => {
             usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
           },
         })
+      })
+    })
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5498: Bedrock can stream two signed
+    // reasoning blocks under one content block index without a stop between them.
+    describe('when signed reasoning blocks share a content block index', () => {
+      type ReasoningDelta = {
+        type: 'reasoningContentDelta'
+        text?: string
+        signature?: string
+        redactedContent?: Uint8Array
+      }
+      const userMessages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      it.each([
+        { name: 'with a stop between them', separateStops: true },
+        { name: 'under one index', separateStops: false },
+      ])('keeps each block and its signature distinct $name', async ({ separateStops }) => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', text: 'first' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', signature: 'SIG1' } }
+          if (separateStops) yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', text: 'second' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', signature: 'SIG2' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { result } = await collectGenerator(provider.streamAggregated(userMessages))
+
+        expect(result.message.content).toEqual([
+          new ReasoningBlock({ text: 'first', signature: 'SIG1' }),
+          new ReasoningBlock({ text: 'second', signature: 'SIG2' }),
+        ])
+      })
+
+      it.each<{ name: string; deltas: ReasoningDelta[]; expected: ReasoningBlock[] }>([
+        {
+          name: 'redacted content after a signature',
+          deltas: [
+            { type: 'reasoningContentDelta', text: 'first' },
+            { type: 'reasoningContentDelta', signature: 'SIG1' },
+            { type: 'reasoningContentDelta', redactedContent: new Uint8Array([1, 2]) },
+          ],
+          expected: [
+            new ReasoningBlock({ text: 'first', signature: 'SIG1' }),
+            new ReasoningBlock({ redactedContent: new Uint8Array([1, 2]) }),
+          ],
+        },
+        {
+          name: 'text after a signature-only block',
+          deltas: [
+            { type: 'reasoningContentDelta', signature: 'SIG1' },
+            { type: 'reasoningContentDelta', text: 'second' },
+          ],
+          expected: [new ReasoningBlock({ signature: 'SIG1' }), new ReasoningBlock({ text: 'second' })],
+        },
+        {
+          name: 'more text after a delta that carries text and signature',
+          deltas: [
+            { type: 'reasoningContentDelta', text: 'Thinking about', signature: 'sig1' },
+            { type: 'reasoningContentDelta', text: ' the problem' },
+          ],
+          expected: [
+            new ReasoningBlock({ text: 'Thinking about', signature: 'sig1' }),
+            new ReasoningBlock({ text: ' the problem' }),
+          ],
+        },
+        {
+          name: 'deltas that carry text and signature together',
+          deltas: [
+            { type: 'reasoningContentDelta', text: 'first', signature: 'SIG1' },
+            { type: 'reasoningContentDelta', text: 'second', signature: 'SIG2' },
+          ],
+          expected: [
+            new ReasoningBlock({ text: 'first', signature: 'SIG1' }),
+            new ReasoningBlock({ text: 'second', signature: 'SIG2' }),
+          ],
+        },
+      ])('starts a new block on $name and passes every delta through', async ({ deltas, expected }) => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          for (const delta of deltas) yield { type: 'modelContentBlockDeltaEvent', delta }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { items, result } = await collectGenerator(provider.streamAggregated(userMessages))
+
+        expect(result.message.content).toEqual(expected)
+        const streamedDeltas = items.flatMap((item) =>
+          item.type === 'modelContentBlockDeltaEvent' ? [item.delta] : []
+        )
+        expect(streamedDeltas).toEqual(deltas)
+      })
+
+      it('yields the finished block before the delta that starts the next one', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', text: 'first' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', signature: 'SIG1' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', text: 'second' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { items } = await collectGenerator(provider.streamAggregated(userMessages))
+
+        const firstBlockIndex = items.findIndex((item) => item.type === 'reasoningBlock')
+        const secondDeltaIndex = items.findIndex(
+          (item) =>
+            item.type === 'modelContentBlockDeltaEvent' &&
+            item.delta.type === 'reasoningContentDelta' &&
+            item.delta.text === 'second'
+        )
+        expect(items[firstBlockIndex]).toEqual(new ReasoningBlock({ text: 'first', signature: 'SIG1' }))
+        expect(firstBlockIndex).toBe(secondDeltaIndex - 1)
+      })
+
+      it('leaves a pending tool use intact', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', name: 'test', toolUseId: 'tool-1' },
+          }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: '{"value":' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', text: 'first' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', signature: 'SIG1' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', text: 'second' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: '1}' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        })
+
+        const { result } = await collectGenerator(provider.streamAggregated(userMessages))
+
+        // The stop emits only the tool use, so the trailing reasoning 'second' is dropped (known limitation).
+        expect(result.message.content).toEqual([
+          new ReasoningBlock({ text: 'first', signature: 'SIG1' }),
+          new ToolUseBlock({ name: 'test', toolUseId: 'tool-1', input: { value: 1 } }),
+        ])
       })
     })
 
