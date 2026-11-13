@@ -1,6 +1,6 @@
 ---
 title: Web access
-description: "Strands harness's default web tools: web_fetch reads a URL and answers over it with a small summarizer, and web_search turns on the provider's native search."
+description: "Strands harness's default web tools: web_fetch reads a URL and answers over it with a small summarizer, and web_search turns on the provider's native search, or AgentCore web search on Bedrock."
 sourceLinks:
   - path: harness-py/src/strands_harness/tools/web_fetch.py
   - path: harness-py/src/strands_harness/models.py
@@ -81,9 +81,24 @@ main model's family, Anthropic-on-Bedrock or OpenAI-on-Bedrock). Override it wit
 
 ## web_search
 
-`web_search` lets the agent look things up while it answers. It isn't a separate tool: it
-turns on the web search built into the model provider. OpenAI, Anthropic,
+`web_search` lets the agent look things up while it answers. Where the model provider has web
+search built in, it isn't a separate tool: it turns that search on. OpenAI, Anthropic,
 Google, and the GPT-5, GPT-6, and Daybreak models on `bedrock-mantle` have one.
+
+Everywhere else on Amazon Bedrock, the agent instead gets a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html).
+That covers `bedrock/...` and the other `bedrock-mantle/...` models, a `BedrockModel` you build
+yourself, an `AnthropicModel` on Anthropic's Bedrock or Mantle client, an OpenAI model with a
+Bedrock Mantle config, and a `ModelRouter` of only those. It calls the `InvokeWebSearch` API in the
+model's region with the default AWS credential chain (not the model's own session or client
+config), so each query is authorized by IAM and billed to that AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
+`arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is available in a subset
+of regions. Without the permission, or in an unsupported region, the first search returns an
+error telling the model to answer without search, and later searches fail without a request. A
+`web_search` tool you pass in `tools` replaces this default; to search in another region or with
+other credentials, pass `make_agentcore_web_search(region=..., boto_session=...)` (Python) or
+`makeAgentCoreWebSearch({ region, clientConfig })` (TypeScript). In TypeScript, an MCP server that
+exposes `web_search` needs `web_search` turned off, since its tools are only listed once it connects.
 
 For models that don't provide web search, the harness logs a message and builds the agent
 without it. If you asked for it explicitly in `builtin_tools`, you get an error instead, so

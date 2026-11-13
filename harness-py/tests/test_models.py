@@ -1,6 +1,9 @@
+from unittest.mock import MagicMock
+
 import pytest
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 
+from strands_harness import defaults
 from strands_harness.defaults import DEFAULT_EFFORT
 from strands_harness.models import (
     _claude_extended_thinking,
@@ -542,18 +545,61 @@ def test_supports_web_search_by_provider():
     assert supports_web_search("bedrock-mantle/openai.gpt-6-astra") is True
     # https://github.com/strands-agents/harness-sdk/issues/5187
     assert supports_web_search("bedrock-mantle/openai.gpt-6.1-sol") is True
-    assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is False
-    assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is False
-    assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is False
+    # Mantle models without Bedrock Web Search get AgentCore web search instead.
+    assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is True
+    assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is True
+    # Bedrock Converse has no native search; the harness serves AgentCore web search as a tool.
+    assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is True
+    assert supports_web_search("global.anthropic.claude-opus-4-8") is True
     assert supports_web_search("anthropic/claude-opus-4-8") is True
+    assert supports_web_search("ollama/llama3") is False
 
 
-def test_supports_web_search_none_uses_default_provider():
+def test_supports_web_search_none_uses_default_provider(monkeypatch):
+    monkeypatch.setattr(defaults, "DEFAULT_MODEL", "ollama/llama3")
     assert supports_web_search(None) is False
+    monkeypatch.setattr(defaults, "DEFAULT_MODEL", "openai/gpt-5.6-sol")
+    assert supports_web_search(None) is True
 
 
-def test_supports_web_search_model_instance_is_false():
-    assert supports_web_search(BedrockModel(model_id="anything")) is False
+def test_supports_web_search_on_model_instances():
+    assert supports_web_search(BedrockModel(model_id="anything")) is True
+    assert supports_web_search(MagicMock(spec=Model)) is False
+    assert supports_web_search(ModelRouter([BedrockModel(model_id="a"), BedrockModel(model_id="b")])) is True
+    from strands.models.openai import OpenAIModel
+
+    other = OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")
+    assert supports_web_search(ModelRouter([BedrockModel(model_id="a"), other])) is False
+
+
+def test_web_search_kind_covers_every_bedrock_api():
+    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
+    from strands.models.anthropic import AnthropicModel
+    from strands.models.openai import OpenAIModel
+    from strands.models.openai_responses import OpenAIResponsesModel
+
+    from strands_harness.models import _bedrock_region, _web_search_kind
+
+    def anthropic_on(client):
+        # Set after construction so this runs on SDK releases whose AnthropicModel has no ``client`` argument.
+        model = AnthropicModel(model_id="claude", max_tokens=10)
+        model.client = client
+        return model
+
+    bedrock_models = {
+        "eu-west-1": anthropic_on(AsyncAnthropicBedrock(aws_region="eu-west-1")),
+        "ap-south-1": anthropic_on(AsyncAnthropicBedrockMantle(aws_region="ap-south-1")),
+        "us-east-2": OpenAIResponsesModel(
+            model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "us-east-2"}
+        ),
+        "ca-central-1": OpenAIModel(model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "ca-central-1"}),
+    }
+    for region, model in bedrock_models.items():
+        assert (_web_search_kind(model), _bedrock_region(model)) == ("agentcore", region)
+    assert _web_search_kind(anthropic_on(AsyncAnthropic(api_key="x"))) is None
+    assert _web_search_kind(OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")) is None
+    assert _web_search_kind("bedrock-mantle/qwen.qwen3-32b-v1:0") == "agentcore"
+    assert _web_search_kind("bedrock-mantle/openai.gpt-6-astra") == "native"
 
 
 def test_openai_web_search_adds_tool_alongside_reasoning():

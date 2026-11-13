@@ -4,7 +4,7 @@
  * from the same record.
  */
 
-import { type Agent, McpClient, MemoryManager, Tool, type ToolList } from '@strands-agents/sdk'
+import { type Agent, McpClient, MemoryManager, ModelRouter, Tool, type ToolList } from '@strands-agents/sdk'
 import { makeShell } from '@strands-agents/sdk/vended-tools/bash'
 
 import type { HarnessAgentOptions } from './agent.js'
@@ -17,7 +17,7 @@ import {
 import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL } from './defaults.js'
 import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
-import { resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
+import { resolveWebFetchModel, supportsMedia, webSearchKind } from './models.js'
 import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
 import { type AgentBuilder, type AgentSpec, Choice, CONTEXT_MODES, GENERALIST, makeSubagent } from './tools/subagent.js'
@@ -103,11 +103,12 @@ export function webSearchExplicit(value: readonly BuiltinToolName[] | BuiltinToo
     : (value as BuiltinToolsConfig | undefined)?.web_search !== undefined
 }
 
-export type WebSearchMode = 'native' | 'exa'
+export type WebSearchMode = 'native' | 'agentcore' | 'exa'
 
 /**
  * How `web_search` is served for `model`: `'exa'` (the third-party tool, whenever opted into with
- * `'exa'`), `'native'` (a model flag), or `undefined` (off).
+ * `'exa'`), `'native'` (a model flag), `'agentcore'` (the AgentCore tool, on Bedrock), or
+ * `undefined` (off).
  */
 export function webSearchMode(
   setting: WebSearchSetting,
@@ -123,11 +124,16 @@ export function webSearchMode(
     )
     return 'exa'
   }
-  if (supportsWebSearch(model)) {
-    return 'native'
+  const kind = webSearchKind(model)
+  if (kind !== undefined) {
+    return kind
   }
   const target =
-    typeof model === 'string' || model === undefined ? `Model ${model ?? DEFAULT_MODEL}` : 'A pre-built Model instance'
+    typeof model === 'string' || model === undefined
+      ? `Model ${model ?? DEFAULT_MODEL}`
+      : model instanceof ModelRouter
+        ? 'A pre-built ModelRouter'
+        : 'A pre-built Model instance'
   if (explicit) {
     throw new Error(
       `${target} has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search ` +
@@ -146,8 +152,8 @@ export function webSearchMode(
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
 // `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` selects
-// it only when the setting is `'exa'`.
+// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` swaps in
+// the AgentCore tool on Bedrock.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,

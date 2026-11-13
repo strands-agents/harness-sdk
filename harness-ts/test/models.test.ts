@@ -3,14 +3,16 @@ import { Model, ModelRouter } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import {
+  bedrockRegion,
   resolveModel,
   resolveWebFetchModel,
   supportsMedia,
   supportsThinking,
   supportsWebSearch,
+  webSearchKind,
 } from '../src/models.js'
 import type { Effort } from '../src/types/agent.js'
-import { DEFAULT_EFFORT } from '../src/defaults.js'
+import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../src/defaults.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 
 const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
@@ -776,26 +778,87 @@ describe('supportsWebSearch', () => {
     // https://github.com/strands-agents/harness-sdk/issues/5187
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-6.1-sol')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-daybreak-blue-5.6-sol')).toBe(true)
-    expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(false)
-    expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(false)
+    // Mantle models without Bedrock Web Search get AgentCore web search instead.
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(true)
+    expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(true)
   })
 
-  it('is false for bedrock but true for anthropic direct', () => {
-    expect(supportsWebSearch('bedrock/global.anthropic.claude-opus-4-8')).toBe(false)
+  it('is true for bedrock (AgentCore web search) and anthropic direct, false for ollama', () => {
+    expect(supportsWebSearch('bedrock/global.anthropic.claude-opus-4-8')).toBe(true)
+    expect(supportsWebSearch('global.anthropic.claude-opus-4-8')).toBe(true)
     expect(supportsWebSearch('anthropic/claude-opus-4-8')).toBe(true)
+    expect(supportsWebSearch('ollama/llama3')).toBe(false)
   })
 
   it('uses the default model provider for undefined', () => {
-    expect(supportsWebSearch(undefined)).toBe(false)
+    expect(supportsWebSearch(undefined)).toBe(supportsWebSearch(DEFAULT_MODEL))
   })
 
-  it('is false for a Model instance', () => {
-    expect(supportsWebSearch(new BedrockModel({ modelId: 'anything' }))).toBe(false)
+  it('webSearchKind names the backend', () => {
+    expect(webSearchKind('openai/gpt-5.6-sol')).toBe('native')
+    expect(webSearchKind('bedrock/global.anthropic.claude-opus-4-8')).toBe('agentcore')
+    expect(webSearchKind(new BedrockModel({ modelId: 'x' }))).toBe('agentcore')
+    expect(webSearchKind('ollama/llama3')).toBeUndefined()
   })
 
-  it('is false for a ModelRouter', () => {
-    const router = new ModelRouter([new BedrockModel({ modelId: 'fast' })])
-    expect(supportsWebSearch(router)).toBe(false)
+  it('is true for a BedrockModel instance and false for another Model', async () => {
+    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+    expect(supportsWebSearch(new BedrockModel({ modelId: 'anything' }))).toBe(true)
+    expect(supportsWebSearch(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBe(false)
+  })
+
+  it('covers every Bedrock API: Anthropic Bedrock/Mantle clients and OpenAI bedrockMantleConfig', async () => {
+    const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
+    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+    const anthropicOn = (client: object) => new AnthropicModel({ modelId: 'claude', client: client as never })
+    const cases: [Model, string][] = [
+      [
+        anthropicOn({ awsRegion: 'eu-west-1', baseURL: 'https://bedrock-runtime.eu-west-1.amazonaws.com' }),
+        'eu-west-1',
+      ],
+      [
+        anthropicOn({ awsRegion: 'ap-south-1', baseURL: 'https://bedrock-mantle.ap-south-1.api.aws/anthropic' }),
+        'ap-south-1',
+      ],
+      [new OpenAIModel({ modelId: 'qwen.qwen3-32b-v1:0', bedrockMantleConfig: { region: 'us-east-2' } }), 'us-east-2'],
+    ]
+    for (const [model, region] of cases) {
+      expect(webSearchKind(model)).toBe('agentcore')
+      expect(await bedrockRegion(model)).toBe(region)
+    }
+    expect(webSearchKind(anthropicOn({ baseURL: 'https://api.anthropic.com' }))).toBeUndefined()
+    // Claude Platform on AWS (`AnthropicAws`) carries an `awsRegion` too, but it isn't Bedrock.
+    expect(
+      webSearchKind(
+        anthropicOn({ awsRegion: 'us-east-1', baseURL: 'https://aws-external-anthropic.us-east-1.api.aws' })
+      )
+    ).toBeUndefined()
+    expect(webSearchKind(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBeUndefined()
+    expect(webSearchKind('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe('agentcore')
+    expect(webSearchKind('bedrock-mantle/openai.gpt-6-astra')).toBe('native')
+  })
+
+  it('is true for an all-Bedrock ModelRouter and false for a mixed one', async () => {
+    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+    expect(supportsWebSearch(new ModelRouter([new BedrockModel({ modelId: 'fast' })]))).toBe(true)
+    const mixed = new ModelRouter([
+      new BedrockModel({ modelId: 'fast' }),
+      new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }),
+    ])
+    expect(supportsWebSearch(mixed)).toBe(false)
+  })
+})
+
+describe('bedrockRegion', () => {
+  it("reads a BedrockModel's region and is undefined for other models", async () => {
+    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+    expect(await bedrockRegion(new BedrockModel({ modelId: 'x', region: 'eu-west-1' }))).toBe('eu-west-1')
+    expect(await bedrockRegion(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBeUndefined()
+    const router = new ModelRouter([
+      new BedrockModel({ modelId: 'a', region: 'ap-south-1' }),
+      new BedrockModel({ modelId: 'b', region: 'eu-west-1' }),
+    ])
+    expect(await bedrockRegion(router)).toBe('ap-south-1')
   })
 })
 

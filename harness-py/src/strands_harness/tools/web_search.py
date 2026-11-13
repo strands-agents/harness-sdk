@@ -1,31 +1,42 @@
 """web_search: search the web and return the top results as numbered sources.
 
-The opt-in Exa tool (``builtin_tools={"web_search": "exa"}``), built whenever the setting selects it;
-a plain ``True`` on OpenAI, Anthropic, Gemini and Mantle GPT models is a model flag instead and this
-tool is not built (see ``agent.py``). It is backed by Exa's hosted MCP server, a third party that receives the
-queries; the keyless free tier covers getting started and ``EXA_API_KEY`` lifts the rate limit in
-place. The tool/backend split keeps the model-facing contract fixed while the search provider behind
-it can change.
+On Bedrock models the tool is backed by Amazon Bedrock AgentCore's ``InvokeWebSearch`` API, in the
+model's region and authorized by IAM. The opt-in Exa tool (``builtin_tools={"web_search": "exa"}``)
+serves it on any model from Exa's hosted MCP server, a third party that receives the queries; the
+keyless free tier covers getting started and ``EXA_API_KEY`` lifts the rate limit in place. On
+OpenAI, Anthropic, Gemini and Mantle GPT models a plain ``True`` is a model flag instead and no tool
+is built (see ``agent.py``). The tool/backend split keeps the model-facing contract fixed while the
+search provider behind it can change.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import re
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, TypedDict
 
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError, NoCredentialsError
+from strands.models.bedrock import DEFAULT_BEDROCK_REGION
 from strands.tools.decorator import tool
 from strands.tools.mcp import MCPClient
 
+logger = logging.getLogger(__name__)
+
+_AGENTCORE_WEB_SEARCH_ID = "web-search.v1"
 _EXA_MCP_URL = "https://mcp.exa.ai/mcp"
 _EXA_TOOL = "web_search_exa"
 _TIMEOUT = timedelta(seconds=30)
 _MAX_RESULTS = 10
 _SNIPPET_CHARS = 500
+_UNAVAILABLE = " web_search is unavailable here; answer without it."
 
 
 class SearchResult(TypedDict):
@@ -96,6 +107,90 @@ def _exa_backend(api_key: str | None = None) -> SearchBackend:
             raise WebSearchError(f"{exc} (Exa's keyless tier is rate limited; set EXA_API_KEY to lift it.)") from exc
 
     return search
+
+
+def _unavailable(state: dict[str, Any], lock: threading.Lock, reason: str) -> str:
+    """Remember a permanent AgentCore failure (logged once) and return what the model is told."""
+    with lock:
+        if "unavailable" not in state:
+            logger.warning("web_search: AgentCore web search is unavailable, so every search will fail: %s", reason)
+            state["unavailable"] = reason + _UNAVAILABLE
+        return str(state["unavailable"])
+
+
+def _agentcore_backend(region: str | None = None, boto_session: boto3.Session | None = None) -> SearchBackend:
+    """Search backend over Amazon Bedrock AgentCore's ``InvokeWebSearch`` API, authorized by IAM.
+
+    ``region`` defaults the way ``BedrockModel`` resolves its own. A missing permission, missing
+    credentials, or an unsupported region is permanent, so it is remembered (and logged once) and
+    later calls fail without a request.
+    """
+    state: dict[str, Any] = {}  # the client is built on first search, so constructing a harness stays cheap
+    lock = threading.Lock()  # parallel first searches run in separate threads
+
+    def call(query: str, max_results: int) -> list[SearchResult]:
+        with lock:
+            if "unavailable" in state:
+                raise WebSearchError(state["unavailable"])
+            if "client" not in state:
+                session = boto_session or boto3.Session()
+                state["region"] = (
+                    region or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+                )
+                state["client"] = session.client(
+                    "bedrock-agentcore",
+                    region_name=state["region"],
+                    config=Config(
+                        connect_timeout=10,
+                        read_timeout=int(_TIMEOUT.total_seconds()),
+                        retries={"max_attempts": 2, "mode": "standard"},
+                    ),
+                )
+        try:
+            response = state["client"].invoke_web_search(
+                webSearchId=_AGENTCORE_WEB_SEARCH_ID, searchQuery=query, maxResults=max_results
+            )
+        except NoCredentialsError as exc:
+            reason = (
+                f"{exc} (AgentCore web search is signed with AWS credentials; a Bedrock API key does not cover it)."
+            )
+            raise WebSearchError(_unavailable(state, lock, reason)) from exc
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            # A modeled ResourceNotFoundException (e.g. an unknown webSearchId) is a 404 too; only the
+            # unmodeled routing 404 means the region lacks the API.
+            if status == 404 and code != "ResourceNotFoundException":
+                reason = f"AgentCore web search is not available in {state['region']} ({exc})."
+            elif code == "AccessDeniedException":
+                resource = f"arn:aws:bedrock-agentcore:{state['region']}:aws:tool/{_AGENTCORE_WEB_SEARCH_ID}"
+                reason = f"{exc} (the caller needs bedrock-agentcore:InvokeWebSearch on {resource})."
+            else:
+                raise
+            raise WebSearchError(_unavailable(state, lock, reason)) from exc
+        return [
+            {
+                "title": result.get("title") or result.get("url", ""),
+                "url": result.get("url", ""),
+                "snippet": " ".join(result.get("text", "").split())[:_SNIPPET_CHARS],
+            }
+            for result in response.get("results", [])
+        ]
+
+    async def search(query: str, max_results: int) -> list[SearchResult]:
+        return await asyncio.to_thread(call, query, max_results)
+
+    return search
+
+
+def make_agentcore_web_search(*, region: str | None = None, boto_session: boto3.Session | None = None) -> Any:
+    """Build a ``web_search`` tool over Amazon Bedrock AgentCore web search.
+
+    ``region`` defaults the way ``BedrockModel`` resolves its own (the session, then ``AWS_REGION``,
+    then ``us-west-2``); ``boto_session`` (default: a new ``boto3.Session()``) supplies the credentials,
+    which need ``bedrock-agentcore:InvokeWebSearch``.
+    """
+    return _search_tool(_agentcore_backend(region, boto_session))
 
 
 def make_exa_web_search() -> Any:

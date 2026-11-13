@@ -24,10 +24,11 @@ from strands_harness import defaults
 from strands_harness.interventions import InterventionsOption, resolve_interventions
 from strands_harness.memory import resolve_memory
 from strands_harness.models import (
+    _bedrock_region,
     _supports_media,
+    _web_search_kind,
     resolve_model,
     resolve_web_fetch_model,
-    supports_web_search,
 )
 from strands_harness.options import (
     _builtin_tool_config,
@@ -49,6 +50,7 @@ from strands_harness.tools import (
     write,
 )
 from strands_harness.tools.subagent import build_default_subagent
+from strands_harness.tools.web_search import make_agentcore_web_search
 from strands_harness.types.agent import (
     BuiltinPluginName,
     BuiltinToolName,
@@ -82,7 +84,7 @@ def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
     derives its summarizer from the agent's model, ``subagent`` takes the whole parent config so it
     can rebuild a child the way this agent was built. ``subagent``'s own delegation-depth budget
     lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa tool;
-    ``create_harness`` selects it only when the setting is ``"exa"``."""
+    ``create_harness`` swaps in the AgentCore tool on Bedrock."""
     enabled = parent_config["builtin_tools"]
     web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
     web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
@@ -107,9 +109,10 @@ def _select_builtin_tools(enabled: Mapping[str, Any], tools: dict[str, Any]) -> 
 
 def _web_search_mode(
     setting: Any, explicit: bool, model: Model | ModelRouter | str | None
-) -> Literal["native", "exa"] | None:
+) -> Literal["native", "agentcore", "exa"] | None:
     """How ``web_search`` is served for ``model``: ``"exa"`` (the third-party tool, whenever opted
-    into with ``"exa"``), ``"native"`` (a model flag), or ``None`` (off)."""
+    into with ``"exa"``), ``"native"`` (a model flag), ``"agentcore"`` (the AgentCore tool, on
+    Bedrock), or ``None`` (off)."""
     if setting is False:
         return None
     if setting == "exa":
@@ -118,11 +121,14 @@ def _web_search_mode(
             "environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
         )
         return "exa"
-    if supports_web_search(model):
-        return "native"
+    kind = _web_search_kind(model)
+    if kind is not None:
+        return kind
     target = (
-        "A pre-built Model instance"
-        if isinstance(model, (Model, ModelRouter))
+        "A pre-built ModelRouter"
+        if isinstance(model, ModelRouter)
+        else "A pre-built Model instance"
+        if isinstance(model, Model)
         else f"Model {model or defaults.DEFAULT_MODEL}"
     )
     if explicit:
@@ -308,8 +314,12 @@ def create_harness(
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
-            ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
+            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). On every other Bedrock API
+            (``supports_web_search``) it is a tool backed by Amazon Bedrock AgentCore web search in the
+            model's region (signed by the default AWS credential chain, which needs the
+            ``bedrock-agentcore:InvokeWebSearch`` IAM permission), and a ``web_search`` tool you pass
+            replaces it (e.g. ``make_agentcore_web_search(boto_session=...)``). Elsewhere (another
+            provider's ``Model`` instance) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
             ``programmatic_tool_caller`` lets the model orchestrate its other tools by writing Python
@@ -456,7 +466,18 @@ def create_harness(
         "sandbox": agent_kwargs.get("sandbox"),
     }
 
-    builtin = _select_builtin_tools({**enabled_tools, "web_search": web_search == "exa"}, _builtin_tools(parent_config))
+    builtin_tools_by_name = _builtin_tools(parent_config)
+    default_agentcore = None
+    if web_search == "agentcore":
+        builtin_tools_by_name["web_search"] = make_agentcore_web_search(region=_bedrock_region(resolved_model))
+        if not web_search_explicit:
+            # A caller's own web_search (a tool, plugin, or MCP server) replaces the default, so it is
+            # registered after the Agent loads theirs; naming web_search in builtin_tools still collides.
+            default_agentcore = builtin_tools_by_name["web_search"]
+    builtin = _select_builtin_tools(
+        {**enabled_tools, "web_search": web_search == "exa" or (web_search == "agentcore" and web_search_explicit)},
+        builtin_tools_by_name,
+    )
     context_enabled = context_manager is not None and context_manager is not False
     # The SDK's Agent rejects a bare config dict; build the instance from it here.
     if isinstance(context_manager, Mapping):
@@ -534,4 +555,10 @@ def create_harness(
         **agent_kwargs,
     )
     _drop_sandbox_tools(agent)
+    if default_agentcore is not None:
+        if any(name.replace("-", "_") == "web_search" for name in agent.tool_registry.registry):
+            logger.info("A web_search tool was passed, so the built-in AgentCore web_search is not added.")
+            enabled_tools["web_search"] = False  # parent_config shares this dict, so delegates don't re-add it
+        else:
+            agent.tool_registry.register_tool(default_agentcore)
     return agent

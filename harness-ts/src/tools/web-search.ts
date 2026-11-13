@@ -1,22 +1,29 @@
 /**
  * web_search: search the web and return the top results as numbered sources.
  *
- * The opt-in Exa tool (`builtinTools: { web_search: 'exa' }`), built whenever the setting selects it;
- * a plain `true` on OpenAI, Gemini and Mantle GPT models is a model flag instead and this tool is
- * not built (see `agent.ts`). It is backed by Exa's hosted MCP server, a third party that receives the
- * queries; the keyless free tier covers getting started and `EXA_API_KEY` lifts the rate limit in
- * place. The tool/backend split keeps the model-facing contract fixed while the search provider
- * behind it can change.
+ * On Bedrock models the tool is backed by Amazon Bedrock AgentCore's `InvokeWebSearch` API, in the
+ * model's region and authorized by IAM. The opt-in Exa tool (`builtinTools: { web_search: 'exa' }`)
+ * serves it on any model from Exa's hosted MCP server, a third party that receives the queries; the
+ * keyless free tier covers getting started and `EXA_API_KEY` lifts the rate limit in place. On
+ * OpenAI, Anthropic, Gemini and Mantle GPT models a plain `true` is a model flag instead and no tool
+ * is built (see `agent.ts`). The tool/backend split keeps the model-facing contract fixed while the
+ * search provider behind it can change.
  */
 
+import type { BedrockAgentCoreClient, BedrockAgentCoreClientConfig } from '@aws-sdk/client-bedrock-agentcore'
 import { McpClient, tool, type Tool } from '@strands-agents/sdk'
 import { z } from 'zod'
+import { logger } from '../logging.js'
 
+const AGENTCORE_WEB_SEARCH_ID = 'web-search.v1'
+// BedrockModel's fallback when neither the environment nor the profile names a region.
+const BEDROCK_DEFAULT_REGION = 'us-west-2'
 const EXA_MCP_URL = 'https://mcp.exa.ai/mcp'
 const EXA_TOOL = 'web_search_exa'
 const TIMEOUT_MS = 30_000
 const MAX_RESULTS = 10
 const SNIPPET_CHARS = 500
+const UNAVAILABLE = ' web_search is unavailable here; answer without it.'
 
 export interface SearchResult {
   title: string
@@ -107,6 +114,96 @@ export function exaBackend(apiKey?: string): SearchBackend {
       throw new WebSearchError(`${reason} (Exa's keyless tier is rate limited; set EXA_API_KEY to lift it.)`)
     }
   }
+}
+
+/** Options for {@link makeAgentCoreWebSearch}. */
+export interface MakeAgentCoreWebSearchOptions {
+  /** The AgentCore region; defaults the way the harness's `BedrockModel` resolves its own. */
+  region?: string
+  /** Client config (e.g. `credentials`) for the AgentCore client; defaults to the default credential chain. */
+  clientConfig?: BedrockAgentCoreClientConfig
+}
+
+/**
+ * One client per backend, in `region` or else the one the harness's `BedrockModel` defaults to:
+ * `AWS_REGION` / `AWS_DEFAULT_REGION`, then the shared config profile, then BedrockModel's default.
+ */
+async function agentCoreClient(
+  options: MakeAgentCoreWebSearchOptions
+): Promise<{ client: BedrockAgentCoreClient; region: string }> {
+  const { BedrockAgentCoreClient } = await import('@aws-sdk/client-bedrock-agentcore')
+  const region =
+    options.region ||
+    process.env.AWS_REGION ||
+    process.env.AWS_DEFAULT_REGION ||
+    (await new BedrockAgentCoreClient({}).config.region().catch(() => BEDROCK_DEFAULT_REGION))
+  // Bounded like the Exa path (see TIMEOUT_MS on send), instead of the SDK's 3 attempts per call.
+  return { client: new BedrockAgentCoreClient({ maxAttempts: 2, ...options.clientConfig, region }), region }
+}
+
+/**
+ * Search backend over Amazon Bedrock AgentCore's `InvokeWebSearch` API, authorized by IAM. A missing
+ * permission, missing credentials, or an unsupported region is permanent, so it is remembered
+ * (and logged once) and later calls fail without a request.
+ */
+export function agentCoreBackend(options: MakeAgentCoreWebSearchOptions = {}): SearchBackend {
+  let connection: ReturnType<typeof agentCoreClient> | undefined
+  let unavailable: string | undefined
+  const markUnavailable = (reason: string): WebSearchError => {
+    if (unavailable === undefined) {
+      logger.warn(`web_search: AgentCore web search is unavailable, so every search will fail: ${reason}`)
+      unavailable = reason + UNAVAILABLE
+    }
+    return new WebSearchError(unavailable)
+  }
+  return async (query, maxResults) => {
+    if (unavailable !== undefined) {
+      throw new WebSearchError(unavailable)
+    }
+    const { InvokeWebSearchCommand } = await import('@aws-sdk/client-bedrock-agentcore')
+    const { client, region } = await (connection ??= agentCoreClient(options))
+    let response
+    try {
+      response = await client.send(
+        new InvokeWebSearchCommand({ webSearchId: AGENTCORE_WEB_SEARCH_ID, searchQuery: query, maxResults }),
+        { abortSignal: AbortSignal.timeout(TIMEOUT_MS) }
+      )
+    } catch (err) {
+      const name = err instanceof Error ? err.name : undefined
+      const reason = err instanceof Error ? err.message : String(err)
+      // A modeled ResourceNotFoundException (e.g. an unknown webSearchId) is a 404 too; only the
+      // unmodeled routing 404 means the region lacks the API.
+      if (
+        (err as { $response?: { statusCode?: number } }).$response?.statusCode === 404 &&
+        name !== 'ResourceNotFoundException'
+      ) {
+        throw markUnavailable(`AgentCore web search is not available in ${region} (${reason}).`)
+      }
+      if (name === 'AccessDeniedException') {
+        const resource = `arn:aws:bedrock-agentcore:${region}:aws:tool/${AGENTCORE_WEB_SEARCH_ID}`
+        throw markUnavailable(`${reason} (the caller needs bedrock-agentcore:InvokeWebSearch on ${resource}).`)
+      }
+      if (name === 'CredentialsProviderError') {
+        throw markUnavailable(
+          `${reason} (AgentCore web search is signed with AWS credentials; a Bedrock API key does not cover it).`
+        )
+      }
+      throw err
+    }
+    return (response.results ?? []).map((result) => ({
+      title: result.title || (result.url ?? ''),
+      url: result.url ?? '',
+      snippet: (result.text ?? '').replace(/\s+/g, ' ').trim().slice(0, SNIPPET_CHARS),
+    }))
+  }
+}
+
+/**
+ * Build a `web_search` tool over Amazon Bedrock AgentCore web search. The credentials need
+ * `bedrock-agentcore:InvokeWebSearch`.
+ */
+export function makeAgentCoreWebSearch(options: MakeAgentCoreWebSearchOptions = {}): Tool {
+  return searchTool(agentCoreBackend(options))
 }
 
 /** Build a `web_search` tool over Exa's hosted search (`EXA_API_KEY` lifts the keyless rate limit). */
