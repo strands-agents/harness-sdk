@@ -212,6 +212,45 @@ option (for example the summarizer's or the classifier's) >
 <Syntax py="aux_model" ts="auxModel" /> unset changes nothing. A `ModelRouter` is
 not accepted here: side calls run outside the agent loop the router attaches to.
 
+### Model info
+
+When the SDK can't recognize your model ID, tell it the model's limits and capabilities
+with <Syntax py="model_info" ts="modelInfo" />. Each provider reports what the SDK knows
+about its model as <Syntax py="model.model_info" ts="model.modelInfo" />: the context
+window, the output limit, and capabilities such as prompt caching. The SDK looks up the
+model ID in the
+[shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json).
+For an ID it can't map, such as an application inference profile ARN or a proxy alias,
+the lookup finds nothing. The SDK then falls back to defaults such as a 200,000-token
+context window. Your <Syntax py="model_info" ts="modelInfo" /> wins over everything else:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.models import BedrockModel, ModelCapabilities, ModelInfo, ModelLimits
+
+model = BedrockModel(
+    model_id="arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3",
+    model_info=ModelInfo(
+        limits=ModelLimits(context_window=1_000_000, max_output_tokens=64_000),
+        capabilities=ModelCapabilities(prompt_caching="cache_points"),
+    ),
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/index_imports.ts:model_info_imports"
+
+--8<-- "user-guide/sdk/model-providers/index.ts:model_info"
+```
+</Tab>
+</Tabs>
+
+Fields you leave unset keep their looked-up values.
+
 ## Next Steps
 
 ### Explore Model Providers
