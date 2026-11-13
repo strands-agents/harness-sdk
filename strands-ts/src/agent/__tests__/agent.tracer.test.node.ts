@@ -200,6 +200,21 @@ describe('Agent tracer integration', () => {
       expect(tracer.startAgentSpan).toHaveBeenCalledWith(
         expect.objectContaining({
           tools: expect.arrayContaining([expect.objectContaining({ name: 'myTool' })]),
+          toolsConfig: { myTool: tool.toolSpec },
+        })
+      )
+    })
+
+    it('omits toolsConfig from agent span when agent has no tools', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model })
+      const tracer = getLatestTracer()
+
+      await agent.invoke('Hi')
+
+      expect(tracer.startAgentSpan).toHaveBeenCalledWith(
+        expect.not.objectContaining({
+          toolsConfig: expect.anything(),
         })
       )
     })
