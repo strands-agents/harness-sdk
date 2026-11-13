@@ -38,7 +38,7 @@ class LLMDecisionModel(DecisionModel):
 
     Example:
         ```python
-        decision = LLMDecisionModel(model=BedrockModel())
+        decision = LLMDecisionModel(model=BedrockModel(strict_tools=True))
         result = await decision.ask(
             "The fruit is an apple",
             {
@@ -60,7 +60,10 @@ class LLMDecisionModel(DecisionModel):
         """Create an LLM-backed decision model.
 
         Args:
-            model: Underlying vended model. Defaults to a zero-config ``BedrockModel``.
+            model: Underlying vended model, forced to return the answers as its only possible response.
+                Defaults to a ``BedrockModel`` with strict tool use enabled so answers conform to the
+                schema. When passing your own model, enable your provider's strict mode (e.g.
+                ``strict_tools=True`` on ``BedrockModel``).
             system_prompt: System prompt used to frame the decision for the model. The SDK appends
                 mandatory output and prompt-injection rules that the prompt cannot override.
                 Defaults to a generic decision framing.
@@ -69,7 +72,7 @@ class LLMDecisionModel(DecisionModel):
             TypeError: If ``model`` is not a ``Model``.
         """
         super().__init__()
-        resolved_model = model if model is not None else BedrockModel()
+        resolved_model = model if model is not None else BedrockModel(strict_tools=True)
         if not isinstance(resolved_model, Model):
             raise TypeError("model must be a Model")
         self._model = resolved_model
