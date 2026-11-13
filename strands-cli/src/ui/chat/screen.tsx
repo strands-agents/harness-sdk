@@ -47,7 +47,9 @@ import {
   type MouseMoveState,
   type ScreenSelectionSegment,
 } from '../../terminal/mouse-input.js'
-import { copyTerminalText, setTerminalMouseMotion } from '../../terminal/terminal.js'
+import { setTerminalMouseMotion } from '../../terminal/terminal.js'
+import { fixInNewTab } from '../../dev/fix-in-new-tab.js'
+import { isCopyShortcut, useClipboard } from '../clipboard.js'
 import { openExternalUrl } from '../../terminal/open-url.js'
 import { openAgentProject } from '../../terminal/open-editor.js'
 import { canUseNativePicker, chooseFiles } from '../../terminal/directory-picker.js'
@@ -61,6 +63,7 @@ import {
 import { panelModelId, type FooterAction } from '../footer.js'
 import {
   errorPanelLayout,
+  errorPanelText,
   activateMetadataTarget,
   adjacentSliderOption,
   awsProfileItems,
@@ -108,6 +111,7 @@ import {
 } from '../panels/configuration.js'
 import type { ChatPanel, ChatPanelRow, ChatPanelSlider } from './types.js'
 import { ThemeProvider } from '../theme.js'
+import { DevPanelClicks } from '../panels/dev.js'
 import { UpdatePrompt } from '../update.js'
 
 type PendingInput = { kind: 'key'; text: string; key: Key } | { kind: 'paste'; text: string }
@@ -187,11 +191,10 @@ export function ChatApp({
   const [focusedQueuedPrompt, setFocusedQueuedPrompt] = useState<QueuedPromptTarget>()
   const [focusedBackgroundTask, setFocusedBackgroundTask] = useState<string>()
   const [hoveredBackgroundTask, setHoveredBackgroundTask] = useState(false)
+  const [hoveredDevJob, setHoveredDevJob] = useState<string | undefined>(undefined)
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
   const [screenSelection, setScreenSelection] = useState<readonly ScreenSelectionSegment[]>([])
-  const [clipboardNotice, setClipboardNotice] = useState<
-    { status: 'success'; characterCount: number } | { status: 'error' }
-  >()
+  const { copyText, clipboardNotice } = useClipboard()
   const [frog, setFrog] = useState<{ id: number; variant: FrogVariant }>()
   const [frogBrandAnimationId, setFrogBrandAnimationId] = useState<number>()
   const [party, setParty] = useState(false)
@@ -213,7 +216,6 @@ export function ChatApp({
   const nextFrogBrandAnimationId = useRef(0)
   const previousFrogVariant = useRef<FrogVariant | undefined>(undefined)
   const leftMouseDownRef = useRef(false)
-  const copyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const selectionDragRef = useRef<{ anchor: Pick<MouseInput, 'column' | 'row'>; lines: readonly string[] } | undefined>(
     undefined
   )
@@ -249,6 +251,8 @@ export function ChatApp({
   const [queuedPromptElements, registerQueuedPromptElement] = useElementMap<QueuedPromptTarget>()
   const statusElement = useRef<DOMElement | undefined>(undefined)
   const backgroundTaskElement = useRef<DOMElement | undefined>(undefined)
+  const devJobElements = useRef(new Map<string, DOMElement>())
+  const [devPanelClicks] = useState(() => new DevPanelClicks())
   const [toolGroupElements, registerToolGroupElement] = useElementMap<string>()
   const frogElement = useRef<DOMElement | undefined>(undefined)
   const jumpToBottomElement = useRef<DOMElement | undefined>(undefined)
@@ -447,6 +451,7 @@ export function ChatApp({
     setHoveredJumpToBottom(false)
     setHoveredMetadata(undefined)
     setHoveredBackgroundTask(false)
+    setHoveredDevJob(undefined)
   }, [])
   const resetPressed = useCallback((): void => {
     setPressedMetadata(undefined)
@@ -556,6 +561,7 @@ export function ChatApp({
     attachments,
     ...(focusedBackgroundTask ? { focusedBackgroundTask } : {}),
     hoveredBackgroundTask,
+    ...(hoveredDevJob ? { hoveredDevJob } : {}),
   }
   const viewPropsRef = useRef(viewProps)
   viewPropsRef.current = viewProps
@@ -570,6 +576,10 @@ export function ChatApp({
   }, [])
   const registerBackgroundTaskElement = useCallback((element: DOMElement | null): void => {
     backgroundTaskElement.current = element ?? undefined
+  }, [])
+  const registerDevJobElement = useCallback((command: string, element: DOMElement | null): void => {
+    if (element) devJobElements.current.set(command, element)
+    else devJobElements.current.delete(command)
   }, [])
   const registerPanelSearchElement = useCallback((element: DOMElement | null): void => {
     panelSearchElement.current = element ?? undefined
@@ -685,6 +695,16 @@ export function ChatApp({
       controller.showError?.('could not open project', `${project.root}\n${errorMessage(cause)}`)
     })
   }, [controller, openProject, suspendTerminal])
+  const fixErrorInNewTab = useCallback(
+    (report: string, directory: string): void => {
+      const retry = controller.getSnapshot().runtime.sourceWatching ? 'reload' : 'restart'
+      controller.dismissPanel()
+      void fixInNewTab({ report, directory, retry }, stdout).then(({ status, text }) =>
+        controller.notify?.(status, text)
+      )
+    },
+    [controller, stdout]
+  )
 
   useLayoutEffect(() => {
     const { snapshot, terminalWidth, terminalHeight, panelRows, composerHeight } = viewPropsRef.current
@@ -865,27 +885,6 @@ export function ChatApp({
     }
   }, [stdout])
 
-  useEffect(
-    (): (() => void) => () => {
-      clearTimeout(copyNoticeTimerRef.current)
-    },
-    []
-  )
-
-  const copyText = useCallback(
-    (text: string): void => {
-      const characterCount = graphemes(text).length
-      void copyTerminalText(text, stdout).then((copied) => {
-        clearTimeout(copyNoticeTimerRef.current)
-        setClipboardNotice(copied ? { status: 'success', characterCount } : { status: 'error' })
-        copyNoticeTimerRef.current = setTimeout(() => {
-          setClipboardNotice(undefined)
-        }, 2_000)
-      })
-    },
-    [stdout]
-  )
-
   const handleMouse = useCallback(
     (mouse: MouseInput): void => {
       if (!shouldProcessMouseInput(mouse, mouseMoveStateRef.current)) {
@@ -1063,6 +1062,8 @@ export function ChatApp({
           ? elementContainsMouse(backgroundTaskElement.current, mouse)
           : false
       const toolGroupTarget = !snapshot.panel ? elementAtMouse(toolGroupElements, mouse) : undefined
+      const devJobTarget = snapshot.devJobs?.length ? elementAtMouse(devJobElements.current, mouse) : undefined
+      const devPanelClick = snapshot.panel?.kind === 'dev' ? devPanelClicks.at(mouse) : undefined
       const sliderElement =
         snapshot.panel?.kind === 'effort' || snapshot.panel?.kind === 'permissions' || snapshot.panel?.kind === 'voice'
           ? panelSliderElement.current
@@ -1090,6 +1091,7 @@ export function ChatApp({
         setHoveredJumpToBottom(jumpToBottomHit)
         setHoveredMetadata(metadataTarget)
         setHoveredBackgroundTask(backgroundTaskHit)
+        setHoveredDevJob(devJobTarget)
       }
       if (mouse.action === 'press' && button === 0) {
         resetHover()
@@ -1104,6 +1106,7 @@ export function ChatApp({
           toolGroupTarget ||
           queuedPromptTarget ||
           backgroundTaskHit ||
+          devJobTarget ||
           jumpToBottomHit
             ? undefined
             : {
@@ -1236,7 +1239,11 @@ export function ChatApp({
       if (mouse.action !== 'release' || (!leftRelease && button !== 0)) {
         return
       }
-      if (jumpToBottomHit) {
+      if (devJobTarget) {
+        controller.openDevCommand?.(devJobTarget)
+      } else if (devPanelClick) {
+        devPanelClick()
+      } else if (jumpToBottomHit) {
         setTranscriptScroll(0)
       } else if (panelFilterId) {
         if (snapshot.panel?.kind === 'models' && panelFilterId.startsWith('aws-profile:')) {
@@ -1328,6 +1335,7 @@ export function ChatApp({
       availableUpdate,
       copyText,
       controller,
+      devPanelClicks,
       dispatchPrompt,
       footerElements,
       metadataElements,
@@ -1382,6 +1390,9 @@ export function ChatApp({
         handleExit(character === 'c' ? 130 : 0)
         return
       }
+      if (snapshot.panel?.kind === 'dev') {
+        return
+      }
       if (frog && key.escape) {
         setFrog(undefined)
         return
@@ -1419,6 +1430,14 @@ export function ChatApp({
         ) {
           if (key.escape || key.return || key.backspace || key.delete || character === '\u007f') {
             controller.dismissPanel()
+            return
+          }
+          if (snapshot.panel.kind === 'error' && isCopyShortcut(character, key)) {
+            copyText(errorPanelText(snapshot.panel))
+            return
+          }
+          if (snapshot.panel.kind === 'error' && snapshot.panel.fixDirectory && character.toLowerCase() === 'f') {
+            fixErrorInNewTab(errorPanelText(snapshot.panel), snapshot.panel.fixDirectory)
             return
           }
           const errorLayout =
@@ -1574,7 +1593,7 @@ export function ChatApp({
           return
         }
         const copyableModelId = panelModelId(snapshot.panel, rows[hoveredPanelRow ?? panelSelectionRef.current])
-        if (copyableModelId && key.ctrl && !key.meta && !key.super && character.toLowerCase() === 'y') {
+        if (copyableModelId && isCopyShortcut(character, key)) {
           copyText(copyableModelId)
           return
         }
@@ -2248,6 +2267,8 @@ export function ChatApp({
       {...(clipboardNotice ? { clipboardNotice } : {})}
       onQueuedPromptElement={registerQueuedPromptElement}
       onBackgroundTaskElement={registerBackgroundTaskElement}
+      onDevJobElement={registerDevJobElement}
+      devPanelClicks={devPanelClicks}
       onStatusElement={registerStatusElement}
       onFrogElement={registerFrogElement}
       onJumpToBottomElement={registerJumpToBottomElement}

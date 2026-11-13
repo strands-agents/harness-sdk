@@ -14,6 +14,7 @@ import { PythonBackend, type PythonOptions } from '../../src/project/python.js'
 import { createPythonChat } from '../../src/ui/chat/runtime.js'
 import { exportSourceProject } from '../../src/project/export.js'
 import { watchAgentProject } from '../../src/project/watch.js'
+import { bindExistingAgent } from '../../src/dev/create.js'
 import type { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { pythonExecutable as python } from '../fixtures/python-runtime.js'
 
@@ -186,6 +187,33 @@ ${(name === 'memory store'
     },
     30_000
   )
+
+  it('shouldLeaveTheDevWorkspaceOutOfExportsWhenItIsInsideTheProject', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(entrypoint, factorySource)
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    await writeFile(join(directory, 'tmp', 'sentinel.txt'), 'WORKSPACE SENTINEL')
+    const archiveDirectory = await mkdtemp(join(tmpdir(), 'strands-dev-export-'))
+    const archive = join(archiveDirectory, 'agent.zip')
+    const chat = await createPythonChat(
+      entrypoint,
+      CliConfigStore.memory(),
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+    try {
+      await chat.submit(`/export python "${archive}"`)
+
+      const names = Object.keys(unzipSync(await readFile(archive)))
+      expect(names.some((name) => name.endsWith('agent.py'))).toBe(true)
+      expect(names.filter((name) => name.includes('strands-dev'))).toEqual([])
+    } finally {
+      await rm(archiveDirectory, { recursive: true, force: true })
+    }
+  })
 
   it.each([
     '{"dir": "custom-memory"}',

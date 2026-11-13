@@ -1,12 +1,13 @@
 import chalk from 'chalk'
 import { createElement, type ReactElement } from 'react'
-import { renderToString } from 'ink'
+import { Box, Text, renderToString } from 'ink'
 import stringWidth from 'string-width'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { snapshot } from '../fixtures/chat-snapshot.js'
 import { render, ttyOutput } from '../fixtures/terminal.js'
 
 import { ChatView } from '../../src/ui/chat/view.js'
+import { useStartupContentRows } from '../../src/ui/startup.js'
 import { TurnView } from '../../src/ui/chat/transcript-turn.js'
 import { Markdown } from '../../src/ui/markdown.js'
 import {
@@ -3008,7 +3009,7 @@ describe('ChatView', () => {
       expect(top).toBeGreaterThan(24 / 2)
       expect(bottom - top + 1).toBeLessThanOrEqual(4)
       expect(stringWidth(rows[top]!.trim())).toBe(width - 2)
-      expect(rows[bottom + 1]?.trim()).toBe('Esc close')
+      expect(rows[bottom + 1]?.trim()).toBe('Ctrl+Y copy error · Esc close')
       expect(bottom).toBe(rows.findIndex((line) => line.includes('/settings')) - 3)
       expect(rows.filter((line) => line.includes('Esc close'))).toHaveLength(1)
       expect(rows).toHaveLength(24)
@@ -3022,6 +3023,145 @@ describe('ChatView', () => {
       expect(error).not.toContain('Viewing')
       expect(error).not.toContain('Esc to dismiss')
     }
+  })
+
+  const startupFrame = (terminalHeight: number): string[] =>
+    sanitizeTerminalText(
+      renderView(
+        {
+          snapshot: snapshot(),
+          terminalWidth: 120,
+          terminalHeight,
+          startupContent: createElement(Box, { height: 20 }, createElement(Text, {}, 'Startup choice')),
+        },
+        { columns: 120 }
+      )
+    ).split('\n')
+  const logoRows = 24
+
+  it.each([50, 70])('shouldSpaceStartupContentEvenlyBelowTheLogoWhenTheTerminalHas%sRows', (terminalHeight) => {
+    const frame = startupFrame(terminalHeight)
+    const top = frame.findIndex((line) => line.includes('╭'))
+    const bottom = frame.findIndex((line) => line.includes('╰'))
+
+    expect(frame.slice(0, logoRows).join('\n')).toMatch(/▄▟[ █]{3}▙▄/)
+    expect(Math.abs(top - logoRows - (frame.length - 1 - bottom))).toBeLessThanOrEqual(1)
+    expect(frame.join('\n')).not.toContain('/settings')
+  })
+
+  it('shouldDrawTheStartupCardWithoutABackgroundColorWhenColorsAreOn', () => {
+    const level = chalk.level
+    let rows: string[]
+    try {
+      chalk.level = 3
+      rows = renderView(
+        {
+          snapshot: snapshot(),
+          terminalWidth: 120,
+          terminalHeight: 50,
+          startupContent: createElement(Text, {}, 'Startup choice'),
+        },
+        { columns: 120 }
+      ).split('\n')
+    } finally {
+      chalk.level = level
+    }
+    const top = rows.findIndex((line) => line.includes('╭'))
+    const bottom = rows.findIndex((line) => line.includes('╰'))
+
+    expect(top).toBeGreaterThan(0)
+    expect(rows.slice(top, bottom + 1).join('\n')).not.toContain('\u001b[48;')
+  })
+
+  const StartupRowsProbe = (): ReactElement =>
+    createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Startup rows'))
+
+  const logoFrames = (terminalHeight: number, introStartedAt?: number): { chat: string[]; card: string[] } => {
+    const frame = (startupContent?: ReactElement): string[] =>
+      renderView(
+        {
+          snapshot: snapshot(),
+          terminalWidth: 120,
+          terminalHeight,
+          ...(startupContent ? { startupContent } : {}),
+          ...(introStartedAt !== undefined ? { introStartedAt } : {}),
+        },
+        { columns: 120 }
+      ).split('\n')
+    return { chat: frame(), card: frame(createElement(StartupRowsProbe)) }
+  }
+  const cardTop = (frame: string[]): number => frame.findIndex((line) => line.includes('╭'))
+  const cardBottom = (frame: string[]): number => frame.findIndex((line) => line.includes('╰'))
+
+  it.each([20, 24, 30, 32, 35, 36, 40, 60])(
+    'shouldDrawTheLogoWhereTheChatScreenDrawsItWhenAStartupCardIsOpenAt%sRows',
+    (terminalHeight) => {
+      const { chat, card } = logoFrames(terminalHeight)
+      const top = cardTop(card)
+
+      expect(top).toBeGreaterThan(0)
+      expect(card.slice(0, top)).toEqual(chat.slice(0, top))
+      expect(card.slice(0, top).join('\n')).toMatch(/[▀▄█]/)
+      expect(card).toHaveLength(terminalHeight)
+      expect(cardBottom(card)).toBeGreaterThan(top)
+    }
+  )
+
+  it.each([32, 35, 36, 40, 60])('shouldPlayTheChatScreenIntroAboveTheStartupCardAt%sRows', (terminalHeight) => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(100_000)
+      const resting = logoFrames(terminalHeight)
+      const playing = logoFrames(terminalHeight, Date.now() - 1_500)
+      const top = cardTop(playing.card)
+
+      expect(top).toBe(cardTop(resting.card))
+      expect(playing.card.slice(0, top)).toEqual(playing.chat.slice(0, top))
+      expect(playing.card.slice(0, top)).not.toEqual(resting.card.slice(0, top))
+      expect(playing.card.slice(top + 1, cardBottom(playing.card)).join('\n')).not.toMatch(/[▀▄█]/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  const rowsDrawing = (frame: string[], marks: RegExp): [number, string][] =>
+    frame.flatMap((line, row): [number, string][] => (marks.test(line) ? [[row, line]] : []))
+
+  it.each([14, 16, 18, 20, 24, 30, 32, 36])('shouldKeepTheStartupCardBelowEveryLogoRowAt%sRows', (terminalHeight) => {
+    const { chat, card } = logoFrames(terminalHeight)
+    const logoMarks = /[▀▄█▟▙]/
+
+    expect(rowsDrawing(chat, logoMarks).length).toBeGreaterThan(0)
+    expect(rowsDrawing(card, logoMarks)).toEqual(rowsDrawing(chat, logoMarks))
+  })
+
+  it.each([38, 40, 45, 60])('shouldShowTheWholeIntroAboveTheStartupCardAt%sRows', (terminalHeight) => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(100_000)
+      const { chat, card } = logoFrames(terminalHeight, Date.now() - 300)
+      const introMarks = /[∙◆●◇]/
+
+      expect(rowsDrawing(chat, introMarks).length).toBeGreaterThan(0)
+      expect(rowsDrawing(card, introMarks)).toEqual(rowsDrawing(chat, introMarks))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([32, 35, 36, 40])('shouldKeepTwelveContentRowsBelowTheFullLogoAt%sRows', (terminalHeight) => {
+    const { card } = logoFrames(terminalHeight)
+
+    expect(cardBottom(card) - cardTop(card) - 1).toBeGreaterThanOrEqual(12)
+  })
+
+  it('shouldKeepStartupContentOneRowAboveTheBottomWhenTheBrandAnimationLeavesNoRoom', () => {
+    const frame = startupFrame(30)
+    const bottom = frame.findIndex((line) => line.includes('╰'))
+
+    expect(frame).toHaveLength(30)
+    expect(frame.length - 1 - bottom).toBe(1)
+    expect(frame.join('\n')).toContain('Startup choice')
   })
 })
 

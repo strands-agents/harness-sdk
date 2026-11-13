@@ -184,6 +184,16 @@ export async function prepareArchiveDependencies(root: string, language: AgentPr
   if (root === cache || !containsPath(cache, root)) return
   // Keep the lock outside the archive: wrapped projects must still have a single child directory.
   const lockPath = join(cache, `${relative(cache, root).split(sep)[0]}.dependencies.lock`)
+  await prepareDependencies(root, language, lockPath)
+}
+
+export const prepareWorkspaceDependencies = async (root: string, language: AgentProjectLanguage): Promise<void> => {
+  const state = join(root, '.strands', 'state')
+  mkdirSync(state, { recursive: true, mode: 0o700 })
+  await prepareDependencies(realpathSync(root), language, join(state, 'dependencies.lock'))
+}
+
+const prepareDependencies = async (root: string, language: AgentProjectLanguage, lockPath: string): Promise<void> => {
   const deadline = Date.now() + 3 * 180_000
   const owner = `${process.pid}-${randomUUID()}`
   while (true) {
@@ -342,6 +352,15 @@ async function runInstaller(
   })
 }
 
+const INSTALLER_DIAGNOSTIC =
+  /^(?:npm (?:error|ERR!)|ERROR:|error:|[A-Za-z.]*Error:)|installer timed out after|installer output exceeded/u
+
+const installerDiagnostic = (error: unknown): string => {
+  const lines = (error instanceof Error ? error.message : String(error)).split('\n').map((line) => line.trim())
+  const found = lines.find((line) => INSTALLER_DIAGNOSTIC.test(line))
+  return found ? found.slice(0, 300) : ''
+}
+
 async function installDependencies(root: string, language: AgentProjectLanguage, lockPath: string): Promise<void> {
   const manifests =
     language === 'typescript'
@@ -421,7 +440,13 @@ async function installDependencies(root: string, language: AgentProjectLanguage,
         : []),
     ].join(', then ')
     throw new Error(
-      `Could not install the agent's dependencies. In ${root}, run ${setup}, then launch Strands again.`,
+      [
+        `Could not install the agent's dependencies.`,
+        installerDiagnostic(error),
+        `In ${root}, run ${setup}, then launch Strands again.`,
+      ]
+        .filter(Boolean)
+        .join(' '),
       {
         cause: error,
       }

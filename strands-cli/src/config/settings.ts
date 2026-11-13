@@ -49,7 +49,7 @@ export const SETTINGS_CATEGORIES = [
   },
 ] as const
 
-export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number]['id']
+export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number]['id'] | 'Workspace'
 
 export const DEFAULT_SETTINGS_CATEGORY = 'Appearance' satisfies SettingsCategory
 

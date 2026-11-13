@@ -1,13 +1,13 @@
 import { execFile } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL } from 'node:url'
 import { promisify } from 'node:util'
 import { ImageBlock, Message } from '@strands-agents/sdk'
-import { strToU8, zipSync } from 'fflate'
+import { strToU8, unzipSync, zipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { parseArgs } from '../../src/cli/arguments.js'
@@ -16,6 +16,7 @@ import { AgentMessaging } from '../../src/agent/messaging.js'
 import { importAgentProject } from '../../src/project/import.js'
 import { TypescriptBackend, type TypescriptInit } from '../../src/project/typescript-backend.js'
 import { createTypescriptChat } from '../../src/ui/chat/runtime.js'
+import { bindExistingAgent } from '../../src/dev/create.js'
 
 import { projectOptions } from '../../src/project/typescript.js'
 
@@ -618,6 +619,68 @@ const timer = setInterval(() => {
     await backend.dispose()
     await stopped(previous)
   }, 30000)
+
+  it('shouldLeaveTheDevWorkspaceOutOfExportsWhenItIsInsideTheProject', async () => {
+    await writeFile(join(root, 'value.ts'), "export const value = 'exported'\n")
+    await writeFile(project().entrypoint, source())
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    await writeFile(join(directory, 'tmp', 'sentinel.txt'), 'WORKSPACE SENTINEL')
+    const archiveDirectory = await mkdtemp(join(tmpdir(), 'strands-dev-export-'))
+    const archive = join(archiveDirectory, 'agent.zip')
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = {
+      args: parseArgs(['dev', '--workspace', directory]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    }
+    const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+    try {
+      await chat.submit(`/export typescript "${archive}"`)
+
+      const names = Object.keys(unzipSync(await readFile(archive)))
+      expect(names.some((name) => name.endsWith('value.ts'))).toBe(true)
+      expect(names.filter((name) => name.includes('strands-dev'))).toEqual([])
+    } finally {
+      await chat.dispose()
+      await rm(archiveDirectory, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it.each([
+    ['TheBoundEntrypoint', 'agent.ts', false],
+    ['AnotherEntrypoint', 'other.ts', true],
+  ])(
+    'shouldResumeTheDevSessionInItsWorkspaceWhenItRuns%s',
+    async (_case, file, keepsAgent) => {
+      const agentSource = `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness(${JSON.stringify({ ...defaults, session: true, name: 'Dev' })})\n`
+      await writeFile(project().entrypoint, agentSource)
+      await writeFile(join(root, 'other.ts'), agentSource)
+      const directory = join(root, 'strands-dev')
+      await bindExistingAgent(directory, project().entrypoint)
+      const entrypoint = join(root, file)
+      const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+      const options = {
+        args: parseArgs(['dev', '--workspace', directory, '--agent', entrypoint]),
+        cwd: root,
+        initialWorkspace: root,
+        mcpPaths: [],
+        mcpStrictPaths: [],
+      }
+
+      const chat = await createTypescriptChat(entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+
+      try {
+        expect(chat.resumeSession?.devWorkspace).toBe(await realpath(directory))
+        expect(chat.resumeSession?.agentProject).toBe(keepsAgent ? await realpath(entrypoint) : undefined)
+      } finally {
+        await chat.dispose()
+      }
+    },
+    30000
+  )
 
   it('keeps the old process usable after a replacement evaluates and fails', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'original'\n")

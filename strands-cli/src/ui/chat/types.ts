@@ -1,4 +1,5 @@
 import type { Message } from '@strands-agents/sdk'
+import type { ComponentType } from 'react'
 import type {
   ChatAttachmentSummary,
   ChatBackend,
@@ -20,6 +21,7 @@ import type {
 } from '../../agent/types.js'
 
 import type { BackgroundAgentActivity } from '../../agent/background.js'
+import type { WorkspaceAction } from '../../agent/configuration.js'
 import type { LoadedMcp } from '../../agent/mcp.js'
 import type { PeerMessage } from '../../agent/messaging.js'
 import type { ChatSkillsRuntime } from '../../agent/skills.js'
@@ -28,6 +30,7 @@ import type { ChatSettings, SettingsCategory } from '../../config/settings.js'
 import type { AgentProjectOutput } from '../../project/export.js'
 import type { ImportedAgentProject } from '../../project/import.js'
 import type { ChatSessionRuntime, ResumeSession } from '../../session/sessions.js'
+import type { LocalCommandSpec } from './commands.js'
 import type { CommandAssistance } from './commands.js'
 import type { StreamPresentationOptions } from './stream-presentation.js'
 
@@ -52,6 +55,50 @@ export interface ChatNotice {
   taskId?: string
   text: string
   status: 'running' | 'success' | 'error' | 'delivered'
+}
+
+export interface DevChatNotice {
+  update(status: ChatNotice['status'], text: string): void
+}
+
+export interface DevChatCommandContext {
+  readonly signal: AbortSignal
+  report(status: ChatNotice['status'], text: string): DevChatNotice
+  fail(title: string, detail: string): void
+  submit(prompt: string): void
+}
+
+export interface DevChatPanelProps {
+  readonly width: number
+  readonly height: number
+  readonly close: () => void
+  readonly openCommand: (name: string) => boolean
+}
+
+export type DevChatPanelView = ComponentType<DevChatPanelProps>
+
+export interface DevChatJob {
+  readonly id: string
+  readonly label: string
+  readonly done?: number
+  readonly total?: number
+}
+
+export interface DevChatJobs {
+  subscribe(listener: () => void): () => void
+  snapshot(): readonly DevChatJob[]
+}
+
+export interface DevChatJobGroup {
+  readonly command: string
+  readonly jobs: readonly DevChatJob[]
+}
+
+export interface DevChatCommand {
+  spec: LocalCommandSpec
+  open(context: DevChatCommandContext): DevChatPanelView
+  attach?(context: DevChatCommandContext): void
+  jobs?: DevChatJobs
 }
 
 export interface ChatPanelRow {
@@ -104,7 +151,11 @@ export interface ChatPanelBase {
 
 export type NewChatPanel =
   | (ChatPanelBase & {
-      kind: 'context' | 'skills' | 'tools' | 'voice' | 'help' | 'error'
+      kind: 'context' | 'skills' | 'tools' | 'voice' | 'help'
+    })
+  | (ChatPanelBase & {
+      kind: 'error'
+      fixDirectory?: string
     })
   | (ChatPanelBase & {
       kind: 'agents'
@@ -166,6 +217,13 @@ export type NewChatPanel =
       configuration: ChatConfigurationSource
       language: ChatConfigurationLanguage
     })
+  | (ChatPanelBase & {
+      kind: 'dev'
+      command: string
+      view: DevChatPanelView
+      close: () => void
+      openCommand: (name: string) => boolean
+    })
 
 export type ChatPanel = NewChatPanel & { id: string }
 export type ChatModelPanel = Extract<ChatPanel, { kind: 'models' }>
@@ -174,6 +232,7 @@ export type ChatTasksPanel = Extract<ChatPanel, { kind: 'tasks' }>
 export type ChatPermissionsPanel = Extract<ChatPanel, { kind: 'permissions' }>
 export type ChatPermissionPanel = Extract<ChatPanel, { kind: 'permission' }>
 export type ChatDetailPanel = Extract<ChatPanel, { kind: 'detail' | 'help-detail' }>
+export type ChatDevPanel = Extract<ChatPanel, { kind: 'dev' }>
 
 export interface ChatRuntimeInfo {
   agent: string
@@ -187,6 +246,9 @@ export interface ChatRuntimeInfo {
   cwd: string
   tools: readonly ChatToolInfo[]
   configuration?: readonly { label: string; value: string }[]
+  devWorkspace?: { root: string; entrypoint: string; boundEntrypoint: string; origin: string }
+  sourceWatching?: boolean
+  reloadStatus?: string
 }
 
 export interface ChatVoiceStore {
@@ -231,6 +293,7 @@ export interface ChatSnapshot {
   permissionPreset?: ChatPermissionPreset
   settings: ChatSettings
   voice?: VoiceSessionSnapshot
+  devJobs?: readonly DevChatJobGroup[]
   exitCode?: number
 }
 
@@ -249,6 +312,8 @@ export interface ChatControllerOptions {
   initialConfigurationBaseline?: ChatConfigurationBaseline
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void
+  workspaceAction?: (action: WorkspaceAction) => void
+  devCommands?: readonly DevChatCommand[]
   awsProfile?: {
     get(): Omit<NonNullable<ChatModelPanel['awsProfile']>, 'open'>
     select(profile: string): void
@@ -265,6 +330,10 @@ export interface ChatControllerOptions {
   peerEndpointId?: string
 }
 
+export interface ChatErrorOptions {
+  fixDirectory?: string
+}
+
 export interface ChatControllerApi {
   readonly subscribe: (listener: () => void) => () => void
   readonly getSnapshot: () => ChatSnapshot
@@ -274,7 +343,10 @@ export interface ChatControllerApi {
   readonly resumeSession?: ResumeSession | undefined
   captureConversations?(): Promise<ChatConversations>
   pauseVoiceInput?(): () => void
-  showError?(title: string, message: string): void
+  showError?(title: string, message: string, options?: ChatErrorOptions): void
+  notify?(status: ChatNotice['status'], text: string): void
+  markReloaded?(paths: readonly string[]): void
+  clearReloadStatus?(): void
   setSettings?(settings: Partial<ChatSettings>): Promise<boolean>
   toggleVoiceMute?(): boolean
   actionableCommandToken(input: string): string | undefined
@@ -299,4 +371,5 @@ export interface ChatControllerApi {
   retryMcpServer(name: string): Promise<boolean>
   openModelPanel(): Promise<void>
   openContextPanel(): void
+  openDevCommand?(name: string): boolean
 }

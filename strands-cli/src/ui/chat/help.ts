@@ -1,4 +1,4 @@
-import { LOCAL_COMMANDS } from './commands.js'
+import { LOCAL_COMMANDS, type LocalCommandSpec } from './commands.js'
 import type { ChatBackend } from '../../agent/types.js'
 import type { ChatPanelRow } from './types.js'
 
@@ -37,6 +37,11 @@ const CONTROLS = [
   ],
   ['Copy text', 'Click and drag', 'Click and drag across visible text, then release to copy.'],
   [
+    'Copy an error',
+    'Ctrl+Y',
+    'Ctrl+Y copies the full text of the error on screen, including errors in startup and setup screens.',
+  ],
+  [
     'Scroll conversation',
     'Wheel / PgUp / PgDn',
     'Use the mouse wheel or Page Up/Down. Ctrl+↑/↓ scrolls, and Ctrl+Home/End jumps to the ends.',
@@ -53,6 +58,7 @@ export function helpRows(
     tools: boolean
     export: boolean
     config: boolean
+    devCommands?: readonly LocalCommandSpec[]
   }
 ): ChatPanelRow[] {
   const support: Record<string, boolean> = {
@@ -76,6 +82,13 @@ export function helpRows(
       section: 'Controls',
       filter: 'controls',
       value: `help:detail:control:${index}`,
+    })),
+    ...(options.devCommands ?? []).map((command) => ({
+      label: command.usage,
+      description: command.description,
+      section: 'Commands',
+      filter: 'commands',
+      value: `help:detail:command:${command.name}`,
     })),
     ...LOCAL_COMMANDS.map((command) => {
       const available = support[command.name] !== false

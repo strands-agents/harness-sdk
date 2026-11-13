@@ -97,12 +97,17 @@ import {
   type ChatControllerApi,
   type ChatControllerOptions,
   type ChatNotice,
+  type ChatErrorOptions,
   type ChatPanel,
   type ChatPanelRow,
   type ChatMcpStartup,
   type ChatRuntimeInfo,
   type ChatSettings,
   type ChatSnapshot,
+  type DevChatCommand,
+  type DevChatCommandContext,
+  type DevChatJobGroup,
+  type DevChatNotice,
   type NewChatPanel,
 } from './types.js'
 
@@ -163,6 +168,10 @@ export class ChatController implements ChatControllerApi {
   private readonly _streamPresentation: StreamPresentationOptions | undefined
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
   private readonly _requestSetup: ChatControllerOptions['requestSetup']
+  private readonly _workspaceAction: ChatControllerOptions['workspaceAction']
+  private readonly _devCommands: readonly DevChatCommand[]
+  private readonly _devCommandAbort = new AbortController()
+  private _stopWatchingDevJobs: readonly (() => void)[] = []
   private readonly _awsProfile: ChatControllerOptions['awsProfile']
   private readonly _builtinTools: ChatControllerOptions['builtinTools']
   private _builtinToolSelection = new Set<string>()
@@ -230,6 +239,8 @@ export class ChatController implements ChatControllerApi {
     this._streamPresentation = options.streamPresentation
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
+    this._workspaceAction = options.workspaceAction
+    this._devCommands = options.devCommands ?? []
     this._awsProfile = options.awsProfile
     this._builtinTools = options.builtinTools
     this._exportAgentProject = options.exportAgentProject
@@ -265,7 +276,25 @@ export class ChatController implements ChatControllerApi {
       this._configurationBaseline = options.initialConfigurationBaseline
       this._configurationDiffs = configurationDiffs(options.initialConfigurationBaseline.source, this._configuration)
     }
+    if (this._runtime.devWorkspace) {
+      const { root, entrypoint, origin } = this._runtime.devWorkspace
+      this._notices.push({
+        id: 'dev-workspace',
+        status: 'success',
+        text: `strands dev · ${backend.name}\nWorkspace: ${root}\nHarness: ${entrypoint} (${origin})\nModel, tools, and instructions come from this workspace.`,
+      })
+    }
     this._snapshot = this._createSnapshot()
+    for (const command of this._devCommands) command.attach?.(this._devCommandContext())
+    this._stopWatchingDevJobs = this._devCommands.flatMap(({ jobs }) =>
+      jobs
+        ? [
+            jobs.subscribe(() => {
+              if (!this._closed) this._emit()
+            }),
+          ]
+        : []
+    )
     this._stopWatchingTasks = this._backend.watchTasks?.((tasks) => {
       if (this._closed) {
         return
@@ -344,8 +373,28 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  showError(title: string, message: string): void {
-    this._openError(title, '', message)
+  clearReloadStatus(): void {
+    if (this._runtime.reloadStatus === undefined) return
+    delete this._runtime.reloadStatus
+    this._emit()
+  }
+
+  markReloaded(paths: readonly string[]): void {
+    const changed = [...new Set(paths)]
+    const label = changed.length > 1 ? `${changed.length} files` : changed[0]?.split(/[\\/]/u).at(-1) || 'agent source'
+    const status = `↻ ${sanitizeTerminalText(label)} reloaded · session kept`
+    this._runtime.reloadStatus = status
+    this._addNotice('success', status)
+    this._emit()
+  }
+
+  showError(title: string, message: string, options: ChatErrorOptions = {}): void {
+    this._openError(title, '', message, options.fixDirectory)
+  }
+
+  notify(status: ChatNotice['status'], text: string): void {
+    this._addNotice(status, text)
+    this._emit()
   }
 
   get backend(): ChatBackend {
@@ -372,11 +421,14 @@ export class ChatController implements ChatControllerApi {
   get resumeSession(): ResumeSession | undefined {
     const session = this._sessions?.currentTarget ?? this._backend.sessionIdentity
     if (!session?.sessionId) return undefined
+    const dev = this._runtime.devWorkspace
+    const ranBoundAgent = dev !== undefined && dev.entrypoint === dev.boundEntrypoint
     return {
       sessionId: session.sessionId,
       sessionDirectory: session.sessionDirectory,
       workspace: session.workspace,
-      ...(this._project ? { agentProject: this._project.entrypoint } : {}),
+      ...(dev ? { devWorkspace: dev.root } : {}),
+      ...(this._project && !ranBoundAgent ? { agentProject: this._project.entrypoint } : {}),
     }
   }
 
@@ -388,7 +440,10 @@ export class ChatController implements ChatControllerApi {
     if (!invocation) {
       return undefined
     }
-    if (invocation.prefix === '/' && LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase())) {
+    if (
+      invocation.prefix === '/' &&
+      (LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase()) || this._devCommand(invocation.name))
+    ) {
       return invocation.token
     }
     return this._backend.protocol === 'strands' && this._skillNames.has(invocation.name.toLowerCase())
@@ -401,7 +456,12 @@ export class ChatController implements ChatControllerApi {
     if (!input.startsWith('/')) {
       return undefined
     }
-    return resolveCommandAssistance(input, this.actionableCommandToken(input), this._skillCommands())
+    return resolveCommandAssistance(
+      input,
+      this.actionableCommandToken(input),
+      this._skillCommands(),
+      this._devCommands.map((command) => command.spec)
+    )
   }
 
   async start(firstRequest?: string): Promise<void> {
@@ -479,7 +539,7 @@ export class ChatController implements ChatControllerApi {
     }
     if (
       attachments.length === 0 &&
-      isLiveLocalCommand(prompt) &&
+      (isLiveLocalCommand(prompt) || this._isDevCommandPrompt(prompt)) &&
       !this._resourceChanging &&
       (this._panel?.kind !== 'permission' ||
         ['settings', 'permissions'].includes(parseCommandInvocation(prompt)?.name.toLowerCase() ?? ''))
@@ -642,8 +702,7 @@ export class ChatController implements ChatControllerApi {
       )
       return undefined
     }
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     return this._runStream(prompt, this._backend.streamShell(command), 'shell')
   }
 
@@ -652,8 +711,7 @@ export class ChatController implements ChatControllerApi {
       return undefined
     }
     const submission = normalizeChatInput(input)
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     const prompt =
       submission.attachments.length === 0 ? submission.text : attachmentContent(submission.text, submission.attachments)
     return this._runStream(
@@ -670,8 +728,7 @@ export class ChatController implements ChatControllerApi {
     if (this._closed || this._execution || this._resourceChanging || !this._backend.streamPeer) {
       return undefined
     }
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     return this._runStream(message.body, this._backend.streamPeer(message), 'model', 'peer', message.from)
   }
 
@@ -759,6 +816,7 @@ export class ChatController implements ChatControllerApi {
       this._context = contextBeforeTurn
       const recovery = mode === 'shell' ? undefined : this._failureRecoveryHint(error)
       projector.fail(error, recovery)
+      if (mode === 'model') this._offerDevFix(projector.snapshot())
     } finally {
       clearTimeout(toolOutputEmitTimer)
       clearTimeout(responseDelayTimer)
@@ -783,6 +841,11 @@ export class ChatController implements ChatControllerApi {
     }
 
     return projector.snapshot()
+  }
+
+  private _offerDevFix(turn: ChatTurn): void {
+    if (turn.status !== 'error' || !this._runtime.devWorkspace) return
+    this._openError('Agent turn failed', '', turn.error ?? '', this._runtime.cwd)
   }
 
   private _failureRecoveryHint(error: unknown): string {
@@ -871,6 +934,8 @@ export class ChatController implements ChatControllerApi {
     }
     this._closed = true
     this._sessionNaming?.abort()
+    this._devCommandAbort.abort()
+    this._stopDevJobs()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
     const interrupted = this._execution !== undefined
@@ -890,6 +955,8 @@ export class ChatController implements ChatControllerApi {
   async dispose(): Promise<void> {
     this._closed = true
     this._sessionNaming?.abort()
+    this._devCommandAbort.abort()
+    this._stopDevJobs()
     this._stopWatchingUsage()
     if (this._execution) {
       this._execution.presentationAbort.abort()
@@ -1055,8 +1122,7 @@ export class ChatController implements ChatControllerApi {
       if (!pending) {
         return
       }
-      this._panel = undefined
-      this._panelStack.length = 0
+      this._closePanelsForTurn()
       if (pending.kind === 'peer') {
         await this._runPeerMessage(pending.message)
       } else {
@@ -1125,6 +1191,17 @@ export class ChatController implements ChatControllerApi {
       case 'mcp':
         return row.value.startsWith('mcp:toggle:') ? this._toggleMcpServer(row.value) : false
       case 'settings':
+        if (row.value.startsWith('workspace:')) {
+          const action = row.value.slice('workspace:'.length)
+          if (!this._workspaceAction || !this._runtime.devWorkspace || (action !== 'edit' && action !== 'import'))
+            return false
+          if (this.busy || this._hasUnresolvedBackgroundTasks()) {
+            this._openError('Workspace busy', '', 'Finish or cancel running work before changing this workspace.')
+            return false
+          }
+          this._workspaceAction(action)
+          return true
+        }
         if (row.value === SETTINGS_SETUP_ACTION) {
           if (!this._requestSetup) {
             return false
@@ -1300,6 +1377,7 @@ export class ChatController implements ChatControllerApi {
 
   private _createSnapshot(): ChatSnapshot {
     const activeTurn = this._activeProjector?.snapshot()
+    const devJobs = this._devJobs()
     return {
       completedTurns: [...this._completedTurns],
       ...(activeTurn ? { activeTurn } : {}),
@@ -1336,6 +1414,7 @@ export class ChatController implements ChatControllerApi {
       ...(this._permissionMode ? { permissionMode: this._permissionMode } : {}),
       ...(this._permissionPreset ? { permissionPreset: this._permissionPreset } : {}),
       settings: globalThis.structuredClone(this._settings),
+      ...(devJobs.length > 0 ? { devJobs } : {}),
       ...(this._exitCode !== undefined ? { exitCode: this._exitCode } : {}),
     }
   }
@@ -1363,6 +1442,7 @@ export class ChatController implements ChatControllerApi {
             tools: this._builtinTools !== undefined,
             export: this._exportAgentProject !== undefined,
             config: this._configurationSource !== undefined,
+            devCommands: this._devCommands.map((command) => command.spec),
           }),
           searchable: true,
           filters: [
@@ -1433,6 +1513,11 @@ export class ChatController implements ChatControllerApi {
         this.close()
         break
       default: {
+        const devCommand = this._devCommand(command)
+        if (devCommand) {
+          this._openDevPanel(devCommand)
+          break
+        }
         const turn = await this._activateSkillAndRun(command, prompt)
         if (turn === null) {
           this._openError('unknown command', `/${command}`, 'Type / to browse commands or use /skills to list skills.')
@@ -2531,16 +2616,35 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openSettingsCategory(value: string, replace = false): boolean {
-    const category = SETTINGS_CATEGORIES.find(({ id }) => value === `settings:${id}`)
+    const category =
+      value === 'settings:Workspace' && this._workspaceAction && this._runtime.devWorkspace
+        ? { id: 'Workspace' as const, label: 'Strands dev workspace' }
+        : SETTINGS_CATEGORIES.find(({ id }) => value === `settings:${id}`)
     if (!category) {
       return false
     }
-    const rows = settingsRows(this._settings, category.id, this._requestSetup !== undefined)
+    const rows =
+      category.id === 'Workspace'
+        ? [
+            { label: 'Workspace folder', description: this._runtime.devWorkspace!.root },
+            { label: 'Current agent', description: this._runtime.devWorkspace!.entrypoint },
+            {
+              label: 'Edit workspace configuration',
+              description: 'Open .config; changes apply on next launch',
+              value: 'workspace:edit',
+            },
+            {
+              label: 'Import a different agent',
+              description: 'Select or create another agent, then its workspace folder. This workspace stays.',
+              value: 'workspace:import',
+            },
+          ]
+        : settingsRows(this._settings, category.id, this._requestSetup !== undefined)
     const panel = {
       kind: 'settings',
       title: category.label,
       rows,
-      filters: settingsCategoryFilters(),
+      filters: settingsCategoryFilters(Boolean(this._workspaceAction && this._runtime.devWorkspace)),
       settingsCategory: category.id,
     } satisfies NewChatPanel
     if (replace) {
@@ -2855,6 +2959,80 @@ export class ChatController implements ChatControllerApi {
     this._deliveredBackgroundTaskIds.clear()
   }
 
+  private _closePanelsForTurn(): void {
+    if (this._panel?.kind === 'dev') return
+    this._panel = undefined
+    this._panelStack.length = 0
+  }
+
+  private _stopDevJobs(): void {
+    for (const stop of this._stopWatchingDevJobs) stop()
+    this._stopWatchingDevJobs = []
+  }
+
+  openDevCommand(name: string): boolean {
+    const devCommand = this._devCommand(name)
+    if (!devCommand || this._closed || this._panel?.kind === 'permission') return false
+    this._openDevPanel(devCommand)
+    return true
+  }
+
+  private _openDevPanel(devCommand: DevChatCommand): void {
+    if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name) return
+    const opened = this._openPanel({
+      kind: 'dev',
+      command: devCommand.spec.name,
+      title: `/${devCommand.spec.name}`,
+      rows: [],
+      view: devCommand.open(this._devCommandContext()),
+      close: () => {
+        if (this._panel?.id === opened.id) this.dismissPanel()
+      },
+      openCommand: (name) => this.openDevCommand(name),
+    })
+  }
+
+  private _devJobs(): DevChatJobGroup[] {
+    return this._devCommands.flatMap(({ spec, jobs }) => {
+      const running = jobs?.snapshot() ?? []
+      return running.length > 0
+        ? [{ command: spec.name, jobs: running.map((job) => ({ ...job, label: jobLabel(job.label) })) }]
+        : []
+    })
+  }
+
+  private _isDevCommandPrompt(prompt: string): boolean {
+    const invocation = parseCommandInvocation(prompt)
+    return invocation?.prefix === '/' && this._devCommand(invocation.name) !== undefined
+  }
+
+  private _devCommand(name: string): DevChatCommand | undefined {
+    const requested = name.toLowerCase()
+    return this._devCommands.find((command) => command.spec.name.toLowerCase() === requested)
+  }
+
+  private _devCommandContext(): DevChatCommandContext {
+    return {
+      signal: this._devCommandAbort.signal,
+      report: (status, text): DevChatNotice => {
+        let notice = this._addNotice(status, text)
+        this._emit()
+        return {
+          update: (nextStatus, nextText): void => {
+            if (this._closed) return
+            this._notices = this._notices.filter((candidate) => candidate !== notice)
+            notice = this._addNotice(nextStatus, nextText)
+            this._emit()
+          },
+        }
+      },
+      fail: (title, detail): void => this._openError(title, '', detail),
+      submit: (prompt): void => {
+        void this.submit(prompt)
+      },
+    }
+  }
+
   private _addNotice(status: ChatNotice['status'], text: string, taskId?: string): ChatNotice {
     const afterTurnId = this._activeProjector?.snapshot().id ?? this._completedTurns.at(-1)?.id
     const notice = {
@@ -2967,8 +3145,13 @@ export class ChatController implements ChatControllerApi {
     return makePanel(`panel-${this._nextPanel++}`, input)
   }
 
-  private _openError(title: string, label: string, description: string): void {
-    this._openPanel({ kind: 'error', title, rows: [{ label, description, tone: 'danger' }] })
+  private _openError(title: string, label: string, description: string, fixDirectory?: string): void {
+    this._openPanel({
+      kind: 'error',
+      title,
+      rows: [{ label, description, tone: 'danger' }],
+      ...(fixDirectory ? { fixDirectory } : {}),
+    })
   }
 }
 
@@ -2985,6 +3168,10 @@ function skillInvocationPrompt(activation: SkillActivation, displayPrompt: strin
     '',
     displayPrompt,
   ].join('\n')
+}
+
+function jobLabel(label: string): string {
+  return sanitizeTerminalText(label).replace(/\s+/gu, ' ').trim()
 }
 
 function isLiveLocalCommand(prompt: string): boolean {

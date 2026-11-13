@@ -12,6 +12,11 @@ import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs 
 import { runPlainChat, runTurn } from './console.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telemetry.js'
+import type { CliConfigStore } from '../config/store.js'
+import type { StartupScreen, WorkspaceChange } from '../ui/run.js'
+import type { WorkspaceAction } from '../agent/configuration.js'
+import { devFailure } from '../dev/errors.js'
+import type { PreparedDevRun } from '../dev/prepare.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
@@ -34,7 +39,57 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = await updateCli()
     return
   }
+  if (args.dev?.temporaryCommand) {
+    const { runTemporaryDevCommand } = await import('../dev/temporary-evals-fork/cli.js')
+    process.exitCode = await runTemporaryDevCommand(args)
+    return
+  }
+  if (args.dev) {
+    const previousDirectory = process.cwd()
+    try {
+      if (stdin.isTTY && stdout.isTTY && !args.oneShot) {
+        initLogging('ink')
+        await runInteractive(args, args.request)
+      } else {
+        const { prepareDevRun } = await import('../dev/prepare.js')
+        const prepared = await prepareDevRun(args, { deferPreparation: true })
+        if (prepared) {
+          const { planProjectPreparation, describePreparationCommand } = await import('../project/preparation-plan.js')
+          const { executePreparation, redactPreparationOutput } = await import('../project/preparation.js')
+          const plan = await planProjectPreparation({
+            root: prepared.workspace.root,
+            entrypoint: prepared.workspace.entrypoint,
+            language: prepared.workspace.config.language,
+          })
+          process.stderr.write(
+            `Project root: ${plan.project.root}\nRuntime: ${plan.runtime}\n${plan.commands.map((step) => redactPreparationOutput(describePreparationCommand(step))).join('\n')}\n${plan.guidance ?? ''}\n`
+          )
+          await executePreparation(plan)
+          const { ensureInitialCandidate } = await import('../dev/initialize.js')
+          await ensureInitialCandidate(prepared.workspace, undefined, async (candidate) => {
+            await executePreparation(await planProjectPreparation(candidate))
+          })
+          await prepared.keep()
+          prepared.args.dev = { ...prepared.args.dev!, prepared: true }
+        }
+        if (!prepared || prepared.args.dev?.init) return
+        process.chdir(prepared.workspace.root)
+        await runSession(prepared.args, prepared.config)
+      }
+    } catch (error) {
+      process.stderr.write(
+        `error: ${devFailure(error, { operation: 'open', path: args.agent ?? args.dev?.workspace }).message}\n`
+      )
+      process.exitCode = 1
+    } finally {
+      process.chdir(previousDirectory)
+    }
+    return
+  }
+  await runSession(args)
+}
 
+const runSession = async (args: ParsedArgs, suppliedConfig?: CliConfigStore): Promise<void> => {
   const stdinIsTty = stdin.isTTY === true
   const mode = selectRunMode(args, { stdinIsTty, stdoutIsTty: stdout.isTTY === true })
   initLogging(mode)
@@ -64,9 +119,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return
   }
   if (mode === 'print' || mode === 'plain') {
-    await runConsole(args, request, mode)
+    await runConsole(args, request, mode, suppliedConfig)
   } else {
-    await runInteractive(args, request)
+    await runInteractive(args, request, suppliedConfig)
   }
 }
 
@@ -119,7 +174,12 @@ async function runAcp(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function runConsole(args: ParsedArgs, request: string | undefined, mode: 'print' | 'plain'): Promise<void> {
+async function runConsole(
+  args: ParsedArgs,
+  request: string | undefined,
+  mode: 'print' | 'plain',
+  suppliedConfig?: CliConfigStore
+): Promise<void> {
   let loadedMcp: Awaited<ReturnType<(typeof import('../agent/mcp.js'))['loadMcp']>> | undefined
   let agent: Awaited<ReturnType<typeof createHarness>> | undefined
   try {
@@ -127,7 +187,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       import('../agent/mcp.js'),
       import('../config/store.js'),
     ])
-    const config = await CliConfigStore.load()
+    const config = suppliedConfig ?? (await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
     const projectPath = args.agent ?? config.snapshot().agentProject
     const project = projectPath ? importAgentProject(projectPath) : undefined
@@ -173,7 +233,9 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       await runPlainChat(agent, request)
     }
   } catch (err) {
-    process.stderr.write(`error: ${errorMessage(err)}\n`)
+    process.stderr.write(
+      `error: ${args.dev ? devFailure(err, { operation: 'load', path: args.agent ?? args.dev.workspace }).message : errorMessage(err)}\n`
+    )
     process.exitCode = 1
   } finally {
     // Cleanup failure must not fail a completed turn or skip MCP teardown.
@@ -181,7 +243,11 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
   }
 }
 
-async function runInteractive(args: ParsedArgs, request: string | undefined): Promise<void> {
+async function runInteractive(
+  args: ParsedArgs,
+  request: string | undefined,
+  suppliedConfig?: CliConfigStore
+): Promise<void> {
   try {
     await import('../terminal/ink.js')
     // React's development timing buffer retains rendered props in Node. Load the production UI
@@ -201,9 +267,46 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       import('../ui/run.js'),
       import('../config/store.js'),
     ])
-    const config = await CliConfigStore.load()
+    const config =
+      suppliedConfig ??
+      (args.dev ? await CliConfigStore.load(undefined, { persist: false }) : await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
-    const initialWorkspace = process.cwd()
+    const savedConfig = config.snapshot()
+    let initialWorkspace = process.cwd()
+    if (args.dev) await config.setSettings({ updatePrompts: false, telemetry: false })
+    const launchDirectory = process.cwd()
+    const requestedArgs = args
+    const setupSession = args.dev ? (await import('../dev/project-setup.js')).projectSetupSession() : undefined
+    let rejected: PreparedDevRun | undefined
+    let opened: PreparedDevRun | undefined
+    let keepFailure: string | undefined
+    const keepOpened = <Chat>(chat: Chat): Chat => {
+      void opened?.keep().catch((error: unknown) => {
+        keepFailure = errorMessage(error)
+      })
+      return chat
+    }
+    const prepare =
+      args.dev && !suppliedConfig
+        ? async (screen: StartupScreen): Promise<boolean> => {
+            const { openDevRun } = await import('../dev/open.js')
+            const prepared = await openDevRun({
+              args: requestedArgs,
+              config,
+              savedConfig,
+              launchDirectory,
+              screen,
+              setup: setupSession!,
+              ...(rejected ? { rejected } : {}),
+            })
+            if (!prepared) return false
+            opened = prepared
+            args = prepared.args
+            initialWorkspace = prepared.workspace.root
+            process.chdir(initialWorkspace)
+            return true
+          }
+        : undefined
     let pinged = false
     let updateRequested = false
     const exitCode = await runInkChat(
@@ -216,38 +319,49 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         })
         signal.throwIfAborted()
         const profile = launch?.profile ?? launch?.configuration?.profile
-        const projectPath =
-          launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject))
+        if (args.dev && launch?.agentProject && launch.agentProject !== args.agent) {
+          throw new Error(
+            'A dev session stays with its workspace harness. Restart strands dev to select another workspace.'
+          )
+        }
+        const projectPath = args.dev
+          ? args.agent
+          : (launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject)))
+        if (args.dev && !projectPath) throw new Error('The dev workspace has no harness entrypoint.')
         const project = projectPath ? importAgentProject(projectPath) : undefined
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../ui/chat/runtime.js')
-          return createPythonChat(
-            project.entrypoint,
-            config,
-            await pythonInvocationOptions(args, initialWorkspace, config.snapshot().settings, initialMcp),
-            signal,
-            requestSetup,
-            conversations,
-            launch?.conversationId
+          return keepOpened(
+            await createPythonChat(
+              project.entrypoint,
+              config,
+              await pythonInvocationOptions(args, initialWorkspace, config.snapshot().settings, initialMcp),
+              signal,
+              requestSetup,
+              conversations,
+              launch?.conversationId
+            )
           )
         }
         if (project?.language === 'typescript') {
           const { createTypescriptChat } = await import('../ui/chat/runtime.js')
-          return createTypescriptChat(
-            project.entrypoint,
-            config,
-            {
-              args: launch?.agentProject ? { ...args, agent: project.entrypoint } : args,
-              cwd: initialWorkspace,
-              initialWorkspace,
-              mcpPaths: initialMcp.paths,
-              mcpStrictPaths: initialMcp.strictPaths,
-              ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
-            },
-            signal,
-            requestSetup,
-            conversations,
-            launch?.conversationId
+          return keepOpened(
+            await createTypescriptChat(
+              project.entrypoint,
+              config,
+              {
+                args: launch?.agentProject ? { ...args, agent: project.entrypoint } : args,
+                cwd: initialWorkspace,
+                initialWorkspace,
+                mcpPaths: initialMcp.paths,
+                mcpStrictPaths: initialMcp.strictPaths,
+                ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
+              },
+              signal,
+              requestSetup,
+              conversations,
+              launch?.conversationId
+            )
           )
         }
         const { createInteractiveChat } = await import('../ui/chat/runtime.js')
@@ -295,13 +409,48 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       {
         ...(request ? { firstRequest: request } : {}),
         intro: config.snapshot().settings.animations,
-        setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
+        setup: !args.dev && (args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup())),
+        ...(prepare ? { prepare } : {}),
+        ...(args.dev?.init ? { exitAfterInitialization: true } : {}),
+        ...(setupSession
+          ? {
+              recoverStartup: async (error: unknown, screen: StartupScreen): Promise<'retry' | 'back' | 'exit'> => {
+                const action = await setupSession.recover(error, screen)
+                if (action === 'back') rejected = opened
+                return action
+              },
+            }
+          : {}),
         config,
+        ...(args.dev
+          ? {
+              onWorkspaceAction: async (
+                action: WorkspaceAction,
+                screen: StartupScreen
+              ): Promise<WorkspaceChange | undefined> => {
+                const { prepareWorkspaceChange } = await import('../dev/manage.js')
+                return prepareWorkspaceChange({
+                  args,
+                  savedConfig,
+                  launchDirectory,
+                  action,
+                  screen,
+                  select: async (nextArgs, directory) => {
+                    args = nextArgs
+                    initialWorkspace = directory
+                    await config.useAgentProject(nextArgs.agent!)
+                    process.chdir(directory)
+                  },
+                })
+              },
+            }
+          : {}),
         onUpdateRequested: () => {
           updateRequested = true
         },
       }
     )
+    if (keepFailure) process.stderr.write(`warning: ${keepFailure}\n`)
     if (updateRequested) {
       const { updateCli } = await import('./update.js')
       process.exitCode = await updateCli()
@@ -309,7 +458,9 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       process.exitCode = exitCode
     }
   } catch (err) {
-    process.stderr.write(`error: ${errorMessage(err)}\n`)
+    process.stderr.write(
+      `error: ${args.dev ? devFailure(err, { operation: 'load', path: args.agent ?? args.dev.workspace }).message : errorMessage(err)}\n`
+    )
     process.exitCode = 1
   }
 }

@@ -146,6 +146,10 @@ export function SettingsPicker({
                       {row.description}{' '}
                     </Text>
                   </Box>
+                ) : panel.settingsCategory === 'Workspace' ? (
+                  <Text dimColor wrap="truncate-middle">
+                    {row.description}
+                  </Text>
                 ) : null}
               </Box>
             )

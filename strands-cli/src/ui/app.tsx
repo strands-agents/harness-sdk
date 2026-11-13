@@ -1,6 +1,7 @@
-import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
-import { Box, useInput } from 'ink'
+import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { Box, useInput, useStdout } from 'ink'
 import { sanitizeTerminalText } from '../terminal/text.js'
+import { pauseMouseReporting } from '../terminal/terminal.js'
 import { Text, useTheme, ThemeProvider } from './theme.js'
 import { basename } from 'node:path'
 import { ChatApp } from './chat/screen.js'
@@ -17,6 +18,7 @@ import { useTerminalSize } from './terminal-size.js'
 import { resolveModelTarget } from '../model/selection.js'
 import { type SettingsUpdateStatus } from './chat/panel-state.js'
 import { ChatView } from './chat/view.js'
+import { StartupStatus } from './startup.js'
 
 export interface McpTrustRequest {
   workspace: string
@@ -28,6 +30,7 @@ export interface McpTrustRequest {
 export function McpTrustPrompt({ request }: { request: McpTrustRequest }): ReactElement {
   const { accent } = useTheme()
   useInput((character, key) => {
+    if (key.ctrl || key.meta) return
     const answer = character.toLowerCase()
     if (answer === 'y') request.resolve(true)
     else if (answer === 'n' || key.escape || key.return) request.resolve(false)
@@ -55,7 +58,15 @@ export interface SetupBridge {
   confirmMcp(workspace: string, paths: readonly string[]): Promise<boolean>
 }
 
+const StartupView = (props: Parameters<typeof ChatView>[0]): ReactElement => {
+  const { stdout } = useStdout()
+  useEffect(() => pauseMouseReporting(stdout), [stdout])
+  return <ChatView {...props} />
+}
+
 interface ChatRootProps {
+  startupContent?: ReactNode
+  startupStatus?: string
   controller?: ChatControllerApi
   intro: boolean
   setup: boolean
@@ -71,6 +82,8 @@ interface ChatRootProps {
 }
 
 export function ChatRoot({
+  startupContent,
+  startupStatus,
   controller,
   intro,
   setup,
@@ -212,9 +225,13 @@ export function ChatRoot({
   if (!controller) {
     placeholderEntranceFade.current ??= !deckShown.current
     deckShown.current = true
+    const startupCard =
+      startupContent ??
+      (startupStatus ? <StartupStatus status={startupStatus} animate={settings.animations} /> : undefined)
     return (
-      <ChatView
+      <StartupView
         snapshot={startupSnapshot(settings, config)}
+        {...(startupCard ? { startupContent: startupCard } : {})}
         entranceFade={placeholderEntranceFade.current}
         input=""
         cursor={0}

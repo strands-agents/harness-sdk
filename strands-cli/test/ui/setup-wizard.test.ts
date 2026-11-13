@@ -13,6 +13,7 @@ import { DEFAULT_CHAT_SETTINGS } from '../../src/ui/chat/types.js'
 import { enabledProfileTools } from '../../src/agent/tools.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import * as directoryPicker from '../../src/terminal/directory-picker.js'
+import * as terminal from '../../src/terminal/terminal.js'
 import { SetupWizard } from '../../src/ui/setup/wizard.js'
 import { ChatRoot } from '../../src/ui/app.js'
 import { getTheme } from '../../src/ui/theme.js'
@@ -1533,6 +1534,105 @@ describe('setup presentation', () => {
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
+    }
+  })
+
+  it('shouldCopyAStepErrorWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const press = async (key: string): Promise<void> => {
+      input.push(key)
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      await press('\u001b[B')
+      await press('\u001b[C')
+      await press('\r')
+      await press('\r')
+      await press('\r')
+      expect(frame).toContain('This field cannot be empty. · Ctrl+Y copy error')
+
+      await press('\u0019')
+
+      await vi.waitFor(() => expect(copy).toHaveBeenCalledExactlyOnceWith('This field cannot be empty.', output))
+      await vi.waitFor(() => expect(frame).toContain('This field cannot be empty. · 27 chars copied to clipboard'))
+      expect(frame.split('\n').every((line) => stringWidth(line) <= 80)).toBe(true)
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      copy.mockRestore()
+    }
+  })
+
+  it('shouldCopyTheModelCatalogErrorWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'test-token')
+    vi.stubEnv('AWS_REGION', 'us-east-1')
+    vi.mocked(discoverProviderModels).mockResolvedValue({
+      available: false,
+      models: [],
+      error: 'AccessDeniedException: no catalog access',
+    })
+    const config = CliConfigStore.memory({}, { animations: false }, { profile: { model: 'bedrock/catalog-test' } })
+    const input = ttyInput()
+    const output = ttyOutput(120, 32)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.includes('\n')) frame = sanitizeTerminalText(chunk.toString())
+    })
+    const instance = render(createElement(SetupWizard, { config, deferred: true, onComplete: vi.fn() }), {
+      stdin: input,
+      stdout: output,
+      stderr: output,
+    })
+    try {
+      await instance.waitUntilRenderFlush()
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes('Quickstart'))
+      const column = lines[row]!.indexOf('Quickstart')
+      input.push(mouseInputSequence(0, column, row, 'M'))
+      input.push(mouseInputSequence(3, column, row, 'm'))
+      await vi.waitFor(() => expect(frame).toContain('Model catalog unavailable'))
+      expect(frame).toContain('Ctrl+Y copy')
+
+      input.push('\u0019')
+
+      await vi.waitFor(() =>
+        expect(copy).toHaveBeenCalledExactlyOnceWith(
+          'Model catalog unavailable: AccessDeniedException: no catalog access',
+          output
+        )
+      )
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      copy.mockRestore()
+      vi.mocked(discoverProviderModels).mockResolvedValue({ available: true, models: [] })
+      vi.unstubAllEnvs()
     }
   })
 

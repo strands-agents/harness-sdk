@@ -1,11 +1,12 @@
 import type { HarnessAgentConfig } from '@strands-agents/harness'
-import { Message, type ContentBlockData, type MessageData, type Snapshot } from '@strands-agents/sdk'
+import { Message, type ContentBlockData, type JSONValue, type MessageData, type Snapshot } from '@strands-agents/sdk'
 import { fork, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath, URL } from 'node:url'
 
 import type { BackgroundAgentActivity } from '../agent/background.js'
 import type { SetupChange } from '../agent/configuration.js'
+import type { AgentExtension, AgentExtensionHost } from '../agent/extension.js'
 import type { LoadedMcp, McpServerInfo, McpStartupProgress } from '../agent/mcp.js'
 import type { AgentMessaging, PeerEndpointInfo, PeerMessage } from '../agent/messaging.js'
 import type { ChatSkillsRuntime, SkillActivation, SkillInfo } from '../agent/skills.js'
@@ -57,6 +58,7 @@ export interface TypescriptInit {
   seed?: TypescriptSeed
   restoreSeedMessages?: boolean
   selection?: ChatConversation['selection']
+  extension?: AgentExtension
 }
 
 /** @internal */
@@ -164,6 +166,7 @@ export type TypescriptHostCall =
     }
   | { operation: 'listPeers'; senderId: string }
   | { operation: 'sendPeer'; senderId: string; to: string; body: string }
+  | { operation: 'extensionTool'; name: string; input: JSONValue }
 
 /** @internal */
 export type TypescriptWorkerMessage =
@@ -217,7 +220,8 @@ class TypescriptConnection {
     private readonly _child: ChildProcess,
     private readonly _config: CliConfigStore,
     private readonly _messaging: AgentMessaging,
-    private readonly _endpointId: string
+    private readonly _endpointId: string,
+    private readonly _extension: AgentExtensionHost | undefined
   ) {
     let current = connections.get(_config)
     if (!current) connections.set(_config, (current = new Set()))
@@ -241,7 +245,8 @@ class TypescriptConnection {
     init: TypescriptInit,
     config: CliConfigStore,
     messaging: AgentMessaging,
-    signal?: AbortSignal
+    signal: AbortSignal | undefined,
+    extension: AgentExtensionHost | undefined
   ): Promise<{ connection: TypescriptConnection; messages: Message[] }> {
     signal?.throwIfAborted()
     config.applyProviderEnvironment()
@@ -255,7 +260,7 @@ class TypescriptConnection {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       detached: process.platform !== 'win32',
     })
-    const connection = new TypescriptConnection(child, config, messaging, init.peerEndpointId)
+    const connection = new TypescriptConnection(child, config, messaging, init.peerEndpointId, extension)
     const cancel = (): void => connection.fail(new Error('TypeScript agent loading cancelled.'))
     signal?.addEventListener('abort', cancel, { once: true })
     let timeout: NodeJS.Timeout | undefined
@@ -383,6 +388,10 @@ class TypescriptConnection {
       await TypescriptBackend.syncConfiguration(this._config)
       return { snapshot: this._config.snapshot(), environment: this._config.providerEnvironment() }
     }
+    if (call.operation === 'extensionTool') {
+      if (!this._extension) throw new Error(`This agent has no host tool named ${call.name}.`)
+      return this._extension.call(call.name, call.input)
+    }
     const sender = call.senderId === this._endpointId ? this._endpointId : this._peers.get(call.senderId)?.id
     if (!sender) throw new Error('This agent is not registered for peer messaging.')
     if (call.operation === 'listPeers') return this._messaging.list(sender)
@@ -495,7 +504,8 @@ export class TypescriptBackend implements ChatBackend {
     private _connection: TypescriptConnection,
     options: Omit<TypescriptInit, 'config'>,
     private readonly _config: CliConfigStore,
-    private readonly _messaging: AgentMessaging
+    private readonly _messaging: AgentMessaging,
+    private readonly _extension: AgentExtensionHost | undefined
   ) {
     this._options = { ...options }
     delete this._options.seed
@@ -537,18 +547,21 @@ export class TypescriptBackend implements ChatBackend {
   }
 
   static async open(
-    init: Omit<TypescriptInit, 'config'>,
+    init: Omit<TypescriptInit, 'config' | 'extension'>,
     config: CliConfigStore,
     messaging: AgentMessaging,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    extension?: AgentExtensionHost
   ): Promise<{ backend: TypescriptBackend; messages: Message[] }> {
+    const options = { ...init, ...(extension ? { extension: extension.extension } : {}) }
     const { connection, messages } = await TypescriptConnection.open(
-      { ...init, config: { snapshot: config.snapshot(), environment: config.providerEnvironment() } },
+      { ...options, config: { snapshot: config.snapshot(), environment: config.providerEnvironment() } },
       config,
       messaging,
-      signal
+      signal,
+      extension
     )
-    return { backend: new TypescriptBackend(connection, init, config, messaging), messages }
+    return { backend: new TypescriptBackend(connection, options, config, messaging, extension), messages }
   }
 
   static async syncConfiguration(config: CliConfigStore): Promise<void> {
@@ -674,7 +687,8 @@ export class TypescriptBackend implements ChatBackend {
       { ...options, config: { snapshot: this._config.snapshot(), environment: this._config.providerEnvironment() } },
       this._config,
       this._messaging,
-      signal
+      signal,
+      this._extension
     )
     if (this._disposal) {
       await connection.dispose()

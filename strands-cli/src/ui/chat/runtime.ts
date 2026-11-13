@@ -1,7 +1,13 @@
 import { resolve } from 'node:path'
+import { containsPath } from '../../paths.js'
 import { type HarnessAgentConfig } from '@strands-agents/harness'
 
-import { configurationFromStore, createBuiltinToolsRuntime, type RequestSetup } from '../../agent/configuration.js'
+import {
+  configurationFromStore,
+  createBuiltinToolsRuntime,
+  type RequestSetup,
+  type WorkspaceAction,
+} from '../../agent/configuration.js'
 import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
@@ -25,9 +31,14 @@ import { resolveSkillPaths } from '../../agent/skills.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
 import { errorMessage } from '../../terminal/text.js'
 import { PythonVoiceSession } from '../../agent/voice.js'
-import { importAgentProject } from '../../project/import.js'
+import { importAgentProject, type ImportedAgentProject } from '../../project/import.js'
 import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
+import type { AgentExtensionHost } from '../../agent/extension.js'
+import { devChatExtension } from '../../dev/chat-extension.js'
+import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/agent-context.js'
+import { temporaryDevChatPart, temporaryDevCommands } from '../../dev/temporary-evals-fork/command.js'
+import { readDevWorkspace, type DevWorkspace } from '../../dev/workspace.js'
 import {
   createInteractiveRuntime,
   type CreateInteractiveRuntimeOptions,
@@ -56,6 +67,18 @@ async function restoreSessionNames(
   return { ...names, agentName: conversation.agentName }
 }
 
+const devExtension = (
+  workspace: DevWorkspace | undefined,
+  project: ImportedAgentProject,
+  agent: () => TemporaryAgentFacts
+): AgentExtensionHost | undefined =>
+  workspace ? devChatExtension(workspace, project, [temporaryDevChatPart(workspace, project, agent)]) : undefined
+
+const nestedWorkspace = (project: ImportedAgentProject, workspace: DevWorkspace | undefined): string[] =>
+  workspace?.directory && workspace.directory !== project.root && containsPath(project.root, workspace.directory)
+    ? [workspace.directory]
+    : []
+
 export async function createTypescriptChat(
   path: string,
   config: CliConfigStore,
@@ -66,8 +89,13 @@ export async function createTypescriptChat(
   conversationId = conversations?.activeId
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
+  const devWorkspace = options.args.dev?.workspace ? await readDevWorkspace(options.args.dev.workspace) : undefined
+  let devAgent = (): TemporaryAgentFacts => ({})
+  const extension = devExtension(devWorkspace, project, () => devAgent())
   const messaging = new AgentMessaging()
-  const catalog = await SessionRootCatalog.load().catch(() => undefined)
+  const catalog = await SessionRootCatalog.load(
+    options.args.dev?.workspace ? resolve(options.args.dev.workspace, '.strands/state/catalog') : undefined
+  ).catch(() => undefined)
   let nextEndpoint = 1
   for (const entry of conversations?.entries ?? []) {
     nextEndpoint = Math.max(nextEndpoint, Number(entry.id.slice('agent-'.length)) + 1)
@@ -83,8 +111,10 @@ export async function createTypescriptChat(
       { ...initialOptions, project, peerEndpointId },
       config,
       messaging,
-      signal
+      signal,
+      extension
     )
+    devAgent = (): TemporaryAgentFacts => backend.info?.() ?? {}
     try {
       signal.throwIfAborted()
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
@@ -99,6 +129,16 @@ export async function createTypescriptChat(
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
+          ...(devWorkspace
+            ? {
+                devWorkspace: {
+                  root: devWorkspace.directory ?? devWorkspace.root,
+                  entrypoint: project.entrypoint,
+                  boundEntrypoint: devWorkspace.entrypoint,
+                  origin: devWorkspace.config.origin.kind,
+                },
+              }
+            : {}),
           cwd: backend.cwd,
           session: sessionName ?? backend.sessionId ?? (backend.state.managedSession ? 'managed' : 'in-memory'),
           ...(sessionName ? { sessionName } : {}),
@@ -119,6 +159,12 @@ export async function createTypescriptChat(
           await backend.syncConfiguration()
         },
         requestSetup,
+        ...(devWorkspace
+          ? {
+              workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
+              devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
+            }
+          : {}),
         awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
         project,
         exportAgentProject: (language, destination, output): Promise<string | undefined> =>
@@ -126,7 +172,9 @@ export async function createTypescriptChat(
             project,
             backend.name,
             language,
-            backend.privatePaths === null ? null : [backend.sessionDirectory, ...backend.privatePaths],
+            backend.privatePaths === null
+              ? null
+              : [backend.sessionDirectory, ...backend.privatePaths, ...nestedWorkspace(project, devWorkspace)],
             destination,
             output
           ),
@@ -251,11 +299,14 @@ export async function createTypescriptChat(
           ? null
           : entries.flatMap(({ controller }) => {
               const backend = controller.backend as TypescriptBackend
-              return [backend.sessionDirectory, ...(backend.privatePaths ?? [])].map((path) =>
-                resolve(backend.cwd, path)
-              )
+              return [
+                backend.sessionDirectory,
+                ...(backend.privatePaths ?? []),
+                ...nestedWorkspace(project, devWorkspace),
+              ].map((path) => resolve(backend.cwd, path))
             }),
-        reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
+        reloadProject: (conversationId, paths): void =>
+          requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
       }
     )
   } catch (error) {
@@ -275,7 +326,11 @@ export async function createPythonChat(
   conversationId = conversations?.activeId
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
+  const devWorkspace = options.devWorkspace ? await readDevWorkspace(options.devWorkspace) : undefined
+  let devAgent = (): TemporaryAgentFacts => ({})
+  const extension = devExtension(devWorkspace, project, () => devAgent())
   const createController = async (backend: PythonBackend, conversation?: ChatConversation): Promise<ChatController> => {
+    devAgent = (): TemporaryAgentFacts => backend.info?.() ?? {}
     const snapshot = config.snapshot()
     const sessions = new FileSessionRuntime(backend, backend.sessionDirectory, {
       workspace: backend.cwd,
@@ -286,6 +341,16 @@ export async function createPythonChat(
       runtime: {
         cwd: backend.cwd,
         version: HARNESS_VERSION,
+        ...(devWorkspace
+          ? {
+              devWorkspace: {
+                root: devWorkspace.directory ?? devWorkspace.root,
+                entrypoint: project.entrypoint,
+                boundEntrypoint: devWorkspace.entrypoint,
+                origin: devWorkspace.config.origin.kind,
+              },
+            }
+          : {}),
         session: sessionName ?? backend.sessionId ?? 'managed',
         ...(sessionName ? { sessionName } : {}),
         ...(agentName ? { agent: agentName } : {}),
@@ -301,10 +366,24 @@ export async function createPythonChat(
       skillNames: backend.skills.map((skill) => skill.name),
       setSettings: (settings) => config.setSettings(settings),
       requestSetup,
+      ...(devWorkspace
+        ? {
+            workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
+            devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
+          }
+        : {}),
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),
       project,
       exportAgentProject: (language, destination, output): Promise<string | undefined> => {
-        return exportSourceProject(project, backend.name, language, backend.privatePaths, destination, output)
+        const privatePaths = backend.privatePaths
+        return exportSourceProject(
+          project,
+          backend.name,
+          language,
+          privatePaths === null ? null : [...privatePaths, ...nestedWorkspace(project, devWorkspace)],
+          destination,
+          output
+        )
       },
       configurationSource: () => configurationSource(config.snapshot().profile, project),
     })
@@ -313,7 +392,7 @@ export async function createPythonChat(
     initialOptions: PythonOptions,
     conversation?: ChatConversation
   ): Promise<ChatController> => {
-    const backend = await PythonBackend.open(project, config, initialOptions, signal)
+    const backend = await PythonBackend.open(project, config, initialOptions, signal, extension)
     try {
       if (conversation) await backend.restoreConversation(conversation)
       return await createController(backend, conversation)
@@ -382,8 +461,10 @@ export async function createPythonChat(
           }),
         voice: new PythonVoiceSession({ cwd: options.cwd ?? process.cwd() }),
         project,
-        projectPrivatePaths: privatePaths,
-        reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
+        projectPrivatePaths:
+          privatePaths === null ? null : [...privatePaths, ...nestedWorkspace(project, devWorkspace)],
+        reloadProject: (conversationId, paths): void =>
+          requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
       }
     )
   } catch (error) {
@@ -679,8 +760,8 @@ export async function createInteractiveChat(
                       (agentPrivatePaths(runtime.agent) ?? []).map((path) => resolve(initialWorkspace, path))
                     ),
                   ],
-              reloadProject: (conversationId: string): void =>
-                options.requestSetup?.({ agentProject: project.entrypoint, conversationId }),
+              reloadProject: (conversationId: string, paths: readonly string[]): void =>
+                options.requestSetup?.({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
             }
           : {}),
       }

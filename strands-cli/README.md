@@ -76,6 +76,244 @@ lets you choose a provider and model, then launch. Customize lets you select too
 other capabilities individually or together, and edit the agent instructions, data paths, and approval
 controls. The CLI detects standard credential sources but never writes API keys to its config.
 
+## Local harness development
+
+`strands dev` runs a harness from a local workspace. It does not change the default agent for plain `strands`.
+
+```bash
+strands dev
+strands dev --search-root ../other-projects
+strands dev init --create cli --workspace ./strands-dev
+strands dev --workspace ./strands-dev
+strands dev --agent ./my-project/agent.py
+strands dev init --create python --workspace ./new-agent
+```
+
+The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
+The selector separates CLI Default, Local Projects, and New Project choices. Source details appear below the selected choice.
+Base CLI shows its source path and explains that only a later manual import applies changes globally.
+Discovery omits the current CLI source and the base workspace already represented by that choice. Distinct projects with matching names remain separate.
+Creation errors stay in the picker so you can retry without restarting the CLI.
+Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
+It skips dependency folders, build output, private state, and copied harness libraries.
+It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example the copies in `strands-dev/tmp/`.
+
+When the launch directory has no workspace, select an existing harness in the picker.
+When the suggested folder already holds the workspace of that harness, dev opens it. Dev does not ask for a folder.
+
+When that folder does not hold the workspace of the harness, the picker asks for a folder under **Create a workspace**.
+The folder field starts with the folder that contains the harness file. Dev creates `strands-dev/` in that folder.
+For example, `~/agents/support/agent.py` gives the field `~/agents/support` and the workspace `~/agents/support/strands-dev/`.
+The rule is the same when the file is in a source folder: `~/repo/src/agent.ts` gives `~/repo/src/strands-dev/`.
+
+When that `strands-dev/` holds the workspace of a different agent, a note under the field names that agent.
+Then Enter asks you to type DELETE before dev replaces that workspace. Dev never makes a numbered folder such as `strands-dev-2/`.
+
+For the Base CLI, the suggested workspace is `~/.strands/strands-dev/`, in the folder of the CLI config.
+When that folder does not contain the Base CLI workspace, the field starts with `~/.strands`.
+This rule also applies when the Base CLI has a saved project.
+That folder holds the Base CLI workspace only when dev made it from the current project or config of the CLI.
+
+You can edit the path before you continue.
+When the path that you type ends in `strands-dev` or `strands-dev-N`, the note names that folder.
+A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
+
+When you go back from a failed setup, dev deletes the folders that the failed setup made. The other choices keep their usual folders.
+If the failed setup used a folder that was there before, dev keeps that folder. The next selection suggests the same folder.
+
+Before dev replaces a workspace, it moves the old folder to a hidden backup. Dev deletes the backup when the chat starts.
+If you go back, cancel, or quit before the chat starts, dev puts the old folder back.
+
+**Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
+The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
+When `strands-workspace/` holds the same new harness, dev opens it.
+When it holds a different harness, dev asks you to type DELETE before it replaces that project.
+If the model module of the saved profile is in the other language, the new harness uses the `model` of the profile. The form shows a note.
+
+Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
+Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N`, or when the path is already a workspace.
+For example, `--workspace ~/my-agents` gives the workspace `~/my-agents/strands-dev/`.
+With `--workspace`, the folder field of each choice starts in that folder. Then a new harness goes into `agent/` inside the workspace.
+
+The workspace folder must be new or empty, or it must hold a workspace.
+Dev opens the workspace of the selected agent. For the workspace of another agent, dev asks you to type DELETE first.
+A workspace named `strands-dev` reopens from its parent folder or from inside it.
+To reopen a workspace with a different name, run `strands dev` inside it, or give its folder to `--workspace`.
+
+`--agent` and `--create` do not show the picker. `--agent` uses `strands-dev/` in the folder that contains the agent file, or the ZIP.
+`--create typescript` and `--create python` create `strands-workspace/` in the launch directory. `--create cli` uses `~/.strands/strands-dev/`.
+With `--workspace`, the two flags use that folder.
+
+When that folder holds the workspace of another agent, the two flags stop with an error that names the folder and the agent. They do not replace it.
+
+Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
+An existing workspace reopens with its recorded initial copy instead of creating another one. `--agent` selects another entrypoint for one launch without changing the manifest.
+Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
+`strands dev init` prepares the workspace and exits without a model request.
+
+New agents use the same project exporter and dependency installer as exported agents.
+A new agent from the picker is in `strands-workspace/` in the launch directory, and its workspace is inside that project.
+With `--workspace`, or for a Base CLI that has only a saved profile, the new project is in `agent/` inside the workspace.
+Selecting an existing agent records its project path without copying or regenerating its source.
+Base CLI uses the saved source project when one exists. Otherwise, dev installs a persistent project from the saved profile.
+Local model modules and static imports are packaged without changing the saved profile. Credentials remain external.
+
+### Prepare and validate the selected project
+
+Discovery identifies source files without executing them. Labels show `Needs setup`, `Manual setup`, or `Check setup`; discovery does not prove that an agent runs.
+After selection, dev prepares the project automatically. There is no preparation confirmation screen.
+Selecting a project permits its declared install and build commands to run. These commands can execute project code.
+Successful preparation is cached locally. Unchanged dependencies and build inputs reuse the existing environment and outputs.
+Source changes can trigger a build without reinstalling dependencies. Missing environments, changed manifests, or changed setup files invalidate the relevant cache.
+Dev still loads the selected entrypoint on every launch, so cached setup does not hide import errors.
+
+| Project                                   | Automatic preparation                                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone npm project                    | `npm ci` with a lockfile, otherwise `npm install` without saving or creating a lockfile. Then the declared `build` script.      |
+| Python with `requirements.txt`            | Install requirements into the project `.venv`.                                                                                  |
+| Installable Python `pyproject.toml`       | Install the local package in editable mode, including its declared dependencies. This also runs when `requirements.txt` exists. |
+| Python with `uv.lock`                     | `uv sync --locked --inexact`, using the project environment without rewriting the lockfile.                                     |
+| Other package managers or Node workspaces | Show manual setup guidance, then validate the prepared environment.                                                             |
+
+A `pyproject.toml` that contains only tool settings is not treated as an installable package.
+For packages such as `src/refund_desk`, the local package must be installed, not only `strands-harness`.
+Dev never guesses a registry package name from a missing import.
+Python 3.10 or newer is required. `PYTHON` can select the interpreter used to create a new environment.
+Installation stays in the project environment. Destination overrides cannot redirect npm or pip into global locations.
+
+After preparation, the CLI loads the entrypoint in the same runtime used by chat. Validation makes no model request.
+Dependencies and resources loaded only during a later tool call can still fail at runtime.
+The initial candidate copy uses the same declared preparation path. After a failure, validation-only mode skips dependency installation.
+
+### When setup fails
+
+The TUI stays open and shows the failed stage, relevant error, suggested next action, and private log path.
+Enter or `r` retries. `v` validates after manual setup. `d` shows details. `b` returns to selection.
+Retry re-reads the project manifests and forces setup when repair is needed. Dev does not reset source or silently rewrite lockfiles.
+Logs live under the selected project's `.strands/state/setup/`. Known credential values and authenticated URL credentials are redacted.
+
+`f` opens the Strands CLI in a new terminal tab to fix the project. The first message has the error, the project folder, and how dev loads agents.
+In a dev chat, a failed turn opens the **Agent turn failed** panel. That panel and the **Agent reload failed** panel have the same key.
+The new tab uses the built-in agent, not a saved default agent.
+
+In tmux, dev opens a new tmux window. On macOS, dev opens an iTerm2 tab, a Ghostty tab (Ghostty 1.3 or later), or a Terminal window.
+In other terminals, dev copies a command and shows it. Run that command in a new tab.
+
+If a runtime or package manager is unsupported, prepare the project with its own tooling and then validate it in dev.
+If an import is missing, check the selected root and declared dependencies. For Python src-layout projects, check package metadata and editable installation.
+
+### Workspace binding
+
+`.config` is a JSON file. It identifies the persistent project and its entrypoint. `tmp/` is a sibling directory, not part of `.config`.
+
+A new harness from the picker has this layout:
+
+```text
+strands-workspace/
+  agent.ts
+  package.json
+  strands-dev/
+    .config
+    tmp/
+      <candidate-id>/
+        baseline/
+        agent/
+        candidate.json
+        reports/
+      initial.json
+```
+
+With `--workspace`, dev puts the new project in `agent/` inside the workspace:
+
+```text
+strands-dev/
+  .config
+  agent/
+    package.json
+    agent/agent.ts
+  tmp/
+```
+
+For Python, the project contains `agent.py` and its dependency files instead.
+In `strands-workspace/`, an `agent/` folder holds packaged tools, skills, and policies. Dev makes this folder only when the saved profile has such files.
+The top-level `agent/` in a workspace exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
+When the workspace is inside the project, dev keeps the workspace out of candidate copies, `/export`, and the source watcher.
+
+```json
+{
+  "version": 1,
+  "name": "My harness",
+  "agent": {
+    "path": "agent",
+    "entrypoint": "agent/agent.ts",
+    "language": "typescript"
+  },
+  "origin": {
+    "kind": "created"
+  }
+}
+```
+
+In `strands-workspace/strands-dev/.config`, `agent.path` is `..`.
+
+`agent.path` resolves relative to `.config`, or can be absolute. `agent.entrypoint` resolves inside that project.
+`origin.kind` is `cli`, `discovered`, or `created`. Optional source metadata records where the binding came from.
+A binding cannot point into its own `tmp/`. Dev never changes the global CLI default during creation or startup.
+
+The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
+Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
+Reload waits for active work to finish. A failed replacement keeps the previous agent and conversation active without showing a success message.
+Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding and initial copy without moving or rewriting their source.
+For the old `strands-dev/base-cli/` layout, select Base CLI and type the folder that contains `strands-dev/`.
+Dev then creates the control files in `strands-dev/` and binds the existing agent.
+
+### Workspace Settings
+
+In a dev session, `/settings` includes **Strands dev workspace**. This section shows the workspace folder and active agent path.
+
+- **Edit workspace configuration** opens `.config` in your configured editor. Binding changes apply on the next launch.
+- **Import a different agent** opens the startup agent selector. The selector scans the same folders and hides the current agent.
+
+In the selector, you can select the Base CLI, a local project, or **Create a new harness** for a new TypeScript or Python project.
+When the current workspace is the Base CLI workspace, the selector does not show the Base CLI.
+The selection uses the same workspace folders as startup. The current workspace stays in its folder.
+
+When the selected agent already has its workspace, dev opens that workspace. Otherwise, dev asks for a folder under **Create a workspace**.
+When that folder holds the workspace of another agent, dev asks you to type DELETE first.
+Dev does not replace the open workspace. To replace it, restart strands dev and select the agent there.
+
+A new chat starts in the selected workspace. If the new chat cannot start, dev returns to the previous workspace and chat.
+Press Esc in the selector to keep the current chat. These actions do not change the default agent for plain `strands`.
+
+### Temporary candidate infrastructure
+
+Candidate creation exports the current bound source into a baseline, then installs an independent agent project from that baseline.
+Each candidate has its own dependency environment and reports directory. Credentials, prior sessions, and memory are excluded from the copied project.
+`candidate.json` records the original agent and baseline fingerprint. The stale-baseline check rejects candidates when the main source changes.
+Creating or editing candidates never switches the dev chat away from the bound agent.
+
+### Experiments, tests, and optimization
+
+Inside a `strands dev` chat:
+
+- `/experiment` creates and reviews sets of test cases. **Create a new experiment** starts a conversation about what to test, rather than running generation immediately.
+- `/test` selects saved experiments, runs the agent on their cases, and shows results and reports.
+- `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
+
+You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-tests`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. Reading cases or past results does not start a new run. Tests support one or several experiments; optimization returns proposed edits for explicit acceptance, and can be stopped or its pending proposals discarded on request.
+
+Generation, testing, and optimization call models and can incur charges. Review and approve the proposed run before it starts.
+Running jobs show progress below the chat input. Experiments, drafts, reports, and optimization records live under the workspace's `tmp/` folder.
+
+The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
+
+**Temporary dependency:** the evaluation workflow installs `strands-agents-evals[optimization]` from the pinned
+[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/6c5dd0bd4af93adfdbc02a6f7698e5981572ac2d)
+in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
+
+Global import remains deferred. A future manual import can select the persistent agent as the default for plain `strands`.
+The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
+
 ## Using it
 
 Run from the repository root with:
@@ -166,7 +404,7 @@ Run `strands --help` for the parser's current list.
 | `--prompt <text>`             | All             | Initial request; equivalent to the positional request                                                                                   |
 | `--acp-server`                | ACP server      | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`                                                    |
 | `--setup`                     | Ink             | Open the provider and default-agent setup wizard                                                                                        |
-| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`                                                                             |
+| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`, or `""` for the built-in agent                                             |
 | `--env-file <path>`           | All             | Load an explicitly trusted env file; repeat for several files, later files win                                                          |
 | `--set <field=value>`         | Harness backend | Override any portable config field; repeatable and JSON-aware                                                                           |
 | `--name <name>`               | Harness backend | Override the agent name for this invocation                                                                                             |
@@ -474,6 +712,9 @@ Select a control or tool for its full text, drag to copy, and press Esc to retur
 Tool names and descriptions come from the active backend; unreported tools or origins are
 marked as unknown rather than inferred from defaults. Command support follows the connection's
 capabilities, including Python and ACP backends.
+
+Press Ctrl+Y to copy the full text of an error message. This works in the chat error panel
+and on the startup, setup, and update screens.
 
 An available Agent Skill can also be invoked directly with `/skill-name [prompt]` or
 `$skill-name [prompt]`. The CLI activates it through the SDK's `skills` tool, then runs the trailing

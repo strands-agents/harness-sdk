@@ -3,9 +3,9 @@ import { render, useInput, type Instance } from 'ink'
 
 import { ChatRoot, type ChatLaunch, type SetupBridge, type McpTrustRequest } from './app.js'
 import type { ChatControllerApi } from './chat/controller.js'
-import type { ChatConversations } from '../agent/types.js'
+import type { ChatConversations, ChatConfigurationProject } from '../agent/types.js'
 import type { CliConfigStore } from '../config/store.js'
-import { configurationFromStore, type RequestSetup } from '../agent/configuration.js'
+import { configurationFromStore, type RequestSetup, type WorkspaceAction } from '../agent/configuration.js'
 import { hardExitProcessTree } from '../terminal/process-tree.js'
 import { openAgentProject } from '../terminal/open-editor.js'
 import {
@@ -19,8 +19,27 @@ import {
 import { observeTerminalColorMode } from '../terminal/theme-detection.js'
 import { sessionResumeCommand } from '../session/sessions.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
+import { devFailure } from '../dev/errors.js'
+
+const STARTUP_STATUS_DELAY_MS = 300
+
+export interface StartupScreen {
+  signal: AbortSignal
+  show(content: ReactElement | undefined, status?: string): void
+  openProject?(project: ChatConfigurationProject): Promise<void>
+}
+
+export interface WorkspaceChange {
+  apply(): Promise<void>
+  rollback(): Promise<void>
+  finish(): Promise<void>
+}
 
 interface RunInkChatOptions {
+  exitAfterInitialization?: boolean
+  onWorkspaceAction?: (action: WorkspaceAction, screen: StartupScreen) => Promise<WorkspaceChange | undefined>
+  prepare?: (screen: StartupScreen) => Promise<boolean>
+  recoverStartup?: (error: unknown, screen: StartupScreen) => Promise<'retry' | 'back' | 'exit'>
   firstRequest?: string
   input?: NodeJS.ReadStream
   output?: NodeJS.WriteStream
@@ -123,6 +142,9 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let replacementTask: Promise<void> | undefined
   let launchOptions: ChatLaunch | undefined
   let trustRequest: McpTrustRequest | undefined
+  let startupContent: ReactElement | undefined
+  let startupStatus: string | undefined
+  let startupStatusReveal: ReturnType<typeof setTimeout> | undefined
   const setupBridge: SetupBridge = {
     request: (): void => {},
     confirmMcp: (workspace, paths): Promise<boolean> =>
@@ -145,11 +167,101 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         resolveSetup = resolve
       })
     : Promise.resolve<0 | 130>(0)
+  const changeWorkspace = async (action: WorkspaceAction): Promise<void> => {
+    const previous = controller
+    if (!previous || !options.onWorkspaceAction) return
+    let disposed = false
+    let change: WorkspaceChange | undefined
+    let conversations: ChatConversations | undefined
+    let pendingController: ChatControllerApi | undefined
+    const resumeVoice = previous.pauseVoiceInput?.()
+    controller = undefined
+    stopWatchingTitle()
+    renderChat()
+    try {
+      change = await options.onWorkspaceAction(action, {
+        signal: startupAbort.signal,
+        show: (content, status): void => {
+          startupContent = content
+          startupStatus = status
+          renderChat()
+        },
+        openProject: async (project): Promise<void> => {
+          leaveTerminalMode()
+          restoreTerminalModes(output)
+          const wasRaw = input.isRaw
+          try {
+            if (input.isTTY) input.setRawMode(false)
+            await openAgentProject(project)
+          } finally {
+            if (input.isTTY && wasRaw) input.setRawMode(true)
+            if (!cleanedUp && alternateScreen) leaveTerminalMode = enterAlternateScreen(output)
+          }
+        },
+      })
+      if (!change || startupAbort.signal.aborted) {
+        if (change) await change.rollback()
+        controller = previous
+        return
+      }
+      conversations = await previous.captureConversations?.()
+      await previous.dispose()
+      disposed = true
+      controller = undefined
+      await change.apply()
+      const replacement = await initializeController()
+      pendingController = replacement
+      startupAbort.signal.throwIfAborted()
+      controller = replacement
+      try {
+        await change.finish()
+      } catch (error) {
+        replacement.showError?.('Workspace backup retained', error instanceof Error ? error.message : String(error))
+      }
+      startTasks.push(replacement.start())
+      pendingController = undefined
+    } catch (error) {
+      if (pendingController) await pendingController.dispose()
+      let message = error instanceof Error ? error.message : String(error)
+      if (change && disposed) {
+        try {
+          await change.rollback()
+          if (!startupAbort.signal.aborted) {
+            controller = await initializeController(undefined, conversations)
+            startTasks.push(controller.start())
+          }
+        } catch (restoreError) {
+          message += `\nRestore failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`
+        }
+      } else {
+        controller = previous
+      }
+      controller?.showError?.('Workspace unchanged', message)
+      if (!controller && !startupAbort.signal.aborted) {
+        inkOutputs.stderr.write(`error: ${message}\n`)
+        closeForExit(1)
+      }
+    } finally {
+      startupContent = undefined
+      startupStatus = undefined
+      replacementTask = undefined
+      if (!disposed) resumeVoice?.()
+      if (controller && !cleanedUp) {
+        watchTerminalTitle(controller)
+        renderChat()
+      }
+    }
+  }
   const completeSetup = (exitCode: 0 | 130, changed: boolean, launch?: ChatLaunch): void => {
+    if (launch && 'workspaceAction' in launch) {
+      if (options.onWorkspaceAction && !replacementTask) replacementTask = changeWorkspace(launch.workspaceAction)
+      return
+    }
     if (changed && !controller) launchOptions = launch
     resolveSetup(exitCode)
     if (exitCode === 0 && changed && controller && controllerFactory && instance && !replacementTask) {
       const previousController = controller
+      previousController.clearReloadStatus?.()
       const resumeVoiceInput = previousController.pauseVoiceInput?.()
       controller = undefined
       reloading = reloadingController(previousController, closeForExit)
@@ -157,6 +269,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       replacementTask = (async (): Promise<void> => {
         const conversations = await previousController.captureConversations?.()
         const replacement = await initializeController(launch, conversations)
+        if (launch?.reloadedFiles && conversations) replacement.markReloaded?.(launch.reloadedFiles)
         await Promise.allSettled([previousController.dispose()])
         if (pendingExitCode !== undefined) {
           replacement.close(pendingExitCode)
@@ -172,9 +285,15 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
           } catch (recordingError) {
             message += `\nCould not save the setup failure: ${recordingError instanceof Error ? recordingError.message : String(recordingError)}`
           }
-          inkOutputs.stderr.write(`error: Failed to apply setup: ${sanitizeTerminalText(message)}\n`)
+          const { devWorkspace: workspace, cwd } = previousController.getSnapshot().runtime
+          if (workspace) {
+            const failure = devFailure(error, { operation: 'reload', path: workspace.entrypoint })
+            previousController.showError?.('Agent reload failed', failure.message, { fixDirectory: cwd })
+          } else {
+            inkOutputs.stderr.write(`error: Failed to apply setup: ${sanitizeTerminalText(message)}\n`)
+            previousController.showError?.('Setup failed', message)
+          }
           controller = previousController
-          previousController.showError?.('Setup failed', message)
           if (pendingExitCode !== undefined) {
             await previousController.dispose()
           }
@@ -241,6 +360,14 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const startupExitTask = new Promise<number>((resolve) => {
     resolveStartupExit = resolve
   })
+  const discardInputBeforeFirstFrame = (chunk: Buffer | string): void => {
+    if (chunk.toString().includes('\u0003')) closeForExit(130)
+  }
+  const stopDiscardingInput = (): void => {
+    if (!terminalTheme.input.listeners('data').includes(discardInputBeforeFirstFrame)) return
+    terminalTheme.input.off('data', discardInputBeforeFirstFrame)
+    terminalTheme.input.pause()
+  }
   const closeForExit = (exitCode: number): void => {
     pendingExitCode ??= exitCode
     if (!startupAbort.signal.aborted) {
@@ -258,6 +385,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       setup: options.setup === true,
       ...(options.config ? { config: options.config } : {}),
       ...(trustRequest ? { trustRequest } : {}),
+      ...(startupContent ? { startupContent } : {}),
+      ...(startupStatus ? { startupStatus } : {}),
       setupBridge,
       onSetupComplete: completeSetup,
       ...(options.checkForUpdate ? { checkForUpdate: options.checkForUpdate } : {}),
@@ -319,6 +448,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     process.off('SIGHUP', onSighup)
     process.off('exit', onProcessExit)
     process.off('uncaughtExceptionMonitor', onProcessExit)
+    clearTimeout(startupStatusReveal)
+    stopDiscardingInput()
     for (const restore of [
       (): void => instance?.unmount(),
       (): void => instance?.cleanup(),
@@ -357,14 +488,59 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       controller = source
       watchTerminalTitle(controller)
     }
-    if (controller || controllerFactory || options.setup) renderChat()
+    if (!options.prepare && (controller || controllerFactory || options.setup)) renderChat()
+    if (options.prepare) terminalTheme.input.on('data', discardInputBeforeFirstFrame)
+    const showStartup = (): void => {
+      clearTimeout(startupStatusReveal)
+      startupStatusReveal = undefined
+      if (!instance) stopDiscardingInput()
+      renderChat()
+    }
+    const screen: StartupScreen = {
+      signal: startupAbort.signal,
+      show: (content, status): void => {
+        if (startupAbort.signal.aborted) return
+        startupContent = content
+        startupStatus = status
+        if (instance || content) return showStartup()
+        if (status) startupStatusReveal ??= setTimeout(showStartup, STARTUP_STATUS_DELAY_MS)
+      },
+    }
+    const prepareStartup = async (): Promise<boolean> => {
+      if (!options.prepare) return true
+      const prepared = await Promise.race([
+        options.prepare(screen).then((ready) => ({ ready })),
+        startupExitTask.then((exitCode) => ({ exitCode })),
+      ])
+      return !('exitCode' in prepared) && prepared.ready
+    }
+    if (options.prepare) {
+      if (!(await prepareStartup())) return pendingExitCode ?? 0
+      startupContent = undefined
+      startupStatus = undefined
+      showStartup()
+    }
     const setupExit = await Promise.race([setupTask, startupExitTask])
     if (setupExit !== 0 || exitAfterSetup) {
       instance?.unmount()
       return setupExit
     }
     if (controllerFactory) {
-      const controllerTask = initializeController(launchOptions)
+      const initializeWithRecovery = async (): Promise<ChatControllerApi | undefined> => {
+        let initialized: ChatControllerApi | undefined
+        while (!initialized) {
+          try {
+            initialized = await initializeController(launchOptions)
+          } catch (error) {
+            if (!options.recoverStartup || startupAbort.signal.aborted) throw error
+            const action = await options.recoverStartup(error, screen)
+            if (action === 'exit') return undefined
+            if (action === 'back' && !(await prepareStartup())) return undefined
+          }
+        }
+        return initialized
+      }
+      const controllerTask = initializeWithRecovery()
       const startupResult = await Promise.race([
         controllerTask.then((initializedController) => ({ controller: initializedController })),
         startupExitTask.then((exitCode) => ({ exitCode })),
@@ -372,14 +548,17 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       if ('exitCode' in startupResult) {
         void controllerTask.then(
           async (lateController) => {
-            lateController.close(startupResult.exitCode)
-            await lateController.dispose()
+            lateController?.close(startupResult.exitCode)
+            await lateController?.dispose()
           },
           () => {}
         )
         return hardExit(startupResult.exitCode)
       }
       controller = startupResult.controller
+      if (!controller) return pendingExitCode ?? 0
+      startupContent = undefined
+      startupStatus = undefined
       if (pendingExitCode !== undefined) {
         controller.close(pendingExitCode)
         return pendingExitCode
@@ -390,6 +569,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     if (!controller) {
       throw new Error('Controller initialization did not return a controller.')
     }
+    if (options.exitAfterInitialization) return 0
     startTasks.push(controller.start(options.firstRequest))
     await instance!.waitUntilExit()
     return pendingExitCode ?? controller?.getSnapshot().exitCode ?? 0

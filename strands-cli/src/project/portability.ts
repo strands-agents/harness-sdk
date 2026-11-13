@@ -345,7 +345,7 @@ export function portableConfig(
     return `./agent/${destination}`
   }
   const reference = (value: HarnessModuleReference): HarnessModuleReference => {
-    const referenceLanguage = value.language ?? inferredLanguage(value.module)
+    const referenceLanguage = moduleLanguage(value)
     if (referenceLanguage && referenceLanguage !== language) {
       throw new Error(
         `Cannot export ${referenceLanguage} ${value.kind} module ${JSON.stringify(value.module)} as ${language}.`
@@ -472,6 +472,9 @@ function mcpServerMap(value: Record<string, unknown>): Record<string, unknown> {
   }
   return nested
 }
+
+export const moduleLanguage = (reference: HarnessModuleReference): AgentProjectLanguage | undefined =>
+  reference.language ?? inferredLanguage(reference.module)
 
 function inferredLanguage(module: string): AgentProjectLanguage | undefined {
   if (/\.[cm]?[jt]sx?$/iu.test(module)) {

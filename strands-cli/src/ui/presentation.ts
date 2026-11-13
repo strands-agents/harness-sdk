@@ -308,7 +308,12 @@ export function metadataPlacements(
   const pathMinimumStart = modelText ? stringWidth(modelText) + separatorWidth : 0
   const pathMaximumEnd = Math.max(0, available - settingsWidth - separatorWidth)
   const pathText = truncateText(
-    sanitizeTerminalText(snapshot.runtime.cwd),
+    sanitizeTerminalText(
+      snapshot.runtime.devWorkspace
+        ? (snapshot.runtime.reloadStatus ??
+            `dev · ${snapshot.runtime.agent} · ${snapshot.runtime.sourceWatching ? 'watching files' : 'watch off'}`)
+        : snapshot.runtime.cwd
+    ),
     Math.max(0, pathMaximumEnd - pathMinimumStart),
     true
   )

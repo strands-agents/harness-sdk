@@ -7,6 +7,7 @@ import { useTerminalSize } from './terminal-size.js'
 import { hyperlinkEscapes, setTerminalMouseMotion } from '../terminal/terminal.js'
 import { elementAtMouse, registerElement } from './interaction.js'
 import { Text, useTheme } from './theme.js'
+import { useCopyableError } from './clipboard.js'
 
 const CLI_PACKAGE_URL = 'https://www.npmjs.com/package/@strands-agents/cli'
 const UPDATE_CHOICES = [
@@ -40,6 +41,7 @@ export function UpdatePrompt({
   const [selection, setSelection] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const errorCopyHint = useCopyableError(error)
   const choiceElements = useRef(new Map<number, DOMElement>())
   const pressedChoice = useRef<number | undefined>(undefined)
   const width = Math.max(1, requestedWidth ?? terminal.columns)
@@ -172,6 +174,11 @@ export function UpdatePrompt({
               <Text color={error ? palette.error : palette.muted} wrap="truncate-end">
                 {error ?? UPDATE_CHOICES[selection]!.description}
               </Text>
+              {errorCopyHint ? (
+                <Box flexShrink={0}>
+                  <Text dimColor> · {errorCopyHint}</Text>
+                </Box>
+              ) : null}
             </Box>
           ) : null}
         </Box>

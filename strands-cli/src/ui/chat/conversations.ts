@@ -3,6 +3,8 @@ import { makePanel } from './panel-state.js'
 import {
   ChatController,
   type ChatControllerApi,
+  type ChatNotice,
+  type ChatErrorOptions,
   type NewChatPanel,
   type ChatPanel,
   type ChatPanelRow,
@@ -43,7 +45,7 @@ interface ConversationManagerOptions {
   voice?: VoiceInput
   project?: ImportedAgentProject
   projectPrivatePaths?: readonly string[] | null
-  reloadProject?(conversationId: string): void
+  reloadProject?(conversationId: string, paths: readonly string[]): void
 }
 
 export class ConversationManager implements ChatControllerApi {
@@ -66,6 +68,8 @@ export class ConversationManager implements ChatControllerApi {
   private _nextPanel = 1
   private _opening: 'fork' | 'resume' | undefined
   private _projectReloadPending = false
+  private readonly _changedPaths = new Set<string>()
+  private _sourceWatching = false
   private _closed = false
   private _disposed = false
 
@@ -109,18 +113,25 @@ export class ConversationManager implements ChatControllerApi {
     }
     this._snapshot = this._buildSnapshot()
     const project = options.project
+    this._sourceWatching = Boolean(project && options.reloadProject && options.projectPrivatePaths !== null)
     this._stopProjectWatch =
       project && options.reloadProject && options.projectPrivatePaths !== null
         ? watchAgentProject(
             project,
-            () => {
+            (paths = []) => {
+              this.clearReloadStatus()
+              for (const path of paths) this._changedPaths.add(path)
               for (const { controller } of this._conversations.values()) {
                 controller.refreshConfiguration()
               }
               this._projectReloadPending = true
               this._reloadProjectIfReady()
             },
-            (error) => this._openError('live reload unavailable', project.root, errorMessage(error)),
+            (error) => {
+              this._sourceWatching = false
+              this.clearReloadStatus()
+              this._openError('live reload unavailable', project.root, errorMessage(error))
+            },
             options.projectPrivatePaths
           )
         : undefined
@@ -138,6 +149,7 @@ export class ConversationManager implements ChatControllerApi {
       }
       this._emit()
     })
+    this._snapshot = this._buildSnapshot()
     this._voice.connect(() => {
       if (this._panel?.kind === 'voice') {
         const id = this._panel.id
@@ -181,8 +193,20 @@ export class ConversationManager implements ChatControllerApi {
     return this._voice.pauseInput()
   }
 
-  showError(title: string, message: string): void {
-    this._openError(title, '', message)
+  clearReloadStatus(): void {
+    for (const { controller } of this._conversations.values()) controller.clearReloadStatus()
+  }
+
+  markReloaded(paths: readonly string[]): void {
+    this._active.controller.markReloaded(paths)
+  }
+
+  showError(title: string, message: string, options: ChatErrorOptions = {}): void {
+    this._openError(title, '', message, options.fixDirectory)
+  }
+
+  notify(status: ChatNotice['status'], text: string): void {
+    this._active.controller.notify(status, text)
   }
 
   get busy(): boolean {
@@ -399,6 +423,16 @@ export class ConversationManager implements ChatControllerApi {
     if (this._taskOwnerId && !this.dismissPanel()) return
     this._panel = undefined
     this._active.controller.openContextPanel()
+  }
+
+  openDevCommand(name: string): boolean {
+    if (this._snapshot.panel?.kind === 'permission') return false
+    if (this._taskOwnerId && !this.dismissPanel()) return false
+    const previous = this._panel
+    this._panel = undefined
+    if (this._active.controller.openDevCommand(name)) return true
+    this._panel = previous
+    return false
   }
 
   openTask(taskId: string, ownerId = this._activeId): boolean {
@@ -654,7 +688,9 @@ export class ConversationManager implements ChatControllerApi {
       return
     }
     this._projectReloadPending = false
-    this._reloadProject(this._activeId)
+    const paths = [...this._changedPaths]
+    this._changedPaths.clear()
+    this._reloadProject(this._activeId, paths)
   }
 
   private _switchConversation(id: string): boolean {
@@ -726,11 +762,12 @@ export class ConversationManager implements ChatControllerApi {
     }
   }
 
-  private _openError(title: string, label: string, description: string): void {
+  private _openError(title: string, label: string, description: string, fixDirectory?: string): void {
     this._panel = this._makePanel({
       kind: 'error',
       title,
       rows: [{ label, description, tone: 'danger' }],
+      ...(fixDirectory ? { fixDirectory } : {}),
     })
     this._emit()
   }
@@ -770,6 +807,7 @@ export class ConversationManager implements ChatControllerApi {
       ...(this._voice.snapshot ? { voice: { ...this._voice.snapshot } } : {}),
       runtime: {
         ...active.runtime,
+        ...(active.runtime.devWorkspace ? { sourceWatching: this._sourceWatching } : {}),
         configuration: [
           ...(active.runtime.configuration ?? []),
           { label: 'agent', value: `${this._active.controller.name} (${this._conversations.size} total)` },

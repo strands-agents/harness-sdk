@@ -27,18 +27,20 @@ from strands.models import Model
 from strands.session import FileSessionManager, S3SessionManager, SnapshotSessionManager
 from strands.storage import InMemoryStorage, LocalFileStorage, S3Storage
 from strands.storage import storage as storage_types
+from strands.tools import PythonAgentTool
 from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 from strands.vended_plugins.context_offloader import ContextOffloader
 from strands.vended_plugins.context_offloader import storage as offloader_storage
-from strands.vended_plugins.skills import AgentSkills
+from strands.vended_plugins.skills import AgentSkills, Skill
 from strands_harness import define_harness_agent_config, harness_agent_kwargs_from_config
 from strands_harness.defaults import DEFAULT_MODEL
 
 channel = os.fdopen(3, "w", buffering=1)
 commands = os.fdopen(4, encoding="utf-8")
 pending_permissions = {}
+pending_tools = {}
 COMPACT_PRESERVE_RECENT_MESSAGES = 2
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
@@ -158,6 +160,33 @@ async def authorize_tool(event):
     approved = await permission(request)
     if not approved:
         event.cancel_tool = "DENIED: Tool call denied by the user"
+
+
+def host_tool(spec):
+    async def call(tool_use, **_):
+        request_id = str(uuid4())
+        future = asyncio.get_running_loop().create_future()
+        pending_tools[request_id] = future
+        try:
+            send({"type": "tool", "id": request_id, "name": spec["name"], "input": tool_use.get("input", {})})
+            ok, text = await future
+        finally:
+            pending_tools.pop(request_id, None)
+        return {"toolUseId": tool_use["toolUseId"], "status": "success" if ok else "error", "content": [{"text": text}]}
+
+    return PythonAgentTool(
+        spec["name"],
+        {"name": spec["name"], "description": spec["description"], "inputSchema": {"json": spec["inputSchema"]}},
+        call,
+    )
+
+
+def replace_instructions(agent, instructions):
+    if not instructions:
+        return
+    heading = instructions.split("\n", 1)[0]
+    kept = [block for block in agent.system_prompt_content or [] if not block.get("text", "").startswith(heading)]
+    agent.system_prompt = [*kept, {"text": instructions}]
 
 
 async def permission(request):
@@ -378,6 +407,11 @@ class Runtime:
         if flags.get("sessionId") is not None and (session is True or isinstance(session, dict)):
             self.options["session"] = {**(session if isinstance(session, dict) else {}), "id": flags["sessionId"]}
         self.explicit_option_keys = set(self.options)
+        if command.get("devWorkspace"):
+            isolated = isolate_dev_options({**authored, **self.options}, Path(command["devWorkspace"]).resolve())
+            for key in ("session", "memory"):
+                self.options[key] = isolated.get(key, False)
+                self.explicit_option_keys.add(key)
         model = self.options.get("model", authored.get("model"))
         if model is None and hasattr(module, "_strands_options"):
             model = DEFAULT_MODEL
@@ -431,6 +465,7 @@ class Runtime:
         self.interactive = command.get("interactive", False)
         self.mcp_servers = command.get("mcpServers", {})
         self.skill_paths = command.get("skillPaths", []) if self.options.get("skills", authored.get("skills", True)) else []
+        self.extension = command.get("extension") or {}
         self.cancel_signal = threading.Event()
         self.reload_requested = False
         self.context_estimates = None
@@ -506,7 +541,28 @@ class Runtime:
                 )
             else:
                 agent._plugin_registry.add_and_init(AgentSkills(skills=self.skill_paths))
+        await self.extend(agent)
         self.attach_context_capture(agent)
+
+    async def extend(self, agent):
+        registered = {spec["name"] for spec in agent.tool_registry.get_all_tool_specs()}
+        tools = [host_tool(spec) for spec in self.extension.get("tools", []) if spec["name"] not in registered]
+        if tools:
+            agent.tool_registry.process_tools(tools)
+        added = [Skill(**skill) for skill in self.extension.get("skills", [])]
+        if added:
+            skills = next(
+                (plugin for plugin in agent._plugin_registry._plugins.values() if isinstance(plugin, AgentSkills)),
+                None,
+            )
+            if skills:
+                names = {skill.name for skill in added}
+                current = [skill for skill in skills.get_available_skills(agent) if skill.name not in names]
+                skills.set_available_skills([*current, *added])
+                await skills.init_agent(agent)
+            else:
+                agent._plugin_registry.add_and_init(AgentSkills(skills=added))
+        replace_instructions(agent, self.extension.get("instructions", ""))
 
     def attach_context_capture(self, agent):
         # Python exposes effective model requests only through the optional middleware registry.
@@ -979,7 +1035,42 @@ def direct_harness_assignment(entrypoint):
     )
 
 
-def load_project(entrypoint, root):
+def isolate_dev_options(options, root):
+    if any(options.get(key) is not None for key in ("session_manager", "memory_manager", "storage")):
+        raise ValueError("Dev cannot isolate custom session, memory, or storage managers.")
+    result = dict(options)
+    for key, directory in (("session", "sessions"), ("memory", "memory")):
+        configured = options.get(key, True)
+        if configured is False:
+            continue
+        if configured is not True and not isinstance(configured, dict):
+            raise ValueError(f"Dev cannot isolate a custom {key} manager.")
+        if isinstance(configured, dict) and configured.get("stores"):
+            raise ValueError("Dev cannot isolate custom memory stores.")
+        result[key] = {
+            **(configured if isinstance(configured, dict) else {}),
+            "dir": str(root / ".strands" / "state" / directory),
+        }
+    return result
+
+
+def installed_project_module(entrypoint, root):
+    parts = list(entrypoint.relative_to(root).with_suffix("").parts)
+    for index in range(1, len(parts) - 1):
+        name = parts[index]
+        if not name.isidentifier():
+            continue
+        spec = importlib.machinery.PathFinder.find_spec(name)
+        if spec is None:
+            continue
+        expected = root.joinpath(*parts[: index + 1]).resolve()
+        locations = spec.submodule_search_locations or []
+        if any(Path(location).resolve() == expected for location in locations):
+            return ".".join(parts[index:])
+    return None
+
+
+def load_project(entrypoint, root, dev_root=None):
     sys.meta_path.insert(0, ProjectImports(root))
     sys.path[:0] = [str(root), str(entrypoint.parent)]
     relative = entrypoint.relative_to(root)
@@ -989,10 +1080,13 @@ def load_project(entrypoint, root):
     packaged = bool(module_parts) and all(
         (root.joinpath(*module_parts[:index], "__init__.py")).is_file() for index in range(1, len(module_parts))
     )
+    installed_name = installed_project_module(entrypoint, root) if not packaged else None
     captured = []
     original_create_harness = strands_harness.create_harness
 
     def capture_create_harness(*args, **options):
+        if dev_root is not None:
+            options = isolate_dev_options(options, dev_root)
         agent = original_create_harness(*args, **options)
         if captured is not None:
             captured.append((agent, args, options))
@@ -1000,8 +1094,8 @@ def load_project(entrypoint, root):
 
     strands_harness.create_harness = capture_create_harness
     try:
-        if packaged:
-            module = importlib.import_module(".".join(module_parts))
+        if packaged or installed_name:
+            module = importlib.import_module(installed_name or ".".join(module_parts))
         else:
             spec = importlib.util.spec_from_file_location(f"harness_project_agent_{uuid4().hex}", entrypoint)
             if spec is None or spec.loader is None:
@@ -1030,8 +1124,9 @@ def load_project(entrypoint, root):
 
 
 async def main():
-    module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
     command = json.loads(await asyncio.to_thread(commands.readline))
+    dev_root = Path(command["devWorkspace"]).resolve() if command.get("devWorkspace") else None
+    module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), dev_root)
     runtime = Runtime(module, command)
     await runtime.build(runtime.options, resume=command.get("resume", False))
     send({"type": "ready", "state": runtime.state()})
@@ -1044,6 +1139,10 @@ async def main():
                 future = pending_permissions.get(command["requestId"])
                 if future and not future.done():
                     future.set_result(command["approved"])
+            elif kind == "toolResult":
+                future = pending_tools.get(command["id"])
+                if future and not future.done():
+                    future.set_result((command["ok"], command["text"]))
             elif kind in ("cancel", "close"):
                 runtime.cancel_signal.set()
                 if running:

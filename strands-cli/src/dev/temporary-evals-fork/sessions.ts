@@ -1,0 +1,526 @@
+import { mkdir } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+
+import { errorMessage } from '../../terminal/text.js'
+import type { DevChatJob } from '../../ui/chat/types.js'
+import {
+  type ExperimentRun,
+  type ExperimentSummary,
+  type Knob,
+  type KnobKey,
+  type OptimizePlan,
+  type OptimizeProgress,
+  type OptimizeReview,
+  type OptimizeSession,
+  type OptimizeState,
+  type ProposedEdit,
+  type TestResults,
+  type TestRun,
+  type TestSession,
+  type TestState,
+} from '../panels/model.js'
+import { locateTemporaryEdit } from './apply.js'
+import { temporaryReportsFolder, temporaryRunName, temporaryWorkspaceDirectory } from './evals-process.js'
+import {
+  readTemporaryExperimentFile,
+  temporaryNamedExperiment,
+  writeTemporaryExperimentFile,
+} from './experiment-files.js'
+import { TemporaryExperiments } from './experiments-session.js'
+import { announce, plural, type TemporaryHost, type TemporarySessionHost } from './host.js'
+import { Store, tailTemporaryLines, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
+import { runTemporaryOptimization } from './optimize.js'
+import {
+  TEMPORARY_ITERATION_CHOICES,
+  temporaryCaseSplit,
+  temporaryOptimizeWarning,
+  temporaryRolloutEstimate,
+} from './plan.js'
+import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
+import {
+  readTemporaryStudy,
+  temporaryStudyReader,
+  type TemporaryMeasurement,
+  type TemporaryStudyOutcome,
+} from './study.js'
+import { runTemporaryTest } from './test.js'
+
+export interface TemporaryDevSessions {
+  readonly experiments: TemporaryExperiments
+  readonly test: TemporaryTest
+  readonly optimize: TemporaryOptimize
+}
+
+const DEFAULT_ITERATIONS = 4
+const WIDTH = 4
+const REPETITIONS = 1
+const MILLISECONDS = 1000
+const TUNABLE_KNOBS: readonly KnobKey[] = ['instructions', 'effort']
+
+const KNOBS: readonly Knob[] = [
+  { key: 'instructions', label: 'instructions', detail: "your agent's instructions (system prompt)", enabled: true },
+  {
+    key: 'effort',
+    label: 'effort',
+    detail: 'auto · off · minimal · low · medium · high · xhigh · max',
+    enabled: false,
+  },
+  {
+    key: 'tools',
+    label: 'tool descriptions',
+    detail: '',
+    enabled: false,
+    unavailable: 'strands-evals optimize cannot tune tool descriptions from an agent file yet',
+  },
+]
+
+const MEASURED_ON: Record<TemporaryMeasurement, string> = {
+  search: 'training cases',
+  validation: 'validation cases',
+  test: 'test cases',
+}
+
+export const temporaryTestJobs = ({ runs }: TestState): DevChatJob[] =>
+  runs.flatMap(({ experiment, run }) =>
+    run.status === 'running' ? [{ id: experiment.path, label: experiment.name, done: run.done, total: run.cases }] : []
+  )
+
+export const temporaryOptimizeJobs = (state: OptimizeState): DevChatJob[] =>
+  state.step === 'running'
+    ? [
+        {
+          id: 'optimize',
+          label: state.progress.run,
+          done: state.progress.candidates.length + (state.progress.baseline === undefined ? 0 : 1),
+          total: state.progress.planned,
+        },
+      ]
+    : []
+
+export class TemporaryTest extends Store<TestState> implements TestSession {
+  private readonly runs = new Map<string, ExperimentRun>()
+
+  constructor(
+    private readonly host: TemporaryHost,
+    readonly experiments: TemporaryExperiments
+  ) {
+    super({ runs: [] })
+  }
+
+  show(): Promise<void> {
+    return this.restore()
+  }
+
+  run(experiments: readonly ExperimentSummary[]): void {
+    for (const experiment of experiments) {
+      if (this.isRunning(experiment.path)) continue
+      this.starting(experiment, experiment.caseCount, false)
+      void this.execute(experiment, experiment.path, false)
+    }
+  }
+
+  rerunFailed(path: string): void {
+    const entry = this.runs.get(path)
+    if (entry?.run.status !== 'done') return
+    const failed = entry.run.results.cases.filter((item) => !item.passed).map((item) => item.name)
+    if (failed.length === 0) return
+    this.starting(entry.experiment, failed.length, true)
+    void this.rerun(entry.experiment, failed)
+  }
+
+  private isRunning(path: string): boolean {
+    return this.runs.get(path)?.run.status === 'running'
+  }
+
+  private reportsFolder(): string {
+    return temporaryReportsFolder(temporaryWorkspaceDirectory(this.host().workspace))
+  }
+
+  private async restore(): Promise<void> {
+    const saved = await this.experiments.reload()
+    const folder = this.reportsFolder()
+    await Promise.all(
+      saved.filter(({ path }) => !this.runs.has(path)).map((experiment) => this.restoreRun(folder, experiment))
+    )
+  }
+
+  private async remember(name: string, results: TestResults): Promise<void> {
+    try {
+      await rememberTemporaryTestResults(this.reportsFolder(), name, results)
+    } catch (error) {
+      announce(
+        this.host(),
+        'error',
+        `test · ${name} · /test cannot show this report after a restart: ${errorMessage(error)}`
+      )
+    }
+  }
+
+  private async restoreRun(folder: string, experiment: ExperimentSummary): Promise<void> {
+    let run: TestRun | undefined
+    try {
+      const results = await readTemporaryLatestTestResults(folder, experiment.name)
+      if (results) run = { status: 'done', results }
+    } catch (error) {
+      run = { status: 'failed', message: errorMessage(error) }
+    }
+    if (run && !this.runs.has(experiment.path)) this.update(experiment, run)
+  }
+
+  private update(experiment: ExperimentSummary, run: TestRun): void {
+    this.runs.set(experiment.path, { experiment, run })
+    this.set({ runs: [...this.runs.values()] })
+  }
+
+  private starting(experiment: ExperimentSummary, cases: number, rerun: boolean): void {
+    this.update(experiment, { status: 'running', cases, evaluators: [], done: 0, startedAt: Date.now(), rerun })
+  }
+
+  private async rerun(experiment: ExperimentSummary, names: readonly string[]): Promise<void> {
+    try {
+      const { raw } = await readTemporaryExperimentFile(experiment.path)
+      const folder = this.reportsFolder()
+      const path = join(folder, `${temporaryRunName(experiment.path, new Date())}-failed.json`)
+      await mkdir(folder, { recursive: true })
+      await writeTemporaryExperimentFile(path, temporaryNamedExperiment(raw), names)
+      await this.execute(experiment, path, true)
+    } catch (error) {
+      this.update(experiment, { status: 'failed', message: errorMessage(error) })
+    }
+  }
+
+  private async execute(experiment: ExperimentSummary, cases: string, rerun: boolean): Promise<void> {
+    const startedAt = Date.now()
+    let stopCounting = (): void => undefined
+    try {
+      const { experiment: loaded } = await readTemporaryExperimentFile(cases)
+      const running = {
+        status: 'running' as const,
+        cases: loaded.cases.length,
+        evaluators: loaded.evaluators,
+        done: 0,
+        startedAt,
+        rerun,
+      }
+      this.update(experiment, running)
+      const outcome = await runTemporaryTest(
+        {
+          workspace: this.host().workspace,
+          experiment: cases,
+          background: true,
+          onStart: ({ cases: store }) => {
+            stopCounting = watchTemporaryFileCount(store, (done) => {
+              if (this.isRunning(experiment.path)) this.update(experiment, { ...running, done })
+            })
+          },
+        },
+        this.host().dependencies
+      )
+      stopCounting()
+      const results = await readTemporaryTestResults(outcome.report, {
+        experiment: experiment.name,
+        seconds: (Date.now() - startedAt) / MILLISECONDS,
+      })
+      this.update(experiment, { status: 'done', results })
+      const passed = results.cases.filter((item) => item.passed).length
+      announce(
+        this.host(),
+        'success',
+        `test · ${experiment.name} · ${passed} of ${plural(results.cases.length, 'case')} passed · /test shows the results`
+      )
+      await this.remember(experiment.name, results)
+    } catch (error) {
+      this.update(experiment, { status: 'failed', message: errorMessage(error) })
+      announce(this.host(), 'error', `test · ${experiment.name} stopped · /test shows why`)
+    } finally {
+      stopCounting()
+    }
+  }
+}
+
+export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeSession {
+  private evaluators = 1
+  private abort: AbortController | undefined
+  private stopping = false
+  private readonly writers = new Map<number, (after: string) => Promise<void>>()
+
+  constructor(
+    private readonly host: TemporaryHost,
+    readonly experiments: TemporaryExperiments
+  ) {
+    super({ step: 'pick' })
+  }
+
+  plan(experiment: ExperimentSummary): void {
+    void this.planFor(experiment)
+  }
+
+  show(): void {
+    this.experiments.refresh()
+  }
+
+  toggleKnob(key: KnobKey): void {
+    this.updatePlan((plan) => ({
+      ...plan,
+      knobs: plan.knobs.map((knob) =>
+        knob.key === key && !knob.unavailable ? { ...knob, enabled: !knob.enabled } : knob
+      ),
+    }))
+  }
+
+  setIterations(iterations: number): void {
+    this.updatePlan((plan) =>
+      plan.iterationChoices.includes(iterations) ? this.estimate({ ...plan, iterations }) : plan
+    )
+  }
+
+  start(): void {
+    const state = this.snapshot()
+    if (state.step !== 'setup') return
+    const tune = state.plan.knobs.filter((knob) => knob.enabled && !knob.unavailable).map((knob) => knob.key)
+    if (tune.length > 0) void this.run(state.plan, tune)
+  }
+
+  stop(): void {
+    const state = this.snapshot()
+    if (state.step !== 'running' || !this.abort || this.stopping) return
+    this.stopping = true
+    this.set({ step: 'running', progress: { ...state.progress, stopping: true } })
+    this.abort.abort()
+  }
+
+  accept(index: number, accepted: boolean): void {
+    const state = this.snapshot()
+    if (state.step !== 'review' || !this.writers.has(index)) return
+    this.set({
+      step: 'review',
+      review: {
+        ...state.review,
+        edits: state.review.edits.map((edit, position) => (position === index ? { ...edit, accepted } : edit)),
+      },
+    })
+  }
+
+  apply(): void {
+    void this.applyAccepted()
+  }
+
+  reset(): void {
+    if (this.snapshot().step === 'running') return
+    this.set({ step: 'pick' })
+    this.show()
+  }
+
+  private updatePlan(change: (plan: OptimizePlan) => OptimizePlan): void {
+    const state = this.snapshot()
+    if (state.step === 'setup') this.set({ step: 'setup', plan: change(state.plan) })
+  }
+
+  private estimate(plan: OptimizePlan): OptimizePlan {
+    const { rollouts, judgeCalls } = temporaryRolloutEstimate({
+      split: plan.split,
+      repetitions: plan.repetitions,
+      iterations: plan.iterations,
+      width: plan.width,
+      evaluators: this.evaluators,
+    })
+    return { ...plan, rollouts, judgeCalls }
+  }
+
+  private async planFor(summary: ExperimentSummary): Promise<void> {
+    try {
+      const { experiment } = await readTemporaryExperimentFile(summary.path)
+      const caseCount = experiment.cases.length
+      const split = temporaryCaseSplit(caseCount)
+      const warning = temporaryOptimizeWarning(caseCount)
+      this.evaluators = Math.max(1, experiment.evaluators.length)
+      this.set({
+        step: 'setup',
+        plan: this.estimate({
+          experiment: { ...summary, caseCount },
+          knobs: KNOBS,
+          split,
+          repetitions: REPETITIONS,
+          width: WIDTH,
+          iterations: DEFAULT_ITERATIONS,
+          iterationChoices: TEMPORARY_ITERATION_CHOICES,
+          rollouts: 0,
+          judgeCalls: 0,
+          ...(warning ? { warning } : {}),
+        }),
+      })
+    } catch (error) {
+      this.set({ step: 'failed', message: errorMessage(error) })
+    }
+  }
+
+  private async run(plan: OptimizePlan, tune: readonly KnobKey[]): Promise<void> {
+    const abort = new AbortController()
+    const startedAt = Date.now()
+    this.abort = abort
+    this.stopping = false
+    let record: string | undefined
+    let cancelled = false
+    let reader: ReturnType<typeof temporaryStudyReader> | undefined
+    let tail: TemporaryTail | undefined
+    const progress = (): OptimizeProgress =>
+      reader
+        ? { ...reader.progress(), planned: 1 + plan.iterations * plan.width, stopping: this.stopping }
+        : {
+            run: 'starting',
+            record: '',
+            metric: '',
+            iterations: plan.iterations,
+            planned: 1 + plan.iterations * plan.width,
+            candidates: [],
+            startedAt,
+            stopping: this.stopping,
+          }
+    const show = (): void => this.set({ step: 'running', progress: progress() })
+    this.set({ step: 'running', progress: progress() })
+    try {
+      await runTemporaryOptimization(
+        {
+          workspace: this.host().workspace,
+          experiment: plan.experiment.path,
+          forkArguments: ['--tune', tune.join(','), '--iterations', String(plan.iterations)],
+          background: true,
+          signal: abort.signal,
+          onStart: (path) => {
+            record = path
+            reader = temporaryStudyReader({ run: basename(path), record: path, startedAt })
+            tail = tailTemporaryLines(join(path, 'study.jsonl'), (line) => {
+              reader?.push(line)
+              show()
+            })
+            show()
+          },
+        },
+        this.host().dependencies
+      )
+      await tail?.stop()
+    } catch (error) {
+      await tail?.stop()
+      if (!this.stopping) {
+        this.set({ step: 'failed', message: errorMessage(error), ...(record ? { record } : {}) })
+        announce(this.host(), 'error', `optimize · ${plan.experiment.name} stopped · /optimize shows why`)
+        return
+      }
+      cancelled = true
+    } finally {
+      this.abort = undefined
+    }
+    if (cancelled && !record) return this.reportCancelled(plan)
+    await this.finish(record!, plan, cancelled)
+  }
+
+  private async finish(record: string, plan: OptimizePlan, cancelled: boolean): Promise<void> {
+    try {
+      const review = await this.review(await readTemporaryStudy(record), record)
+      this.set({ step: 'review', review })
+      announce(this.host(), 'success', `optimize · run ${review.run} finished · /optimize opens the review`)
+    } catch (error) {
+      if (cancelled) return this.reportCancelled(plan, record)
+      this.set({ step: 'failed', message: errorMessage(error), record })
+      announce(this.host(), 'error', `optimize · run ${basename(record)} could not be read · /optimize shows why`)
+    }
+  }
+
+  private reportCancelled(plan: OptimizePlan, record?: string): void {
+    this.set({
+      step: 'cancelled',
+      experiment: plan.experiment.name,
+      ...(record ? { run: basename(record) } : {}),
+    })
+    announce(this.host(), 'success', `optimize · ${plan.experiment.name} cancelled · the agent source is unchanged`)
+  }
+
+  private async review(outcome: TemporaryStudyOutcome, record: string): Promise<OptimizeReview> {
+    const { workspace } = this.host()
+    this.writers.clear()
+    const edits: ProposedEdit[] = []
+    for (const knob of TUNABLE_KNOBS) {
+      const before = outcome.baseline.params[knob]
+      const after = outcome.best?.params[knob]
+      if (before === undefined || after === undefined || String(before) === String(after)) continue
+      const located = await locateTemporaryEdit({
+        root: workspace.root,
+        entrypoint: workspace.entrypoint,
+        knob,
+        before: String(before),
+        after: String(after),
+      })
+      const writable = 'write' in located
+      if (writable) this.writers.set(edits.length, located.write)
+      edits.push({
+        knob,
+        label: knob,
+        before: String(before),
+        after: String(after),
+        accepted: writable,
+        ...(writable ? { target: located.target } : { unavailable: located.unavailable }),
+      })
+    }
+    const baseline = outcome.baseline.score ?? 0
+    return {
+      run: basename(record),
+      record,
+      baseline,
+      best: outcome.best?.score ?? baseline,
+      measuredOn: MEASURED_ON[outcome.measuredOn],
+      edits,
+    }
+  }
+
+  private async applyAccepted(): Promise<void> {
+    const state = this.snapshot()
+    if (state.step !== 'review') return
+    const applied: string[] = []
+    let applyError: string | undefined
+    for (const [index, edit] of state.review.edits.entries()) {
+      const write = this.writers.get(index)
+      if (!edit.accepted || !write) continue
+      const target = edit.target ?? edit.label
+      try {
+        await write(edit.after)
+        applied.push(target)
+      } catch (error) {
+        applyError = `Could not change ${target}: ${errorMessage(error)} Change it by hand, then run /test.`
+        break
+      }
+    }
+    this.set({ step: 'review', review: { ...state.review, applied, ...(applyError ? { applyError } : {}) } })
+    const changed = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
+    announce(
+      this.host(),
+      applyError ? 'error' : 'success',
+      applyError ? `optimize · ${changed} · ${applyError}` : `optimize · ${changed} · run /test to check your agent`
+    )
+  }
+}
+
+const registry = new Map<string, { use: (host: TemporarySessionHost) => void; sessions: TemporaryDevSessions }>()
+
+export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSessions => {
+  const key = temporaryWorkspaceDirectory(host.workspace)
+  const existing = registry.get(key)
+  if (existing) {
+    existing.use(host)
+    return existing.sessions
+  }
+  let latest = host
+  const current = (): TemporarySessionHost => latest
+  const experiments = new TemporaryExperiments(current)
+  const sessions = {
+    experiments,
+    test: new TemporaryTest(current, experiments),
+    optimize: new TemporaryOptimize(current, experiments),
+  }
+  registry.set(key, {
+    use: (next) => {
+      latest = { ...latest, ...next }
+    },
+    sessions,
+  })
+  return sessions
+}
