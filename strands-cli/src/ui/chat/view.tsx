@@ -66,7 +66,7 @@ const startupCardLayout = (
 ): { top: number; padding: 0 | 1; contentRows: number } => {
   const logoBottom = paddingTop + lockupHeight
   const paddedFrameRows = STARTUP_CARD_BORDER_ROWS + STARTUP_CARD_PADDING_ROWS
-  const padding = terminalHeight - logoBottom - paddedFrameRows >= STARTUP_CARD_MIN_CONTENT_ROWS ? 1 : 0
+  const padding = terminalHeight - headerHeight - paddedFrameRows >= STARTUP_CARD_MIN_CONTENT_ROWS ? 1 : 0
   const frameRows = padding ? paddedFrameRows : STARTUP_CARD_BORDER_ROWS
   const top = Math.max(logoBottom, Math.min(headerHeight, terminalHeight - frameRows - STARTUP_CARD_MIN_CONTENT_ROWS))
   return { top, padding, contentRows: Math.max(1, terminalHeight - top - frameRows) }

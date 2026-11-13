@@ -3124,6 +3124,31 @@ describe('ChatView', () => {
     }
   })
 
+  const rowsDrawing = (frame: string[], marks: RegExp): [number, string][] =>
+    frame.flatMap((line, row): [number, string][] => (marks.test(line) ? [[row, line]] : []))
+
+  it.each([14, 16, 18, 20, 24, 30, 32, 36])('shouldKeepTheStartupCardBelowEveryLogoRowAt%sRows', (terminalHeight) => {
+    const { chat, card } = logoFrames(terminalHeight)
+    const logoMarks = /[▀▄█▟▙]/
+
+    expect(rowsDrawing(chat, logoMarks).length).toBeGreaterThan(0)
+    expect(rowsDrawing(card, logoMarks)).toEqual(rowsDrawing(chat, logoMarks))
+  })
+
+  it.each([38, 40, 45, 60])('shouldShowTheWholeIntroAboveTheStartupCardAt%sRows', (terminalHeight) => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(100_000)
+      const { chat, card } = logoFrames(terminalHeight, Date.now() - 300)
+      const introMarks = /[∙◆●◇]/
+
+      expect(rowsDrawing(chat, introMarks).length).toBeGreaterThan(0)
+      expect(rowsDrawing(card, introMarks)).toEqual(rowsDrawing(chat, introMarks))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each([32, 35, 36, 40])('shouldKeepTwelveContentRowsBelowTheFullLogoAt%sRows', (terminalHeight) => {
     const { card } = logoFrames(terminalHeight)
 
