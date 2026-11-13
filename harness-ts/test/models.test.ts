@@ -95,7 +95,7 @@ describe('resolveModel', () => {
     expect(bedrockClient(await resolve('bedrock/global.anthropic.claude-opus-5-5')).baseURL).toBe(baseURL)
   })
 
-  it('passes AWS_BEARER_TOKEN_BEDROCK to the AnthropicBedrock client', async () => {
+  it('leaves AWS_BEARER_TOKEN_BEDROCK to the AnthropicBedrock client, which reads it itself', async () => {
     vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'bedrock-api-key')
     expect(bedrockClient(await resolve('bedrock/global.anthropic.claude-opus-5-5')).apiKey).toBe('bedrock-api-key')
   })
