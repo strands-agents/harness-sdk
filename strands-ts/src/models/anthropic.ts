@@ -340,6 +340,7 @@ export interface AnthropicModelOptions extends AnthropicModelConfig {
   /**
    * Pre-built client for any Anthropic Messages API endpoint, such as `Anthropic`, or
    * `AnthropicBedrock` / `AnthropicBedrockMantle` from `@anthropic-ai/bedrock-sdk`.
+   * Cannot be combined with `apiKey` or `clientConfig`.
    */
   client?: AnthropicMessagesClient
   clientConfig?: ClientOptions
@@ -357,6 +358,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   constructor(options?: AnthropicModelOptions) {
     super()
     const { apiKey, client, clientConfig, ...modelConfig } = options || {}
+    if (client && (apiKey !== undefined || Object.keys(clientConfig ?? {}).length > 0)) {
+      throw new Error("'apiKey' and 'clientConfig' cannot be combined with a pre-built 'client'.")
+    }
     this._clientBetas = headerBetas(clientConfig?.defaultHeaders)
 
     this._config = {

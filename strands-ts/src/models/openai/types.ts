@@ -121,12 +121,12 @@ interface OpenAIClientOptions {
 
   /**
    * Pre-configured OpenAI client instance. If provided, this client will be used
-   * instead of creating a new one.
+   * instead of creating a new one. Cannot be combined with `apiKey` or `clientConfig`.
    */
   client?: OpenAI
 
   /**
-   * Additional OpenAI client configuration. Only used if `client` is not provided.
+   * Additional OpenAI client configuration. Cannot be combined with a pre-built `client`.
    */
   clientConfig?: ClientOptions
 

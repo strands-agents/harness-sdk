@@ -128,6 +128,22 @@ describe('AnthropicModel', () => {
       expect(provider).toBeDefined()
     })
 
+    it.each([
+      { name: 'apiKey', options: { apiKey: 'sk-ant-test' } },
+      { name: 'clientConfig', options: { clientConfig: { defaultHeaders: { 'anthropic-beta': 'client-beta' } } } },
+    ])('throws when a provided client is combined with $name', ({ options }) => {
+      const mockClient = {} as Anthropic
+      expect(() => new AnthropicModel({ client: mockClient, ...options })).toThrow(
+        "'apiKey' and 'clientConfig' cannot be combined with a pre-built 'client'."
+      )
+    })
+
+    it('accepts a provided client with an empty clientConfig', () => {
+      const mockClient = {} as Anthropic
+      expect(() => new AnthropicModel({ client: mockClient, clientConfig: {} })).not.toThrow()
+      expect(Anthropic).not.toHaveBeenCalled()
+    })
+
     it('warns when maxTokens is not explicitly set', () => {
       new AnthropicModel({ apiKey: 'sk-ant-test' })
       expect(warnOnce).toHaveBeenCalledWith(
