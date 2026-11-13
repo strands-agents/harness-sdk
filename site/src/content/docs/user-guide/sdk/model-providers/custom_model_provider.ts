@@ -3,9 +3,9 @@
  * These examples demonstrate how to implement a custom model provider.
  */
 
-import { Agent, BedrockModel, type BedrockModelConfig } from '@strands-agents/sdk'
+import { Agent, BedrockModel, Model, type BedrockModelConfig } from '@strands-agents/sdk'
 import type {
-  Model,
+  ModelInfo,
   BaseModelConfig,
   Message,
   ContentBlock,
@@ -250,3 +250,32 @@ async function usageExample() {
   const response = await agent.invoke('Hello, how are you today?')
 }
 // --8<-- [end:usage_example]
+
+class CustomModelInfoExample extends Model<BaseModelConfig> {
+  private _config: BaseModelConfig = { modelId: 'claude-sonnet-4-5' }
+
+  // --8<-- [start:model_info]
+  override get modelInfo(): ModelInfo {
+    const info = super.modelInfo
+    const user = Object.entries(this._config.modelInfo?.capabilities ?? {})
+    return {
+      ...info,
+      capabilities: {
+        ...info.capabilities,
+        serverSideSummary: false,
+        ...Object.fromEntries(user.filter(([, value]) => value !== undefined)),
+      },
+    }
+  }
+  // --8<-- [end:model_info]
+
+  updateConfig(config: BaseModelConfig): void {
+    this._config = { ...this._config, ...config }
+  }
+
+  getConfig(): BaseModelConfig {
+    return this._config
+  }
+
+  async *stream(): AsyncIterable<ModelStreamEvent> {}
+}

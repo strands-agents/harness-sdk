@@ -41,3 +41,16 @@ async function auxModel() {
   agent.auxModel = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
   // --8<-- [end:aux_model]
 }
+
+function modelInfo() {
+  // --8<-- [start:model_info]
+  const model = new BedrockModel({
+    modelId:
+      'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3',
+    modelInfo: {
+      limits: { contextWindow: 200_000, maxOutputTokens: 64_000 },
+      capabilities: { promptCaching: 'cachePoints' },
+    },
+  })
+  // --8<-- [end:model_info]
+}

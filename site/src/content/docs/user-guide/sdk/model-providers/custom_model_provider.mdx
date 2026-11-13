@@ -39,6 +39,7 @@ The base class also provides optional methods you can override:
 
 - `count_tokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimate_utilization()`: Compute the ratio of input tokens to `context_window_limit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
+- `model_info`: Report what your service supports, such as turning off server-side summary. See [Model info](#model-info).
 </Tab>
 <Tab label="TypeScript">
 
@@ -52,6 +53,7 @@ The base class also provides optional methods you can override:
 
 - `countTokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimateUtilization()`: Compute the ratio of input tokens to `contextWindowLimit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
+- `modelInfo`: Report what your service supports, such as turning off server-side summary. See [Model info](#model-info).
 </Tab>
 </Tabs>
 
@@ -70,12 +72,12 @@ Define a `ModelConfig` `TypedDict` to hold the settings for invoking your model.
 # your_org/models/custom_model.py
 import logging
 import os
-from typing import Any, AsyncIterable, Optional, TypedDict
+from typing import Any, AsyncIterable, Optional
 from typing_extensions import Unpack, override
 
 from custom.model import CustomModelClient
 
-from strands.models import Model
+from strands.models import BaseModelConfig, Model
 from strands.types.content import Messages
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolSpec
@@ -86,7 +88,7 @@ logger = logging.getLogger(__name__)
 class CustomModel(Model):
     """Your custom model provider implementation."""
 
-    class ModelConfig(TypedDict):
+    class ModelConfig(BaseModelConfig):
         """
         Configuration your model.
 
@@ -524,3 +526,58 @@ If your model API supports tool calling, format the tool specifications in `stre
 ### Error Handling
 
 Map your API's failures onto the SDK's exceptions so the agent loop can react. Handle context window overflows (raise `ContextWindowOverflowException`), connection errors, authentication failures, rate limits, and malformed responses.
+
+### Model Info
+
+The base `Model` class reports what the SDK knows about your configured model, such as its
+context window, by looking up the model ID in
+[`shared/model-info.json`](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json).
+Python reads the ID from `get_config()["model_id"]`; TypeScript reads the `modelId`
+getter. Store your default model ID in the config so an unconfigured provider still gets
+those facts.
+
+Override <Syntax py="model_info" ts="modelInfo" /> for what your service does differently.
+Put your facts over the base result and the user's
+<Syntax py="model_info" ts="modelInfo" /> config over yours, so their override still
+wins. Most providers need at least this one: turn off
+<Syntax py="server_side_summary" ts="serverSideSummary" /> unless you override
+<Syntax py="summarize" ts="summarize" />, as every built-in provider except Anthropic
+does.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.models import ModelCapabilities, ModelInfo
+
+
+class CustomModel(Model):
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(server_side_summary=False)),
+            self.config.get("model_info"),
+        )
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/custom_model_provider_imports.ts:model_info_imports"
+
+--8<-- "user-guide/sdk/model-providers/custom_model_provider.ts:model_info"
+```
+
+`super.modelInfo` already includes the user's override, so re-apply only the section you
+change, and skip `undefined` values so an unset field doesn't erase yours.
+</Tab>
+</Tabs>
+
+Report <Syntax py="stateful" ts="stateful" /> as `true` only if your service keeps
+conversation state: the agent then sends only the latest message. Don't read
+<Syntax py="self.stateful" ts="this.stateful" /> inside the override, because it reads
+<Syntax py="model_info" ts="modelInfo" />. Limits you report win over the user's
+<Syntax py="context_window_limit" ts="contextWindowLimit" />, so if they don't depend on
+your service, add the model to the shared data instead.
