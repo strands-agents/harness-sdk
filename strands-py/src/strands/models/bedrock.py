@@ -1242,17 +1242,18 @@ class BedrockModel(Model):
             if "format" in document:
                 result["format"] = document["format"]
 
-            # Handle source - supports bytes or location
+            # Handle source - supports location, bytes, or text
             if "source" in document:
                 source = document["source"]
-                formatted_document_source: dict[str, Any] | None
                 if "location" in source:
                     formatted_document_source = self._handle_location(source["location"])
                     if formatted_document_source is None:
                         return None
+                    result["source"] = formatted_document_source
                 elif "bytes" in source:
-                    formatted_document_source = {"bytes": source["bytes"]}
-                result["source"] = formatted_document_source
+                    result["source"] = {"bytes": source["bytes"]}
+                elif "text" in source:
+                    result["source"] = {"text": source["text"]}
 
             # Handle optional fields
             if "citations" in document and document["citations"] is not None:
