@@ -1,0 +1,279 @@
+---
+import arrow from '../../assets/banner/arrow.svg?raw'
+import { BOX_DOWNLOAD_COMMAND, BOX_LINKS } from '../../config/box-landing'
+import { pathWithBase } from '../../util/links'
+import CopyCommand from '../CopyCommand.astro'
+---
+
+<section class="box-hero" aria-labelledby="box-hero-title">
+  <div class="box-hero__dots" aria-hidden="true"></div>
+  <div class="box-hero__inner">
+    <h1 id="box-hero-title">/box</h1>
+    <p class="box-hero__tagline">
+      <span>Run agents.</span>
+      <span class="box-hero__accent">Set the boundary.</span>
+    </p>
+    <p class="box-hero__intro">
+      Isolate agent workloads and control commands, files, network access, and MCP calls with policy.
+    </p>
+    <div class="box-hero__conversion">
+      <div class="box-hero__actions">
+        <a class="box-hero__cta box-hero__cta--primary" href={pathWithBase(BOX_LINKS.quickstart)}>
+          Quickstart
+          <span set:html={arrow} aria-hidden="true"></span>
+        </a>
+        <a
+          class="box-hero__cta box-hero__cta--secondary"
+          href={BOX_LINKS.repository}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GitHub
+          <span set:html={arrow} aria-hidden="true"></span>
+        </a>
+      </div>
+      <div class="box-hero__command">
+        <CopyCommand command={BOX_DOWNLOAD_COMMAND} ariaLabel="Copy the Box download command" surface="box-download" />
+      </div>
+    </div>
+    <p class="box-hero__support">Apple silicon macOS <span aria-hidden="true">·</span> ARM64 Linux</p>
+  </div>
+</section>
+
+<style>
+  .box-hero {
+    --box-accent: var(--project-accent, var(--card-accent-purple));
+    --box-button-fg: var(--strands-white);
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    padding: 18px var(--home-gutter) 0;
+    background:
+      linear-gradient(to bottom, color-mix(in srgb, var(--box-accent) 8%, var(--bg)), var(--bg) 78%),
+      var(--bg);
+    color: var(--fg);
+  }
+
+  :global(:root[data-theme='dark']) .box-hero {
+    --box-button-fg: var(--strands-black);
+  }
+
+  .box-hero__inner {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: clamp(460px, 60vh, 590px);
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: clamp(48px, 5vw, 64px) 0;
+    text-align: center;
+  }
+
+  .box-hero h1 {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(60px, 5.8vw, 84px);
+    font-weight: 700;
+    letter-spacing: -0.075em;
+    line-height: 0.9;
+    color: var(--box-accent);
+  }
+
+  .box-hero__tagline {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0 0.22em;
+    margin: 20px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(34px, 3.6vw, 50px);
+    font-weight: 620;
+    letter-spacing: -0.055em;
+    line-height: 0.96;
+    text-wrap: balance;
+  }
+
+  .box-hero__accent {
+    color: var(--box-accent);
+  }
+
+  .box-hero__intro {
+    max-width: 680px;
+    margin: 20px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(16px, 1.45vw, 19px);
+    line-height: 1.48;
+    color: color-mix(in srgb, var(--fg) 72%, transparent);
+  }
+
+  .box-hero__conversion {
+    display: inline-grid;
+    justify-items: stretch;
+    gap: 14px;
+    min-width: 0;
+    width: min(100%, 760px);
+    margin-top: 26px;
+  }
+
+  .box-hero__actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+    gap: 12px;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .box-hero__command {
+    --accent-green: var(--box-accent);
+    min-width: 0;
+    width: 100%;
+  }
+
+  .box-hero__command :global(.copy-command) {
+    width: 100%;
+  }
+
+  .box-hero__command :global(.copy-command__code) {
+    flex: 1;
+  }
+
+  .box-hero__cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    min-width: 0;
+    min-height: 50px;
+    padding: 12px 22px;
+    border: 1px solid color-mix(in srgb, var(--fg) 32%, transparent);
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--fg);
+    text-decoration: none;
+    transition:
+      transform 0.18s ease,
+      border-color 0.18s ease;
+  }
+
+  .box-hero__cta:hover {
+    transform: translateY(-2px);
+  }
+
+  .box-hero__cta:focus-visible {
+    outline: 2px solid var(--box-accent);
+    outline-offset: 4px;
+  }
+
+  .box-hero__cta--primary {
+    border-color: var(--box-accent);
+    background: var(--box-accent);
+    color: var(--box-button-fg);
+  }
+
+  .box-hero__cta--secondary {
+    background: color-mix(in srgb, var(--bg) 90%, transparent);
+  }
+
+  .box-hero__cta--secondary:hover {
+    border-color: var(--box-accent);
+    color: var(--box-accent);
+  }
+
+  .box-hero__cta span {
+    display: inline-flex;
+    width: 12px;
+    height: 10px;
+  }
+
+  .box-hero__cta span :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .box-hero__support {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin: 14px 0 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 56%, transparent);
+  }
+
+  .box-hero__dots {
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    background: radial-gradient(circle, color-mix(in srgb, var(--box-accent) 45%, transparent) 0 2px, transparent 2.6px)
+      0 0 / 19px 19px;
+    opacity: 0.35;
+    pointer-events: none;
+    mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 60%) 35%, transparent 80%);
+  }
+
+  @media (max-width: 600px) {
+    .box-hero {
+      padding-top: 8px;
+    }
+
+    .box-hero__inner {
+      align-items: stretch;
+      min-height: 0;
+      padding: 56px 0 60px;
+      text-align: left;
+    }
+
+    .box-hero h1 {
+      font-size: clamp(56px, 15vw, 72px);
+    }
+
+    .box-hero__tagline {
+      flex-direction: column;
+      align-items: flex-start;
+      margin-top: 22px;
+      font-size: clamp(34px, 9.5vw, 44px);
+    }
+
+    .box-hero__conversion {
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .box-hero__actions {
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.8fr);
+      gap: 10px;
+    }
+
+    .box-hero__cta {
+      padding-inline: 14px;
+      font-size: 12px;
+    }
+
+    .box-hero__support {
+      justify-content: flex-start;
+    }
+  }
+
+  @media (max-width: 360px) {
+    .box-hero__actions {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .box-hero__cta {
+      transition: none;
+    }
+
+    .box-hero__cta:hover {
+      transform: none;
+    }
+  }
+</style>

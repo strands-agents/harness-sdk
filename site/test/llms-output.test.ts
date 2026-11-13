@@ -82,6 +82,15 @@ describe('llms.txt builder', () => {
 })
 
 describe('llms.txt output', () => {
+  it('includes the Box product landing page in both machine-readable indexes', () => {
+    const llms = readFileSync(new URL('../dist/llms.txt', import.meta.url), 'utf8')
+    const llmsFull = readFileSync(new URL('../dist/llms-full.txt', import.meta.url), 'utf8')
+
+    expect(llms).toContain('/box/index.md')
+    expect(llmsFull).toContain('/box/index.md')
+    expect(llmsFull).toContain('# Strands Box')
+  })
+
   it('keeps external FAQ sources valid in llms-full.txt', () => {
     const llmsFull = readFileSync(new URL('../dist/llms-full.txt', import.meta.url), 'utf8')
 

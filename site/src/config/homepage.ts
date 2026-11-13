@@ -46,7 +46,7 @@ export const homepageCapabilities: HomepageProject[] = [
     description: 'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
     cta: 'Use Strands Box',
     href: box.href,
-    markdownHref: '/docs/user-guide/box/quickstart/index.md',
+    markdownHref: '/box/index.md',
   },
   {
     product: evals,

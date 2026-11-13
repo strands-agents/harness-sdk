@@ -17,9 +17,12 @@ interface Props {
   // Match the page theme when the footer follows a dark standalone section.
   // Docs pages keep the brand-green footer by default.
   themeSurface?: boolean
+  // Product landing pages can use their own accent without changing the
+  // default Strands footer elsewhere.
+  accent?: 'green' | 'purple'
 }
 
-const { topShape = true, showInstall = true, themeSurface = false } = Astro.props
+const { topShape = true, showInstall = true, themeSurface = false, accent = 'green' } = Astro.props
 
 const columns = [
   {
@@ -76,13 +79,13 @@ const columns = [
 
 {
   topShape && (
-    <div class="footer__transition" aria-hidden="true">
+    <div class:list={['footer__transition', { 'footer__transition--purple': accent === 'purple' }]} aria-hidden="true">
       <div class="footer__shape footer__shape--desktop" set:html={shape} />
       <div class="footer__shape footer__shape--mobile" set:html={shapeMobile} />
     </div>
   )
 }
-<footer class:list={['footer', { 'footer--theme': themeSurface }]}>
+<footer class:list={['footer', { 'footer--theme': themeSurface, 'footer--purple': accent === 'purple' }]}>
   <div class="footer__inner">
     {
       showInstall && (
@@ -177,6 +180,10 @@ const columns = [
     fill: var(--surface-green);
   }
 
+  .footer__transition--purple :global([fill='#00CC60']) {
+    fill: var(--surface-purple);
+  }
+
   /* 1px taller than the section so the shape's bottom sub-pixel edge overlaps
      into the footer, hiding the seam between the two green fills. */
   .footer__shape--desktop {
@@ -209,6 +216,11 @@ const columns = [
   .footer--theme {
     --footer-background: var(--bg);
     --footer-foreground: var(--fg);
+  }
+
+  .footer--purple {
+    --footer-background: var(--surface-purple);
+    --footer-foreground: var(--surface-purple-fg);
   }
 
   .footer__inner {

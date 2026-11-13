@@ -69,7 +69,7 @@ export const faqItems: FaqItem[] = [
         ' for a complete agent with tuned defaults, or use the ',
         link('Harness SDK', '/docs/user-guide/sdk/quickstart/overview/'),
         ' to choose and wire the components yourself. Add ',
-        link('Box', '/docs/user-guide/box/quickstart/'),
+        link('Box', '/box/'),
         ', ',
         link('Shell', '/docs/user-guide/shell/'),
         ', ',
@@ -123,7 +123,7 @@ export const faqItems: FaqItem[] = [
       'They are optional projects: Box isolates agent work, Shell mediates command and resource access, Evals measures agent behavior, and Decider handles routing, classification, and scoring.',
     answer: [
       list(
-        [link('Box', '/docs/user-guide/box/quickstart/'), ' runs agent work in OS-isolated sandboxes.'],
+        [link('Box', '/box/'), ' runs agent work in OS-isolated sandboxes.'],
         [link('Shell', '/docs/user-guide/shell/'), ' mediates command, filesystem, network, and credential access.'],
         [link('Evals', '/docs/user-guide/evals-sdk/'), ' measures agent output and behavior across repeatable cases.'],
         [

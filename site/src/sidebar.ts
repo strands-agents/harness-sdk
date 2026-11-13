@@ -59,12 +59,13 @@ export interface ProductLink {
 export interface Product {
   /** Internal key; must match the navbar entry's label so scoping and lookup line up. */
   label: string
-  /** Full product name shown in the hub hero and the sidebar box, e.g. "Strands harness". */
+  /** Full product name shown in docs navigation, e.g. "Strands harness". */
   name: string
   /** Short brand slug used in URLs and the Projects dropdown, e.g. "/shell". */
   slug: string
   /** Homepage card color key (--card-accent-* in fonts.css), e.g. "teal". */
   accent?: string
+  /** Public product landing page. The matching navbar entry owns the docs scope. */
   href: string
   description: string
   /** Source repository URL, e.g. "https://github.com/strands-agents/shell". */

@@ -6,6 +6,11 @@ import { homepageBanner, latestPostBanner } from '../util/announcements';
 import { getPublishedPosts } from '../util/blog';
 import { pathWithBase } from '../util/links';
 
+interface Props {
+  accent?: 'green' | 'purple'
+}
+
+const { accent = 'green' } = Astro.props
 const [announcementEntries, posts] = await Promise.all([
   getCollection('announcements'),
   getPublishedPosts(),
@@ -25,7 +30,11 @@ const fallbackHref = fallback && pathWithBase(fallback.href);
 {
   announcement && (
     <>
-      <aside class="announcement" aria-label="Announcement" data-expires={announcement.expires}>
+      <aside
+        class:list={['announcement', { 'announcement--purple': accent === 'purple' }]}
+        aria-label="Announcement"
+        data-expires={announcement.expires}
+      >
         <a class="announcement__link" href={href} {...(isExternal && {
             target: '_blank',
             rel: 'noopener',
@@ -67,6 +76,11 @@ const fallbackHref = fallback && pathWithBase(fallback.href);
   .announcement {
     background: var(--strands-green);
     color: var(--strands-black);
+  }
+
+  .announcement--purple {
+    background: var(--surface-purple);
+    color: var(--surface-purple-fg);
   }
 
   .announcement__link {

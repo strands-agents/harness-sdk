@@ -1,0 +1,129 @@
+---
+interface Props {
+  command: string
+  ariaLabel?: string
+  surface?: string
+}
+
+const { command, ariaLabel = 'Copy command', surface = 'command' } = Astro.props
+---
+
+<div class="copy-command" data-copy-command={command} data-copy-surface={surface}>
+  <code class="copy-command__code">
+    <span class="copy-command__prompt" aria-hidden="true">$</span>
+    <span>{command}</span>
+  </code>
+  <button type="button" class="copy-command__button" data-copy-command-button aria-label={ariaLabel}>
+    <span data-copy-command-label>copy</span>
+  </button>
+  <span
+    class="copy-command__status"
+    data-copy-command-status
+    aria-live="polite"
+    aria-atomic="true"
+  ></span>
+</div>
+
+<style>
+  .copy-command {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    width: fit-content;
+    max-width: 100%;
+    padding: 8px 8px 8px 16px;
+    border: 1px solid color-mix(in srgb, var(--fg) 34%, transparent);
+    border-radius: 999px;
+    background: var(--toggle-bg);
+    color: var(--fg);
+  }
+
+  .copy-command__code {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(11px, 1.1vw, 14px);
+    line-height: 1.4;
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+
+  .copy-command__code::-webkit-scrollbar {
+    display: none;
+  }
+
+  .copy-command__prompt {
+    flex: none;
+    color: var(--accent-green);
+  }
+
+  .copy-command__button {
+    flex: none;
+    min-height: 38px;
+    padding: 7px 15px;
+    border: 1px solid color-mix(in srgb, var(--fg) 34%, transparent);
+    border-radius: 999px;
+    background: var(--toggle-inactive-bg);
+    color: var(--toggle-inactive-fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .copy-command__button:hover,
+  .copy-command__button:focus-visible {
+    color: var(--fg);
+  }
+
+  .copy-command__button:focus-visible {
+    outline: 2px solid var(--accent-green);
+    outline-offset: 2px;
+  }
+
+  .copy-command__button.is-copied {
+    border-color: var(--accent-green);
+    background: var(--accent-green);
+    color: var(--strands-black);
+  }
+
+  .copy-command__status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 600px) {
+    .copy-command {
+      width: 100%;
+    }
+
+    .copy-command__code {
+      flex: 1;
+    }
+  }
+</style>
+
+<script>
+  import { attachCopyButton } from '../util/clipboard'
+
+  document.querySelectorAll<HTMLElement>('[data-copy-command]').forEach((root) => {
+    const button = root.querySelector<HTMLButtonElement>('[data-copy-command-button]')
+    if (!button) return
+
+    attachCopyButton(button, {
+      label: root.querySelector<HTMLElement>('[data-copy-command-label]'),
+      status: root.querySelector<HTMLElement>('[data-copy-command-status]'),
+      getText: () => root.dataset.copyCommand ?? '',
+      track: { surface: root.dataset.copySurface ?? 'command' },
+    })
+  })
+</script>

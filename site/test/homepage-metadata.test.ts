@@ -14,6 +14,11 @@ describe('homepage machine-readable metadata', () => {
   const homepageHtml = readFileSync(new URL('../dist/index.html', import.meta.url), 'utf8')
   const homepage = parse(homepageHtml)
 
+  it('keeps the default Strands green theme', () => {
+    expect(homepage.querySelector('.strands-nav--purple')).toBeNull()
+    expect(homepage.querySelector('body.project-landing--purple')).toBeNull()
+  })
+
   it('keeps meaningful content near the start of a compact HTML response', () => {
     expect(Buffer.byteLength(homepageHtml)).toBeLessThan(1_000_000)
     expect(homepageHtml.indexOf('<h1')).toBeGreaterThan(-1)
@@ -128,7 +133,7 @@ describe('homepage machine-readable metadata', () => {
         href: item.querySelector('a')?.getAttribute('href'),
       }))
     ).toEqual([
-      { title: '/box', href: configuredPathWithBase('/docs/user-guide/box/') },
+      { title: '/box', href: configuredPathWithBase('/box/') },
       { title: '/evals', href: configuredPathWithBase('/docs/user-guide/evals-sdk/') },
       { title: '/decider', href: configuredPathWithBase('/docs/labs/strands-decider/overview/') },
     ])
@@ -294,6 +299,7 @@ describe('homepage machine-readable metadata', () => {
     expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
     expect(harnessOverview).toBeLessThan(sdkQuickstart)
     expect(markdown).not.toContain('/docs/user-guide/shell/index.md')
+    expect(markdown).toContain('/box/index.md')
     expect(markdown).toContain('/examples/')
     expect(markdown).toContain('/faq/index.md')
     expect(markdown).toContain('https://pypi.org/project/strands-agents/')

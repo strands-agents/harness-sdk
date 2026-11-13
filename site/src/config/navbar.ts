@@ -75,6 +75,15 @@ const rawProducts: Product[] = config.products || []
 export const navLinks: NavLink[] = transformNavLinks(rawNavLinks)
 
 /**
+ * Resolve the docs-scoped navbar entry for a product. Product `href` values
+ * may point to standalone landing pages, while navbar paths continue to own
+ * sidebar scoping for the product's documentation.
+ */
+export function docsHrefForProduct(product: Product): string {
+  return navLinks.find((link) => link.label === product.label)?.href ?? product.href
+}
+
+/**
  * GitHub sections for the header dropdown.
  */
 export const githubSections: GitHubSection[] = rawGithubSections

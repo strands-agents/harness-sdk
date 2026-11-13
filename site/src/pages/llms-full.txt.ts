@@ -12,6 +12,7 @@ import {
   faqCategories,
   faqItems,
 } from '../config/faq'
+import { buildBoxLandingMarkdown } from '../config/box-landing'
 
 export const GET: APIRoute = async () => {
   const allDocs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
@@ -24,6 +25,13 @@ export const GET: APIRoute = async () => {
   lines.push(
     '> Strands Agents is an open-source toolkit for building, running, and improving agents in Python and TypeScript. Strands harness assembles tools, context management, session management, memory, and a system prompt into a complete agent with tuned defaults for pilot through production. The Harness SDK exposes the same agent loop and components for direct control. Box provides OS-isolated sandboxes, Shell mediates command access, Evals measures agent behavior, and Decider routes, classifies, or scores known outcomes with confidence. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP tools, multi-agent patterns, memory and session management, model portability across providers, streaming, guardrails, tracing, or evaluation. Agents run in-process with no hosted control plane and use the model provider you configure, including Amazon Bedrock, Anthropic, OpenAI, Google, Ollama, and others.'
   )
+  lines.push('')
+
+  lines.push(buildBoxLandingMarkdown(siteLink).trim())
+  lines.push('')
+  lines.push(`Source: ${siteLink('/box/index.md')}`)
+  lines.push('')
+  lines.push('---')
   lines.push('')
 
   lines.push(`## ${FAQ_TITLE}`)

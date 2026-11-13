@@ -9,12 +9,17 @@ import wordmark from '../assets/nav/wordmark.svg?raw';
 import NavMenu from './NavMenu.astro';
 import LanguageToggle from './LanguageToggle.astro';
 import { getStarCount } from '../util/github';
-import { products } from '../config/navbar';
+import { docsHrefForProduct, products } from '../config/navbar';
 import { pathWithBase } from '../util/links';
 import { getProductNav, normalizedSidebarToProductNav } from '../util/product-nav';
 import { isSampleGuidePath } from '../util/sample-guides';
 import MobileNavTree from './MobileNavTree.astro';
 
+interface Props {
+  accent?: 'green' | 'purple'
+}
+
+const { accent = 'green' } = Astro.props
 const stars = await getStarCount();
 const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
 const isExamplesPage = isSampleGuidePath(currentPath);
@@ -32,7 +37,7 @@ const docsCategories = [
       href: p.href,
       accent: p.accent,
       pages: p.pages,
-      nav: await getProductNav(p.href, [p.label, p.name]),
+      nav: await getProductNav(docsHrefForProduct(p), [p.label, p.name]),
     })),
   )),
   {
@@ -61,7 +66,7 @@ const learnCategories = [
 
 ---
 
-<nav class="strands-nav" aria-label="Primary">
+<nav class:list={['strands-nav', { 'strands-nav--purple': accent === 'purple' }]} aria-label="Primary">
   <div class="strands-nav__inner">
     <div class="strands-nav__left">
       <a href={pathWithBase('/')} class="strands-nav__logo" aria-label="Strands home">
@@ -283,6 +288,7 @@ const learnCategories = [
 
 <style>
   .strands-nav {
+    --nav-accent: var(--accent-green);
     background: var(--nav-bg);
     color: var(--nav-fg);
     /* Stick to the top as the page scrolls. On docs/blog/changelog the nav
@@ -294,6 +300,12 @@ const learnCategories = [
     z-index: var(--sl-z-index-navbar, 50);
     width: 100%;
     transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  .strands-nav--purple {
+    --nav-accent: var(--card-accent-purple);
+    --toggle-active-bg: var(--card-accent-purple);
+    background: color-mix(in srgb, var(--card-accent-purple) 4%, var(--nav-bg));
   }
 
   /* Only cancel Starlight's header padding when inside its fixed <header>
@@ -421,7 +433,7 @@ const learnCategories = [
     display: block;
     height: 28px;
     width: auto;
-    fill: var(--accent-green);
+    fill: var(--nav-accent);
   }
 
   .strands-nav__links {
@@ -452,14 +464,14 @@ const learnCategories = [
     top: -12px;
     width: calc(100% + 2 * var(--nav-tab-pad));
     bottom: 0; /* item bottom == panel top, so the tab flows into the panel */
-    border: 1px solid var(--accent-green);
+    border: 1px solid var(--nav-accent);
     border-bottom: none;
     z-index: 101; /* above the panel border (z-index 100) for a clean join */
     pointer-events: none;
   }
 
   :global(.strands-nav__item:has(.nav-menu.is-open)) .strands-nav__trigger {
-    color: var(--accent-green);
+    color: var(--nav-accent);
     opacity: 1;
     position: relative;
     z-index: 102;
@@ -812,7 +824,7 @@ const learnCategories = [
     }
 
     .mobile-menu__control-item:hover {
-      color: var(--accent-green);
+      color: var(--nav-accent);
     }
 
     .mobile-menu__control-icon {
@@ -858,7 +870,7 @@ const learnCategories = [
     }
 
     .mobile-menu__section.is-open > .mobile-menu__section-title {
-      color: var(--accent-green);
+      color: var(--nav-accent);
     }
 
     /* Indent categories under their section header (Docs / Learn) so the
@@ -951,7 +963,7 @@ const learnCategories = [
 
     .mobile-menu__cat.is-open .mobile-menu__cat-title,
     .mobile-menu__cat--link[aria-current='page'] .mobile-menu__cat-title {
-      color: var(--accent-green);
+      color: var(--nav-accent);
     }
 
     .mobile-menu__cat-desc {
@@ -1001,7 +1013,7 @@ const learnCategories = [
     z-index: 9999;
     /* Pixel frog art is all currentColor — tint it the brand green, which is
        already theme-aware (darker green on light, brighter on dark). */
-    color: var(--accent-green);
+    color: var(--nav-accent);
     /* A soft shadow lifts the frog off whatever it scrolls over — a per-pixel
        hard outline muddies this thin line art. */
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));

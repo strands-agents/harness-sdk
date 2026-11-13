@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import path from 'node:path'
 import { loadNavbarFromConfig, loadProductsFromConfig } from '../src/sidebar'
 import { PRODUCT_RELEASE_STREAM } from '../src/config/changelog'
+import { docsHrefForProduct, products as renderedProducts } from '../src/config/navbar'
 import {
   changelogHrefForProduct,
   documentationIssueHref,
@@ -62,13 +63,26 @@ describe('product identity wiring', () => {
     }
   })
 
-  it('every product resolves from its own hub href', async () => {
+  it('every product resolves from its docs-scoped navbar path', async () => {
     const { currentProduct } = await import('../src/util/current-product')
     for (const p of products) {
-      const resolved = currentProduct(p.href)
-      expect(resolved?.label, `currentProduct("${p.href}")`).toBe(p.label)
+      const nav = navbar.find((item) => item.label === p.label)
+      const docsPaths = Array.isArray(nav?.basePath) ? nav.basePath : [nav?.basePath ?? nav?.href]
+      for (const docsPath of docsPaths.filter((value): value is string => Boolean(value))) {
+        const resolved = currentProduct(docsPath)
+        expect(resolved?.label, `currentProduct("${docsPath}")`).toBe(p.label)
+      }
     }
     expect(currentProduct('/docs/learning/how-agents-really-work/')).toBeUndefined()
+  })
+
+  it('separates the Box landing page from its docs navigation scope', async () => {
+    const { currentProduct } = await import('../src/util/current-product')
+    const box = renderedProducts.find((product) => product.label === 'Box')
+    expect(box?.href).toBe('/box/')
+    expect(box && docsHrefForProduct(box)).toBe('/docs/user-guide/box/')
+    expect(currentProduct('/box/')).toBeUndefined()
+    expect(currentProduct('/docs/user-guide/box/quickstart/')?.label).toBe('Box')
   })
 })
 

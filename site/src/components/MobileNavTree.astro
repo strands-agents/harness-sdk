@@ -95,7 +95,7 @@ const containsCurrent = (item: ProductNavItem): boolean =>
   }
 
   .mnav__link[aria-current='page'] {
-    color: var(--accent-green);
+    color: var(--nav-accent, var(--accent-green));
     font-weight: 700;
   }
 

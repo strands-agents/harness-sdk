@@ -85,12 +85,15 @@ describe('standalone FAQ page', () => {
     const hrefs = page.querySelectorAll('.faq-item__answer a').map((link) => link.getAttribute('href'))
 
     expect(hrefs).toContain(configuredPathWithBase('/docs/user-guide/harness/'))
+    expect(hrefs).toContain(configuredPathWithBase('/box/'))
     expect(hrefs).toContain(configuredPathWithBase('/docs/user-guide/sdk/safety-security/'))
     expect(hrefs).toContain('https://github.com/strands-labs/robots')
     expect(
       hrefs.every(
         (href) =>
-          href?.startsWith(configuredPathWithBase('/docs/')) || href?.startsWith('https://github.com/strands-labs')
+          href?.startsWith(configuredPathWithBase('/docs/')) ||
+          href === configuredPathWithBase('/box/') ||
+          href?.startsWith('https://github.com/strands-labs')
       )
     ).toBe(true)
   })
@@ -100,6 +103,7 @@ describe('standalone FAQ page', () => {
 
     for (const item of faqItems) expect(markdown).toContain(`### ${item.question}`)
     expect(markdown).toContain(configuredPathWithBase('/docs/user-guide/sdk/model-providers/index.md'))
+    expect(markdown).toContain(configuredPathWithBase('/box/index.md'))
     expect(markdown).toContain('https://github.com/strands-labs/robots')
   })
 })

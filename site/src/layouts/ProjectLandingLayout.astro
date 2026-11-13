@@ -1,0 +1,127 @@
+---
+import Search from '@astrojs/starlight/components/Search.astro'
+import Analytics from '../components/Analytics.astro'
+import AnnouncementBanner from '../components/AnnouncementBanner.astro'
+import Footer from '../components/Footer.astro'
+import Navigation from '../components/Navigation.astro'
+import SiteScripts from '../components/SiteScripts.astro'
+import { pathWithBase } from '../util/links'
+import { serializeJsonLd } from '../util/structured-data'
+import '../styles/fonts.css'
+import '../styles/homepage.css'
+
+interface Props {
+  title: string
+  description: string
+  markdownPath?: string
+  ogImageAlt: string
+  structuredData?: object
+  footerTopShape?: boolean
+  showFooterInstall?: boolean
+  accent?: 'green' | 'purple'
+}
+
+const {
+  title,
+  description,
+  markdownPath,
+  ogImageAlt,
+  structuredData,
+  footerTopShape = true,
+  showFooterInstall = false,
+  accent = 'green',
+} = Astro.props
+
+const base = import.meta.env.BASE_URL || '/'
+const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`
+const canonicalHref = new URL(Astro.url.pathname, Astro.site ?? 'https://strandsagents.com').href
+const markdownHref = markdownPath ? pathWithBase(markdownPath) : undefined
+const ogImageHref = new URL(pathWithBase('/og-image.png'), Astro.site ?? 'https://strandsagents.com').href
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalHref} />
+    {markdownHref && <link rel="alternate" type="text/markdown" href={markdownHref} />}
+    <link rel="icon" type="image/svg+xml" href={faviconHref} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalHref} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImageHref} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={ogImageAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageHref} />
+    {Astro.site?.origin !== 'https://strandsagents.com' && <meta name="robots" content="noindex, nofollow" />}
+    {structuredData && <script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />}
+    <script is:inline>
+      ;(function () {
+        try {
+          var saved = localStorage.getItem('starlight-theme')
+          var theme =
+            saved === 'dark' || saved === 'light'
+              ? saved
+              : matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          document.documentElement.dataset.theme = theme
+        } catch (_) {}
+      })()
+    </script>
+    <SiteScripts />
+    <Analytics />
+  </head>
+  <body class:list={['project-landing', `project-landing--${accent}`]}>
+    <AnnouncementBanner {accent} />
+    <Navigation {accent} />
+    <div class="site-search-host">
+      <Search />
+    </div>
+    <slot />
+    <Footer topShape={footerTopShape} showInstall={showFooterInstall} {accent} />
+  </body>
+</html>
+
+<style is:global>
+  .site-search-host {
+    display: contents;
+  }
+
+  .site-search-host button[data-open-modal] {
+    display: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+
+  body.project-landing--purple {
+    --project-accent: var(--card-accent-purple);
+  }
+</style>

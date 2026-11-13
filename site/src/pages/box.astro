@@ -1,0 +1,33 @@
+---
+import BoxGetRunning from '../components/box/BoxGetRunning.astro'
+import BoxHero from '../components/box/BoxHero.astro'
+import BoxHowItWorks from '../components/box/BoxHowItWorks.astro'
+import { BOX_PAGE_DESCRIPTION, BOX_PAGE_TITLE } from '../config/box-landing'
+import { products } from '../config/navbar'
+import ProjectLandingLayout from '../layouts/ProjectLandingLayout.astro'
+import { baseSchemas, productSchema } from '../util/structured-data'
+
+const box = products.find((product) => product.slug === '/box')
+if (!box) throw new Error('Missing Box navigation configuration')
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': [...baseSchemas(siteUrl), productSchema(box, siteUrl)],
+}
+---
+
+<ProjectLandingLayout
+  title={BOX_PAGE_TITLE}
+  description={BOX_PAGE_DESCRIPTION}
+  markdownPath="/box/index.md"
+  ogImageAlt="Strands Box: Run agents. Set the boundary."
+  {structuredData}
+  accent="purple"
+>
+  <main data-pagefind-body>
+    <BoxHero />
+    <BoxHowItWorks />
+    <BoxGetRunning />
+  </main>
+</ProjectLandingLayout>

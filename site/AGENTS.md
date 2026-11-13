@@ -75,6 +75,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │   ├── CourseNotice.astro    # Course recording and example update notices
 │   │   ├── FaqAnswer.astro       # Shared renderer for structured FAQ answers
 │   │   ├── HomeFaq.astro         # Five-question homepage FAQ preview
+│   │   ├── box/                  # Sections for the standalone Box product landing page
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
 │   │   ├── samples/              # Native Starlight page wrapper for generated sample guides
@@ -102,8 +103,10 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       └── user-guide/
 │   │           └── box           # Symlink to .build/external-docs/strands-box/content
 │   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
-│   ├── layouts/                  # Custom layouts
+│   ├── layouts/                  # Custom layouts, including the shared standalone project shell
 │   ├── pages/                    # Astro pages, including generated /examples routes
+│   │   ├── box.astro             # Standalone Box product landing page
+│   │   ├── box/index.md.ts       # Machine-readable Box landing page
 │   │   ├── faq.astro             # Standalone FAQ page
 │   │   └── faq/index.md.ts       # Machine-readable FAQ endpoint
 │   ├── plugins/                  # Remark/Rehype plugins
