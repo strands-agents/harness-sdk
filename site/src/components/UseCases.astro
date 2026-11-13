@@ -174,16 +174,12 @@ const useCases = [
     description:
       'Drive arms, humanoids, quadrupeds, and drones with natural language. One Robot() call gives an agent a MuJoCo simulation or a real robot — same code, sim or hardware.',
     active: false,
-    filename: { ts: 'robot_agent.py', py: 'robot_agent.py' },
-    ts: [
-      { line: 1, tokens: [str('# strands-robots is Python-first — toggle to Python for the sample.')] },
-      { line: 2, tokens: [t('')] },
-      { line: 3, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
-      { line: 4, tokens: [kw('from'), t(' strands_robots '), kw('import'), t(' Robot')] },
-      { line: 5, tokens: [t('')] },
-      { line: 6, tokens: [t('robot = Robot('), str('"so100"'), t(')')] },
-      { line: 7, tokens: [t('create_harness(tools=[robot])('), str('"pick up the red cube"'), t(')')] },
-    ],
+    // strands-robots has no TypeScript package (see strands-labs/robots) —
+    // this card has no `ts` sample. render() falls back to the Python panel
+    // plus a note when TypeScript is selected, matching the InteractiveToolkit
+    // Python-only pattern used for /evals.
+    pythonOnly: true,
+    filename: { py: 'robot_agent.py' },
     py: [
       { line: 1, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
       { line: 2, tokens: [kw('from'), t(' strands_robots '), kw('import'), t(' Robot')] },
@@ -258,6 +254,9 @@ const useCases = [
         data-filenames={JSON.stringify(
           Object.fromEntries(useCases.map((uc) => [uc.id, uc.filename]))
         )}
+        data-python-only={JSON.stringify(
+          useCases.filter((uc) => uc.pythonOnly).map((uc) => uc.id)
+        )}
       >
         <header class="terminal__header">
           <div class="terminal__dots" aria-hidden="true">
@@ -309,27 +308,31 @@ const useCases = [
           </button>
         </header>
 
-        {/* One TS + one Python panel per use case. Only the active use case's
-            panel for the current language is visible; the rest are `hidden`.
-            The item buttons + language toggle swap visibility via data attrs. */}
+        {/* One TS + one Python panel per use case (TS omitted for a
+            Python-only use case, e.g. "Control robots" — see `pythonOnly`).
+            Only the active use case's panel for the current language is
+            visible; the rest are `hidden`. The item buttons + language
+            toggle swap visibility via data attrs. */}
         {useCases.map((uc) => (
           <Fragment>
-            <pre
-              class="terminal__code terminal__code--ts"
-              data-lang-code="typescript"
-              data-use-case-code={uc.id}
-              hidden={!uc.active}
-              tabindex="0"
-              role="region"
-              aria-label={`${uc.title} — TypeScript code example`}
-            ><code>{uc.ts.map((row) => (
-              <div class="terminal__row">
-                <span class="terminal__lineno">{row.line}</span>
-                <span class="terminal__line">{row.tokens.map((tok) => (
-                  tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                ))}</span>
-              </div>
-            ))}</code></pre>
+            {uc.ts && (
+              <pre
+                class="terminal__code terminal__code--ts"
+                data-lang-code="typescript"
+                data-use-case-code={uc.id}
+                hidden={!uc.active}
+                tabindex="0"
+                role="region"
+                aria-label={`${uc.title} — TypeScript code example`}
+              ><code>{uc.ts.map((row) => (
+                <div class="terminal__row">
+                  <span class="terminal__lineno">{row.line}</span>
+                  <span class="terminal__line">{row.tokens.map((tok) => (
+                    tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
+                  ))}</span>
+                </div>
+              ))}</code></pre>
+            )}
             <pre
               class="terminal__code terminal__code--py"
               data-lang-code="python"
@@ -346,6 +349,13 @@ const useCases = [
                 ))}</span>
               </div>
             ))}</code></pre>
+            {/* Python-only note (e.g. "Control robots"): shown only when
+                TypeScript is selected, since there's no TS panel above. */}
+            {uc.pythonOnly && (
+              <p class="terminal__note" data-use-case-note={uc.id} hidden>
+                strands-robots is Python-only — showing the Python sample.
+              </p>
+            )}
           </Fragment>
         ))}
 
@@ -671,6 +681,17 @@ const useCases = [
     display: none;
   }
 
+  /* Shown in place of the (absent) TypeScript panel for a Python-only use
+     case, e.g. "Control robots". Mirrors .toolkit__card-terminal-note. */
+  .terminal__note {
+    margin: 0;
+    padding: 20px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--strands-grey-600);
+  }
+
   .terminal__row {
     display: flex;
     align-items: baseline;
@@ -818,9 +839,12 @@ const useCases = [
   if (section) {
     const terminal = section.querySelector<HTMLElement>('.terminal');
     const filenameEl = terminal?.querySelector<HTMLElement>('[data-filename]');
-    const filenames: Record<string, { ts: string; py: string }> = JSON.parse(
+    const filenames: Record<string, { ts?: string; py: string }> = JSON.parse(
       terminal?.dataset.filenames || '{}'
     );
+    // Use cases with no TypeScript panel (Python-only, e.g. "Control robots")
+    // fall back to their Python panel + a note when TypeScript is selected.
+    const pythonOnlyIds = new Set<string>(JSON.parse(terminal?.dataset.pythonOnly || '[]'));
 
     const firstItem = section.querySelector<HTMLElement>('.use-cases__item.is-active');
     let currentCase = firstItem?.dataset.useCase || Object.keys(filenames)[0] || '';
@@ -829,19 +853,32 @@ const useCases = [
 
     function render() {
       const langCode = currentLang === 'Python' ? 'python' : 'typescript';
+      const effectiveLangCode =
+        pythonOnlyIds.has(currentCase) && langCode === 'typescript' ? 'python' : langCode;
 
-      // Show only the panel matching the current use case AND language.
+      // Show only the panel matching the current use case AND (effective)
+      // language.
       section!.querySelectorAll<HTMLElement>('.terminal__code').forEach((pre) => {
         const match =
           pre.dataset.useCaseCode === currentCase &&
-          pre.dataset.langCode === langCode;
+          pre.dataset.langCode === effectiveLangCode;
         pre.hidden = !match;
       });
 
-      // Filename follows the use case + language.
+      // Python-only note: visible only for a Python-only use case while
+      // TypeScript is selected (there's no TS panel to show instead).
+      section!.querySelectorAll<HTMLElement>('[data-use-case-note]').forEach((note) => {
+        note.hidden = !(
+          note.dataset.useCaseNote === currentCase &&
+          pythonOnlyIds.has(currentCase) &&
+          langCode === 'typescript'
+        );
+      });
+
+      // Filename follows the use case + effective language.
       if (filenameEl && filenames[currentCase]) {
-        filenameEl.textContent =
-          currentLang === 'Python' ? filenames[currentCase].py : filenames[currentCase].ts;
+        const names = filenames[currentCase];
+        filenameEl.textContent = effectiveLangCode === 'python' ? names.py : names.ts ?? names.py;
       }
 
       // Active use-case item styling + a11y state.
