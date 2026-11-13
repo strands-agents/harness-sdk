@@ -6,7 +6,15 @@ import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createCancellableAgent } from '../../__fixtures__/agent-helpers.js'
 import { AfterNodeCallEvent, BeforeNodeCallEvent, MultiAgentInitializedEvent } from '../events.js'
-import { ReasoningBlock, TextBlock, type ContentBlockData } from '../../types/messages.js'
+import { z } from 'zod'
+import {
+  ReasoningBlock,
+  TextBlock,
+  ToolUseBlock,
+  type ContentBlock,
+  type ContentBlockData,
+} from '../../types/messages.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
 import { Status, MultiAgentState } from '../state.js'
 import { AgentNode, MultiAgentNode } from '../nodes.js'
 import { Graph } from '../graph.js'
@@ -402,6 +410,33 @@ describe('Graph', () => {
       const input = streamSpy.mock.calls[0]![0] as TextBlock[]
       expect(input.map((b) => b.text)).toStrictEqual(['task-input', '[node: a]', 'from-a'])
       expect(input.map((b) => b.type)).toStrictEqual(['textBlock', 'textBlock', 'textBlock'])
+    })
+
+    it('forwards a dependency structured output as a JSON TextBlock, not a toolUse block', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
+        ),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy).toHaveBeenCalled()
+      const forwarded = streamSpy.mock.calls[0]![0]
+      const blocks = (typeof forwarded === 'string' ? [new TextBlock(forwarded)] : forwarded) as ContentBlock[]
+      expect(blocks.some((b) => b.type === 'toolUseBlock')).toBe(false)
+      const texts = blocks.filter((b): b is TextBlock => b.type === 'textBlock').map((b) => b.text)
+      expect(texts).toStrictEqual(['I was double charged', '[node: classifier]', '{"category":"billing"}'])
     })
 
     it('converts ContentBlockData[] input to ContentBlock instances for downstream nodes', async () => {

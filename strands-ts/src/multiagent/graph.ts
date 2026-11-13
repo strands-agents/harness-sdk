@@ -15,6 +15,7 @@ import {
 } from './multiagent.js'
 import type { ContentBlock } from '../types/messages.js'
 import { TextBlock, contentBlockFromData } from '../types/messages.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import type { InterruptResponseContent } from '../types/interrupt.js'
 import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
@@ -784,11 +785,20 @@ export class Graph implements MultiAgent {
     const deps: ContentBlock[] = []
     for (const edge of this.edges.filter((e) => e.target.id === node.id)) {
       const ns = state.node(edge.source.id)!
-      if (ns.content.length > 0) {
-        const content = ns.content.filter((block) => block.type !== 'reasoningBlock')
-        if (content.length > 0) {
-          deps.push(new TextBlock(`[node: ${edge.source.id}]`), ...content)
-        }
+      const content = ns.content.filter(
+        (block) =>
+          block.type !== 'reasoningBlock' &&
+          !(block.type === 'toolUseBlock' && block.name === STRUCTURED_OUTPUT_TOOL_NAME)
+      )
+      // Surface a structured output as a JSON TextBlock so the downstream node's model sees it.
+      // The toolUseBlock that carried it is filtered above because a bare user-message toolUse
+      // is malformed; this mirrors what the Python SDK does via str(result).
+      const lastResult = ns.results[ns.results.length - 1]
+      if (lastResult?.structuredOutput !== undefined) {
+        content.push(new TextBlock(JSON.stringify(lastResult.structuredOutput)))
+      }
+      if (content.length > 0) {
+        deps.push(new TextBlock(`[node: ${edge.source.id}]`), ...content)
       }
     }
 
