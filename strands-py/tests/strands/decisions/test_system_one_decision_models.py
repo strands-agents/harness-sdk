@@ -322,11 +322,14 @@ class TestAsk:
 
     @pytest.mark.asyncio
     async def test_maps_http_413_to_context_window_overflow(self, provider: _ProviderCase):
-        client = _fake_client({"error": "request too large"}, status=413)
+        captured: list[httpx.Request] = []
+        client = _fake_client({"error": "request too large"}, status=413, captured=captured)
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
+        # The body is sent without a client-side size check; only the server's 413 maps it.
         with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large"):
-            await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+            await decision.ask("x" * (64 * 1024), {"q": {"question": "ok?", "choices": "boolean"}})
+        assert len(captured) == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -564,6 +567,54 @@ class TestAsk:
             await decision.ask("state", {"q": {"question": "pick?", "choices": ["a", "b"]}})
 
     @pytest.mark.asyncio
+    async def test_accepts_choice_probabilities_rounded_to_four_decimals(self, provider: _ProviderCase):
+        # Live strands-decider output: ten probabilities rounded to 4 decimals sum to 1.0001.
+        probabilities = {
+            "payments": 0.1056,
+            "fraud": 0.0067,
+            "onboarding": 0.0053,
+            "tax": 0.0032,
+            "identity": 0.0035,
+            "payouts": 0.8215,
+            "disputes": 0.0089,
+            "refunds": 0.0076,
+            "pricing": 0.0031,
+            "support": 0.0347,
+        }
+        client = _fake_client(
+            _response_body(
+                {"q": {"type": "choice", "choice": "payouts", "probabilities": probabilities, "confidence": 0.8017}}
+            )
+        )
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+
+        result = await decision.ask("state", {"q": {"question": "pick?", "choices": list(probabilities)}})
+
+        assert result.answers == {"q": "payouts"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "probabilities",
+        [
+            # Rounded to 4 decimals, but the sum is past the rounding bound of 2 * 5e-5.
+            {"a": 0.5001, "b": 0.5001},
+            # Within the rounding bound, but rounding can't produce values off the 4-decimal grid.
+            {"a": 0.50003, "b": 0.50003},
+        ],
+        ids=["past-bound", "off-grid"],
+    )
+    async def test_rejects_choice_probabilities_that_sum_just_past_the_bound(
+        self, provider: _ProviderCase, probabilities: dict[str, float]
+    ):
+        client = _fake_client(
+            _response_body({"q": {"type": "choice", "choice": "a", "probabilities": probabilities, "confidence": 0}})
+        )
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+
+        with pytest.raises(StructuredOutputException, match="must sum to 1"):
+            await decision.ask("state", {"q": {"question": "pick?", "choices": ["a", "b"]}})
+
+    @pytest.mark.asyncio
     async def test_rejects_more_than_255_choice_options_before_sending(self, provider: _ProviderCase):
         captured: list[httpx.Request] = []
         client = _fake_client(_response_body({}), captured=captured)
@@ -715,18 +766,6 @@ async def test_decisions_api_enforces_the_question_count_limit_before_sending():
 
     with pytest.raises(ValueError, match="at most 8 questions"):
         await decision.ask("state", questions)
-    assert captured == []
-
-
-@pytest.mark.asyncio
-async def test_decisions_api_enforces_the_request_body_limit_before_sending():
-    captured: list[httpx.Request] = []
-    decision = DecisionsAPIDecisionModel(
-        api_key="test-key", http_client=_fake_client(_response_body({}), captured=captured)
-    )
-
-    with pytest.raises(ContextWindowOverflowException):
-        await decision.ask("x" * (33 * 1024), {"q": {"question": "ok?", "choices": "boolean"}})
     assert captured == []
 
 
