@@ -721,7 +721,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._tracer = new Tracer(config?.traceAttributes)
 
     // Initialize meter for local metrics accumulation
-    this._meter = new Meter()
+    this._meter = new Meter(this.id)
 
     // Initialize interrupt state for human-in-the-loop workflows
     this._interruptState = new InterruptState()
