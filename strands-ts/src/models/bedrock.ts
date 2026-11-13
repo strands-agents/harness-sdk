@@ -1440,6 +1440,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           }
         }
 
+        // Blocks after the caller's boundary are per-call content, so a fallback point never lands among them.
+        let trailingBlocks = dynamicTrailingBlocks
         if (placedIdxs.length > 0) {
           // One boundary per message, so this message contributes a single cache point to the budget.
           // Extras are not worthless - a second point ahead of the per-call tail doubles the cached
@@ -1454,9 +1456,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
               `msg_idx=<${lastUserIdx}>, block_idx=<${extraIdx}> | stripped existing cache point (auto mode manages cache points)`
             )
           }
-          if (this._honorPlacedCachePoint(content, placedIdxs[0] as number, lastUserIdx, ttl)) {
+          const placedIdx = placedIdxs[0] as number
+          if (this._honorPlacedCachePoint(content, placedIdx, lastUserIdx, ttl)) {
             return
           }
+          trailingBlocks = Math.max(trailingBlocks, content.length - placedIdx)
           if (content.length === 0) {
             // Removing the point emptied the message, so there is nothing left to cache and
             // re-adding one would rebuild the request Bedrock just refused.
@@ -1467,7 +1471,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (this._limitsCachePoints()) {
-          this._injectNovaCachePoint(messages, lastUserIdx, dynamicTrailingBlocks)
+          this._injectNovaCachePoint(messages, lastUserIdx, trailingBlocks)
           return
         }
 

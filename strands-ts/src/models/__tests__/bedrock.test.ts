@@ -3861,7 +3861,13 @@ describe('BedrockModel', () => {
 
         expect(request()?.toolConfig?.tools).toStrictEqual(formattedTools)
         expect(request()?.system).toStrictEqual([{ text: 'Be helpful' }, { cachePoint: { type: 'default' } }])
+        expect(request()?.messages?.[0]?.content).toStrictEqual([
+          { text: 'What is 6 x 7?' },
+          { cachePoint: { type: 'default' } },
+        ])
         expect(lastContent()).toStrictEqual([formattedToolResult])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }, { type: 'default' }])
+        expect(warnOnce).toHaveBeenCalledWith(expect.anything(), ttlWarning)
       })
 
       it('keeps the conversation cache point on the prompt that started a tool loop', () => {
@@ -3917,6 +3923,7 @@ describe('BedrockModel', () => {
           { text: 'What is 6 x 7?' },
           { cachePoint: { type: 'default' } },
         ])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
         expect(warnOnce).toHaveBeenCalledWith(
           expect.anything(),
           `model_id=<${NOVA}> | dropped a caller-placed cache point with no text ahead of it, this model takes one only directly after text, placing it automatically instead`
@@ -3942,9 +3949,8 @@ describe('BedrockModel', () => {
 
           collectIterator(provider.stream(messages))
 
-          const content = lastContent()
-          expect(content).toHaveLength(media.length + 2)
-          expect(content.slice(0, 2)).toStrictEqual([{ text: 'Describe' }, cachePoint])
+          expect(lastContent()).toStrictEqual([{ text: 'Describe' }, cachePoint, ...media.map(() => expect.anything())])
+          expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
         })
 
         it('moves a caller-placed cache point after an image back to the text', () => {
@@ -3992,7 +3998,7 @@ describe('BedrockModel', () => {
         expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
-      it('moves a caller-placed cache point off a tool result to the end of the message', () => {
+      it('moves a caller-placed cache point off a tool result back to the prompt, never past the boundary', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
         const messages = [
           ...toolTurn,
@@ -4004,11 +4010,12 @@ describe('BedrockModel', () => {
 
         collectIterator(provider.stream(messages, { toolSpecs }))
 
-        expect(lastContent()).toStrictEqual([
-          formattedToolResult,
-          { text: 'next' },
+        expect(lastContent()).toStrictEqual([formattedToolResult, { text: 'next' }])
+        expect(request()?.messages?.[0]?.content).toStrictEqual([
+          { text: 'What is 6 x 7?' },
           { cachePoint: { type: 'default' } },
         ])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
       it('caches a plain-text user message that follows earlier tool calls', () => {
@@ -4023,6 +4030,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages, { toolSpecs }))
 
         expect(lastContent()).toStrictEqual([{ text: 'Thanks' }, { cachePoint: { type: 'default' } }])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
       it('keeps the tools cache point and TTL on Claude', () => {
