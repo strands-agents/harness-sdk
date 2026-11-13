@@ -1,0 +1,10 @@
+name: supermemory-strands
+description: 'Long-term memory for Strands agents backed by Supermemory: a MemoryStore with automatic recall and server-side memory extraction.'
+integrationType: memory-store
+languages:
+  python:
+    package: supermemory-strands
+github: https://github.com/supermemoryai/supermemory/tree/main/packages/strands-python
+docsUrl: https://github.com/supermemoryai/supermemory/tree/main/packages/strands-python#readme
+maintainedBy: partner
+addedDate: 2026-11-13
