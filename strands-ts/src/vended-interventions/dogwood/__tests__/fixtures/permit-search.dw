@@ -1,0 +1,1 @@
+permit(principal, action == Drupe::Action::"search", resource);
