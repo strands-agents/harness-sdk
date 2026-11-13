@@ -110,7 +110,7 @@ const rowItem = (row: TestRow, chosen: ReadonlySet<string>): ListItem => {
   if (row.kind === 'new')
     return {
       key: 'new',
-      label: 'Generate a new experiment',
+      label: 'Manage experiments',
       detail: 'opens /experiment',
       mark: { text: '+' },
       tone: 'muted',

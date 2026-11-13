@@ -63,7 +63,7 @@ const rowItem = (row: PickerRow): ListItem => {
         tone: 'muted',
       }
     case 'new':
-      return { key: 'new', label: '+ Generate a new experiment', detail: 'opens /experiment', tone: 'muted' }
+      return { key: 'new', label: '+ Manage experiments', detail: 'opens /experiment', tone: 'muted' }
   }
 }
 

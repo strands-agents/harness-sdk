@@ -248,7 +248,7 @@ describe('TestPanel', () => {
   it.each([
     ['capital', 0, 'Enter show progress'],
     ['cities', 2, 'Enter run'],
-    ['Generate a new experiment', 3, 'Enter open /experiment'],
+    ['Manage experiments', 3, 'Enter open /experiment'],
   ])('shouldSayWhatEnterDoesWhenTheCursorIsOn%s', async (_row, downs, hint) => {
     const { session } = testSession(withRuns())
     const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
