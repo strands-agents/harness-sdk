@@ -44,6 +44,50 @@ describe('dev-only workflow skills', () => {
       expect(instructions).toContain('Do not invent a price or model-call count')
     }
   )
+
+  it.each(temporaryWorkflowSkills())(
+    'shouldTreatARequestAsAskingForTheScopeNotTheRunIn$name',
+    ({ instructions }) => {
+      expect(instructions).toContain('Being asked to run, test, or improve something is not that approval')
+      expect(instructions).toContain('end that turn with the scope and wait for a separate answer')
+    }
+  )
+
+  it.each(temporaryWorkflowSkills())('shouldReadCurrentStateRatherThanRepeatAnEarlierAnswerIn$name', ({ instructions }) => {
+    expect(instructions).toContain('call strands_dev_status again in every turn that asks what exists')
+    expect(instructions).toContain('including a repeated question')
+    expect(instructions).toContain('Reusing an earlier answer states a workspace that may no longer exist')
+    expect(instructions).toContain('saying you just checked when you did not is a false claim')
+  })
+
+  it.each(temporaryWorkflowSkills())('shouldAnswerOnlyWhatWasAskedIn$name', ({ instructions }) => {
+    expect(instructions).toContain('Answer the question that was asked and stop')
+    expect(instructions).toContain('rather than stacking questions or offering a numbered menu')
+  })
+})
+
+describe('workflow skill activation triggers', () => {
+  const descriptionFor = (name: string): string =>
+    temporaryWorkflowSkills().find((entry) => entry.name === name)!.description
+
+  it.each([
+    ['manage-experiments', ['what experiments do I have', 'show me my cases', 'how is this scored']],
+    [
+      'run-tests',
+      ['run my tests', 'check my agent against my examples', 'did my last test pass', 'rerun the failures'],
+    ],
+    ['optimize-harness', ['can you make my agent better at this', 'improve this agent on refunds', 'tune its effort']],
+  ])('shouldNameThePhrasesThatReach%s', (name, phrases) => {
+    const description = descriptionFor(name as string)
+    for (const phrase of phrases as string[]) expect(description).toContain(`"${phrase}"`)
+    expect(description).toContain('in any wording')
+  })
+
+  it('shouldKeepEachSetOfTriggerPhrasesOutOfTheOtherSkills', () => {
+    expect(descriptionFor('manage-experiments')).not.toContain('run my tests')
+    expect(descriptionFor('run-tests')).not.toContain('what experiments do I have')
+    expect(descriptionFor('optimize-harness')).not.toContain('did my last test pass')
+  })
 })
 
 describe('manage-experiments guidance', () => {

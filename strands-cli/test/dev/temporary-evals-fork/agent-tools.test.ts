@@ -219,7 +219,7 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_reject_optimization', false],
       ['strands_dev_apply_optimization', false],
     ])
-    expect(part.instructions).toContain('wait for the developer to agree')
+    expect(part.instructions).toContain('call the tool only in a later turn, after the developer answered')
     for (const tool of part.tools) {
       expect(tool.inputSchema).not.toHaveProperty('oneOf')
       expect(tool.inputSchema).not.toHaveProperty('anyOf')
@@ -627,5 +627,80 @@ describe('TEMPORARY dev chat part', () => {
 
     await expect(tool('strands_dev_apply_optimization').run(input)).rejects.toThrow(message)
     expect(sessions.optimize.apply).not.toHaveBeenCalled()
+  })
+})
+
+describe('plain-language dev chat guidance', () => {
+  const PAID_TOOLS = ['strands_dev_create_experiment', 'strands_dev_test', 'strands_dev_optimize'] as const
+
+  it('shouldSendAPlainRequestToAWorkflowSkillRatherThanStraightToATool', () => {
+    const { part } = setup()
+
+    expect(part.instructions).toContain(
+      'activate manage-experiments, run-tests, or optimize-harness before you answer one'
+    )
+  })
+
+  it('shouldRereadTheStatusInEveryTurnThatAsksWhatExists', () => {
+    const { part, tool } = setup()
+
+    expect(part.instructions).toContain('Call it again in every turn that asks what exists')
+    expect(part.instructions).toContain('an answer from an earlier turn is stale')
+    expect(tool('strands_dev_status').description).toContain(
+      'Call it again in every turn that asks what exists, including a repeated question'
+    )
+    expect(tool('strands_dev_status').description).toContain('An answer from an earlier turn is stale')
+  })
+
+  it.each(PAID_TOOLS)('shouldWarnThat%sStartsThePaidRunWithoutAskingFirst', (name) => {
+    const { tool } = setup()
+    const { description } = tool(name)
+
+    expect(description.startsWith('Start the paid ')).toBe(true)
+    expect(description).toContain('This call starts the paid run itself and asks nothing first')
+    expect(description).toContain('only after the developer answered yes, in an earlier turn')
+    expect(description).toContain('a scope that looks obvious is not that answer')
+  })
+
+  it('shouldTreatARequestToRunSomethingAsAskingForTheScopeNotForTheRun', () => {
+    const { part, tool } = setup()
+
+    expect(part.instructions).toContain('name the experiments and case counts and stop')
+    expect(part.instructions).toContain('call the tool only in a later turn, after the developer answered')
+    expect(part.instructions).toContain('A scope that looks obvious is still not approval')
+    expect(tool('strands_dev_test').description).toContain('Being asked to test the agent is not that answer')
+    expect(tool('strands_dev_optimize').description).toContain(
+      'Being asked to improve the agent is not that answer'
+    )
+  })
+
+  it('shouldAnswerOnlyTheQuestionAskedWithoutVolunteeringSettingsOrAMenu', () => {
+    const { part } = setup()
+
+    expect(part.instructions).toContain('Answer the question that was asked, from the tool output of this turn')
+    expect(part.instructions).toContain(
+      'Do not add settings, defaults, generator details, or a menu of next steps that the developer did not ask for'
+    )
+  })
+})
+
+describe('paid run turn order', () => {
+  it('shouldOpenTheGuidanceWithTheTwoTurnRuleSoItIsReadBeforeTheToolList', () => {
+    const { part } = setup()
+    const rule = part.instructions.indexOf('Two turns, never one')
+    const toolList = part.instructions.indexOf('- strands_dev_status:')
+
+    expect(rule).toBeGreaterThanOrEqual(0)
+    expect(rule).toBeLessThan(toolList)
+    expect(part.instructions).toContain("spend the developer's money the moment you call them")
+    expect(part.instructions).toContain('Finish the turn with your question as the last thing you write')
+  })
+
+  it('shouldNameTheRequestsThatOnlyAskForTheScope', () => {
+    const { part } = setup()
+
+    expect(part.instructions).toContain(
+      '"Run my tests", "check my agent against my examples", and "make my agent better" ask for that first turn'
+    )
   })
 })
