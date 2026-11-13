@@ -5,6 +5,7 @@ import { ImageBlock } from '../../types/media.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import { DecisionModel } from '../decision-model.js'
 import { DecisionsAPIDecisionModel } from '../decisions-api-decision-model.js'
+import { GeminiDecisionModel } from '../gemini-decision-model.js'
 import { TypeSafeDecisionModel } from '../typesafe-decision-model.js'
 import { Uncertain } from '../types.js'
 
@@ -488,5 +489,152 @@ describe('DecisionsAPIDecisionModel', () => {
       await expect(decision.ask('state', questions)).rejects.toThrow(/at most 8 questions/)
       expect(fetch).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('GeminiDecisionModel', () => {
+  it('sends the Gemini request shape and maps a response without a model id', async () => {
+    const captured: CapturedRequest[] = []
+    const fetch = fakeFetch(
+      {
+        answers: {
+          urgent: { type: 'noul', noul: 0.9, confidence: 0.9 },
+          department: {
+            type: 'choice',
+            choice: 'billing',
+            probabilities: { billing: 0.7, support: 0.3 },
+            confidence: 0.7,
+          },
+        },
+        usage: { total_input_tokens: 12, total_output_tokens: 0, total_tokens: 12 },
+      },
+      { captured }
+    )
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    const result = await decision.ask('Refund this today', {
+      urgent: { question: 'Is this urgent?', choices: 'boolean' },
+      department: { question: 'Which team should handle this?', choices: ['billing', 'support'] },
+    })
+
+    expect(captured).toEqual([
+      {
+        url: 'https://generativelanguage.googleapis.com/v1beta/decisions',
+        headers: { 'x-goog-api-key': 'test-key', 'content-type': 'application/json' },
+        body: {
+          model: 'gemini-decision-1',
+          input: 'Refund this today',
+          questions: {
+            urgent: { type: 'noul', instructions: 'Is this urgent?' },
+            department: {
+              type: 'choice',
+              instructions: 'Which team should handle this?',
+              criteria: { billing: '', support: '' },
+            },
+          },
+        },
+      },
+    ])
+    expect(result).toEqual({
+      answers: { urgent: true, department: 'billing' },
+      usage: { inputTokens: 12, outputTokens: 0, totalTokens: 12 },
+      metadata: {
+        latencyMs: expect.any(Number),
+        providerName: 'gemini',
+        modelId: 'gemini-decision-1',
+        probabilities: {
+          urgent: { true: 0.9, false: 0.09999999999999998 },
+          department: { billing: 0.7, support: 0.3 },
+        },
+        confidence: { urgent: 0.9, department: 0.7 },
+      },
+    })
+  })
+
+  it('reports Gemini Noul confidence but thresholds on the normalized scale', async () => {
+    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.74, confidence: 0.74 } } })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+    expect(result.answers.q).toEqual(new Uncertain())
+    expect(result.metadata.confidence).toEqual({ q: 0.74 })
+  })
+
+  it('sends message state as JSON text input', async () => {
+    const captured: CapturedRequest[] = []
+    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.99, confidence: 0.99 } } }, { captured })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    await decision.ask([new Message({ role: 'user', content: [new TextBlock('hello')] })], {
+      q: { question: 'Greeting?', choices: 'boolean' },
+    })
+
+    expect(captured[0]?.body['input']).toBe('[{"role":"user","content":[{"text":"hello"}]}]')
+  })
+
+  it('reads GEMINI_API_KEY', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'gemini-env-key')
+    const captured: CapturedRequest[] = []
+    const decision = new GeminiDecisionModel({
+      fetch: fakeFetch({ answers: { q: { type: 'noul', noul: 0.99, confidence: 0.99 } } }, { captured }),
+    })
+
+    await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+    expect(captured[0]?.headers['x-goog-api-key']).toBe('gemini-env-key')
+  })
+
+  it('maps Gemini safety blocks to ModelError and throttling to ModelThrottledError', async () => {
+    const question = { q: { question: 'ok?', choices: 'boolean' } } as const
+    const blocked = new GeminiDecisionModel({
+      apiKey: 'test-key',
+      fetch: fakeFetch({ error: { code: 'safety', message: 'Request blocked' } }, { status: 400 }),
+    })
+    const throttled = new GeminiDecisionModel({
+      apiKey: 'test-key',
+      fetch: fakeFetch({ error: { code: 429, message: 'Resource exhausted' } }, { status: 429 }),
+    })
+
+    const blockedError = await blocked.ask('state', question).catch((error: unknown) => error)
+    expect(blockedError).toBeInstanceOf(ModelError)
+    expect(blockedError).not.toBeInstanceOf(ModelThrottledError)
+    expect((blockedError as Error).message).toMatch(/HTTP 400: Request blocked/)
+    await expect(throttled.ask('state', question)).rejects.toThrow(ModelThrottledError)
+  })
+
+  it('rejects a Noul answer without the Gemini confidence', async () => {
+    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.9 } } })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+      /confidence for question id=<q>/
+    )
+  })
+
+  it('caps the normalized Noul confidence at 0.98 for the threshold', async () => {
+    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.99, confidence: 0.99 } } })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    const passes = await decision.ask('state', {
+      q: { question: 'ok?', choices: 'boolean', uncertainty: { minConfidence: 0.98 } },
+    })
+    const blocked = await decision.ask('state', {
+      q: { question: 'ok?', choices: 'boolean', uncertainty: { minConfidence: 0.99 } },
+    })
+
+    expect(passes.answers.q).toBe(true)
+    expect(blocked.answers.q).toEqual(new Uncertain())
+  })
+
+  it('rejects binary content blocks before sending', async () => {
+    const fetch = fakeFetch({ answers: {} })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+    const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
+
+    await expect(decision.ask([image], { q: { question: 'What is shown?', choices: 'boolean' } })).rejects.toThrow(
+      /do not support binary ContentBlock state/
+    )
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

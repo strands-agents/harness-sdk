@@ -19,6 +19,13 @@ export interface SystemOneRequestConfig {
   modelId?: string
   defaultMinConfidence: number
   maxQuestions?: number
+  /** Builds the request body for APIs that differ from the System One `{ state, model, questions }` shape. */
+  buildRequestBody?: (state: DecisionInput, questions: Record<string, Question>) => unknown
+  /**
+   * Whether Noul answers carry the API's own `confidence`. That value is reported in metadata, while
+   * `Uncertain` is still decided on the shared `|2p - 1|` scale.
+   */
+  noulConfidenceFromProvider?: boolean
 }
 
 /** @internal */
@@ -27,6 +34,8 @@ export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   apiKey: string
   modelId: string
   fetch: typeof globalThis.fetch
+  /** Header that carries the API key as is. Defaults to `Authorization: Bearer <apiKey>`. */
+  apiKeyHeader?: string
 }
 
 /**
@@ -53,7 +62,7 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence?: number
     fetch?: typeof globalThis.fetch
   },
-  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch'> & {
+  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch' | 'buildRequestBody'> & {
     apiKeyEnvironmentVariable: string
     modelId: string
     className: string
@@ -89,6 +98,10 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence,
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
+    ...(defaults.apiKeyHeader !== undefined && { apiKeyHeader: defaults.apiKeyHeader }),
+    ...(defaults.noulConfidenceFromProvider !== undefined && {
+      noulConfidenceFromProvider: defaults.noulConfidenceFromProvider,
+    }),
   }
 }
 
@@ -100,7 +113,7 @@ interface WireNoulQuestion {
 interface WireChoiceQuestion {
   type: 'choice'
   instructions: string
-  criteria: Record<string, null>
+  criteria: Record<string, null | ''>
 }
 
 type WireQuestion = WireNoulQuestion | WireChoiceQuestion
@@ -108,7 +121,10 @@ type WireQuestion = WireNoulQuestion | WireChoiceQuestion
 interface ParsedAnswer {
   answer: boolean | string
   probabilities: Readonly<Record<string, number>>
+  /** Reported in metadata. */
   confidence: number
+  /** Compared with `minConfidence`; defaults to `confidence`. */
+  thresholdConfidence?: number
 }
 
 class SystemOneHttpError extends Error {
@@ -140,16 +156,18 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
     throw new Error(`${config.providerName} accepts at most ${config.maxQuestions} questions per request`)
   }
 
-  const body = JSON.stringify({
-    state: toWireState(state),
-    ...(config.modelId !== undefined && { model: config.modelId }),
-    questions: toWireQuestions(questions),
-  })
+  const body = JSON.stringify(
+    config.buildRequestBody?.(state, questions) ?? {
+      state: toWireState(state),
+      ...(config.modelId !== undefined && { model: config.modelId }),
+      questions: toWireQuestions(questions),
+    }
+  )
 
   const startedAt = globalThis.performance.now()
   const payload = await transport(body, cancelSignal)
 
-  const result = parseResult(payload, questions, config.defaultMinConfidence)
+  const result = parseResult(payload, questions, config)
   return {
     answers: result.answers,
     ...(result.usage !== undefined && { usage: result.usage }),
@@ -163,7 +181,8 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
   }
 }
 
-function toWireState(state: DecisionInput): unknown {
+/** @internal */
+export function toWireState(state: DecisionInput): unknown {
   if (typeof state === 'string' || state.length === 0) return state
   if (state[0] instanceof Message) {
     return (state as Message[]).map((message) => ({
@@ -186,7 +205,14 @@ function toWireContentBlock(block: ContentBlock): unknown {
   return block.toJSON()
 }
 
-function toWireQuestions(questions: Record<string, Question>): Record<string, WireQuestion> {
+/**
+ * @param choiceDescription - Value sent for each choice in `criteria`, for APIs that require a string.
+ * @internal
+ */
+export function toWireQuestions(
+  questions: Record<string, Question>,
+  choiceDescription: null | '' = null
+): Record<string, WireQuestion> {
   return Object.fromEntries(
     Object.entries(questions).map(([id, question]) => {
       if (question.choices === 'boolean') {
@@ -195,7 +221,7 @@ function toWireQuestions(questions: Record<string, Question>): Record<string, Wi
       if (question.choices.length > MAX_CHOICE_COUNT) {
         throw new Error(`question id=<${id}> | System One APIs allow at most ${MAX_CHOICE_COUNT} choices`)
       }
-      const criteria = Object.fromEntries(question.choices.map((choice) => [choice, null]))
+      const criteria = Object.fromEntries(question.choices.map((choice) => [choice, choiceDescription]))
       return [id, { type: 'choice', instructions: question.question, criteria } satisfies WireChoiceQuestion]
     })
   )
@@ -216,7 +242,9 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
     response = await config.fetch(config.endpoint, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        ...(config.apiKeyHeader !== undefined
+          ? { [config.apiKeyHeader]: config.apiKey }
+          : { Authorization: `Bearer ${config.apiKey}` }),
         'Content-Type': 'application/json',
       },
       body,
@@ -269,7 +297,7 @@ function errorDetail(body: unknown): string | undefined {
 function parseResult<const Q extends Record<string, Question>>(
   payload: unknown,
   questions: Q,
-  defaultMinConfidence: number
+  config: SystemOneRequestConfig
 ): {
   modelId: string
   answers: { [K in keyof Q]: AnswerOf<Q[K]> }
@@ -289,10 +317,11 @@ function parseResult<const Q extends Record<string, Question>>(
     const rawAnswer = rawAnswers[String(id)]
     if (rawAnswer === undefined)
       throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
-    const parsed = parseAnswer(rawAnswer, question, String(id))
-    const minConfidence = resolveMinConfidence(question, defaultMinConfidence)
+    const parsed = parseAnswer(rawAnswer, question, String(id), config.noulConfidenceFromProvider === true)
+    const minConfidence = resolveMinConfidence(question, config.defaultMinConfidence)
+    const thresholdConfidence = parsed.thresholdConfidence ?? parsed.confidence
     answers[id] = (
-      minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
+      minConfidence !== undefined && thresholdConfidence < minConfidence ? new Uncertain() : parsed.answer
     ) as AnswerOf<Q[typeof id]>
     probabilities[id] = parsed.probabilities
     confidence[id] = parsed.confidence
@@ -302,21 +331,36 @@ function parseResult<const Q extends Record<string, Question>>(
   return { modelId, answers, probabilities, confidence, ...(usage !== undefined && { usage }) }
 }
 
-function parseAnswer(rawAnswer: unknown, question: Question, id: string): ParsedAnswer {
+function parseAnswer(
+  rawAnswer: unknown,
+  question: Question,
+  id: string,
+  noulConfidenceFromProvider: boolean
+): ParsedAnswer {
   const answer = requireRecord(rawAnswer, `answer for question id=<${id}>`)
-  if (question.choices === 'boolean') return parseNoulAnswer(answer, id)
+  if (question.choices === 'boolean') return parseNoulAnswer(answer, id, noulConfidenceFromProvider)
   return parseChoiceAnswer(answer, question.choices, id)
 }
 
-function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAnswer {
+function parseNoulAnswer(
+  answer: Record<string, unknown>,
+  id: string,
+  noulConfidenceFromProvider: boolean
+): ParsedAnswer {
   if (answer['type'] !== 'noul') {
     throw new ModelError(`answer for boolean question id=<${id}> must have type 'noul'`)
   }
   const probability = requireProbability(answer['noul'], `noul for question id=<${id}>`)
+  const normalizedConfidence = Math.abs(2 * probability - 1)
   return {
     answer: probability >= 0.5,
     probabilities: { true: probability, false: 1 - probability },
-    confidence: Math.abs(2 * probability - 1),
+    ...(noulConfidenceFromProvider
+      ? {
+          confidence: requireProbability(answer['confidence'], `confidence for question id=<${id}>`),
+          thresholdConfidence: normalizedConfidence,
+        }
+      : { confidence: normalizedConfidence }),
   }
 }
 
