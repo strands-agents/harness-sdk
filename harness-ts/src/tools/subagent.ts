@@ -632,7 +632,7 @@ class SubagentTool extends Tool {
   }
 
   async *stream(toolContext: ToolContext): ToolStreamGenerator {
-    const { toolUse, invocationState, cancelSignal } = toolContext
+    const { toolUse, invocationState, cancelSignal, invocationContext } = toolContext
     const parent = toolContext.agent
     const toolUseId = toolUse.toolUseId
     const raw = asRecord(toolUse.input)
@@ -683,8 +683,12 @@ class SubagentTool extends Tool {
 
     let result
     try {
-      // Forward cancel signal + invocation state (mirrors the SDK's AgentAsTool).
-      const gen = child.stream(prompt, { invocationState, cancelSignal })
+      // Forward cancel signal, invocation state, and the request's limits/usage (mirrors the SDK's AgentAsTool).
+      const gen = child.stream(prompt, {
+        invocationState,
+        cancelSignal,
+        ...(invocationContext && { invocationContext }),
+      })
       let next = await gen.next()
       while (!next.done) {
         yield new ToolStreamEvent({ data: next.value })
