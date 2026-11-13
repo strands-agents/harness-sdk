@@ -118,8 +118,17 @@ interface WireChoiceQuestion {
 
 type WireQuestion = WireNoulQuestion | WireChoiceQuestion
 
+/**
+ * Answer `type` a provider normalizes to when its API declined to answer one question. The shared parser
+ * reports it as {@link Uncertain}, carrying the provider's optional `reason`, and throws for a question
+ * that disabled uncertainty. Probabilities and confidence stay empty: the provider returned none.
+ *
+ * @internal
+ */
+export const REFUSED_ANSWER_TYPE = 'refused'
+
 interface ParsedAnswer {
-  answer: boolean | string
+  answer: boolean | string | Uncertain
   probabilities: Readonly<Record<string, number>>
   /** Reported in metadata. */
   confidence: number
@@ -319,10 +328,7 @@ function parseResult<const Q extends Record<string, Question>>(
       throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
     const parsed = parseAnswer(rawAnswer, question, String(id), config.noulConfidenceFromProvider === true)
     const minConfidence = resolveMinConfidence(question, config.defaultMinConfidence)
-    const thresholdConfidence = parsed.thresholdConfidence ?? parsed.confidence
-    answers[id] = (
-      minConfidence !== undefined && thresholdConfidence < minConfidence ? new Uncertain() : parsed.answer
-    ) as AnswerOf<Q[typeof id]>
+    answers[id] = resolveAnswer(parsed, minConfidence) as AnswerOf<Q[typeof id]>
     probabilities[id] = parsed.probabilities
     confidence[id] = parsed.confidence
   }
@@ -338,8 +344,28 @@ function parseAnswer(
   noulConfidenceFromProvider: boolean
 ): ParsedAnswer {
   const answer = requireRecord(rawAnswer, `answer for question id=<${id}>`)
+  if (answer['type'] === REFUSED_ANSWER_TYPE) return parseRefusedAnswer(answer, question, id)
   if (question.choices === 'boolean') return parseNoulAnswer(answer, id, noulConfidenceFromProvider)
   return parseChoiceAnswer(answer, question.choices, id)
+}
+
+function parseRefusedAnswer(answer: Record<string, unknown>, question: Question, id: string): ParsedAnswer {
+  if (question.uncertainty === false) {
+    throw new ModelError(`question id=<${id}> | decision provider declined to answer and uncertainty is disabled`)
+  }
+  const reason = answer['reason']
+  return {
+    answer: new Uncertain(typeof reason === 'string' ? reason : undefined),
+    probabilities: {},
+    confidence: 0,
+  }
+}
+
+function resolveAnswer(parsed: ParsedAnswer, minConfidence: number | undefined): boolean | string | Uncertain {
+  if (parsed.answer instanceof Uncertain) return parsed.answer
+  const thresholdConfidence = parsed.thresholdConfidence ?? parsed.confidence
+  if (minConfidence !== undefined && thresholdConfidence < minConfidence) return new Uncertain()
+  return parsed.answer
 }
 
 function parseNoulAnswer(
