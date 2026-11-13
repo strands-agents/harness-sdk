@@ -1,12 +1,14 @@
 ---
 title: Decisions in an agent
-description: "Ask a decision model from an agent's tool or hook, count its tokens toward the agent's request, and decide which tool calls need approval."
+description: "Ask a decision model from an agent's tool or hook, count its tokens toward the agent's request, approve tool calls, and route requests to a model."
 tags: [decision-models]
 sourceLinks:
   - path: strands-py/src/strands/decisions/decision_model.py
   - path: strands-py/src/strands/agent/invocation_context.py
   - path: strands-ts/src/decisions/decision-model.ts
   - path: strands-ts/src/agent/invocation-context.ts
+  - path: strands-py/src/strands/models/routing/classifier_strategy.py
+  - path: strands-ts/src/models/routing/classifier-strategy.ts
 ---
 
 You call a decision model from your own code: a tool, a hook, or the application around
@@ -110,3 +112,12 @@ agent = Agent(interventions=[HumanInTheLoop(classifier=LLMDecisionModel())])
 
 [Human in the loop](../agents/interventions/human-in-the-loop.mdx#risk-classifier)
 covers the risk criteria and the other classifier options.
+
+## Route requests to a model
+
+When an agent can serve each request with one of several models, `ClassifierStrategy`
+picks the model before the first model call. Pass it a decision model, and it asks that
+decision model which candidate fits the request. The decision's tokens count toward the
+request, the same as a decision asked from a tool.
+[Route with a decision model](../model-providers/model-routing.mdx#route-with-a-decision-model)
+shows the setup.
