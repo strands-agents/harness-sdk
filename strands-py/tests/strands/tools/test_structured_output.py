@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Any, Literal, Optional
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 
 from strands.tools.structured_output import convert_pydantic_to_tool_spec
 from strands.types.tools import ToolSpec
@@ -368,6 +368,50 @@ def test_convert_pydantic_with_items_refs():
             }
         },
         "name": "Person",
+    }
+    assert tool_spec == expected_spec
+
+
+def test_convert_pydantic_to_tool_spec_root_model():
+    """Test that a RootModel's schema is nested under a required root property of an object schema."""
+
+    class Link(BaseModel):
+        """A link found on the page."""
+
+        url: str
+        title: str | None = None
+
+    class Links(RootModel[list[Link]]):
+        """All links found on the page."""
+
+    tool_spec = convert_pydantic_to_tool_spec(Links)
+
+    expected_spec = {
+        "description": "All links found on the page.",
+        "inputSchema": {
+            "json": {
+                "description": "All links found on the page.",
+                "properties": {
+                    "root": {
+                        "items": {
+                            "description": "A link found on the page.",
+                            "properties": {
+                                "title": {"type": ["string", "null"]},
+                                "url": {"title": "Url", "type": "string"},
+                            },
+                            "required": ["url"],
+                            "title": "Link",
+                            "type": "object",
+                        },
+                        "type": "array",
+                    }
+                },
+                "required": ["root"],
+                "title": "Links",
+                "type": "object",
+            }
+        },
+        "name": "Links",
     }
     assert tool_spec == expected_spec
 
