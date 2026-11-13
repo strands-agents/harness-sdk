@@ -15,7 +15,9 @@ const REPLACEMENT_CHARACTER = '\uFFFD'
 /**
  * Replaces lone surrogates in a model request with U+FFFD, without modifying the conversation history.
  *
- * Content is walked generically, so new content block types are covered without being registered here.
+ * Content is walked generically, so new content block types are covered without being registered here. A repaired
+ * block is a copy made without its constructor, so a block must keep all its state in own enumerable data
+ * properties: no `#private` fields and no getters backed by hidden state.
  *
  * @param messages - The messages about to be sent
  * @param options - The options about to be sent; their system prompt and tool specs are repaired

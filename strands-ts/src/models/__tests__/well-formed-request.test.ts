@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  CachePointBlock,
   GuardContentBlock,
   InjectedBlock,
   JsonBlock,
@@ -10,10 +11,11 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  UnknownBlock,
   type ContentBlock,
 } from '../../types/messages.js'
 import { CitationsBlock } from '../../types/citations.js'
-import { DocumentBlock, ImageBlock } from '../../types/media.js'
+import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
 import { buildPreview } from '../../context-manager/methods/truncate.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { wellFormedRequest } from '../well-formed-request.js'
@@ -32,6 +34,40 @@ function userMessage(...content: ContentBlock[]): Message {
 
 function jsonToolResult(json: JsonBlock['json']): Message {
   return userMessage(new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new JsonBlock({ json })] }))
+}
+
+/** A block of each content block type with `char` in a string. Keyed by type, so a new type fails type-check here. */
+const BLOCK_SAMPLES: { [K in ContentBlock['type']]: (char: string) => Extract<ContentBlock, { type: K }> } = {
+  textBlock: (char) => new TextBlock(`t${char}`),
+  toolUseBlock: (char) => new ToolUseBlock({ name: 'lookup', toolUseId: 't1', input: { query: `q${char}` } }),
+  toolResultBlock: (char) =>
+    new ToolResultBlock({
+      toolUseId: 't1',
+      status: 'success',
+      content: [new TextBlock(`x${char}`), new JsonBlock({ json: { k: `j${char}` } })],
+    }),
+  reasoningBlock: (char) => new ReasoningBlock({ text: `r${char}` }),
+  cachePointBlock: (char) => new CachePointBlock({ cacheType: 'default', ttl: `5m${char}` }),
+  guardContentBlock: (char) => new GuardContentBlock({ text: { qualifiers: ['query'], text: `g${char}` } }),
+  audioBlock: (char) => new AudioBlock({ format: 'mp3', source: { location: { type: 's3', uri: `s3://b/a${char}` } } }),
+  imageBlock: (char) => new ImageBlock({ format: 'png', source: { url: `https://example.com/i${char}.png` } }),
+  videoBlock: (char) => new VideoBlock({ format: 'mp4', source: { location: { type: 's3', uri: `s3://b/v${char}` } } }),
+  documentBlock: (char) => new DocumentBlock({ name: 'notes', format: 'txt', source: { text: `d${char}` } }),
+  citationsBlock: (char) =>
+    new CitationsBlock({
+      citations: [
+        {
+          location: { type: 'documentChar', documentIndex: 0, start: 0, end: 1 },
+          source: 'notes',
+          sourceContent: [{ text: `s${char}` }],
+          title: 'notes',
+        },
+      ],
+      content: [{ text: `c${char}` }],
+    }),
+  injectedBlock: (char) => new InjectedBlock({ text: `i${char}`, source: 'memory' }),
+  summaryBlock: (char) => new SummaryBlock({ text: `m${char}` }),
+  unknownBlock: (char) => new UnknownBlock({ futureBlock: { text: `u${char}` } }),
 }
 
 // https://github.com/strands-agents/harness-sdk/issues/5937: a lone surrogate must never reach a provider
@@ -107,47 +143,28 @@ describe('wellFormedRequest', () => {
     })
 
     it('covers block types it has no specific knowledge of', () => {
-      class UnknownBlock {
-        readonly type = 'unknownBlock'
+      class FutureBlock {
+        readonly type = 'futureBlock'
         constructor(readonly text: string) {}
       }
 
-      const [messages] = wellFormedRequest([userMessage(new UnknownBlock(`a${LONE_HIGH}`) as unknown as ContentBlock)])
+      const [messages] = wellFormedRequest([userMessage(new FutureBlock(`a${LONE_HIGH}`) as unknown as ContentBlock)])
 
-      expect(messages[0]!.content).toStrictEqual([new UnknownBlock(`a${REPLACEMENT}`)])
+      expect(messages[0]!.content).toStrictEqual([new FutureBlock(`a${REPLACEMENT}`)])
     })
 
     it('repairs each content block type into the instance its constructor would build', () => {
       const blocks = (char: string): ContentBlock[] => [
-        new TextBlock(`t${char}`),
+        ...Object.values(BLOCK_SAMPLES).map((make) => make(char)),
+        // Shares the textBlock type with TextBlock, so it has no key of its own in BLOCK_SAMPLES
         new OffloadedBlock({ text: `o${char}`, method: 'truncate', ref: 'tu-1', tokens: 10 }),
-        new ToolUseBlock({ name: 'lookup', toolUseId: 't1', input: { query: `q${char}` } }),
-        new ToolResultBlock({
-          toolUseId: 't1',
-          status: 'success',
-          content: [new TextBlock(`x${char}`), new JsonBlock({ json: { k: `j${char}` } })],
-        }),
-        new ReasoningBlock({ text: `r${char}` }),
-        new GuardContentBlock({ text: { qualifiers: ['query'], text: `g${char}` } }),
-        new DocumentBlock({ name: 'notes', format: 'txt', source: { text: `d${char}` } }),
-        new CitationsBlock({
-          citations: [
-            {
-              location: { type: 'documentChar', documentIndex: 0, start: 0, end: 1 },
-              source: 'notes',
-              sourceContent: [{ text: `s${char}` }],
-              title: 'notes',
-            },
-          ],
-          content: [{ text: `c${char}` }],
-        }),
-        new InjectedBlock({ text: `i${char}`, source: 'memory' }),
-        new SummaryBlock({ text: `m${char}` }),
       ]
 
       const [messages] = wellFormedRequest([userMessage(...blocks(LONE_HIGH))])
 
       expect(messages[0]!.content).toStrictEqual(blocks(REPLACEMENT))
+      // toStrictEqual can't see #private fields; toJSON reading one on a copy throws
+      expect(JSON.stringify(messages[0]!.content)).toBe(JSON.stringify(blocks(REPLACEMENT)))
     })
 
     it('replaces them in the system prompt and tool specs and keeps other options', () => {
