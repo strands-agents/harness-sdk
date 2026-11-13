@@ -419,8 +419,7 @@ async function refreshRemoteTransport(client: McpClient, name: string, definitio
 /**
  * Tool names are only unique within one server, so each client's tools are namespaced by its config
  * key (`<server>_<tool>`) unless the server sets its own `prefix`, the SDK's `prefixWithServerName`
- * rule. Each client is named by its config key (`clientName`), which the library's subagent uses as
- * the server's name on its `mcp_servers` axis. Stdio servers are built here instead of through
+ * rule. Each client is named by its config key (`clientName`). Stdio servers are built here instead of through
  * `McpClient.loadServers` so their stderr can be discarded (the SDK's transport inherits the parent's
  * stderr, which would print server diagnostics over the terminal UI), so this path derives the prefix
  * itself with the SDK's `[^A-Za-z0-9_-]` -> `_` sanitization.

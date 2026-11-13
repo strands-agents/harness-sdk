@@ -224,10 +224,12 @@ create_harness(builtin_tools=["shell", "read", "write", "edit"])   # no subagent
 The tool's model-facing parameters are derived from configuration. For a fully configured tool
 (custom roles, model tiers, fixed prompts), build one with `make_subagent` and pass it via `tools`
 with `subagent` dropped from `builtin_tools`. You supply the `builder`, a function that turns a
-resolved `AgentSpec` into the child agent (typically calling `create_harness`); this is the seam
-that makes the child a harness member. Delegation depth is bounded at two levels by default; pass
-`max_depth` to change it. Each axis (`instructions`, `tools`, `mcp_servers`, `model`, `context`)
-becomes a parameter, or not, depending on whether it is `Fixed`, `Inherit`, `Open`, or `Choice`:
+resolved `AgentSpec` into the child agent (typically calling `create_harness`, sync or async); this
+is the seam that makes the child a harness member. `make_subagent` is the SDK's vended subagent tool,
+re-exported here. Delegation depth is bounded at two levels by default; pass `max_depth` to change it.
+Each axis (`instructions`, `tools`, `model`, `context`) becomes a parameter, or not, depending on
+whether it is `Fixed`, `Inherit`, `Open`, or `Choice`. See [docs/subagent.md](docs/subagent.md) for
+what the default wiring adds and what changed when the harness moved to the SDK tool:
 
 ```python
 from strands_harness import create_harness

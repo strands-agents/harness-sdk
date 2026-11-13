@@ -98,8 +98,7 @@ export interface HarnessAgentOptions extends Omit<
    * (built-in tools, `tools`, plugins); a collision throws at construction. To replace a built-in,
    * drop it first via `builtinTools` so the name is free. Consumer tools also join the `subagent`
    * tool's narrowable set, so a delegate can be granted them too; a connected `McpClient` passed here
-   * is offered on its `mcp_servers` axis under its `clientName` (set `applicationName`), like the
-   * servers loaded from `mcpServers`; an unnamed or same-named client is warned about and left off it.
+   * is always handed to delegates (shared, not reconnected), like the servers loaded from `mcpServers`.
    */
   tools?: ToolList
   /**

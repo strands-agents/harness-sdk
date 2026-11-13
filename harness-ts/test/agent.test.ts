@@ -23,12 +23,14 @@ import {
   type ToolContext,
 } from '@strands-agents/sdk'
 import { ContextManager } from '@strands-agents/sdk/experimental'
+import { AgentSpec } from '@strands-agents/sdk/multiagent'
 import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
 import { makeShell as makeShellFactory } from '@strands-agents/sdk/vended-tools/bash'
+import { makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
@@ -38,7 +40,7 @@ import { HARNESS_CONTRACT } from '../src/prompt.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 import { makeProgrammaticToolCaller } from '../src/tools/programmatic-tool-caller.js'
 import { buildDefaultSubagent } from '../src/builtin-tools.js'
-import { AgentSpec, makeSubagent } from '../src/tools/subagent.js'
+import { DEFAULT_SUBAGENT_MAX_DEPTH } from '../src/defaults.js'
 import type { HarnessAgentOptions } from '../src/agent.js'
 import { storeOf } from './memory-internals.js'
 
@@ -51,8 +53,8 @@ vi.mock('../src/tools/programmatic-tool-caller.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/tools/programmatic-tool-caller.js')>()
   return { ...actual, makeProgrammaticToolCaller: vi.fn(actual.makeProgrammaticToolCaller) }
 })
-vi.mock('../src/tools/subagent.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/tools/subagent.js')>()
+vi.mock('@strands-agents/sdk/vended-tools/subagent', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@strands-agents/sdk/vended-tools/subagent')>()
   return { ...actual, makeSubagent: vi.fn(actual.makeSubagent) }
 })
 
@@ -322,7 +324,7 @@ describe('createHarness', () => {
   it.each([
     ['shell', makeShellFactory, [{}]],
     ['programmatic_tool_caller', makeProgrammaticToolCaller, [{}]],
-    ['subagent', makeSubagent, [expect.not.objectContaining({ maxDepth: expect.anything() })]],
+    ['subagent', makeSubagent, [expect.objectContaining({ maxDepth: DEFAULT_SUBAGENT_MAX_DEPTH })]],
   ] as const)('builds %s from its factory with no config when enabled with true', async (name, factory, args) => {
     vi.mocked(factory).mockClear()
     await createHarness({ builtinTools: { [name]: true } })
@@ -944,13 +946,13 @@ describe('createHarness', () => {
 })
 
 describe('subagent delegate (built child)', () => {
-  // Build a real delegate through the default builder — the SubagentTool holds it as `builder` — and
-  // assert the guarantees on the constructed child, mirroring the Python child tests.
+  // Build a real delegate through the default builder — the SDK's subagent tool holds it as `_builder` —
+  // and assert the guarantees on the constructed child, mirroring the Python child tests.
   function buildChildFrom(parent: Agent, spec: AgentSpec): Promise<Agent> {
     const subagentTool = parent.tools.find((t) => t.name === 'subagent') as unknown as {
-      builder: (spec: AgentSpec) => Promise<Agent>
+      _builder: (spec: AgentSpec) => Promise<Agent>
     }
-    return subagentTool.builder(spec)
+    return subagentTool._builder(spec)
   }
 
   async function buildChild(options: HarnessAgentOptions, spec: AgentSpec): Promise<Agent> {
@@ -958,7 +960,7 @@ describe('subagent delegate (built child)', () => {
   }
 
   it('narrows the built child to the requested subset, dropping the rest', async () => {
-    const spec = new AgentSpec('x')
+    const spec = new AgentSpec({ name: 'x' })
     spec.tools = ['read']
     const child = await buildChild({ builtinTools: ['read', 'shell', 'subagent'] }, spec)
     expect(toolNames(child)).toContain('read')
@@ -966,36 +968,36 @@ describe('subagent delegate (built child)', () => {
   })
 
   it('hands the built child every consumer tool when the model does not narrow', async () => {
-    const child = await buildChild({ tools: [sampleTool] }, new AgentSpec('x'))
+    const child = await buildChild({ tools: [sampleTool] }, new AgentSpec({ name: 'x' }))
     expect(toolNames(child)).toContain('sample_tool')
   })
 
   it('gives the built child a recall-only (non-writable) memory view', async () => {
-    const child = await buildChild({ memory: { dir: makeTempDir() } }, new AgentSpec('x'))
+    const child = await buildChild({ memory: { dir: makeTempDir() } }, new AgentSpec({ name: 'x' }))
     expect(child.memoryManager).toBeInstanceOf(MemoryManager)
     expect(storeOf(child.memoryManager as MemoryManager).writable).toBe(false)
   })
 
   it('builds the child with sessions forced off', async () => {
-    const child = await buildChild({ session: { dir: makeTempDir() } }, new AgentSpec('x'))
+    const child = await buildChild({ session: { dir: makeTempDir() } }, new AgentSpec({ name: 'x' }))
     expect(child.sessionManager).toBeUndefined()
   })
 
   it('registers the inherited interventions gate on the built child', async () => {
-    const child = await buildChild({ interventions: 'ask' }, new AgentSpec('x'))
+    const child = await buildChild({ interventions: 'ask' }, new AgentSpec({ name: 'x' }))
     expect(interventionHandlers(child)).toHaveLength(1)
     expect(interventionHandlers(child)[0]).toBeInstanceOf(HumanInTheLoop)
   })
 
   it('keeps its own subagent tool so a delegate can sub-delegate', async () => {
-    const child = await buildChild({}, new AgentSpec('x'))
+    const child = await buildChild({}, new AgentSpec({ name: 'x' }))
     expect(toolNames(child)).toContain('subagent')
   })
 
   it('carries explicit web_search onto a narrowed delegate', async () => {
     // web_search is never in the tools enum; a narrowed selection drops it, but the builder carries
     // the parent's setting onto the delegate, which resolves it for its own model.
-    const spec = new AgentSpec('x')
+    const spec = new AgentSpec({ name: 'x' })
     spec.tools = ['read']
     const child = await buildChild(
       { model: 'openai/gpt-5.6-sol', builtinTools: ['read', 'web_search', 'subagent'] },
@@ -1005,140 +1007,63 @@ describe('subagent delegate (built child)', () => {
   })
 
   it('keeps native search on a narrowed delegate of a default-configured parent', async () => {
-    const spec = new AgentSpec('x')
+    const spec = new AgentSpec({ name: 'x' })
     spec.tools = ['read']
     const child = await buildChild({ model: 'openai/gpt-5.6-sol' }, spec)
     expect((child.model.getConfig().params as { tools: unknown }).tools).toEqual([{ type: 'web_search' }])
   })
 
   it('carries the Exa fallback onto a narrowed delegate', async () => {
-    const spec = new AgentSpec('x')
+    const spec = new AgentSpec({ name: 'x' })
     spec.tools = ['read']
     const child = await buildChild({ builtinTools: { web_search: 'exa' } }, spec)
     expect(toolNames(child)).toContain('web_search')
   })
 
-  it('inherits the parent MCP tools via the shared clients, narrowable per server', async () => {
-    // A delegate shares the parent's connected MCP clients, keyed by server name; an omitted
-    // mcp_servers selection grants every server, an empty one drops them, a named one grants it.
+  it('inherits every parent MCP server, also on a narrowed delegate', async () => {
     const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
     const parent = await createHarness({ mcpServers: { srv: { command: 'node', args: [server] } } })
     try {
       await parent.initialize()
       expect(toolNames(parent)).toContain('srv_echo')
+      const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
+      expect(subagentTool.toolSpec.inputSchema!.properties).not.toHaveProperty('mcp_servers')
 
-      const inheritAll = await buildChildFrom(parent, new AgentSpec('x'))
+      const inheritAll = await buildChildFrom(parent, new AgentSpec({ name: 'x' }))
       await inheritAll.initialize()
       expect(toolNames(inheritAll)).toContain('srv_echo')
 
-      const none = new AgentSpec('x')
-      none.mcpServers = []
-      const narrowed = await buildChildFrom(parent, none)
+      const narrowed = await buildChildFrom(parent, new AgentSpec({ name: 'x', tools: ['read'] }))
       await narrowed.initialize()
-      expect(toolNames(narrowed)).not.toContain('srv_echo')
-
-      const one = new AgentSpec('x')
-      one.mcpServers = ['srv', 'srv'] // a repeated name (array-of-enum axis) must not forward a client twice
-      const selected = await buildChildFrom(parent, one)
-      await selected.initialize()
-      expect(toolNames(selected)).toContain('srv_echo')
-
-      // The parent's servers become the mcp_servers enum on the delegation tool's schema.
-      const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
-      const schema = subagentTool.toolSpec.inputSchema as { properties: { mcp_servers: { items: { enum: string[] } } } }
-      expect(schema.properties.mcp_servers.items.enum).toEqual(['srv'])
+      expect(toolNames(narrowed)).toEqual(expect.arrayContaining(['read', 'srv_echo']))
     } finally {
       const clients = (parent as unknown as { _mcpClients: McpClient[] })._mcpClients
       await Promise.all(clients.map((client) => client.disconnect()))
     }
   })
 
-  it('offers MCP clients passed in `tools` on the mcp_servers axis', async () => {
-    // Connected clients handed in via `tools` (how the CLI passes servers) are offered to delegates too,
-    // each under its own clientName.
+  it('hands MCP clients passed in `tools` to a narrowed delegate without offering them as tools', async () => {
+    // Connected clients handed in via `tools` (how the CLI passes servers), named or not.
     const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
-    const clients = await McpClient.loadServers(
-      { alpha: { command: 'node', args: [server] }, beta: { command: 'node', args: [server] } },
-      undefined,
-      { prefixWithServerName: true }
-    )
+    const clients = [
+      ...(await McpClient.loadServers({ alpha: { command: 'node', args: [server] } }, undefined, {
+        prefixWithServerName: true,
+      })),
+      new McpClient({ transport: new StdioClientTransport({ command: 'node', args: [server] }), prefix: 'bare' }),
+    ]
     const parent = await createHarness({ tools: clients })
     try {
       await parent.initialize()
-      expect(toolNames(parent)).toEqual(expect.arrayContaining(['alpha_echo', 'beta_echo']))
       const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
-      const schema = subagentTool.toolSpec.inputSchema as { properties: { mcp_servers: { items: { enum: string[] } } } }
-      expect(schema.properties.mcp_servers.items.enum).toEqual(['alpha', 'beta'])
       const toolsAxis = (subagentTool.toolSpec.inputSchema as { properties: { tools: { items: { enum: string[] } } } })
         .properties.tools.items.enum
-      expect(toolsAxis).not.toEqual(expect.arrayContaining(['alpha'])) // servers never pose as tools
+      expect(toolsAxis).not.toEqual(expect.arrayContaining(['alpha']))
 
-      // Narrowing both axes at once: the tools split must not drop the selected servers.
-      const spec = new AgentSpec('x')
-      spec.tools = ['read']
-      spec.mcpServers = ['beta']
-      const child = await buildChildFrom(parent, spec)
+      const child = await buildChildFrom(parent, new AgentSpec({ name: 'x', tools: ['read'] }))
       await child.initialize()
-      expect(toolNames(child)).toEqual(expect.arrayContaining(['read', 'beta_echo']))
-      expect(toolNames(child)).not.toContain('alpha_echo')
+      expect(toolNames(child)).toEqual(expect.arrayContaining(['read', 'alpha_echo', 'bare_echo']))
     } finally {
       await Promise.all(clients.map((client) => client.disconnect()))
-    }
-  })
-
-  it('warns when two MCP clients share a clientName and offers only the first', async () => {
-    // Two clients answering to the same clientName can't both sit behind one enum value: the first is
-    // offered, the second is dropped from delegation, and the collapse is warned about.
-    const warn = vi.fn()
-    configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
-    const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
-    const clients = await McpClient.loadServers(
-      { alpha: { command: 'node', args: [server] }, beta: { command: 'node', args: [server] } },
-      { applicationName: 'shared' }, // a shared default name overrides the per-key naming
-      { prefixWithServerName: true }
-    )
-    const parent = await createHarness({ tools: clients })
-    try {
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('share the name "shared"'))
-      await parent.initialize()
-      expect(toolNames(parent)).toEqual(expect.arrayContaining(['alpha_echo', 'beta_echo'])) // the parent keeps both
-      const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
-      const schema = subagentTool.toolSpec.inputSchema as { properties: { mcp_servers: { items: { enum: string[] } } } }
-      expect(schema.properties.mcp_servers.items.enum).toEqual(['shared'])
-      const spec = new AgentSpec('x')
-      spec.mcpServers = ['shared']
-      const child = await buildChildFrom(parent, spec)
-      await child.initialize()
-      expect(toolNames(child)).toContain('alpha_echo')
-      expect(toolNames(child)).not.toContain('beta_echo')
-    } finally {
-      await Promise.all(clients.map((client) => client.disconnect()))
-    }
-  })
-
-  it('warns about an MCP client without applicationName and leaves it off the mcp_servers axis', async () => {
-    // A hand-built client has no name the model could pick, so it stays out of the axis (and out of
-    // delegates) with a warning telling the caller how to fix it.
-    const warn = vi.fn()
-    configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
-    const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
-    const bare = new McpClient({
-      transport: new StdioClientTransport({ command: 'node', args: [server] }),
-      prefix: 'bare',
-    })
-    const parent = await createHarness({ tools: [bare] })
-    try {
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('has no applicationName'))
-      await parent.initialize()
-      expect(toolNames(parent)).toContain('bare_echo')
-      const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
-      const schema = subagentTool.toolSpec.inputSchema as { properties: Record<string, unknown> }
-      expect(schema.properties).not.toHaveProperty('mcp_servers') // no offerable server, so no axis at all
-      const child = await buildChildFrom(parent, new AgentSpec('x'))
-      await child.initialize()
-      expect(toolNames(child)).not.toContain('bare_echo')
-    } finally {
-      await bare.disconnect()
     }
   })
 
@@ -1148,42 +1073,13 @@ describe('subagent delegate (built child)', () => {
     const parent = await createHarness({ mcpServers: { srv: { command: 'node', args: [server] } } })
     try {
       await parent.initialize()
-      const child = await buildChildFrom(parent, new AgentSpec('x'))
+      const child = await buildChildFrom(parent, new AgentSpec({ name: 'x' }))
       await child.initialize()
       expect(toolNames(child)).toContain('srv_echo')
 
-      const grandchild = await buildChildFrom(child, new AgentSpec('x'))
+      const grandchild = await buildChildFrom(child, new AgentSpec({ name: 'x' }))
       await grandchild.initialize()
       expect(toolNames(grandchild)).toContain('srv_echo')
-    } finally {
-      const clients = (parent as unknown as { _mcpClients: McpClient[] })._mcpClients
-      await Promise.all(clients.map((client) => client.disconnect()))
-    }
-  })
-
-  it('propagates MCP narrowing through a grandchild', async () => {
-    // A child restricted to no MCP servers can't pass any to a grandchild; a granted server carries on.
-    const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
-    const parent = await createHarness({ mcpServers: { srv: { command: 'node', args: [server] } } })
-    try {
-      await parent.initialize()
-
-      const starvedSpec = new AgentSpec('x')
-      starvedSpec.mcpServers = []
-      const starved = await buildChildFrom(parent, starvedSpec)
-      await starved.initialize()
-      expect(toolNames(starved)).not.toContain('srv_echo')
-      const starvedGrandchild = await buildChildFrom(starved, new AgentSpec('x'))
-      await starvedGrandchild.initialize()
-      expect(toolNames(starvedGrandchild)).not.toContain('srv_echo')
-
-      const grantedSpec = new AgentSpec('x')
-      grantedSpec.mcpServers = ['srv']
-      const granted = await buildChildFrom(parent, grantedSpec)
-      await granted.initialize()
-      const grantedGrandchild = await buildChildFrom(granted, new AgentSpec('x'))
-      await grantedGrandchild.initialize()
-      expect(toolNames(grantedGrandchild)).toContain('srv_echo')
     } finally {
       const clients = (parent as unknown as { _mcpClients: McpClient[] })._mcpClients
       await Promise.all(clients.map((client) => client.disconnect()))

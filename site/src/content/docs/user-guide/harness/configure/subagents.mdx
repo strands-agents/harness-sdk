@@ -4,7 +4,7 @@ description: "Hand Strands harness your own specialist Agent instances as tools,
 sourceLinks:
   - path: harness-py/src/strands_harness/agent.py
   - path: harness-py/src/strands_harness/tools/subagent.py
-  - path: harness-ts/src/tools/subagent.ts
+  - path: harness-ts/src/builtin-tools.ts
 sidebar:
   label: "Delegate to subagents"
 ---
@@ -58,9 +58,13 @@ across the tool set, the same rule as any tool.
 Strands harness enables one built-in subagent, `generalist`, exposed to the agent as a tool. It is a
 full Strands harness agent that inherits the parent's configuration (model, thinking, caching,
 context management, built-in tools, plugins, subagents, interventions, and sandbox) but
-runs with a generic role prompt instead of your `instructions`. It starts from a blank
-conversation, so the model must put everything the subtask needs into the call, and it
-returns a single self-contained answer.
+runs with a generic role prompt instead of your `instructions`. By default it starts from a blank
+conversation, so the model must put everything the subtask needs into the call (it can opt into
+sharing the parent's history with the `context` parameter), and it returns a single self-contained
+answer. It keeps every MCP server the parent has.
+
+The tool is the SDK's [`subagent`](../../../sdk/tools/vended-tools/subagent/) with a builder that
+rebuilds the child as a harness agent, so the model-facing parameters match the SDK tool.
 
 Reach for it when a subtask would otherwise flood the main context: searching many files,
 a multi-step change, or open-ended exploration where you only need the conclusion. Because
@@ -119,6 +123,38 @@ it off:
 In both SDKs the `generalist` runs in the background, so the main agent
 can keep working while it runs. See
 [run work in the background](../background-tasks/).
+:::
+
+## Limit delegation depth
+
+A delegate may delegate again, up to `max_depth` / `maxDepth` levels (default 2). Set it to `0` to
+remove the `subagent` tool entirely:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+
+    agent = create_harness(builtin_tools={"subagent": {"max_depth": 1}})
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+
+    const agent = await createHarness({ builtinTools: { subagent: { maxDepth: 1 } } })
+    ```
+  </Tab>
+</Tabs>
+
+:::caution[Breaking change]
+Earlier harness releases shipped their own copy of this tool. It now uses the SDK's: the
+`mcp_servers` / `mcpServers` parameter is gone, `AgentSpec` has no `task`, `context` or
+`last_messages` field, TypeScript's `Option` is `new Option(name, value, description)`, the depth
+budget is stored under `strands.subagent_depth`, child interrupt ids are namespaced by the
+subagent call (`v1:subagent:<toolUseId>:<id>` in Python, `subagent:<toolUseId>:<id>` in TypeScript),
+and a depth of `0` removes the tool rather than
+registering one that always refuses.
 :::
 
 For the full option list, see the
