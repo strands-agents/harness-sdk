@@ -56,6 +56,7 @@ class _PluginRegistry:
         """
         self._agent_ref = weakref.ref(agent)
         self._plugins: dict[str, Plugin] = {}
+        self._tool_owners: dict[str, Plugin] = {}
 
     @property
     def _agent(self) -> "Agent":
@@ -122,12 +123,44 @@ class _PluginRegistry:
 
         Args:
             plugin: The plugin whose tools should be registered.
+
+        Raises:
+            ValueError: If a tool name is already registered by a different tool.
         """
         if plugin.tools:
+            self._check_tool_name_conflicts(plugin)
             self._agent.tool_registry.process_tools(list(plugin.tools))
             for tool in plugin.tools:
+                self._tool_owners[tool.tool_name] = plugin
                 logger.debug(
                     "plugin=<%s>, tool=<%s> | registered tool",
                     plugin.name,
                     tool.tool_name,
                 )
+
+    def _check_tool_name_conflicts(self, plugin: Plugin) -> None:
+        """Reject plugin tools whose names are already taken by another tool.
+
+        The tool registry skips its duplicate-name check for hot-reloadable tools, and
+        every @tool decorated function is hot-reloadable. Without this check a second
+        plugin that exposes a tool with the same name silently replaces the first
+        plugin's tool, so the first plugin's tool is lost without any error.
+
+        Args:
+            plugin: The plugin whose tools are about to be registered.
+
+        Raises:
+            ValueError: If a tool name is already registered by another tool.
+        """
+        registry = self._agent.tool_registry.registry
+        for tool in plugin.tools:
+            if tool.tool_name not in registry:
+                continue
+            owner = self._tool_owners.get(tool.tool_name)
+            if owner is plugin:
+                # Re-registering the same plugin's tool (e.g. hot reload) is allowed.
+                continue
+            raise ValueError(
+                f"tool_name=<{tool.tool_name}>, plugin_name=<{plugin.name}> | "
+                "tool already registered by another tool"
+            )
