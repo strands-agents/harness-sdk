@@ -39,7 +39,7 @@ import {
   type CacheTTL,
   type StreamOptions,
 } from './model.js'
-import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -176,7 +176,7 @@ export class VercelModel extends Model<VercelModelConfig> {
   override get modelInfo(): ModelInfo {
     const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
     const implicitCache = bedrock && this.modelId.toLowerCase().includes('openai.')
-    return mergeModelInfo(
+    return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
       implicitCache ? { capabilities: { promptCaching: 'auto' } } : undefined,

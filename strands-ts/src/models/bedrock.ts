@@ -62,7 +62,7 @@ import {
   resolveConfigMetadata,
   resolveMaxTokens,
 } from '../models/model.js'
-import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -534,7 +534,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    */
   override get modelInfo(): ModelInfo {
     const openai = this.modelId?.toLowerCase().includes('openai.')
-    return mergeModelInfo(
+    return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
       openai ? { capabilities: { promptCaching: 'auto' } } : undefined,

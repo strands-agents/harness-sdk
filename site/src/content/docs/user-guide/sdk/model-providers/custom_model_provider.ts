@@ -7,11 +7,10 @@ import {
   Agent,
   BedrockModel,
   Model,
-  mergeModelInfo,
+  ModelInfo,
   type BedrockModelConfig,
 } from '@strands-agents/sdk'
 import type {
-  ModelInfo,
   BaseModelConfig,
   Message,
   ContentBlock,
@@ -262,7 +261,7 @@ class CustomModelInfoExample extends Model<BaseModelConfig> {
 
   // --8<-- [start:model_info]
   override get modelInfo(): ModelInfo {
-    return mergeModelInfo(
+    return ModelInfo.merge(
       super.modelInfo,
       { capabilities: { serverSideSummary: false } },
       this.getConfig().modelInfo

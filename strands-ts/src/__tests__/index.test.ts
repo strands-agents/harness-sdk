@@ -35,8 +35,8 @@ describe('index', () => {
       expect(SDK).not.toHaveProperty('ToolExecutor')
     })
 
-    it('exports mergeModelInfo', () => {
-      expect(SDK.mergeModelInfo({ limits: { contextWindow: 1 } }, { limits: { contextWindow: 2 } })).toEqual({
+    it('exports ModelInfo.merge', () => {
+      expect(SDK.ModelInfo.merge({ limits: { contextWindow: 1 } }, { limits: { contextWindow: 2 } })).toEqual({
         limits: { contextWindow: 2 },
       })
     })

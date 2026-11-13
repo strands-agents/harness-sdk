@@ -29,7 +29,7 @@ import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
-import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { summarizeWithStream, type SummarizeResult } from './summarize.js'
 
@@ -48,7 +48,7 @@ import { summarizeWithStream, type SummarizeResult } from './summarize.js'
  */
 export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, modelId: string): T {
   if (config.contextWindowLimit !== undefined) return config
-  const contextWindow = mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
+  const contextWindow = ModelInfo.merge(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
   if (contextWindow === undefined) return config
   return { ...config, contextWindowLimit: contextWindow }
 }
@@ -65,7 +65,7 @@ export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, mode
  */
 export function resolveMaxTokens(config: BaseModelConfig, modelId: string): number | undefined {
   if (config.maxTokens !== undefined) return config.maxTokens
-  return mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
+  return ModelInfo.merge(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
 }
 
 class CitationAccumulator {
@@ -422,12 +422,12 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
    * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
-   * `mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this.getConfig().modelInfo)`.
+   * `ModelInfo.merge(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this.getConfig().modelInfo)`.
    * Do not read {@link stateful} inside the override; it reads this getter.
    */
   get modelInfo(): ModelInfo {
     const config = this.getConfig()
-    return mergeModelInfo(
+    return ModelInfo.merge(
       lookupModelInfo(this.modelId ?? ''),
       {
         capabilities: { temporaryMessages: false },
