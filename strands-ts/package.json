@@ -279,7 +279,7 @@
     "@ai-sdk/amazon-bedrock": "^4.0.129",
     "@ai-sdk/openai": "^3.0.41",
     "@ai-sdk/provider": "^3.0.0",
-    "@anthropic-ai/sdk": "^1.4.0",
+    "@anthropic-ai/sdk": "^1.7.0",
     "@aws-sdk/client-bedrock": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1153.0",

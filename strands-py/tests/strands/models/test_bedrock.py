@@ -2601,13 +2601,14 @@ def stream_structured_output(model, test_output_model_cls, alist):
     return stream_structured_output
 
 
+@pytest.mark.parametrize("model_id", ["us.anthropic.claude-opus-5-5", "global.anthropic.claude-haiku-5-5"])
 @pytest.mark.asyncio
 async def test_stream_structured_output_starts_at_native_when_the_model_info_forbids_forcing(
-    native_output_client, test_output_model_cls, messages, alist
+    native_output_client, test_output_model_cls, messages, alist, model_id
 ):
     """A model the shared model info says cannot be forced skips the forced request entirely."""
     native_output_client.converse_stream.return_value = {"stream": []}
-    model = BedrockModel(model_id="us.anthropic.claude-opus-5-5")
+    model = BedrockModel(model_id=model_id)
     tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
 
     await alist(
@@ -3233,6 +3234,21 @@ def test_format_request_filters_sdk_unknown_member_content_blocks(model, model_i
 
     for block in content:
         assert "SDK_UNKNOWN_MEMBER" not in block
+
+
+def test_format_request_skips_an_injected_block_it_receives_with_a_warning(bedrock_client, caplog):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-opus-5-5",
+        model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=True)),
+    )
+    messages = [{"role": "user", "content": [{"text": "Hello"}, {"injected": {"text": "cwd: /repo", "source": "env"}}]}]
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        formatted_request = model.format_request(messages)
+
+    assert formatted_request["messages"][0]["content"] == [{"text": "Hello"}]
+    assert "block_type=<injected> | bedrock does not send injected blocks | skipping it" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -4459,7 +4475,9 @@ def test_model_info_treats_a_non_string_model_id_as_unknown(bedrock_client):
     model = BedrockModel(model_id=None)
 
     assert "context_window_limit" not in model.get_config()
-    assert model.model_info == ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
+    assert model.model_info == ModelInfo(
+        capabilities=ModelCapabilities(server_side_summary=False, temporary_messages=False)
+    )
     assert model.stateful is False
 
 
@@ -4479,7 +4497,7 @@ def test_cache_strategy_auto_falls_back_to_the_claude_name_test_for_ids_the_mode
 
     model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
 
-    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False)
+    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False, temporary_messages=False)
     assert model._cache_strategy == "anthropic"
 
 
@@ -4491,7 +4509,7 @@ def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedro
         cache_config=CacheConfig(strategy="auto"),
     )
 
-    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False)
+    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False, temporary_messages=False)
     assert model._cache_strategy is None
 
 

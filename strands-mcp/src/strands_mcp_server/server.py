@@ -14,7 +14,7 @@ except ImportError:
     FastMCP = import_module("mcp.server.mcpserver").MCPServer
     ToolError = import_module("mcp.server.mcpserver.exceptions").ToolError
 
-from .utils import cache, text_processor
+from .utils import cache, integrations, text_processor
 from .utils.indexer import Doc, IndexSearch, _tokenize
 
 APP_NAME = "strands-agents-mcp-server"
@@ -57,6 +57,9 @@ fetch_doc(uri, section). Short pages come back whole.
 4. Pages often show Python and TypeScript side by side; use only the language the user is working in.
 5. The docs describe the latest releases. If the user is on an older version, check its release notes.
 6. Avoid fetch_doc with an empty uri unless you need to browse: it lists every page, over 1,000 URLs.
+7. To choose an integration (model provider, memory store, tool, observability, and more), call \
+find_integrations to filter the catalog by type, language, and maintainer. Tell the user when a result is \
+community-maintained.
 
 Cite the page URLs you used in your answer."""
 
@@ -295,6 +298,55 @@ def fetch_doc(
         "preamble": text_processor.extract_preamble(page.content),
         "sections": clean_sections,
     }
+
+
+@mcp.tool(title="Find Strands integrations", annotations=READ_ONLY_DOCS)
+def find_integrations(
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                'Keywords matched against integration names and descriptions, e.g. "langfuse", "postgres". '
+                "Leave empty to filter by the other parameters only."
+            )
+        ),
+    ] = "",
+    type: Annotated[integrations.IntegrationType | None, Field(description="Integration type to filter by.")] = None,
+    language: Annotated[
+        integrations.Language | None, Field(description="Only integrations that support this language.")
+    ] = None,
+    maintained_by: Annotated[
+        integrations.Maintainer | None,
+        Field(
+            description=(
+                'Who maintains the integration: "strands" (built into the SDK), "aws", "partner" (the vendor\'s '
+                'official org), or "community".'
+            )
+        ),
+    ] = None,
+    sdk: Annotated[
+        integrations.Sdk | None,
+        Field(
+            description='Strands product the integration is for: "agents" (Strands Agents) or "evals" (Strands Evals).'
+        ),
+    ] = None,
+    limit: Annotated[int, Field(ge=1, le=50, description="Maximum number of results to return.")] = 10,
+) -> Dict[str, Any]:
+    """Find Strands integrations in the catalog published at https://strandsagents.com/integrations/.
+
+    Every keyword in query must appear in the name or description; name matches rank first. Returns total, the
+    number of matching integrations, and results, the first limit of them; when total is larger, raise limit or
+    narrow the filters. Each result has name, description, type, sdk, maintained_by, languages, packages (each
+    with language, package, and an install command), docs_url, and github. A docs_url on strandsagents.com can be
+    read with fetch_doc. An integration listed for a language without a package is documented by a guide only.
+
+    The catalog is fetched on first use and refreshed every few minutes. If it has never loaded, the call fails
+    with a tool error; retry later or use search_docs.
+    """
+    try:
+        return integrations.find(query, type, language, maintained_by, sdk, limit)
+    except integrations.FeedUnavailableError as e:
+        raise ToolError(str(e)) from e
 
 
 def main() -> None:

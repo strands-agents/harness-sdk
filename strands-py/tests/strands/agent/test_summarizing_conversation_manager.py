@@ -836,7 +836,7 @@ def test_default_path_passes_correct_system_prompt():
 
     # Verify model.stream() was called with the default summarization system prompt
     call_kwargs = parent_agent.model.stream.call_args
-    assert call_kwargs.kwargs["system_prompt"] == DEFAULT_SUMMARIZATION_PROMPT
+    assert call_kwargs.args[2] == DEFAULT_SUMMARIZATION_PROMPT
 
 
 def test_default_path_uses_custom_system_prompt():
@@ -854,7 +854,7 @@ def test_default_path_uses_custom_system_prompt():
 
     # Verify model.stream() was called with the custom system prompt
     call_kwargs = mock_agent.model.stream.call_args
-    assert call_kwargs.kwargs["system_prompt"] == custom_prompt
+    assert call_kwargs.args[2] == custom_prompt
 
 
 def test_default_path_does_not_modify_agent_state():
