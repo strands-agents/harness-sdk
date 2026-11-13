@@ -185,7 +185,7 @@ export function frogStartupHeight(width: number, availableHeight: number): numbe
   return frogWordmarkHeight(width, availableHeight)
 }
 
-export function frogWordmarkHeight(width: number, availableHeight: number): number {
+function frogWordmarkHeight(width: number, availableHeight: number): number {
   if (width >= BRAND_WORD.width && availableHeight >= wordOnlyHeight(width) + 8) {
     return wordOnlyHeight(width)
   }

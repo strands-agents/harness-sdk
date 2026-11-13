@@ -56,8 +56,21 @@ export const QUEUED_PROMPT_ACTIONS = [
 export type QueuedPromptAction = (typeof QUEUED_PROMPT_ACTIONS)[number]['action']
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
 
-const STARTUP_CARD_RESERVED_ROWS = 13
-const STARTUP_CARD_FRAME_ROWS = 6
+const STARTUP_CARD_MIN_CONTENT_ROWS = 12
+const STARTUP_CARD_BORDER_ROWS = 2
+const STARTUP_CARD_PADDING_ROWS = 4
+
+const startupCardLayout = (
+  terminalHeight: number,
+  { headerHeight, paddingTop, lockupHeight }: ReturnType<typeof startupHeaderLayout>
+): { top: number; padding: 0 | 1; contentRows: number } => {
+  const logoBottom = paddingTop + lockupHeight
+  const paddedFrameRows = STARTUP_CARD_BORDER_ROWS + STARTUP_CARD_PADDING_ROWS
+  const padding = terminalHeight - logoBottom - paddedFrameRows >= STARTUP_CARD_MIN_CONTENT_ROWS ? 1 : 0
+  const frameRows = padding ? paddedFrameRows : STARTUP_CARD_BORDER_ROWS
+  const top = Math.max(logoBottom, Math.min(headerHeight, terminalHeight - frameRows - STARTUP_CARD_MIN_CONTENT_ROWS))
+  return { top, padding, contentRows: Math.max(1, terminalHeight - top - frameRows) }
+}
 
 export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactElement {
   return (
@@ -320,16 +333,10 @@ function ChatViewContent({
   const startupReservedRightWidth = wideConfigurationDock ? configDockWidth + CONFIG_DOCK_GAP : 0
   // The transcript reflows into the space left of the dock instead of running underneath it.
   const transcriptReservedRightWidth = hasActivity ? startupReservedRightWidth : 0
-  const startupBrand = startupContent ? 'wordmark' : 'lockup'
-  const startupAvailableHeight =
-    terminalHeight - (startupBrand === 'lockup' ? commandDeckHeight : STARTUP_CARD_RESERVED_ROWS)
-  const { headerHeight: startupHeaderHeight } = startupHeaderLayout(
-    terminalWidth,
-    startupAvailableHeight,
-    startupReservedRightWidth,
-    startupBrand
-  )
-  const startupContentRows = Math.max(1, terminalHeight - startupHeaderHeight - STARTUP_CARD_FRAME_ROWS)
+  const startupAvailableHeight = terminalHeight - commandDeckHeight
+  const startupHeader = startupHeaderLayout(terminalWidth, startupAvailableHeight, startupReservedRightWidth)
+  const startupCard = startupCardLayout(terminalHeight, startupHeader)
+  const startupLogoRows = startupContent ? startupCard.top + startupCard.padding : undefined
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
   const { settings } = snapshot
   const frogBrandElapsedMs = useBrandAnimation(frogBrandAnimationId, settings.animations)
@@ -340,7 +347,7 @@ function ChatViewContent({
         availableHeight={startupAvailableHeight}
         animate={settings.animations}
         reservedRightWidth={startupReservedRightWidth}
-        brand={startupBrand}
+        {...(startupLogoRows !== undefined ? { maxHeight: startupLogoRows } : {})}
         {...(introStartedAt !== undefined ? { introStartedAt } : {})}
         theme={settings.frogTheme}
         partyElapsedMs={partyFrame * PARTY_FRAME_INTERVAL_MS}
@@ -352,7 +359,7 @@ function ChatViewContent({
     [
       terminalWidth,
       startupAvailableHeight,
-      startupBrand,
+      startupLogoRows,
       settings.animations,
       startupReservedRightWidth,
       introStartedAt,
@@ -660,10 +667,23 @@ function ChatViewContent({
       </FadeIn>
       {startupContent ? (
         <Box position="absolute" width={editorWidth} height={terminalHeight} flexDirection="column">
-          <Box flexBasis={startupHeaderHeight} flexShrink={1} />
-          <Box flexGrow={1} flexShrink={0} flexDirection="column" justifyContent="center" paddingX={1} paddingY={1}>
-            <Box flexDirection="column" borderStyle="round" borderColor={accent} paddingX={1} paddingY={1}>
-              <StartupContentRows value={startupContentRows}>{startupContent}</StartupContentRows>
+          <Box flexBasis={startupCard.top} flexShrink={1} />
+          <Box
+            flexGrow={1}
+            flexShrink={0}
+            flexDirection="column"
+            justifyContent="center"
+            paddingX={1}
+            paddingY={startupCard.padding}
+          >
+            <Box
+              flexDirection="column"
+              borderStyle="round"
+              borderColor={accent}
+              paddingX={1}
+              paddingY={startupCard.padding}
+            >
+              <StartupContentRows value={startupCard.contentRows}>{startupContent}</StartupContentRows>
             </Box>
           </Box>
         </Box>
