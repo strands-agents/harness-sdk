@@ -60,7 +60,7 @@ from typing_extensions import Protocol, TypedDict
 from ...types import PaginatedList
 from ...types.exceptions import MCPClientInitializationError, ToolProviderException
 from ...types.media import ImageFormat
-from ...types.tools import AgentTool, ToolResultContent, ToolResultStatus
+from ...types.tools import AgentTool, ToolResultContent, ToolResultStatus, ToolUse
 from ..tool_provider import ToolProvider
 from ._compat import (
     MCP_V2,
@@ -109,7 +109,7 @@ from .mcp_tasks import (
     _UpdateTaskRequest,
     _UpdateTaskRequestParams,
 )
-from .mcp_types import MCPClientCredentials, MCPToolResult, MCPTransport, ToolsChanged
+from .mcp_types import MCPClientCredentials, MCPToolResult, MCPTransport, MetaProvider, ToolsChanged
 
 logger = logging.getLogger(__name__)
 
@@ -320,6 +320,7 @@ class MCPClient(ToolProvider):
         tasks_config: TasksConfig | None = None,
         on_tools_changed: ToolsChanged | None = None,
         meta: dict[str, Any] | None = None,
+        meta_provider: MetaProvider | None = None,
     ) -> None:
         """Initialize a new MCP Server connection.
 
@@ -368,6 +369,12 @@ class MCPClient(ToolProvider):
                 `call_tool_sync`/`call_tool_async`, including model-driven calls dispatched via `MCPAgentTool`,
                 which routes through `call_tool_async`. Trace context is merged on top. A per-call `meta`
                 argument to either method takes precedence over this client-level value.
+            meta_provider: Optional callback that computes the request metadata (`_meta`) of each
+                model-driven tool call. It is called with the call's `ToolUse` and the agent's
+                `invocation_state`, and the mapping it returns is merged over the client-level
+                `meta`, so the client-level value acts as a default. Returning None sends the
+                client-level `meta` alone. The provider is not used for direct `call_tool_sync`/
+                `call_tool_async` calls, which carry their own `meta` argument.
 
         Raises:
             ValueError: If neither or both of `transport_callable` and `url` are provided, if
@@ -386,6 +393,7 @@ class MCPClient(ToolProvider):
         self._elicitation_callback = elicitation_callback
         self._progress_callback = progress_callback
         self._meta = meta
+        self._meta_provider = meta_provider
         self._on_tools_changed = on_tools_changed
         self._tools_refresh_in_progress = False
         self._tools_refresh_pending = False
@@ -421,6 +429,30 @@ class MCPClient(ToolProvider):
         self._server_task_capable: bool | None = None
 
         self._tool_task_support_cache: dict[str, str] = {}
+
+    def _resolve_meta(self, tool_use: ToolUse, invocation_state: dict[str, Any]) -> dict[str, Any] | None:
+        """Resolve the request metadata (`_meta`) for a model-driven tool call.
+
+        The client-level `meta` acts as the default. When a `meta_provider` is configured,
+        it is called with the tool use and the agent's invocation state, and the mapping it
+        returns is merged over the client-level meta.
+
+        Args:
+            tool_use: The tool use the call was made with.
+            invocation_state: The agent's invocation state for this call.
+
+        Returns:
+            The `_meta` to send with the call, or None when there is no metadata to send -
+            in which case the client-level meta applies unchanged.
+        """
+        if self._meta_provider is None:
+            return self._meta
+
+        provided = self._meta_provider(tool_use, invocation_state)
+        if not provided:
+            return self._meta
+
+        return {**(self._meta or {}), **provided}
 
     def __enter__(self) -> "MCPClient":
         """Context manager entry point which initializes the MCP server connection.
@@ -758,6 +790,9 @@ class MCPClient(ToolProvider):
         self._log_debug_with_thread("received %d tools from MCP server", len(list_tools_response.tools))
 
         mcp_tools = []
+        # Only wire the provider when one is configured, so tools created without
+        # a provider keep the client-level meta on their own.
+        meta_kwargs = {"meta_provider": self._resolve_meta} if self._meta_provider is not None else {}
         for tool in list_tools_response.tools:
             if self._is_tasks_enabled():
                 # Cache taskSupport for task-augmented execution decisions
@@ -766,10 +801,10 @@ class MCPClient(ToolProvider):
             # Apply prefix if specified
             if effective_prefix:
                 prefixed_name = f"{effective_prefix}_{tool.name}"
-                mcp_tool = MCPAgentTool(tool, self, name_override=prefixed_name)
+                mcp_tool = MCPAgentTool(tool, self, name_override=prefixed_name, **meta_kwargs)
                 logger.debug("tool_rename=<%s->%s> | renamed tool", tool.name, prefixed_name)
             else:
-                mcp_tool = MCPAgentTool(tool, self)
+                mcp_tool = MCPAgentTool(tool, self, **meta_kwargs)
 
             # Apply filters if specified
             if self._should_include_tool_with_filters(mcp_tool, effective_filters):

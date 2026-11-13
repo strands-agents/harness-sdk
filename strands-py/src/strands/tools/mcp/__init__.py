@@ -23,7 +23,7 @@ from .mcp_tasks import (
     MCPUpdateTaskResult,
     TasksConfig,
 )
-from .mcp_types import MCPClientCredentials, MCPTransport, ToolsChanged, ToolsChangedCallback
+from .mcp_types import MCPClientCredentials, MCPTransport, MetaProvider, ToolsChanged, ToolsChangedCallback
 
 __all__ = [
     "MCPAgentTool",
@@ -44,6 +44,7 @@ __all__ = [
     "MCPTaskStatus",
     "MCPUpdateTaskResult",
     "TasksConfig",
+    "MetaProvider",
     "ToolFilters",
     "ToolsChanged",
     "ToolsChangedCallback",
