@@ -160,12 +160,12 @@ function formatImageBlock(block: ImageBlock): Part[] {
  * @internal
  */
 function formatReasoningBlock(block: ReasoningBlock): Part[] {
-  if (!block.text) {
+  if (!block.text && !block.signature) {
     return []
   }
 
   const part: Part = {
-    text: block.text,
+    text: block.text ?? '',
     thought: true,
   }
 
@@ -448,9 +448,8 @@ export function mapChunkToEvents(chunk: GenerateContentResponse, streamState: Go
       }
 
       // Handle text and reasoning parts
-      if ('text' in part && part.text) {
-        const isThought = 'thought' in part && part.thought === true
-
+      const isThought = part.thought === true
+      if (part.text) {
         if (isThought) {
           // Handle reasoning content
           // Close text block if transitioning from text to reasoning
@@ -497,6 +496,24 @@ export function mapChunkToEvents(chunk: GenerateContentResponse, streamState: Go
           })
         }
       }
+
+      // A signature can ride on a non-thought text part or on a part with no text at all (Gemini
+      // attaches it to a trailing empty part). Inside a text block it is held until the message
+      // ends so the answer stays one block; otherwise it gets a reasoning block of its own.
+      if (part.thoughtSignature && !(part.text && isThought)) {
+        if (streamState.textContentBlockStarted) {
+          streamState.deferredSignatures.push(part.thoughtSignature)
+          continue
+        }
+        if (!streamState.reasoningContentBlockStarted) {
+          streamState.reasoningContentBlockStarted = true
+          events.push({ type: 'modelContentBlockStartEvent' })
+        }
+        events.push({
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'reasoningContentDelta', signature: part.thoughtSignature },
+        })
+      }
     }
   }
 
@@ -512,6 +529,15 @@ export function mapChunkToEvents(chunk: GenerateContentResponse, streamState: Go
       events.push({ type: 'modelContentBlockStopEvent' })
       streamState.reasoningContentBlockStarted = false
     }
+    for (const signature of streamState.deferredSignatures) {
+      events.push({ type: 'modelContentBlockStartEvent' })
+      events.push({
+        type: 'modelContentBlockDeltaEvent',
+        delta: { type: 'reasoningContentDelta', signature },
+      })
+      events.push({ type: 'modelContentBlockStopEvent' })
+    }
+    streamState.deferredSignatures = []
 
     const stopReason = streamState.hasToolCalls ? 'toolUse' : FINISH_REASON_MAP[finishReason] || 'endTurn'
 

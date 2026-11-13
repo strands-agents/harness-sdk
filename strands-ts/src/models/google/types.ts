@@ -83,6 +83,8 @@ export interface GoogleStreamState {
   messageStarted: boolean
   textContentBlockStarted: boolean
   reasoningContentBlockStarted: boolean
+  /** Thought signatures that arrived inside a text block, emitted as their own reasoning blocks at message end. */
+  deferredSignatures: string[]
   hasToolCalls: boolean
   inputTokens: number
   outputTokens: number
