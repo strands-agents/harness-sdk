@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'strands-py/**'
+      - 'shared/**'
       - '.github/workflows/python-*'
   merge_group:
     types: [checks_requested]

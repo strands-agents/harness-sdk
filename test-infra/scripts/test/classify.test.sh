@@ -55,6 +55,7 @@ expect_branch structural "shared integ fixture" "strands-ts/test/integ/__fixture
 expect_branch structural "binary integ resource" "strands-ts/test/integ/__resources__/yellow.png"
 expect_branch structural "the orchestration script itself" "test-infra/scripts/run-selective-ts.sh"
 expect_branch structural "typescript CI workflow" ".github/workflows/typescript-ts-test.yml"
+expect_branch structural "shared data the SDK copies in at build" "shared/model-info.json"
 expect_branch structural "structural mixed with source" "README.md" "strands-ts/src/agent/agent.ts" "package.json"
 
 # --- Skip: no strands-ts source touched ---
