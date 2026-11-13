@@ -88,7 +88,7 @@ def test_public_agent_card(mock_strands_agent):
     assert isinstance(card, AgentCard)
     assert card.name == "Test Agent"
     assert card.description == "A test agent for unit testing"
-    assert card.url == "http://127.0.0.1:9000/"
+    assert card.supported_interfaces[0].url == "http://127.0.0.1:9000/"
     assert card.version == "0.0.1"
     assert card.default_input_modes == ["text"]
     assert card.default_output_modes == ["text"]
@@ -99,19 +99,17 @@ def test_public_agent_card(mock_strands_agent):
 def test_public_agent_card_with_missing_name(mock_strands_agent):
     """Test that public_agent_card raises ValueError when name is missing."""
     mock_strands_agent.name = ""
-    a2a_agent = A2AServer(mock_strands_agent, skills=[])
 
     with pytest.raises(ValueError, match="A2A agent name cannot be None or empty"):
-        _ = a2a_agent.public_agent_card
+        A2AServer(mock_strands_agent, skills=[])
 
 
 def test_public_agent_card_with_missing_description(mock_strands_agent):
     """Test that public_agent_card raises ValueError when description is missing."""
     mock_strands_agent.description = ""
-    a2a_agent = A2AServer(mock_strands_agent, skills=[])
 
     with pytest.raises(ValueError, match="A2A agent description cannot be None or empty"):
-        _ = a2a_agent.public_agent_card
+        A2AServer(mock_strands_agent, skills=[])
 
 
 def test_agent_skills_empty_registry(mock_strands_agent):
@@ -241,11 +239,10 @@ def test_agent_skills_handles_missing_description(mock_strands_agent):
     }
     mock_strands_agent.tool_registry.get_all_tools_config.return_value = mock_tool_config
 
-    a2a_agent = A2AServer(mock_strands_agent)
-
-    # This should raise a KeyError when accessing agent_skills due to missing description
+    # A2AServer builds its AgentCard (and thus agent_skills) eagerly during construction,
+    # because DefaultRequestHandler requires the AgentCard upfront.
     with pytest.raises(KeyError):
-        _ = a2a_agent.agent_skills
+        A2AServer(mock_strands_agent)
 
 
 def test_agent_skills_handles_missing_name(mock_strands_agent):
@@ -259,11 +256,8 @@ def test_agent_skills_handles_missing_name(mock_strands_agent):
     }
     mock_strands_agent.tool_registry.get_all_tools_config.return_value = mock_tool_config
 
-    a2a_agent = A2AServer(mock_strands_agent)
-
-    # This should raise a KeyError when accessing agent_skills due to missing name
     with pytest.raises(KeyError):
-        _ = a2a_agent.agent_skills
+        A2AServer(mock_strands_agent)
 
 
 def test_agent_skills_setter(mock_strands_agent):
@@ -387,25 +381,25 @@ def test_explicit_skills_override_tools(mock_strands_agent):
 
 
 def test_skills_not_loaded_during_initialization(mock_strands_agent):
-    """Test that skills are not loaded from tools during initialization."""
-    # Create a mock that would raise an exception if called
-    mock_strands_agent.tool_registry.get_all_tools_config.side_effect = Exception("Should not be called during init")
+    """Test that agent_skills is not cached and is recomputed from tools on each access.
 
-    # This should not raise an exception because tools are not accessed during initialization
-    a2a_agent = A2AServer(mock_strands_agent)
-
-    # Verify that _agent_skills is None
-    assert a2a_agent._agent_skills is None
-
-    # Reset the mock to return proper data for when skills are actually accessed
+    A2AServer.__init__ builds the AgentCard (and thus agent_skills) once eagerly, because
+    DefaultRequestHandler requires the AgentCard upfront. ``agent_skills`` itself is not
+    cached, though: ``_agent_skills`` stays None and every access re-derives skills from the
+    tool registry.
+    """
     mock_tool_config = {"test_tool": {"name": "test_tool", "description": "A test tool"}}
-    mock_strands_agent.tool_registry.get_all_tools_config.side_effect = None
     mock_strands_agent.tool_registry.get_all_tools_config.return_value = mock_tool_config
 
-    # Now accessing skills should work
+    a2a_agent = A2AServer(mock_strands_agent)
+
+    assert a2a_agent._agent_skills is None
+
     skills = a2a_agent.agent_skills
+
     assert len(skills) == 1
     assert skills[0].name == "test_tool"
+    assert a2a_agent._agent_skills is None
 
 
 def test_public_agent_card_with_custom_skills(mock_strands_agent):
@@ -618,7 +612,7 @@ def test_public_agent_card_with_http_url(mock_strands_agent):
     card = a2a_agent.public_agent_card
 
     assert isinstance(card, AgentCard)
-    assert card.url == "https://my-alb.amazonaws.com/agent1/"
+    assert card.supported_interfaces[0].url == "https://my-alb.amazonaws.com/agent1/"
     assert card.name == "Test Agent"
     assert card.description == "A test agent for unit testing"
 
@@ -640,7 +634,7 @@ def test_agent_card_url_override(mock_strands_agent):
 
     assert a2a_agent.agent_card_url == "https://my-alb.amazonaws.com/agent1"
     card = a2a_agent.public_agent_card
-    assert card.url == "https://my-alb.amazonaws.com/agent1"
+    assert card.supported_interfaces[0].url == "https://my-alb.amazonaws.com/agent1"
 
 
 def test_to_starlette_app_with_mounting(mock_strands_agent):
@@ -702,7 +696,7 @@ def test_backwards_compatibility_without_http_url(mock_strands_agent):
 
     # Agent card should use the traditional URL
     card = a2a_agent.public_agent_card
-    assert card.url == "http://localhost:9000/"
+    assert card.supported_interfaces[0].url == "http://localhost:9000/"
 
 
 def test_mount_path_logging(mock_strands_agent, caplog):
@@ -793,11 +787,11 @@ def test_serve_at_root_fastapi_mounting_behavior(mock_strands_agent):
     client_mounted = TestClient(app_mounted)
 
     # Should work at mounted path
-    response = client_mounted.get("/agent1/.well-known/agent.json")
+    response = client_mounted.get("/agent1/.well-known/agent-card.json")
     assert response.status_code == 200
 
     # Should not work at root
-    response = client_mounted.get("/.well-known/agent.json")
+    response = client_mounted.get("/.well-known/agent-card.json")
     assert response.status_code == 404
 
 
@@ -813,11 +807,11 @@ def test_serve_at_root_fastapi_root_behavior(mock_strands_agent):
     client_root = TestClient(app_root)
 
     # Should work at root
-    response = client_root.get("/.well-known/agent.json")
+    response = client_root.get("/.well-known/agent-card.json")
     assert response.status_code == 200
 
     # Should not work at mounted path (since we're serving at root)
-    response = client_root.get("/agent1/.well-known/agent.json")
+    response = client_root.get("/agent1/.well-known/agent-card.json")
     assert response.status_code == 404
 
 
@@ -833,7 +827,7 @@ def test_serve_at_root_starlette_behavior(mock_strands_agent):
     client_mounted = TestClient(app_mounted)
 
     # Should work at mounted path
-    response = client_mounted.get("/agent1/.well-known/agent.json")
+    response = client_mounted.get("/agent1/.well-known/agent-card.json")
     assert response.status_code == 200
 
     # Serve at root
@@ -842,7 +836,7 @@ def test_serve_at_root_starlette_behavior(mock_strands_agent):
     client_root = TestClient(app_root)
 
     # Should work at root
-    response = client_root.get("/.well-known/agent.json")
+    response = client_root.get("/.well-known/agent-card.json")
     assert response.status_code == 200
 
 
@@ -857,8 +851,8 @@ def test_serve_at_root_alb_scenarios(mock_strands_agent):
     app_preserved = server_preserved.to_fastapi_app()
     client_preserved = TestClient(app_preserved)
 
-    # Container receives /agent1/.well-known/agent.json
-    response = client_preserved.get("/agent1/.well-known/agent.json")
+    # Container receives /agent1/.well-known/agent-card.json
+    response = client_preserved.get("/agent1/.well-known/agent-card.json")
     assert response.status_code == 200
     agent_data = response.json()
     assert agent_data["url"] == "http://my-alb.amazonaws.com/agent1/"
@@ -870,8 +864,8 @@ def test_serve_at_root_alb_scenarios(mock_strands_agent):
     app_stripped = server_stripped.to_fastapi_app()
     client_stripped = TestClient(app_stripped)
 
-    # Container receives /.well-known/agent.json (path stripped by ALB)
-    response = client_stripped.get("/.well-known/agent.json")
+    # Container receives /.well-known/agent-card.json (path stripped by ALB)
+    response = client_stripped.get("/.well-known/agent-card.json")
     assert response.status_code == 200
     agent_data = response.json()
     assert agent_data["url"] == "http://my-alb.amazonaws.com/agent1/"
@@ -947,7 +941,7 @@ def test_serve_with_overridden_host_port_updates_agent_card_url(mock_run, mock_s
 
     # Verify the agent card reflects the updated URL
     card = a2a_agent.public_agent_card
-    assert card.url == "http://localhost:9210/"
+    assert card.supported_interfaces[0].url == "http://localhost:9210/"
 
     # Verify uvicorn was called with the overridden parameters
     mock_run.assert_called_once()
@@ -1033,7 +1027,7 @@ def test_serve_with_explicit_http_url_does_not_override_url(mock_run, mock_stran
 
     # Verify the agent card still shows the public URL
     card = a2a_agent.public_agent_card
-    assert card.url == "https://my-alb.amazonaws.com/agent1/"
+    assert card.supported_interfaces[0].url == "https://my-alb.amazonaws.com/agent1/"
 
 
 @patch("uvicorn.run")
