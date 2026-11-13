@@ -81,6 +81,7 @@ describe('homepage machine-readable metadata', () => {
     expect(
       banner?.querySelectorAll('.banner__install [data-install-variant]').map((command) => command.text.trim())
     ).toEqual(['pip install strands-harness', 'npm install @strands-agents/harness'])
+    expect(banner?.querySelector('.banner__actions + .banner__install')).not.toBeNull()
     expect(banner?.querySelector('.banner__dots')).not.toBeNull()
     expect(homepage.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe(
       'Strands Agents: Build agents. Own every layer.'

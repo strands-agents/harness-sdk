@@ -18,9 +18,6 @@ if (!harness) throw new Error('Missing Harness homepage project')
       <p class="banner__intro">An open-source toolkit for building, running, and improving AI agents.</p>
 
       <div class="banner__conversion">
-        <div class="banner__install">
-          <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
-        </div>
         <div class="banner__actions">
           <a href={harness.href} class="banner__cta banner__cta--primary">
             Build an agent
@@ -35,6 +32,9 @@ if (!harness) throw new Error('Missing Harness homepage project')
             GitHub
             <span class="banner__arrow" set:html={arrow} />
           </a>
+        </div>
+        <div class="banner__install">
+          <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
         </div>
       </div>
     </div>
