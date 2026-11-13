@@ -5,7 +5,7 @@ Each TS ``it(...)`` maps to a ``test_...`` case here.
 
 The extractor is driven through its public ``extract`` API: a fake ``Model``
 (``MockedModelProvider``) yields stream events that
-``strands.event_loop.streaming.stream_messages`` aggregates into a chosen
+``ModelProxy.stream`` aggregates into a chosen
 assistant message, so we exercise the real aggregate-and-parse path.
 
 These tests are written test-first: ``ModelExtractor`` lands in Task 6, so they
@@ -229,7 +229,7 @@ async def test_raises_and_ends_span_when_model_yields_no_stop_event():
     tracer = MagicMock()
     with (
         patch("strands.memory.extraction.model_extractor.get_tracer", return_value=tracer),
-        patch("strands.event_loop.streaming.stream_messages", _no_stop_stream),
+        patch("strands.models._model_proxy.ModelProxy.stream", _no_stop_stream),
     ):
         with pytest.raises(RuntimeError, match="model returned no response"):
             await extractor.extract([_user_turn("x")])

@@ -564,6 +564,10 @@ class SageMakerAIModel(OpenAIModel):
                     yield self.format_chunk({"chunk_type": "content_start", "data_type": "text"})
                     yield self.format_chunk({"chunk_type": "content_stop", "data_type": "text"})
 
+                # Some endpoints finish a tool call with "stop" or no finish reason at all.
+                if tool_calls and finish_reason in ("", "stop"):
+                    finish_reason = "tool_calls"
+
                 # Message close
                 yield self.format_chunk({"chunk_type": "message_stop", "data": finish_reason})
 

@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
+from ..models._model_proxy import ModelProxy
 from ..models.bedrock import BedrockModel
 from ..models.model import Model
 from ..types.content import ContentBlock, Message, Messages
@@ -85,7 +86,9 @@ class LLMDecisionModel(DecisionModel):
         latency_ms: int | None = None
 
         try:
-            async for event in self._model.structured_output(answer_model, messages, system_prompt=system_prompt):
+            async for event in ModelProxy(self._model).structured_output(
+                answer_model, messages, system_prompt=system_prompt
+            ):
                 chunk = event.get("event")
                 if isinstance(chunk, Mapping) and isinstance(metadata := chunk.get("metadata"), Mapping):
                     if isinstance(reported := metadata.get("usage"), Mapping):
@@ -129,16 +132,18 @@ def _build_answer_model(questions: dict[str, Question]) -> type[BaseModel]:
     fields: dict[str, Any] = {}
     for index, (question_id, question) in enumerate(questions.items()):
         # Only an explicit False disables the default uncertain answer.
-        literals = _answer_literals(question, question.get("uncertainty") is not False)
-        answer_type: Any = Literal[tuple(literals)]
-        per_question_model = create_model(
-            f"Answer{index}",
-            answer=(answer_type, Field(description=question["question"])),
-            reason=(
+        allow_uncertain = question.get("uncertainty") is not False
+        answer_type: Any = Literal[tuple(_answer_literals(question, allow_uncertain))]
+        # The question is stated once, on the answer object: repeated on ``answer``, models fill the object with a
+        # bare value instead.
+        entry_fields: dict[str, Any] = {"answer": (answer_type, ...)}
+        # A reason is only ever surfaced on Uncertain, so questions that cannot be uncertain do not offer one.
+        if allow_uncertain:
+            entry_fields["reason"] = (
                 str | None,
                 Field(default=None, description=f"Explanation when answer is '{_UNCERTAIN_LITERAL}'; omit otherwise."),
-            ),
-        )
+            )
+        per_question_model = create_model(f"Answer{index}", **entry_fields)
         per_question_model.__doc__ = question["question"]
         fields[_field_name(index, questions)] = (
             per_question_model,
@@ -163,7 +168,7 @@ def _convert_answers(output: BaseModel, questions: dict[str, Question]) -> dict[
         entry = getattr(output, _field_name(index, questions), None)
         if entry is None:
             raise StructuredOutputException(f"decision model omitted answer for question id=<{question_id}>")
-        answers[question_id] = _convert_single_answer(question, entry.answer, entry.reason)
+        answers[question_id] = _convert_single_answer(question, entry.answer, getattr(entry, "reason", None))
     return answers
 
 

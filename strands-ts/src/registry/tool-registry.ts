@@ -30,13 +30,38 @@ export class ToolRegistry {
   add(tool: Tool | Tool[]): void {
     const tools = Array.isArray(tool) ? tool : [tool]
     for (const t of tools) {
-      this._validateProperties(t)
-      if (this._tools.has(t.name)) {
-        throw new ToolValidationError(`Tool with name '${t.name}' already registered`)
-      }
-      this._checkNormalizedConflict(t.name)
+      this._validateNewTool(t, this._tools)
       this._tools.set(t.name, t)
     }
+  }
+
+  /**
+   * Swaps one source's tools for its new list in a single step. Each new tool is checked against the registry without
+   * `current` and against the new tools before it. A tool that fails the check is skipped, so another source's tool
+   * with the same name stays registered.
+   *
+   * @param current - The source's registered tools; a tool not registered under its name is left alone
+   * @param next - The source's new tools
+   * @returns The tools of `next` that were skipped, each with the reason
+   * @internal
+   */
+  swap(current: Tool[], next: Tool[]): { tool: Tool; error: ToolValidationError }[] {
+    const tools = new Map(this._tools)
+    for (const tool of current) {
+      if (tools.get(tool.name) === tool) tools.delete(tool.name)
+    }
+    const skipped: { tool: Tool; error: ToolValidationError }[] = []
+    for (const tool of next) {
+      try {
+        this._validateNewTool(tool, tools)
+        tools.set(tool.name, tool)
+      } catch (error) {
+        if (!(error instanceof ToolValidationError)) throw error
+        skipped.push({ tool, error })
+      }
+    }
+    this._tools = tools
+    return skipped
   }
 
   /**
@@ -150,9 +175,17 @@ export class ToolRegistry {
     }
   }
 
-  private _checkNormalizedConflict(name: string): void {
+  private _validateNewTool(tool: Tool, tools: Map<string, Tool>): void {
+    this._validateProperties(tool)
+    if (tools.has(tool.name)) {
+      throw new ToolValidationError(`Tool with name '${tool.name}' already registered`)
+    }
+    this._checkNormalizedConflict(tool.name, tools)
+  }
+
+  private _checkNormalizedConflict(name: string, tools: Map<string, Tool> = this._tools): void {
     const normalized = name.replaceAll('-', '_')
-    for (const existing of this._tools.keys()) {
+    for (const existing of tools.keys()) {
       if (existing !== name && existing.replaceAll('-', '_') === normalized) {
         throw new ToolValidationError(
           `Tool name '${name}' already exists as '${existing}'.` +

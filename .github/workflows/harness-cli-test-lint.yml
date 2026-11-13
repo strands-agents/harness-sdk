@@ -1,20 +1,20 @@
-name: "Harness CLI: Test and Lint"
+name: 'Harness CLI: Test and Lint'
 
 # Build + lint + unit tests for the Strands CLI (`@strands-agents/cli`). Reusable:
 # called by ci.yml on PRs that touch strands-cli, and by release-harness-cli.yml
 # at release time. Mirrors harness-ts-test-lint.yml.
 #
-# The CLI installs standalone (its own package-lock.json) against the published
-# @strands-agents/harness (< 2.0.0) and @strands-agents/sdk, not the repo-root
-# workspace. `npm run build` also bundles the sibling harness-py source
-# (scripts/bundle-python.js reads ../harness-py), so this needs a full checkout.
+# The CLI installs standalone against published Harness and SDK packages.
+# Python runtime tests install the sibling packages, requiring a full checkout.
 
 on:
   workflow_call:
     inputs:
-      ref:
-        required: true
+      release-sha:
+        description: Optional full release commit SHA from origin/main history
+        required: false
         type: string
+        default: ''
 
 jobs:
   test-lint:
@@ -26,19 +26,46 @@ jobs:
       matrix:
         include:
           - { os: strands-agents_ubuntu-latest_4-core, name: Test and Lint }
-          - { os: strands-agents_windows-latest_4-core, name: Test and Lint (Windows) }
-    timeout-minutes: 20
+          # Windows runs the suite on one worker and takes over 10 minutes for all of it, so it is split in two.
+          - { os: strands-agents_windows-latest_4-core, name: Test (Windows 1/2), shard: 1/2 }
+          - { os: strands-agents_windows-latest_4-core, name: Test (Windows 2/2), shard: 2/2 }
+    timeout-minutes: 25
     permissions:
       contents: read
     defaults:
       run:
         working-directory: strands-cli
     steps:
-      - name: Checkout code
+      - name: Checkout pull request
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Checkout event revision
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted release commit
+        if: inputs.release-sha != ''
+        shell: bash
+        working-directory: .
+        env:
+          RELEASE_SHA: ${{ inputs.release-sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::release-sha must be a full commit SHA from origin/main history."
+            exit 1
+          fi
+          git checkout --detach "$RELEASE_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -46,11 +73,58 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
+      - name: Setup Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install PortAudio
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+
+      - name: Prepare Python agent runtime
+        run: |
+          python -m venv ../harness-py/.venv
+          python -c "import os, pathlib, subprocess; root=pathlib.Path('../harness-py/.venv'); python=root/('Scripts/python.exe' if os.name == 'nt' else 'bin/python'); subprocess.check_call([str(python), '-m', 'pip', 'install', '--disable-pip-version-check', '-e', '../strands-py', '-e', '../harness-py[openai]'])"
+
+      - name: Select test Python
+        run: python -c "import os, pathlib; root=pathlib.Path('../harness-py/.venv').resolve(); python=root/('Scripts/python.exe' if os.name == 'nt' else 'bin/python'); env=open(os.environ['GITHUB_ENV'], 'a'); print(f'PYTHON={python}', file=env); print(f'STRANDS_TEST_PYTHON={python}', file=env)"
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build
         run: npm run build
 
+      # The step timeout below kills a hung run and its child processes, so record what is running a minute before
+      # it: the 840 s here must stay under that step's 15 minutes.
+      - name: Start hang watchdog
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $snapshot = "Start-Sleep 840; Get-CimInstance Win32_Process | Where-Object CommandLine |" +
+            " Select-Object ProcessId, ParentProcessId, CreationDate, CommandLine | Format-List |" +
+            " Out-File -Width 400 '$env:RUNNER_TEMP\hang-processes.txt'"
+          Start-Process pwsh -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', $snapshot
+
       - name: Lint, format, type-check, and test
+        if: ${{ !matrix.shard }}
+        # Below the job timeout, so a hang fails this step and the job still reports and keeps its logs.
+        timeout-minutes: 15
         run: npm run check
+
+      - name: Test
+        if: ${{ matrix.shard }}
+        timeout-minutes: 15
+        run: npx vitest run --coverage --shard=${{ matrix.shard }}
+
+      - name: Show processes from a hung run
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: Get-Content "$env:RUNNER_TEMP\hang-processes.txt" -ErrorAction SilentlyContinue
+
+      - name: Test voice adapters against the pinned SDK
+        run: npm run test:voice

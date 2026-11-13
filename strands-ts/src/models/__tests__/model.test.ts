@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -7,6 +7,9 @@ import {
   ReasoningBlock,
   GuardContentBlock,
   InjectedBlock,
+  SummaryBlock,
+  CachePointBlock,
+  type StopReason,
 } from '../../types/messages.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
@@ -14,7 +17,9 @@ import { MaxTokensError, ModelError } from '../../errors.js'
 import { Model } from '../model.js'
 import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
-import { isModelStreamEvent, type ModelStreamEvent } from '../streaming.js'
+import { createEmptyUsage, isModelStreamEvent, type ModelStreamEvent, type Usage } from '../streaming.js'
+import { DEFAULT_SUMMARIZE_INSTRUCTIONS, SUMMARIZE_GUARD } from '../summarize.js'
+import { logger } from '../../logging/logger.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 /**
@@ -1101,7 +1106,243 @@ describe('Model.modelId', () => {
   })
 })
 
+/** Replies with `reply` texts and `stopReason`, recording each stream call. */
+class RecordingModel extends TestModelProvider {
+  readonly calls: { messages: Message[]; options: StreamOptions | undefined }[] = []
+
+  constructor(
+    private readonly _reply: string[] = ['the summary'],
+    private readonly _stopReason: StopReason = 'endTurn',
+    private readonly _error?: Error,
+    private readonly _usage?: Usage
+  ) {
+    super()
+  }
+
+  override async *stream(messages: Message[], options?: StreamOptions): AsyncGenerator<ModelStreamEvent> {
+    this.calls.push({ messages, options })
+    if (this._error) throw this._error
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    for (const text of this._reply) {
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text } }
+      yield { type: 'modelContentBlockStopEvent' }
+    }
+    if (this._usage) yield { type: 'modelMetadataEvent', usage: this._usage }
+    yield { type: 'modelMessageStopEvent', stopReason: this._stopReason }
+  }
+}
+
+describe('summarize', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const history = (): Message[] => [
+    new Message({ role: 'user', content: [new TextBlock('task')] }),
+    new Message({
+      role: 'assistant',
+      content: [new ToolUseBlock({ toolUseId: 't1', name: 'lookup', input: { q: 'x' } })],
+    }),
+    new Message({
+      role: 'user',
+      content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('42')] })],
+    }),
+  ]
+  const hi = (): Message[] => [new Message({ role: 'user', content: [new TextBlock('hi')] })]
+  const zeroUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  const turns = (messages: Message[]): { role: string; content: unknown[] }[] =>
+    messages.map(({ role, content }) => ({ role, content }))
+
+  it('replays the request with the instructions closing it', async () => {
+    const model = new RecordingModel(['first', 'second'])
+    const messages = history()
+    const toolSpecs = [{ name: 'lookup', description: 'Look up', inputSchema: { type: 'object' as const } }]
+    const systemPrompt = [new TextBlock('live prompt'), new CachePointBlock({ cacheType: 'default' })]
+
+    const result = await model.summarize(messages, { toolSpecs, systemPrompt, instructions: 'Summarize briefly.' })
+
+    expect(result).toEqual({ content: [new SummaryBlock({ text: 'first\nsecond' })], usage: zeroUsage })
+    expect(model.calls).toHaveLength(1)
+    const call = model.calls[0]!
+    expect(turns(call.messages)).toEqual(
+      turns([
+        ...history().slice(0, 2),
+        new Message({
+          role: 'user',
+          content: [...history()[2]!.content, new TextBlock(`${SUMMARIZE_GUARD}\n\nSummarize briefly.`)],
+        }),
+      ])
+    )
+    expect(call.options).toEqual({ toolSpecs, systemPrompt })
+    expect(turns(messages)).toEqual(turns(history()))
+  })
+
+  it('sends the agent metadata', async () => {
+    const model = new RecordingModel()
+    const agentMetadata = { sessionId: 'session' }
+
+    await model.summarize(history().slice(0, 2), { agentMetadata })
+
+    expect(model.calls).toHaveLength(1)
+    expect(turns(model.calls[0]!.messages)).toEqual(
+      turns([
+        ...history().slice(0, 2),
+        new Message({
+          role: 'user',
+          content: [new TextBlock(`${SUMMARIZE_GUARD}\n\n${DEFAULT_SUMMARIZE_INSTRUCTIONS}`)],
+        }),
+      ])
+    )
+    expect(model.calls[0]!.options).toEqual({ agentMetadata })
+  })
+
+  it('adds a user turn after an assistant turn', async () => {
+    const model = new RecordingModel()
+
+    await model.summarize(history().slice(0, 2), { instructions: 'Summarize briefly.' })
+
+    expect(turns(model.calls[0]!.messages)).toEqual(
+      turns([
+        ...history().slice(0, 2),
+        new Message({ role: 'user', content: [new TextBlock(`${SUMMARIZE_GUARD}\n\nSummarize briefly.`)] }),
+      ])
+    )
+  })
+
+  it.each([{ instructions: undefined }, { instructions: '' }])(
+    'sends no system prompt and the default instructions for instructions=$instructions',
+    async ({ instructions }) => {
+      const model = new RecordingModel()
+
+      await model.summarize(hi(), { ...(instructions !== undefined && { instructions }) })
+
+      expect(model.calls[0]!.options?.systemPrompt).toBeUndefined()
+      expect(model.calls[0]!.messages.at(-1)!.content.at(-1)).toEqual(
+        new TextBlock(`${SUMMARIZE_GUARD}\n\n${DEFAULT_SUMMARIZE_INSTRUCTIONS}`)
+      )
+    }
+  )
+
+  it.each<StopReason>(['toolUse', 'guardrailIntervened', 'contentFiltered'])(
+    'returns an empty summary for an unfinished reply: %s',
+    async (stopReason) => {
+      const usage = { inputTokens: 10, outputTokens: 1, totalTokens: 11 }
+      const model = new RecordingModel(['canned'], stopReason, undefined, usage)
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      const result = await model.summarize(hi())
+
+      expect(result).toEqual({ content: [], usage })
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`stop_reason=<${stopReason}> | summary reply did not finish`)
+      )
+    }
+  )
+
+  it('returns an empty summary when cancelled mid-stream', async () => {
+    const controller = new AbortController()
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'partial' } }
+      controller.abort()
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+    })
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await model.summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: zeroUsage })
+  })
+
+  it('sends no request when cancelled before the call', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const model = new TestModelProvider()
+    const stream = vi.spyOn(model, 'stream')
+
+    const result = await model.summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: createEmptyUsage() })
+    expect(stream).not.toHaveBeenCalled()
+  })
+
+  it('returns an empty summary when the stream throws after a cancel', async () => {
+    const controller = new AbortController()
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      controller.abort()
+      throw new DOMException('aborted', 'AbortError')
+    })
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await model.summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: zeroUsage })
+  })
+
+  it.each<StopReason>(['maxTokens', 'stopSequence'])(
+    'keeps a reply that stopped at a limit: %s',
+    async (stopReason) => {
+      const model = new RecordingModel(['partial'], stopReason)
+
+      const result = await model.summarize(hi())
+
+      expect(result).toEqual({ content: [new SummaryBlock({ text: 'partial' })], usage: zeroUsage })
+    }
+  )
+
+  it('returns an empty summary when the reply holds no text', async () => {
+    const usage = { inputTokens: 10, outputTokens: 1, totalTokens: 11 }
+    const model = new RecordingModel(['  '], 'endTurn', undefined, usage)
+
+    const result = await model.summarize(hi())
+
+    expect(result).toEqual({ content: [], usage })
+  })
+
+  it('returns its usage', async () => {
+    const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+    const model = new RecordingModel(['the summary'], 'endTurn', undefined, usage)
+
+    const result = await model.summarize(hi())
+
+    expect(result).toEqual({ content: [new SummaryBlock({ text: 'the summary' })], usage })
+  })
+
+  it('forwards the cancel signal', async () => {
+    const model = new RecordingModel()
+    const cancelSignal = new AbortController().signal
+
+    await model.summarize(hi(), { cancelSignal })
+
+    expect(model.calls[0]!.options?.cancelSignal).toBe(cancelSignal)
+  })
+
+  it('propagates stream errors', async () => {
+    const model = new RecordingModel(['the summary'], 'endTurn', new Error('images unsupported'))
+
+    await expect(model.summarize(hi())).rejects.toThrow('images unsupported')
+    expect(model.calls).toHaveLength(1)
+  })
+})
+
 describe('countTokens', () => {
+  it('counts summary text like a text block', async () => {
+    const provider = new TestModelProvider()
+    const text = 'x'.repeat(400)
+
+    const summary = await provider.countTokens([
+      new Message({ role: 'assistant', content: [new SummaryBlock({ text })] }),
+    ])
+
+    expect(summary).toBe(
+      await provider.countTokens([new Message({ role: 'assistant', content: [new TextBlock(text)] })])
+    )
+  })
+
   it('estimates text block tokens using chars/4 heuristic', async () => {
     const provider = new TestModelProvider()
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hello world')] })]

@@ -52,6 +52,7 @@ describe('homepage machine-readable metadata', () => {
       'SoftwareApplication',
       'SoftwareApplication',
       'SoftwareApplication',
+      'SoftwareApplication',
     ])
     expect(structuredData['@graph'][0].sameAs).toContain('https://github.com/strands-agents')
     expect(JSON.stringify(structuredData)).not.toContain('SearchAction')
@@ -64,6 +65,77 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.text.trim().length).toBeGreaterThan(500)
     expect(headings[0]?.tagName).toBe('H1')
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
+  })
+
+  it('highlights one product under each toolkit pillar', () => {
+    const toolkit = homepage.querySelector('.toolkit')
+    const pillars = toolkit?.querySelectorAll('.toolkit__section') ?? []
+
+    expect(toolkit?.querySelector('.toolkit__cards-title')?.tagName).toBe('H2')
+    expect(
+      pillars.map((pillar) => ({
+        title: {
+          tagName: pillar.querySelector('.toolkit__section-title')?.tagName,
+          text: pillar.querySelector('.toolkit__section-title')?.text.trim(),
+        },
+        products: pillar.querySelectorAll('.toolkit__card').map((card) => {
+          const heading = card.querySelector('.toolkit__card-slug')
+          const docsLink = card.querySelector('.toolkit__card-read')
+          return {
+            tagName: heading?.tagName,
+            text: heading?.text.trim(),
+            docs: {
+              text: docsLink?.text.trim(),
+              href: docsLink?.getAttribute('href'),
+              ariaLabel: docsLink?.getAttribute('aria-label'),
+            },
+          }
+        }),
+      }))
+    ).toEqual([
+      {
+        title: { tagName: 'H3', text: 'Build' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/harness',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/harness/'),
+              ariaLabel: 'Read Strands harness docs',
+            },
+          },
+        ],
+      },
+      {
+        title: { tagName: 'H3', text: 'Control' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/box',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/box/'),
+              ariaLabel: 'Read Strands Box docs',
+            },
+          },
+        ],
+      },
+      {
+        title: { tagName: 'H3', text: 'Validate' },
+        products: [
+          {
+            tagName: 'H4',
+            text: '/evals',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
+              ariaLabel: 'Read Strands Evals docs',
+            },
+          },
+        ],
+      },
+    ])
   })
 
   it('promotes distinct recent blog posts', async () => {
@@ -87,12 +159,22 @@ describe('homepage machine-readable metadata', () => {
     if (posts.length > 1) expect(communityLink?.getAttribute('href')).not.toBe(bannerLink?.getAttribute('href'))
   })
 
+  it('shows five FAQ previews and links to the standalone FAQ page', () => {
+    const section = homepage.querySelector('.home-faq')
+    const items = section?.querySelectorAll('.home-faq__item') ?? []
+    const link = section?.querySelector('.home-faq__cta')
+
+    expect(items).toHaveLength(5)
+    expect(link?.getAttribute('href')).toBe(configuredPathWithBase('/faq/'))
+  })
+
   it('publishes a concise Markdown homepage with official resources', () => {
     const markdown = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
 
     expect(markdown).toContain('# Strands Agents')
     expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
     expect(markdown).toContain('/examples/')
+    expect(markdown).toContain('/faq/index.md')
     expect(markdown).toContain('https://pypi.org/project/strands-agents/')
     expect(markdown).toContain('https://www.npmjs.com/package/@strands-agents/sdk')
     expect(markdown).toContain('https://github.com/strands-agents/harness-sdk')

@@ -134,6 +134,27 @@ class TestHandoffToUserAgentLoop:
         )
         assert tool_result["content"][0]["text"] == "yes@example.com"
 
+    def test_resume_with_none_response_raises_instead_of_reinterrupting(self):
+        """Resuming with a None response fails loudly (#4470).
+
+        None marks an interrupt unanswered, so accepting it would return the same
+        interrupt again instead of resuming the handoff.
+        """
+        model = MockedModelProvider(
+            [
+                _tool_use_msg("handoff_to_user", "htu-4", {"message": "Confirm your email"}),
+                _text_msg("All done."),
+            ]
+        )
+        agent = Agent(model=model, tools=[handoff_to_user])
+
+        result = agent("Verify me")
+        assert result.stop_reason == "interrupt"
+
+        interrupt_id = result.interrupts[0].id
+        with pytest.raises(ValueError, match="interrupt response must not be None"):
+            agent([{"interruptResponse": {"interruptId": interrupt_id, "response": None}}])
+
     def test_interrupt_name_is_constant_even_when_tool_is_renamed(self):
         # The interrupt name is a stable discriminator: renaming the tool via the
         # factory must not change it, so consumers can match on HANDOFF_INTERRUPT_NAME.

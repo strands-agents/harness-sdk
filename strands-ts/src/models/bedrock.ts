@@ -13,6 +13,7 @@ import {
   type CachePointBlock as BedrockCachePointBlock,
   type CacheTTL as BedrockSdkCacheTTL,
   type ContentBlock as BedrockContentBlock,
+  type ToolResultContentBlock,
   type ContentBlockDeltaEvent as BedrockContentBlockDeltaEvent,
   type ContentBlockStartEvent as BedrockContentBlockStartEvent,
   ConverseCommand,
@@ -61,7 +62,7 @@ import {
   resolveConfigMetadata,
   resolveMaxTokens,
 } from '../models/model.js'
-import { mergeModelInfo, type ModelInfo } from './model-info.js'
+import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -527,13 +528,18 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Reports OpenAI models as implicitly cached, which a `modelInfo` override still wins over. The
-   * shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them
-   * implicitly and rejects cache points.
+   * Turns `serverSideSummary` off, and reports OpenAI models as implicitly cached; a `modelInfo` override still
+   * wins over both. The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches
+   * them implicitly and rejects cache points.
    */
   override get modelInfo(): ModelInfo {
-    if (!this.modelId?.toLowerCase().includes('openai.')) return super.modelInfo
-    return mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)
+    const openai = this.modelId?.toLowerCase().includes('openai.')
+    return mergeModelInfo(
+      super.modelInfo,
+      SERVER_SIDE_SUMMARY_OFF,
+      openai ? { capabilities: { promptCaching: 'auto' } } : undefined,
+      this._config.modelInfo
+    )
   }
 
   /**
@@ -915,19 +921,22 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     request: ConverseStreamCommandInput,
     send: (input: ConverseStreamCommandInput) => Promise<T>
   ): Promise<T> {
+    const sent = (this._dropStaleThinkingModelId === request.modelId && requestWithDropBlock(request)) || request
     try {
-      return await send(request)
+      return await send(sent)
     } catch (error) {
       const isBindingError =
         error instanceof Error && error.name === 'ValidationException' && isThinkingBindingError(error)
-      const retryFields = isBindingError ? fieldsWithDropBlock(request.additionalModelRequestFields) : undefined
-      if (!retryFields) throw error
+      const retryRequest = isBindingError ? requestWithDropBlock(sent) : undefined
+      if (!retryRequest) throw error
 
       logger.warn(
         `model_id=<${request.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
       )
+      const response = await send(retryRequest)
+      // Latched only once the retry is accepted, so a rejected retry does not alter later requests.
       this._dropStaleThinkingModelId = request.modelId
-      return send({ ...request, additionalModelRequestFields: retryFields })
+      return response
     }
   }
 
@@ -1075,7 +1084,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     const toolChoice = options?.toolChoice
     if (!toolChoice || 'auto' in toolChoice) {
-      return this._dropStaleThinkingModelId === this._config.modelId ? (fieldsWithDropBlock(fields) ?? fields) : fields
+      return fields
     }
 
     const { thinking: _, ...rest } = fields
@@ -1506,36 +1515,44 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
       case 'toolResultBlock': {
-        const content = block.content.map((content) => {
+        const content = block.content.flatMap((content): ToolResultContentBlock[] => {
           switch (content.type) {
+            case 'unknownBlock':
+              return []
             case 'textBlock':
-              return { text: content.text }
+              return [{ text: content.text }]
             case 'jsonBlock':
-              return { json: content.json }
+              return [{ json: content.json }]
             case 'imageBlock':
-              return {
-                image: {
-                  format: content.format as ImageFormat,
-                  source: this._formatMediaSource(content.source),
+              return [
+                {
+                  image: {
+                    format: content.format as ImageFormat,
+                    source: this._formatMediaSource(content.source),
+                  },
                 },
-              }
+              ]
             case 'videoBlock':
-              return {
-                video: {
-                  format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
-                  source: this._formatMediaSource(content.source),
+              return [
+                {
+                  video: {
+                    format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
+                    source: this._formatMediaSource(content.source),
+                  },
                 },
-              }
+              ]
             case 'documentBlock':
-              return {
-                document: {
-                  name: content.name,
-                  format: content.format as DocumentFormat,
-                  source: this._formatDocumentSource(content.source),
-                  ...(content.citations && { citations: content.citations }),
-                  ...(content.context && { context: content.context }),
+              return [
+                {
+                  document: {
+                    name: content.name,
+                    format: content.format as DocumentFormat,
+                    source: this._formatDocumentSource(content.source),
+                    ...(content.citations && { citations: content.citations }),
+                    ...(content.context && { context: content.context }),
+                  },
                 },
-              }
+              ]
           }
         })
 
@@ -1649,6 +1666,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         // ModelProxy turns the ones Bedrock should see into text, so only a direct call or a modelInfo override that
         // turns temporaryMessages on gets here.
         warnOnce(logger, 'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it')
+        return undefined
+      case 'summaryBlock':
+        throw new Error(`content_type=<${block.type}> | unsupported type`)
+      case 'unknownBlock':
         return undefined
     }
   }
@@ -2311,18 +2332,20 @@ function recordRejectedMechanism(
 }
 
 /**
- * Return additional request fields that drop stale thinking blocks, or undefined if they cannot change.
+ * Return the request with stale thinking blocks dropped, or undefined if it cannot change.
  *
- * @param fields - The additional model request fields
- * @returns The fields with drop_block and its beta, or undefined
+ * @param request - The Bedrock request
+ * @returns The request with drop_block and its beta, or undefined
  */
-function fieldsWithDropBlock(fields: JSONValue | undefined): Record<string, JSONValue> | undefined {
+function requestWithDropBlock(request: ConverseStreamCommandInput): ConverseStreamCommandInput | undefined {
+  const fields = request.additionalModelRequestFields ?? {}
   if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) return undefined
-  const thinking = thinkingWithDropBlock(fields.thinking)
+  const toolChoice = request.toolConfig?.toolChoice
+  const thinking = thinkingWithDropBlock(fields.thinking, !!toolChoice && ('any' in toolChoice || 'tool' in toolChoice))
   if (!thinking) return undefined
   const betas = Array.isArray(fields.anthropic_beta) ? fields.anthropic_beta : []
   const anthropicBeta = betas.includes(THINKING_BINDING_BETA) ? betas : [...betas, THINKING_BINDING_BETA]
-  return { ...fields, anthropic_beta: anthropicBeta, thinking }
+  return { ...request, additionalModelRequestFields: { ...fields, anthropic_beta: anthropicBeta, thinking } }
 }
 
 /**
