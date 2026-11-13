@@ -18,6 +18,12 @@ import modelInfoData from './model-info.json' with { type: 'json' }
 export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
 
 /**
+ * How a model keeps deferred tool schemas out of its context until it loads them: `'native'` sends them with the
+ * API's own deferral flag, and `'unsupported'` sends every schema.
+ */
+export type DeferredTools = 'unsupported' | 'native'
+
+/**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
  * union, like {@link PromptCaching} (which mechanism). A fact about two features together gets its
  * own field named after the pair. `undefined` is unknown either way.
@@ -44,6 +50,13 @@ export interface ModelCapabilities {
    * (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.
    */
   readonly temporaryMessages?: boolean | undefined
+  /**
+   * How the model and provider defer tool schemas; see {@link DeferredTools}. The shared data gives the path on the
+   * model vendor's own API, but `Model.modelInfo` reports `'unsupported'` unless the provider takes one
+   * (`AnthropicModel`). On another provider, which sends every full spec, a `modelInfo` override that turns it on only
+   * changes the `strands_load_tools` result: `BedrockModel` names each loaded tool and other providers leave it out.
+   */
+  readonly deferredTools?: DeferredTools | undefined
 }
 
 /** Size limits of the model. */
@@ -118,6 +131,7 @@ const CAPABILITY_FIELDS = Object.keys({
   nativeStructuredOutput: true,
   serverSideSummary: true,
   temporaryMessages: true,
+  deferredTools: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,

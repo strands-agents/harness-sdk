@@ -9,7 +9,9 @@ import { Offload } from '../../context-manager/strategies/offload/index.js'
 import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
 import { tool } from '../../tools/tool-factory.js'
 import { OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { createRandomTool } from '../../__fixtures__/tool-helpers.js'
 import type { ConversationManager } from '../../conversation-manager/conversation-manager.js'
+import type { ContextStrategy } from '../../context-manager/types.js'
 
 function internals(agent: Agent): any {
   return agent as any
@@ -123,6 +125,49 @@ describe('Agent contextManager', () => {
       await agent.invoke('hi')
       const plugins = internals(agent)._pluginRegistry._plugins
       expect(plugins.get('strands:context-manager')).toBeInstanceOf(ContextManager)
+    })
+
+    it('registers a strategy tool after initializing the strategy', async () => {
+      const strategyTool = createRandomTool('strategy-tool')
+      let initialized = false
+      let getToolsCalls = 0
+      const strategy: ContextStrategy = {
+        name: 'tool-provider',
+        init: () => {
+          initialized = true
+        },
+        getTools: () => {
+          expect(initialized).toBe(true)
+          getToolsCalls++
+          return [strategyTool]
+        },
+        apply: async () => false,
+      }
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        contextManager: { strategies: [strategy] },
+      })
+
+      await agent.initialize()
+
+      expect(agent.toolRegistry.get('strategy-tool')).toBe(strategyTool)
+      expect(agent.toolRegistry.get('retrieve_context')).toBeDefined()
+      expect(agent.contextManager?.getTools()).toContain(strategyTool)
+      expect(getToolsCalls).toBe(1)
+    })
+
+    it('rejects strategy tools with the same name', async () => {
+      const strategy = (name: string): ContextStrategy => ({
+        name,
+        getTools: () => [createRandomTool('shared-name')],
+        apply: async () => false,
+      })
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        contextManager: { strategies: [strategy('first'), strategy('second')], stash: false },
+      })
+
+      await expect(agent.initialize()).rejects.toThrow("Tool with name 'shared-name' already registered")
     })
   })
 

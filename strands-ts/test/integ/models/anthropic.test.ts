@@ -127,6 +127,38 @@ describe.skipIf(anthropic.skip)('AnthropicModel Integration Tests', () => {
       expect(usage2?.cacheReadInputTokens).toBeGreaterThan(0)
     })
 
+    it('caches the tools on the last non-deferred tool and reads the cache on the second turn', async () => {
+      const provider = anthropic.createModel({ maxTokens: 100, cacheConfig: { strategy: 'auto', messagesTTL: false } })
+      const toolSpecs = [
+        {
+          name: 'load_tools',
+          description: `Load tool schemas by name ${Date.now()}-${Math.random()}. ${'The catalog is stable across requests. '.repeat(400)}`,
+          inputSchema: { type: 'object' as const, properties: { names: { type: 'array' as const } } },
+        },
+        {
+          name: 'get_weather',
+          description: 'Get the current weather for a city.',
+          inputSchema: { type: 'object' as const, properties: { city: { type: 'string' as const } } },
+          deferLoading: true,
+        },
+      ]
+      const messages = (text: string): Message[] => [new Message({ role: 'user', content: [new TextBlock(text)] })]
+
+      const first = await collectIterator(
+        provider.stream(messages('Reply ALPHA. Do not call any tool.'), { toolSpecs })
+      )
+      const second = await collectIterator(
+        provider.stream(messages('Reply BETA. Do not call any tool.'), { toolSpecs })
+      )
+
+      expect(first.find((event) => event.type === 'modelMetadataEvent')?.usage?.cacheWriteInputTokens).toBeGreaterThan(
+        0
+      )
+      expect(second.find((event) => event.type === 'modelMetadataEvent')?.usage?.cacheReadInputTokens).toBeGreaterThan(
+        0
+      )
+    })
+
     it('cacheConfig toolsTTL earns a read on the second turn', async () => {
       const provider = anthropic.createModel({
         maxTokens: 100,

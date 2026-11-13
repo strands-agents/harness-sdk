@@ -11,6 +11,7 @@ import {
   InjectedBlock,
   SummaryBlock,
   type SummaryBlockData,
+  ToolReferenceBlock,
   UnknownBlock,
   contentBlockFromData,
   toolResultContentFromData,
@@ -436,6 +437,38 @@ describe('InjectedBlock', () => {
   })
 })
 
+describe('ToolReferenceBlock', () => {
+  test('roundtrips inside a tool result through toJSON and Message.fromJSON', () => {
+    const message = new Message({
+      role: 'user',
+      content: [
+        new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success',
+          content: [new ToolReferenceBlock({ name: 'shell' })],
+        }),
+      ],
+    })
+
+    const restored = Message.fromJSON(JSON.parse(JSON.stringify(message)))
+
+    expect(message.toJSON().content[0]).toEqual({
+      toolResult: {
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [{ toolReference: { name: 'shell' } }],
+      },
+    })
+    expect(restored).toEqual(message)
+  })
+
+  test('is converted by toolResultContentFromData', () => {
+    expect(toolResultContentFromData({ toolReference: { name: 'shell' } })).toEqual(
+      new ToolReferenceBlock({ name: 'shell' })
+    )
+  })
+})
+
 describe('UnknownBlock', () => {
   test('creates unknown block holding the raw data', () => {
     const block = new UnknownBlock({ futureBlock: { value: 1 } })
@@ -743,7 +776,7 @@ describe('restoring saved data with an unknown content block type', () => {
       toolResult: {
         toolUseId: 'tool-1',
         status: 'success',
-        content: [{ text: 'loaded' }, { toolReference: { name: 'shell' } }],
+        content: [{ text: 'loaded' }, { futureBlock: { name: 'shell' } }],
       },
     }
 
@@ -753,23 +786,23 @@ describe('restoring saved data with an unknown content block type', () => {
       new ToolResultBlock({
         toolUseId: 'tool-1',
         status: 'success',
-        content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+        content: [new TextBlock('loaded'), new UnknownBlock({ futureBlock: { name: 'shell' } })],
       })
     )
     expect(block.toJSON()).toStrictEqual(saved)
   })
 
   it('contentBlockFromData still throws on unknown content inside a tool result', () => {
-    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
+    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ futureBlock: {} }] } }
 
     expect(() => contentBlockFromData(data as never)).toThrow('Unknown ToolResultContentData type')
   })
 
   it('ToolResultBlock.fromJSON keeps unknown content', () => {
     using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
+    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ futureBlock: {} }] } }
 
-    expect(ToolResultBlock.fromJSON(data as never).content).toEqual([new UnknownBlock({ toolReference: {} })])
+    expect(ToolResultBlock.fromJSON(data as never).content).toEqual([new UnknownBlock({ futureBlock: {} })])
   })
 
   it('contentBlockFromSavedData converts known types as usual, without a warning', () => {

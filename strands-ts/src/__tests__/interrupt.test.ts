@@ -280,7 +280,7 @@ describe('InterruptState', () => {
             toolResult: {
               toolUseId: 't-0',
               status: 'success',
-              content: [{ text: 'loaded' }, { toolReference: { name: 'shell' } } as never],
+              content: [{ text: 'loaded' }, { futureBlock: { name: 'shell' } } as never],
             },
           },
         },
@@ -305,7 +305,7 @@ describe('InterruptState', () => {
             new ToolResultBlock({
               toolUseId: 't-0',
               status: 'success',
-              content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+              content: [new TextBlock('loaded'), new UnknownBlock({ futureBlock: { name: 'shell' } })],
             }),
           ],
         ]),

@@ -11,6 +11,7 @@
 
 import type { ContextStrategy } from './types.js'
 import { Offload } from './strategies/offload/index.js'
+import { DynamicToolLoadingStrategy } from './strategies/dynamic-tool-loading.js'
 
 /**
  * Known preset name strings accepted in the strategies array.
@@ -22,12 +23,16 @@ import { Offload } from './strategies/offload/index.js'
  * - `'largeToolOffloading'` — truncate tool results over 2500 tokens to a 1000-token preview
  * - `'overflowProtection'` — drop the oldest messages when the context window is full
  * - `'staleToolCleanup'` — drop tool results outside the newest 5 tool-result messages
+ * - `'dynamicToolLoading'` — experimental: defer every tool's input schema from 20 tools, on models that defer tools
+ *   natively (Claude 4.5 and later on the Claude API); other models get every spec. No user tool can be pinned yet,
+ *   so the model loads even its most used tools first
  */
 export const STRATEGY_PRESET_NAMES = [
   'proactiveSummarization',
   'largeToolOffloading',
   'overflowProtection',
   'staleToolCleanup',
+  'dynamicToolLoading',
 ] as const
 
 /** String union of preset names. */
@@ -51,6 +56,8 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
       return [Offload.drop('*').when({ contextUtilization: '100%', preserveRecent: 4 })]
     case 'staleToolCleanup':
       return [Offload.drop('toolResults').when({ preserveRecent: 5 })]
+    case 'dynamicToolLoading':
+      return [new DynamicToolLoadingStrategy({ minTools: 20 })]
   }
 }
 

@@ -13,6 +13,7 @@ import {
   Message,
   SummaryBlock,
   TextBlock,
+  ToolReferenceBlock,
   ToolResultBlock,
   ToolUseBlock,
 } from '../../../types/messages.js'
@@ -234,6 +235,33 @@ describe('Offload builder', () => {
     expect(result).toBe(true)
     const block = messages[0]!.content[0] as ToolResultBlock
     expect((block.content[0] as TextBlock).text).toBe('[Dropped: ~25 tokens]')
+  })
+
+  it('Offload.drop() keeps strands_load_tools results, which hold the loaded schemas', async () => {
+    const reference = new ToolReferenceBlock({ name: 'bash' })
+    const messages = [
+      new Message({
+        role: 'assistant',
+        content: [
+          new ToolUseBlock({ name: 'strands_load_tools', toolUseId: 'load-1', input: { names: ['bash'] } }),
+          new ToolUseBlock({ name: 'bash', toolUseId: 'bash-1', input: {} }),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({ toolUseId: 'load-1', status: 'success', content: [reference] }),
+          new ToolResultBlock({ toolUseId: 'bash-1', status: 'success', content: [new TextBlock('x'.repeat(100))] }),
+        ],
+      }),
+    ]
+
+    const result = await Offload.drop('toolResults').when({}).apply(makeContext(messages))
+
+    expect(result).toBe(true)
+    const [loadResult, bashResult] = messages[1]!.content as ToolResultBlock[]
+    expect(loadResult!.content).toEqual([reference])
+    expect((bashResult!.content[0] as TextBlock).text).toBe('[Dropped: ~25 tokens]')
   })
 
   it('Offload.truncate with string[] target matches tool by name from assistant message', async () => {

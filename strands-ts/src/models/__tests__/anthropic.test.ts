@@ -11,6 +11,7 @@ import {
   TextBlock,
   CachePointBlock,
   GuardContentBlock,
+  ToolReferenceBlock,
   ToolResultBlock,
   JsonBlock,
   ReasoningBlock,
@@ -28,6 +29,7 @@ import { z } from 'zod'
 import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
 import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
 import { Model, type StreamOptions } from '../model.js'
+import type { ToolSpec } from '../../tools/types.js'
 
 /**
  * Helper to create a mock Anthropic client with streaming support
@@ -212,6 +214,16 @@ describe('AnthropicModel', () => {
     it('reads cache points from the shared model info', () => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' })
       expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it.each([
+      ['claude-haiku-4-5-20251001', 'native'],
+      ['claude-opus-5-5', 'native'],
+      ['claude-opus-4-1', 'unsupported'],
+      ['claude-3-5-haiku-20241022', 'unsupported'],
+    ])('reports deferred tools from the shared model info for %s: %s', (modelId, expected) => {
+      const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
+      expect(model.modelInfo.capabilities?.deferredTools).toBe(expected)
     })
 
     it.each([
@@ -1536,6 +1548,58 @@ describe('AnthropicModel', () => {
         expect(warnSpy).toHaveBeenCalled()
         warnSpy.mockRestore()
       })
+
+      describe('tool references', () => {
+        const shell = { name: 'shell', description: 'Run a command', inputSchema: { type: 'object' as const } }
+        const read = { name: 'read', description: 'Read a file', inputSchema: { type: 'object' as const } }
+        const shellText = `shell parameters: ${JSON.stringify(shell.inputSchema)}`
+        const sentToolResult = async (
+          content: ToolResultBlock['content'],
+          toolSpecs: ToolSpec[] = [{ ...shell, deferLoading: true }, read]
+        ): Promise<unknown> => {
+          const { captured, mockClient } = setupCapture()
+          const provider = new AnthropicModel({ client: mockClient })
+          const messages = [
+            new Message({
+              role: 'user',
+              content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content })],
+            }),
+          ]
+          await collectIterator(provider.stream(messages, { toolSpecs }))
+          return captured.request.messages[0].content[0]
+        }
+        const toolResult = (content: unknown): unknown => ({
+          type: 'tool_result',
+          tool_use_id: 't1',
+          content,
+          is_error: false,
+        })
+
+        it('sends references to tools the request defers as tool_reference blocks', async () => {
+          expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' })])).toEqual(
+            toolResult([{ type: 'tool_reference', tool_name: 'shell' }])
+          )
+        })
+
+        it('sends a reference as text when the request does not defer the tool, as in a server-side summary', async () => {
+          expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' })], [shell])).toEqual(
+            toolResult(shellText)
+          )
+        })
+
+        it.each([
+          ['other content', new TextBlock('note'), { type: 'text', text: 'note' }],
+          [
+            'a reference to a tool the request does not defer',
+            new ToolReferenceBlock({ name: 'read' }),
+            { type: 'text', text: `read parameters: ${JSON.stringify(read.inputSchema)}` },
+          ],
+        ])('sends every reference in a result as text when the result also holds %s', async (_name, other, sent) => {
+          expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' }), other])).toEqual(
+            toolResult([{ type: 'text', text: shellText }, sent])
+          )
+        })
+      })
     })
 
     describe('injected blocks', () => {
@@ -1976,6 +2040,82 @@ describe('AnthropicModel', () => {
 
       expect(breakpoints(captured.request)).toEqual([['tools', 't2', { type: 'ephemeral' }]])
       expect(captured.request.tools[0].cache_control).toBeUndefined()
+    })
+
+    it('sends deferred tools with defer_loading and caches the last non-deferred tool', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+      const deferred = [
+        { ...toolSpecs[0]!, deferLoading: true },
+        toolSpecs[1]!,
+        { name: 't3', description: 'tool three', inputSchema: { type: 'object' as const }, deferLoading: true },
+      ]
+
+      await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs: deferred }))
+
+      expect(captured.request.tools).toEqual([
+        { name: 't1', description: 'tool one', input_schema: { type: 'object' }, defer_loading: true },
+        { name: 't2', description: 'tool two', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } },
+        { name: 't3', description: 'tool three', input_schema: { type: 'object' }, defer_loading: true },
+      ])
+    })
+
+    it('lists the deferred tools in the strands_load_tools description, since the API hides them', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+      const loader = {
+        name: 'strands_load_tools',
+        description: 'Load tools.',
+        inputSchema: { type: 'object' as const },
+      }
+      await collectIterator(
+        provider.stream([userMessage('Hi')], {
+          toolSpecs: [loader, { ...toolSpecs[0]!, deferLoading: true }, toolSpecs[1]!],
+        })
+      )
+      expect(captured.request.tools[0].description).toBe('Load tools.\n\nTools you can load:\n- t1: tool one')
+    })
+
+    it('omits defer_loading on a model without native deferred tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      const deferred = [{ ...toolSpecs[0]!, deferLoading: true }]
+      for (const config of [
+        { modelId: 'claude-opus-4-1' },
+        { modelId: 'claude-opus-5-5', modelInfo: { capabilities: { deferredTools: 'unsupported' as const } } },
+      ]) {
+        await collectIterator(
+          new AnthropicModel({ client: mockClient, ...config }).stream([userMessage('Hi')], { toolSpecs: deferred })
+        )
+        expect(captured.request.tools).toEqual([
+          { name: 't1', description: 'tool one', input_schema: { type: 'object' } },
+        ])
+      }
+    })
+
+    it('omits defer_loading when deferLoading is false', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+
+      await collectIterator(
+        provider.stream([userMessage('Hi')], { toolSpecs: [{ ...toolSpecs[0]!, deferLoading: false }] })
+      )
+
+      expect(captured.request.tools).toEqual([
+        { name: 't1', description: 'tool one', input_schema: { type: 'object' } },
+      ])
+    })
+
+    it('adds no tools breakpoint when every tool is deferred', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+
+      await collectIterator(
+        provider.stream([userMessage('Hi')], {
+          toolSpecs: toolSpecs.map((spec) => ({ ...spec, deferLoading: true })),
+        })
+      )
+
+      expect(breakpoints(captured.request)).toEqual([])
     })
 
     it('carries a toolsTTL onto cache_control', async () => {

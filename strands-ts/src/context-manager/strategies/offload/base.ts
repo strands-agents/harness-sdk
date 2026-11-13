@@ -20,6 +20,7 @@ import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { carriedTokens, formatElided, isOffloaded, offloadPlaceholder } from '../../placeholder.js'
 import { collectRemovableWithPair, placeholderFor, removeMessages, repairAlternation } from '../../message-trimming.js'
+import { LOAD_TOOLS_TOOL_NAME } from '../../../tools/load-tools.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
 import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
@@ -196,6 +197,8 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    */
   private _isProtectedResult(block: ToolResultBlock, toolNameMap: Map<string, string>): boolean {
     if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return true
+    // A load result is what keeps a loaded tool's schema in the model's context.
+    if (toolNameMap.get(block.toolUseId) === LOAD_TOOLS_TOOL_NAME) return true
     const placeholder = block.content.find(isOffloaded)
     return placeholder !== undefined && (this._method !== 'drop' || placeholder.method === 'drop')
   }

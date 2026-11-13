@@ -5,6 +5,7 @@ import { Tool } from '../tool.js'
 import { createMockContext } from '../../__fixtures__/tool-helpers.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import type { JSONValue } from '../../types/json.js'
+import { ToolReferenceBlock } from '../../types/messages.js'
 import type { ToolContext } from '../tool.js'
 
 /**
@@ -167,6 +168,19 @@ describe('tool', () => {
         expect(result.status).toBe('success')
         expect(result.content).toHaveLength(1)
         expect(result.content[0]).toEqual(expect.objectContaining({ type: 'textBlock', text: 'hello' }))
+      })
+
+      it('keeps returned tool references as tool reference content', async () => {
+        const myTool = tool({
+          name: 'loader',
+          description: 'Returns tool references',
+          inputSchema: z.object({}),
+          callback: () => [new ToolReferenceBlock({ name: 'shell' })],
+        })
+
+        const { result } = await collectGenerator(myTool.stream(createContext({})))
+
+        expect(result.content).toEqual([new ToolReferenceBlock({ name: 'shell' })])
       })
 
       it('streams promise callback result', async () => {

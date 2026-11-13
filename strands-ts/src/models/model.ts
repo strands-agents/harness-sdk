@@ -417,8 +417,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
   /**
    * Everything the SDK knows about the configured model, resolved on each read. Layers, later
-   * ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that supports
-   * them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
+   * ones winning: the shared model info for `modelId`, `temporaryMessages` and `deferredTools` off (a provider that
+   * supports them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override.
+   * Each read returns a new record, so do not compare reads by reference.
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
    * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
@@ -430,7 +431,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
     return mergeModelInfo(
       lookupModelInfo(this.modelId ?? ''),
       {
-        capabilities: { temporaryMessages: false },
+        capabilities: { temporaryMessages: false, deferredTools: 'unsupported' },
         limits: { contextWindow: config.contextWindowLimit },
       },
       config.modelInfo
@@ -879,7 +880,14 @@ function heuristicText(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
-function heuristicJson(obj: unknown): number {
+/**
+ * Estimates the tokens of a JSON value the way {@link Model.countTokens} does by default.
+ *
+ * @param obj - The value to estimate
+ * @returns The estimated token count, or 0 when the value can't be serialized
+ * @internal
+ */
+export function heuristicJson(obj: unknown): number {
   try {
     return Math.ceil(JSON.stringify(obj).length / 2)
   } catch {
