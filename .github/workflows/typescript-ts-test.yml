@@ -13,6 +13,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ matrix.os }}
+    # The slowest leg takes about 9 min; 30 min caps a hung test run instead of the 6-hour default.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +45,7 @@ jobs:
 
       - name: Upload test artifacts
         if: always()
+        continue-on-error: true # the artifacts are diagnostics; an upload outage should not fail a passing run
         uses: actions/upload-artifact@v7.0.2
         with:
           name: test-artifacts-${{ matrix.node-version }}-${{ matrix.os }}
