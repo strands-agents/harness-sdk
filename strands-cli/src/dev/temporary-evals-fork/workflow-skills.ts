@@ -2,9 +2,11 @@ import type { AgentExtensionSkill } from '../../agent/extension.js'
 
 const DEV_ONLY = `This is a runtime-only developer-assistance workflow for this local strands dev chat, not part of the agent's product behavior. Never copy this skill, these instructions, or strands_dev_* tools into the agent's source, saved instructions, configuration, or exports.
 
-Use the developer's request and earlier conversation first. Plain-language requests are enough; do not require slash commands. Keep defaults and technical settings in the background, not a questionnaire. Ask one brief question only when a missing answer materially changes the action. Do not ask again for information or approval already given for the same specific scope. Use strands_dev_status when you need to discover saved experiments, current jobs, or pending review. Read-only listing, inspection, and result retrieval do not need approval.
+Use the developer's request and earlier conversation first. Plain-language requests are enough; do not require slash commands. Keep defaults and technical settings in the background, not a questionnaire. Ask one brief question only when a missing answer materially changes the action, and ask it on its own rather than stacking questions or offering a numbered menu. Do not ask again for information or approval already given for the same specific scope. Read-only listing, inspection, and result retrieval do not need approval.
 
-Before a paid run, briefly explain the concrete scope, that model calls cost money, and that the run can take minutes; obtain approval before starting. A specific run already approved after that explanation needs no repeated approval. Approval for one run is not permission for additional runs or a larger scope. Do not invent a price or model-call count that the tools have not supplied.`
+Answer the question that was asked and stop. Answer it from tool output read in this turn: call strands_dev_status again in every turn that asks what exists, including a repeated question, because the developer, the panels, and finished runs change the workspace between turns. Reusing an earlier answer states a workspace that may no longer exist, and saying you just checked when you did not is a false claim.
+
+Before a paid run, briefly explain the concrete scope, that model calls cost money, and that the run can take minutes; obtain approval before starting. Being asked to run, test, or improve something is not that approval: end that turn with the scope and wait for a separate answer. A specific run already approved after that explanation needs no repeated approval. Approval for one run is not permission for additional runs or a larger scope. Do not invent a price or model-call count that the tools have not supplied.`
 
 const MANAGE_EXPERIMENTS = `# Manage experiments in dev chat
 
@@ -24,7 +26,7 @@ ${DEV_ONLY}
 
 Help with requests such as "test refunds", "run these experiments", "rerun the failures", or "show the latest results". Resolve experiment names from the conversation and strands_dev_status; if the selection is ambiguous, ask only for the missing scope. Read cases and evaluator details with strands_dev_read_experiment when needed to explain the run.
 
-Tests exercise the current authored agent through its SDK-configured runtime, not a separate generator provider or the chat assistant. Testing leaves the agent source unchanged. Explain which experiments and cases will run and that scoring may also call models before obtaining paid-run approval. Use existing defaults rather than asking the developer to configure a generator model.
+Tests exercise the current authored agent through its SDK-configured runtime, not a separate generator provider or the chat assistant. Testing leaves the agent source unchanged. Explain which experiments and cases will run and that scoring may also call models before obtaining paid-run approval. "Run my tests" and "check my agent against my examples" ask for that explanation, not for the run: name the experiments and case counts, then end the turn. Use existing defaults rather than asking the developer to configure a generator model.
 
 Call strands_dev_test with {experiment, failedOnly?} for one experiment, or {experiments: string[], failedOnly?} for a batch. Use one selector, not both. Set failedOnly only when the developer requests it and prior failures exist in a finished run for each selected experiment; check strands_dev_test_results first. If there are no prior failures, explain that and ask before substituting a paid full run. Do not silently expand a failed-only request to all cases.
 
@@ -53,19 +55,28 @@ export const temporaryWorkflowSkills = (): AgentExtensionSkill[] => [
   {
     name: 'manage-experiments',
     description:
-      'List and inspect saved experiments and scoring in dev chat. Not part of the exported agent; use for natural-language experiment management requests.',
+      'List and inspect saved experiments, their cases, and their scoring in dev chat. ' +
+      'Use it when the developer asks what exists or what a case holds, in any wording, including ' +
+      '"what experiments do I have", "what tests are saved", "show me my cases", "show the refund cases", ' +
+      '"what does this experiment check", and "how is this scored". Not part of the exported agent.',
     instructions: MANAGE_EXPERIMENTS,
   },
   {
     name: 'run-tests',
     description:
-      'Run approved tests or inspect existing progress and case results in dev chat. Not part of the exported agent; use for natural-language testing requests.',
+      'Run approved tests, or inspect the progress and case results of tests already run, in dev chat. ' +
+      'Use it when the developer asks to try the agent on saved cases or asks how a run went, in any wording, including ' +
+      '"run my tests", "check my agent against my examples", "test refunds", "try these cases", ' +
+      '"did my last test pass", "how did the run go", and "rerun the failures". Not part of the exported agent.',
     instructions: RUN_TESTS,
   },
   {
     name: 'optimize-harness',
     description:
-      'Propose instruction or effort improvements and review explicitly accepted edits in dev chat. Not part of the exported agent; use for natural-language optimization requests.',
+      'Propose instruction or effort edits that raise the score of this agent, and write only the edits the developer ' +
+      'accepts, in dev chat. Use it when the developer asks to make the agent better, in any wording, including ' +
+      '"can you make my agent better at this", "improve this agent on refunds", "how do I fix these failures", ' +
+      '"tune its effort", and "make it smarter". Not part of the exported agent.',
     instructions: OPTIMIZE_HARNESS,
   },
 ]
