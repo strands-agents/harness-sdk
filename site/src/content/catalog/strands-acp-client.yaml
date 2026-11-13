@@ -1,0 +1,8 @@
+name: strands-acp-client
+description: Lets a Strands agent delegate tasks to coding agents such as Claude Code, Codex and OpenCode over the Agent Client Protocol, with permission policies and resumable sessions.
+integrationType: tool
+languages:
+  python:
+    package: strands-acp-client
+github: https://github.com/pablodevrzmz/strands-acp-client
+addedDate: 2026-11-11
