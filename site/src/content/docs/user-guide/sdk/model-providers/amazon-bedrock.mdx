@@ -540,6 +540,69 @@ When `guardLatestUserMessage: true`, only the most recent user message is sent t
 </Tab>
 </Tabs>
 
+#### Guarding specific content
+
+In addition to evaluating whole messages, you can mark individual pieces of content for guardrail evaluation by adding a `guardContent` block to a message's content. This lets you guard only selected parts of a turn (for example, untrusted text pulled from a retrieval source) rather than the entire conversation.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+
+bedrock_model = BedrockModel(
+    model_id="global.anthropic.claude-sonnet-5-5",
+    guardrail_id="your-guardrail-id",
+    guardrail_version="DRAFT",
+)
+
+agent = Agent(model=bedrock_model)
+
+# Only the guardContent block below is evaluated by the guardrail
+agent([
+    {
+        "guardContent": {
+            "text": {
+                "text": "Untrusted text to evaluate against the guardrail.",
+                "qualifiers": ["guard_content"],
+            }
+        }
+    },
+    {"text": "Summarize the text above."},
+])
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock_imports.ts:guard_content_imports"
+
+--8<-- "user-guide/sdk/model-providers/amazon-bedrock.ts:guard_content"
+```
+
+</Tab>
+</Tabs>
+
+The `qualifiers` field tells Bedrock how to treat the text. It is optional in Python and required in TypeScript.
+
+- `guard_content`: evaluate the text against all of the guardrail's policies. This is the same as omitting `qualifiers`.
+- `grounding_source`: supply reference material for a [contextual grounding check](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html).
+- `query`: supply the user query for a contextual grounding check.
+
+Text qualified only as `grounding_source` or `query` is used by the contextual grounding check and skipped by every other policy. When that text is untrusted, such as content pulled from a retrieval source, also list `guard_content` so the other policies screen it too, for example `["grounding_source", "guard_content"]`.
+
+See the Bedrock [`GuardrailConverseContentBlock`](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_GuardrailConverseContentBlock.html) API reference for more details.
+
+:::caution[Guarded content stays in the conversation]
+Once any `guardContent` block is present in the messages, Bedrock evaluates only `guardContent` blocks and skips all other content. The agent keeps the block in its conversation history, so on later turns the guardrail keeps evaluating that block while new plain-text user messages go unscreened. To screen later turns, wrap each new input in a `guardContent` block or enable <Syntax py="guardrail_latest_message" ts="guardLatestUserMessage" />.
+:::
+
+:::note[Automatic wrapping]
+With <Syntax py="guardrail_latest_message=True" ts="guardLatestUserMessage: true" />, the SDK wraps the text and PNG/JPEG image content of the latest user message in `guardContent` blocks for you, with no qualifiers. Other image formats are sent unwrapped. If you also add your own `guardContent` blocks to that message, its plain text blocks are wrapped too: in the example above, `Summarize the text above.` would also be evaluated.
+:::
+
 ### Caching
 
 Strands caches system prompts, tools, and messages on Bedrock to reduce token
