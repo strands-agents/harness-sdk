@@ -67,13 +67,20 @@ describe('homepage machine-readable metadata', () => {
     expect(banner?.querySelector('.banner__eyebrow')).toBeNull()
     expect(banner?.querySelector('h1')?.getAttribute('aria-label')).toBeUndefined()
     expect(banner?.querySelectorAll('.banner__cta')).toHaveLength(2)
-    expect(banner?.querySelector('.banner__cta--primary')?.getAttribute('href')).toBe('#framework')
+    expect(banner?.querySelector('.banner__cta--primary')?.getAttribute('href')).toBe(
+      configuredPathWithBase('/docs/user-guide/harness/')
+    )
     expect(banner?.querySelector('.banner__cta--primary')?.text.trim()).toBe('Build an agent')
     expect(banner?.querySelector('.banner__cta--secondary')?.getAttribute('href')).toBe(
-      'https://github.com/strands-agents'
+      'https://github.com/strands-agents/harness-sdk'
     )
-    expect(banner?.querySelector('.banner__cta--secondary')?.text.trim()).toBe('View on GitHub')
-    expect(banner?.querySelector('.banner__install')).toBeNull()
+    expect(banner?.querySelector('.banner__cta--secondary')?.text.trim()).toBe('GitHub')
+    expect(banner?.querySelector('.banner__intro')?.text.trim()).toBe(
+      'An open-source toolkit for building, running, and improving AI agents.'
+    )
+    expect(
+      banner?.querySelectorAll('.banner__install [data-install-variant]').map((command) => command.text.trim())
+    ).toEqual(['pip install strands-harness', 'npm install @strands-agents/harness'])
     expect(banner?.querySelector('.banner__dots')).not.toBeNull()
     expect(homepage.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe(
       'Strands Agents: Build agents. Own every layer.'
@@ -90,9 +97,7 @@ describe('homepage machine-readable metadata', () => {
     expect(framework?.querySelector('.framework__capabilities-label')?.text.trim()).toBe('More Strands projects')
     expect(
       layers.map((layer) => ({
-        marker: layer.querySelector('.framework__card-meta span')?.text.trim(),
-        slug: layer.querySelector('.framework__card-meta strong')?.text.trim(),
-        name: layer.querySelector('h3')?.text.trim(),
+        title: layer.querySelector('.framework__product-title')?.text.trim(),
         description: layer.querySelector('.framework__card-copy p')?.text.trim(),
         installCommands: layer.querySelectorAll('[data-install-variant]').map((command) => command.text.trim()),
         href: layer.querySelector('.framework__card-link')?.getAttribute('href'),
@@ -100,9 +105,7 @@ describe('homepage machine-readable metadata', () => {
       }))
     ).toEqual([
       {
-        marker: 'Production-ready defaults',
-        slug: '/harness',
-        name: 'Harness',
+        title: '/harness',
         description:
           'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
         installCommands: ['pip install strands-harness', 'npm install @strands-agents/harness'],
@@ -110,9 +113,7 @@ describe('homepage machine-readable metadata', () => {
         cta: 'Build with Harness',
       },
       {
-        marker: 'Build from primitives',
-        slug: '/harness-sdk',
-        name: 'Harness SDK',
+        title: '/harness-sdk',
         description:
           'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
         installCommands: ['pip install strands-agents', 'npm install @strands-agents/sdk'],
@@ -122,29 +123,34 @@ describe('homepage machine-readable metadata', () => {
     ])
     expect(
       capabilityItems.map((item) => ({
-        name: item.querySelector('h4')?.text.trim(),
-        slug: item.querySelector('.framework__product-slug')?.text.trim(),
+        title: item.querySelector('.framework__product-title')?.text.trim(),
         href: item.querySelector('a')?.getAttribute('href'),
       }))
     ).toEqual([
-      { name: 'Box', slug: '/box', href: configuredPathWithBase('/docs/user-guide/box/') },
-      { name: 'Evals', slug: '/evals', href: configuredPathWithBase('/docs/user-guide/evals-sdk/') },
-      { name: 'Decider', slug: '/decider', href: configuredPathWithBase('/docs/labs/strands-decider/overview/') },
+      { title: '/box', href: configuredPathWithBase('/docs/user-guide/box/') },
+      { title: '/evals', href: configuredPathWithBase('/docs/user-guide/evals-sdk/') },
+      { title: '/decider', href: configuredPathWithBase('/docs/labs/strands-decider/overview/') },
     ])
     expect(framework?.text).not.toContain('Shell')
+    expect(framework?.querySelector('.framework__card-meta')).toBeNull()
+    expect(framework?.querySelector('.framework__capability-meta')).toBeNull()
     expect(
       capabilityItems
-        .find((item) => item.querySelector('h4')?.text.trim() === 'Decider')
-        ?.querySelector('.framework__capability-meta span:last-child')
+        .find((item) => item.querySelector('.framework__product-title')?.text.trim() === '/decider')
+        ?.querySelector('.framework__product-title')
         ?.text.trim()
     ).toBe('/decider')
     expect(framework?.text).not.toContain('Experimental')
+    expect(framework?.text).not.toContain('Production-ready defaults')
+    expect(framework?.text).not.toContain('Build from primitives')
+    expect(framework?.text).not.toContain('Isolate')
+    expect(framework?.text).not.toContain('Evaluate')
     expect(framework?.text).not.toContain('Your first agent')
     expect(framework?.text).not.toContain('Add only what your agent needs.')
     expect(
       framework
-        ?.querySelectorAll('.framework__product-slug')
-        .every((slug) => slug.text.trim() === slug.text.trim().toLowerCase())
+        ?.querySelectorAll('.framework__product-title')
+        .every((title) => title.text.trim() === title.text.trim().toLowerCase())
     ).toBe(true)
     expect(framework?.querySelector('.framework__labs')).toBeNull()
     expect(homepageHtml.indexOf('class="framework ')).toBeLessThan(homepageHtml.indexOf('class="logo-farm '))
@@ -195,7 +201,13 @@ describe('homepage machine-readable metadata', () => {
     expect(variants).toHaveLength(8)
     expect(variants.filter((variant) => variant.getAttribute('data-code-variant') === 'TypeScript')).toHaveLength(4)
     expect(variants.filter((variant) => variant.getAttribute('data-code-variant') === 'Python')).toHaveLength(4)
-    expect(useCases?.querySelectorAll('pre')).toHaveLength(8)
+    const codeBlocks = useCases?.querySelectorAll('pre') ?? []
+    expect(codeBlocks).toHaveLength(8)
+    expect(codeBlocks.every((block) => block.classList.contains('astro-code-themes'))).toBe(true)
+    expect(codeBlocks.every((block) => block.classList.contains('github-light'))).toBe(true)
+    expect(codeBlocks.every((block) => block.classList.contains('github-dark'))).toBe(true)
+    expect(codeBlocks.every((block) => block.getAttribute('style')?.includes('--shiki-light:'))).toBe(true)
+    expect(codeBlocks.every((block) => block.getAttribute('style')?.includes('--shiki-dark:'))).toBe(true)
   })
 
   it('keeps every testimonial available before enhancing the story browser', async () => {
@@ -218,8 +230,10 @@ describe('homepage machine-readable metadata', () => {
     expect(proof?.querySelector('.prove__counter')?.text.replace(/\s+/g, '')).toBe(`01/${total}stories`)
   })
 
-  it('restores a compact FAQ before the final Harness call to action', () => {
+  it('restores a compact FAQ before the final Harness action and branded footer', () => {
     const faq = homepage.querySelector('.home-faq')
+    const nextSteps = homepage.querySelector('.next-steps')
+    const footer = homepage.querySelector('.footer')
     const items = faq?.querySelectorAll('.home-faq__item') ?? []
 
     expect(faq?.querySelector('h2')?.text.trim()).toBe('Questions before you start.')
@@ -234,27 +248,22 @@ describe('homepage machine-readable metadata', () => {
     ])
     expect(faq?.querySelector('.home-faq__link')?.getAttribute('href')).toBe(configuredPathWithBase('/faq/'))
     expect(homepageHtml.indexOf('class="home-faq ')).toBeLessThan(homepageHtml.indexOf('class="next-steps '))
-  })
-
-  it('returns to Harness once in the final call to action', () => {
-    const nextSteps = homepage.querySelector('.next-steps')
-    const footer = homepage.querySelector('.footer')
-
-    expect(nextSteps?.querySelector('.next-steps__eyebrow')?.text.trim()).toBe('Build with Harness')
-    expect(nextSteps?.querySelector('h2')?.text.trim()).toBe('Take an agent to production.')
-    expect(nextSteps?.querySelector('.next-steps__shape--desktop')).not.toBeNull()
-    expect(nextSteps?.querySelector('.next-steps__shape--mobile')).not.toBeNull()
-    expect(nextSteps?.querySelector('.next-steps__cta--primary')?.getAttribute('href')).toBe(
-      configuredPathWithBase('/docs/user-guide/harness/')
-    )
-    expect(nextSteps?.querySelector('.next-steps__cta--primary')?.text.trim()).toBe('Build with Harness')
+    expect(homepageHtml.indexOf('class="next-steps ')).toBeLessThan(homepageHtml.indexOf('class="footer '))
+    expect(nextSteps?.querySelector('.next-steps__eyebrow')?.text.trim()).toBe('Start with Harness')
+    expect(nextSteps?.querySelector('h2')?.text.trim()).toBe('Build your first agent.')
+    expect(nextSteps?.text).toContain('pip install strands-harness')
     expect(nextSteps?.text).toContain('npm install @strands-agents/harness')
+    expect(nextSteps?.querySelector('.next-steps__cta--primary')?.getAttribute('href')).toBe(
+      configuredPathWithBase('/docs/user-guide/harness/quickstart/')
+    )
     expect(nextSteps?.querySelector('.next-steps__cta--secondary')?.getAttribute('href')).toBe(
       'https://github.com/strands-agents/harness-sdk'
     )
+    expect(nextSteps?.querySelector('.next-steps__ctas + .next-steps__install')).not.toBeNull()
+    expect(homepage.querySelector('.footer__transition')).toBeNull()
     expect(footer?.querySelector('.footer__get-started')).toBeNull()
     expect(footer?.querySelector('.footer__columns')).not.toBeNull()
-    expect(footer?.classList.contains('footer--theme')).toBe(true)
+    expect(footer?.classList.contains('footer--theme')).toBe(false)
   })
 
   it('promotes the latest blog post in the announcement', async () => {

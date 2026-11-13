@@ -75,10 +75,8 @@ const logos = [
   .logo-farm__inner {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 0;
     max-width: var(--home-content-width);
-    padding-bottom: var(--home-section-space-compact);
-    border-bottom: 1px solid var(--home-rule);
     margin: 0 auto;
   }
 
@@ -112,6 +110,8 @@ const logos = [
     align-items: center;
     justify-content: space-between;
     gap: 12px clamp(20px, 2.4vw, 36px);
+    padding-block: clamp(30px, 3vw, 42px);
+    border-bottom: 1px solid var(--home-rule);
   }
 
   .logo-farm__cell {
@@ -200,31 +200,21 @@ const logos = [
   }
 
   @media (max-width: 767px) {
-    .logo-farm__inner {
-      gap: 10px;
-    }
-
     .logo-farm__label {
       gap: 10px;
       font-size: 9px;
     }
 
     .logo-farm__row {
-      display: flex;
-      justify-content: flex-start;
-      flex-wrap: nowrap;
-      gap: 18px;
-      margin-inline: calc(-1 * var(--home-gutter));
-      padding-inline: var(--home-gutter);
-      overflow-x: auto;
-      overscroll-behavior-inline: contain;
-      scrollbar-width: thin;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px 16px;
+      padding-block: 28px;
     }
 
     .logo-farm__cell {
-      flex: 0 0 auto;
-      min-width: 88px;
       min-height: 44px;
+      padding: 4px 8px;
     }
 
     .logo-farm__logo :global(svg) {
@@ -250,6 +240,5 @@ const logos = [
     .logo-farm__cell[data-logo='MRH Trowe'] :global(svg) {
       height: 22px;
     }
-
   }
 </style>

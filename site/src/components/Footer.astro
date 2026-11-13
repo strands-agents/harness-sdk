@@ -8,11 +8,10 @@ import { pathWithBase } from '../util/links';
 import { LEGAL_LINKS } from '../config/footer';
 
 interface Props {
-  // Render the green curved transition above the footer. On by default so every
-  // page's footer has the homepage's curved top edge; the homepage itself opts
-  // out because its NextSteps section already provides the transition.
+  // Render the green curved transition above the footer. On by default; standalone
+  // pages can opt out when they use a flat transition into the footer.
   topShape?: boolean
-  // The homepage already ends with a dedicated Harness install action, so it
+  // The homepage includes a dedicated Harness install action in its hero, so it
   // can hide the repeated footer command while docs pages keep it.
   showInstall?: boolean
   // Match the page theme when the footer follows a dark standalone section.
@@ -154,10 +153,8 @@ const columns = [
 </footer>
 
 <style>
-  /* Green curved transition into the footer — the same shape the homepage's
-     NextSteps section uses, so every page's footer shares that curved top edge.
-     The green wedges sit on the page background and meet the green footer body
-     below, reading as one green shape with a curved top. */
+  /* Green curved transition into the footer. The green wedges sit on the page
+     background and meet the green footer body below, reading as one shape. */
   .footer__transition {
     position: relative;
     background: var(--bg);

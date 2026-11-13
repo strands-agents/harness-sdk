@@ -1,30 +1,30 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
 import shape from '../assets/next-steps/shape.svg?raw'
-import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw'
 import { products } from '../config/navbar'
 import InstallCommand from './InstallCommand.astro'
 
 const harness = products.find((product) => product.slug === '/harness')
-if (!harness) throw new Error('Missing Harness navigation target')
+const quickstart = harness?.pages?.find((page) => page.label === 'Quickstart')
+if (!harness || !quickstart) throw new Error('Missing Harness navigation targets')
 ---
 
 <section class="next-steps" aria-labelledby="next-steps-title">
   <div class="next-steps__shape next-steps__shape--desktop" aria-hidden="true" set:html={shape}></div>
-  <div class="next-steps__shape next-steps__shape--mobile" aria-hidden="true" set:html={shapeMobile}></div>
   <div class="next-steps__content">
-    <p class="next-steps__eyebrow">Build with Harness</p>
-    <h2 id="next-steps-title" class="next-steps__title">Take an agent to production.</h2>
+    <p class="next-steps__eyebrow">Start with Harness</p>
+    <h2 id="next-steps-title" class="next-steps__title">Build your first agent.</h2>
     <p class="next-steps__lede">
-      Use tuned defaults from pilot onward. Override individual components with the Harness SDK as your needs grow.
+      Install Harness and run the quickstart. Override individual defaults with Harness SDK components to customize the
+      agent loop.
     </p>
-    <div class="next-steps__install">
-      <span class="next-steps__install-label">Install Harness</span>
-      <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
-    </div>
     <div class="next-steps__ctas">
-      <a href={harness.href} class="next-steps__cta next-steps__cta--primary">
-        Build with Harness
+      <a
+        href={quickstart.href}
+        class="next-steps__cta next-steps__cta--primary"
+        aria-label="Open the Harness quickstart"
+      >
+        Quickstart
         <span class="next-steps__cta-arrow" set:html={arrow} />
       </a>
       <a
@@ -32,10 +32,14 @@ if (!harness) throw new Error('Missing Harness navigation target')
         class="next-steps__cta next-steps__cta--secondary"
         target="_blank"
         rel="noopener noreferrer"
+        aria-label="View Harness source on GitHub"
       >
         GitHub
         <span class="next-steps__cta-arrow" set:html={arrow} />
       </a>
+    </div>
+    <div class="next-steps__install">
+      <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
     </div>
   </div>
 </section>
@@ -44,10 +48,11 @@ if (!harness) throw new Error('Missing Harness navigation target')
   .next-steps {
     position: relative;
     min-height: 410px;
-    padding: var(--home-section-space) var(--home-gutter) clamp(58px, 6vw, 80px);
+    padding: clamp(50px, 5.5vw, 72px) var(--home-gutter) clamp(54px, 6vw, 76px);
     overflow: hidden;
-    background: var(--strands-black);
-    color: var(--strands-white);
+    background: var(--bg);
+    color: var(--fg);
+    margin-bottom: -1px;
   }
 
   .next-steps__shape {
@@ -61,7 +66,7 @@ if (!harness) throw new Error('Missing Harness navigation target')
   }
 
   .next-steps__shape :global([fill='#00CC60']) {
-    fill: var(--bg);
+    fill: var(--surface-green);
   }
 
   .next-steps__shape :global(svg) {
@@ -72,10 +77,6 @@ if (!harness) throw new Error('Missing Harness navigation target')
 
   .next-steps__shape--desktop {
     inset-block: 0;
-  }
-
-  .next-steps__shape--mobile {
-    display: none;
   }
 
   .next-steps__content {
@@ -98,7 +99,7 @@ if (!harness) throw new Error('Missing Harness navigation target')
     letter-spacing: 0.11em;
     line-height: 1.3;
     text-transform: uppercase;
-    color: var(--strands-green);
+    color: var(--cta-green);
   }
 
   .next-steps__title {
@@ -116,48 +117,14 @@ if (!harness) throw new Error('Missing Harness navigation target')
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: var(--home-body-size);
     line-height: 1.5;
-    color: rgb(255 255 255 / 72%);
+    color: color-mix(in srgb, var(--fg) 72%, transparent);
   }
 
   .next-steps__install {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
     margin-top: 2px;
-  }
-
-  .next-steps__install-label {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.11em;
-    line-height: 1.3;
-    text-transform: uppercase;
-    color: rgb(255 255 255 / 56%);
-  }
-
-  .next-steps__install :global(.install) {
-    background: rgb(255 255 255 / 8%);
-    border-color: rgb(255 255 255 / 18%);
-  }
-
-  .next-steps__install :global(.install__cmd) {
-    color: var(--strands-white);
-  }
-
-  .next-steps__install :global(.install__prompt) {
-    color: var(--strands-green);
-  }
-
-  .next-steps__install :global(.install__copy) {
-    background: rgb(255 255 255 / 9%);
-    border-color: rgb(255 255 255 / 16%);
-    color: var(--strands-white);
-  }
-
-  .next-steps__install :global(.install__copy:hover) {
-    background: rgb(255 255 255 / 16%);
   }
 
   .next-steps__ctas {
@@ -173,15 +140,17 @@ if (!harness) throw new Error('Missing Harness navigation target')
     align-items: center;
     justify-content: center;
     gap: 9px;
+    box-sizing: border-box;
+    min-width: 0;
     min-height: 44px;
     padding: 10px 18px;
-    border: 1px solid rgb(255 255 255 / 40%);
+    border: 1px solid color-mix(in srgb, var(--fg) 40%, transparent);
     border-radius: 999px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 14px;
     font-weight: 700;
     line-height: 1.2;
-    color: var(--strands-white);
+    color: var(--fg);
     text-decoration: none;
     transition:
       transform 0.18s ease,
@@ -227,16 +196,11 @@ if (!harness) throw new Error('Missing Harness navigation target')
       display: none;
     }
 
-    .next-steps__shape--mobile {
-      display: block;
-      inset: auto 0 -1px;
-      height: 112px;
-    }
   }
 
   @media (max-width: 767px) {
     .next-steps {
-      padding-block: var(--home-section-space) 78px;
+      padding-block: 42px;
     }
 
     .next-steps__content {
@@ -257,37 +221,6 @@ if (!harness) throw new Error('Missing Harness navigation target')
 
     .next-steps__cta {
       width: 100%;
-    }
-  }
-
-  @media (max-width: 480px) {
-    .next-steps__install :global(.install) {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      width: 100%;
-      padding: 12px;
-      border-radius: 18px;
-    }
-
-    .next-steps__install :global(.install__cmd) {
-      width: 100%;
-      padding-bottom: 3px;
-      font-size: 12px;
-      scrollbar-width: thin;
-    }
-
-    .next-steps__install :global(.install__cmd)::-webkit-scrollbar {
-      display: block;
-      height: 4px;
-    }
-
-    .next-steps__install :global(.install__cmd)::-webkit-scrollbar-thumb {
-      background: var(--toggle-inactive-border);
-      border-radius: 999px;
-    }
-
-    .next-steps__install :global(.install__copy) {
-      justify-self: end;
     }
   }
 

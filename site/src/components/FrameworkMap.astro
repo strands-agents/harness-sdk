@@ -15,12 +15,8 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 
     <div class="framework__start-grid">
       <article class="framework__layer framework__layer--primary" data-accent={harness.product.accent}>
-        <div class="framework__card-meta">
-          <span>{harness.marker}</span>
-          <strong class="framework__product-slug">{harness.product.slug}</strong>
-        </div>
         <div class="framework__card-copy">
-          <h3>{harness.product.label}</h3>
+          <h3 class="framework__product-title">{harness.product.slug}</h3>
           <p>{harness.description}</p>
         </div>
         <div class="framework__install">
@@ -37,12 +33,8 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
       </article>
 
       <article class="framework__layer framework__layer--secondary" data-accent={harnessSdk.product.accent}>
-        <div class="framework__card-meta">
-          <span>{harnessSdk.marker}</span>
-          <strong class="framework__product-slug">{harnessSdk.product.slug}</strong>
-        </div>
         <div class="framework__card-copy">
-          <h3>{harnessSdk.product.label}</h3>
+          <h3 class="framework__product-title">{harnessSdk.product.slug}</h3>
           <p>{harnessSdk.description}</p>
         </div>
         <div class="framework__install">
@@ -60,13 +52,9 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 
       <div class="framework__capability-grid">
         {
-          homepageCapabilities.map(({ product, marker, description, cta, href }) => (
+          homepageCapabilities.map(({ product, description, cta, href }) => (
             <article class="framework__capability" data-accent={product.accent}>
-              <div class="framework__capability-meta">
-                <span>{marker}</span>
-                <span class="framework__product-slug">{product.slug}</span>
-              </div>
-              <h4>{product.label}</h4>
+              <h4 class="framework__product-title">{product.slug}</h4>
               <p>{description}</p>
               <a href={href}>
                 {cta}
@@ -95,16 +83,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     gap: clamp(24px, 3vw, 34px);
     max-width: var(--home-content-width);
     margin: 0 auto;
-  }
-
-  .framework__card-meta,
-  .framework__capability-meta {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.11em;
-    line-height: 1.35;
-    text-transform: uppercase;
   }
 
   .framework__intro h2 {
@@ -175,36 +153,21 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     background: color-mix(in srgb, var(--framework-accent) 3%, var(--bg));
   }
 
-  .framework__card-meta {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 14px;
-    color: var(--framework-accent);
-  }
-
-  .framework__card-meta strong {
-    font: inherit;
-    color: color-mix(in srgb, var(--fg) 52%, transparent);
-  }
-
-  .framework__product-slug {
-    text-transform: lowercase;
-  }
-
   .framework__card-copy {
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
 
-  .framework__card-copy h3 {
+  .framework__card-copy .framework__product-title {
     margin: 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: clamp(28px, 2.8vw, 38px);
     font-weight: 600;
     letter-spacing: -0.035em;
     line-height: 1;
+    color: var(--framework-accent);
+    text-transform: lowercase;
   }
 
   .framework__card-copy > p:last-child {
@@ -295,25 +258,15 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     border-left: 1px solid var(--home-rule);
   }
 
-  .framework__capability-meta {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 20px;
-    color: var(--framework-accent);
-  }
-
-  .framework__capability-meta span:last-child {
-    color: color-mix(in srgb, var(--fg) 44%, transparent);
-  }
-
-  .framework__capability h4 {
+  .framework__capability .framework__product-title {
     margin: 0 0 10px;
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: clamp(24px, 2vw, 30px);
     font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.05;
+    color: var(--framework-accent);
+    text-transform: lowercase;
   }
 
   .framework__capability > p {
@@ -353,10 +306,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
       border-left: 0;
     }
 
-    .framework__card-meta {
-      margin-bottom: 14px;
-    }
-
     .framework__card-copy {
       gap: 8px;
     }
@@ -385,10 +334,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     .framework__capability + .framework__capability {
       border-top: 1px solid var(--home-rule);
       border-left: 0;
-    }
-
-    .framework__capability-meta {
-      margin-bottom: 16px;
     }
 
     .framework__capability > p {

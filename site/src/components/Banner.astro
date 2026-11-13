@@ -1,5 +1,10 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
+import { homepageStartProjects } from '../config/homepage'
+import InstallCommand from './InstallCommand.astro'
+
+const [harness] = homepageStartProjects
+if (!harness) throw new Error('Missing Harness homepage project')
 ---
 
 <section class="banner" aria-labelledby="hero-title">
@@ -10,23 +15,24 @@ import arrow from '../assets/banner/arrow.svg?raw'
         <span class="banner__headline-accent">Own every layer.</span>
       </h1>
 
-      <div class="banner__summary">
-        <p class="banner__intro">
-          Strands is an open-source toolkit for building, running, and improving AI agents.
-        </p>
+      <p class="banner__intro">An open-source toolkit for building, running, and improving AI agents.</p>
 
+      <div class="banner__conversion">
+        <div class="banner__install">
+          <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
+        </div>
         <div class="banner__actions">
-          <a href="#framework" class="banner__cta banner__cta--primary">
+          <a href={harness.href} class="banner__cta banner__cta--primary">
             Build an agent
             <span class="banner__arrow" set:html={arrow} />
           </a>
           <a
-            href="https://github.com/strands-agents"
+            href={harness.product.repository}
             class="banner__cta banner__cta--secondary"
             target="_blank"
             rel="noopener noreferrer"
           >
-            View on GitHub
+            GitHub
             <span class="banner__arrow" set:html={arrow} />
           </a>
         </div>
@@ -49,8 +55,10 @@ import arrow from '../assets/banner/arrow.svg?raw'
     position: relative;
     isolation: isolate;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    min-height: clamp(380px, 46vh, 470px);
+    justify-content: center;
+    min-height: clamp(470px, 58vh, 600px);
     max-width: var(--home-content-width);
     margin: 0 auto;
     padding: clamp(42px, 5vw, 64px) 0;
@@ -62,8 +70,10 @@ import arrow from '../assets/banner/arrow.svg?raw'
     z-index: 1;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
     width: 100%;
+    min-width: 0;
+    text-align: center;
   }
 
   .banner__headline {
@@ -80,34 +90,44 @@ import arrow from '../assets/banner/arrow.svg?raw'
     text-wrap: balance;
   }
 
-  .banner__summary {
-    display: grid;
-    grid-template-columns: minmax(0, 720px) max-content;
-    align-items: end;
-    justify-content: space-between;
-    gap: clamp(28px, 4vw, 64px);
-    width: 100%;
-    margin-top: 22px;
-  }
-
   .banner__headline-accent {
     color: var(--accent-green);
   }
 
   .banner__intro {
     max-width: 720px;
-    margin: 0;
+    margin: 22px 0 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: clamp(17px, 1.4vw, 20px);
     line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 74%, transparent);
   }
 
+  .banner__conversion {
+    position: relative;
+    z-index: 1;
+    display: inline-grid;
+    justify-items: stretch;
+    gap: 14px;
+    width: fit-content;
+    max-width: 100%;
+    margin-top: 30px;
+  }
+
+  .banner__install {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .banner__install :global(.install) {
+    width: 100%;
+  }
+
   .banner__actions {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
     gap: 12px;
-    justify-content: flex-end;
+    width: 100%;
     margin: 0;
   }
 
@@ -116,15 +136,17 @@ import arrow from '../assets/banner/arrow.svg?raw'
     align-items: center;
     justify-content: center;
     gap: 9px;
-    min-height: 44px;
-    padding: 10px 17px;
-    border: 1px solid transparent;
+    width: 100%;
+    min-height: 50px;
+    padding: 12px 22px;
+    border: 1px solid color-mix(in srgb, var(--fg) 32%, transparent);
     border-radius: 999px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
     line-height: 1.2;
     text-decoration: none;
+    white-space: nowrap;
     transition:
       transform 0.18s ease,
       background-color 0.18s ease,
@@ -141,6 +163,7 @@ import arrow from '../assets/banner/arrow.svg?raw'
   }
 
   .banner__cta--primary {
+    border-color: var(--strands-green);
     background: var(--strands-green);
     color: var(--strands-black);
   }
@@ -151,12 +174,11 @@ import arrow from '../assets/banner/arrow.svg?raw'
 
   .banner__cta--secondary {
     background: transparent;
-    border-color: transparent;
     color: var(--fg);
   }
 
   .banner__cta--secondary:hover {
-    border-color: transparent;
+    border-color: var(--accent-green);
     color: var(--accent-green);
   }
 
@@ -174,41 +196,25 @@ import arrow from '../assets/banner/arrow.svg?raw'
   .banner__dots {
     position: absolute;
     z-index: 0;
-    top: 50%;
-    right: clamp(-48px, -2vw, -12px);
-    width: min(31vw, 430px);
-    height: 76%;
-    background: radial-gradient(circle, var(--halftone-dot) 0 2.2px, transparent 2.7px) 0 0 / 18px 18px;
-    opacity: 0.5;
+    top: 0;
+    right: 0;
+    left: 0;
+    width: 100%;
+    height: 72%;
+    background: radial-gradient(circle, var(--halftone-dot) 0 2.4px, transparent 2.9px) 0 0 / 18px 18px;
+    opacity: 0.58;
     pointer-events: none;
-    transform: translateY(-50%);
-    -webkit-mask-image: radial-gradient(ellipse at 72% 50%, #000 0 18%, rgb(0 0 0 / 78%) 38%, transparent 76%);
-    mask-image: radial-gradient(ellipse at 72% 50%, #000 0 18%, rgb(0 0 0 / 78%) 38%, transparent 76%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 82%) 38%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 82%) 38%, transparent 100%);
   }
 
   :global(:root[data-theme='dark']) .banner__dots {
-    opacity: 0.28;
+    opacity: 0.3;
   }
 
   @media (max-width: 980px) {
     .banner__headline {
       font-size: clamp(56px, 8vw, 76px);
-    }
-
-    .banner__summary {
-      grid-template-columns: minmax(0, 1fr) max-content;
-      gap: 24px;
-    }
-
-    .banner__actions {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-
-    .banner__dots {
-      right: -72px;
-      width: 34vw;
-      opacity: 0.34;
     }
   }
 
@@ -218,9 +224,8 @@ import arrow from '../assets/banner/arrow.svg?raw'
     }
 
     .banner__inner {
-      align-items: flex-start;
       min-height: 0;
-      padding: 34px 0 32px;
+      padding: 46px 0 42px;
     }
 
     .banner__content {
@@ -233,43 +238,35 @@ import arrow from '../assets/banner/arrow.svg?raw'
       line-height: 0.94;
     }
 
-    .banner__summary {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 20px;
-      margin-top: 18px;
-    }
-
     .banner__intro {
       max-width: 36rem;
+      margin-top: 18px;
       font-size: 16px;
     }
 
-    .banner__actions {
-      align-items: center;
-      flex-direction: row;
-      display: flex;
+    .banner__conversion {
+      gap: 12px;
+      margin-top: 24px;
     }
 
-    .banner__cta {
-      width: auto;
+    .banner__actions {
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
     }
 
     .banner__dots {
-      top: 46px;
-      right: -48px;
-      width: 150px;
-      height: 105px;
+      top: 0;
+      right: 0;
+      left: 0;
+      width: 100%;
+      height: 220px;
       background-size: 14px 14px;
-      opacity: 0.38;
-      transform: none;
-      -webkit-mask-image: radial-gradient(ellipse at 76% 24%, #000 0 18%, rgb(0 0 0 / 70%) 38%, transparent 78%);
-      mask-image: radial-gradient(ellipse at 76% 24%, #000 0 18%, rgb(0 0 0 / 70%) 38%, transparent 78%);
+      opacity: 0.5;
+      -webkit-mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 78%) 40%, transparent 100%);
+      mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 78%) 40%, transparent 100%);
     }
 
     :global(:root[data-theme='dark']) .banner__dots {
-      opacity: 0.24;
+      opacity: 0.28;
     }
   }
 
@@ -282,22 +279,14 @@ import arrow from '../assets/banner/arrow.svg?raw'
       font-size: 39px;
     }
 
-    .banner__summary {
-      gap: 18px;
-      margin-top: 16px;
-    }
-
     .banner__intro {
+      margin-top: 16px;
       font-size: 15px;
       line-height: 1.45;
     }
 
-    .banner__actions {
-      gap: 10px;
-    }
-
     .banner__cta {
-      padding-inline: 12px;
+      padding-inline: 10px;
       font-size: 11px;
     }
   }

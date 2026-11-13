@@ -3,7 +3,6 @@ import { products } from './navbar'
 
 interface HomepageProject {
   product: Product
-  marker: string
   description: string
   cta: string
   href: string
@@ -25,7 +24,6 @@ const decider = productFor('/decider')
 export const homepageStartProjects: HomepageProject[] = [
   {
     product: harness,
-    marker: 'Production-ready defaults',
     description:
       'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
     cta: 'Build with Harness',
@@ -34,7 +32,6 @@ export const homepageStartProjects: HomepageProject[] = [
   },
   {
     product: harnessSdk,
-    marker: 'Build from primitives',
     description:
       'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
     cta: 'Build with the SDK',
@@ -46,7 +43,6 @@ export const homepageStartProjects: HomepageProject[] = [
 export const homepageCapabilities: HomepageProject[] = [
   {
     product: box,
-    marker: 'Isolate',
     description: 'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
     cta: 'Use Strands Box',
     href: box.href,
@@ -54,7 +50,6 @@ export const homepageCapabilities: HomepageProject[] = [
   },
   {
     product: evals,
-    marker: 'Evaluate',
     description: 'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
     cta: 'Run an evaluation',
     href: evals.href,
@@ -62,7 +57,6 @@ export const homepageCapabilities: HomepageProject[] = [
   },
   {
     product: decider,
-    marker: 'Decide',
     description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
     cta: 'Try Decider',
     href: decider.href,

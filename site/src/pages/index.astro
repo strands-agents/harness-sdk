@@ -98,8 +98,8 @@ const structuredData = {
       <HomeFaq />
       <NextSteps />
     </main>
-    {/* NextSteps provides the curved transition into the theme-matched homepage footer. */}
-    <Footer topShape={false} showInstall={false} themeSurface />
+    {/* NextSteps provides the green side transition and the full Harness install action. */}
+    <Footer topShape={false} showInstall={false} />
   </body>
 </html>
 
@@ -131,8 +131,7 @@ const structuredData = {
     transition: background-color 0.15s ease, color 0.15s ease;
   }
 
-  /* Prevent horizontal scroll from off-canvas decorative shapes (like the
-     NextSteps green corners) on narrow viewports. */
+  /* Prevent horizontal scroll from off-canvas decorative elements on narrow viewports. */
   body {
     overflow-x: hidden;
   }
