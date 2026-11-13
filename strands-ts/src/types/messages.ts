@@ -942,6 +942,7 @@ export class JsonBlock implements JsonBlockData, JSONSerializable<JsonBlockData>
  * - `pauseTurn` - Model paused a long-running turn; the response should be sent back to continue
  * - `refusal` - A streaming classifier intervened to handle a potential policy violation
  * - `stopSequence` - A stop sequence was encountered
+ * - `superseded` - Agent loop stopped at a cycle boundary because another invocation took the turn (`concurrentInvocationMode: 'stopPrevious'`)
  * - `toolUse` - Model wants to use a tool
  * - `modelContextWindowExceeded` - Input exceeded the model's context window
  */
@@ -960,6 +961,7 @@ export type StopReason =
   | 'pauseTurn'
   | 'refusal'
   | 'stopSequence'
+  | 'superseded'
   | 'toolUse'
   | 'modelContextWindowExceeded'
   | (string & {}) // Allow any string while preserving autocomplete for known values
