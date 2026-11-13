@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Agent, Tool, ToolContext } from '@strands-agents/sdk'
 
 import { createHarness } from '../../src/agent.js'
-import { shellOf } from '../../src/sandbox.js'
+import { SHELL_PROBE } from '../../src/sandbox.js'
 
 let agent: Agent
 let shell: Tool
@@ -41,8 +41,11 @@ describe('shell', () => {
   })
 
   it('is stateless: state does not persist across calls', { timeout: 30_000 }, async () => {
-    const powershell = (await shellOf(agent.sandbox)) === 'powershell'
-    await invoke({ command: powershell ? "$env:STRANDS_CLI_TEST = '42'" : 'export STRANDS_CLI_TEST=42' })
+    // Probed directly so the probe is bounded by this test's timeout, not `shellOf`'s own.
+    const { stdout } = await agent.sandbox.execute(SHELL_PROBE)
+    const powershell = ['Desktop', 'Core'].includes(stdout.trim())
+    const set = await invoke({ command: powershell ? "$env:STRANDS_CLI_TEST = '42'" : 'export STRANDS_CLI_TEST=42' })
+    expect(set).toMatchObject({ exit_code: 0 })
     const result = await invoke({
       command: powershell ? 'echo "[$env:STRANDS_CLI_TEST]"' : 'echo "[$STRANDS_CLI_TEST]"',
     })
