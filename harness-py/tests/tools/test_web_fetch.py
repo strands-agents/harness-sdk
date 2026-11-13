@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from strands.models import BedrockModel, ModelRouter
+from strands.models.anthropic import AnthropicModel
 from strands.sandbox import ExecutionResult
 from strands.sandbox.errors import SandboxTimeoutError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
@@ -453,7 +454,7 @@ async def test_web_fetch_caches_within_ttl(monkeypatch):
 
 def test_resolve_web_fetch_model_defaults_to_provider_small_model():
     model = resolve_web_fetch_model("bedrock/global.anthropic.claude-opus-4-8", None)
-    assert isinstance(model, BedrockModel)
+    assert isinstance(model, AnthropicModel)
     assert model.get_config()["model_id"] == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
