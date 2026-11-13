@@ -48,7 +48,7 @@ function modelInfo() {
     modelId:
       'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3',
     modelInfo: {
-      limits: { contextWindow: 200_000, maxOutputTokens: 64_000 },
+      limits: { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
       capabilities: { promptCaching: 'cachePoints' },
     },
   })

@@ -233,7 +233,7 @@ from strands.models import BedrockModel, ModelCapabilities, ModelInfo, ModelLimi
 model = BedrockModel(
     model_id="arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3",
     model_info=ModelInfo(
-        limits=ModelLimits(context_window=200_000, max_output_tokens=64_000),
+        limits=ModelLimits(context_window=1_000_000, max_output_tokens=64_000),
         capabilities=ModelCapabilities(prompt_caching="cache_points"),
     ),
 )
