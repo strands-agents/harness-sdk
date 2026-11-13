@@ -1,6 +1,9 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
+import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import { latestUserIndex } from './model.js'
+import { hasToolReferences, withToolReferenceText } from './tool-references.js'
+import type { ToolSpec } from '../tools/types.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
 
@@ -15,8 +18,16 @@ import type { ModelStreamEvent } from './streaming.js'
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
- * of the earlier ones. A tool result whose content is all `UnknownBlock`s gets a placeholder text, since
- * providers skip unknown blocks and some reject an empty tool result.
+ * of the earlier ones.
+ *
+ * Deferred tools take one of two paths, by the model's `modelInfo.capabilities.deferredTools`. With `'native'`, the
+ * deferred specs and every `ToolReferenceBlock` reach the provider as they are, and the provider sends them its API's
+ * way. With `'stubs'`, each deferred spec becomes a stub: its name, its description with a pointer to
+ * `strands_load_tools`, and an open schema, so the model can call the tool before it loads the schema. Every model but
+ * a `'native'` one gets each `ToolReferenceBlock` as the parameters of the call's tool with that name, in text.
+ *
+ * A tool result whose content is all `UnknownBlock`s gets a placeholder text, since providers skip unknown blocks and
+ * some reject an empty tool result.
  *
  * @internal
  */
@@ -42,12 +53,12 @@ export class ModelProxy {
     options?: StreamOptions,
     invocationContext?: InvocationContext
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
-    const { messages: prepared, dynamicTrailingBlocks } = this._prepare(messages)
+    const { messages: prepared, dynamicTrailingBlocks } = this._prepare(messages, options?.toolSpecs)
     // The cache point stays ahead of injected text, which the next call no longer sends.
     const keepsCachePoint = dynamicTrailingBlocks > (options?.dynamicTrailingBlocks ?? 0)
     const result = yield* this._model.streamAggregated(
       prepared,
-      keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options
+      this._withStubs(keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options)
     )
     this._record(result, invocationContext)
     return result
@@ -61,11 +72,27 @@ export class ModelProxy {
    * @returns The wrapped model's count
    */
   countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    return this._model.countTokens(this._prepare(messages).messages, options)
+    return this._model.countTokens(this._prepare(messages, options?.toolSpecs).messages, this._withStubs(options))
   }
 
-  private _prepare(messages: Message[]): RenderedMessages {
-    messages = withUnknownOnlyToolResultsFilled(this._withSummaryText(messages))
+  /** Sends each deferred spec as a stub with an open schema when the model takes stubs. */
+  private _withStubs<T extends { toolSpecs?: ToolSpec[] }>(options: T | undefined): T | undefined {
+    if (!options?.toolSpecs?.some((spec) => spec.deferLoading)) return options
+    if (this._model.modelInfo.capabilities?.deferredTools !== 'stubs') return options
+    const toolSpecs = options.toolSpecs.map((spec) =>
+      spec.deferLoading
+        ? {
+            name: spec.name,
+            description: `${spec.description}\n${STUB_HINT}`,
+            inputSchema: { type: 'object' as const },
+          }
+        : spec
+    )
+    return { ...options, toolSpecs }
+  }
+
+  private _prepare(messages: Message[], toolSpecs: ToolSpec[] = []): RenderedMessages {
+    messages = withUnknownOnlyToolResultsFilled(this._withToolReferenceText(this._withSummaryText(messages), toolSpecs))
     if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
@@ -85,6 +112,12 @@ export class ModelProxy {
           ...(message.metadata !== undefined && { metadata: message.metadata }),
         })
     )
+  }
+
+  /** Sends tool references as text to a model that doesn't defer tools natively; a native provider sends them. */
+  private _withToolReferenceText(messages: Message[], toolSpecs: ToolSpec[]): Message[] {
+    if (!hasToolReferences(messages) || this._model.modelInfo.capabilities?.deferredTools === 'native') return messages
+    return withToolReferenceText(messages, toolSpecs, false)
   }
 
   /** Adds a completed call's reported usage to the request. */
@@ -152,6 +185,8 @@ function withUnknownOnlyToolResultsFilled(messages: Message[]): Message[] {
 }
 
 const UNSUPPORTED_CONTENT_PLACEHOLDER = '[unsupported content omitted]'
+
+const STUB_HINT = `Call ${LOAD_TOOLS_TOOL_NAME} with this name for its parameters first.`
 
 function isUnknownOnlyToolResult(block: ContentBlock): block is ToolResultBlock {
   return (

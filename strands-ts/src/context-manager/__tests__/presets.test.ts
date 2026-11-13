@@ -38,6 +38,12 @@ describe('presets', () => {
       expect(strategies).toHaveLength(1)
       expect(strategies[0]!.name).toBe('offload:drop')
     })
+
+    it('dynamicToolLoading resolves to a dynamic tool loading strategy', () => {
+      const strategies = resolvePreset('dynamicToolLoading')
+      expect(strategies).toHaveLength(1)
+      expect(strategies[0]!.name).toBe('dynamic-tool-loading')
+    })
   })
 
   describe('resolveStrategies', () => {

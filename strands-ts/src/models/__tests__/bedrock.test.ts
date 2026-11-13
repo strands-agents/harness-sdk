@@ -17,6 +17,7 @@ import {
   ToolUseBlock,
   ToolResultBlock,
   JsonBlock,
+  ToolReferenceBlock,
   UnknownBlock,
 } from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
@@ -917,7 +918,7 @@ describe('BedrockModel', () => {
             new ToolResultBlock({
               toolUseId: 'id-1',
               status: 'success',
-              content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+              content: [new TextBlock('loaded'), new UnknownBlock({ futureBlock: { name: 'shell' } })],
             }),
           ],
         }),
@@ -925,6 +926,26 @@ describe('BedrockModel', () => {
       await collectIterator(provider.stream(messages))
       expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toEqual([
         { toolResult: { toolUseId: 'id-1', content: [{ text: 'loaded' }], status: 'success' } },
+      ])
+    })
+
+    it('names the tool for a tool reference a modelInfo override lets through', async () => {
+      const provider = new BedrockModel({ modelInfo: { capabilities: { deferredTools: 'native' } } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'id-1',
+              status: 'success',
+              content: [new ToolReferenceBlock({ name: 'shell' })],
+            }),
+          ],
+        }),
+      ]
+      await collectIterator(provider.stream(messages))
+      expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toEqual([
+        { toolResult: { toolUseId: 'id-1', content: [{ text: 'Loaded shell.' }], status: 'success' } },
       ])
     })
 
@@ -986,6 +1007,31 @@ describe('BedrockModel', () => {
       const toolConfig = call.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }
       expect(toolConfig.tools[0]!.toolSpec!.name).toBe('calc')
       expect(toolConfig.tools.length).toBe(1)
+    })
+
+    describe('deferred tools', () => {
+      it.each([
+        ['Claude', { modelId: 'us.anthropic.claude-opus-5-5' }, 'stubs'],
+        ['another model', { modelId: 'qwen.qwen3-235b-a22b-2507-v1:0' }, 'stubs'],
+        ['a model with strictTools', { modelId: 'us.anthropic.claude-opus-5-5', strictTools: true }, 'unsupported'],
+        ['a model that can not take stubs', { modelId: 'us.amazon.nova-pro-v1:0' }, 'unsupported'],
+      ])('reports deferredTools for %s', (_name, config, expected) => {
+        expect(new BedrockModel(config).modelInfo.capabilities?.deferredTools).toBe(expected)
+      })
+
+      it('sends a deferred tool as a full spec when called directly, since ModelProxy makes the stubs', async () => {
+        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        const inputSchema = { type: 'object' as const, properties: { expression: { type: 'string' as const } } }
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [{ name: 'calculator', description: 'Calculate', inputSchema, deferLoading: true }],
+          })
+        )
+        expect(mockConverseStreamCommand.mock.lastCall?.[0]?.toolConfig?.tools).toStrictEqual([
+          { toolSpec: { name: 'calculator', description: 'Calculate', inputSchema: { json: inputSchema } } },
+        ])
+      })
     })
 
     it('formats tool specs without outputSchema in Bedrock requests', async () => {

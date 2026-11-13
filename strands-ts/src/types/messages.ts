@@ -475,7 +475,7 @@ export class ToolUseBlock implements ToolUseBlockData, JSONSerializable<{ toolUs
 
 /**
  * Content within a tool result.
- * Can be text, structured JSON data, or media blocks (image, video, document).
+ * Can be text, structured JSON data, media blocks (image, video, document), or a tool reference.
  *
  * This is a discriminated union where the object key determines the content format.
  */
@@ -485,8 +485,67 @@ export type ToolResultContentData =
   | { image: ImageBlockData }
   | { video: VideoBlockData }
   | { document: DocumentBlockData }
+  | { toolReference: ToolReferenceBlockData }
 
-export type ToolResultContent = TextBlock | JsonBlock | ImageBlock | VideoBlock | DocumentBlock | UnknownBlock
+export type ToolResultContent =
+  TextBlock | JsonBlock | ImageBlock | VideoBlock | DocumentBlock | ToolReferenceBlock | UnknownBlock
+
+/**
+ * Data for a tool reference block.
+ */
+export interface ToolReferenceBlockData {
+  /**
+   * Name of the tool the result loads.
+   */
+  name: string
+}
+
+/**
+ * A deferred tool whose input schema a tool result loads. When the model defers tools natively
+ * (`modelInfo.capabilities.deferredTools` is `'native'`), the request defers this tool, and the tool result holds only
+ * such references, the provider sends a reference the API expands into the tool's definition. Otherwise the model gets
+ * the parameters of the request's tool with this name as text, so a tool that changed is shown as it is now.
+ *
+ * @example
+ * ```typescript
+ * new ToolReferenceBlock({ name: weatherTool.name })
+ * ```
+ */
+export class ToolReferenceBlock
+  implements ToolReferenceBlockData, JSONSerializable<{ toolReference: ToolReferenceBlockData }>
+{
+  /**
+   * Discriminator for tool reference content.
+   */
+  readonly type = 'toolReferenceBlock' as const
+
+  /**
+   * Name of the tool the result loads.
+   */
+  readonly name: string
+
+  constructor(data: ToolReferenceBlockData) {
+    this.name = data.name
+  }
+
+  /**
+   * Serializes the ToolReferenceBlock to a JSON-compatible ToolResultContentData object.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): { toolReference: ToolReferenceBlockData } {
+    return { toolReference: { name: this.name } }
+  }
+
+  /**
+   * Creates a ToolReferenceBlock instance from its wrapped data format.
+   *
+   * @param data - Wrapped ToolReferenceBlockData to deserialize
+   * @returns ToolReferenceBlock instance
+   */
+  static fromJSON(data: { toolReference: ToolReferenceBlockData }): ToolReferenceBlock {
+    return new ToolReferenceBlock({ name: data.toolReference.name })
+  }
+}
 
 /**
  * Data for a tool result block.
@@ -627,6 +686,7 @@ function parseToolResultContent(data: ToolResultContentData, onUnknown: OnUnknow
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
   if ('document' in data) return DocumentBlock.fromJSON(data as { document: DocumentBlockData })
+  if ('toolReference' in data) return ToolReferenceBlock.fromJSON(data)
   return onUnknown(data, 'ToolResultContentData')
 }
 

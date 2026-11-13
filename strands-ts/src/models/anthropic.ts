@@ -20,9 +20,12 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
+import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
+import type { ToolSpec } from '../tools/types.js'
 import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import { withToolReferenceText } from './tool-references.js'
 import { Message, SummaryBlock } from '../types/messages.js'
-import type { ContentBlock, SystemPrompt } from '../types/messages.js'
+import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../models/streaming.js'
 import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
 import type { SummarizeResult } from './summarize.js'
@@ -123,6 +126,23 @@ function validateAnthropicTools(anthropicTools: Anthropic.ToolUnion[]): void {
       )
     }
   }
+}
+
+/**
+ * Formats tool specs as function tools. When the model defers tools natively, each deferred tool goes with
+ * `defer_loading`, and `strands_load_tools` lists the deferred tools, since the API hides them until they are loaded.
+ */
+function formatFunctionTools(toolSpecs: ToolSpec[], defersTools: boolean): Anthropic.Tool[] {
+  const loadable = defersTools
+    ? toolSpecs.filter((tool) => tool.deferLoading).map((tool) => `- ${tool.name}: ${tool.description}`)
+    : []
+  const listing = loadable.length > 0 ? `\n\nTools you can load:\n${loadable.join('\n')}` : ''
+  return toolSpecs.map((tool) => ({
+    name: tool.name,
+    description: tool.name === LOAD_TOOLS_TOOL_NAME ? `${tool.description}${listing}` : tool.description,
+    input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
+    ...(defersTools && tool.deferLoading && { defer_loading: true }),
+  }))
 }
 
 /** A server tool's `name`, or its `type` for a toolset, which has none. */
@@ -394,10 +414,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Turns temporary messages back on for the models the shared model info lists. */
+  /** Turns temporary messages and native deferred tools back on for the models the shared model info lists. */
   override get modelInfo(): ModelInfo {
-    const { temporaryMessages } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
-    return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
+    const { temporaryMessages, deferredTools } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    return mergeModelInfo(
+      super.modelInfo,
+      { capabilities: { temporaryMessages, deferredTools } },
+      this._config.modelInfo
+    )
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
@@ -999,6 +1023,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
     if (this._serverSideSummary()) messages = fromLastCompaction(messages)
+    const defersTools = this.modelInfo.capabilities?.deferredTools === 'native'
+    const toolSpecs = options?.toolSpecs ?? []
+    // Requests that skip ModelProxy, such as server-side summaries and native token counts, can carry references too.
+    messages = withToolReferenceText(messages, toolSpecs, defersTools)
 
     const messagesCache = this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
@@ -1024,11 +1052,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       if (system !== undefined) request.system = system
     }
 
-    const tools: Anthropic.ToolUnion[] = (options?.toolSpecs ?? []).map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
-    }))
+    const tools: Anthropic.ToolUnion[] = formatFunctionTools(toolSpecs, defersTools)
     const serverTools = [
       ...(this._config.anthropicTools ?? []),
       ...((this._config.params?.tools as Anthropic.ToolUnion[] | undefined) ?? []),
@@ -1043,9 +1067,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
     }
 
-    // A cache_control on the last tool caches all of them, so one cache point suffices.
+    // A cache_control on the last tool caches all of them, so one cache point suffices. Deferred tools
+    // are left out of the cached prefix and the API rejects cache_control on them.
     const toolsCache = this._cacheSection('toolsTTL')
-    const lastTool = tools[tools.length - 1]
+    const lastTool = tools.filter((tool) => !('defer_loading' in tool && tool.defer_loading)).pop()
     if (toolsCache.enabled && lastTool) {
       lastTool.cache_control = this._formatCacheControl(toolsCache.ttl)
     }
@@ -1288,17 +1313,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
       case 'toolResultBlock': {
         const innerContent = block.content
-          .map((c) => {
-            if (c.type === 'textBlock') return { type: 'text' as const, text: c.text }
-            if (c.type === 'jsonBlock') return { type: 'text' as const, text: JSON.stringify(c.json) }
-
-            // Recursively format any other content block (image, document, video, etc.)
-            const formatted = this._formatContentBlock(c as unknown as ContentBlock)
-            return formatted
-          })
+          .map((content) => this._formatToolResultContent(content))
           .filter((c): c is NonNullable<typeof c> => !!c)
 
-        let contentVal: string | Anthropic.ContentBlockParam[]
+        let contentVal: string | (Anthropic.ContentBlockParam | Anthropic.ToolReferenceBlockParam)[]
 
         const firstItem = innerContent[0]
         if (innerContent.length === 1 && firstItem && firstItem.type === 'text') {
@@ -1341,6 +1359,17 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       default:
         return undefined
     }
+  }
+
+  /** Formats one item of a tool result's content. */
+  private _formatToolResultContent(
+    content: ToolResultContent
+  ): Anthropic.ContentBlockParam | Anthropic.ToolReferenceBlockParam | undefined {
+    if (content.type === 'textBlock') return { type: 'text', text: content.text }
+    if (content.type === 'jsonBlock') return { type: 'text', text: JSON.stringify(content.json) }
+    if (content.type === 'toolReferenceBlock') return { type: 'tool_reference', tool_name: content.name }
+    // Recursively format any other content block (image, document, video, etc.)
+    return this._formatContentBlock(content as unknown as ContentBlock)
   }
 
   /**

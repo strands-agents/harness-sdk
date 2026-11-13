@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { ContextOffloader } from '../plugin.js'
 import { InMemoryStorage } from '../storage.js'
 import { AfterToolCallEvent, BeforeModelCallEvent } from '../../../hooks/events.js'
-import { TextBlock, JsonBlock, ToolResultBlock } from '../../../types/messages.js'
+import { TextBlock, JsonBlock, ToolReferenceBlock, ToolResultBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock, DocumentBlock } from '../../../types/media.js'
 import { createMockAgent, invokeTrackedHook } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
@@ -17,7 +17,12 @@ function makeMockAgent() {
 
 function makeEvent(
   content: InstanceType<
-    typeof TextBlock | typeof JsonBlock | typeof ImageBlock | typeof VideoBlock | typeof DocumentBlock
+    | typeof TextBlock
+    | typeof JsonBlock
+    | typeof ImageBlock
+    | typeof VideoBlock
+    | typeof DocumentBlock
+    | typeof ToolReferenceBlock
   >[],
   overrides?: { status?: 'success' | 'error'; toolName?: string }
 ) {
@@ -128,6 +133,18 @@ describe('ContextOffloader', () => {
       await invokeTrackedHook(agent, event)
 
       expect((event.result.content[0] as TextBlock).text).toBe('x'.repeat(1000))
+    })
+
+    it('does not offload strands_load_tools results, which keep the loaded schemas in context', async () => {
+      const plugin = new ContextOffloader({ storage: new InMemoryStorage(), maxResultTokens: 10, previewTokens: 5 })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+      const event = makeEvent([new ToolReferenceBlock({ name: 'shell' })], { toolName: 'strands_load_tools' })
+      vi.spyOn(event.agent.model, 'countTokens').mockResolvedValue(1000)
+
+      await invokeTrackedHook(agent, event)
+
+      expect(event.result.content).toEqual([new ToolReferenceBlock({ name: 'shell' })])
     })
 
     it('offloads large text results', async () => {

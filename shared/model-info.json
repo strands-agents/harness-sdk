@@ -13,7 +13,8 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-sonnet-4-20250514": {
@@ -33,7 +34,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "deferredTools": "native"
       }
     },
     "claude-opus-4-6": {
@@ -43,7 +45,8 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-opus-4-7": {
@@ -53,7 +56,8 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "defaultEffort": "xhigh"
+        "defaultEffort": "xhigh",
+        "deferredTools": "native"
       }
     },
     "claude-opus-4-8": {
@@ -66,7 +70,8 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "temporaryMessages": true,
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-opus-5": {
@@ -79,7 +84,8 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": true,
         "temporaryMessages": true,
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-opus-5-5": {
@@ -93,7 +99,8 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredTools": "native"
       }
     },
     "claude-fable-5": {
@@ -104,7 +111,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "temporaryMessages": true,
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-fable-5-1": {
@@ -117,7 +125,8 @@
         "forcedToolChoice": false,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-fable-5-2": {
@@ -131,7 +140,8 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-sonnet-5": {
@@ -143,7 +153,8 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-sonnet-5-5": {
@@ -157,7 +168,8 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredTools": "native"
       }
     },
     "claude-haiku-5-5": {
@@ -171,7 +183,8 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredTools": "native"
       }
     },
     "claude-opus-4-5": {
@@ -180,7 +193,8 @@
         "maxOutputTokens": 64000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "deferredTools": "native"
       }
     },
     "claude-opus-4-20250514": {
@@ -207,7 +221,8 @@
         "maxOutputTokens": 64000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "deferredTools": "native"
       }
     },
     "claude-3-7-sonnet-20250219": {
@@ -292,7 +307,8 @@
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
         "temporaryMessages": true,
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "deferredTools": "native"
       }
     },
     "claude-mythos-preview": {
@@ -309,7 +325,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredTools": "unsupported"
       }
     },
     "amazon.nova-lite-v1:0": {
@@ -318,7 +335,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredTools": "unsupported"
       }
     },
     "amazon.nova-micro-v1:0": {
@@ -327,7 +345,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredTools": "unsupported"
       }
     },
     "amazon.nova-premier-v1:0": {
@@ -336,7 +355,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredTools": "unsupported"
       }
     },
     "amazon.nova-2-lite-v1:0": {
@@ -345,7 +365,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredTools": "unsupported"
       }
     },
     "amazon.nova-2-pro-preview-20251202-v1:0": {
@@ -354,7 +375,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredTools": "unsupported"
       }
     },
     "zai.glm-4.7": {
@@ -813,6 +835,9 @@
     "mistral.mistral-large-2402": {
       "limits": {
         "contextWindow": 32000
+      },
+      "capabilities": {
+        "deferredTools": "unsupported"
       }
     },
     "google.gemma-4-31b": {
@@ -833,16 +858,85 @@
     "xai.grok-4.7": {
       "limits": {
         "contextWindow": 524288
+      },
+      "capabilities": {
+        "deferredTools": "unsupported"
       }
     },
     "xai.grok-4.6": {
       "limits": {
         "contextWindow": 500000
+      },
+      "capabilities": {
+        "deferredTools": "unsupported"
       }
     },
     "xai.grok-4.3": {
       "limits": {
         "contextWindow": 1000000
+      },
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama3-1-8b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama3-1-70b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama3-1-405b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama3-2-1b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama3-2-3b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama3-2-11b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama3-2-90b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama3-3-70b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama4-scout-17b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "meta.llama4-maverick-17b-instruct": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "deepseek.v3": {
+      "capabilities": {
+        "deferredTools": "unsupported"
+      }
+    },
+    "qwen.qwen3-coder-480b-a35b": {
+      "capabilities": {
+        "deferredTools": "unsupported"
       }
     },
     "chat-latest": {
