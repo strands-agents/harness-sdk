@@ -20,7 +20,6 @@ const total = String(testimonials.length).padStart(2, '0')
 <section
   class="prove"
   aria-labelledby="prove-title"
-  aria-roledescription="carousel"
   data-testimonial-browser
   data-testimonial-interval="9000"
 >
@@ -86,11 +85,8 @@ const total = String(testimonials.length).padStart(2, '0')
           <article
             class="prove__story"
             role="group"
-            aria-roledescription="slide"
             aria-label={`${index + 1} of ${testimonials.length}: Story from ${testimonial.name}`}
-            aria-hidden={index === 0 ? 'false' : 'true'}
             data-testimonial-story
-            inert={index !== 0}
           >
             <svg class="prove__mark" viewBox="0 0 31 25" fill="none" aria-hidden="true">
               <path
@@ -276,7 +272,6 @@ const total = String(testimonials.length).padStart(2, '0')
     isolation: isolate;
     display: grid;
     min-width: 0;
-    min-height: 360px;
     overflow: hidden;
     border-radius: var(--home-radius-large);
     background: linear-gradient(
@@ -302,10 +297,10 @@ const total = String(testimonials.length).padStart(2, '0')
     position: relative;
     z-index: 1;
     display: flex;
-    grid-area: 1 / 1;
-    min-height: 100%;
+    min-height: 360px;
     flex-direction: column;
     padding: clamp(38px, 5vw, 68px);
+    border-bottom: 1px solid var(--home-rule);
     opacity: 1;
     visibility: visible;
     transition:
@@ -313,7 +308,21 @@ const total = String(testimonials.length).padStart(2, '0')
       visibility 0s linear;
   }
 
-  .prove__story[aria-hidden='true'] {
+  .prove__story:last-child {
+    border-bottom: 0;
+  }
+
+  .prove[data-initialized='true'] .prove__stories {
+    min-height: 360px;
+  }
+
+  .prove[data-initialized='true'] .prove__story {
+    grid-area: 1 / 1;
+    min-height: 100%;
+    border-bottom: 0;
+  }
+
+  .prove[data-initialized='true'] .prove__story[aria-hidden='true'] {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
@@ -542,161 +551,8 @@ const total = String(testimonials.length).padStart(2, '0')
 </style>
 
 <script>
-  function initializeTestimonialBrowsers() {
-    document.querySelectorAll<HTMLElement>('[data-testimonial-browser]').forEach((browser) => {
-      if (browser.dataset.initialized === 'true') return
-
-      const stories = Array.from(browser.querySelectorAll<HTMLElement>('[data-testimonial-story]'))
-      const controls = browser.querySelector<HTMLElement>('[data-testimonial-controls]')
-      const current = browser.querySelector<HTMLElement>('[data-testimonial-current]')
-      const status = browser.querySelector<HTMLElement>('[data-testimonial-status]')
-      const toggle = browser.querySelector<HTMLButtonElement>('[data-testimonial-toggle]')
-      const previous = browser.querySelector<HTMLButtonElement>('[data-testimonial-previous]')
-      const next = browser.querySelector<HTMLButtonElement>('[data-testimonial-next]')
-
-      if (stories.length < 2 || !controls || !current || !status || !toggle || !previous || !next) return
-
-      const interval = Number(browser.dataset.testimonialInterval) || 9000
-      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
-      let activeIndex = 0
-      let rotationTimer: number | undefined
-      let isVisible = false
-      let isHovered = false
-      let hasFocus = false
-      let isPausedByUser = reducedMotion.matches
-      let observer: IntersectionObserver | undefined
-      const abortController = new AbortController()
-      const listenerOptions = { signal: abortController.signal }
-
-      function showStory(index: number, announce = false) {
-        activeIndex = (index + stories.length) % stories.length
-        stories.forEach((story, storyIndex) => {
-          const isActive = storyIndex === activeIndex
-          story.setAttribute('aria-hidden', isActive ? 'false' : 'true')
-          story.inert = !isActive
-        })
-        current.textContent = String(activeIndex + 1).padStart(2, '0')
-        if (announce) {
-          status.textContent = stories[activeIndex]?.getAttribute('aria-label') ?? ''
-        }
-      }
-
-      function updateToggle() {
-        toggle.dataset.paused = String(isPausedByUser)
-        toggle.setAttribute('aria-pressed', String(isPausedByUser))
-        toggle.setAttribute(
-          'aria-label',
-          isPausedByUser ? 'Resume automatic story rotation' : 'Pause automatic story rotation'
-        )
-      }
-
-      function stopRotation() {
-        if (rotationTimer === undefined) return
-        window.clearTimeout(rotationTimer)
-        rotationTimer = undefined
-      }
-
-      function scheduleRotation() {
-        stopRotation()
-        if (isPausedByUser || !isVisible || isHovered || hasFocus || document.hidden) return
-        rotationTimer = window.setTimeout(() => {
-          showStory(activeIndex + 1)
-          scheduleRotation()
-        }, interval)
-      }
-
-      function showManualStory(index: number) {
-        showStory(index, true)
-        scheduleRotation()
-      }
-
-      previous.addEventListener('click', () => showManualStory(activeIndex - 1), listenerOptions)
-      next.addEventListener('click', () => showManualStory(activeIndex + 1), listenerOptions)
-      toggle.addEventListener(
-        'click',
-        () => {
-          isPausedByUser = !isPausedByUser
-          updateToggle()
-          scheduleRotation()
-        },
-        listenerOptions
-      )
-
-      browser.addEventListener(
-        'mouseenter',
-        () => {
-          isHovered = true
-          scheduleRotation()
-        },
-        listenerOptions
-      )
-      browser.addEventListener(
-        'mouseleave',
-        () => {
-          isHovered = false
-          scheduleRotation()
-        },
-        listenerOptions
-      )
-      browser.addEventListener(
-        'focusin',
-        () => {
-          hasFocus = true
-          scheduleRotation()
-        },
-        listenerOptions
-      )
-      browser.addEventListener(
-        'focusout',
-        () => {
-          window.setTimeout(() => {
-            hasFocus = browser.contains(document.activeElement)
-            scheduleRotation()
-          })
-        },
-        listenerOptions
-      )
-      document.addEventListener('visibilitychange', scheduleRotation, listenerOptions)
-      reducedMotion.addEventListener(
-        'change',
-        (event) => {
-          isPausedByUser = event.matches
-          updateToggle()
-          scheduleRotation()
-        },
-        listenerOptions
-      )
-
-      if ('IntersectionObserver' in window) {
-        observer = new IntersectionObserver(
-          ([entry]) => {
-            isVisible = Boolean(entry && entry.intersectionRatio >= 0.35)
-            scheduleRotation()
-          },
-          { threshold: 0.35 }
-        )
-        observer.observe(browser)
-      } else {
-        isVisible = true
-      }
-
-      document.addEventListener(
-        'astro:before-swap',
-        () => {
-          stopRotation()
-          observer?.disconnect()
-          abortController.abort()
-        },
-        { once: true, signal: abortController.signal }
-      )
-
-      updateToggle()
-      scheduleRotation()
-      controls.hidden = false
-      browser.dataset.initialized = 'true'
-    })
-  }
+  import { initializeTestimonialBrowsers } from '../util/homepage-testimonials'
 
   initializeTestimonialBrowsers()
-  document.addEventListener('astro:page-load', initializeTestimonialBrowsers)
+  document.addEventListener('astro:page-load', () => initializeTestimonialBrowsers())
 </script>

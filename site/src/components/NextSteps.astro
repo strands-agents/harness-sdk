@@ -25,11 +25,7 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
       <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
     </div>
     <div class="next-steps__ctas">
-      <a
-        href={quickstart.href}
-        class="next-steps__cta next-steps__cta--primary"
-        aria-label="Open the Harness quickstart"
-      >
+      <a href={quickstart.href} class="next-steps__cta next-steps__cta--primary">
         Quickstart
         <span class="next-steps__cta-arrow" set:html={arrow} />
       </a>
@@ -38,7 +34,6 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
         class="next-steps__cta next-steps__cta--secondary"
         target="_blank"
         rel="noopener noreferrer"
-        aria-label="View Harness source on GitHub"
       >
         GitHub
         <span class="next-steps__cta-arrow" set:html={arrow} />
@@ -264,6 +259,37 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
 
     .next-steps__cta {
       width: 100%;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .next-steps__install :global(.install) {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      width: 100%;
+      padding: 12px;
+      border-radius: 18px;
+    }
+
+    .next-steps__install :global(.install__cmd) {
+      width: 100%;
+      padding-bottom: 3px;
+      font-size: 12px;
+      scrollbar-width: thin;
+    }
+
+    .next-steps__install :global(.install__cmd)::-webkit-scrollbar {
+      display: block;
+      height: 4px;
+    }
+
+    .next-steps__install :global(.install__cmd)::-webkit-scrollbar-thumb {
+      background: var(--toggle-inactive-border);
+      border-radius: 999px;
+    }
+
+    .next-steps__install :global(.install__copy) {
+      justify-self: end;
     }
   }
 

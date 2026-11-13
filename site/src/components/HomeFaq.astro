@@ -1,34 +1,7 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
+import { featuredFaqItems } from '../config/faq'
 import { pathWithBase } from '../util/links'
-
-const faqItems = [
-  {
-    question: 'What is Strands?',
-    answer:
-      'Strands is an open-source framework for building and running AI agents in Python and TypeScript. Start with Harness, then add SDK components and specialized projects as needed.',
-  },
-  {
-    question: 'Should I start with Harness or the Harness SDK?',
-    answer:
-      'Start with Harness for a complete agent with defaults for tools, context management, sessions, memory, and the system prompt. Use the Harness SDK when you want to choose and wire those components yourself.',
-  },
-  {
-    question: 'Can I customize Harness without starting over?',
-    answer:
-      'Yes. Replace individual Harness defaults with Harness SDK components as your needs grow, without rebuilding the parts that already work.',
-  },
-  {
-    question: 'How do Box, Shell, Evals, and Decider fit?',
-    answer:
-      'They are optional projects: Box isolates agent work, Shell mediates command and resource access, Evals measures agent behavior, and Decider handles routing, classification, and scoring.',
-  },
-  {
-    question: 'Where can I run a Strands agent?',
-    answer:
-      'Strands runs inside your application process. Deploy that application to serverless, containers, Kubernetes, or a managed agent runtime.',
-  },
-]
 
 const faqHref = pathWithBase('/faq/')
 ---
@@ -47,13 +20,13 @@ const faqHref = pathWithBase('/faq/')
 
     <div class="home-faq__list">
       {
-        faqItems.map((faq, index) => (
+        featuredFaqItems.map((faq, index) => (
           <details class="home-faq__item" open={index === 0}>
             <summary>
               <span>{faq.question}</span>
               <span class="home-faq__toggle" aria-hidden="true" />
             </summary>
-            <p>{faq.answer}</p>
+            <p>{faq.featuredSummary}</p>
           </details>
         ))
       }

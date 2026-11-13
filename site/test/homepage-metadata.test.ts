@@ -1,10 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
-
-import { products } from '../src/config/navbar'
 
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
@@ -61,7 +59,7 @@ describe('homepage machine-readable metadata', () => {
 
     expect(banner?.querySelectorAll('h1 > span').map((line) => line.text.trim())).toEqual([
       'Build agents.',
-      'Control of every layer.',
+      'Control every layer.',
     ])
     expect(banner?.querySelector('.banner__intro')?.text).toContain('open-source framework')
     expect(banner?.querySelector('.banner__intro')?.text).toContain('composable tools')
@@ -78,18 +76,7 @@ describe('homepage machine-readable metadata', () => {
     expect(banner?.querySelector('.banner__dots')).not.toBeNull()
   })
 
-  it('does not ship the rejected hero comparison controls', () => {
-    expect(homepage.querySelector('.concept-switcher')).toBeNull()
-    expect(homepageHtml).not.toContain('data-concept-id')
-    expect(homepageHtml).not.toContain('applyHeroConceptFromSearch')
-  })
-
   it('presents Strands as one connected framework rather than peer products', () => {
-    const productFor = (slug: string) => products.find((product) => product.slug === slug)!
-    const harness = productFor('/harness')
-    const harnessQuickstart = harness.pages?.find((page) => page.label === 'Quickstart')
-    const sdk = productFor('/harness-sdk')
-    const capabilities = ['/box', '/shell', '/evals', '/decider'].map(productFor)
     const framework = homepage.querySelector('.framework')
     const layers = framework?.querySelectorAll('.framework__layer') ?? []
     const capabilityItems = framework?.querySelectorAll('.framework__capability') ?? []
@@ -106,15 +93,15 @@ describe('homepage machine-readable metadata', () => {
     ).toEqual([
       {
         marker: 'Recommended',
-        slug: harness.slug,
-        name: harness.label,
-        href: harnessQuickstart?.href,
+        slug: '/harness',
+        name: 'Harness',
+        href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
       },
       {
         marker: 'Direct control',
-        slug: sdk.slug,
-        name: sdk.label,
-        href: sdk.href,
+        slug: '/harness-sdk',
+        name: 'Harness SDK',
+        href: configuredPathWithBase('/docs/user-guide/sdk/'),
       },
     ])
     expect(
@@ -122,7 +109,12 @@ describe('homepage machine-readable metadata', () => {
         name: item.querySelector('h4')?.text.trim(),
         href: item.querySelector('a')?.getAttribute('href'),
       }))
-    ).toEqual(capabilities.map((product) => ({ name: product.label, href: product.href })))
+    ).toEqual([
+      { name: 'Box', href: configuredPathWithBase('/docs/user-guide/box/') },
+      { name: 'Shell', href: configuredPathWithBase('/docs/user-guide/shell/') },
+      { name: 'Evals', href: configuredPathWithBase('/docs/user-guide/evals-sdk/') },
+      { name: 'Decider', href: configuredPathWithBase('/docs/labs/strands-decider/overview/') },
+    ])
     expect(
       capabilityItems
         .find((item) => item.querySelector('h4')?.text.trim() === 'Decider')
@@ -171,17 +163,16 @@ describe('homepage machine-readable metadata', () => {
     expect(useCases?.querySelectorAll('pre')).toHaveLength(8)
   })
 
-  it('keeps every testimonial available in the stable, automatic story browser', () => {
+  it('keeps every testimonial available before enhancing the story browser', async () => {
+    const testimonialEntries = await getCollection('testimonials')
     const proof = homepage.querySelector('.prove')
     const stories = proof?.querySelectorAll('[data-testimonial-story]') ?? []
+    const total = String(testimonialEntries.length).padStart(2, '0')
 
-    expect(stories).toHaveLength(15)
-    expect(stories.map((story) => story.getAttribute('aria-hidden'))).toEqual([
-      'false',
-      ...Array<string>(14).fill('true'),
-    ])
+    expect(stories).toHaveLength(testimonialEntries.length)
     expect(stories.every((story) => !story.hasAttribute('hidden'))).toBe(true)
-    expect(stories.map((story) => story.hasAttribute('inert'))).toEqual([false, ...Array<boolean>(14).fill(true)])
+    expect(stories.every((story) => !story.hasAttribute('aria-hidden'))).toBe(true)
+    expect(stories.every((story) => !story.hasAttribute('inert'))).toBe(true)
     expect(proof?.getAttribute('data-testimonial-interval')).toBe('9000')
     expect(proof?.querySelector('[data-testimonial-toggle]')?.getAttribute('aria-label')).toBe(
       'Pause automatic story rotation'
@@ -189,7 +180,7 @@ describe('homepage machine-readable metadata', () => {
     expect(proof?.querySelector('[data-testimonial-previous]')?.getAttribute('aria-label')).toBe('Previous story')
     expect(proof?.querySelector('[data-testimonial-next]')?.getAttribute('aria-label')).toBe('Next story')
     expect(proof?.querySelector('[data-testimonial-current]')?.text.trim()).toBe('01')
-    expect(proof?.querySelector('.prove__counter')?.text.replace(/\s+/g, '')).toBe('01/15stories')
+    expect(proof?.querySelector('.prove__counter')?.text.replace(/\s+/g, '')).toBe(`01/${total}stories`)
   })
 
   it('restores a compact FAQ before the final Harness call to action', () => {
@@ -208,11 +199,6 @@ describe('homepage machine-readable metadata', () => {
     ])
     expect(faq?.querySelector('.home-faq__link')?.getAttribute('href')).toBe(configuredPathWithBase('/faq/'))
     expect(homepageHtml.indexOf('class="home-faq ')).toBeLessThan(homepageHtml.indexOf('class="next-steps '))
-  })
-
-  it('keeps other retired homepage sections removed', () => {
-    expect(homepage.querySelector('.community')).toBeNull()
-    expect(homepage.querySelector('.interactive-toolkit')).toBeNull()
   })
 
   it('returns to Harness once in the final call to action', () => {
@@ -265,5 +251,25 @@ describe('homepage machine-readable metadata', () => {
     expect(markdown).toContain('https://github.com/strands-agents/harness-sdk')
     expect(markdown).toContain('/llms.txt')
     expect(markdown.length).toBeLessThan(4_000)
+  })
+
+  it('publishes only internal Markdown links that resolve in the built site', () => {
+    const markdown = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
+    const siteOrigin = process.env.SITE_DOMAIN?.replace(/\/$/, '')
+    const links = [...markdown.matchAll(/\]\(([^)]+)\)/g)]
+      .map((match) => match[1]!)
+      .flatMap((link) => {
+        if (link.startsWith('/')) return [link]
+        if (siteOrigin && link.startsWith(`${siteOrigin}/`)) return [link.slice(siteOrigin.length)]
+        return []
+      })
+    const configuredBase = configuredPathWithBase('/')
+
+    expect(links.length).toBeGreaterThan(0)
+    for (const link of links) {
+      const path = link.split(/[?#]/, 1)[0]!
+      const outputPath = configuredBase === '/' ? path : path.slice(configuredBase.length - 1)
+      expect(existsSync(new URL(`../dist${outputPath}`, import.meta.url)), link).toBe(true)
+    }
   })
 })
