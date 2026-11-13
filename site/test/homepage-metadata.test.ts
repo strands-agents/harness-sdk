@@ -168,6 +168,15 @@ describe('homepage machine-readable metadata', () => {
     ])
     expect(sections[0]?.querySelectorAll('.toolkit__card-feature')).toHaveLength(0)
     expect(sections[0]?.querySelectorAll('.toolkit__card-tag')).toHaveLength(0)
+    expect(sections[0]?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(2)
+    expect(sections[0]?.querySelectorAll('.toolkit__card-terminal')).toHaveLength(2)
+    expect(
+      sections[0]?.querySelectorAll('.toolkit__card-terminal-copy').map((button) => button.getAttribute('aria-label'))
+    ).toEqual(['Copy code', 'Copy code'])
+    expect(
+      sections[0]?.querySelectorAll('[data-toggle]').map((toggle) => toggle.getAttribute('aria-expanded'))
+    ).toEqual(['true', 'true'])
+    expect(sections[1]?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
     expect(toolkit?.querySelectorAll('[data-toggle]').map((toggle) => toggle.getAttribute('aria-controls'))).toEqual(
       toolkit?.querySelectorAll('.toolkit__card-expanded').map((details) => details.getAttribute('id'))
     )

@@ -45,6 +45,7 @@ const cards: ToolkitCard[] = [
     color: 'var(--card-accent-orange)',
     description:
       'Use Strands harness when you want a complete agent with benchmarked defaults you can customize.',
+    defaultOpen: true,
     expanded: {
       description:
         'Use Strands harness when you want a complete agent with benchmarked defaults you can customize.',
@@ -69,6 +70,7 @@ const cards: ToolkitCard[] = [
     color: 'var(--card-accent-teal)',
     description:
       'Use the Strands Harness SDK when you want to assemble every part of the agent yourself.',
+    defaultOpen: true,
     expanded: {
       description:
         'Use the Strands Harness SDK when you want to assemble every part of the agent yourself.',
@@ -1113,10 +1115,11 @@ const sections = [
   // Expandable toolkit cards toggle `.is-open` and swap the `+` icon for a
   // `−` via CSS.
   function setCardOpen(card: HTMLElement, willOpen: boolean) {
-    // Accordion: only one card open at a time, so the widened grid track
-    // never has to accommodate two expanded cards.
-    if (willOpen) {
-      document.querySelectorAll<HTMLElement>('.toolkit__card.is-open').forEach((open) => {
+    // Supporting-product cards share an accordion because an open card widens
+    // its grid track. The two build cards stay independent at equal widths.
+    const cards = card.closest<HTMLElement>('.toolkit__section-cards');
+    if (willOpen && cards?.classList.contains('toolkit__section-cards--tools')) {
+      cards.querySelectorAll<HTMLElement>('.toolkit__card.is-open').forEach((open) => {
         if (open === card) return;
         open.classList.remove('is-open');
         open
