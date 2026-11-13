@@ -168,15 +168,34 @@ describe('homepage machine-readable metadata', () => {
     ])
     expect(sections[0]?.querySelectorAll('.toolkit__card-feature')).toHaveLength(0)
     expect(sections[0]?.querySelectorAll('.toolkit__card-tag')).toHaveLength(0)
-    expect(sections[0]?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(2)
+    expect(sections[0]?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
     expect(sections[0]?.querySelectorAll('.toolkit__card-terminal')).toHaveLength(2)
     expect(
       sections[0]?.querySelectorAll('.toolkit__card-terminal-copy').map((button) => button.getAttribute('aria-label'))
     ).toEqual(['Copy code', 'Copy code'])
     expect(
+      sections[0]?.querySelectorAll('[data-install]').map((install) => ({
+        python: install.querySelector('[data-install-variant="Python"]')?.text.trim(),
+        typescript: install.querySelector('[data-install-variant="TypeScript"]')?.text.trim(),
+        copyLabel: install.querySelector('[data-install-copy]')?.getAttribute('aria-label'),
+      }))
+    ).toEqual([
+      {
+        python: 'pip install strands-harness',
+        typescript: 'npm install @strands-agents/harness',
+        copyLabel: 'Copy install command',
+      },
+      {
+        python: 'pip install strands-agents',
+        typescript: 'npm install @strands-agents/sdk',
+        copyLabel: 'Copy install command',
+      },
+    ])
+    expect(
       sections[0]?.querySelectorAll('[data-toggle]').map((toggle) => toggle.getAttribute('aria-expanded'))
-    ).toEqual(['true', 'true'])
+    ).toEqual(['false', 'false'])
     expect(sections[1]?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
+    expect(sections[1]?.querySelectorAll('[data-install]')).toHaveLength(0)
     expect(toolkit?.querySelectorAll('[data-toggle]').map((toggle) => toggle.getAttribute('aria-controls'))).toEqual(
       toolkit?.querySelectorAll('.toolkit__card-expanded').map((details) => details.getAttribute('id'))
     )

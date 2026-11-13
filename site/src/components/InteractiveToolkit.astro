@@ -2,6 +2,7 @@
 import plus from '../assets/toolkit/plus.svg?raw';
 import arrow from '../assets/banner/arrow.svg?raw';
 import { pathWithBase } from '../util/links';
+import InstallCommand from './InstallCommand.astro';
 
 // Token helpers for the expanded-card code samples — same model + colors as
 // the Use Cases terminal. `kw` = keyword/decorator, `str` = string literal;
@@ -17,6 +18,10 @@ interface ToolkitCard {
   description: string;
   tags?: string[];
   defaultOpen?: boolean;
+  install?: {
+    pip: string;
+    npm: string;
+  };
   expanded: {
     description: string;
     features?: {
@@ -45,7 +50,10 @@ const cards: ToolkitCard[] = [
     color: 'var(--card-accent-orange)',
     description:
       'Use Strands harness when you want a complete agent with benchmarked defaults you can customize.',
-    defaultOpen: true,
+    install: {
+      pip: 'pip install strands-harness',
+      npm: 'npm install @strands-agents/harness',
+    },
     expanded: {
       description:
         'Use Strands harness when you want a complete agent with benchmarked defaults you can customize.',
@@ -70,7 +78,10 @@ const cards: ToolkitCard[] = [
     color: 'var(--card-accent-teal)',
     description:
       'Use the Strands Harness SDK when you want to assemble every part of the agent yourself.',
-    defaultOpen: true,
+    install: {
+      pip: 'pip install strands-agents',
+      npm: 'npm install @strands-agents/sdk',
+    },
     expanded: {
       description:
         'Use the Strands Harness SDK when you want to assemble every part of the agent yourself.',
@@ -256,6 +267,11 @@ const sections = [
                   <div class="toolkit__card-compact">
                     <h4 class="toolkit__card-slug">{card.slug}</h4>
                     <p class="toolkit__card-desc">{card.description}</p>
+                    {card.install && (
+                      <div class="toolkit__card-install">
+                        <InstallCommand pip={card.install.pip} npm={card.install.npm} />
+                      </div>
+                    )}
                     {card.tags && (
                       <ul class="toolkit__card-tags" role="list">
                         {card.tags.map((tag) => (
@@ -605,6 +621,11 @@ const sections = [
 
   /* Push the tags row toward the bottom of the card. */
   .toolkit__card-compact > .toolkit__card-tags {
+    margin-top: auto;
+  }
+
+  .toolkit__card-install {
+    max-width: 100%;
     margin-top: auto;
   }
 
@@ -1115,11 +1136,10 @@ const sections = [
   // Expandable toolkit cards toggle `.is-open` and swap the `+` icon for a
   // `−` via CSS.
   function setCardOpen(card: HTMLElement, willOpen: boolean) {
-    // Supporting-product cards share an accordion because an open card widens
-    // its grid track. The two build cards stay independent at equal widths.
-    const cards = card.closest<HTMLElement>('.toolkit__section-cards');
-    if (willOpen && cards?.classList.contains('toolkit__section-cards--tools')) {
-      cards.querySelectorAll<HTMLElement>('.toolkit__card.is-open').forEach((open) => {
+    // Accordion: only one card open at a time, so the widened grid track
+    // never has to accommodate two expanded cards.
+    if (willOpen) {
+      document.querySelectorAll<HTMLElement>('.toolkit__card.is-open').forEach((open) => {
         if (open === card) return;
         open.classList.remove('is-open');
         open
@@ -1140,11 +1160,10 @@ const sections = [
     });
 
     // The `+` alone is easy to miss, so the whole compact tile is a click
-    // target too. The compact view is hidden once open, so this only ever
-    // opens a card — it never competes with the links/copy button that live in
-    // the expanded view.
+    // target too. Links and buttons handle their own clicks, so reading docs
+    // or copying an install command does not expand the card.
     card.querySelector<HTMLElement>('.toolkit__card-compact')?.addEventListener('click', (event) => {
-      if (event.target instanceof Element && event.target.closest('a')) return;
+      if (event.target instanceof Element && event.target.closest('a, button')) return;
       setCardOpen(card, true);
     });
   });
