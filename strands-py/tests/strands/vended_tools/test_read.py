@@ -49,7 +49,7 @@ class TestReadText:
         file_path = tmp_path / "f.txt"
         file_path.write_text("alpha\nbeta\n")
         out = await reader(path=str(file_path), tool_context=ctx)
-        assert out == "     1\talpha\n     2\tbeta\n     3\t"
+        assert out == "     1\talpha\n     2\tbeta"
 
     @pytest.mark.asyncio
     async def test_offset_and_limit_page_through_file(self, reader, ctx, tmp_path):
@@ -67,6 +67,46 @@ class TestReadText:
         file_path.write_text("one\ntwo\n")
         out = await reader(path=str(file_path), offset=100, tool_context=ctx)
         assert "offset 100 is past the end" in out
+
+    @pytest.mark.asyncio
+    async def test_trailing_newline_is_not_a_phantom_line(self, reader, ctx, tmp_path):
+        # ``cat -n`` counts a trailing newline as the end of the last line, so
+        # "a\\nb\\n" is two lines, not three.
+        file_path = tmp_path / "f.txt"
+        file_path.write_text("a\nb\n")
+        out = await reader(path=str(file_path), tool_context=ctx)
+        assert out == "     1\ta\n     2\tb"
+
+    @pytest.mark.asyncio
+    async def test_full_read_has_no_read_more_notice(self, reader, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_text("a\nb\n")
+        out = await reader(path=str(file_path), limit=2, tool_context=ctx)
+        assert out == "     1\ta\n     2\tb"
+        assert "Use offset/limit to read more" not in out
+
+    @pytest.mark.asyncio
+    async def test_offset_past_end_counts_real_lines_only(self, reader, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_text("a\nb\n")
+        out = await reader(path=str(file_path), offset=3, tool_context=ctx)
+        assert "File has 2 lines" in out
+        assert "offset 3 is past the end" in out
+
+    @pytest.mark.asyncio
+    async def test_empty_file_reports_empty(self, reader, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_text("")
+        out = await reader(path=str(file_path), tool_context=ctx)
+        assert out == "[File is empty.]"
+
+    @pytest.mark.asyncio
+    async def test_reading_the_last_line_does_not_claim_more(self, reader, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_text("a\nb\n")
+        out = await reader(path=str(file_path), offset=2, tool_context=ctx)
+        assert "     2\tb" in out
+        assert "Use offset/limit to read more" not in out
 
 
 class TestReadImage:
@@ -156,7 +196,7 @@ class TestReadDocument:
         file_path = tmp_path / "data.csv"
         file_path.write_text("a,b\n1,2\n")
         out = await reader(path=str(file_path), tool_context=ctx)
-        assert out == "     1\ta,b\n     2\t1,2\n     3\t"
+        assert out == "     1\ta,b\n     2\t1,2"
 
     @pytest.mark.parametrize(
         ("name", "data"),
@@ -207,7 +247,7 @@ class TestMediaOff:
         file_path = tmp_path / "f.txt"
         file_path.write_text("alpha\nbeta\n")
         out = await reader_text_only(path=str(file_path), tool_context=ctx)
-        assert out == "     1\talpha\n     2\tbeta\n     3\t"
+        assert out == "     1\talpha\n     2\tbeta"
 
 
 class TestPathValidation:

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 from ...tools.decorator import tool
 from ...types.media import DocumentFormat, ImageFormat
 from ...types.tools import ToolContext, ToolResult
+from .._lines import split_lines
 from .._paths import validate_absolute_path
 
 if TYPE_CHECKING:
@@ -177,7 +178,9 @@ def make_read(
                 f"available, inspect it there."
             ) from error
 
-        lines = content.split("\n")
+        lines = split_lines(content)
+        if not lines:
+            return "[File is empty.]"
         start = max(0, (offset - 1) if offset else 0)
         count = limit if limit is not None else _READ_DEFAULT_LIMIT
         window = lines[start : start + count]
@@ -193,8 +196,8 @@ def make_read(
             )
 
         numbered = "\n".join(f"{index + start + 1:>6}\t{line}" for index, line in enumerate(window))
-        if start > 0 or start + count < len(lines):
-            shown_end = start + len(window)
+        shown_end = start + len(window)
+        if shown_end < len(lines):
             numbered += f"\n[Showing lines {start + 1}-{shown_end} of {len(lines)}. Use offset/limit to read more.]"
         return numbered
 
