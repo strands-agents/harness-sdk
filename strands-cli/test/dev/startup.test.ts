@@ -6,6 +6,10 @@ import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { chooseHarness } from '../../src/dev/picker.js'
+import { ChatRoot } from '../../src/ui/app.js'
+import { ChatController } from '../../src/ui/chat/controller.js'
+import { FROG_INTRO_DURATION_MS } from '../../src/ui/frog-renderer.js'
+import { idleBackend } from '../fixtures/chat-backend.js'
 import type { DevWorkspace } from '../../src/dev/workspace.js'
 
 const STRANDS_WORDMARK = /STRANDS|▄▟[ █]{3}▙▄|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
@@ -283,5 +287,47 @@ describe('dev startup screen', () => {
     expect(await running).toBe(130)
     expect(signal?.aborted).toBe(true)
     expect(factory).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['During', FROG_INTRO_DURATION_MS / 2],
+    ['After', FROG_INTRO_DURATION_MS + 500],
+  ])('shouldNotReplayTheIntroWhenTheHarnessOpens%sIt', async (_, openAfterMs) => {
+    vi.useFakeTimers()
+    const input = ttyInput()
+    const output = ttyOutput(120, 40)
+    const frame = captureFrame(output)
+    const logo = (): string[] => frame().slice(0, 18)
+    const root = {
+      intro: true,
+      setup: false,
+      setupBridge: { request: () => {}, confirmMcp: async () => true },
+      onSetupComplete: () => {},
+      onExitSetup: () => {},
+    }
+    const instance = render(
+      createElement(ChatRoot, { ...root, startupContent: createElement(Text, {}, 'Choose a harness') }),
+      { stdin: input, stdout: output, stderr: ttyOutput(120, 40) }
+    )
+    const controller = new ChatController(idleBackend())
+    try {
+      await vi.advanceTimersByTimeAsync(FROG_INTRO_DURATION_MS / 2)
+      const playing = logo()
+      await vi.advanceTimersByTimeAsync(openAfterMs - FROG_INTRO_DURATION_MS / 2)
+
+      instance.rerender(createElement(ChatRoot, { ...root, controller }))
+      await vi.advanceTimersByTimeAsync(FROG_INTRO_DURATION_MS + 500 - openAfterMs)
+      const resting = logo()
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(frame().join('\n')).not.toContain('Choose a harness')
+      expect(resting.join('\n')).toMatch(STRANDS_WORDMARK)
+      expect(resting).not.toEqual(playing)
+      expect(logo()).toEqual(resting)
+    } finally {
+      instance.unmount()
+      await controller.dispose()
+      vi.useRealTimers()
+    }
   })
 })

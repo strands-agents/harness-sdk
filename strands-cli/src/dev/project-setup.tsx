@@ -3,7 +3,7 @@ import { Box, useInput, useStdout } from 'ink'
 
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
-import { useTerminalSize } from '../ui/terminal-size.js'
+import { useStartupContentRows } from '../ui/startup.js'
 import { useCopyableError } from '../ui/clipboard.js'
 import { planProjectPreparation, type ProjectPreparationPlan } from '../project/preparation-plan.js'
 import {
@@ -18,6 +18,10 @@ import {
 import type { ImportedAgentProject } from '../project/import.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { fixInNewTab, type FixOutcome } from './fix-in-new-tab.js'
+
+const PANEL_FIXED_ROWS = 10
+const DETAILS_MIN_ROWS = 2
+const DETAILS_MAX_ROWS = 8
 
 export type SetupAction = 'validate' | 'back' | 'cancel' | 'retry'
 
@@ -44,7 +48,7 @@ const failureReport = (plan: ProjectPreparationPlan | undefined, failure: Prepar
 
 export const ProjectSetupPanel = ({ plan, failure, directory, onAction }: ProjectSetupPanelProps): ReactElement => {
   const { error } = useTheme()
-  const { rows } = useTerminalSize()
+  const detailRows = Math.max(DETAILS_MIN_ROWS, Math.min(DETAILS_MAX_ROWS, useStartupContentRows() - PANEL_FIXED_ROWS))
   const { stdout } = useStdout()
   const [details, setDetails] = useState(false)
   const [fix, setFix] = useState<FixOutcome>()
@@ -87,7 +91,7 @@ export const ProjectSetupPanel = ({ plan, failure, directory, onAction }: Projec
       ) : null}
       {failure.logPath ? <Text wrap="truncate-middle">Log: {failure.logPath}</Text> : null}
       {details ? (
-        <Box height={Math.max(2, Math.min(8, rows - 20))} overflow="hidden">
+        <Box height={detailRows} overflow="hidden">
           <Text>{failure.details}</Text>
         </Box>
       ) : null}

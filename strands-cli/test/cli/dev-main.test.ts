@@ -115,6 +115,18 @@ describe('dev ingress', () => {
     }
   )
 
+  it.each([true, false])('shouldPlayTheIntroOnlyWhenAnimationsAre%s', async (animations) => {
+    const root = await workspaceFixture()
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory({}, { animations }))
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    terminal(true)
+    ui.run.mockResolvedValue(0)
+
+    await main(['dev', '--workspace', root])
+
+    expect(ui.run.mock.calls[0]?.[1]).toMatchObject({ intro: animations, setup: false })
+  })
+
   it('shouldStopAfterInitializationWhenDevInitIsRequested', async () => {
     const root = await workspaceFixture()
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory())

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectSetupPanel, projectSetupSession } from '../../src/dev/project-setup.js'
 import { runInkChat } from '../../src/ui/run.js'
+import { StartupContentRows } from '../../src/ui/startup.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
@@ -113,6 +114,39 @@ describe('project setup guidance', () => {
         'Log: /tmp/setup.log',
       ].join('\n')
     )
+  })
+
+  it.each([12, 14, 20])('shouldFitOpenDetailsInTheStartupCardWhenItHas%sRows', async (cardRows) => {
+    const input = ttyInput()
+    const output = ttyOutput(140, 40)
+    const frame = captureFrame(output)
+    const panel = createElement(ProjectSetupPanel, {
+      plan: {
+        project: { root: '/project', entrypoint: '/project/agent.ts', language: 'typescript' },
+        runtime: 'Node 22',
+        manager: 'npm',
+        fingerprint: 'x',
+        commands: [],
+      },
+      failure: {
+        stage: 'build',
+        summary: 'Project build failed',
+        action: 'Fix the project, then Retry.',
+        command: 'npm run build',
+        logPath: '/tmp/setup.log',
+        details: Array.from({ length: 30 }, (_, line) => `log line ${line}`).join('\n'),
+      },
+      directory: '/project',
+      onAction: vi.fn(),
+    })
+    render(createElement(StartupContentRows, { value: cardRows }, panel), { stdin: input, stdout: output })
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('d details'))
+
+    input.write('d')
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('hide details'))
+    expect(frame().join('\n')).toContain('log line 1')
+    expect(frame().filter((line) => line.trim()).length).toBeLessThanOrEqual(cardRows)
   })
 
   it('shouldOpenStrandsInANewTabWithTheSetupReportWhenFIsPressed', async () => {

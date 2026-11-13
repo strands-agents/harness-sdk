@@ -8,7 +8,6 @@ import {
   frogStartupHeight,
   frogStartupHitbox,
   frogStartupWidth,
-  frogWordmarkHeight,
   renderFrogBrandEasterEggFrame,
   renderFrogSpiralFrame,
   renderFrogStartupLockup,
@@ -20,8 +19,6 @@ import { type AppearanceSettings } from './setup/steps.js'
 import { useSpinner } from './animation.js'
 
 const LOCKUP_SLIDE_DURATION_MS = 400
-
-export type StartupBrand = 'lockup' | 'wordmark'
 
 export function StartupStatus({ status, animate }: { status: string; animate: boolean }): ReactElement {
   const spinner = useSpinner(true, animate)
@@ -43,8 +40,7 @@ export const useStartupContentRows = (): number => {
 export const startupHeaderLayout = (
   terminalWidth: number,
   availableHeight: number,
-  reservedRightWidth = 0,
-  brand: StartupBrand = 'lockup'
+  reservedRightWidth = 0
 ): {
   maxWidth: number
   lockupWidth: number
@@ -55,10 +51,9 @@ export const startupHeaderLayout = (
 } => {
   const maxWidth = Math.max(1, terminalWidth - 2)
   const artworkMaxWidth = Math.max(1, maxWidth - reservedRightWidth)
-  const brandHeight = brand === 'lockup' ? frogStartupHeight : frogWordmarkHeight
   // Sized to the artwork so the column centers it.
-  const lockupWidth = frogStartupWidth(artworkMaxWidth, brandHeight(artworkMaxWidth, availableHeight))
-  const lockupHeight = brandHeight(lockupWidth, availableHeight)
+  const lockupWidth = frogStartupWidth(artworkMaxWidth, frogStartupHeight(artworkMaxWidth, availableHeight))
+  const lockupHeight = frogStartupHeight(lockupWidth, availableHeight)
   const fullLockup =
     lockupWidth >= FROG_FULL_LOCKUP_MIN_WIDTH && lockupHeight >= frogStartupHeight(lockupWidth, Infinity)
   const paddingTop = startupLockupTopPadding(fullLockup, lockupHeight)
@@ -72,7 +67,7 @@ export function StartupView({
   availableHeight,
   animate,
   reservedRightWidth = 0,
-  brand = 'lockup',
+  maxHeight = Infinity,
   introStartedAt,
   frogBrandElapsedMs,
   onFrogElement,
@@ -84,7 +79,7 @@ export function StartupView({
   availableHeight: number
   animate: boolean
   reservedRightWidth?: number
-  brand?: StartupBrand
+  maxHeight?: number
   introStartedAt?: number
   frogBrandElapsedMs?: number
   onFrogElement?: (element: DOMElement | null) => void
@@ -97,8 +92,7 @@ export function StartupView({
   const { maxWidth, lockupWidth, lockupHeight, fullLockup, paddingTop, headerHeight } = startupHeaderLayout(
     terminalWidth,
     availableHeight,
-    reservedRightWidth,
-    brand
+    reservedRightWidth
   )
   const introElapsedMs = useStartupIntro(introStartedAt, animate && fullLockup)
   const frogHitbox = frogStartupHitbox(lockupWidth, lockupHeight)
@@ -113,7 +107,7 @@ export function StartupView({
   const brandProgress = animate ? brandElapsedMs / FROG_BRAND_EASTER_EGG_DURATION_MS : brandElapsedMs < 800 ? 0.54 : 1
   if (introElapsedMs < FROG_INTRO_DURATION_MS && frogBrandElapsedMs === undefined) {
     return (
-      <Box width="100%" height={headerHeight} flexShrink={0} overflow="hidden">
+      <Box width="100%" height={Math.min(headerHeight, maxHeight)} flexShrink={0} overflow="hidden">
         <Text>
           {renderFrogSpiralFrame(
             maxWidth,
