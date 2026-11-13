@@ -1,0 +1,667 @@
+---
+import arrow from '../assets/banner/arrow.svg?raw'
+import { homepageCapabilities, homepageStartProjects } from '../config/homepage'
+import ProjectCode from './ProjectCode.astro'
+
+const [harness] = homepageStartProjects
+if (!harness) throw new Error('Missing Harness homepage project')
+
+const harnessExample = {
+  python: `from strands_harness import create_harness
+
+agent = create_harness()
+agent("Summarize what this repository does")`,
+  typescript: `import { createHarness } from "@strands-agents/harness"
+
+const agent = await createHarness()
+await agent.invoke("Summarize what this repository does")`,
+}
+
+const evalsExample = `from strands import Agent
+from strands_evals import eval_task, Case, Experiment
+from strands_evals.evaluators import OutputEvaluator
+
+@eval_task()
+def task():
+    return Agent(system_prompt="You are helpful.")
+
+cases = [Case[str, str](
+  input="Capital of France?", expected_output="Paris")]
+
+Experiment[str, str](cases=cases,
+  evaluators=[OutputEvaluator(rubric="Correct?")],
+).run_evaluations(task)`
+---
+
+<section class="framework" id="framework" aria-label="Strands projects">
+  <div class="framework__inner">
+    <section class="framework__build" aria-labelledby="framework-build-title">
+      <h2 id="framework-build-title" class="framework__action">Build an agent</h2>
+      <article class="framework__harness-feature" data-accent={harness.product.accent}>
+        <div class="framework__harness-copy">
+          <p class="framework__harness-name">{harness.product.slug}</p>
+          <h3>Start with a complete agent.</h3>
+          <p class="framework__harness-description">{harness.description}</p>
+          <a class="framework__card-link" href={harness.href}>
+            {harness.cta}
+            <span set:html={arrow} />
+          </a>
+        </div>
+        <div class="framework__harness-example">
+          <ProjectCode {...harnessExample} label="Harness" />
+        </div>
+      </article>
+    </section>
+
+    <div class="framework__capabilities">
+      <div class="framework__capability-grid">
+        {
+          homepageCapabilities.map(({ product, action, description, cta, href }) => {
+            return (
+              <div class="framework__branch">
+                <h2 class="framework__action">{action}</h2>
+                <article class="framework__capability" data-accent={product.accent}>
+                  <details class="framework__details">
+                    <summary class="framework__summary">
+                      <div class="framework__card-copy">
+                        <h3 class="framework__product-title">{product.slug}</h3>
+                        <p>{description}</p>
+                      </div>
+                      <span class="framework__toggle" aria-hidden="true"></span>
+                    </summary>
+                    {product.slug === '/box' && (
+                      <figure class="framework__visual">
+                        <svg viewBox="0 0 360 300" role="img" aria-labelledby="box-example-title">
+                          <title id="box-example-title">Example sandbox: an agent can use allowed project files and shell tools inside Box. Access to private files outside the boundary is blocked.</title>
+                          <rect class="visual-boundary" x="12" y="26" width="336" height="184" rx="18" />
+                          <text class="visual-eyebrow" x="30" y="49">STRANDS BOX</text>
+                          <text class="visual-note" x="30" y="66">OS containment + policy</text>
+                          <rect class="visual-agent" x="134" y="84" width="92" height="36" rx="8" />
+                          <text class="visual-label" x="180" y="107" text-anchor="middle">Agent</text>
+                          <path class="visual-wire" d="M134 102 H87 V137 M226 102 H273 V137" />
+                          <path class="visual-icon" d="M70 142 H84 L90 148 H105 V168 H70 Z" />
+                          <path class="visual-icon" d="M256 143 H290 V168 H256 Z M262 152 L267 156 L262 160 M274 161 H283" />
+                          <text class="visual-label" x="87" y="192" text-anchor="middle">Project files</text>
+                          <text class="visual-label" x="273" y="192" text-anchor="middle">Shell tools</text>
+                          <path class="visual-wire visual-wire--blocked" d="M180 120 V244" />
+                          <circle class="visual-stop" cx="180" cy="210" r="12" />
+                          <path class="visual-stop-mark" d="M175 205 L185 215 M185 205 L175 215" />
+                          <text class="visual-label" x="180" y="263" text-anchor="middle">Private files</text>
+                          <text class="visual-note" x="180" y="283" text-anchor="middle">Outside the allowed boundary</text>
+                        </svg>
+                        <figcaption>Illustrative permissions, configured by you.</figcaption>
+                      </figure>
+                    )}
+                    {product.slug === '/evals' && (
+                      <ProjectCode python={evalsExample} label="Evals" />
+                    )}
+                    {product.slug === '/decider' && (
+                      <figure class="framework__visual">
+                        <svg viewBox="0 0 360 300" role="img" aria-labelledby="decider-example-title">
+                          <title id="decider-example-title">Example decision: a request saying I was charged twice goes to Decider, which selects Billing from Billing, Technical, and Sales.</title>
+                          <text class="visual-eyebrow" x="18" y="26">SUPPORT REQUEST</text>
+                          <text class="visual-quote" x="18" y="52">“I was charged twice.”</text>
+                          <path class="visual-wire" d="M76 68 V125" />
+                          <path class="visual-icon" d="M72 120 L76 125 L80 120" />
+                          <rect class="visual-boundary" x="18" y="132" width="120" height="108" rx="14" />
+                          <text class="visual-eyebrow" x="78" y="167" text-anchor="middle">SYSTEM ONE</text>
+                          <text class="visual-model" x="78" y="194" text-anchor="middle">Decider</text>
+                          <text class="visual-note" x="78" y="217" text-anchor="middle">Choose a queue</text>
+                          <text class="visual-eyebrow" x="206" y="86">YOUR CHOICES</text>
+                          <path class="visual-wire visual-wire--muted" d="M138 186 H172 V180 H198 M172 186 V244 H198" />
+                          <path class="visual-wire visual-wire--selected" d="M138 186 H162 V116 H198" />
+                          <rect class="visual-choice" x="198" y="96" width="144" height="42" rx="7" />
+                          <text class="visual-label" x="212" y="122">Billing</text>
+                          <path class="visual-check" d="M313 117 L318 122 L328 111" />
+                          <text class="visual-label visual-muted" x="212" y="186">Technical</text>
+                          <text class="visual-label visual-muted" x="212" y="250">Sales</text>
+                          <path class="visual-rule" d="M198 200 H342 M198 264 H342" />
+                        </svg>
+                        <figcaption>An illustrative choice from a defined set.</figcaption>
+                      </figure>
+                    )}
+                  </details>
+                  <a href={href}>
+                    {cta}
+                    <span set:html={arrow} />
+                  </a>
+                </article>
+              </div>
+            )
+          })
+        }
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .framework {
+    width: 100%;
+    padding: var(--home-section-space) var(--home-gutter);
+    scroll-margin-top: 92px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .framework__inner {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(24px, 3vw, 34px);
+    max-width: var(--home-content-width);
+    margin: 0 auto;
+  }
+
+  [data-accent='orange'] {
+    --framework-accent: var(--card-accent-orange);
+  }
+
+  [data-accent='teal'] {
+    --framework-accent: var(--card-accent-teal);
+  }
+
+  [data-accent='purple'] {
+    --framework-accent: var(--card-accent-purple);
+  }
+
+  [data-accent='yellow'] {
+    --framework-accent: var(--card-accent-yellow);
+  }
+
+  [data-accent='pink'] {
+    --framework-accent: var(--card-accent-pink);
+  }
+
+  [data-accent='red'] {
+    --framework-accent: var(--card-accent-red);
+  }
+
+  .framework__card-copy {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .framework__card-copy .framework__product-title {
+    margin: 0;
+    font-family: var(--home-body-font);
+    font-size: clamp(28px, 2.8vw, 38px);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1;
+    color: var(--framework-accent);
+    text-transform: lowercase;
+  }
+
+  .framework__card-copy > p:last-child {
+    max-width: 52ch;
+    margin: 0;
+    font-family: var(--home-body-font);
+    font-size: 15px;
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+  }
+
+  .framework__card-link,
+  .framework__capability a {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    width: fit-content;
+    min-height: 44px;
+    font-family: var(--home-display-font);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  .framework__card-link :global(svg),
+  .framework__capability a :global(svg) {
+    width: 13px;
+    height: 13px;
+    transition: transform 160ms ease;
+  }
+
+  .framework__card-link:hover :global(svg),
+  .framework__card-link:focus-visible :global(svg),
+  .framework__capability a:hover :global(svg),
+  .framework__capability a:focus-visible :global(svg) {
+    transform: translateX(3px);
+  }
+
+  .framework__card-link:focus-visible,
+  .framework__capability a:focus-visible {
+    outline: 2px solid var(--framework-accent);
+    outline-offset: 5px;
+  }
+
+  .framework__capabilities {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .framework__capability-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-block: 1px solid var(--home-rule);
+  }
+
+  .framework__capability {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+    padding: 20px;
+  }
+
+  .framework__capability .framework__product-title {
+    margin: 0 0 10px;
+    font-family: var(--home-body-font);
+    font-size: clamp(24px, 2vw, 30px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    color: var(--framework-accent);
+    text-transform: lowercase;
+  }
+
+  @media (max-width: 767px) {
+    .framework__inner {
+      gap: 28px;
+    }
+
+    .framework__card-copy {
+      gap: 8px;
+    }
+
+    .framework__card-copy h3 {
+      font-size: 32px;
+    }
+
+    .framework__card-link {
+      margin-top: 6px;
+    }
+
+    .framework__capability {
+      min-height: 0;
+      padding: 18px 16px;
+    }
+
+    .framework__capability-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .framework__card-link :global(svg),
+    .framework__capability a :global(svg) {
+      transition: none;
+    }
+  }
+  .framework__capability-grid {
+    gap: 20px;
+    border: 0;
+  }
+
+  .framework__capability {
+    background: var(--card-bg);
+    border: 1.5px solid var(--card-border);
+    border-radius: 16px;
+  }
+
+  .framework__capability::before {
+    display: none;
+  }
+
+  .framework__card-copy .framework__product-title,
+  .framework__capability .framework__product-title {
+    font-family: var(--home-display-font);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: normal;
+    line-height: 1.3;
+  }
+
+  .framework__card-copy {
+    flex: 1;
+    gap: 10px;
+  }
+
+  .framework__harness-feature {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: clamp(24px, 4vw, 56px);
+    min-height: 310px;
+    padding: clamp(24px, 3vw, 40px);
+    border: 1.5px solid var(--card-border);
+    border-radius: 16px;
+    background: var(--card-bg);
+  }
+
+  .framework__harness-name {
+    margin: 0 0 18px;
+    font: 700 16px/1.3 var(--home-display-font);
+    color: var(--framework-accent);
+  }
+
+  .framework__harness-copy h3 {
+    max-width: 20ch;
+    margin: 0;
+    font: 600 clamp(24px, 2.3vw, 34px)/1.25 var(--home-display-font);
+    letter-spacing: normal;
+    text-wrap: balance;
+  }
+
+  .framework__harness-description {
+    max-width: 46ch;
+    margin: 18px 0 0;
+    font: 16px/1.5 var(--home-body-font);
+  }
+
+  .framework__harness-copy .framework__card-link {
+    margin-top: 22px;
+    font-size: 14px;
+  }
+
+  .framework__harness-example {
+    min-width: 0;
+  }
+
+  .framework__harness-example :global(.project-code) {
+    margin-top: 0;
+  }
+
+  @media (max-width: 1023px) {
+    .framework__harness-feature {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 24px;
+      min-height: 0;
+    }
+    .framework__harness-copy h3 {
+      max-width: none;
+    }
+  }
+
+  @media (max-width: 479px) {
+    .framework__harness-feature {
+      padding: 20px;
+    }
+    .framework__harness-description {
+      font-size: 15px;
+    }
+  }
+
+  .framework__capability-grid {
+    align-items: start;
+  }
+
+  .framework__details {
+    flex: 1;
+  }
+
+  .framework__summary {
+    position: relative;
+    padding-right: 38px;
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .framework__summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .framework__summary:focus-visible {
+    outline: 2px solid var(--framework-accent);
+    outline-offset: 6px;
+    border-radius: 4px;
+  }
+
+  .framework__summary .framework__product-title {
+    margin: 0;
+  }
+
+  .framework__toggle {
+    position: absolute;
+    top: -4px;
+    right: 0;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--card-border);
+    border-radius: 50%;
+  }
+
+  .framework__toggle::before,
+  .framework__toggle::after {
+    content: '';
+    position: absolute;
+    top: 12px;
+    left: 7px;
+    width: 12px;
+    height: 1px;
+    background: var(--fg);
+  }
+
+  .framework__toggle::after {
+    transform: rotate(90deg);
+  }
+
+  .framework__details[open] .framework__toggle::after {
+    display: none;
+  }
+
+  .framework__summary:hover .framework__toggle {
+    border-color: var(--framework-accent);
+  }
+
+  .framework__visual {
+    margin: 20px 0 0;
+    padding-top: 14px;
+    border-top: 1px dashed var(--card-border);
+  }
+  .framework__visual svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  .framework__visual text {
+    fill: var(--fg);
+    font-family: var(--home-display-font);
+  }
+  .framework__visual .visual-label {
+    font-size: 13px;
+  }
+  .framework__visual .visual-model {
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .framework__visual .visual-quote {
+    font-size: 16px;
+  }
+  .framework__visual .visual-eyebrow {
+    font-size: 10px;
+    letter-spacing: 1px;
+    font-weight: 600;
+  }
+  .framework__visual .visual-note {
+    font-family: var(--home-body-font);
+    font-size: 12px;
+  }
+  .framework__visual .visual-boundary {
+    fill: color-mix(in srgb, var(--framework-accent) 5%, var(--bg));
+    stroke: var(--framework-accent);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 4;
+  }
+  .framework__visual .visual-agent {
+    fill: var(--bg);
+    stroke: var(--framework-accent);
+    stroke-width: 1.5;
+  }
+  .framework__visual .visual-wire,
+  .framework__visual .visual-icon,
+  .framework__visual .visual-rule,
+  .framework__visual .visual-check {
+    fill: none;
+    stroke: var(--fg);
+    stroke-width: 1.25;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .framework__visual .visual-wire {
+    stroke-dasharray: 3 4;
+  }
+  .framework__visual .visual-wire--blocked {
+    stroke: var(--card-accent-red);
+  }
+  .framework__visual .visual-stop {
+    fill: var(--bg);
+    stroke: var(--card-accent-red);
+    stroke-width: 1.5;
+  }
+  .framework__visual .visual-stop-mark {
+    fill: none;
+    stroke: var(--card-accent-red);
+    stroke-width: 1.5;
+  }
+  .framework__visual .visual-choice {
+    fill: color-mix(in srgb, var(--framework-accent) 8%, var(--bg));
+    stroke: var(--framework-accent);
+  }
+  .framework__visual .visual-wire--selected,
+  .framework__visual .visual-check {
+    stroke: var(--framework-accent);
+    stroke-width: 2;
+    stroke-dasharray: none;
+  }
+  .framework__visual .visual-muted,
+  .framework__visual .visual-wire--muted,
+  .framework__visual .visual-rule {
+    opacity: 0.5;
+  }
+  .framework__visual figcaption {
+    margin-top: 6px;
+    text-align: center;
+    font: 12px/1.4 var(--home-body-font);
+  }
+
+  .framework__card-link {
+    margin-top: 14px;
+    min-height: 36px;
+  }
+
+  .framework__card-copy > p:last-child,
+  .framework__capability > p {
+    color: var(--fg);
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .framework__capabilities {
+    gap: 0;
+    margin-top: 10px;
+  }
+
+  .framework__capability-grid {
+    position: relative;
+  }
+
+  .framework__capability-grid::before {
+    content: '';
+    position: absolute;
+    top: -13px;
+    left: calc((100% - 40px) / 6);
+    right: calc((100% - 40px) / 6);
+    border-top: 1px dashed var(--fg);
+  }
+
+  .framework__branch {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding-top: 52px;
+  }
+
+  .framework__branch::before {
+    content: '';
+    position: absolute;
+    top: -13px;
+    left: 50%;
+    height: 44px;
+    border-left: 1px dashed var(--fg);
+  }
+
+  .framework__branch::after {
+    content: '';
+    position: absolute;
+    top: 30px;
+    left: calc(50% - 4px);
+    border: 4px solid transparent;
+    border-top: 6px solid var(--fg);
+  }
+
+  .framework__action {
+    margin: 0 0 14px;
+    font-family: var(--home-display-font);
+    font-size: clamp(18px, 1.55vw, 22px);
+    font-weight: 600;
+    letter-spacing: normal;
+    line-height: 1.3;
+    text-align: center;
+  }
+
+  .framework__branch .framework__capability {
+    flex: 1;
+    min-height: 0;
+    padding: 18px 20px;
+  }
+
+  .framework__capability > p {
+    flex: 1;
+    max-width: none;
+  }
+
+  .framework__capability a {
+    margin-top: 12px;
+    padding-top: 0;
+    min-height: 36px;
+  }
+
+  @media (min-width: 768px) and (max-width: 1100px) {
+    .framework__action {
+      display: grid;
+      place-items: center;
+      min-height: 2.6em;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .framework__capability-grid::before {
+      display: none;
+    }
+
+    .framework__branch {
+      padding-top: 36px;
+    }
+
+    .framework__branch::before {
+      top: 0;
+      height: 18px;
+    }
+
+    .framework__branch::after {
+      top: 17px;
+    }
+
+    .framework__action {
+      font-size: 20px;
+    }
+
+    .framework__branch .framework__capability {
+      min-height: 0;
+    }
+  }
+</style>

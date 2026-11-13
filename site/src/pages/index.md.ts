@@ -1,16 +1,21 @@
 import type { APIRoute } from 'astro'
+import { homepageCapabilities, homepageStartProjects } from '../config/homepage'
 import { siteLink } from '@util/links'
 
 export const GET: APIRoute = () => {
   const lines = [
     '# Strands Agents',
     '',
-    '> Strands Agents is the open source toolkit for building production AI agents in Python and TypeScript. It runs in your process with no hosted Strands control plane.',
+    '> Strands Agents is an open-source toolkit for building, running, and improving agents in Python and TypeScript. Harness provides a complete agent with tuned defaults for pilot through production. Use the Harness SDK for direct control of the agent loop and its components. Box provides OS-isolated execution, Evals measures agent behavior, and Decider routes, classifies, or scores known outcomes. Agents run in-process, with no hosted Strands control plane.',
     '',
-    '## Start here',
+    '## Build an agent',
     '',
-    `- [Documentation](${siteLink('/docs/user-guide/sdk/quickstart/overview/index.md')}): Choose a model provider and build your first agent.`,
-    `- [Harness quickstart](${siteLink('/docs/user-guide/harness/quickstart/index.md')}): Start with a fully assembled agent.`,
+    ...homepageStartProjects.map(
+      ({ product, description, markdownHref }) => `- [${product.name}](${siteLink(markdownHref)}): ${description}`
+    ),
+    ...homepageCapabilities.map(
+      ({ product, description, markdownHref }) => `- [${product.label}](${siteLink(markdownHref)}): ${description}`
+    ),
     `- [Build with AI coding agents](${siteLink('/docs/user-guide/build-with-ai/index.md')}): Install the Strands plugin for Claude Code, Codex, or Cursor.`,
     `- [Examples](${siteLink('/examples/')}): Explore complete agent examples.`,
     `- [Frequently asked questions](${siteLink('/faq/index.md')}): Get practical answers about choosing, building, evaluating, and deploying with Strands.`,

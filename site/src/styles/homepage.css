@@ -1,0 +1,117 @@
+:root {
+  --home-content-width: 1332px;
+  --home-gutter: clamp(19px, 4vw, 55px);
+  --home-section-space: clamp(52px, 5.5vw, 76px);
+  --home-section-space-compact: clamp(34px, 4vw, 48px);
+  --home-radius-large: 16px;
+  --home-radius-medium: 16px;
+  --home-display-font: var(--sl-font-mono);
+  --home-body-font: var(--sl-font);
+  --home-control-font: var(--sl-font-mono);
+  --home-hero-size: clamp(40px, 4vw, 56px);
+  --home-hero-tracking: 0.07em;
+  --home-hero-line-height: 1.12;
+  --home-heading-size: clamp(34px, 3.4vw, 48px);
+  --home-heading-tracking: 0.075em;
+  --home-heading-line-height: 1.15;
+  --home-body-size: clamp(16px, 1.3vw, 18px);
+  --home-label: var(--eyebrow);
+  --home-rule: var(--border);
+}
+
+@media (max-width: 767px) {
+  :root {
+    --home-section-space: 48px;
+    --home-section-space-compact: 32px;
+    --home-hero-size: clamp(29px, 8.4vw, 40px);
+    --home-hero-tracking: 0.045em;
+    --home-heading-size: clamp(28px, 7.5vw, 34px);
+    --home-heading-tracking: 0.055em;
+    --home-body-size: 16px;
+  }
+}
+
+html body main .use-cases h2,
+html body main .prove__intro h2,
+html body main .home-faq h2,
+html body main .next-steps__title {
+  font-family: var(--home-display-font);
+  font-size: clamp(26px, 3.125vw, 40px);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+html body main .use-cases__eyebrow,
+html body main .prove__eyebrow,
+html body main .home-faq__eyebrow,
+html body main .next-steps__eyebrow {
+  font-size: clamp(16px, 1.6vw, 20px);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+}
+
+html body main .use-cases__button-title {
+  font-family: var(--home-display-font);
+  font-size: clamp(18px, 1.7vw, 24px);
+  font-weight: 500;
+  letter-spacing: normal;
+  line-height: 1.3;
+}
+
+html body main .use-cases__button-description {
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+html body main .prove__stories {
+  background: var(--card-bg);
+  border: 1.5px solid var(--card-border);
+}
+
+html body main .prove__stories::before {
+  display: none;
+}
+
+html body main .home-faq h2 {
+  font-size: clamp(24px, 2.4vw, 32px);
+  letter-spacing: 0.04em;
+}
+
+html body main .home-faq__inner {
+  border: 0;
+}
+
+html body main .home-faq__list,
+html body main .home-faq__item {
+  border-color: var(--card-border);
+}
+
+html body main .home-faq__link {
+  padding: 12px 18px;
+  border: 1px solid var(--accent-green);
+  border-radius: 8px;
+  background: var(--accent-green);
+  color: var(--bg);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+html body main .home-faq__link:hover {
+  background: transparent;
+  color: var(--accent-green);
+}
+
+@media (max-width: 767px) {
+
+  html body main .use-cases h2,
+  html body main .prove__intro h2,
+  html body main .home-faq h2,
+  html body main .next-steps__title {
+    font-size: 26px;
+    letter-spacing: 0.07em;
+  }
+}

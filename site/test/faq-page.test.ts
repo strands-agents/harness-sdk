@@ -25,7 +25,10 @@ describe('standalone FAQ page', () => {
       [
         'choose',
         [
+          'what-is-strands',
           'harness-or-sdk',
+          'customize-harness',
+          'strands-projects-fit',
           'keep-current-model',
           'python-or-typescript',
           'bidirectional-or-standard-streaming',
@@ -104,11 +107,27 @@ describe('standalone FAQ page', () => {
 describe('homepage FAQ selection', () => {
   it('keeps the preview focused on five questions', () => {
     expect(featuredFaqItems.map((item) => item.id)).toEqual([
+      'what-is-strands',
       'harness-or-sdk',
-      'python-or-typescript',
-      'custom-or-mcp-tool',
-      'evaluate-before-production',
+      'customize-harness',
+      'strands-projects-fit',
       'deploy-strands-agent',
     ])
+  })
+
+  it('renders the canonical featured questions and summaries', () => {
+    const homepageHtml = readFileSync(new URL('../dist/index.html', import.meta.url), 'utf8')
+    const homepage = parse(homepageHtml)
+    const renderedItems = homepage.querySelectorAll('.home-faq__item').map((item) => ({
+      question: item.querySelector('summary span')?.text.trim(),
+      summary: item.querySelector('p')?.text.trim(),
+    }))
+
+    expect(renderedItems).toEqual(
+      featuredFaqItems.map((item) => ({
+        question: item.question,
+        summary: item.featuredSummary,
+      }))
+    )
   })
 })

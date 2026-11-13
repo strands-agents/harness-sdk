@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&family=JetBrains+Mono:wght@400..700&family=Space+Grotesk:wght@400..700&display=swap');
-
 :root {
   /* Palette tokens — brand colors constant across themes. Use these only for
      colors identical in light/dark; otherwise use the semantic tokens below. */
@@ -89,9 +87,9 @@
   /* CTA link text on white surfaces: darker green clears AA (5.45:1). */
   --cta-green: #007a3d;
 
-  /* Muted grey for inactive use-case titles on white. At mobile the title
-     shrinks to 20px normal (needs 4.5:1), so use #767373 (4.7:1). */
-  --use-case-muted: #767373;
+  /* Use-case descriptions sit on a 6% green tint when active. #706d6d keeps
+     their 12–13px text above 4.5:1 on that surface and plain white. */
+  --use-case-muted: #706d6d;
   --surface-green: #e6f6e7; /* Strands Seafoam Green */
   /* Banner halftone dots on the white light-mode bg — seafoam was nearly
      invisible, so use a mid brand green that reads clearly yet stays subtle. */

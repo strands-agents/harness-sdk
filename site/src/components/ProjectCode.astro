@@ -1,0 +1,166 @@
+---
+import { Code } from 'astro:components'
+import LanguageToggle from './LanguageToggle.astro'
+
+interface Props {
+  python: string
+  typescript?: string
+  label: string
+}
+
+const { python, typescript, label } = Astro.props
+---
+
+<homepage-project-code class="project-code">
+  <header>
+    {typescript ? <LanguageToggle /> : <span class="project-code__language">Python</span>}
+    <button type="button" aria-label={`Copy ${label} example`}>Copy</button>
+    <span class="project-code__status" role="status"></span>
+  </header>
+  {typescript && <div data-example-language="TypeScript">
+    <Code tabindex="0" role="region" aria-label={`${label} TypeScript example`} code={typescript} lang="typescript" themes={{ light: 'github-light', dark: 'github-dark' }} defaultColor={false} />
+  </div>}
+  <div data-example-language="Python" hidden={!!typescript}>
+    <Code tabindex="0" role="region" aria-label={`${label} Python example`} code={python} lang="python" themes={{ light: 'github-light', dark: 'github-dark' }} defaultColor={false} />
+  </div>
+</homepage-project-code>
+
+<script>
+  import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL, copyToClipboard } from '../util/language-preference'
+
+  class HomepageProjectCode extends HTMLElement {
+    private controller?: AbortController
+    private resetTimer?: number
+
+    connectedCallback() {
+      this.controller?.abort()
+      this.controller = new AbortController()
+      const { signal } = this.controller
+      const applyLanguage = (language: string) => {
+        const selectedLanguage = this.querySelector('[data-example-language="TypeScript"]') ? language : 'Python'
+        this.querySelectorAll<HTMLElement>('[data-example-language]').forEach((panel) => {
+          panel.hidden = panel.dataset.exampleLanguage !== selectedLanguage
+        })
+      }
+      let language = DEFAULT_LANGUAGE_LABEL
+      try {
+        if (localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python') language = 'Python'
+      } catch {}
+      applyLanguage(language)
+      window.addEventListener(
+        'lang-change',
+        (event) => {
+          applyLanguage((event as CustomEvent<string>).detail)
+        },
+        { signal }
+      )
+      const button = this.querySelector<HTMLButtonElement>('header > button')!
+      button.addEventListener(
+        'click',
+        async () => {
+          const code = this.querySelector<HTMLElement>('[data-example-language]:not([hidden]) code')
+          if (!code) return
+          const copied = await copyToClipboard(code.textContent || '')
+          button.textContent = copied ? 'Copied' : 'Copy'
+          this.querySelector<HTMLElement>('[role="status"]')!.textContent = copied ? 'Copied' : 'Select the code to copy'
+          window.clearTimeout(this.resetTimer)
+          this.resetTimer = window.setTimeout(() => {
+            button.textContent = 'Copy'
+          }, 1600)
+        },
+        { signal }
+      )
+    }
+
+    disconnectedCallback() {
+      this.controller?.abort()
+      window.clearTimeout(this.resetTimer)
+    }
+  }
+
+  if (!customElements.get('homepage-project-code')) {
+    customElements.define('homepage-project-code', HomepageProjectCode)
+  }
+</script>
+
+<style>
+  .project-code {
+    display: block;
+    min-width: 0;
+    margin-top: 20px;
+    overflow: hidden;
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--card-border);
+  }
+  header > button {
+    margin-left: auto;
+    padding: 6px 10px;
+    border: 1px solid var(--card-border);
+    border-radius: 20px;
+    background: transparent;
+    color: var(--fg);
+    font:
+      12px 'JetBrains Mono',
+      monospace;
+    cursor: pointer;
+  }
+  .project-code__language {
+    font:
+      12px 'JetBrains Mono',
+      monospace;
+    padding: 6px 0;
+  }
+  header > button:focus-visible {
+    outline: 2px solid var(--framework-accent);
+    outline-offset: 3px;
+  }
+  .project-code__status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  [data-example-language][hidden] {
+    display: none;
+  }
+  .project-code :global(pre) {
+    max-width: 100%;
+    margin: 0;
+    padding: 16px;
+    overflow-x: auto;
+    font:
+      12px/1.65 'JetBrains Mono',
+      monospace;
+    background: var(--shiki-light-bg);
+    color: var(--shiki-light);
+  }
+  .project-code :global(pre span) {
+    color: var(--shiki-light);
+  }
+  :global(.framework__capability) .project-code :global(pre) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  @media (min-width: 1280px) {
+    :global(.framework__capability) .project-code :global(pre) {
+      font-size: 11px;
+      white-space: pre;
+      overflow-wrap: normal;
+    }
+  }
+  :global(:root[data-theme='dark']) .project-code :global(pre) {
+    background: var(--shiki-dark-bg);
+    color: var(--shiki-dark);
+  }
+  :global(:root[data-theme='dark']) .project-code :global(pre span) {
+    color: var(--shiki-dark);
+  }
+</style>
