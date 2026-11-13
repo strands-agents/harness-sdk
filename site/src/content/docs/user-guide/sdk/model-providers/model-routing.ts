@@ -5,6 +5,7 @@ import {
   FallbackStrategy,
   ModelRouter,
   RoutingCandidate,
+  TypeSafeDecisionModel,
   type RoutingContext,
   type RoutingStrategy,
 } from '@strands-agents/sdk'
@@ -61,7 +62,7 @@ async function modelRoutingClassifier() {
     ],
     {
       strategy: new ClassifierStrategy(classifierModel, {
-        systemPrompt: routingPolicy,
+        routingPolicy,
       }),
     }
   )
@@ -71,6 +72,32 @@ async function modelRoutingClassifier() {
     'Design a rollback-safe migration from regional to global idempotency keys.'
   )
   // --8<-- [end:mr_classify]
+}
+
+async function modelRoutingDecisionModel() {
+  // --8<-- [start:mr_decision_model]
+  const router = new ModelRouter(
+    [
+      new RoutingCandidate({
+        model: new BedrockModel({ modelId: 'us.amazon.nova-lite-v1:0' }),
+        name: 'routine',
+        description: 'Concise factual questions and routine requests.',
+      }),
+      new RoutingCandidate({
+        model: new BedrockModel({ modelId: 'us.amazon.nova-pro-v1:0' }),
+        name: 'advanced',
+        description: 'Systems design with several interacting constraints.',
+      }),
+    ],
+    // Reads the API key from TYPESAFE_API_KEY
+    { strategy: new ClassifierStrategy(new TypeSafeDecisionModel()) }
+  )
+  const agent = new Agent({ model: router })
+
+  await agent.invoke(
+    'Design a rollback-safe migration from regional to global idempotency keys.'
+  )
+  // --8<-- [end:mr_decision_model]
 }
 
 async function modelRoutingComposedStrategy() {
