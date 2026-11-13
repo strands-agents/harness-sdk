@@ -9,7 +9,7 @@ import pytest
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
 from strands.experimental.context_manager import ContextManager
-from strands.hooks import BeforeModelCallEvent
+from strands.hooks import BeforeModelCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.memory import MemoryManager
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 from strands.sandbox.docker import DockerSandbox
@@ -1358,3 +1358,95 @@ def test_subagent_child_inherits_exa_fallback():
     parent = create_harness(builtin_tools={"web_search": "exa"})
     child = parent.tool_registry.registry["subagent"]._builder(AgentSpec(name="subagent", tools=["read"]))
     assert "web_search" in child.tool_names
+
+
+class _ScriptedModel(Model):
+    """Replays canned assistant turns in order; parent and delegate share it, so the script interleaves them."""
+
+    def __init__(self, turns: list[dict]) -> None:
+        self.turns = list(turns)
+        self._config = {"model_id": "scripted-model", "context_window_limit": 1_000_000}
+
+    def update_config(self, **model_config):
+        self._config.update(model_config)
+
+    def get_config(self):
+        return self._config
+
+    async def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):
+        raise NotImplementedError
+        yield
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        turn = self.turns.pop(0)
+        yield {"messageStart": {"role": "assistant"}}
+        if "tool" in turn:
+            name, tool_use_id, tool_input = turn["tool"]
+            yield {"contentBlockStart": {"start": {"toolUse": {"name": name, "toolUseId": tool_use_id}}}}
+            yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(tool_input)}}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+            return
+        yield {"contentBlockStart": {"start": {}}}
+        yield {"contentBlockDelta": {"delta": {"text": turn["text"]}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+_executions: list[str] = []
+
+
+@tool
+def dangerous_action(target: str) -> str:
+    """Perform an action that requires confirmation."""
+    _executions.append(target)
+    return f"done: {target}"
+
+
+class _ConfirmDangerousAction(HookProvider):
+    def register_hooks(self, registry: HookRegistry, **kwargs) -> None:
+        registry.add_callback(BeforeToolCallEvent, self._confirm)
+
+    def _confirm(self, event: BeforeToolCallEvent) -> None:
+        if event.tool_use["name"] == "dangerous_action" and event.interrupt("confirm", reason="ok?") != "APPROVE":
+            event.cancel_tool = "not approved"
+
+
+def _delegating_harness(child_turns: list[dict]) -> Agent:
+    model = _ScriptedModel(
+        [{"tool": ("subagent", "t1", {"task": "do it", "tools": ["dangerous_action"]})}]
+        + child_turns
+        + [{"text": "parent done"}]
+    )
+    return create_harness(
+        model=model,
+        tools=[dangerous_action],
+        hooks=[_ConfirmDangerousAction()],
+        background_tasks=False,
+        session=False,
+        memory=False,
+    )
+
+
+def test_subagent_delegates_end_to_end_through_create_harness():
+    parent = _delegating_harness([{"text": "child done"}])
+    result = parent("go")
+    assert str(result).strip() == "parent done"
+    tool_result = parent.messages[-2]["content"][0]["toolResult"]
+    assert tool_result["status"] == "success"
+    assert tool_result["content"] == [{"text": "child done\n"}]
+
+
+def test_subagent_child_interrupt_surfaces_on_the_parent_and_resumes():
+    _executions.clear()
+    parent = _delegating_harness([{"tool": ("dangerous_action", "c1", {"target": "prod"})}, {"text": "child done"}])
+    result = parent("go")
+    assert result.stop_reason == "interrupt"
+    (interrupt,) = result.interrupts
+    assert interrupt.id.startswith("v1:subagent:t1:")
+    assert _executions == []
+
+    result = parent([{"interruptResponse": {"interruptId": interrupt.id, "response": "APPROVE"}}])
+    assert str(result).strip() == "parent done"
+    assert _executions == ["prod"]
+    assert parent.messages[-2]["content"][0]["toolResult"]["content"] == [{"text": "child done\n"}]
