@@ -1,5 +1,6 @@
 """Amazon SageMaker model provider."""
 
+import asyncio
 import json
 import logging
 import os
@@ -9,20 +10,25 @@ from typing import Any, Literal, TypedDict, TypeVar
 
 import boto3
 from botocore.config import Config as BotocoreConfig
+from botocore.exceptions import ClientError
 from mypy_boto3_sagemaker_runtime import SageMakerRuntimeClient
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
 from ..types.content import ContentBlock, Messages
+from ..types.exceptions import ModelThrottledException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec
-from ._validation import validate_config_keys, warn_on_tool_choice_not_supported
-from .model import BaseModelConfig
+from ._validation import validate_config_keys, warn_on_cache_config_not_supported, warn_on_tool_choice_not_supported
+from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
 
 T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
+
+# ``None`` is a valid decoded event, so it cannot mark the end of the stream.
+_END_OF_STREAM: Any = object()
 
 
 @dataclass
@@ -87,6 +93,21 @@ class ToolCall:
         self.id = str(kwargs.get("id", ""))
         self.type = "function"
         self.function = FunctionCall(**kwargs.get("function", {"name": "", "arguments": ""}))
+
+
+def _is_container_throttling(error: ClientError) -> bool:
+    """Return whether a SageMaker runtime error wraps an HTTP 429 from the model container.
+
+    SageMaker reports container errors as ``ModelError`` (HTTP 424) with the container's status in
+    ``OriginalStatusCode``.
+
+    Args:
+        error: The SageMaker runtime client error.
+
+    Returns:
+        True if the container responded with HTTP 429.
+    """
+    return error.response.get("OriginalStatusCode") == 429
 
 
 def _strip_sse_framing(line: str) -> str | None:
@@ -181,7 +202,9 @@ class SageMakerAIModel(OpenAIModel):
             top_p: Nucleus sampling parameter (optional)
             top_k: Top-k sampling parameter (optional)
             stop: List of stop sequences to use for the model (optional)
-            tool_results_as_user_messages: Convert tool result to user messages (optional)
+            tool_results_as_user_messages: Send tool results as user messages, for endpoints that reject the
+                tool role (optional). Each result becomes its own user message, so parallel tool calls produce
+                consecutive user messages.
             additional_args: Additional request parameters, as supported by https://bit.ly/djl-lmi-request-schema
         """
 
@@ -200,6 +223,7 @@ class SageMakerAIModel(OpenAIModel):
         Attributes:
             endpoint_name: The name of the SageMaker endpoint to invoke
             inference_component_name: The name of the inference component to use
+            cache_config: Prompt caching settings. SageMaker honors no cache fields, so any set field is ignored.
 
             additional_args: Other request parameters, as supported by https://bit.ly/sagemaker-invoke-endpoint-params
         """
@@ -209,6 +233,7 @@ class SageMakerAIModel(OpenAIModel):
         inference_component_name: str | None
         target_model: str | None | None
         target_variant: str | None | None
+        cache_config: CacheConfig | None
         additional_args: dict[str, Any] | None
 
     def __init__(
@@ -332,14 +357,24 @@ class SageMakerAIModel(OpenAIModel):
             payload["tool_choice"] = "auto"
 
         for message in payload["messages"]:  # type: ignore
-            # Assistant message must have either content or tool_calls, but not both
-            if message.get("role", "") == "assistant" and message.get("tool_calls", []) != []:
+            # An assistant turn may carry text beside its tool calls -- the model's
+            # reasoning about why it is calling the tool -- and OpenAI-compatible
+            # endpoints accept both fields together. Drop `content` only when there
+            # is nothing in it to send, which is the case this guarded: an assistant
+            # message with no content would otherwise go out as `"content": null`
+            # next to `tool_calls`.
+            if (
+                message.get("role", "") == "assistant"
+                and message.get("tool_calls", []) != []
+                and not message.get("content")
+            ):
                 message.pop("content", None)
             if message.get("role") == "tool" and self.payload_config.get("tool_results_as_user_messages", False):
                 # Convert tool message to user message
-                tool_call_id = message.get("tool_call_id", "ABCDEF")
+                tool_call_id = message.pop("tool_call_id", "ABCDEF")
                 content = message.get("content", "")
-                message = {"role": "user", "content": f"Tool call ID '{tool_call_id}' returned: {content}"}
+                message["role"] = "user"
+                message["content"] = f"Tool call ID '{tool_call_id}' returned: {content}"
             # Cannot have both reasoning_text and text - if "text", content becomes an array of content["text"]
             for c in message.get("content", []):
                 if "text" in c:
@@ -373,7 +408,27 @@ class SageMakerAIModel(OpenAIModel):
         if additional_args:
             request.update(additional_args)
 
+        # SageMaker applies no CacheConfig fields; warn that any set field is ignored.
+        warn_on_cache_config_not_supported(
+            self.endpoint_config.get("cache_config"), "SageMaker", supported=set(), stacklevel=3
+        )
         return request
+
+    def _invoke_endpoint(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Invoke the endpoint and decode its response body.
+
+        The SageMaker runtime client is synchronous, so callers run this on a worker
+        thread to keep the event loop free.
+
+        Args:
+            request: Formatted request to send to the endpoint.
+
+        Returns:
+            The decoded JSON response body.
+        """
+        response = self.client.invoke_endpoint(**request)
+        body: dict[str, Any] = json.loads(response["Body"].read().decode("utf-8"))
+        return body
 
     @override
     async def stream(
@@ -397,6 +452,9 @@ class SageMakerAIModel(OpenAIModel):
 
         Yields:
             Formatted message chunks from the model.
+
+        Raises:
+            ModelThrottledException: If the model container responds with HTTP 429.
         """
         warn_on_tool_choice_not_supported(tool_choice)
 
@@ -408,7 +466,9 @@ class SageMakerAIModel(OpenAIModel):
 
         try:
             if self.payload_config.get("stream", True):
-                response = self.client.invoke_endpoint_with_response_stream(**request)
+                # The SageMaker runtime client is synchronous, so the invocation and each
+                # read of the response body run off the event loop.
+                response = await asyncio.to_thread(self.client.invoke_endpoint_with_response_stream, **request)
 
                 # Message start
                 yield self.format_chunk({"chunk_type": "message_start"})
@@ -420,7 +480,9 @@ class SageMakerAIModel(OpenAIModel):
                 text_content_started = False
                 reasoning_content_started = False
 
-                for content in _parse_event_stream(response["Body"]):
+                # Pulling one event at a time keeps the read on a worker thread.
+                events = _parse_event_stream(response["Body"])
+                while (content := await asyncio.to_thread(next, events, _END_OF_STREAM)) is not _END_OF_STREAM:
                     choices = content.get("choices")
                     if not choices:
                         if usage := content.get("usage"):
@@ -507,8 +569,7 @@ class SageMakerAIModel(OpenAIModel):
 
             else:
                 # Not all SageMaker AI models support streaming!
-                response = self.client.invoke_endpoint(**request)  # type: ignore[assignment]
-                final_response_json = json.loads(response["Body"].read().decode("utf-8"))  # type: ignore[attr-defined]
+                final_response_json = await asyncio.to_thread(self._invoke_endpoint, request)
                 logger.info("response=<%s>", json.dumps(final_response_json, indent=2))
 
                 # Obtain the key elements from the response
@@ -560,10 +621,8 @@ class SageMakerAIModel(OpenAIModel):
                 # Message close
                 yield self.format_chunk({"chunk_type": "message_stop", "data": message_stop_reason})
                 # Handle usage metadata
-                if final_response_json.get("usage"):
-                    yield self.format_chunk(
-                        {"chunk_type": "metadata", "data": UsageMetadata(**final_response_json.get("usage"))}
-                    )
+                if usage := final_response_json.get("usage"):
+                    yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata(**usage)})
         except (
             self.client.exceptions.InternalFailure,
             self.client.exceptions.ServiceUnavailable,
@@ -572,6 +631,8 @@ class SageMakerAIModel(OpenAIModel):
             self.client.exceptions.InternalDependencyException,
             self.client.exceptions.ModelNotReadyException,
         ) as e:
+            if _is_container_throttling(e):
+                raise ModelThrottledException(str(e)) from e
             logger.error("SageMaker error: %s", str(e))
             raise e
 
@@ -660,6 +721,9 @@ class SageMakerAIModel(OpenAIModel):
 
         Yields:
             Model events with the last being the structured output.
+
+        Raises:
+            ModelThrottledException: If the model container responds with HTTP 429.
         """
         # Format the request for structured output
         request = self.format_request(prompt, system_prompt=system_prompt)
@@ -674,8 +738,7 @@ class SageMakerAIModel(OpenAIModel):
 
         try:
             # Use non-streaming mode for structured output
-            response = self.client.invoke_endpoint(**request)
-            final_response_json = json.loads(response["Body"].read().decode("utf-8"))
+            final_response_json = await asyncio.to_thread(self._invoke_endpoint, request)
 
             # Extract the structured content
             message = final_response_json["choices"][0]["message"]
@@ -699,5 +762,7 @@ class SageMakerAIModel(OpenAIModel):
             self.client.exceptions.InternalDependencyException,
             self.client.exceptions.ModelNotReadyException,
         ) as e:
+            if _is_container_throttling(e):
+                raise ModelThrottledException(str(e)) from e
             logger.error("SageMaker structured output error: %s", str(e))
             raise ValueError(f"SageMaker structured output error: {str(e)}") from e

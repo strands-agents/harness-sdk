@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
-    from ..agent.agent import Agent
     from ..agent.state import AgentState
+    from ..types.agent import LocalAgent
     from ..types.content import Messages
 
 InjectionTrigger = Literal["userTurn", "everyTurn"]
@@ -44,7 +44,7 @@ class InjectionContext:
 
     messages: Messages
     state: AgentState
-    agent: Agent
+    agent: LocalAgent
 
 
 class TriggerCallback(Protocol):

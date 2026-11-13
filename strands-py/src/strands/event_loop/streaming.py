@@ -7,9 +7,12 @@ import threading
 import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..models.model import Model
+from pydantic import BaseModel
+
+from ..agent.agent_metadata import AgentMetadata
+from ..agent.invocation_context import InvocationContext
 from ..tools import InvalidToolUseNameException
 from ..tools.tools import validate_tool_use_name
 from ..types._events import (
@@ -40,6 +43,9 @@ from ..types.streaming import (
     Usage,
 )
 from ..types.tools import ToolSpec, ToolUse
+
+if TYPE_CHECKING:
+    from ..models.model import Model
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +254,11 @@ def handle_content_block_delta(
         typed_event = CitationStreamEvent(delta=delta_content, citation=delta_content["citation"])
 
     elif "reasoningContent" in delta_content:
+        reasoning_delta = delta_content["reasoningContent"]
+        # A new reasoning payload after a signature starts a block, even under the same index.
+        if "signature" in state and ("text" in reasoning_delta or "redactedContent" in reasoning_delta):
+            _finalize_reasoning_text(state)
+
         if "text" in delta_content["reasoningContent"]:
             if "reasoningText" not in state:
                 state["reasoningText"] = ""
@@ -275,6 +286,25 @@ def handle_content_block_delta(
     return state, typed_event
 
 
+def _finalize_reasoning_text(state: dict[str, Any]) -> None:
+    """Append only the pending reasoning text and consume its signature."""
+    if state["reasoningText"] or "signature" in state:
+        content_block: ContentBlock = {
+            "reasoningContent": {
+                "reasoningText": {
+                    "text": state["reasoningText"],
+                }
+            }
+        }
+
+        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
+        if (signature := state.pop("signature", None)) is not None:
+            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
+
+        state["content"].append(content_block)
+        state["reasoningText"] = ""
+
+
 def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
     """Handles the end of a content block by finalizing tool usage, text content, or reasoning content.
 
@@ -288,7 +318,6 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
 
     current_tool_use = state["current_tool_use"]
     text = state["text"]
-    reasoning_text = state["reasoningText"]
     citations_content = state["citationsContent"]
     redacted_content = state.get("redactedContent")
 
@@ -335,7 +364,8 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
         content.append({"toolUse": tool_use})
         state["current_tool_use"] = {}
 
-    elif text:
+    # Text, reasoning, and redacted blocks accumulate independently of the tool-use branch.
+    if text:
         if citations_content:
             citations_block: CitationsContentBlock = {"citations": citations_content, "content": [{"text": text}]}
             content.append({"citationsContent": citations_block})
@@ -344,22 +374,8 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
             content.append({"text": text})
         state["text"] = ""
 
-    elif reasoning_text or "signature" in state:
-        content_block: ContentBlock = {
-            "reasoningContent": {
-                "reasoningText": {
-                    "text": state["reasoningText"],
-                }
-            }
-        }
-
-        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
-        if (signature := state.pop("signature", None)) is not None:
-            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
-
-        content.append(content_block)
-        state["reasoningText"] = ""
-    elif redacted_content:
+    _finalize_reasoning_text(state)
+    if redacted_content:
         content.append({"reasoningContent": {"redactedContent": redacted_content}})
         state["redactedContent"] = b""
 
@@ -429,6 +445,7 @@ async def process_stream(
     chunks: AsyncIterable[StreamEvent],
     start_time: float | None = None,
     cancel_signal: threading.Event | None = None,
+    invocation_context: InvocationContext | None = None,
 ) -> AsyncGenerator[TypedEvent, None]:
     """Processes the response stream from the API, constructing the final message and extracting usage metrics.
 
@@ -436,6 +453,8 @@ async def process_stream(
         chunks: The chunks of the response stream from the model.
         start_time: Time when the model request is initiated
         cancel_signal: Optional threading.Event to check for cancellation during streaming.
+        invocation_context: The request the call's usage adds to once the stream ends. A cancelled stream adds the
+            usage reported before it stopped; a stream that raises adds nothing.
 
     Yields:
         The reason for stopping, the constructed message, and the usage metrics.
@@ -460,6 +479,7 @@ async def process_stream(
         # Check for cancellation during stream processing
         if cancel_signal and cancel_signal.is_set():
             logger.debug("cancellation detected during stream processing")
+            _record_usage(invocation_context, usage)
             # Return cancelled stop reason with cancellation message
             # The incomplete message in state["message"] is discarded and never added to agent.messages
             yield ModelStopReason(
@@ -498,6 +518,7 @@ async def process_stream(
     # A provider that aborts in flight ends the stream without messageStop; the in-loop check
     # above cannot see it, so report the cancellation here rather than a truncated end_turn.
     if not saw_message_stop and cancel_signal and cancel_signal.is_set():
+        _record_usage(invocation_context, usage)
         yield ModelStopReason(
             stop_reason="cancelled",
             message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
@@ -506,11 +527,18 @@ async def process_stream(
         )
         return
 
+    _record_usage(invocation_context, usage)
     yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
 
 
+def _record_usage(invocation_context: InvocationContext | None, usage: Usage) -> None:
+    """Add a finished model call's usage to the request it ran in, if any."""
+    if invocation_context is not None:
+        invocation_context._record_usage(usage)
+
+
 async def stream_messages(
-    model: Model,
+    model: "Model",
     system_prompt: str | None,
     messages: Messages,
     tool_specs: list[ToolSpec],
@@ -521,9 +549,12 @@ async def stream_messages(
     model_state: dict[str, Any] | None = None,
     dynamic_trailing_blocks: int = 0,
     cancel_signal: threading.Event | None = None,
+    agent_metadata: AgentMetadata | None = None,
+    structured_output_model: type[BaseModel] | None = None,
+    invocation_context: InvocationContext | None = None,
     **kwargs: Any,
 ) -> AsyncGenerator[TypedEvent, None]:
-    """Streams messages to the model and processes the response.
+    """Streams messages to the model and processes the response, through the SDK-internal ``ModelProxy``.
 
     Args:
         model: Model provider.
@@ -539,31 +570,30 @@ async def stream_messages(
             call, so a provider placing cache points keeps its own ahead of them.
         cancel_signal: Optional threading.Event to check for cancellation during streaming. Also
             forwarded to the model so a provider can abort an in-flight request.
+        agent_metadata: Metadata of the invoking agent, forwarded to the model.
+        structured_output_model: Output model this call must produce, forwarded to the model so the provider can
+            choose how to enforce it.
+        invocation_context: The request the call's usage adds to once the stream ends.
         **kwargs: Additional keyword arguments for future extensibility.
 
     Yields:
         The reason for stopping, the final message, and the usage metrics
     """
-    logger.debug("model=<%s> | streaming messages", model)
+    # Lazy: _model_proxy imports this module at load time.
+    from ..models._model_proxy import ModelProxy
 
-    messages = _normalize_messages(messages)
-    # Whitelist only role and content before sending to the model provider.
-    # This ensures metadata (and any future non-model fields) never leak to providers.
-    messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
-    start_time = time.time()
-
-    chunks = model.stream(
+    async for event in ModelProxy(model).stream(
         messages,
-        tool_specs if tool_specs else None,
+        tool_specs,
         system_prompt,
         tool_choice=tool_choice,
         system_prompt_content=system_prompt_content,
         invocation_state=invocation_state,
         model_state=model_state,
+        dynamic_trailing_blocks=dynamic_trailing_blocks,
         cancel_signal=cancel_signal,
-        # Omitted when zero, so an ordinary call's arguments are unchanged.
-        **({"dynamic_trailing_blocks": dynamic_trailing_blocks} if dynamic_trailing_blocks else {}),
-    )
-
-    async for event in process_stream(chunks, start_time, cancel_signal):
+        agent_metadata=agent_metadata,
+        structured_output_model=structured_output_model,
+        invocation_context=invocation_context,
+    ):
         yield event

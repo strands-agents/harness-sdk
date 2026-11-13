@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -6,13 +6,20 @@ import {
   ToolResultBlock,
   ReasoningBlock,
   GuardContentBlock,
+  InjectedBlock,
+  SummaryBlock,
+  CachePointBlock,
+  type StopReason,
 } from '../../types/messages.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { MaxTokensError, ModelError } from '../../errors.js'
 import { Model } from '../model.js'
+import { mergeModelInfo, type ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
-import type { ModelStreamEvent } from '../streaming.js'
+import { createEmptyUsage, isModelStreamEvent, type ModelStreamEvent, type Usage } from '../streaming.js'
+import { DEFAULT_SUMMARIZE_INSTRUCTIONS, SUMMARIZE_GUARD } from '../summarize.js'
+import { logger } from '../../logging/logger.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 /**
@@ -121,6 +128,85 @@ describe('Model', () => {
         await expect(async () => await collectGenerator(provider.streamAggregated(messages))).rejects.toThrow(
           'Model reached maximum token limit. This is an unrecoverable state that requires intervention.'
         )
+      })
+    })
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/5763 and
+    // https://github.com/strands-agents/harness-sdk/issues/3189: a stream without a message start
+    // still completes as an assistant message.
+    describe('when the stream has no message start event', () => {
+      it('completes a message with streamed text and tool use as the assistant', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelContentBlockStartEvent' }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'textDelta', text: 'Checking' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', toolUseId: 'tool1', name: 'get_weather' },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{"location": "Paris"}' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [
+              { type: 'textBlock', text: 'Checking' },
+              {
+                type: 'toolUseBlock',
+                toolUseId: 'tool1',
+                name: 'get_weather',
+                input: { location: 'Paris' },
+              },
+            ],
+            trackingId: anyTrackingId,
+          },
+          stopReason: 'toolUse',
+        })
+      })
+
+      it('returns an empty assistant message when the turn is empty', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+          yield {
+            type: 'modelMetadataEvent',
+            usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+          }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            trackingId: anyTrackingId,
+            metadata: {
+              usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+            },
+          },
+          stopReason: 'endTurn',
+          metadata: {
+            type: 'modelMetadataEvent',
+            usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+          },
+        })
       })
     })
 
@@ -642,6 +728,101 @@ describe('Model', () => {
       })
     })
 
+    describe('when a citations delta grounds already-streamed text', () => {
+      const citation = {
+        location: { type: 'web' as const, url: 'https://a.com' },
+        source: 'https://a.com',
+        sourceContent: [],
+        title: 'A',
+      }
+
+      it('falls back to the accumulated text when the delta carries no content', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hello' } }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'citationsDelta', citations: [citation], content: [] },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+
+        expect(result.message.content).toEqual([
+          new CitationsBlock({ citations: [citation], content: [{ text: 'Hello' }] }),
+        ])
+      })
+
+      it('keeps the delta content when it carries some', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hello' } }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'citationsDelta', citations: [citation], content: [{ text: 'cited' }] },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+
+        expect(result.message.content).toEqual([
+          new CitationsBlock({ citations: [citation], content: [{ text: 'cited' }] }),
+        ])
+      })
+    })
+
+    describe('when content blocks have no start events', () => {
+      it('keeps text and citations scoped to each completed block', async () => {
+        const citation = {
+          location: { type: 'documentChunk' as const, documentIndex: 0, start: 0, end: 1 },
+          source: '',
+          sourceContent: [{ text: 'Project Atlas automates invoice processing.' }],
+          title: 'doc1',
+        }
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'From the document: ' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'citationsDelta', citations: [citation], content: [] },
+          }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Atlas ' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'automates invoices.' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: ' That is the summary.' } }
+          yield { type: 'modelContentBlockStopEvent' }
+
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { items, result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('What is Atlas?')] })])
+        )
+
+        const expectedContent = [
+          new TextBlock('From the document: '),
+          new CitationsBlock({ citations: [citation], content: [{ text: 'Atlas automates invoices.' }] }),
+          new TextBlock(' That is the summary.'),
+        ]
+        expect(items.filter((item) => !isModelStreamEvent(item))).toEqual(expectedContent)
+        expect(result.message.content).toEqual(expectedContent)
+      })
+    })
+
     describe('when a content block emits no text deltas alongside reasoning and tool use', () => {
       it('drops the resulting empty TextBlock from the aggregated message but still yields it', async () => {
         const provider = new TestModelProvider(async function* () {
@@ -925,7 +1106,243 @@ describe('Model.modelId', () => {
   })
 })
 
+/** Replies with `reply` texts and `stopReason`, recording each stream call. */
+class RecordingModel extends TestModelProvider {
+  readonly calls: { messages: Message[]; options: StreamOptions | undefined }[] = []
+
+  constructor(
+    private readonly _reply: string[] = ['the summary'],
+    private readonly _stopReason: StopReason = 'endTurn',
+    private readonly _error?: Error,
+    private readonly _usage?: Usage
+  ) {
+    super()
+  }
+
+  override async *stream(messages: Message[], options?: StreamOptions): AsyncGenerator<ModelStreamEvent> {
+    this.calls.push({ messages, options })
+    if (this._error) throw this._error
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    for (const text of this._reply) {
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text } }
+      yield { type: 'modelContentBlockStopEvent' }
+    }
+    if (this._usage) yield { type: 'modelMetadataEvent', usage: this._usage }
+    yield { type: 'modelMessageStopEvent', stopReason: this._stopReason }
+  }
+}
+
+describe('summarize', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const history = (): Message[] => [
+    new Message({ role: 'user', content: [new TextBlock('task')] }),
+    new Message({
+      role: 'assistant',
+      content: [new ToolUseBlock({ toolUseId: 't1', name: 'lookup', input: { q: 'x' } })],
+    }),
+    new Message({
+      role: 'user',
+      content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('42')] })],
+    }),
+  ]
+  const hi = (): Message[] => [new Message({ role: 'user', content: [new TextBlock('hi')] })]
+  const zeroUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  const turns = (messages: Message[]): { role: string; content: unknown[] }[] =>
+    messages.map(({ role, content }) => ({ role, content }))
+
+  it('replays the request with the instructions closing it', async () => {
+    const model = new RecordingModel(['first', 'second'])
+    const messages = history()
+    const toolSpecs = [{ name: 'lookup', description: 'Look up', inputSchema: { type: 'object' as const } }]
+    const systemPrompt = [new TextBlock('live prompt'), new CachePointBlock({ cacheType: 'default' })]
+
+    const result = await model.summarize(messages, { toolSpecs, systemPrompt, instructions: 'Summarize briefly.' })
+
+    expect(result).toEqual({ content: [new SummaryBlock({ text: 'first\nsecond' })], usage: zeroUsage })
+    expect(model.calls).toHaveLength(1)
+    const call = model.calls[0]!
+    expect(turns(call.messages)).toEqual(
+      turns([
+        ...history().slice(0, 2),
+        new Message({
+          role: 'user',
+          content: [...history()[2]!.content, new TextBlock(`${SUMMARIZE_GUARD}\n\nSummarize briefly.`)],
+        }),
+      ])
+    )
+    expect(call.options).toEqual({ toolSpecs, systemPrompt })
+    expect(turns(messages)).toEqual(turns(history()))
+  })
+
+  it('sends the agent metadata', async () => {
+    const model = new RecordingModel()
+    const agentMetadata = { sessionId: 'session' }
+
+    await model.summarize(history().slice(0, 2), { agentMetadata })
+
+    expect(model.calls).toHaveLength(1)
+    expect(turns(model.calls[0]!.messages)).toEqual(
+      turns([
+        ...history().slice(0, 2),
+        new Message({
+          role: 'user',
+          content: [new TextBlock(`${SUMMARIZE_GUARD}\n\n${DEFAULT_SUMMARIZE_INSTRUCTIONS}`)],
+        }),
+      ])
+    )
+    expect(model.calls[0]!.options).toEqual({ agentMetadata })
+  })
+
+  it('adds a user turn after an assistant turn', async () => {
+    const model = new RecordingModel()
+
+    await model.summarize(history().slice(0, 2), { instructions: 'Summarize briefly.' })
+
+    expect(turns(model.calls[0]!.messages)).toEqual(
+      turns([
+        ...history().slice(0, 2),
+        new Message({ role: 'user', content: [new TextBlock(`${SUMMARIZE_GUARD}\n\nSummarize briefly.`)] }),
+      ])
+    )
+  })
+
+  it.each([{ instructions: undefined }, { instructions: '' }])(
+    'sends no system prompt and the default instructions for instructions=$instructions',
+    async ({ instructions }) => {
+      const model = new RecordingModel()
+
+      await model.summarize(hi(), { ...(instructions !== undefined && { instructions }) })
+
+      expect(model.calls[0]!.options?.systemPrompt).toBeUndefined()
+      expect(model.calls[0]!.messages.at(-1)!.content.at(-1)).toEqual(
+        new TextBlock(`${SUMMARIZE_GUARD}\n\n${DEFAULT_SUMMARIZE_INSTRUCTIONS}`)
+      )
+    }
+  )
+
+  it.each<StopReason>(['toolUse', 'guardrailIntervened', 'contentFiltered'])(
+    'returns an empty summary for an unfinished reply: %s',
+    async (stopReason) => {
+      const usage = { inputTokens: 10, outputTokens: 1, totalTokens: 11 }
+      const model = new RecordingModel(['canned'], stopReason, undefined, usage)
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      const result = await model.summarize(hi())
+
+      expect(result).toEqual({ content: [], usage })
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`stop_reason=<${stopReason}> | summary reply did not finish`)
+      )
+    }
+  )
+
+  it('returns an empty summary when cancelled mid-stream', async () => {
+    const controller = new AbortController()
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'partial' } }
+      controller.abort()
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+    })
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await model.summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: zeroUsage })
+  })
+
+  it('sends no request when cancelled before the call', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const model = new TestModelProvider()
+    const stream = vi.spyOn(model, 'stream')
+
+    const result = await model.summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: createEmptyUsage() })
+    expect(stream).not.toHaveBeenCalled()
+  })
+
+  it('returns an empty summary when the stream throws after a cancel', async () => {
+    const controller = new AbortController()
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      controller.abort()
+      throw new DOMException('aborted', 'AbortError')
+    })
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await model.summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: zeroUsage })
+  })
+
+  it.each<StopReason>(['maxTokens', 'stopSequence'])(
+    'keeps a reply that stopped at a limit: %s',
+    async (stopReason) => {
+      const model = new RecordingModel(['partial'], stopReason)
+
+      const result = await model.summarize(hi())
+
+      expect(result).toEqual({ content: [new SummaryBlock({ text: 'partial' })], usage: zeroUsage })
+    }
+  )
+
+  it('returns an empty summary when the reply holds no text', async () => {
+    const usage = { inputTokens: 10, outputTokens: 1, totalTokens: 11 }
+    const model = new RecordingModel(['  '], 'endTurn', undefined, usage)
+
+    const result = await model.summarize(hi())
+
+    expect(result).toEqual({ content: [], usage })
+  })
+
+  it('returns its usage', async () => {
+    const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+    const model = new RecordingModel(['the summary'], 'endTurn', undefined, usage)
+
+    const result = await model.summarize(hi())
+
+    expect(result).toEqual({ content: [new SummaryBlock({ text: 'the summary' })], usage })
+  })
+
+  it('forwards the cancel signal', async () => {
+    const model = new RecordingModel()
+    const cancelSignal = new AbortController().signal
+
+    await model.summarize(hi(), { cancelSignal })
+
+    expect(model.calls[0]!.options?.cancelSignal).toBe(cancelSignal)
+  })
+
+  it('propagates stream errors', async () => {
+    const model = new RecordingModel(['the summary'], 'endTurn', new Error('images unsupported'))
+
+    await expect(model.summarize(hi())).rejects.toThrow('images unsupported')
+    expect(model.calls).toHaveLength(1)
+  })
+})
+
 describe('countTokens', () => {
+  it('counts summary text like a text block', async () => {
+    const provider = new TestModelProvider()
+    const text = 'x'.repeat(400)
+
+    const summary = await provider.countTokens([
+      new Message({ role: 'assistant', content: [new SummaryBlock({ text })] }),
+    ])
+
+    expect(summary).toBe(
+      await provider.countTokens([new Message({ role: 'assistant', content: [new TextBlock(text)] })])
+    )
+  })
+
   it('estimates text block tokens using chars/4 heuristic', async () => {
     const provider = new TestModelProvider()
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hello world')] })]
@@ -1020,6 +1437,28 @@ describe('countTokens', () => {
     expect(result).toBe(Math.ceil('cited text here'.length / 4))
   })
 
+  it('estimates injected block tokens', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo, date: today', source: 'test' })] }),
+    ]
+
+    const result = await provider.countTokens(messages)
+
+    expect(result).toBe(Math.ceil('cwd: /repo, date: today'.length / 4))
+  })
+
+  it('counts only the injected blocks of the latest user message', async () => {
+    const provider = new TestModelProvider()
+    const messages = [
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'x'.repeat(400), source: 'test' })] }),
+      new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+      new Message({ role: 'user', content: [new InjectedBlock({ text: 'cwd: /repo', source: 'test' })] }),
+    ]
+    const result = await provider.countTokens(messages)
+    expect(result).toBe(Math.ceil('ok'.length / 4) + Math.ceil('cwd: /repo'.length / 4))
+  })
+
   it('estimates string system prompt tokens', async () => {
     const provider = new TestModelProvider()
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
@@ -1112,7 +1551,102 @@ describe('countTokens', () => {
   })
 })
 
+describe('info', () => {
+  it('knows only that temporary messages are off for a provider with no model id, and unknown stateful reads as false', () => {
+    const provider = new TestModelProvider()
+    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false } })
+    expect(provider.stateful).toBe(false)
+  })
+
+  it('resolves facts from the shared model info for any provider by modelId', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId: 'us.anthropic.claude-sonnet-4-6' })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(1_000_000)
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('leaves temporary messages off for a model the shared data says takes them', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId: 'vertex.claude-opus-5-5' })
+    expect(provider.modelInfo.capabilities?.temporaryMessages).toBe(false)
+  })
+
+  it('lets a provider put its facts over the shared model info, with the user override over both', () => {
+    class GatewayProvider extends TestModelProvider {
+      override get modelInfo(): ModelInfo {
+        return mergeModelInfo(
+          super.modelInfo,
+          { capabilities: { promptCaching: 'unsupported' } },
+          this.getConfig().modelInfo
+        )
+      }
+    }
+    const provider = new GatewayProvider()
+    provider.updateConfig({ modelId: 'claude-sonnet-4-6', contextWindowLimit: 8_000 })
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('unsupported') // shared file says cachePoints
+    expect(provider.modelInfo.limits?.contextWindow).toBe(8_000)
+    expect(Object.isFrozen(provider.modelInfo)).toBe(true)
+
+    provider.updateConfig({ modelInfo: { capabilities: { promptCaching: 'cachePoints' } } })
+    expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+  })
+
+  it('lets the info override set stateful, and the stateful getter reads it', () => {
+    const provider = new TestModelProvider()
+    expect(provider.stateful).toBe(false)
+
+    provider.updateConfig({ modelInfo: { capabilities: { stateful: true } } })
+
+    expect(provider.modelInfo.capabilities?.stateful).toBe(true)
+    expect(provider.stateful).toBe(true)
+  })
+
+  it('lets the info override win over contextWindowLimit', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ contextWindowLimit: 50_000, modelInfo: { limits: { contextWindow: 10_000 } } })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(10_000)
+  })
+
+  it('takes the context window from the config', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ contextWindowLimit: 50_000 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(50_000)
+  })
+
+  it('reads stateful from what a provider puts in the record', () => {
+    class StatefulProvider extends TestModelProvider {
+      override get modelInfo(): ModelInfo {
+        return mergeModelInfo(super.modelInfo, { capabilities: { stateful: true } }, this.getConfig().modelInfo)
+      }
+    }
+    const provider = new StatefulProvider()
+    expect(provider.stateful).toBe(true)
+
+    provider.updateConfig({ modelInfo: { capabilities: { stateful: false } } })
+    expect(provider.stateful).toBe(false)
+  })
+
+  it('reflects config changes on the next read', () => {
+    const provider = new TestModelProvider()
+    expect(provider.modelInfo.limits?.contextWindow).toBeUndefined()
+
+    provider.updateConfig({ contextWindowLimit: 4_096 })
+
+    expect(provider.modelInfo.limits?.contextWindow).toBe(4_096)
+  })
+})
+
 describe('estimateUtilization', () => {
+  it('uses the context window from info, including an info override', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelInfo: { limits: { contextWindow: 10_000 } } })
+
+    expect(provider.estimateUtilization(5_000)).toBe(0.5)
+  })
+
   it('returns ratio of inputTokens to contextWindowLimit', () => {
     const provider = new TestModelProvider()
     provider.updateConfig({ contextWindowLimit: 100_000 })

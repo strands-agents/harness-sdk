@@ -7,6 +7,7 @@ SDK. These types are modeled after the Bedrock API.
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from typing_extensions import NotRequired, TypedDict
@@ -76,6 +77,40 @@ class CachePoint(TypedDict):
     ttl: NotRequired[str]
 
 
+class SummaryBlock(TypedDict, total=False):
+    """A summary of earlier conversation history that takes the summarized messages' place.
+
+    Attributes:
+        provider: Name of the provider that wrote the summary server-side, for example "anthropic".
+        signature: Signature the provider returned with the summary, sent back unchanged.
+        text: The summary text.
+    """
+
+    provider: str | None
+    signature: str | None
+    text: str
+
+
+class InjectedBlock(TypedDict):
+    """Text the app adds to a user turn, such as a reminder, kept apart from the user's own words.
+
+    Readers of ``agent.messages`` can skip it (``"injected" in block``). ``ContextInjector`` writes its text as injected
+    blocks. It belongs in a user message, after the existing content; in any other message it is left out.
+
+    When the model takes temporary messages (``model_info.capabilities.temporary_messages``), the provider sends it as
+    a system message the model reads only until the next user message, which the model ranks above the user. Every
+    other model receives only the latest user message's injected text, as plain text. Keep content from outside the
+    conversation, such as tool output or retrieved documents, out of it.
+
+    Attributes:
+        text: Text the app adds to the user turn.
+        source: Name of the component that added the text, such as a ``ContextInjector``'s name.
+    """
+
+    text: str
+    source: str
+
+
 class ContentBlock(TypedDict, total=False):
     """A block of content for a message that you pass to, or receive from, a model.
 
@@ -85,7 +120,9 @@ class ContentBlock(TypedDict, total=False):
         document: A document to include in the message.
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
+        injected: Text the app adds to a user turn, kept apart from the user's own words.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
+        summary: A summary of earlier conversation history.
         text: Text to include in the message.
         toolResult: The result for a tool request that a model makes.
         toolUse: Information about a tool use request from a model.
@@ -98,12 +135,33 @@ class ContentBlock(TypedDict, total=False):
     document: DocumentContent
     guardContent: GuardContent
     image: ImageContent
+    injected: InjectedBlock
     reasoningContent: ReasoningContentBlock
+    summary: SummaryBlock
     text: str
     toolResult: ToolResult
     toolUse: ToolUse
     video: VideoContent
     citationsContent: CitationsContentBlock
+
+
+class _TextBlockData(TypedDict):
+    text: str
+
+
+@dataclass
+class TextBlock:
+    """Text content for a message.
+
+    Attributes:
+        text: Text to send.
+    """
+
+    text: str
+
+    def to_dict(self) -> _TextBlockData:
+        """Return the dictionary form of this block."""
+        return {"text": self.text}
 
 
 class SystemContentBlock(TypedDict, total=False):

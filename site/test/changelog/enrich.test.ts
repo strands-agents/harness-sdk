@@ -28,7 +28,7 @@ describe('enrich', () => {
   it('missing pr degrades gracefully (fetcher returns null)', async () => {
     const f = async () => null
     const e = await enrichFromPr('r', 1, f)
-    expect(e).toEqual({ areas: [], breaking: false, commit: null, author: null, languages: null, docsOnly: false })
+    expect(e).toEqual({ areas: [], breaking: false, commit: null, author: null, streams: null, docsOnly: false })
   })
 
   it('docsOnly true when every file is under site/ or docs/', async () => {
@@ -96,7 +96,7 @@ describe('enrich', () => {
     expect(e.author).toBe(null)
   })
 
-  it('derives languages from monorepo top-level dirs', async () => {
+  it('derives streams from monorepo top-level dirs', async () => {
     const f = async () => ({
       labels: [],
       merge_commit_sha: 'abc1234',
@@ -104,10 +104,10 @@ describe('enrich', () => {
       files: ['strands-py/src/agent.py', 'strands-py/tests/t.py'],
     })
     const e = await enrichFromPr('r', 1, f)
-    expect(e.languages).toEqual(['python'])
+    expect(e.streams).toEqual(['sdk:python'])
   })
 
-  it('PR touching both sdk dirs yields both languages', async () => {
+  it('PR touching both sdk dirs yields both streams', async () => {
     const f = async () => ({
       labels: [],
       merge_commit_sha: 'abc1234',
@@ -115,10 +115,10 @@ describe('enrich', () => {
       files: ['strands-py/a.py', 'strands-ts/b.ts'],
     })
     const e = await enrichFromPr('r', 1, f)
-    expect(e.languages!.sort()).toEqual(['python', 'typescript'])
+    expect(e.streams!.sort()).toEqual(['sdk:python', 'sdk:typescript'])
   })
 
-  it('site/ci/docs-only PR yields empty languages', async () => {
+  it('site/ci/docs-only PR yields empty streams', async () => {
     const f = async () => ({
       labels: [],
       merge_commit_sha: 'abc1234',
@@ -126,13 +126,31 @@ describe('enrich', () => {
       files: ['site/src/page.astro', '.github/workflows/x.yml', 'designs/d.md'],
     })
     const e = await enrichFromPr('r', 1, f)
-    expect(e.languages).toEqual([])
+    expect(e.streams).toEqual([])
   })
 
-  it('missing files info yields null languages (unknown -- keep everywhere)', async () => {
+  it('missing files info yields null streams (unknown -- keep everywhere)', async () => {
     const f = async () => ({ labels: [], merge_commit_sha: 'abc1234', user: 'x' })
     const e = await enrichFromPr('r', 1, f)
-    expect(e.languages).toBe(null)
+    expect(e.streams).toBe(null)
+  })
+
+  it('maps harness, cli, and mcp dirs to their own streams', async () => {
+    const cases: Array<[string, string]> = [
+      ['harness-py/src/strands_harness/harness.py', 'harness:python'],
+      ['harness-ts/src/index.ts', 'harness:typescript'],
+      ['strands-cli/src/main.ts', 'cli'],
+      ['strands-mcp/src/server.py', 'mcp'],
+    ]
+    for (const [file, stream] of cases) {
+      const e = await enrichFromPr('r', 1, async () => ({
+        labels: [],
+        merge_commit_sha: 'abc1234',
+        user: 'x',
+        files: [file],
+      }))
+      expect(e.streams, file).toEqual([stream])
+    }
   })
 
   it('a root-npm-lockfile-only PR is attributed to typescript', async () => {
@@ -144,7 +162,7 @@ describe('enrich', () => {
       user: 'dependabot[bot]',
       files: ['package-lock.json'],
     })
-    expect((await enrichFromPr('r', 1, npmBump)).languages).toEqual(['typescript'])
+    expect((await enrichFromPr('r', 1, npmBump)).streams).toEqual(['sdk:typescript'])
   })
 
   it('a root lockfile alongside SDK code keeps the dir signal', async () => {
@@ -155,7 +173,7 @@ describe('enrich', () => {
       files: ['package-lock.json', 'strands-py/pyproject.toml'],
     })
     const e = await enrichFromPr('r', 1, f)
-    expect(e.languages).toEqual(['python'])
+    expect(e.streams).toEqual(['sdk:python'])
   })
 
   it('root manifests and non-root lockfiles stay language-neutral', async () => {
@@ -174,7 +192,7 @@ describe('enrich', () => {
         user: 'x',
         files: [file],
       }))
-      expect(e.languages, file).toEqual([])
+      expect(e.streams, file).toEqual([])
     }
   })
 
@@ -186,6 +204,6 @@ describe('enrich', () => {
       files: ['package-lock.json', '.github/workflows/ci.yml'],
     })
     const e = await enrichFromPr('r', 1, f)
-    expect(e.languages).toEqual([])
+    expect(e.streams).toEqual([])
   })
 })

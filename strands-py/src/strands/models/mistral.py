@@ -6,6 +6,7 @@
 import base64
 import json
 import logging
+from collections import Counter
 from collections.abc import AsyncGenerator, Iterable
 from typing import Any, TypeVar
 
@@ -13,13 +14,17 @@ from mistralai.client import Mistral
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
+from ..agent.agent_metadata import AgentMetadata
 from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._defaults import resolve_config_metadata
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._openai_cache import _resolve_cache_key
 from ._validation import (
     _has_location_source,
+    _log_skipped_blocks,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
@@ -31,17 +36,28 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
-def _apply_cache_config(request: dict[str, Any], cache_config: CacheConfig | None) -> None:
+def _apply_cache_config(
+    request: dict[str, Any],
+    cache_config: CacheConfig | None,
+    agent_metadata: AgentMetadata | None = None,
+) -> None:
     """Map a CacheConfig onto a Mistral request.
+
+    The prompt-cache routing key resolves as: the configured ``cache_key`` wins when set to a string,
+    ``cache_key=False`` opts out; otherwise it falls back to ``strands-<session_id>`` when the agent
+    carries a session id. A falsy result (empty or None) emits no key. Mistral exposes no retention or
+    placement controls, so every other ``CacheConfig`` field is a no-op and warned.
 
     Args:
         request: The Mistral request dict to mutate.
         cache_config: The provider's configured cache settings, if any.
+        agent_metadata: The invoking agent's metadata, used to derive a routing key when one is unset.
     """
     if cache_config is None:
         return
-    if cache_config.cache_key is not None and "prompt_cache_key" not in request:
-        request["prompt_cache_key"] = cache_config.cache_key
+    cache_key = _resolve_cache_key(cache_config, agent_metadata)
+    if cache_key and "prompt_cache_key" not in request:
+        request["prompt_cache_key"] = cache_key
     warn_on_cache_config_not_supported(cache_config, "Mistral", supported={"cache_key"})
 
 
@@ -71,7 +87,8 @@ class MistralModel(Model):
             top_p: Controls diversity via nucleus sampling.
             stream: Whether to enable streaming responses.
             cache_config: Prompt-caching configuration. Mistral routes cache reads on
-                cache_config.cache_key (mapped to the request's prompt_cache_key); it exposes no
+                cache_config.cache_key (mapped to the request's prompt_cache_key), falling back to
+                ``strands-<session_id>`` when unset and a session manager is attached; it exposes no
                 retention or placement controls, so other fields are ignored.
         """
 
@@ -135,6 +152,15 @@ class MistralModel(Model):
         """
         validate_config_keys(model_config, self.MistralConfig)
         self.config.update(model_config)
+
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        The Mistral API has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @override
     def get_config(self) -> MistralConfig:
@@ -228,6 +254,7 @@ class MistralModel(Model):
             A Mistral compatible messages array.
         """
         formatted_messages: list[dict[str, Any]] = []
+        skipped: Counter[str] = Counter()
 
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
@@ -236,33 +263,48 @@ class MistralModel(Model):
             role = message["role"]
             contents = message["content"]
 
-            text_contents: list[str] = []
+            message_contents: list[str | dict[str, Any]] = []
             tool_calls: list[dict[str, Any]] = []
             tool_messages: list[dict[str, Any]] = []
 
             for content in contents:
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Mistral | skipping content block")
+                    skipped["Location sources are not supported by Mistral | skipping content block"] += 1
                     continue
 
                 if "cachePoint" in content:
-                    logger.warning("cachePoint content block is not supported by Mistral | skipping")
+                    skipped["cachePoint content block is not supported by Mistral | skipping"] += 1
                     continue
 
-                if "text" in content:
-                    formatted_content = self._format_request_message_content(content)
-                    if isinstance(formatted_content, str):
-                        text_contents.append(formatted_content)
+                if "text" in content or "image" in content:
+                    message_contents.append(self._format_request_message_content(content))
+                elif "reasoningContent" in content:
+                    reasoning_text = content["reasoningContent"].get("reasoningText", {}).get("text")
+                    if reasoning_text:
+                        message_contents.append(
+                            {"type": "thinking", "thinking": [{"type": "text", "text": reasoning_text}]}
+                        )
                 elif "toolUse" in content:
                     tool_calls.append(self._format_request_message_tool_call(content["toolUse"]))
                 elif "toolResult" in content:
                     tool_messages.append(self._format_request_tool_message(content["toolResult"]))
 
-            if text_contents or tool_calls:
+            # Tool results must immediately follow tool calls, before any injected user text.
+            formatted_messages.extend(tool_messages)
+
+            if message_contents or tool_calls:
+                message_content: str | list[dict[str, Any]]
+                if any(isinstance(content, dict) for content in message_contents):
+                    message_content = [
+                        {"type": "text", "text": content} if isinstance(content, str) else content
+                        for content in message_contents
+                    ]
+                else:
+                    message_content = " ".join(content for content in message_contents if isinstance(content, str))
                 formatted_message: dict[str, Any] = {
                     "role": role,
-                    "content": " ".join(text_contents) if text_contents else "",
+                    "content": message_content,
                 }
 
                 if tool_calls:
@@ -270,12 +312,15 @@ class MistralModel(Model):
 
                 formatted_messages.append(formatted_message)
 
-            formatted_messages.extend(tool_messages)
-
+        _log_skipped_blocks(logger, skipped)
         return formatted_messages
 
     def format_request(
-        self, messages: Messages, tool_specs: list[ToolSpec] | None = None, system_prompt: str | None = None
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        agent_metadata: AgentMetadata | None = None,
     ) -> dict[str, Any]:
         """Format a Mistral chat streaming request.
 
@@ -283,6 +328,8 @@ class MistralModel(Model):
             messages: List of message objects to be processed by the model.
             tool_specs: List of tool specifications to make available to the model.
             system_prompt: System prompt to provide context to the model.
+            agent_metadata: Stable identity of the invoking agent, used to derive a prompt-cache
+                routing key when ``cache_config.cache_key`` is unset.
 
         Returns:
             A Mistral chat streaming request.
@@ -318,7 +365,7 @@ class MistralModel(Model):
                 for tool_spec in tool_specs
             ]
 
-        _apply_cache_config(request, self.config.get("cache_config"))
+        _apply_cache_config(request, self.config.get("cache_config"), agent_metadata)
 
         return request
 
@@ -339,7 +386,7 @@ class MistralModel(Model):
                 return {"messageStart": {"role": "assistant"}}
 
             case "content_start":
-                if event["data_type"] == "text":
+                if event["data_type"] in ("text", "reasoning_content"):
                     return {"contentBlockStart": {"start": {}}}
 
                 tool_call = event["data"]
@@ -357,6 +404,9 @@ class MistralModel(Model):
             case "content_delta":
                 if event["data_type"] == "text":
                     return {"contentBlockDelta": {"delta": {"text": event["data"]}}}
+
+                if event["data_type"] == "reasoning_content":
+                    return {"contentBlockDelta": {"delta": {"reasoningContent": {"text": event["data"]}}}}
 
                 return {"contentBlockDelta": {"delta": {"toolUse": {"input": event["data"]}}}}
 
@@ -392,6 +442,57 @@ class MistralModel(Model):
             case _:
                 raise RuntimeError(f"chunk_type=<{event['chunk_type']}> | unknown type")
 
+    def _content_parts(self, content: Any) -> list[tuple[str, str]]:
+        """Split Mistral message content into ``(data_type, text)`` parts.
+
+        Content is a plain string for most models. Reasoning models (for example Mistral Large 4) return a list of
+        chunks instead: a ``ThinkChunk`` carries the reasoning, as a list of text chunks, and a ``TextChunk`` carries
+        the answer. Chunk types without text, such as references, are skipped.
+
+        Args:
+            content: The ``content`` of a Mistral message or stream delta.
+
+        Returns:
+            The parts in order, each tagged ``"text"`` or ``"reasoning_content"``.
+        """
+        if isinstance(content, str):
+            return [("text", content)] if content else []
+
+        parts: list[tuple[str, str]] = []
+        for chunk in content or []:
+            chunk_type = getattr(chunk, "type", None)
+            if chunk_type == "thinking":
+                thinking = "".join(
+                    part.text
+                    for part in getattr(chunk, "thinking", None) or []
+                    if isinstance(getattr(part, "text", None), str)
+                )
+                if thinking:
+                    parts.append(("reasoning_content", thinking))
+            elif chunk_type == "text" and isinstance(getattr(chunk, "text", None), str) and chunk.text:
+                parts.append(("text", chunk.text))
+        return parts
+
+    def _content_events(self, content: Any, data_type: str | None) -> tuple[list[dict[str, Any]], str | None]:
+        """Turn Mistral message content into content events, opening a new block whenever the part type changes.
+
+        Args:
+            content: The ``content`` of a Mistral message or stream delta.
+            data_type: The type of the block that is currently open, if any.
+
+        Returns:
+            The events, and the type of the block left open. The caller closes that block.
+        """
+        events: list[dict[str, Any]] = []
+        for part_type, text in self._content_parts(content):
+            if part_type != data_type:
+                if data_type is not None:
+                    events.append({"chunk_type": "content_stop", "data_type": data_type})
+                events.append({"chunk_type": "content_start", "data_type": part_type})
+                data_type = part_type
+            events.append({"chunk_type": "content_delta", "data_type": part_type, "data": text})
+        return events, data_type
+
     def _handle_non_streaming_response(self, response: Any) -> Iterable[dict[str, Any]]:
         """Handle non-streaming response from Mistral API.
 
@@ -403,18 +504,12 @@ class MistralModel(Model):
         """
         yield {"chunk_type": "message_start"}
 
-        content_started = False
-
         if response.choices and response.choices[0].message:
             message = response.choices[0].message
 
-            if hasattr(message, "content") and message.content:
-                if not content_started:
-                    yield {"chunk_type": "content_start", "data_type": "text"}
-                    content_started = True
-
-                yield {"chunk_type": "content_delta", "data_type": "text", "data": message.content}
-
+            events, data_type = self._content_events(getattr(message, "content", None), None)
+            yield from events
+            if data_type is not None:
                 yield {"chunk_type": "content_stop"}
 
             if hasattr(message, "tool_calls") and message.tool_calls:
@@ -440,6 +535,7 @@ class MistralModel(Model):
         system_prompt: str | None = None,
         *,
         tool_choice: ToolChoice | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the Mistral model.
@@ -450,6 +546,8 @@ class MistralModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation. **Note: This parameter is accepted for
                 interface consistency but is currently ignored for this model provider.**
+            agent_metadata: Stable identity of the invoking agent, used to derive a prompt-cache
+                routing key when ``cache_config.cache_key`` is unset.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -462,7 +560,7 @@ class MistralModel(Model):
         warn_on_tool_choice_not_supported(tool_choice)
 
         logger.debug("formatting request")
-        request = self.format_request(messages, tool_specs, system_prompt)
+        request = self.format_request(messages, tool_specs, system_prompt, agent_metadata)
         logger.debug("request=<%s>", request)
 
         logger.debug("invoking model")
@@ -483,9 +581,8 @@ class MistralModel(Model):
 
                 yield self.format_chunk({"chunk_type": "message_start"})
 
-                content_started = False
+                data_type: str | None = None
                 tool_calls: dict[str, list[Any]] = {}
-                accumulated_text = ""
 
                 async for chunk in stream_response:
                     if hasattr(chunk, "data") and hasattr(chunk.data, "choices") and chunk.data.choices:
@@ -494,15 +591,9 @@ class MistralModel(Model):
                         if hasattr(choice, "delta"):
                             delta = choice.delta
 
-                            if hasattr(delta, "content") and delta.content:
-                                if not content_started:
-                                    yield self.format_chunk({"chunk_type": "content_start", "data_type": "text"})
-                                    content_started = True
-
-                                yield self.format_chunk(
-                                    {"chunk_type": "content_delta", "data_type": "text", "data": delta.content}
-                                )
-                                accumulated_text += delta.content
+                            events, data_type = self._content_events(getattr(delta, "content", None), data_type)
+                            for event in events:
+                                yield self.format_chunk(event)
 
                             if hasattr(delta, "tool_calls") and delta.tool_calls:
                                 for tool_call in delta.tool_calls:
@@ -510,8 +601,8 @@ class MistralModel(Model):
                                     tool_calls.setdefault(tool_id, []).append(tool_call)
 
                         if hasattr(choice, "finish_reason") and choice.finish_reason:
-                            if content_started:
-                                yield self.format_chunk({"chunk_type": "content_stop", "data_type": "text"})
+                            if data_type is not None:
+                                yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
 
                             for tool_deltas in tool_calls.values():
                                 yield self.format_chunk(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from typing_extensions import TypedDict
@@ -11,6 +11,9 @@ from ..types.content import ContentBlock, Messages
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
+    from ..agent.invocation_context import InvocationContext
+    from ..storage.storage import Storage
+    from .stash import Stash
 
 
 def is_tool_result_block(block: ContentBlock) -> bool:
@@ -36,11 +39,19 @@ class ContextState:
         messages: The agent's current message list (mutable in place).
         agent: The agent instance.
         utilization: Current context utilization ratio (0-1+). Above 1.0 means overflow.
+        overflow: Set when running in response to a ContextWindowOverflowException.
+            Strategies should bypass utilization gates when True.
+        stash: L1 stash for persisting offloaded content. Present when storage is configured.
+        invocation_context: The request this reduction runs for, if any; a nested call that joins it
+            adds to the request's usage, but the request's limits don't apply.
     """
 
     messages: Messages
     agent: Agent
     utilization: float
+    overflow: bool = field(default=False)
+    stash: Stash | None = field(default=None)
+    invocation_context: InvocationContext | None = field(default=None)
 
 
 @runtime_checkable
@@ -61,11 +72,46 @@ class ContextStrategy(Protocol):
         ...
 
 
+class StashConfig(TypedDict, total=False):
+    """Configuration for the L1 stash.
+
+    Each agent stashes under ``context/<session_id>/scopes/agent/<agent_id>/``. The prefix is dropped
+    only when a namespaced view is passed as this config's ``storage``; that view becomes the exact
+    stash root, so agents given the same view share one stash. Deleting a session leaves a shared
+    stash in place.
+
+    Attributes:
+        storage: Storage backend. Defaults to InMemoryStorage when omitted.
+        retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
+
+    Example:
+        ```python
+        storage = S3Storage(bucket="my-bucket")
+
+        # Namespaced view passed to the stash: stashes at "team/" (prefix dropped, shared).
+        ContextManager(stash={"storage": storage.namespace("team")})
+
+        # Plain storage passed to the stash:
+        # stashes at "context/<session_id>/scopes/agent/<agent_id>/".
+        ContextManager(stash={"storage": storage})
+
+        # Namespaced view passed as agent-level storage: prefix still applies, under the view:
+        # stashes at "team/context/<session_id>/scopes/agent/<agent_id>/".
+        Agent(storage=storage.namespace("team"), context_manager=ContextManager())
+        ```
+    """
+
+    storage: Storage
+    retrieval_tool: bool
+
+
 class ContextManagerConfig(TypedDict, total=False):
     """Full configuration for a ContextManager instance.
 
     Attributes:
         strategies: Strategies for context reduction, applied as an ordered pipeline.
+        stash: L1 stash configuration. Omit or True for defaults; False to disable.
     """
 
-    strategies: list[ContextStrategy]
+    strategies: list[ContextStrategy | str]
+    stash: StashConfig | bool

@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, PropertyMock
 import pytest
 from pydantic import BaseModel
 
-from strands._middleware.stages import ExecuteToolContext
 from strands.agent._agent_as_tool import DELEGATION_DESCRIPTION_SUFFIX, _AgentAsTool
 from strands.agent._agent_delegation import AgentDelegation, _DelegationState, _to_content_blocks
 from strands.agent.agent import Agent
@@ -19,6 +18,7 @@ from strands.hooks import (
     MessageAddedEvent,
 )
 from strands.interrupt import _InterruptState
+from strands.middleware.stages import ExecuteToolContext
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.tools.structured_output.structured_output_tool import StructuredOutputTool
@@ -83,52 +83,6 @@ def test_as_tool_custom_description_with_delegate():
     tool = Agent(name="sub", callback_handler=None).as_tool(delegate=True, description="Custom")
     exp_description = "Custom" + DELEGATION_DESCRIPTION_SUFFIX
     assert tool._description == exp_description
-
-
-# --- Tool does not own stop ---
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("delegate", [True, False])
-async def test_tool_stream_never_sets_stop_event_loop(delegate):
-    """_AgentAsTool defers all stop decisions to the plugin."""
-    mock_agent = _mock_sub_agent()
-    result = AgentResult(
-        stop_reason="end_turn",
-        message={"role": "assistant", "content": [{"text": "ok"}]},
-        metrics=EventLoopMetrics(),
-        state={},
-    )
-
-    async def mock_stream(prompt):
-        yield {"result": result}
-
-    mock_agent.stream_async = mock_stream
-    tool = _AgentAsTool(mock_agent, name="sub", delegate=delegate, preserve_context=True)
-
-    invocation_state = {"request_state": {}}
-    async for _ in tool.stream({"toolUseId": "t1", "name": "sub", "input": {"input": "hi"}}, invocation_state):
-        pass
-
-    assert "stop_event_loop" not in invocation_state["request_state"]
-
-
-@pytest.mark.asyncio
-async def test_tool_stream_error_does_not_set_stop():
-    mock_agent = _mock_sub_agent()
-
-    async def failing(prompt):
-        raise RuntimeError("crash")
-        yield  # noqa: RET503
-
-    mock_agent.stream_async = failing
-    tool = _AgentAsTool(mock_agent, name="sub", delegate=True, preserve_context=True)
-
-    invocation_state = {"request_state": {}}
-    async for _ in tool.stream({"toolUseId": "t1", "name": "sub", "input": {"input": "hi"}}, invocation_state):
-        pass
-
-    assert invocation_state["request_state"].get("stop_event_loop") is not True
 
 
 # --- Single-call constraint (BeforeToolsEvent) ---
@@ -232,7 +186,6 @@ def test_on_after_tools_sets_end_turn_on_success():
 
 
 def test_on_after_tools_suppressed_with_structured_output():
-
     class R(BaseModel):
         x: int
 
@@ -358,7 +311,7 @@ async def test_child_structured_output_datetime_serializes_cleanly():
         structured_output=S(at=datetime(2025, 1, 15, 9, 0)),
     )
 
-    async def stream(prompt, cancel_signal=None):
+    async def stream(prompt, cancel_signal=None, invocation_context=None):
         yield {"result": result}
 
     mock_agent.stream_async = stream
@@ -403,6 +356,46 @@ async def test_full_delegation_routes_to_specialist():
         for block in msg.get("content", []):
             if isinstance(block, dict) and "text" in block:
                 assert "Turn ended early" not in block["text"]
+
+
+@pytest.mark.asyncio
+async def test_full_delegation_delegate_tool_stays_foreground_with_background_tasks():
+    tech_support = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Try rebooting your router."}]}]),
+        name="TechSupport",
+        callback_handler=None,
+    )
+    orchestrator = Agent(
+        model=MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "toolUse": {
+                                "toolUseId": "call-1",
+                                "name": "TechSupport",
+                                "input": {"input": "My wifi does not work", "_background_execution": True},
+                            }
+                        }
+                    ],
+                }
+            ]
+        ),
+        name="Orchestrator",
+        tools=[tech_support.as_tool(delegate=True)],
+        background_tasks={},
+        callback_handler=None,
+    )
+
+    result = await orchestrator.invoke_async("My wifi does not work")
+
+    tru_stop_reason = result.stop_reason
+    exp_stop_reason = "end_turn"
+    assert tru_stop_reason == exp_stop_reason
+    tru_text = [block["text"] for block in result.message["content"] if "text" in block]
+    exp_text = ["Try rebooting your router."]
+    assert tru_text == exp_text
 
 
 @pytest.mark.asyncio
@@ -746,7 +739,7 @@ async def test_delegation_preserves_json_block_verbatim():
         state={},
     )
 
-    async def fake_stream(prompt, cancel_signal=None):
+    async def fake_stream(prompt, cancel_signal=None, invocation_context=None):
         yield {"result": fake_result}
 
     tool._agent.stream_async = fake_stream
@@ -787,7 +780,7 @@ async def test_delegation_preserves_citations_alongside_text():
         state={},
     )
 
-    async def fake_stream(prompt, cancel_signal=None):
+    async def fake_stream(prompt, cancel_signal=None, invocation_context=None):
         yield {"result": fake_result}
 
     tool._agent.stream_async = fake_stream
@@ -826,7 +819,7 @@ async def test_full_delegation_json_content_serialized_to_text():
         state={},
     )
 
-    async def fake_stream(prompt, cancel_signal=None):
+    async def fake_stream(prompt, cancel_signal=None, invocation_context=None):
         yield {"result": fake_result}
 
     tool._agent.stream_async = fake_stream

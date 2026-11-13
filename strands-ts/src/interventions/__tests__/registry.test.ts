@@ -546,6 +546,27 @@ describe('InterventionRegistry', () => {
         await expect(hookRegistry.invokeCallbacks(event)).rejects.toThrow('Interrupt raised')
       }
     )
+
+    // Guards #4371: a handler calling event.interrupt() directly pauses the agent under any onError.
+    it.each(['proceed', 'deny'] as const)(
+      'a handler-raised InterruptError propagates regardless of onError=%s',
+      async (onError) => {
+        class DirectInterruptHandler extends InterventionHandler {
+          readonly name = 'direct-interrupt'
+          override readonly onError = onError
+          override beforeToolCall(event: BeforeToolCallEvent): InterventionAction {
+            event.interrupt({ name: 'approval', reason: 'approve?' })
+            return { type: 'proceed' }
+          }
+        }
+
+        new InterventionRegistry([new DirectInterruptHandler()], hookRegistry)
+
+        const event = makeBeforeToolCallEvent()
+        await expect(hookRegistry.invokeCallbacks(event)).rejects.toThrow('Interrupt raised')
+        expect(event.cancel).toBe(false)
+      }
+    )
   })
 
   describe('transform', () => {

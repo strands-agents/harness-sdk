@@ -1,1 +1,1 @@
-"""Experimental and internal. Reduction method primitives."""
+"""Reduction method primitives for context management."""

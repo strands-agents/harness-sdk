@@ -41,3 +41,6 @@ export type { SwarmConfig, SwarmNodeDefinition, SwarmOptions } from './swarm.js'
 export type { MultiAgentPlugin } from './plugins.js'
 
 export type { MultiAgent, MultiAgentInput, MultiAgentInvokeOptions } from './multiagent.js'
+
+export { AgentSpec, Choice, Fixed, Inherit, Open, Option, Preset } from './spec.js'
+export type { AgentBuilder } from './spec.js'

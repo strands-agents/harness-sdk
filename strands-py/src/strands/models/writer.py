@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -18,8 +19,15 @@ from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
-from ._validation import _has_location_source, validate_config_keys, warn_on_tool_choice_not_supported
-from .model import BaseModelConfig, Model
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._validation import (
+    _has_location_source,
+    _log_skipped_blocks,
+    validate_config_keys,
+    warn_on_cache_config_not_supported,
+    warn_on_tool_choice_not_supported,
+)
+from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +52,7 @@ class WriterModel(Model):
         Attributes:
             model_id: Model name to use (e.g. palmyra-x5, palmyra-x4, etc.).
             max_tokens: Maximum number of tokens to generate.
+            cache_config: Prompt caching settings. Writer honors no cache fields, so any set field is ignored.
             stop: Default stop sequences.
             stream_options: Additional options for streaming.
             temperature: What sampling temperature to use.
@@ -52,6 +61,7 @@ class WriterModel(Model):
 
         model_id: str
         max_tokens: int | None
+        cache_config: CacheConfig | None
         stop: str | list[str] | None
         stream_options: dict[str, Any]
         temperature: float | None
@@ -81,6 +91,15 @@ class WriterModel(Model):
         """
         validate_config_keys(model_config, self.WriterConfig)
         self.config.update(model_config)
+
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        The Writer API has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @override
     def get_config(self) -> WriterConfig:
@@ -224,6 +243,7 @@ class WriterModel(Model):
         """
         formatted_messages: list[dict[str, Any]]
         formatted_messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+        skipped: Counter[str] = Counter()
 
         for message in messages:
             contents = message["content"]
@@ -232,7 +252,7 @@ class WriterModel(Model):
             filtered_contents = []
             for content in contents:
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Writer | skipping content block")
+                    skipped["Location sources are not supported by Writer | skipping content block"] += 1
                     continue
                 filtered_contents.append(content)
 
@@ -255,14 +275,17 @@ class WriterModel(Model):
                 if "toolResult" in content
             ]
 
+            # Tool results must immediately follow tool calls, before any injected user text.
+            formatted_messages.extend(formatted_tool_messages)
+
             formatted_message = {
                 "role": message["role"],
                 "content": formatted_contents if len(formatted_contents) > 0 else "",
                 **({"tool_calls": formatted_tool_calls} if formatted_tool_calls else {}),
             }
             formatted_messages.append(formatted_message)
-            formatted_messages.extend(formatted_tool_messages)
 
+        _log_skipped_blocks(logger, skipped)
         return [message for message in formatted_messages if message["content"] or "tool_calls" in message]
 
     def format_request(
@@ -279,7 +302,7 @@ class WriterModel(Model):
             The formatted request.
         """
         request = {
-            **{k: v for k, v in self.config.items()},
+            **{k: v for k, v in self.config.items() if k != "cache_config"},
             "messages": self._format_request_messages(messages, system_prompt),
             "stream": True,
         }
@@ -304,6 +327,8 @@ class WriterModel(Model):
                 for tool_spec in tool_specs
             ]
 
+        # Writer applies no CacheConfig fields; warn that any set field is ignored.
+        warn_on_cache_config_not_supported(self.config.get("cache_config"), "Writer", supported=set(), stacklevel=3)
         return request
 
     def format_chunk(self, event: Any) -> StreamEvent:
@@ -349,6 +374,8 @@ class WriterModel(Model):
                         return {"messageStop": {"stopReason": "tool_use"}}
                     case "length":
                         return {"messageStop": {"stopReason": "max_tokens"}}
+                    case "content_filter":
+                        return {"messageStop": {"stopReason": "content_filtered"}}
                     case _:
                         return {"messageStop": {"stopReason": "end_turn"}}
 

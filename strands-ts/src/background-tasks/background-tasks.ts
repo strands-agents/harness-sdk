@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { continuations } from '../agent/continuation.js'
 import { AgentAsTool } from '../agent/agent-as-tool.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 import { AfterInvocationEvent, BeforeModelCallEvent, InitializedEvent } from '../hooks/events.js'
 import { HookOrder } from '../hooks/types.js'
 import { InterruptError } from '../interrupt.js'
@@ -12,7 +13,16 @@ import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { tool } from '../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../tools/tool.js'
 import type { ToolSpec } from '../tools/types.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock, toolResultContentFromData } from '../types/messages.js'
+import { deepCopy } from '../types/json.js'
+import {
+  JsonBlock,
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  toolResultContentFromData,
+} from '../types/messages.js'
+import type { ToolResultContent } from '../types/messages.js'
 
 import { BackgroundTaskNotFoundError } from './errors.js'
 import { InProcessTaskManager } from './in-process/manager.js'
@@ -61,7 +71,7 @@ export class BackgroundTasks implements Plugin {
     this._manageTool = tool({
       name: MANAGE_TOOL_NAME,
       description:
-        'List, inspect, or cancel background tasks. Completed results are delivered automatically; do not poll with this tool.',
+        "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. Do not poll for results.",
       inputSchema: z.object({
         mode: z.enum(['list', 'get', 'cancel']).describe('Whether to list, inspect, or cancel background tasks.'),
         taskId: z
@@ -79,7 +89,7 @@ export class BackgroundTasks implements Plugin {
         if (!taskId) throw new TypeError(`Task ID is required for mode '${mode}'`)
         const task = this._tasks.get(taskId)
         if (!task) throw new BackgroundTaskNotFoundError(taskId)
-        if (mode === 'get') return task
+        if (mode === 'get') return taskResultContent(task)
         const cancelled = isTaskStatusTerminal(task.status) ? task : await this._manager.cancel(taskId)
         return { taskId: cancelled.taskId, status: cancelled.status }
       },
@@ -179,12 +189,13 @@ export class BackgroundTasks implements Plugin {
     toolUse: ToolUseData,
     invocationState: InvocationState,
     passId: string,
-    tool: Tool
+    tool: Tool,
+    invocationContext?: InvocationContext
   ): Promise<ToolResultBlock> {
     if (this._agent.cancelSignal.aborted) return toolError(toolUse.toolUseId, 'Tool execution cancelled')
 
     try {
-      const task = await this._manager.submit(toolUse, invocationState, passId, tool)
+      const task = await this._manager.submit(toolUse, invocationState, passId, tool, invocationContext)
       return new ToolResultBlock({
         toolUseId: toolUse.toolUseId,
         status: 'success',
@@ -296,17 +307,14 @@ export class BackgroundTasks implements Plugin {
     const taskIds = terminalTasks.map((task) => task.taskId)
     continuations.addInput(event, {
       args: terminalTasks.flatMap((task) => {
-        const content = task.result?.content.map(toolResultContentFromData) ?? [
-          new TextBlock(task.error?.message ?? 'Background task cancelled'),
-        ]
         return [
           new Message({
             role: 'assistant',
             content: [
               new ToolUseBlock({
-                name: 'strands_background_task_result',
+                name: MANAGE_TOOL_NAME,
                 toolUseId: task.taskId,
-                input: { toolName: task.toolName },
+                input: { mode: 'get', taskId: task.taskId },
               }),
             ],
           }),
@@ -315,8 +323,9 @@ export class BackgroundTasks implements Plugin {
             content: [
               new ToolResultBlock({
                 toolUseId: task.taskId,
-                status: task.status === 'completed' ? 'success' : 'error',
-                content,
+                // The get succeeds even if the task failed; task status and errors are in the metadata.
+                status: 'success',
+                content: taskResultContent(task),
               }),
             ],
           }),
@@ -367,6 +376,11 @@ export class BackgroundTasks implements Plugin {
     const wildcard = this._policy.get('*')
     return wildcard ? { mode: wildcard, exact: false } : undefined
   }
+}
+
+function taskResultContent(task: BackgroundTask): ToolResultContent[] {
+  const { result, ...metadata } = task
+  return [new JsonBlock({ json: deepCopy(metadata) }), ...(result?.content.map(toolResultContentFromData) ?? [])]
 }
 
 function toolError(toolUseId: string, message: string): ToolResultBlock {

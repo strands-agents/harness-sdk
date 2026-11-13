@@ -1,7 +1,10 @@
 <div align="center">
   <div>
     <a href="https://strandsagents.com">
-      <img src="https://strandsagents.com/latest/assets/logo-github.svg" alt="Strands Agents" width="55px" height="105px">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/wordmark-github-dark.svg">
+        <img src="https://strandsagents.com/latest/assets/wordmark-github-light.svg" alt="Strands" width="320">
+      </picture>
     </a>
   </div>
 
@@ -26,9 +29,15 @@
   <p>
     <a href="https://strandsagents.com/">Documentation</a>
     ◆ <a href="https://github.com/strands-agents/samples">Samples</a>
-    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python SDK</a>
-    ◆ <a href="https://github.com/strands-agents/tools">Tools</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-cli">CLI</a>
     ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-mcp">MCP Server</a>
+    <br>
+    Harness (<a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">TypeScript</a>)
+    ◆ SDK (<a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-ts">TypeScript</a>)
+    ◆ <a href="https://github.com/strands-agents/box">Box</a>
+    ◆ <a href="https://github.com/strands-agents/shell">Shell</a>
+    ◆ <a href="https://github.com/strands-agents/evals">Evals</a>
+    ◆ <a href="https://github.com/strands-labs">Labs</a>
   </p>
 </div>
 
@@ -36,7 +45,7 @@ This MCP server provides curated documentation access to your GenAI tools via ll
 
 ## Features
 
-- **Document Search**: Weighted TF-IDF ranking over document titles, extended to page content once a page is hydrated (fetched), so body terms become searchable
+- **Document Search**: Field-weighted BM25 ranking over page titles, URL paths, and llms.txt descriptions, extended to page content once a page is hydrated (fetched), so body terms become searchable
 - **Section-Based Browsing**: Browse document structure via table of contents, then fetch only the section you need - more token-efficient than retrieving full pages
 - **Curated Content**: Indexes documentation from llms.txt files with clean, human-readable titles
 - **On-Demand Fetching**: Lazy-loads full document content only when needed for optimal performance
@@ -45,12 +54,21 @@ This MCP server provides curated documentation access to your GenAI tools via ll
 
 ### Tool behavior
 
-- `search_docs(query, k)` ranks by document title and by page content once a page has been hydrated. Both title-like keywords and body terms work; call `fetch_doc` to inspect a result's contents.
-- Search scores are unbounded weighted TF-IDF values. They are useful only for ordering results from the same query; they are not probabilities and should not be compared across queries.
+- `search_docs(query, k, alternate_queries)` ranks by page title, URL path, and llms.txt description, and by page content once a page has been hydrated. Both title-like keywords and body terms work; call `fetch_doc` to inspect a result's contents. The changelog index, which concatenates every release note, is ranked by title and description only.
+- `alternate_queries` takes up to 4 other phrasings of the same question. Each phrasing is searched and the rankings are combined with reciprocal rank fusion, so pages matched by several phrasings rank first. Phrasings that tokenize the same as an earlier one are searched once.
+- Search scores are unbounded field-weighted BM25 values, or fused rank scores when `alternate_queries` are given. They are useful only for ordering results from the same query; they are not probabilities and should not be compared across queries.
 - `search_docs` returns an empty list when no document matches. If a matched page cannot be fetched for its snippet, the result still includes the URL and title.
-- `fetch_doc` returns `{"error": "...", "url": "..."}` for unsupported URLs and failed page fetches. For
-  sectioned documents, unknown section IDs also return an error; `section` is ignored when the full document is
-  returned automatically.
+- `fetch_doc` returns `{"error": "...", "url": "...", "hint": "..."}` for unsupported URLs, URLs that are not in
+  the docs catalog (with the closest catalog URLs as `suggestions`), and unknown section IDs (with the valid
+  `sections`); `section` is ignored when the full document is returned automatically. A catalog page that cannot be
+  fetched is reported as a tool error (`isError: true`).
+- `find_integrations(query, type, language, maintained_by, sdk, limit)` filters the integrations catalog feed at
+  `https://strandsagents.com/integrations.json`, fetched on first use and cached for 10 minutes. It returns the total
+  match count and up to `limit` results carrying the maintainer, install commands, and a docs URL; on-site docs URLs
+  can be passed to `fetch_doc`. A failed refresh keeps serving the cached copy; a feed that has never loaded is
+  reported as a tool error.
+- All tools are annotated read-only and idempotent, and the server sends `instructions` telling clients when to use
+  it and in which order to call the tools.
 
 ## Configuration
 
@@ -222,6 +240,7 @@ The Inspector is also useful for troubleshooting MCP server issues as it provide
 4. **Start using the documentation tools**:
    - `search_docs` - Find relevant documentation with intelligent ranking
    - `fetch_doc` - Browse a page's structure and preamble, then read individual sections
+   - `find_integrations` - Filter the integrations catalog by type, language, and maintainer
    - The server automatically indexes curated content from llms.txt files
 
 ## Server Development

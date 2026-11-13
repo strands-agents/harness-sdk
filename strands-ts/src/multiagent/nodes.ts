@@ -1,7 +1,8 @@
 import { Agent } from '../agent/agent.js'
 import { AgentPrinter, type Printer } from '../agent/printer.js'
-import type { InvocationState, InvokeOptions, InvokableAgent, AgentStreamEvent } from '../types/agent.js'
-import type { MultiAgentInput } from './multiagent.js'
+import type { InvocationState, InvokableAgent, InvokeOptions, AgentStreamEvent } from '../types/agent.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
+import type { MultiAgentInput, MultiAgentInvokeOptions } from './multiagent.js'
 import { dropStaleInterruptedResult } from './multiagent.js'
 import type { MultiAgentStreamEvent } from './events.js'
 import { NodeStreamUpdateEvent, NodeResultEvent } from './events.js'
@@ -12,6 +13,7 @@ import { logger } from '../logging/logger.js'
 import type { z } from 'zod'
 import { normalizeError } from '../errors.js'
 import { omitUndefined } from '../types/json.js'
+import { LIMIT_STOP_REASONS, limitStopMessage } from '../types/messages.js'
 
 /**
  * Known node type identifiers with extensibility for custom nodes.
@@ -55,6 +57,9 @@ export interface NodeInputOptions {
    * don't interleave on stdout.
    */
   bufferOutput?: boolean
+
+  /** The request this node runs as part of, forwarded to its underlying agent or orchestrator. */
+  invocationContext?: InvocationContext
 }
 
 /**
@@ -263,6 +268,7 @@ export class AgentNode extends Node {
     // Resolve once per handle() call — Node.stream() normally supplies this;
     // handle() is public API, so direct callers get per-call state.
     const invocationState: InvocationState = options?.invocationState ?? {}
+    const invocationContext = options?.invocationContext
 
     // Only Agent instances support snapshot/restore for state isolation.
     // When `preserveContext` is set, skip the snapshot/restore cycle so the agent
@@ -293,6 +299,7 @@ export class AgentNode extends Node {
       const invokeOptions: InvokeOptions = {
         ...(options?.structuredOutputSchema && { structuredOutputSchema: options.structuredOutputSchema }),
         ...(options?.cancelSignal && { cancelSignal: options.cancelSignal }),
+        ...(invocationContext && { invocationContext }),
         invocationState,
       }
 
@@ -312,6 +319,14 @@ export class AgentNode extends Node {
       }
 
       const agentResult = next.value
+      // Returned rather than thrown so the failed node keeps its usage.
+      if (LIMIT_STOP_REASONS.has(agentResult.stopReason)) {
+        return omitUndefined({
+          status: Status.FAILED,
+          error: new Error(limitStopMessage(this.id, agentResult.stopReason)),
+          usage: agentResult.metrics?.accumulatedUsage,
+        })
+      }
       const interrupted =
         agentResult.stopReason === 'interrupt' && agentResult.interrupts && agentResult.interrupts.length > 0
 
@@ -388,11 +403,14 @@ export class MultiAgentNode extends Node {
     // Resolve once per handle() call — Node.stream() normally supplies this;
     // handle() is public API, so direct callers get per-call state.
     const invocationState: InvocationState = options?.invocationState ?? {}
+    const invocationContext = options?.invocationContext
 
-    const gen = this._orchestrator.stream(input, {
+    const nestedOptions: MultiAgentInvokeOptions = {
       invocationState,
       ...(options?.cancelSignal && { cancelSignal: options.cancelSignal }),
-    })
+      ...(invocationContext && { invocationContext }),
+    }
+    const gen = this._orchestrator.stream(input, nestedOptions)
     let next = await gen.next()
     while (!next.done) {
       const event = next.value

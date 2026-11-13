@@ -18,6 +18,7 @@ from .interrupt import _Interruptible
 from .media import DocumentContent, ImageContent
 
 if TYPE_CHECKING:
+    from ..agent.invocation_context import InvocationContext
     from .agent import LocalAgent
 
 JSONSchema = dict
@@ -119,6 +120,35 @@ class ToolResult(TypedDict):
     toolUseId: str
 
 
+class _ToolResultBlockData(TypedDict):
+    toolResult: ToolResult
+
+
+@dataclass
+class ToolResultBlock:
+    """Tool result content for a message.
+
+    Attributes:
+        tool_use_id: Identifier of the tool request that produced this result.
+        status: Whether the tool execution succeeded or failed.
+        content: Content returned by the tool.
+    """
+
+    tool_use_id: str
+    status: ToolResultStatus
+    content: list[ToolResultContent]
+
+    def to_dict(self) -> _ToolResultBlockData:
+        """Return the dictionary form of this block."""
+        return {
+            "toolResult": {
+                "toolUseId": self.tool_use_id,
+                "status": self.status,
+                "content": self.content,
+            }
+        }
+
+
 class ToolChoiceAuto(TypedDict):
     """Configuration for automatic tool selection.
 
@@ -163,6 +193,9 @@ class ToolContext(_Interruptible, Generic[_LocalAgentT]):
                        :meth:`~strands.tools.mcp.mcp_client.MCPClient.call_tool_async`). A tool that
                        ignores it runs to completion. Treat as read-only: setting or clearing it
                        from a tool is unsupported.
+        invocation_context: The request this tool call belongs to (``None`` outside one). Forward it
+                            as ``invocation_context`` to an agent the tool runs so that agent joins
+                            the request, sharing its limits and usage.
 
     Note:
         This class is intended to be instantiated by the SDK. Direct construction by users
@@ -176,6 +209,7 @@ class ToolContext(_Interruptible, Generic[_LocalAgentT]):
     # invoking agent's signal. Kept out of repr and equality: an Event carries no useful text
     # and compares by identity.
     cancel_signal: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
+    invocation_context: "InvocationContext | None" = field(default=None, repr=False, compare=False)
 
     def _interrupt_id(self, name: str) -> str:
         """Unique id for the interrupt.

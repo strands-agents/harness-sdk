@@ -13,7 +13,7 @@ describe('remark-mkdocs-snippets', () => {
   beforeAll(() => {
     // Create a temp directory for test fixtures
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'snippets-test-'))
-    
+
     // Create a test source file with section markers
     const sourceContent = `import { Agent } from '@strands-agents/sdk'
 
@@ -36,7 +36,7 @@ function helper() {
 }
 `
     fs.writeFileSync(path.join(tempDir, 'example.ts'), sourceContent)
-    
+
     // Create a file with indented sections
     const indentedContent = `class MyClass {
   // --8<-- [start:method]
@@ -48,7 +48,7 @@ function helper() {
 }
 `
     fs.writeFileSync(path.join(tempDir, 'indented.ts'), indentedContent)
-    
+
     // Create a file with spaces in markers (like some mkdocs files have)
     const spacedContent = `# --8<-- [start: imports]
 from strands import Agent
@@ -74,7 +74,7 @@ from strands import Agent
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     expect(result).toContain('const agent = new Agent()')
     expect(result).toContain('await agent.invoke')
     expect(result).not.toContain('--8<--')
@@ -88,7 +88,7 @@ from strands import Agent
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     expect(result).toContain('const agent = new Agent()')
     expect(result).toContain('const advancedAgent = new Agent')
   })
@@ -99,7 +99,7 @@ from strands import Agent
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     // Should have the method content without the class-level indentation
     expect(result).toContain('async doSomething()')
     expect(result).toContain('const x = 1')
@@ -111,7 +111,7 @@ from strands import Agent
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     expect(result).toContain('from strands import Agent')
   })
 
@@ -123,7 +123,7 @@ from strands import Agent
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     expect(result).toContain('// Some comment')
     expect(result).toContain('// Another comment')
     expect(result).toContain('const agent = new Agent()')
@@ -135,7 +135,7 @@ from strands import Agent
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     expect(result).toContain('Section "nonexistent_section" not found')
   })
 
@@ -145,7 +145,7 @@ from strands import Agent
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     expect(result).toContain('Failed to load snippet')
   })
 
@@ -155,7 +155,7 @@ from strands import Agent
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     // Should contain the entire file
     expect(result).toContain('import { Agent }')
     expect(result).toContain('function helper()')
@@ -184,7 +184,7 @@ const y = 2
 \`\`\`
 `
     const result = await processMarkdown(markdown, tempDir)
-    
+
     expect(result).toContain('const x = 1')
     expect(result).toContain('const y = 2')
   })

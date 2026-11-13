@@ -6,17 +6,65 @@
 
 import type { Plugin } from '../plugins/plugin.js'
 import type { Tool } from '../tools/tool.js'
+import { createAuxiliaryInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
+import { ModelProxy } from '../models/model-proxy.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
 import { EPHEMERAL } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
+import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
-import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.js'
+import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
+import { ToolUseBlock, type Message } from '../types/messages.js'
+
+/**
+ * The retrieval tool calls answered by the message at `index`. Their results are copies of
+ * stashed content, so the stash leaves them out. A tool result follows the message that called it.
+ */
+function retrievalCallsBefore(messages: readonly Message[], index: number): Set<string> {
+  const ids = new Set<string>()
+  for (const block of messages[index - 1]?.content ?? []) {
+    if (block instanceof ToolUseBlock && block.name === RETRIEVAL_TOOL_NAME) ids.add(block.toolUseId)
+  }
+  return ids
+}
+
+const TRUNCATE_PREVIEW_TOKENS = 750
+
+/** @internal */
+export const CONTEXT_MANAGER_PRESETS = ['auto', 'agentic'] as const
+
+/** @internal */
+export type ContextManagerPreset = (typeof CONTEXT_MANAGER_PRESETS)[number]
+
+/** The strategy pipeline of each preset. `auto` is also the default for a config that names none. */
+const PRESET_STRATEGIES: Record<ContextManagerPreset, () => ContextStrategy[]> = {
+  auto: () => [
+    Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({ blockThreshold: 1_500 }),
+    Offload.summarize('*').when({ contextUtilization: '85%', preserveRecent: 4 }),
+  ],
+  agentic: () => [
+    Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({ blockThreshold: 8_000 }),
+    Offload.summarize('*').when({ contextUtilization: '100%', preserveRecent: 4 }),
+  ],
+}
+
+/**
+ * Supported values for the `contextManager` parameter.
+ *
+ * - `"auto"`: Managed context with proactive compression + offloading.
+ * - `"agentic"`: Model-driven context management via injected tools.
+ * - {@link ContextManagerConfig}: Custom strategy pipeline and stash configuration.
+ * - {@link ContextManager}: A pre-built instance, used as-is. An instance binds to one agent;
+ *   construct one per `Agent`.
+ * - `false`: Explicitly disable all context management (no compression, no offloading).
+ */
+export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig | ContextManager | false
 
 /**
  * Manages context reduction for an agent's conversation.
@@ -25,12 +73,12 @@ import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.
  * The emergency truncation is always appended as the final strategy — it recomputes
  * utilization and only fires if the window is still overflowing after user strategies.
  *
- * The ContextManager is a first-class agent component — pass it via the
- * `contextManager` parameter on the Agent constructor. When present, it owns
- * overflow recovery — no separate ConversationManager is needed.
+ * Configured through the Agent's `contextManager` parameter — pass a preset
+ * string (`'auto'`, `'agentic'`), a `ContextManagerConfig`, or a `ContextManager`
+ * instance; the Agent registers the manager. When present, it owns overflow
+ * recovery and proactive compression — no separate ConversationManager is needed.
  *
  * @experimental
- * @internal
  */
 export class ContextManager implements Plugin {
   readonly name = 'strands:context-manager'
@@ -38,23 +86,37 @@ export class ContextManager implements Plugin {
   private readonly _strategies: ContextStrategy[]
   private readonly _stashStorage: Storage | false | undefined
   private readonly _enableRetrievalTool: boolean
-  private readonly _retrievalToolUseIds = new Set<string>()
   private _stash: Stash | undefined
   private _stashIsDurable = false
   private _retrievalTool: Tool | undefined
 
   constructor(config?: ContextManagerConfig) {
-    this._strategies = [
-      ...(config?.strategies ?? [
-        Offload.truncate('toolResults').when({ threshold: 2500 }),
-        Offload.summarize('*').when({ threshold: 1000, utilization: 0.85 }),
-      ]),
-      new EmergencyTruncateStrategy(),
-    ]
+    const userStrategies = config?.strategies ? resolveStrategies(config.strategies) : PRESET_STRATEGIES.auto()
+    this._strategies = [...userStrategies, new EmergencyTruncateStrategy()]
     const stashConfig = config?.stash
     const stashObj = typeof stashConfig === 'object' ? stashConfig : undefined
     this._stashStorage = stashConfig === false ? false : stashObj?.storage
     this._enableRetrievalTool = stashConfig !== false && stashObj?.retrievalTool !== false
+  }
+
+  /**
+   * Resolves a `ContextManagerStrategy` value into a `ContextManager` instance.
+   *
+   * @param strategy - A preset string, config object, ContextManager instance, false, or undefined
+   * @returns The instance as-is; a new ContextManager for preset strings and configs; undefined for false/undefined
+   */
+  static from(strategy: ContextManagerStrategy | undefined): ContextManager | undefined {
+    if (strategy === false || strategy === undefined) return undefined
+    if (strategy instanceof ContextManager) return strategy
+    if (typeof strategy === 'string') {
+      if (!(CONTEXT_MANAGER_PRESETS as readonly string[]).includes(strategy)) {
+        throw new Error(
+          `Unknown contextManager preset: "${strategy}". Valid presets: ${CONTEXT_MANAGER_PRESETS.map((s) => `"${s}"`).join(', ')}`
+        )
+      }
+      return new ContextManager({ strategies: PRESET_STRATEGIES[strategy]() })
+    }
+    return new ContextManager(strategy)
   }
 
   getTools(): Tool[] {
@@ -66,19 +128,27 @@ export class ContextManager implements Plugin {
     return [this._retrievalTool]
   }
 
-  initAgent(agent: LocalAgent): void {
+  async initAgent(agent: LocalAgent): Promise<void> {
     if (this._stashStorage !== false) {
       const storage = this._stashStorage ?? agent.storage ?? new InMemoryStorage()
       this._stashIsDurable = !(EPHEMERAL in storage)
-      this._stash = new Stash(storage, agent.sessionId, agent.id)
+      // Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
+      // Plain (non-namespaced) explicit storage still gets the per-agent prefix. Mirrors strands-py.
+      this._stash = new Stash(storage, agent.sessionId, agent.id, {
+        customStashNamespace: this._stashStorage !== undefined,
+      })
     }
 
     if (this._stash) {
       const stash = this._stash
-      const skipSet = this._retrievalToolUseIds
+      const storedKeys = new Set(await stash.list())
+      for (const [index, message] of agent.messages.entries()) {
+        await stash.storeMessage(message, retrievalCallsBefore(agent.messages, index), storedKeys)
+      }
       agent.addHook(MessageAddedEvent, async (event) => {
-        trackRetrievalToolUseIds(event.message, skipSet)
-        await stash.storeMessage(event.message, skipSet)
+        const messages = event.agent.messages
+        const index = messages.indexOf(event.message)
+        await stash.storeMessage(event.message, retrievalCallsBefore(messages, index === -1 ? messages.length : index))
       })
     }
 
@@ -87,7 +157,7 @@ export class ContextManager implements Plugin {
     }
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
-      await this._runStrategies(event.agent, event.projectedInputTokens)
+      await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)
     })
 
     // Assumes sequential invocations on this agent (no concurrent calls)
@@ -104,7 +174,7 @@ export class ContextManager implements Plugin {
         return
       }
 
-      const acted = await this._runStrategies(event.agent)
+      const acted = await this._runStrategies(event.agent, undefined, true, event.invocationContext)
       if (!acted) {
         logger.warn(`agentId=<${event.agent.id}> | no strategy made progress, skipping retry`)
         return
@@ -134,24 +204,35 @@ export class ContextManager implements Plugin {
     return this._stashIsDurable
   }
 
-  private async _runStrategies(agent: LocalAgent, precomputedInputTokens?: number): Promise<boolean> {
+  private async _runStrategies(
+    agent: LocalAgent,
+    precomputedInputTokens?: number,
+    overflow?: boolean,
+    invocationContext?: InvocationContext
+  ): Promise<boolean> {
     const messages = agent.messages
-    const inputTokens = precomputedInputTokens ?? (await agent.model.countTokens(messages))
+    const inputTokens = precomputedInputTokens ?? (await new ModelProxy(agent.model).countTokens(messages))
+    const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
 
     const strategyContext: ContextState = {
       messages,
       agent,
       utilization: agent.model.estimateUtilization(inputTokens),
+      ...(overflow ? { overflow: true } : {}),
       ...(this._stash ? { stash: this._stash } : {}),
+      ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
     }
 
     let anyActed = false
     for (const strategy of this._strategies) {
       try {
+        if (strategy instanceof EmergencyTruncateStrategy && anyActed) strategyContext.overflow = false
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(await agent.model.countTokens(messages))
+          strategyContext.utilization = agent.model.estimateUtilization(
+            await new ModelProxy(agent.model).countTokens(messages)
+          )
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {

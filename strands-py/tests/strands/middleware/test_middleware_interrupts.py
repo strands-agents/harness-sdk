@@ -6,14 +6,10 @@ import pytest
 
 import strands
 from strands import Agent
-from strands._middleware.stages import (
-    AgentStreamContext,
-    ExecuteToolStage,
-    MiddlewareInterruptResult,
-    _resolve_middleware_interrupt,
-)
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
+from strands.middleware._agent_stream import AgentStreamContext
+from strands.middleware.stages import ExecuteToolStage, MiddlewareInterruptResult, _resolve_middleware_interrupt
 from strands.types._events import ToolInterruptEvent, ToolResultEvent
 from tests.fixtures.mock_hook_provider import MockHookProvider
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -56,7 +52,7 @@ def test_middleware_interrupt_halts_agent(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, approval_gate)
+    agent.add_middleware(ExecuteToolStage, approval_gate)
     result = agent("what is 2+2?")
 
     assert result.stop_reason == "interrupt"
@@ -80,7 +76,7 @@ def test_middleware_interrupt_resumes_with_response(calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, approval_gate)
+    agent.add_middleware(ExecuteToolStage, approval_gate)
 
     result = agent("what is 2+2?")
     assert result.stop_reason == "interrupt"
@@ -104,7 +100,7 @@ def test_middleware_interrupt_returns_middleware_interrupt_result(calculator_too
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, gate)
+    agent.add_middleware(ExecuteToolStage, gate)
 
     result = agent("calc")
     assert result.stop_reason == "interrupt"
@@ -124,7 +120,7 @@ def test_middleware_interrupt_with_preemptive_response(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, gate_with_default)
+    agent.add_middleware(ExecuteToolStage, gate_with_default)
     result = agent("what is 2+2?")
 
     assert result.stop_reason == "end_turn"
@@ -155,7 +151,7 @@ def test_middleware_interrupt_short_circuits_tool_execution():
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, blocker)
+    agent.add_middleware(ExecuteToolStage, blocker)
     result = agent("do it")
 
     assert result.stop_reason == "interrupt"
@@ -170,7 +166,7 @@ def test_middleware_interrupt_id_is_deterministic(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, gate)
+    agent.add_middleware(ExecuteToolStage, gate)
 
     result = agent("what is 2+2?")
     assert result.interrupts[0].id.startswith("v1:middleware_execute_tool:tool_1:")
@@ -186,7 +182,7 @@ def test_middleware_interrupt_registered_in_state(calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, blocker)
+    agent.add_middleware(ExecuteToolStage, blocker)
 
     result = agent("calc")
     assert result.stop_reason == "interrupt"
@@ -210,7 +206,7 @@ def test_context_replace_preserves_interrupt(calculator_tool):
         async for event in next_fn(new_context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, replace_then_interrupt)
+    agent.add_middleware(ExecuteToolStage, replace_then_interrupt)
 
     result = agent("calc")
     assert result.stop_reason == "interrupt"
@@ -244,7 +240,7 @@ def test_middleware_interrupt_denial_returns_error_result(calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, approval_gate)
+    agent.add_middleware(ExecuteToolStage, approval_gate)
 
     result = agent("calc")
     assert result.stop_reason == "interrupt"
@@ -284,7 +280,7 @@ def test_middleware_interrupt_approval_executes_tool(calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, approval_gate)
+    agent.add_middleware(ExecuteToolStage, approval_gate)
 
     result = agent("calc")
     assert result.stop_reason == "interrupt"
@@ -308,7 +304,7 @@ async def test_middleware_interrupt_yields_interrupt_event_on_stream(calculator_
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, gate)
+    agent.add_middleware(ExecuteToolStage, gate)
 
     events = []
     async for event in agent.stream_async("calc"):
@@ -353,7 +349,7 @@ def test_tool_originated_interrupt_flows_through_chain(calculator_tool):
                 saw_interrupt_event = True
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, observer)
+    agent.add_middleware(ExecuteToolStage, observer)
     result = agent("go")
 
     assert result.stop_reason == "interrupt"
@@ -395,7 +391,7 @@ def test_tool_originated_multiple_interrupts_all_registered():
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, passthrough)
+    agent.add_middleware(ExecuteToolStage, passthrough)
     result = agent("go")
 
     assert result.stop_reason == "interrupt"
@@ -422,7 +418,7 @@ def test_before_hook_fires_but_after_hook_skipped_on_interrupt(calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, gate)
+    agent.add_middleware(ExecuteToolStage, gate)
     result = agent("calc")
 
     assert result.stop_reason == "interrupt"

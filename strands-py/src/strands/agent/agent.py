@@ -25,14 +25,17 @@ from typing import (
     TypeVar,
     Union,
     cast,
-    get_args,
+    overload,
 )
 
+from opentelemetry import baggage as baggage_api
+from opentelemetry import context as context_api
 from opentelemetry import trace as trace_api
 from pydantic import BaseModel
 
 from .. import _identifier
 from .._async import run_async
+from ..background_tasks import BackgroundTasksConfig
 from ..event_loop._retry import ModelRetryStrategy
 from ..event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY, event_loop_cycle
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
@@ -46,10 +49,10 @@ from ..types._snapshot import (
 )
 
 if TYPE_CHECKING:
-    from .._context_manager.context_manager import ContextManager
+    from .._context_manager.context_manager import ContextManager, ContextManagerStrategy
+    from .._context_manager.types import ContextManagerConfig
+    from ..background_tasks._background_tasks import _BackgroundTasks
     from ..tools import ToolProvider
-from .._middleware import MiddlewareRegistry
-from .._middleware.stages import AgentStreamContext, AgentStreamStage
 from ..handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
 from ..hooks import (
     AfterInvocationEvent,
@@ -67,6 +70,18 @@ from ..interrupt import InterruptException, _InterruptState
 from ..interventions.handler import InterventionHandler
 from ..interventions.registry import InterventionRegistry
 from ..memory import MemoryManager, MemoryManagerConfig
+from ..middleware._agent_stream import AgentStreamContext, AgentStreamStage
+from ..middleware._registry import MiddlewareRegistry
+from ..middleware.types import (
+    MiddlewareHandler,
+    MiddlewareInputHandler,
+    MiddlewareInputPhase,
+    MiddlewareOutputHandler,
+    MiddlewareOutputPhase,
+    MiddlewareStage,
+    MiddlewareWrapPhase,
+)
+from ..models._model_proxy import ModelProxy
 from ..models.bedrock import BedrockModel
 from ..models.model import Model, _ModelPlugin
 from ..models.routing import ModelRouter
@@ -74,6 +89,7 @@ from ..plugins import Plugin
 from ..plugins.registry import _PluginRegistry
 from ..sandbox import Sandbox
 from ..sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
+from ..session.repository_session_manager import RepositorySessionManager
 from ..session.session_manager import SessionManager
 from ..storage import Storage
 from ..telemetry.metrics import EventLoopMetrics
@@ -94,18 +110,26 @@ from ..types.content import (
     _ensure_tracking_id,
     split_system_prompt,
 )
-from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException
+from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException, SnapshotException
 from ..types.tools import AgentTool
 from ..types.traces import AttributeValue
 from . import _continuation
 from ._agent_as_tool import _AgentAsTool
 from ._concurrency import _ConcurrencyController
+from .agent_metadata import AgentMetadata
 from .agent_result import AgentResult
 from .base import AgentBase
 from .conversation_manager import (
     ConversationManager,
     NullConversationManager,
-    SlidingWindowConversationManager,
+)
+from .invocation_context import (
+    InvocationContext,
+    _create_auxiliary_invocation_context,
+    _create_invocation_context,
+    _invocation_context_kwargs,
+    _reached_limit,
+    _unwrap_invocation_context,
 )
 from .state import AgentState
 
@@ -134,6 +158,11 @@ async def _link_cancel_signal(external: threading.Event, internal: threading.Eve
 # TypeVar for generic structured output
 T = TypeVar("T", bound=BaseModel)
 
+# Stage token generics bound by the add_middleware overloads.
+_MwContext = TypeVar("_MwContext")
+_MwResult = TypeVar("_MwResult")
+_MwEvent = TypeVar("_MwEvent")
+
 
 # Sentinel class and object to distinguish between explicit None and default parameter value
 class _DefaultCallbackHandlerSentinel:
@@ -153,32 +182,6 @@ _DEFAULT_RETRY_STRATEGY = _DefaultRetryStrategySentinel()
 _DEFAULT_AGENT_NAME = "Strands Agents"
 _DEFAULT_AGENT_ID = "default"
 
-ContextManagerStrategy = Literal["auto", "agentic"]
-"""Supported values for the ``context_manager`` parameter.
-
-- ``"auto"``: SummarizingConversationManager with proactive compression + ContextOffloader.
-- ``"agentic"``: (Experimental) Lets the model drive context management via injected tools.
-  This mode may change in future versions.
-- ``ContextManager`` instance: Strategy-driven offloading with overflow recovery.
-- ``False``: Explicitly disable all context management.
-- ``None``: Uses the default (same as ``"auto"``).
-"""
-
-_CONTEXT_MANAGER_MAX_RESULT_TOKENS = 1_500
-"""Benchmark-validated token threshold for offloading tool results."""
-
-_AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS = 8_000
-"""Higher offload threshold for agentic mode - the model manages its own context, so we preserve more inline."""
-
-_CONTEXT_MANAGER_PREVIEW_TOKENS = 750
-"""Benchmark-validated preview token count for offloaded results."""
-
-_CONTEXT_MANAGER_SUMMARY_RATIO = 0.3
-"""Benchmark-validated ratio of messages to summarize on overflow."""
-
-_CONTEXT_MANAGER_COMPRESSION_THRESHOLD = 0.85
-"""Benchmark-validated context window ratio that triggers proactive compression."""
-
 
 @dataclass
 class _PassProgress:
@@ -190,6 +193,29 @@ class _PassProgress:
     """
 
     event_loop_produced_result: bool = False
+
+
+def _resolve_aux_model(aux_model: Model | str | None) -> Model | None:
+    """Resolve ``aux_model`` like ``model``: a string is a Bedrock model id; a ``ModelRouter`` is rejected."""
+    if aux_model is None or isinstance(aux_model, Model):
+        return aux_model
+    if isinstance(aux_model, str):
+        return BedrockModel(model_id=aux_model)
+    raise TypeError(f"aux_model must be a Model, a Bedrock model id, or None, got {type(aux_model).__name__}")
+
+
+def _is_blank_text_block(block: ContentBlock) -> bool:
+    return set(block) == {"text"} and not (block["text"] or "").strip()
+
+
+def _raise_if_blank_user_message(messages: Messages) -> None:
+    """Reject a user message with no content before it enters the conversation.
+
+    Most providers reject a blank user turn, and once it is in history every later call fails too.
+    """
+    for message in messages:
+        if message["role"] == "user" and all(_is_blank_text_block(block) for block in message["content"]):
+            raise ValueError("Input prompt is blank. Provide non-blank text or at least one non-text content block.")
 
 
 class Agent(AgentBase, LocalAgent):
@@ -223,11 +249,15 @@ class Agent(AgentBase, LocalAgent):
         load_tools_from_directory: bool = False,
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
+        baggage_attributes: Mapping[str, str] | None = None,
+        aux_model: Model | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         state: AgentState | dict | None = None,
-        context_manager: "ContextManagerStrategy | ContextManager | Literal[False] | None" = None,
+        context_manager: (
+            "ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None"
+        ) = None,
         plugins: list[Plugin] | None = None,
         hooks: list[HookProvider | HookCallback] | None = None,
         interventions: list[InterventionHandler] | None = None,
@@ -240,6 +270,7 @@ class Agent(AgentBase, LocalAgent):
         checkpointing: bool = False,
         sandbox: Sandbox | None = None,
         storage: Storage | None = None,
+        background_tasks: bool | BackgroundTasksConfig | None = None,
     ):
         """Initialize the Agent with the specified configuration.
 
@@ -247,6 +278,14 @@ class Agent(AgentBase, LocalAgent):
             model: Provider for running inference or a string representing the model-id for Bedrock to use.
                 May also be a ``ModelRouter``, whose first candidate is resolved to a concrete model and
                 exposed as ``agent.model``. Defaults to strands.models.BedrockModel if None.
+            aux_model: Optional model for auxiliary side calls the SDK makes outside the main agent loop:
+                context summarization, memory extraction, the HITL risk classifier, LLM steering, the
+                goal judge, and the ``web_fetch`` analyst. Defaults to ``model``, so leaving it unset
+                changes nothing; set it (typically to a smaller, cheaper model) to move every side call
+                off the main model at once. Each side call resolves its model as: the component's own
+                ``model=`` > ``aux_model`` > ``model``. Accepts a ``Model`` or a Bedrock model id string,
+                like ``model``; a ``ModelRouter`` is not accepted because auxiliary calls run outside the
+                agent loop the router attaches to.
             messages: List of initial messages to pre-load into the conversation.
                 Defaults to an empty list if None.
             tools: List of tools to make available to the agent.
@@ -254,7 +293,7 @@ class Agent(AgentBase, LocalAgent):
 
                 - String tool names (e.g., "retrieve")
                 - File paths (e.g., "/path/to/tool.py")
-                - Imported Python modules (e.g., from strands_tools import current_time)
+                - Imported Python modules (e.g., import my_tools)
                 - Dictionaries with name/path keys (e.g., {"name": "tool_name", "path": "/path/to/tool.py"})
                 - ToolProvider instances for managed tool collections
                 - Functions decorated with `@strands.tool` decorator
@@ -278,6 +317,7 @@ class Agent(AgentBase, LocalAgent):
             load_tools_from_directory: Whether to load and automatically reload tools in the `./tools/` directory.
                 Defaults to False.
             trace_attributes: Custom trace attributes to apply to the agent's trace span.
+            baggage_attributes: Optional key-value pairs to attach as OTel baggage context for each agent invocation.
             agent_id: Optional ID for the agent, useful for session management and multi-agent scenarios.
                 Defaults to "default".
             name: name of the Agent
@@ -286,16 +326,16 @@ class Agent(AgentBase, LocalAgent):
                 Defaults to None.
             state: stateful information for the agent. Can be either an AgentState object, or a json serializable dict.
                 Defaults to an empty AgentState object.
-            context_manager: Context management strategy. When set to ``"auto"``, composes
-                a ContextOffloader plugin (max_result_tokens=1500, preview_tokens=750) with a
-                SummarizingConversationManager (summary_ratio=0.3, compression_threshold=0.85)
-                using benchmark-validated defaults. If ``conversation_manager`` is also provided,
-                the user's conversation manager is used instead. Defaults to None (no context management).
-
-                Note: The offloader uses in-memory storage by default. When an agent-level
-                ``storage`` is provided, the offloader uses that instead. Alternatively,
-                provide an explicit ``ContextOffloader`` with its own storage via the
-                ``plugins`` parameter.
+            context_manager: Context management strategy.
+                ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
+                ``"agentic"``: Model-driven context management via injected tools.
+                A :class:`~strands._context_manager.types.ContextManagerConfig` dict for custom
+                strategy pipelines.
+                A :class:`~strands._context_manager.context_manager.ContextManager` instance
+                for full control.
+                ``False``: Disable all context management.
+                When set (except ``False``), any co-provided ``conversation_manager`` is ignored.
+                Defaults to None (SlidingWindowConversationManager, no offloader).
             plugins: List of Plugin instances to extend agent functionality.
                 Plugins are initialized with the agent instance after construction and can register hooks,
                 modify agent attributes, or perform other setup tasks.
@@ -311,6 +351,9 @@ class Agent(AgentBase, LocalAgent):
                 Defaults to None.
             session_manager: Manager for handling agent sessions including conversation history and state.
                 If provided, enables session-based persistence and state management.
+                A :class:`~strands.session.repository_session_manager.RepositorySessionManager`
+                (including ``FileSessionManager`` and ``S3SessionManager``) cannot be combined with
+                ``context_manager``; use :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager`.
             memory_manager: Cross-session memory manager, as a
                 :class:`~strands.memory.MemoryManager` or a
                 :class:`~strands.memory.MemoryManagerConfig` (auto-wrapped). Registers its
@@ -344,13 +387,19 @@ class Agent(AgentBase, LocalAgent):
                 with no isolation.
             storage: Default storage backend for agent subsystems.
                 When provided, subsystems that do not have their own explicit storage
-                (e.g., ContextOffloader) resolve from this value. Each subsystem
-                auto-namespaces under its own prefix (e.g., ``offloader/``) to avoid key
-                collisions. Storage specified directly on a subsystem always takes
-                precedence over this agent-level default. Defaults to None.
+                (e.g., SessionManager, ContextManager) resolve from this value. Each
+                subsystem auto-namespaces under its own prefix to avoid key collisions.
+                Storage specified directly on a subsystem always takes precedence over
+                this agent-level default. Defaults to None.
+            background_tasks: Background tool execution configuration. Pass ``True`` or a
+                :class:`~strands.background_tasks.BackgroundTasksConfig` to let the model run
+                tools in the background and receive their results when they finish. Defaults to
+                None (disabled).
 
         Raises:
-            ValueError: If agent id contains path separators.
+            ValueError: If agent id contains path separators, or if ``context_manager`` is combined
+                with a ``RepositorySessionManager``.
+            TypeError: If ``aux_model`` is not a ``Model``, a string, or ``None``.
         """
         self._model_router: ModelRouter | None = None
         if isinstance(model, ModelRouter):
@@ -362,14 +411,14 @@ class Agent(AgentBase, LocalAgent):
             self.model = BedrockModel(model_id=model)
         else:
             self.model = model
+        self._aux_model: Model | None = _resolve_aux_model(aux_model)
         self.messages = messages if messages is not None else []
         if sandbox is not None and not isinstance(sandbox, Sandbox):
             raise TypeError(f"sandbox must be a Sandbox instance or None, got {type(sandbox).__name__}")
         # Resolve once: configured sandbox, or this agent's own host default (not shared across agents).
         self._sandbox: Sandbox = sandbox or NotASandboxLocalEnvironment()
         self._storage: Storage | None = storage
-        # initializing self._system_prompt for backwards compatibility
-        self._system_prompt, self._system_prompt_content = split_system_prompt(system_prompt)
+        _, self._system_prompt_content = split_system_prompt(system_prompt)
         self._default_structured_output_model = structured_output_model
         self._structured_output_prompt = structured_output_prompt
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -393,19 +442,36 @@ class Agent(AgentBase, LocalAgent):
                 "The model manages conversation state server-side."
             )
 
-        resolved_conversation_manager, resolved_plugins = self._resolve_context_manager(
-            context_manager, conversation_manager, plugins
+        if isinstance(session_manager, RepositorySessionManager) and context_manager not in (None, False):
+            raise ValueError(
+                "context_manager cannot be used with a RepositorySessionManager. "
+                "Use SnapshotSessionManager, or pass context_manager=False."
+            )
+
+        from .._context_manager.context_manager import ContextManager as _ContextManager
+
+        self._context_manager_instance = _ContextManager.from_strategy(context_manager)
+        resolved_conversation_manager = _ContextManager.resolve_conversation_manager(
+            context_manager, conversation_manager
         )
+
+        if plugins and any(isinstance(p, _ContextManager) for p in plugins):
+            raise ValueError(
+                "A ContextManager was passed via plugins; pass it through the context_manager parameter instead "
+                "so session persistence can detect it"
+            )
+
+        self._context_manager: ContextManager | None = self._context_manager_instance
+
+        resolved_plugins = list(plugins) if plugins else []
+        if self._context_manager_instance is not None:
+            resolved_plugins.append(self._context_manager_instance)
 
         self.conversation_manager: ConversationManager
         if self.model.stateful:
             self.conversation_manager = NullConversationManager()
-        elif resolved_conversation_manager:
-            self.conversation_manager = resolved_conversation_manager
-        elif conversation_manager:
-            self.conversation_manager = conversation_manager
         else:
-            self.conversation_manager = SlidingWindowConversationManager()
+            self.conversation_manager = resolved_conversation_manager
 
         # Process trace attributes to ensure they're of compatible types
         self.trace_attributes: dict[str, AttributeValue] = {}
@@ -416,6 +482,7 @@ class Agent(AgentBase, LocalAgent):
                 ):
                     self.trace_attributes[k] = v
 
+        self.baggage_attributes: dict[str, str] = dict(baggage_attributes) if baggage_attributes else {}
         self.record_direct_tool_call = record_direct_tool_call
         self.load_tools_from_directory = load_tools_from_directory
 
@@ -423,6 +490,9 @@ class Agent(AgentBase, LocalAgent):
         self._cancel_signal = threading.Event()
         # Caller-owned external cancel signal for the current invocation, if any.
         self._external_cancel_signal: threading.Event | None = None
+        # Deferred cancellation requested via cancel(after_current_tools=True); read after the tool batch.
+        self._deferred_cancel = False
+        self._cancel_message: str | None = None
 
         self.tool_registry = ToolRegistry()
 
@@ -487,7 +557,7 @@ class Agent(AgentBase, LocalAgent):
         # In agentic mode, surface live token usage to the model so it can decide when to compress.
         if context_manager == "agentic":
             from .._context_manager.modes.agentic.agentic_context import create_token_usage_middleware
-            from .._middleware.stages import InvokeModelStage
+            from ..middleware.stages import InvokeModelStage
 
             self._middleware_registry.add_middleware(InvokeModelStage.Input, create_token_usage_middleware())
 
@@ -540,6 +610,12 @@ class Agent(AgentBase, LocalAgent):
 
         self.tool_executor = tool_executor or ConcurrentToolExecutor()
 
+        self._background_tasks: _BackgroundTasks | None = None
+        if background_tasks is not None and background_tasks is not False:
+            from ..background_tasks._background_tasks import _BackgroundTasks as _BackgroundTasksPlugin
+
+            self._background_tasks = _BackgroundTasksPlugin({} if background_tasks is True else background_tasks)
+
         if hooks:
             for hook in hooks:
                 if isinstance(hook, HookProvider):
@@ -562,6 +638,9 @@ class Agent(AgentBase, LocalAgent):
             for plugin in plugins_to_register:
                 self._plugin_registry.add_and_init(plugin)
 
+        if self._background_tasks is not None:
+            self._plugin_registry.add_and_init(self._background_tasks)
+
         has_agent_delegation = any(plugin.name == "strands:agent-delegation" for plugin in (plugins_to_register or []))
         if not has_agent_delegation:
             from ._agent_delegation import AgentDelegation
@@ -582,87 +661,6 @@ class Agent(AgentBase, LocalAgent):
         self.hooks.invoke_callbacks(AgentInitializedEvent(agent=self))
 
     @staticmethod
-    def _resolve_context_manager(
-        context_manager: "ContextManagerStrategy | ContextManager | Literal[False] | None",
-        conversation_manager: ConversationManager | None,
-        plugins: list[Plugin] | None,
-    ) -> tuple[ConversationManager | None, list[Plugin] | None]:
-        """Resolve context_manager facade into concrete conversation_manager and plugins.
-
-        When context_manager is None, returns (None, None) and no resolution occurs.
-        When False, uses NullConversationManager (or user-provided).
-        When a ContextManager instance, uses NullConversationManager and registers the plugin.
-        When "auto", constructs a SummarizingConversationManager with proactive compression
-        plus a ContextOffloader, using benchmark-validated defaults.
-        When "agentic", constructs a SummarizingConversationManager *without* proactive
-        compression (the model drives context management via injected tools; the conversation
-        manager is only a reactive overflow safety net) plus a ContextOffloader with a higher
-        offload threshold. In both cases a user-provided conversation_manager / offloader wins.
-
-        Args:
-            context_manager: The facade value ("auto", "agentic", ContextManager, False, or None).
-            conversation_manager: User-provided conversation manager, takes precedence if set.
-            plugins: User-provided plugin list; offloader is appended if not already present.
-
-        Returns:
-            Tuple of (resolved conversation manager, resolved plugins list).
-            Both are None when context_manager is None.
-
-        Raises:
-            ValueError: If context_manager is not a supported value.
-        """
-        if context_manager is None:
-            return None, None
-
-        from .._context_manager.context_manager import ContextManager as _ContextManager
-        from ..vended_plugins.context_offloader import ContextOffloader
-        from .conversation_manager import NullConversationManager, SummarizingConversationManager
-
-        if context_manager is False:
-            resolved_cm = conversation_manager if conversation_manager is not None else NullConversationManager()
-            return resolved_cm, list(plugins) if plugins else None
-
-        if isinstance(context_manager, _ContextManager):
-            resolved_plugins = list(plugins) if plugins else []
-            resolved_plugins.append(context_manager)
-            return NullConversationManager(), resolved_plugins
-
-        if context_manager == "auto":
-            offloader_max_result_tokens = _CONTEXT_MANAGER_MAX_RESULT_TOKENS
-            default_conversation_manager = SummarizingConversationManager(
-                summary_ratio=_CONTEXT_MANAGER_SUMMARY_RATIO,
-                proactive_compression={"compression_threshold": _CONTEXT_MANAGER_COMPRESSION_THRESHOLD},
-            )
-        elif context_manager == "agentic":
-            # No proactive compression: the model manages context via injected tools.
-            offloader_max_result_tokens = _AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS
-            default_conversation_manager = SummarizingConversationManager(
-                summary_ratio=_CONTEXT_MANAGER_SUMMARY_RATIO,
-            )
-        else:
-            raise ValueError(
-                f"Unsupported context_manager value: {context_manager!r}. "
-                f"Supported values: {get_args(ContextManagerStrategy)}, ContextManager instance, or False"
-            )
-
-        resolved_plugins = list(plugins) if plugins else []
-
-        has_offloader = any(isinstance(p, ContextOffloader) for p in resolved_plugins)
-        if not has_offloader:
-            resolved_plugins.append(
-                ContextOffloader(
-                    max_result_tokens=offloader_max_result_tokens,
-                    preview_tokens=_CONTEXT_MANAGER_PREVIEW_TOKENS,
-                )
-            )
-
-        resolved_conversation_manager = (
-            conversation_manager if conversation_manager is not None else default_conversation_manager
-        )
-
-        return resolved_conversation_manager, resolved_plugins
-
-    @staticmethod
     def _resolve_memory_manager(
         memory_manager: MemoryManager | MemoryManagerConfig | None,
     ) -> MemoryManager | None:
@@ -680,23 +678,37 @@ class Agent(AgentBase, LocalAgent):
             return MemoryManager(**memory_manager)
         raise ValueError("memory_manager must be a MemoryManager or MemoryManagerConfig")
 
-    def cancel(self) -> None:
+    def cancel(self, *, message: str | None = None, after_current_tools: bool = False) -> None:
         """Cancel the currently running agent invocation.
 
         This method is thread-safe and can be called from any context
         (e.g., another thread, web request handler, background task).
 
-        The agent will stop gracefully at the next cancellation-safe point:
+        By default the agent stops at the next cancellation-safe point:
         - During model response streaming
         - Before tool execution
         - During MCP tool execution
         - After tool execution, before the next model call
 
-        The agent will return a result with stop_reason="cancelled".
+        With ``after_current_tools=True`` the cancellation is deferred: tools already requested in
+        the current batch run to completion, and the loop exits before the next model call. This is
+        the cooperative stop a tool uses to end the loop from inside the agent; see
+        :mod:`strands.vended_tools.stop` for the vended tool.
+
+        When cancellation actually interrupts the loop the agent returns a result with
+        ``stop_reason="cancelled"``. If ``message`` is given, it becomes the text of the final
+        assistant message; otherwise the result carries the model's last message. When several
+        callers set a message, the last write wins. A deferred cancel that never gets to apply --
+        for example, the model answers with plain text and no tools in the same turn -- is a no-op
+        and the invocation returns with its natural ``stop_reason``.
 
         For cancellation driven from outside the agent (a client disconnect, a request
         lifecycle, a timeout), pass a ``cancel_signal`` into the invocation instead. The agent
         observes both, so either cancels independently.
+
+        Args:
+            message: Text of the final assistant message the invocation ends with.
+            after_current_tools: Let the current tool batch finish before stopping.
 
         Example:
             ```python
@@ -715,7 +727,12 @@ class Agent(AgentBase, LocalAgent):
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        self._cancel_signal.set()
+        if message is not None:
+            self._cancel_message = message
+        if after_current_tools:
+            self._deferred_cancel = True
+        else:
+            self._cancel_signal.set()
 
     @property
     def cancel_signal(self) -> threading.Event:
@@ -747,6 +764,24 @@ class Agent(AgentBase, LocalAgent):
         return self._storage
 
     @property
+    def aux_model(self) -> Model:
+        """Model for auxiliary side calls (summarization, memory extraction, classification, steering, web fetch).
+
+        Resolution order: the ``aux_model`` passed at construction > ``model``.
+        """
+        return self._aux_model if self._aux_model is not None else self.model
+
+    @aux_model.setter
+    def aux_model(self, aux_model: Model | str | None) -> None:
+        """Reassign the auxiliary model; ``None`` reverts to following ``model``."""
+        self._aux_model = _resolve_aux_model(aux_model)
+
+    @property
+    def context_manager(self) -> "ContextManager | None":
+        """The ContextManager plugin, if one is registered on this agent."""
+        return self._context_manager
+
+    @property
     def session_id(self) -> str:
         """Identifier for the current conversation session.
 
@@ -755,6 +790,12 @@ class Agent(AgentBase, LocalAgent):
         construction time (unique per agent instance but not persisted across restarts).
         """
         return self._session_id
+
+    @property
+    def _metadata(self) -> AgentMetadata:
+        """Build the agent metadata view passed to the model on stream()."""
+        session_id = getattr(self._session_manager, "session_id", None) or None
+        return AgentMetadata(session_id=session_id)
 
     @property
     def system_prompt(self) -> str | None:
@@ -767,15 +808,14 @@ class Agent(AgentBase, LocalAgent):
         Returns:
             The system prompt as a string, or None if no text content exists.
         """
-        return self._system_prompt
+        return split_system_prompt(self._system_prompt_content)[0]
 
     @system_prompt.setter
     def system_prompt(self, value: str | list[SystemContentBlock] | None) -> None:
         """Set the system prompt and update internal content representation.
 
         Accepts either a string or list of SystemContentBlock objects.
-        When set, both the backwards-compatible string representation and the internal
-        content block representation are updated to maintain consistency.
+        The string representation is derived from the stored content blocks.
 
         Args:
             value: System prompt as string, list of SystemContentBlock objects, or None.
@@ -783,7 +823,7 @@ class Agent(AgentBase, LocalAgent):
                   - list[SystemContentBlock]: Content blocks with features like caching
                   - None: Clear the system prompt
         """
-        self._system_prompt, self._system_prompt_content = split_system_prompt(value)
+        _, self._system_prompt_content = split_system_prompt(value)
 
     @property
     def system_prompt_content(self) -> list[SystemContentBlock] | None:
@@ -806,8 +846,8 @@ class Agent(AgentBase, LocalAgent):
 
         Example:
             ```
-            agent = Agent(tools=[calculator])
-            agent.tool.calculator(...)
+            agent = Agent(tools=[square_root])
+            agent.tool.square_root(number=1764)
             ```
         """
         return self.tool_caller
@@ -830,6 +870,55 @@ class Agent(AgentBase, LocalAgent):
         """
         return self._concurrency.mode
 
+    def shutdown(self) -> None:
+        """Run the agent's shutdown procedures at end of life.
+
+        Safe to call more than once, and a no-op when there is nothing to release. Call it directly
+        when you own the agent's lifecycle (e.g. draining on a shutdown signal), or scope the agent
+        with ``with`` to run it automatically on exit. From async code use :meth:`shutdown_async` or
+        scope with ``async with``.
+        """
+        if self.memory_manager is None:
+            return
+        run_async(self.shutdown_async)
+
+    async def shutdown_async(self) -> None:
+        """Run the agent's shutdown procedures at end of life.
+
+        Asynchronous variant of :meth:`shutdown`. Safe to call more than once, and a no-op when
+        there is nothing to release.
+        """
+        if self.memory_manager is not None:
+            await self.memory_manager.flush()
+
+    def __enter__(self) -> "Agent":
+        """Enter a ``with`` scope, returning the agent unchanged.
+
+        Pairs with ``__exit__``, which runs :meth:`shutdown` when the scope exits.
+        """
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        """Run :meth:`shutdown` when leaving a ``with`` scope.
+
+        Runs on normal exit and when the block raises; any exception still propagates.
+        """
+        self.shutdown()
+
+    async def __aenter__(self) -> "Agent":
+        """Enter an ``async with`` scope, returning the agent unchanged.
+
+        Pairs with ``__aexit__``, which runs :meth:`shutdown_async` when the scope exits.
+        """
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        """Run :meth:`shutdown_async` when leaving an ``async with`` scope.
+
+        Runs on normal exit and when the block raises; any exception still propagates.
+        """
+        await self.shutdown_async()
+
     def __call__(
         self,
         prompt: AgentInput = None,
@@ -840,6 +929,7 @@ class Agent(AgentBase, LocalAgent):
         idempotency_token: Any = None,
         limits: Limits | None = None,
         cancel_signal: threading.Event | None = None,
+        invocation_context: InvocationContext | None = None,
         **kwargs: Any,
     ) -> AgentResult:
         """Process a natural language prompt through the agent's event loop.
@@ -864,12 +954,12 @@ class Agent(AgentBase, LocalAgent):
                 final result — only the result, not the streamed events, though ``callback_handler``
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
-            limits: Per-invocation budget caps (turns / output_tokens / total_tokens).
-                See :class:`~strands.types.agent.Limits`. When a cap is reached, the loop
-                terminates gracefully at the next turn boundary with a corresponding
-                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token
-                caps are soft — a single oversized model response can overshoot the budget
-                by one turn, since checks run at turn boundaries, not within a model call.
+            limits: Limits for the whole request this call starts (turns / output_tokens /
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it
@@ -880,6 +970,10 @@ class Agent(AgentBase, LocalAgent):
                 result carries ``stop_reason="cancelled"``. A duplicate call waiting on an
                 ``idempotency_token`` does not observe this event; only the primary invocation
                 does.
+            invocation_context: Runs this call as a nested call in the request a hook event's or
+                ``tool_context.invocation_context`` handle belongs to, sharing its limits and usage
+                even after that request returned; ``limits`` set alongside it only add stricter
+                limits.
             **kwargs: Additional parameters to pass through the event loop.[Deprecating]
 
         Returns:
@@ -895,7 +989,8 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer,
+                or if ``invocation_context`` is not an ``InvocationContext``.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
         return run_async(
@@ -907,6 +1002,7 @@ class Agent(AgentBase, LocalAgent):
                 idempotency_token=idempotency_token,
                 limits=limits,
                 cancel_signal=cancel_signal,
+                invocation_context=invocation_context,
                 **kwargs,
             )
         )
@@ -934,6 +1030,7 @@ class Agent(AgentBase, LocalAgent):
         idempotency_token: Any = None,
         limits: Limits | None = None,
         cancel_signal: threading.Event | None = None,
+        invocation_context: InvocationContext | None = None,
         **kwargs: Any,
     ) -> AgentResult:
         """Process a natural language prompt through the agent's event loop.
@@ -958,12 +1055,12 @@ class Agent(AgentBase, LocalAgent):
                 final result — only the result, not the streamed events, though ``callback_handler``
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
-            limits: Per-invocation budget caps (turns / output_tokens / total_tokens).
-                See :class:`~strands.types.agent.Limits`. When a cap is reached, the loop
-                terminates gracefully at the next turn boundary with a corresponding
-                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token
-                caps are soft — a single oversized model response can overshoot the budget
-                by one turn, since checks run at turn boundaries, not within a model call.
+            limits: Limits for the whole request this call starts (turns / output_tokens /
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it
@@ -974,6 +1071,10 @@ class Agent(AgentBase, LocalAgent):
                 result carries ``stop_reason="cancelled"``. A duplicate call waiting on an
                 ``idempotency_token`` does not observe this event; only the primary invocation
                 does.
+            invocation_context: Runs this call as a nested call in the request a hook event's or
+                ``tool_context.invocation_context`` handle belongs to, sharing its limits and usage
+                even after that request returned; ``limits`` set alongside it only add stricter
+                limits.
             **kwargs: Additional parameters to pass through the event loop.[Deprecating]
 
         Returns:
@@ -988,7 +1089,8 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer,
+                or if ``invocation_context`` is not an ``InvocationContext``.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
         events = self.stream_async(
@@ -999,6 +1101,7 @@ class Agent(AgentBase, LocalAgent):
             idempotency_token=idempotency_token,
             limits=limits,
             cancel_signal=cancel_signal,
+            invocation_context=invocation_context,
             **kwargs,
         )
         async for event in events:
@@ -1065,6 +1168,14 @@ class Agent(AgentBase, LocalAgent):
             category=DeprecationWarning,
             stacklevel=2,
         )
+        # Model.structured_output only takes the flattened system prompt string, so non-text blocks are lost.
+        if dropped := sorted({key for block in self._system_prompt_content or [] for key in block} - {"text"}):
+            warnings.warn(
+                f"System prompt blocks {dropped} are dropped by Agent.structured_output_async."
+                " Pass `structured_output_model` into the agent invocation instead to keep them.",
+                category=UserWarning,
+                stacklevel=2,
+            )
         await self.hooks.invoke_callbacks_async(BeforeInvocationEvent(agent=self, invocation_state={}))
         with self.tracer.tracer.start_as_current_span(
             "execute_structured_output", kind=trace_api.SpanKind.CLIENT
@@ -1093,7 +1204,9 @@ class Agent(AgentBase, LocalAgent):
                         f"gen_ai.{message['role']}.message",
                         attributes={"role": message["role"], "content": serialize(message["content"])},
                     )
-                events = self.model.structured_output(output_model, temp_messages, system_prompt=self.system_prompt)
+                events = ModelProxy(self.model).structured_output(
+                    output_model, temp_messages, system_prompt=self.system_prompt
+                )
                 async for event in events:
                     if isinstance(event, TypedEvent):
                         event.prepare(invocation_state={})
@@ -1128,6 +1241,9 @@ class Agent(AgentBase, LocalAgent):
                 values they had at construction time before each call, ensuring every
                 invocation starts from the same baseline regardless of any external
                 interactions with the agent. Defaults to False.
+                When False, the orchestrator also stores the agent's interrupted turn so a
+                sub-agent interrupt can be resumed after a restart; when True the agent keeps
+                its own state, so it needs its own session manager for that.
             delegate: When True, the orchestrator treats this tool's result as the final
                 response and exits without an additional model call. The tool's description
                 is automatically suffixed with an instruction telling the model that this
@@ -1227,6 +1343,69 @@ class Agent(AgentBase, LocalAgent):
         """
         self.hooks.add_callback(event_type, callback, order=order)
 
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: MiddlewareInputPhase[_MwContext, _MwResult, _MwEvent],
+        handler: MiddlewareInputHandler[_MwContext],
+    ) -> None: ...
+
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: MiddlewareOutputPhase[_MwContext, _MwResult, _MwEvent],
+        handler: MiddlewareOutputHandler[_MwResult],
+    ) -> None: ...
+
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: (
+            MiddlewareStage[_MwContext, _MwResult, _MwEvent] | MiddlewareWrapPhase[_MwContext, _MwResult, _MwEvent]
+        ),
+        handler: MiddlewareHandler[_MwContext, _MwEvent],
+    ) -> None: ...
+
+    def add_middleware(self, stage_or_phase: Any, handler: Any) -> None:
+        """Register a middleware handler for a stage or one of its phases.
+
+        Middleware wraps a stage of the agent run (``InvokeModelStage``, ``ExecuteToolStage``) and
+        can transform its input, transform its result, or wrap execution to retry, cache,
+        short-circuit, or gate it behind a human-in-the-loop interrupt. Regardless of registration
+        order, handlers run Input -> Wrap -> Output, and within a phase the first registered is the
+        outermost. Handlers cannot be removed once registered.
+
+        Args:
+            stage_or_phase: A stage token for the Wrap phase, or one of its ``.Input`` / ``.Output``
+                sub-tokens.
+            handler: A Wrap handler is an async generator ``(context, next_fn)`` that yields events,
+                one of which is the stage's result event. An Input handler is
+                ``(context) -> context`` and an Output handler is ``(result) -> result`` on the
+                stage's result type (e.g. ``InvokeModelResult``); both may be sync or async.
+
+        Example:
+            ```python
+            from strands.middleware import InvokeModelStage
+
+            agent = Agent()
+
+            async def timing(context, next_fn):
+                async for event in next_fn(context):
+                    yield event
+
+            agent.add_middleware(InvokeModelStage, timing)
+
+            def be_concise(context):
+                return context.replace(system_prompt="Be concise.")
+
+            agent.add_middleware(InvokeModelStage.Input, be_concise)
+            ```
+
+        Docs:
+            https://strandsagents.com/docs/user-guide/sdk/agents/middleware/
+        """
+        self._middleware_registry.add_middleware(stage_or_phase, handler)
+
     def __del__(self) -> None:
         """Clean up resources when agent is garbage collected."""
         # __del__ is called even when an exception is thrown in the constructor,
@@ -1277,6 +1456,7 @@ class Agent(AgentBase, LocalAgent):
         idempotency_token: Any = None,
         limits: Limits | None = None,
         cancel_signal: threading.Event | None = None,
+        invocation_context: InvocationContext | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
         """Process a natural language prompt and yield events as an async iterator.
@@ -1301,12 +1481,12 @@ class Agent(AgentBase, LocalAgent):
                 final result — only the result, not the streamed events, though ``callback_handler``
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
-            limits: Per-invocation budget caps (turns / output_tokens / total_tokens).
-                See :class:`~strands.types.agent.Limits`. When a cap is reached, the loop
-                terminates gracefully at the next turn boundary with a corresponding
-                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token
-                caps are soft — a single oversized model response can overshoot the budget
-                by one turn, since checks run at turn boundaries, not within a model call.
+            limits: Limits for the whole request this call starts (turns / output_tokens /
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it
@@ -1317,6 +1497,10 @@ class Agent(AgentBase, LocalAgent):
                 result carries ``stop_reason="cancelled"``. A duplicate call waiting on an
                 ``idempotency_token`` does not observe this event; only the primary invocation
                 does.
+            invocation_context: Runs this call as a nested call in the request a hook event's or
+                ``tool_context.invocation_context`` handle belongs to, sharing its limits and usage
+                even after that request returned; ``limits`` set alongside it only add stricter
+                limits.
             **kwargs: Additional parameters to pass to the event loop.[Deprecating]
 
         Yields:
@@ -1332,7 +1516,8 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer,
+                or if ``invocation_context`` is not an ``InvocationContext``.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
 
         Example:
@@ -1342,7 +1527,7 @@ class Agent(AgentBase, LocalAgent):
                     yield event["data"]
             ```
         """
-        self._validate_limits(limits)
+        resolved_invocation_context = self._resolve_invocation_context(limits, invocation_context)
 
         begin = self._concurrency.begin(idempotency_token)
 
@@ -1373,6 +1558,13 @@ class Agent(AgentBase, LocalAgent):
         cancel_watcher: asyncio.Task[None] | None = None
 
         try:
+            # Clear cancel state that bypassed stream_async's finally (e.g.
+            # agent.tool.stop(...) called directly). Keep _cancel_message when the signal is
+            # set so a pre-invocation agent.cancel(message=...) still carries its text.
+            self._deferred_cancel = False
+            if not self._cancel_signal.is_set():
+                self._cancel_message = None
+
             self._external_cancel_signal = cancel_signal
             cancel_watcher = self._start_cancel_watcher(cancel_signal)
 
@@ -1403,52 +1595,66 @@ class Agent(AgentBase, LocalAgent):
             # Process input and get message to add (if any)
             messages = await self._convert_prompt_to_messages(prompt)
 
-            self.trace_span = self._start_agent_trace_span(messages)
+            baggage_ctx = context_api.get_current()
+            for key, value in self.baggage_attributes.items():
+                baggage_ctx = baggage_api.set_baggage(key, value, context=baggage_ctx)
 
-            with trace_api.use_span(self.trace_span):
-                try:
-                    events = self._run_loop(
-                        messages, merged_state, structured_output_model, structured_output_prompt, limits
-                    )
-
-                    # The result is the last EventLoopStopEvent, not the last event overall:
-                    # AgentStreamStage middleware may yield trailing events after the stop event.
-                    stop_event: EventLoopStopEvent | None = None
+            # Baggage is current for span start (processors see it) and the whole invocation.
+            baggage_token = context_api.attach(baggage_ctx)
+            try:
+                self.trace_span = self._start_agent_trace_span(messages)
+                with trace_api.use_span(self.trace_span):
                     try:
-                        async for event in events:
-                            event.prepare(invocation_state=merged_state)
+                        events = self._run_loop(
+                            messages,
+                            merged_state,
+                            structured_output_model,
+                            structured_output_prompt,
+                            resolved_invocation_context,
+                        )
 
-                            if isinstance(event, EventLoopStopEvent):
-                                stop_event = event
+                        # The result is the last EventLoopStopEvent, not the last event overall:
+                        # AgentStreamStage middleware may yield trailing events after the stop event.
+                        stop_event: EventLoopStopEvent | None = None
+                        try:
+                            async for event in events:
+                                event.prepare(invocation_state=merged_state)
 
-                            if event.is_callback_event:
-                                as_dict = event.as_dict()
-                                callback_handler(**as_dict)
-                                yield as_dict
+                                if isinstance(event, EventLoopStopEvent):
+                                    stop_event = event
 
-                        if stop_event is None:
-                            raise RuntimeError(
-                                "Agent stream produced no result event. AgentStreamStage middleware must "
-                                "forward events from next() and must not drop the terminal stop event."
-                            )
+                                if event.is_callback_event:
+                                    as_dict = event.as_dict()
+                                    callback_handler(**as_dict)
+                                    yield as_dict
 
-                        result = AgentResult(*stop_event["stop"])
-                        callback_handler(result=result)
-                        yield AgentResultEvent(result=result).as_dict()
+                            if stop_event is None:
+                                raise RuntimeError(
+                                    "Agent stream produced no result event. AgentStreamStage middleware must "
+                                    "forward events from next() and must not drop the terminal stop event."
+                                )
 
-                        self._end_agent_trace_span(response=result)
-                    finally:
-                        await events.aclose()
+                            result = AgentResult(*stop_event["stop"])
 
-                except Exception as e:
-                    self._end_agent_trace_span(error=e)
-                    self._concurrency.complete(begin.registered_token, error=e)
-                    raise
-                except BaseException as cancellation:
-                    # Waiter settlement deferred to the finally block (aborted path) — propagating
-                    # CancelledError into unrelated waiters would be incorrect.
-                    self._end_agent_trace_span(cancellation=cancellation)
-                    raise
+                            result.invocation_context = resolved_invocation_context
+                            callback_handler(result=result)
+                            yield AgentResultEvent(result=result).as_dict()
+
+                            self._end_agent_trace_span(response=result)
+                        finally:
+                            await events.aclose()
+
+                    except Exception as e:
+                        self._end_agent_trace_span(error=e)
+                        self._concurrency.complete(begin.registered_token, error=e)
+                        raise
+                    except BaseException as cancellation:
+                        # Waiter settlement deferred to the finally block (aborted path) — propagating
+                        # CancelledError into unrelated waiters would be incorrect.
+                        self._end_agent_trace_span(cancellation=cancellation)
+                        raise
+            finally:
+                context_api.detach(baggage_token)
 
         finally:
             if cancel_watcher is not None:
@@ -1457,8 +1663,10 @@ class Agent(AgentBase, LocalAgent):
                 cancel_watcher.cancel()
             self._external_cancel_signal = None
 
-            # Clear cancel signal to allow agent reuse after cancellation
+            # Clear cancel state to allow agent reuse after cancellation
             self._cancel_signal.clear()
+            self._deferred_cancel = False
+            self._cancel_message = None
 
             self._concurrency.complete(begin.registered_token, result=result)
             if self._concurrency.mode == ConcurrentInvocationMode.THROW:
@@ -1470,7 +1678,7 @@ class Agent(AgentBase, LocalAgent):
         invocation_state: dict[str, Any],
         structured_output_model: type[BaseModel] | None = None,
         structured_output_prompt: str | None = None,
-        limits: Limits | None = None,
+        invocation_context: InvocationContext | None = None,
     ) -> AsyncGenerator[TypedEvent, None]:
         """Execute the agent's event loop with the given message and parameters.
 
@@ -1479,18 +1687,25 @@ class Agent(AgentBase, LocalAgent):
             invocation_state: Additional parameters to pass to the event loop.
             structured_output_model: Optional Pydantic model type for structured output.
             structured_output_prompt: Optional custom prompt for forcing structured output.
-            limits: Optional per-invocation budget caps. See :class:`~strands.types.agent.Limits`.
+            invocation_context: The request this call runs in; a fresh one when omitted.
 
         Yields:
             Events from the event loop cycle.
         """
         current_messages: Messages | None = messages
         continuation_event: AfterInvocationEvent | None = None
+        if invocation_context is None:
+            invocation_context = _create_invocation_context()
 
         while current_messages is not None:
             try:
                 before_invocation_event, _interrupts = await self.hooks.invoke_callbacks_async(
-                    BeforeInvocationEvent(agent=self, invocation_state=invocation_state, messages=current_messages)
+                    BeforeInvocationEvent(
+                        agent=self,
+                        invocation_state=invocation_state,
+                        messages=current_messages,
+                        invocation_context=invocation_context,
+                    )
                 )
             except BaseException:
                 await _continuation.abandon(
@@ -1506,14 +1721,16 @@ class Agent(AgentBase, LocalAgent):
                     else "invocation denied by hook"
                 )
                 cancel_message: Message = {"role": "assistant", "content": [{"text": cancel_text}]}
-                await self._append_messages(cancel_message)
+                await self._append_messages(cancel_message, invocation_context=invocation_context)
                 yield EventLoopStopEvent(
                     "end_turn", cancel_message, self.event_loop_metrics, invocation_state.get("request_state", {})
                 )
                 await _continuation.abandon(
                     continuation_event, RuntimeError("Continuation was not incorporated into agent history")
                 )
-                after_invocation_event = AfterInvocationEvent(agent=self, invocation_state=invocation_state)
+                after_invocation_event = AfterInvocationEvent(
+                    agent=self, invocation_state=invocation_state, invocation_context=invocation_context
+                )
                 try:
                     await self.hooks.invoke_callbacks_async(after_invocation_event)
                 except BaseException as error:
@@ -1540,9 +1757,6 @@ class Agent(AgentBase, LocalAgent):
                 for message in self.messages:
                     _ensure_tracking_id(message)
 
-                if continuation_event is None:
-                    await self._append_messages(*current_messages)
-
                 structured_output_context = StructuredOutputContext(
                     structured_output_model or self._default_structured_output_model,
                     structured_output_prompt=structured_output_prompt or self._structured_output_prompt,
@@ -1564,13 +1778,14 @@ class Agent(AgentBase, LocalAgent):
                         middleware_context,
                         self._make_agent_stream_terminal(
                             structured_output_context,
-                            limits,
+                            invocation_context,
                             pass_progress,
                             continuation_event,
                         ),
                     ):
                         if isinstance(event, EventLoopStopEvent):
                             agent_result = AgentResult(*event["stop"])
+                            agent_result.invocation_context = invocation_context
                         yield event
 
                     # A resumed AgentStreamStage interrupt that finished without tool execution
@@ -1620,6 +1835,7 @@ class Agent(AgentBase, LocalAgent):
                         unanswered,
                     )
                     agent_result = AgentResult(*stop_event["stop"])
+                    agent_result.invocation_context = invocation_context
                     yield stop_event
             except BaseException as error:
                 caught_error = error
@@ -1628,12 +1844,21 @@ class Agent(AgentBase, LocalAgent):
                 if not self._interrupt_state.activated:
                     self._interrupt_state.end_interrupt_cycle()
 
-                self.conversation_manager.apply_management(self)
+                self.conversation_manager.apply_management(
+                    self,
+                    **_invocation_context_kwargs(
+                        self.conversation_manager.apply_management,
+                        _create_auxiliary_invocation_context(invocation_context),
+                    ),
+                )
                 await _continuation.abandon(
                     continuation_event, RuntimeError("Continuation was not incorporated into agent history")
                 )
                 after_invocation_event = AfterInvocationEvent(
-                    agent=self, invocation_state=invocation_state, result=agent_result
+                    agent=self,
+                    invocation_state=invocation_state,
+                    result=agent_result,
+                    invocation_context=invocation_context,
                 )
                 continuation_event = after_invocation_event
                 try:
@@ -1662,7 +1887,7 @@ class Agent(AgentBase, LocalAgent):
                 has_continuation = continuation_messages is not None
                 continuation_event = after_invocation_event if has_continuation else None
 
-                if has_continuation or after_invocation_event.resume is not None:
+                if has_continuation or self._should_resume(after_invocation_event, invocation_context):
                     current_messages = []
                     if after_invocation_event.resume is not None:
                         logger.debug("resume=<True> | hook requested agent resume with new input")
@@ -1681,22 +1906,23 @@ class Agent(AgentBase, LocalAgent):
     def _make_agent_stream_terminal(
         self,
         structured_output_context: StructuredOutputContext,
-        limits: Limits | None,
+        invocation_context: InvocationContext,
         pass_progress: _PassProgress,
         continuation_event: AfterInvocationEvent | None,
     ) -> Callable[["AgentStreamContext"], AsyncGenerator[TypedEvent, None]]:
         """Build the terminal for the AgentStreamStage middleware chain.
 
         The terminal drives the event loop cycle for one invocation pass — the core work the
-        AgentStreamStage middleware wraps. It reads ``invocation_state`` from the context it
-        receives (not a captured value), so an Input/wrap handler that transforms the context
-        via ``dataclasses.replace()`` actually reaches the event loop. It also handles
-        guardrail-driven user-content redaction inline so that behavior runs whether or not
-        middleware is registered.
+        AgentStreamStage middleware wraps. It appends the pass's input and reads
+        ``invocation_state`` from the context it receives (not captured values), so an
+        Input/wrap handler that transforms the context via ``replace()`` reaches history and
+        the event loop, and a handler that short-circuits leaves history untouched. It also
+        handles guardrail-driven user-content redaction inline so that behavior runs whether
+        or not middleware is registered.
 
         Args:
             structured_output_context: Structured output context for this pass.
-            limits: Optional per-invocation budget caps.
+            invocation_context: The request this pass runs in.
             pass_progress: Records whether the event loop produced this pass's result, which
                 determines whether resuming the pass would call the model again.
             continuation_event: Event owning input that must be appended only if the middleware
@@ -1708,12 +1934,27 @@ class Agent(AgentBase, LocalAgent):
         """
 
         async def terminal(ctx: "AgentStreamContext") -> AsyncGenerator[TypedEvent, None]:
-            if continuation_event is not None:
+            # A limit the request already reached ends the pass before it appends anything, so
+            # the result carries an empty assistant message rather than one from an earlier call.
+            limit_stop_reason = _reached_limit(invocation_context)
+            if limit_stop_reason is not None:
+                pass_progress.event_loop_produced_result = True
+                yield EventLoopStopEvent(
+                    limit_stop_reason,
+                    {"role": "assistant", "content": []},
+                    self.event_loop_metrics,
+                    ctx.invocation_state.get("request_state", {}),
+                )
+                return
+
+            if continuation_event is None:
+                await self._append_messages(*ctx.messages, invocation_context=invocation_context)
+            else:
                 messages = _continuation.combine(continuation_event, ctx.messages)
-                await self._append_continuation_messages(messages, continuation_event)
+                await self._append_continuation_messages(messages, continuation_event, invocation_context)
 
             # Execute the event loop cycle with retry logic for context limits
-            events = self._execute_event_loop_cycle(ctx.invocation_state, structured_output_context, limits)
+            events = self._execute_event_loop_cycle(ctx.invocation_state, structured_output_context, invocation_context)
             async for event in events:
                 if isinstance(event, EventLoopStopEvent):
                     pass_progress.event_loop_produced_result = True
@@ -1740,7 +1981,7 @@ class Agent(AgentBase, LocalAgent):
         self,
         invocation_state: dict[str, Any],
         structured_output_context: StructuredOutputContext | None = None,
-        limits: Limits | None = None,
+        invocation_context: InvocationContext | None = None,
     ) -> AsyncGenerator[TypedEvent, None]:
         """Execute the event loop cycle with retry logic for context window limits.
 
@@ -1751,13 +1992,15 @@ class Agent(AgentBase, LocalAgent):
         Args:
             invocation_state: Additional parameters to pass to the event loop.
             structured_output_context: Optional structured output context for this invocation.
-            limits: Optional per-invocation budget caps. See :class:`~strands.types.agent.Limits`.
+            invocation_context: The request this cycle runs in; a fresh one when omitted.
 
         Yields:
             Events of the loop cycle.
         """
         # Add `Agent` to invocation_state to keep backwards-compatibility
         invocation_state["agent"] = self
+        if invocation_context is None:
+            invocation_context = _create_invocation_context()
 
         if structured_output_context:
             structured_output_context.register_tool(self.tool_registry)
@@ -1767,20 +2010,27 @@ class Agent(AgentBase, LocalAgent):
                 agent=self,
                 invocation_state=invocation_state,
                 structured_output_context=structured_output_context,
-                limits=limits,
+                invocation_context=invocation_context,
             )
             async for event in events:
                 yield event
 
         except ContextWindowOverflowException as e:
             # Try reducing the context size and retrying
-            self.conversation_manager.reduce_context(self, e=e)
+            self.conversation_manager.reduce_context(
+                self,
+                e=e,
+                **_invocation_context_kwargs(
+                    self.conversation_manager.reduce_context,
+                    _create_auxiliary_invocation_context(invocation_context),
+                ),
+            )
 
             # Sync agent after reduce_context to keep conversation_manager_state up to date in the session
             if self._session_manager:
                 self._session_manager.sync_agent(self)
 
-            events = self._execute_event_loop_cycle(invocation_state, structured_output_context, limits)
+            events = self._execute_event_loop_cycle(invocation_state, structured_output_context, invocation_context)
             async for event in events:
                 yield event
 
@@ -1866,6 +2116,7 @@ class Agent(AgentBase, LocalAgent):
             messages = []
         if messages is None:
             raise ValueError("Input prompt must be of type: `str | list[Contentblock] | Messages | None`.")
+        _raise_if_blank_user_message(messages)
         return messages
 
     def _start_agent_trace_span(self, messages: Messages) -> trace_api.Span:
@@ -1881,6 +2132,7 @@ class Agent(AgentBase, LocalAgent):
             model_id=model_id,
             tools=self.tool_names,
             system_prompt=self.system_prompt,
+            system_prompt_content=self.system_prompt_content,
             custom_trace_attributes=self.trace_attributes,
             tools_config=self.tool_registry.get_all_tools_config(),
         )
@@ -1915,30 +2167,38 @@ class Agent(AgentBase, LocalAgent):
             self.tracer.end_agent_span(**trace_attributes)
 
     @staticmethod
-    def _validate_limits(limits: Limits | None) -> None:
-        """Validate per-invocation budget caps before any model work begins.
+    def _resolve_invocation_context(
+        limits: Limits | None, invocation_context: InvocationContext | None
+    ) -> InvocationContext:
+        """Join the request in ``invocation_context``, or start a new request with this call's limits.
 
-        Each cap, when set, must be a positive ``int``. Booleans are rejected because
-        ``bool`` is a subclass of ``int`` in Python and ``True``/``False`` would
-        otherwise pass through as ``1``/``0``, silently no-op'ing or tripping
-        immediately.
-
-        Args:
-            limits: The caps to validate, or ``None`` to skip.
+        A nested call that sets its own ``limits`` gets child state, bound by both its own limits
+        and the request's.
 
         Raises:
-            TypeError: If any value is not a positive int.
+            TypeError: If ``invocation_context`` was not created by the SDK, or ``limits`` is invalid.
         """
-        if not limits:
-            return
-        for key in ("turns", "output_tokens", "total_tokens"):
-            if key not in limits:
-                continue
-            value = limits[key]
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                raise TypeError(f"limits[{key!r}] must be a positive int, got {value!r}")
+        inherited = _unwrap_invocation_context(invocation_context)
+        if inherited is None:
+            return _create_invocation_context(limits)
+        return inherited if limits is None else _create_invocation_context(limits, inherited)
 
-    async def _append_messages(self, *messages: Message) -> None:
+    @staticmethod
+    def _should_resume(event: AfterInvocationEvent, invocation_context: InvocationContext) -> bool:
+        """Whether a hook's ``resume`` starts another pass.
+
+        Never once one of the request's limits is reached: it stays reached for the rest of the
+        request, so that pass would stop at once.
+        """
+        if event.resume is None:
+            return False
+        limit_stop_reason = _reached_limit(invocation_context)
+        if limit_stop_reason is None:
+            return True
+        logger.debug("limit=<%s> | ignoring resume because the request reached its limit", limit_stop_reason)
+        return False
+
+    async def _append_messages(self, *messages: Message, invocation_context: InvocationContext | None = None) -> None:
         """Appends messages to history and invoke the callbacks for the MessageAddedEvent.
 
         Assigns a durable tracking id to any message that does not already have one.
@@ -1946,12 +2206,15 @@ class Agent(AgentBase, LocalAgent):
         for message in messages:
             _ensure_tracking_id(message)
             self.messages.append(message)
-            await self.hooks.invoke_callbacks_async(MessageAddedEvent(agent=self, message=message))
+            await self.hooks.invoke_callbacks_async(
+                MessageAddedEvent(agent=self, message=message, invocation_context=invocation_context)
+            )
 
     async def _append_continuation_messages(
         self,
         messages: Messages,
         continuation_event: AfterInvocationEvent | BeforeModelCallEvent,
+        invocation_context: InvocationContext | None = None,
     ) -> None:
         added_messages: Messages = []
         for message in messages:
@@ -1974,7 +2237,9 @@ class Agent(AgentBase, LocalAgent):
 
         await _continuation.mark_appended(continuation_event)
         for message in added_messages:
-            await self.hooks.invoke_callbacks_async(MessageAddedEvent(agent=self, message=message))
+            await self.hooks.invoke_callbacks_async(
+                MessageAddedEvent(agent=self, message=message, invocation_context=invocation_context)
+            )
 
     def take_snapshot(
         self,
@@ -2033,9 +2298,14 @@ class Agent(AgentBase, LocalAgent):
             snapshot: The snapshot to restore from.
 
         Raises:
-            SnapshotException: If snapshot.schema_version is not "1.0".
+            SnapshotException: If snapshot.schema_version is not "1.0" or snapshot.scope is not "agent".
+            RuntimeError: If background tasks are still tracked.
         """
+        if self._background_tasks is not None:
+            self._background_tasks.assert_can_load_snapshot()
         snapshot.validate()
+        if snapshot.scope != "agent":
+            raise SnapshotException(f"Expected snapshot scope 'agent', got {snapshot.scope!r}")
 
         data = snapshot.data
 
@@ -2051,6 +2321,8 @@ class Agent(AgentBase, LocalAgent):
             self.system_prompt = copy.deepcopy(data["system_prompt"])
         if "model_state" in data:
             self._model_state = copy.deepcopy(data["model_state"])
+        if self._background_tasks is not None and "state" in data:
+            self._background_tasks.load_state()
 
     def _redact_user_content(self, content: list[ContentBlock], redact_message: str) -> list[ContentBlock]:
         """Redact user content preserving toolResult blocks.

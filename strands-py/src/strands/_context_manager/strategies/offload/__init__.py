@@ -1,4 +1,4 @@
-"""Experimental and internal. Offload strategies — reduce content in the context window."""
+"""Offload strategies — reduce content in the context window."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from .summarize import SummarizeStrategy
 from .truncate import TruncateStrategy
 
 if TYPE_CHECKING:
-    from ...methods.summarize import SummarizeConfig
     from ...methods.truncate import TruncateConfig
     from .base import OffloadTarget
+    from .summarize import SummarizeConfig
 
 
 class _OffloadNamespace:

@@ -6,5 +6,5 @@ languages:
   python: {}
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/session/file_session_manager.py
-docsPage: docs/user-guide/concepts/agents/session-management
+docsPage: docs/user-guide/sdk/agents/session-management
 addedDate: 2025-07-13

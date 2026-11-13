@@ -8,78 +8,75 @@ import { logger } from '../../../logging/logger.js'
 import { Message, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
-import type { ContextStrategy, ContextState } from '../../types.js'
-import { truncateToolResultBlock, truncateTextBlock, type TruncateConfig } from '../../methods/truncate.js'
-import { formatStashRefs } from '../../stash.js'
+import type { ContextState } from '../../types.js'
 import {
-  BaseOffloadStrategy,
-  spliceWithPairs,
-  repairAlternation,
-  type OffloadConditions,
-  type OffloadTarget,
-} from './base.js'
+  PREVIEW_HEAD_SHARE,
+  resolvePreviewTokens,
+  truncateToolResultBlock,
+  truncateTextBlock,
+  type TruncateConfig,
+} from '../../methods/truncate.js'
+import type { Stash } from '../../stash.js'
+import { placeholderFor, removeMessages, withPairs } from '../../message-trimming.js'
+import { formatElided, formatOffloaded, isOffloaded } from '../../placeholder.js'
+import { BaseOffloadStrategy } from './base.js'
+import type { OffloadConditions } from './conditions.js'
+import { mediaKind, type OffloadTarget } from './target.js'
 
 export class TruncateStrategy extends BaseOffloadStrategy {
-  readonly name = 'offload:truncate'
-
   private readonly _truncateConfig: TruncateConfig
+  private readonly _previewTokens: number
 
-  constructor(target?: OffloadTarget, config?: TruncateConfig, conditions?: OffloadConditions) {
-    super(target, conditions)
+  constructor(target: OffloadTarget, config?: TruncateConfig, conditions?: OffloadConditions) {
+    super('truncate', target, conditions)
     this._truncateConfig = config ?? {}
+    this._previewTokens = resolvePreviewTokens(this._truncateConfig)
 
-    const previewTokens =
-      typeof this._truncateConfig.previewTokens === 'number' && Number.isFinite(this._truncateConfig.previewTokens)
-        ? this._truncateConfig.previewTokens
-        : 1000
-    if (
-      conditions?.threshold !== undefined &&
-      Number.isFinite(conditions.threshold) &&
-      conditions.threshold <= previewTokens
-    ) {
+    // Every message over a threshold is larger than previewTokens, so middle-out would elide them all, as drop does.
+    if (target === '*' && this._conditions.blockThreshold) {
       throw new Error(
-        `threshold (${conditions.threshold}) must be greater than previewTokens (${previewTokens}) to ensure truncation converges`
+        "Offload.truncate('*') doesn't take a blockThreshold; use Offload.drop('*') to remove large messages, or Offload.truncate('toolResults') to preview large blocks"
       )
     }
+    // A percent needs the context window, so init checks it.
+    const threshold = this._conditions.blockThreshold
+    if (threshold && !threshold.isShare) this._checkThresholdExceedsPreview(threshold.value, String(threshold.value))
   }
 
-  when(conditions: OffloadConditions): ContextStrategy {
+  when(conditions: OffloadConditions = {}): TruncateStrategy {
     return new TruncateStrategy(this._target, this._truncateConfig, conditions)
   }
 
-  protected override _makeRemovalMarker(count: number): string {
-    return `[... ${count} ${count === 1 ? 'message' : 'messages'} elided ...]`
+  /**
+   * Checks a percent blockThreshold against `previewTokens`, then initializes the strategy.
+   *
+   * @param agent - The agent this strategy is attached to
+   * @param stash - The stash offloaded content is stored in
+   * @throws Error when a percent `blockThreshold` of the context window is no larger than `previewTokens`, or the
+   *   base strategy's conditions can't run on this agent
+   */
+  override init(agent: LocalAgent, stash?: Stash): void {
+    if (this._conditions.blockThreshold?.isShare) {
+      const tokens = this._conditions.thresholdTokens(agent)!
+      this._checkThresholdExceedsPreview(tokens, `${tokens} tokens of the context window`)
+    }
+    super.init(agent, stash)
   }
 
-  protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages } = context
-    if (messages.length <= 1) return false
+  private _checkThresholdExceedsPreview(tokens: number, shown: string): void {
+    if (tokens > this._previewTokens) return
+    throw new Error(
+      `blockThreshold (${shown}) must be greater than previewTokens (${this._previewTokens}) to ensure truncation converges; raise blockThreshold or lower previewTokens`
+    )
+  }
 
-    const eligible = await this._getEligibleMessages(context)
-    if (eligible.length === 0) return false
-
-    // Determine head/tail split based on config (default: favor tail — 30% head, 70% tail)
-    const previewMode = this._truncateConfig.preview ?? 'headTail'
-    const headShare = { head: 1, tail: 0, headTail: 0.3 }[previewMode]
-    const targetRemoval = Math.max(1, Math.floor(eligible.length * this._removalRatio))
-    const keepCount = eligible.length - targetRemoval
-
-    const headKeep = Math.floor(keepCount * headShare)
-    const tailKeep = keepCount - headKeep
-
-    const middleMessages = eligible.slice(headKeep, eligible.length - tailKeep)
-
-    if (middleMessages.length === 0) return false
-
-    const { removed, lowestIndex } = spliceWithPairs(messages, middleMessages)
-    if (removed === 0) return false
-
-    const marker = this._makeRemovalMarker(removed)
-    const insertIndex = Math.max(1, Math.min(lowestIndex, messages.length))
-    messages.splice(insertIndex, 0, new Message({ role: 'user', content: [new TextBlock(marker)] }))
-
-    repairAlternation(messages)
-    return true
+  /** Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. */
+  protected async _applyPerMessage(context: ContextState): Promise<boolean> {
+    const { messages, agent } = context
+    const middle = withPairs(messages, await this._selectMiddle(await this._removableMessages(context), agent))
+    // A middle of only placeholders has nothing new to elide.
+    if (middle.every((message) => message.content.every(isOffloaded))) return false
+    return removeMessages(messages, middle, placeholderFor(agent.model, formatElided), 'truncate', this._stash)
   }
 
   protected async _replaceBlock(
@@ -87,42 +84,42 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     tokens: number,
     message: Message,
     _agent: LocalAgent,
-    stashRefs: string[]
+    stashRef: string | undefined
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
-      logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
       const truncated = truncateToolResultBlock(block, this._truncateConfig)
-      if (truncated !== block) {
-        return appendStashRefs(truncated, stashRefs)
-      }
-      return truncated
+      if (!truncated) return null
+      logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
+      return block.with({ content: [this._placeholder(truncated.preview, stashRef, tokens), ...truncated.kept] })
     }
     if (block instanceof TextBlock) {
-      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
       const truncated = truncateTextBlock(block, this._truncateConfig)
-      const refs = formatStashRefs(stashRefs)
-      return refs ? new TextBlock(`${truncated.text}\n\n[Stashed:${refs}]`) : truncated
+      if (truncated === block) return null
+      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
+      return this._placeholder(truncated.text, stashRef, tokens)
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(`[Offloaded: ~${tokens} tokens${formatStashRefs(stashRefs)}]`)
+    return this._placeholder(formatOffloaded(tokens, mediaKind(block)), stashRef, tokens)
+  }
+
+  /** The eligible messages between the head and tail kept within the preview token budget. */
+  private async _selectMiddle(eligible: Message[], agent: LocalAgent): Promise<Message[]> {
+    const headBudget = this._previewTokens * PREVIEW_HEAD_SHARE[this._truncateConfig.preview ?? 'headTail']
+    const headCount = await countWithinBudget(eligible, headBudget, agent)
+    const rest = eligible.slice(headCount)
+    const tailCount = await countWithinBudget([...rest].reverse(), this._previewTokens - headBudget, agent)
+    return rest.slice(0, rest.length - tailCount)
   }
 }
 
-function appendStashRefs(block: ToolResultBlock, stashRefs: string[]): ToolResultBlock {
-  const refs = formatStashRefs(stashRefs)
-  if (!refs) return block
-
-  const content = [...block.content]
-  for (let index = 0; index < content.length; index++) {
-    const item = content[index]!
-    if (item instanceof TextBlock) {
-      content[index] = new TextBlock(`${item.text}\n\n[Stashed:${refs}]`)
-      return new ToolResultBlock({
-        toolUseId: block.toolUseId,
-        status: block.status,
-        content,
-      })
-    }
+/** How many leading messages fit within `budget` tokens. */
+async function countWithinBudget(messages: Message[], budget: number, agent: LocalAgent): Promise<number> {
+  let total = 0
+  let count = 0
+  for (const message of messages) {
+    total += await agent.model.countTokens([message])
+    if (total > budget) break
+    count++
   }
-  return block
+  return count
 }

@@ -1,6 +1,6 @@
 name: sigil-sdk-strands
 description: Grafana Cloud AI Observability (Sigil) hooks for Strands Agents — sends agent, model, and tool lifecycle events to Grafana Sigil via SigilStrandsHookProvider.
-integrationType: plugin
+integrationType: observability
 maintainedBy: partner
 languages:
   python:

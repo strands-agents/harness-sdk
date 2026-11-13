@@ -13,6 +13,8 @@ import { CitationsBlock } from '../types/citations.js'
 import type { Citation, CitationGeneratedContent } from '../types/citations.js'
 import type { StateStore } from '../state-store.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
+import type { AgentMetadata } from '../agent/agent-metadata.js'
+import type { z } from 'zod'
 import {
   ModelContentBlockDeltaEvent,
   ModelContentBlockStartEvent,
@@ -26,23 +28,44 @@ import {
 import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
-import { DEFAULT_CONTEXT_WINDOW_LIMIT, getContextWindowLimit } from './defaults.js'
+import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
+import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
+import { summarizeWithStream, type SummarizeResult } from './summarize.js'
 
 /**
- * Resolves model metadata fields on a config object from built-in lookup tables
- * when not explicitly set. Explicit values pass through unchanged.
+ * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
+ * through unchanged.
+ *
+ * Kept so `getConfig().contextWindowLimit` keeps its documented value. The filled value is resolved
+ * through every layer below the user's (shared model info, then the `modelInfo` override), so
+ * `Model.modelInfo` can take it at face value.
  *
  * @internal
  * @param config - The stored model config
  * @param modelId - The model ID to look up
- * @returns A new config with resolved metadata, or the original config if nothing to resolve
+ * @returns A new config with the limit filled in, or the original config if nothing to fill
  */
 export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, modelId: string): T {
   if (config.contextWindowLimit !== undefined) return config
-  const limit = getContextWindowLimit(modelId)
-  if (limit === undefined) return config
-  return { ...config, contextWindowLimit: limit }
+  const contextWindow = mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
+  if (contextWindow === undefined) return config
+  return { ...config, contextWindowLimit: contextWindow }
+}
+
+/**
+ * The `maxTokens` to send: the configured value, else the model's output ceiling from the shared model
+ * info with the `modelInfo` override applied, else `undefined`. Reads the layers directly rather than
+ * `Model.modelInfo` so `getConfig()` can call it.
+ *
+ * @internal
+ * @param config - The stored model config
+ * @param modelId - The model ID to look up
+ * @returns The resolved `maxTokens`, or `undefined` when neither the user nor the model info says
+ */
+export function resolveMaxTokens(config: BaseModelConfig, modelId: string): number | undefined {
+  if (config.maxTokens !== undefined) return config.maxTokens
+  return mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
 }
 
 class CitationAccumulator {
@@ -116,8 +139,15 @@ export interface CacheConfig {
    */
   messagesTTL?: boolean | CacheTTL
 
-  /** Stable identity a provider can use to route its cache. */
-  cacheKey?: string
+  /**
+   * Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM) uses as its cache key. Left
+   * unset, it is derived per request as `strands-<sessionId>` whenever the agent has a session
+   * manager, so repeat runs of a session share a cache prefix with no key management. Set it to a
+   * string to pin your own key; set it to `false` to opt out of routing entirely. The resolved key
+   * (whether set or derived from the session id) is transmitted to the provider. Because the derived
+   * key is resolved per request, it is not reflected in `getConfig()`.
+   */
+  cacheKey?: string | false
 }
 
 /**
@@ -198,14 +228,20 @@ export interface BaseModelConfig {
   /**
    * Maximum context window size in tokens for the model.
    *
-   * This value represents the total token capacity shared between input and output.
-   * When not provided, it is automatically resolved from a built-in lookup table
-   * based on the configured model ID. An explicit value always takes precedence.
-   *
-   * When `modelId` is changed via `updateConfig()`, this value is automatically
-   * re-resolved if it was initially auto-populated. Explicitly set values are preserved.
+   * The same fact as `modelInfo.limits.contextWindow`; setting it here is shorthand for setting it
+   * through `modelInfo`, and it wins over the shared model info. When both are set, `modelInfo` wins.
+   * When not provided, vended providers still populate it from the shared model info for
+   * callers that read `getConfig()`; `modelInfo` is the resolved view to read.
    */
   contextWindowLimit?: number
+
+  /**
+   * Overrides for what the SDK knows about the model. Fields set here win over the shared model
+   * info and the provider; `capabilities.stateful` changes how the agent loop sends history, so set
+   * it only for a provider that keeps state server-side. `updateConfig({ modelInfo })` replaces the
+   * previous override entirely, it does not merge into it.
+   */
+  modelInfo?: ModelInfo
 }
 
 /**
@@ -244,6 +280,16 @@ export interface StreamOptions {
 
   /** How many trailing blocks of the last user message are rebuilt on every call. */
   dynamicTrailingBlocks?: number
+
+  /** Metadata of the invoking agent, supplied per request. */
+  agentMetadata?: AgentMetadata
+
+  /**
+   * Schema this call must produce, set by the agent on its structured output retry so the provider can choose how to
+   * enforce it. The response must then be either a call to the tool named in `toolChoice` or a final text response
+   * whose text is exactly one JSON object that validates against this schema.
+   */
+  structuredOutputSchema?: z.ZodSchema
 }
 
 /**
@@ -260,6 +306,38 @@ export interface CountTokensOptions {
    * Array of tool specifications to include in the count.
    */
   toolSpecs?: ToolSpec[]
+}
+
+/**
+ * Options for {@link Model.summarize}.
+ */
+export interface SummarizeOptions {
+  /**
+   * The request's system prompt.
+   */
+  systemPrompt?: SystemPrompt
+
+  /**
+   * The request's tool specifications.
+   */
+  toolSpecs?: ToolSpec[]
+
+  /**
+   * Summarization instructions replacing the default ones, which `undefined` or `''` keeps. The base
+   * implementation's instruction not to act on the request or call tools is always sent.
+   */
+  instructions?: string
+
+  /**
+   * Signal that aborts the call.
+   */
+  cancelSignal?: AbortSignal
+
+  /**
+   * Metadata of the invoking agent, as passed to `stream()`. A provider may consult it to derive a prompt-cache
+   * routing key, so a replay can share the agent's cache.
+   */
+  agentMetadata?: AgentMetadata
 }
 
 /**
@@ -328,13 +406,35 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * sends only the latest message instead of the full history. After each invocation,
    * the agent's local message history is cleared automatically.
    *
-   * Model providers that support server-side state management should override this
-   * to return `true`.
+   * Reads `modelInfo.capabilities.stateful`, so a provider that keeps state server-side sets it there
+   * (see {@link modelInfo}) and a `modelInfo` config override can change it.
    *
-   * @returns `false` by default
+   * @returns `false` when unknown
    */
   get stateful(): boolean {
-    return false
+    return this.modelInfo.capabilities?.stateful ?? false
+  }
+
+  /**
+   * Everything the SDK knows about the configured model, resolved on each read. Layers, later
+   * ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that supports
+   * them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
+   *
+   * A provider that knows better than the shared model info overrides this getter: put its facts over
+   * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
+   * `{ ...info, capabilities: { ...info.capabilities, promptCaching: 'auto', ...config.modelInfo?.capabilities } }`.
+   * Do not read {@link stateful} inside the override; it reads this getter.
+   */
+  get modelInfo(): ModelInfo {
+    const config = this.getConfig()
+    return mergeModelInfo(
+      lookupModelInfo(this.modelId ?? ''),
+      {
+        capabilities: { temporaryMessages: false },
+        limits: { contextWindow: config.contextWindowLimit },
+      },
+      config.modelInfo
+    )
   }
 
   /**
@@ -351,7 +451,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * Count tokens for the given input before sending to the model.
    *
    * Used for proactive context management (e.g., triggering compression at a threshold).
-   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON).
+   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON). It counts only the
+   * latest user message's injected blocks, the ones a model reads.
    *
    * Subclasses should override this method to use native token counting APIs
    * (e.g., Bedrock CountTokens, Anthropic countTokens, Gemini countTokens)
@@ -366,6 +467,31 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Summarizes `messages`.
+   *
+   * `messages` is a request as the caller would send it to `stream()`, along with its tool specs and system
+   * prompt. The base implementation sends that request closed by an instruction not to act on it or call tools,
+   * followed by `instructions` (or default ones), and otherwise as given, so a caller that replays its own
+   * conversation can share its prompt cache. The summary is the reply's text, including a reply cut off at the
+   * output limit or a stop sequence. A reply that ends for another reason, such as a tool call, a cancellation or a
+   * guardrail, or that holds no text, gives an empty result.
+   *
+   * Every summary is a `summaryBlock`. The base implementation leaves its `provider` unset. A provider that reports
+   * `modelInfo.capabilities.serverSideSummary` as `true` overrides this method to summarize server-side and sets
+   * `provider` to its own name, using the base implementation when the capability is off or the server-side
+   * summary fails, as `AnthropicModel` does. A summary with a `provider` can stand in for the messages it
+   * summarized only when they start at the conversation's first message; a caller that summarizes anything else
+   * uses only its text.
+   *
+   * @param messages - The request to summarize, left unmodified
+   * @param options - The request's system prompt and tools, summarization instructions, cancel signal and agent metadata
+   * @returns The summary and the token usage of the calls made for it
+   */
+  async summarize(messages: Message[], options?: SummarizeOptions): Promise<SummarizeResult> {
+    return summarizeWithStream(this, messages, options)
+  }
+
+  /**
    * Estimate the fraction of the model's context window consumed by the given input token count.
    *
    * Resolves the model's context window limit (falling back to {@link DEFAULT_CONTEXT_WINDOW_LIMIT}
@@ -375,7 +501,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * @returns Token usage ratio (0–1+; above 1.0 means overflow)
    */
   estimateUtilization(inputTokens: number): number {
-    let contextWindowLimit = this.getConfig().contextWindowLimit
+    let contextWindowLimit = this.modelInfo.limits?.contextWindow
     if (!contextWindowLimit) {
       contextWindowLimit = DEFAULT_CONTEXT_WINDOW_LIMIT
       warnOnce(
@@ -447,7 +573,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
     try {
       // State maintained in closure
-      let messageRole: Role | null = null
+      // Providers can end an empty turn with only a stop event, so a message is assumed to be the assistant's.
+      let messageRole: Role = 'assistant'
       const contentBlocks: ContentBlock[] = []
       let accumulatedText = ''
       let accumulatedToolInput = ''
@@ -531,11 +658,19 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               } else if (accumulatedCitations.hasData()) {
                 block = new CitationsBlock({
                   citations: accumulatedCitations.citations,
-                  content: accumulatedCitations.content,
+                  // Citations deltas that ground already-streamed text carry no content of their own.
+                  content:
+                    accumulatedCitations.content.length > 0
+                      ? accumulatedCitations.content
+                      : accumulatedText
+                        ? [{ text: accumulatedText }]
+                        : [],
                 })
+                accumulatedText = ''
                 accumulatedCitations.reset()
               } else {
                 block = new TextBlock(accumulatedText)
+                accumulatedText = ''
               }
               contentBlocks.push(block)
               yield block
@@ -550,16 +685,11 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
           case 'modelMessageStopEvent':
             // Store message and stop reason
-            if (messageRole) {
-              const filtered = contentBlocks.filter(
-                (block) => !(block instanceof TextBlock && block.text.trim() === '')
-              )
-              stoppedMessage = new Message({
-                role: messageRole,
-                content: filtered,
-              })
-              finalStopReason = event.stopReason!
-            }
+            stoppedMessage = new Message({
+              role: messageRole,
+              content: contentBlocks.filter((block) => !(block instanceof TextBlock && block.text.trim() === '')),
+            })
+            finalStopReason = event.stopReason!
             break
 
           case 'modelMetadataEvent':
@@ -681,6 +811,12 @@ function estimateContentBlockTokens(block: ContentBlock): number {
         if ('text' in item) total += heuristicText(item.text)
       }
       break
+    case 'injectedBlock':
+      total += heuristicText(block.injected.text)
+      break
+    case 'summaryBlock':
+      total += heuristicText(block.text)
+      break
     default:
       break
   }
@@ -706,11 +842,7 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
     }
   }
 
-  for (const message of messages) {
-    for (const block of message.content) {
-      total += estimateContentBlockTokens(block)
-    }
-  }
+  total += estimateMessageTokens(messages)
 
   if (options?.toolSpecs) {
     for (const spec of options.toolSpecs) {
@@ -719,6 +851,28 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
   }
 
   return total
+}
+
+/** Counts the messages, with only the latest user message's injected blocks, the ones a model reads. */
+function estimateMessageTokens(messages: Message[]): number {
+  const latestUser = latestUserIndex(messages)
+  return messages
+    .flatMap((message, index) =>
+      index === latestUser ? message.content : message.content.filter((block) => block.type !== 'injectedBlock')
+    )
+    .reduce((total, block) => total + estimateContentBlockTokens(block), 0)
+}
+
+/**
+ * Index of the latest user message, or -1 when there is none.
+ *
+ * @internal
+ */
+export function latestUserIndex(messages: Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]!.role === 'user') return index
+  }
+  return -1
 }
 
 function heuristicText(text: string): number {

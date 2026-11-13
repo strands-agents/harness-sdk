@@ -7,13 +7,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from strands import Agent, tool
 from strands.hooks.events import AfterToolCallEvent, BeforeModelCallEvent
+from strands.hooks.registry import HookOrder
 from strands.types.tools import ToolContext, ToolUse
 from strands.vended_plugins.context_offloader import (
     ContextOffloader,
     FileStorage,
     InMemoryStorage,
 )
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 from tests.fixtures.sandbox import TestSandbox
 
 
@@ -90,10 +93,47 @@ class TestContextOffloader:
         assert plugin.name == "context_offloader"
 
     def test_hooks_auto_discovered(self, plugin):
-        assert len(plugin.hooks) == 2
         hook_names = {h.__name__ for h in plugin.hooks}
-        assert "_handle_tool_result" in hook_names
-        assert "_on_before_model_call" in hook_names
+        assert hook_names == {"_on_before_model_call"}
+
+    def test_init_agent_registers_tool_result_hook_last(self, plugin, mock_agent):
+        plugin.init_agent(mock_agent)
+
+        mock_agent.add_hook.assert_called_once()
+        args, kwargs = mock_agent.add_hook.call_args
+        assert args == (plugin._handle_tool_result, AfterToolCallEvent)
+        assert HookOrder.DEFAULT < kwargs["order"] < HookOrder.SDK_LAST
+
+    def test_user_after_tool_call_hooks_see_full_result_before_rewrite(self, storage):
+        """Hooks passed via ``hooks=`` run before the offloader rewrites ``event.result`` (#5596)."""
+        large_text = "x" * 2_000
+
+        @tool
+        def big_tool() -> str:
+            return large_text
+
+        seen: list[str] = []
+
+        def audit(event: AfterToolCallEvent) -> None:
+            seen.append(event.result["content"][0]["text"])
+
+        model = MockedModelProvider(
+            [
+                {"role": "assistant", "content": [{"toolUse": {"name": "big_tool", "toolUseId": "t1", "input": {}}}]},
+                {"role": "assistant", "content": [{"text": "done"}]},
+            ]
+        )
+        agent = Agent(
+            model=model,
+            tools=[big_tool],
+            hooks=[audit],
+            plugins=[ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)],
+        )
+        agent("go")
+
+        assert seen == [large_text]
+        stored = agent.messages[2]["content"][0]["toolResult"]["content"][0]["text"]
+        assert stored.startswith("[Offloaded:")
 
     def test_raises_on_non_positive_max_result_tokens(self):
         with pytest.raises(ValueError, match="max_result_tokens must be positive"):
@@ -129,6 +169,35 @@ class TestContextOffloader:
         content, content_type = await storage.retrieve(ref)
         assert content == large_text.encode("utf-8")
         assert content_type == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_preview_keeps_head_and_tail(self, storage, mock_agent):
+        """The preview keeps the tail so trailing notices such as pagination hints stay visible (#5597)."""
+        plugin = ContextOffloader(storage=storage, max_result_tokens=300, preview_tokens=100)
+        body = "\n".join(f"line {i}" for i in range(1, 201))
+        notice = "[Showing lines 1-200 of 5000. Use offset/limit to read more.]"
+        event = _make_event(mock_agent, f"{body}\n{notice}")
+
+        await plugin._handle_tool_result(event)
+
+        preview = event.result["content"][0]["text"]
+        assert preview.index("line 1\n") < preview.index("chars elided") < preview.index(notice)
+        assert "line 100" not in preview
+
+    def test_slice_preview_returns_text_within_budget(self, plugin):
+        assert plugin._slice_preview("a" * 40) == "a" * 40
+
+    def test_slice_preview_splits_budget_60_40(self, plugin):
+        preview = plugin._slice_preview("h" * 100 + "t" * 100)
+        assert preview == "h" * 24 + "\n\n[... 160 chars elided ...]\n\n" + "t" * 16
+
+    def test_slice_preview_never_longer_than_text(self, storage):
+        plugin = ContextOffloader(storage=storage, max_result_tokens=10, preview_tokens=9)
+        assert plugin._slice_preview("a" * 50) == "a" * 50
+
+    def test_slice_preview_zero_budget_is_empty(self, storage):
+        plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=0)
+        assert plugin._slice_preview("a" * 100) == ""
 
     @pytest.mark.asyncio
     async def test_preserves_status_and_tool_use_id(self, plugin, mock_agent):
@@ -933,7 +1002,7 @@ class TestActionableReferences:
     """Tests that storage-specific references appear in the offloaded preview."""
 
     @pytest.mark.asyncio
-    async def test_file_storage_path_in_preview(self, tmp_path, mock_agent):
+    async def test_file_storage_bare_filename_in_preview(self, tmp_path, mock_agent):
         storage = FileStorage(artifact_dir=str(tmp_path / "artifacts"))
         plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
         event = _make_event(mock_agent, "a" * 200)
@@ -941,10 +1010,15 @@ class TestActionableReferences:
         await plugin._handle_tool_result(event)
 
         result_text = event.result["content"][0]["text"]
-        assert str(tmp_path / "artifacts") in result_text
+        assert str(tmp_path / "artifacts") not in result_text
+        assert ".txt" in result_text
+        ref_section = result_text.split("[Stored references:]")[1].strip()
+        ref = ref_section.split()[0]
+        assert ref.endswith(".txt"), f"expected .txt reference, got {ref!r}"
+        assert "/" not in ref and "\\" not in ref, f"reference should be a bare filename, got {ref!r}"
 
     @pytest.mark.asyncio
-    async def test_file_storage_image_placeholder_has_path(self, tmp_path, mock_agent):
+    async def test_file_storage_image_placeholder_has_bare_filename(self, tmp_path, mock_agent):
         storage = FileStorage(artifact_dir=str(tmp_path / "artifacts"))
         plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
         img_bytes = b"\x89PNG" + b"\x00" * 100
@@ -957,7 +1031,8 @@ class TestActionableReferences:
         await plugin._handle_tool_result(event)
 
         placeholder = event.result["content"][1]["text"]
-        assert str(tmp_path / "artifacts") in placeholder
+        assert str(tmp_path / "artifacts") not in placeholder
+        assert ".png" in placeholder
 
     @pytest.mark.asyncio
     async def test_inmemory_storage_opaque_reference_in_preview(self, mock_agent):
@@ -1241,7 +1316,6 @@ class TestUnifiedStorage:
 
     @pytest.mark.asyncio
     async def test_eviction_debug_log_on_delete_failure(self, unified_mock_agent, caplog):
-
         from strands.storage import InMemoryStorage as UnifiedInMemory
 
         storage = UnifiedInMemory()

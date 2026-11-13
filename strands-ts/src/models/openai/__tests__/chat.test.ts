@@ -4,7 +4,15 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  GuardContentBlock,
+  OffloadedBlock,
+  UnknownBlock,
+} from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
 import { warnOnce } from '../../../logging/warn-once.js'
@@ -388,6 +396,28 @@ describe('OpenAIModel', () => {
       expect(captured.request.messages[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Hi' }] })
       warnSpy.mockRestore()
     })
+
+    it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [placeholder] }),
+          new Message({ role: 'assistant', content: [placeholder] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+          }),
+        ])
+      )
+
+      expect(captured.request.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: '[Dropped] [ref: tu-1]' }] },
+        { role: 'assistant', content: '[Dropped] [ref: tu-1]' },
+        { role: 'tool', tool_call_id: 'tu-1', content: '[Dropped] [ref: tu-1]' },
+      ])
+    })
   })
 
   describe('stream', () => {
@@ -738,6 +768,79 @@ describe('OpenAIModel', () => {
       })
     })
 
+    it('surfaces cacheWriteInputTokens from prompt_tokens_details', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield {
+          choices: [{ delta: { role: 'assistant' }, index: 0 }],
+        }
+        yield {
+          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
+        }
+        yield {
+          choices: [],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 40 },
+          },
+        }
+      })
+
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          cacheReadInputTokens: 64,
+          cacheWriteInputTokens: 40,
+        },
+      })
+    })
+
+    it('omits cacheWriteInputTokens when cache_write_tokens is zero or absent', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield {
+          choices: [{ delta: { role: 'assistant' }, index: 0 }],
+        }
+        yield {
+          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
+        }
+        yield {
+          choices: [],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 0 },
+          },
+        }
+      })
+
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          cacheReadInputTokens: 64,
+        },
+      })
+    })
+
     it('handles usage with undefined properties', async () => {
       const mockClient = createMockClient(async function* () {
         yield {
@@ -767,6 +870,37 @@ describe('OpenAIModel', () => {
           totalTokens: 0,
         },
       })
+    })
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/4847: OpenAI-compatible
+    // providers such as OpenRouter send usage on the finish_reason chunk instead of a choice-less chunk.
+    it('emits usage that arrives on the finish_reason chunk', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield {
+          choices: [{ delta: { role: 'assistant' }, index: 0 }],
+        }
+        yield {
+          choices: [{ delta: { content: 'Hi' }, index: 0 }],
+        }
+        yield {
+          choices: [{ finish_reason: 'stop', delta: { content: '' }, index: 0 }],
+          usage: { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 },
+        }
+      })
+
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events).toEqual([
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        { type: 'modelContentBlockStartEvent' },
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hi' } },
+        { type: 'modelContentBlockStopEvent' },
+        { type: 'modelMetadataEvent', usage: { inputTokens: 8, outputTokens: 6, totalTokens: 14 } },
+        { type: 'modelMessageStopEvent', stopReason: 'endTurn' },
+      ])
     })
 
     it('filters out empty string content deltas', async () => {
@@ -1270,6 +1404,64 @@ describe('OpenAIModel', () => {
       expect(captured.request.prompt_cache_key).toBe('explicit')
     })
 
+    it('derives prompt_cache_key from the agent metadata session when cacheKey is unset', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured), cacheConfig: {} })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          agentMetadata: { sessionId: 's1' },
+        })
+      )
+
+      expect(captured.request.prompt_cache_key).toBe('strands-s1')
+    })
+
+    it('lets a configured cacheKey win over the agent metadata session', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        cacheConfig: { cacheKey: 'tenant-42' },
+      })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          agentMetadata: { sessionId: 's1' },
+        })
+      )
+
+      expect(captured.request.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('treats a false cacheKey as an opt-out even with an agent metadata session', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        cacheConfig: { cacheKey: false },
+      })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          agentMetadata: { sessionId: 's1' },
+        })
+      )
+
+      expect(captured.request.prompt_cache_key).toBeUndefined()
+    })
+
+    it('omits prompt_cache_key when the agent metadata carries no session', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured), cacheConfig: {} })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], { agentMetadata: {} })
+      )
+
+      expect(captured.request.prompt_cache_key).toBeUndefined()
+    })
+
     it.each(['24h', 'in_memory'])(
       'maps retention-literal cacheConfig.ttl %s to prompt_cache_retention',
       async (ttl) => {
@@ -1668,6 +1860,28 @@ describe('OpenAIModel', () => {
     })
   })
 
+  describe('unknown blocks in messages', () => {
+    it('skips unknown blocks in user and assistant messages, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const captured: { request: any } = { request: null }
+      const mockClient = createMockClientWithCapture(captured)
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Hello'), unknownBlock] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Hi'), unknownBlock] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request!.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        { role: 'assistant', content: 'Hi' },
+      ])
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+  })
+
   describe('media blocks', () => {
     it('formats image block in user message as image_url with base64', async () => {
       const captured: { request: any } = { request: null }
@@ -1854,6 +2068,81 @@ describe('OpenAIModel', () => {
       expect(toolMsg.content).toBe('result')
       expect(warnSpy).toHaveBeenCalled()
       warnSpy.mockRestore()
+    })
+  })
+
+  describe('tool result and text ordering', () => {
+    // Regression: an everyTurn context injector folds rendered text onto a tool-result turn, producing a
+    // mixed [toolResult, text] user message. Tool results must be emitted before that text so each `tool`
+    // message immediately follows the assistant `tool_calls` it answers — OpenAI rejects a request where a
+    // non-tool message wedges between them.
+    it.each([
+      { name: 'tool result then text', order: ['tu1', 'text'], roles: ['user', 'assistant', 'tool', 'user'] },
+      { name: 'text then tool result', order: ['text', 'tu1'], roles: ['user', 'assistant', 'tool', 'user'] },
+      {
+        name: 'text between parallel tool results',
+        order: ['tu1', 'text', 'tu2'],
+        roles: ['user', 'assistant', 'tool', 'tool', 'user'],
+      },
+    ])('keeps tool results adjacent to the assistant tool_calls for $name', async ({ order, roles }) => {
+      const toolUseIds = order.filter((entry) => entry !== 'text')
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [new TextBlock('task')] }),
+          new Message({
+            role: 'assistant',
+            content: toolUseIds.map((toolUseId) => new ToolUseBlock({ name: 'calc', toolUseId, input: {} })),
+          }),
+          new Message({
+            role: 'user',
+            content: order.map((entry) =>
+              entry === 'text'
+                ? new TextBlock('\n\nNOTE')
+                : new ToolResultBlock({ toolUseId: entry, status: 'success', content: [new TextBlock('42')] })
+            ),
+          }),
+        ])
+      )
+
+      const requestMessages = captured.request.messages
+      expect(requestMessages.map((message: any) => message.role)).toEqual(roles)
+      // The message immediately after the assistant tool_calls must be the first tool response.
+      expect(requestMessages[2]).toEqual({ role: 'tool', tool_call_id: 'tu1', content: '42' })
+      // The injected text trails the tool responses as its own user message.
+      expect(requestMessages.at(-1)).toEqual({ role: 'user', content: [{ type: 'text', text: '\n\nNOTE' }] })
+    })
+
+    it('keeps media hoisted out of a tool result ahead of the injected text', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+
+      await collectIterator(
+        provider.stream([
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 'tu1',
+                status: 'success',
+                content: [
+                  new TextBlock('42'),
+                  new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } }),
+                ],
+              }),
+              new TextBlock('\n\nNOTE'),
+            ],
+          }),
+        ])
+      )
+
+      expect(captured.request.messages).toEqual([
+        { role: 'tool', tool_call_id: 'tu1', content: '42' },
+        { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQ==' } }] },
+        { role: 'user', content: [{ type: 'text', text: '\n\nNOTE' }] },
+      ])
     })
   })
 

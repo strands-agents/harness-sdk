@@ -7,9 +7,13 @@
  */
 
 import type { Agent } from './agent.js'
+import type { AgentResult, InvokeArgs, InvokeOptions } from '../types/agent.js'
 import type { Snapshot } from '../types/snapshot.js'
+import { InterruptError, type InterruptState } from '../interrupt.js'
+import { logger } from '../logging/logger.js'
+import { AgentToolStreamer, ChildAgentAdapter } from '../multiagent/agent-tool-streamer.js'
 import type { JSONValue } from '../types/json.js'
-import { JsonBlock, TextBlock, ToolResultBlock } from '../types/messages.js'
+import { JsonBlock, TextBlock, type ToolResultContent } from '../types/messages.js'
 import { createErrorResult, Tool, ToolStreamEvent } from '../tools/tool.js'
 import type { ToolContext, ToolStreamGenerator } from '../tools/tool.js'
 import type { ToolSpec } from '../tools/types.js'
@@ -48,10 +52,12 @@ export interface AgentAsToolOptions {
    *
    * When `false` (default), the agent's messages and state are reset to the
    * values they had at the time the tool was created, ensuring every call
-   * starts from the same baseline.
+   * starts from the same baseline. The orchestrator also stores the agent's
+   * interrupted turn, so a sub-agent interrupt can be resumed after a restart.
    *
    * When `true`, the agent retains its conversation history across invocations,
-   * allowing it to build context over multiple calls.
+   * allowing it to build context over multiple calls. It keeps its own state on
+   * an interrupt too, so it needs its own session manager to resume after a restart.
    *
    * @defaultValue false
    */
@@ -175,7 +181,7 @@ export class AgentAsTool extends Tool {
   }
 
   async *stream(toolContext: ToolContext): ToolStreamGenerator {
-    const { toolUse, invocationState, cancelSignal } = toolContext
+    const { toolUse, invocationState, cancelSignal, invocationContext } = toolContext
     const toolUseId = toolUse.toolUseId
 
     // Concurrency guard: loadSnapshot + agent.stream() must not overlap.
@@ -185,55 +191,76 @@ export class AgentAsTool extends Tool {
 
     this._busy = true
     try {
-      const { input } = toolUse.input as { input: string }
+      const streamer = new AgentToolStreamer<AgentResult>({
+        interruptState: (toolContext.agent as unknown as { _interruptState?: InterruptState })._interruptState,
+        toolUseId,
+        namespace: 'agent_as_tool',
+        persistInterruptedTurn: !this._preserveContext,
+      })
+      const adapter = new ChildAgentAdapter({ label: `Agent '${this.name}'`, name: this.name })
 
-      // Reset agent state if not preserving context
-      if (this._initialSnapshot) {
-        this._agent.loadSnapshot(this._initialSnapshot)
+      let input: InvokeArgs
+      if (streamer.isResuming()) {
+        const unavailableMessage =
+          `Agent '${this.name}' did NOT run and the human's response was NOT applied: its interrupted turn ` +
+          'is not available. Do not report the requested action as completed; tell the user it failed and ' +
+          'ask them to respond again.'
+        const resumed = await streamer.resume(adapter, this._agent, unavailableMessage)
+        if (resumed === undefined) {
+          if (streamer.error !== undefined) {
+            return createErrorResult(streamer.error, toolUseId)
+          }
+          return streamer.terminalResult((result) => this._renderSuccess(result))
+        }
+        input = resumed
+        logger.debug(`tool_name=<${this.name}>, tool_use_id=<${toolUseId}> | resuming sub-agent from interrupt`)
+      } else {
+        input = (toolUse.input as { input: string }).input
+        // Reset agent state if not preserving context
+        if (this._initialSnapshot) {
+          this._agent.loadSnapshot(this._initialSnapshot)
+        }
       }
 
       // Stream the sub-agent, forwarding the outer invocation's state so
       // mutations in the inner agent's hooks/tools are visible to the outer
       // agent's downstream callbacks and final AgentResult.
-      const gen = this._agent.stream(input, {
+      const invokeOptions: InvokeOptions = {
         invocationState,
         cancelSignal,
-      })
-      let next = await gen.next()
-      while (!next.done) {
-        const event = next.value
+        ...(invocationContext && { invocationContext }),
+      }
+      for await (const event of streamer.stream(adapter, this._agent, this._agent.stream(input, invokeOptions))) {
         if (event.type == 'toolStreamUpdateEvent') {
           yield event.event
         } else {
-          yield new ToolStreamEvent({ data: next.value })
+          yield new ToolStreamEvent({ data: event })
         }
-
-        next = await gen.next()
-      }
-      const result = next.value
-
-      if (result.stopReason === 'cancelled') {
-        return createErrorResult(`Agent '${this.name}' cancelled`, toolUseId)
       }
 
-      // Build the tool result
-      if (result.structuredOutput !== undefined) {
-        return new ToolResultBlock({
-          toolUseId,
-          status: 'success',
-          content: [new JsonBlock({ json: result.structuredOutput as JSONValue })],
-        })
+      if (streamer.interrupts !== undefined && this._preserveContext && this._agent.sessionManager == null) {
+        logger.warn(
+          `tool_name=<${this.name}>, tool_use_id=<${toolUseId}> | interrupted sub-agent has preserveContext=true ` +
+            'and no session manager, so its interrupt cannot be resumed after a restart'
+        )
       }
-
-      return new ToolResultBlock({
-        toolUseId,
-        status: 'success',
-        content: [new TextBlock(result.toString())], // toString defined by AgentResult
-      })
+      if (streamer.error !== undefined) {
+        return createErrorResult(streamer.error, toolUseId)
+      }
+      return streamer.terminalResult((result) => this._renderSuccess(result))
     } catch (error) {
+      if (error instanceof InterruptError) {
+        throw error
+      }
       return createErrorResult(error, toolUseId)
     } finally {
       this._busy = false
     }
+  }
+
+  private _renderSuccess(result: AgentResult): ToolResultContent[] {
+    return result.structuredOutput !== undefined
+      ? [new JsonBlock({ json: result.structuredOutput as JSONValue })]
+      : [new TextBlock(result.toString())]
   }
 }

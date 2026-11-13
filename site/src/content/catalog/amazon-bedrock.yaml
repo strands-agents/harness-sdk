@@ -6,5 +6,5 @@ languages:
   python: {}
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py
-docsPage: docs/user-guide/concepts/model-providers/amazon-bedrock
+docsPage: docs/user-guide/sdk/model-providers/amazon-bedrock
 addedDate: 2025-05-16

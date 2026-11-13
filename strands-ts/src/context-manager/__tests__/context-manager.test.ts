@@ -3,8 +3,9 @@ import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock, OffloadedBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
 function makeMockAgent(overrides?: {
   id?: string
@@ -61,15 +62,22 @@ describe('ContextManager', () => {
     })
   })
 
+  describe('from', () => {
+    it('returns a ContextManager instance as-is', () => {
+      const cm = new ContextManager({ strategies: [{ name: 'custom', apply: async () => false }] })
+      expect(ContextManager.from(cm)).toBe(cm)
+    })
+  })
+
   describe('initAgent', () => {
-    it('registers AfterModelCallEvent hook', () => {
+    it('registers AfterModelCallEvent hook', async () => {
       const cm = new ContextManager()
       const agent = makeMockAgent()
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
       expect(agent.trackedHooks.length).toBeGreaterThan(0)
     })
 
-    it('initializes strategies with init context', () => {
+    it('initializes strategies with init context', async () => {
       let initCalled = false
       const strategy = {
         name: 'test',
@@ -80,8 +88,87 @@ describe('ContextManager', () => {
       }
       const cm = new ContextManager({ strategies: [strategy] })
       const agent = makeMockAgent()
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
       expect(initCalled).toBe(true)
+    })
+  })
+
+  describe('stash root', () => {
+    it('uses an explicitly configured scoped stash storage as the exact root', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      await cm.initAgent(makeMockAgent())
+      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+
+    it('keeps the per-agent root under a scoped agent storage', async () => {
+      const storage = new InMemoryStorage()
+      const agent = createMockAgent({
+        extra: { id: 'test-agent', storage: storage.namespace('tenant') } as Partial<Agent>,
+      })
+      const cm = new ContextManager()
+      await cm.initAgent(agent)
+      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['tenant/context/test-ses/scopes/agent/test-agent/tool-1_0'])
+    })
+  })
+
+  describe('seeded messages', () => {
+    it('does not overwrite a stashed original with a seeded preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      const preview = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [
+              new OffloadedBlock({
+                text: '[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1]',
+                method: 'truncate',
+                ref: 'tu-1',
+              }),
+            ],
+          }),
+        ],
+      })
+      const cm = new ContextManager({ stash: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [preview] }))
+
+      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+    })
+  })
+
+  describe('seeded messages from a session without placeholder metadata', () => {
+    it('does not overwrite a stashed original with a text-only preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      await view.write('msg-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original user text' })))
+      const restored = new Message({
+        role: 'user',
+        content: [
+          new TextBlock('[Truncated: ~2,000 tokens] original [ref: msg-1_0]'),
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1_0]')],
+          }),
+        ],
+        trackingId: 'msg-1',
+      })
+      const cm = new ContextManager({ stash: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [restored] }))
+
+      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+      expect(await cm.stash!.retrieve('msg-1_0')).toStrictEqual({ data: { text: 'original user text' } })
     })
   })
 
@@ -97,7 +184,7 @@ describe('ContextManager', () => {
       }
       const cm = new ContextManager({ strategies: [strategy] })
       const agent = makeMockAgent()
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
@@ -117,7 +204,7 @@ describe('ContextManager', () => {
       }
       const cm = new ContextManager({ strategies: [strategy] })
       const agent = makeMockAgent()
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = new AfterModelCallEvent({
         agent,
@@ -153,7 +240,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const originalLength = messages.length
       const event = makeOverflowEvent(agent)
@@ -163,7 +250,29 @@ describe('ContextManager', () => {
       expect(event.retry).toBe(true)
     })
 
-    it('does not truncate when strategies bring utilization below 1.0', async () => {
+    it('truncates when a strategy throws', async () => {
+      const messages = Array.from(
+        { length: 10 },
+        (_, i) => new Message({ role: i % 2 === 0 ? 'user' : 'assistant', content: [new TextBlock(`msg ${i}`)] })
+      )
+      const strategy = {
+        name: 'failing',
+        apply: async (): Promise<boolean> => {
+          throw new Error('summarizer rejected')
+        },
+      }
+      const cm = new ContextManager({ strategies: [strategy] })
+      const agent = makeMockAgent({ messages, countTokens: async () => 10000, estimateUtilization: () => 1.5 })
+      await cm.initAgent(agent)
+
+      const event = makeOverflowEvent(agent)
+      await invokeTrackedHook(agent, event)
+
+      expect(messages.length).toBeLessThan(10)
+      expect(event.retry).toBe(true)
+    })
+
+    it('does not truncate on non-overflow when utilization is below 1.0', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('system')] }),
         new Message({ role: 'assistant', content: [new TextBlock('response 1')] }),
@@ -173,20 +282,54 @@ describe('ContextManager', () => {
         new Message({ role: 'assistant', content: [new TextBlock('response 3')] }),
       ]
 
-      const strategy = { name: 'noop', apply: async () => true }
+      const strategy = { name: 'test', apply: async () => false }
       const cm = new ContextManager({ strategies: [strategy] })
       const agent = makeMockAgent({
         messages,
         countTokens: async () => 100,
         estimateUtilization: () => 0.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
+
+      const originalLength = messages.length
+      const event = new BeforeModelCallEvent({
+        agent,
+        model: agent.model,
+        invocationState: {},
+        projectedInputTokens: 100,
+      })
+      await invokeTrackedHook(agent, event)
+
+      expect(messages.length).toBe(originalLength)
+    })
+
+    it('emergency truncate fires when estimate undercounts on overflow', async () => {
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('system')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('response 1')] }),
+        new Message({ role: 'user', content: [new TextBlock('msg 2')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('response 2')] }),
+        new Message({ role: 'user', content: [new TextBlock('msg 3')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('response 3')] }),
+        new Message({ role: 'user', content: [new TextBlock('msg 4')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('response 4')] }),
+      ]
+
+      const strategy = { name: 'noop', apply: async () => false }
+      const cm = new ContextManager({ strategies: [strategy] })
+      const agent = makeMockAgent({
+        messages,
+        countTokens: async () => 100,
+        estimateUtilization: () => 0.5,
+      })
+      await cm.initAgent(agent)
 
       const originalLength = messages.length
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
 
-      expect(messages.length).toBe(originalLength)
+      expect(messages.length).toBeLessThan(originalLength)
+      expect(event.retry).toBe(true)
     })
 
     it('caps retries at 3 and stops setting retry', async () => {
@@ -208,7 +351,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       // First 3 overflows should retry
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -236,7 +379,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       // Use 2 retries
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -285,7 +428,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
@@ -323,7 +466,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
@@ -357,7 +500,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
@@ -380,7 +523,7 @@ describe('ContextManager', () => {
       const agent = makeMockAgent({
         estimateUtilization: (tokens: number) => tokens / 10000,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeBeforeEvent(agent, 5000)
       await invokeTrackedHook(agent, event)

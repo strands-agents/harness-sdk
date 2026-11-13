@@ -1,0 +1,213 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import FaqAnswer from '../components/FaqAnswer.astro'
+import {
+  FAQ_DESCRIPTION,
+  FAQ_INTRO,
+  FAQ_TITLE,
+  faqAnswerText,
+  faqCategories,
+  faqItems,
+} from '../config/faq'
+import { pathWithBase } from '../util/links'
+import { faqPageSchema } from '../util/structured-data'
+
+const groupedFaqs = faqCategories.map((category) => ({
+  ...category,
+  items: faqItems.filter((item) => item.category === category.id),
+}))
+const headings = groupedFaqs.flatMap((category) => [
+  { depth: 2, slug: category.id, text: category.label },
+  ...category.items.map((item) => ({ depth: 3, slug: item.id, text: item.question })),
+])
+
+const pageUrl = new URL(Astro.url.pathname, Astro.site ?? 'https://strandsagents.com').href
+const markdownHref = pathWithBase('/faq/index.md')
+const head = [
+  { tag: 'link' as const, attrs: { rel: 'canonical', href: pageUrl } },
+  { tag: 'link' as const, attrs: { rel: 'alternate', type: 'text/markdown', href: markdownHref } },
+  { tag: 'meta' as const, attrs: { property: 'og:type', content: 'website' } },
+  { tag: 'meta' as const, attrs: { property: 'og:url', content: pageUrl } },
+  { tag: 'meta' as const, attrs: { property: 'og:title', content: FAQ_TITLE } },
+  { tag: 'meta' as const, attrs: { property: 'og:description', content: FAQ_DESCRIPTION } },
+  { tag: 'meta' as const, attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+  { tag: 'meta' as const, attrs: { name: 'twitter:title', content: FAQ_TITLE } },
+  { tag: 'meta' as const, attrs: { name: 'twitter:description', content: FAQ_DESCRIPTION } },
+]
+
+Astro.locals.structuredData = [
+  faqPageSchema(
+    faqItems.map((item) => ({
+      question: item.question,
+      answer: faqAnswerText(item.answer),
+    })),
+    pageUrl
+  ),
+]
+---
+
+<StarlightPage
+  frontmatter={{
+    title: FAQ_TITLE,
+    description: FAQ_DESCRIPTION,
+    editUrl: false,
+    tableOfContents: true,
+    head,
+  }}
+  hasSidebar={false}
+  {headings}
+>
+  <div class="faq-page">
+    <p class="faq-page__intro">{FAQ_INTRO}</p>
+
+    <nav class="faq-page__jump" aria-label="FAQ sections">
+      {
+        groupedFaqs.map((category) => (
+          <a href={`#${category.id}`}>
+            {category.label}
+            <span aria-hidden="true">↓</span>
+          </a>
+        ))
+      }
+    </nav>
+
+    {
+      groupedFaqs.map((category) => (
+        <section class="faq-group" aria-labelledby={category.id}>
+          <h2 id={category.id}>{category.label}</h2>
+          <div class="faq-group__items">
+            {category.items.map((item) => (
+              <section class="faq-item" aria-labelledby={item.id}>
+                <h3 id={item.id}>{item.question}</h3>
+                <div class="faq-item__answer">
+                  <FaqAnswer blocks={item.answer} />
+                </div>
+              </section>
+            ))}
+          </div>
+        </section>
+      ))
+    }
+  </div>
+</StarlightPage>
+
+<style>
+  .faq-page {
+    max-width: 58rem;
+  }
+
+  .faq-page__intro {
+    max-width: 48rem;
+    margin: 0;
+    font-size: var(--sl-text-lg);
+    line-height: 1.55;
+    color: var(--sl-color-gray-2);
+  }
+
+  .faq-page__jump {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  .faq-page__jump a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 0.9rem;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 999px;
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    color: var(--sl-color-white);
+    text-decoration: none;
+  }
+
+  .faq-page__jump a:hover {
+    border-color: var(--sl-color-text-accent);
+    color: var(--sl-color-text-accent);
+  }
+
+  .faq-page__jump a:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 3px;
+  }
+
+  .faq-group {
+    margin-top: 3.5rem;
+  }
+
+  .faq-group > h2 {
+    margin: 0 0 1rem;
+    scroll-margin-top: calc(var(--sl-nav-height) + 1.5rem);
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-h2);
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+
+  .faq-group__items {
+    border-top: 1px solid var(--sl-color-hairline);
+  }
+
+  .faq-item {
+    border-bottom: 1px solid var(--sl-color-hairline);
+    padding: 1.25rem 0 1.5rem;
+  }
+
+  .faq-item h3 {
+    margin: 0;
+    scroll-margin-top: calc(var(--sl-nav-height) + 1.5rem);
+    font-family: var(--sl-font);
+    font-size: clamp(1.05rem, 2vw, 1.2rem);
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--sl-color-white);
+  }
+
+  .faq-item__answer {
+    max-width: 50rem;
+    margin-top: 0.75rem;
+    color: var(--sl-color-gray-2);
+  }
+
+  .faq-item__answer :global(p) {
+    margin: 0.85rem 0 0;
+    line-height: 1.65;
+  }
+
+  .faq-item__answer :global(p:first-child) {
+    margin-top: 0;
+  }
+
+  .faq-item__answer :global(ul) {
+    margin: 0.85rem 0 0;
+    padding-inline-start: 1.4rem;
+  }
+
+  .faq-item__answer :global(li + li) {
+    margin-top: 0.4rem;
+  }
+
+  .faq-item__answer :global(a) {
+    color: var(--sl-color-text-accent);
+  }
+
+  @media (max-width: 40rem) {
+    .faq-page__jump {
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+
+    .faq-page__jump a {
+      justify-content: space-between;
+      border-radius: 8px;
+    }
+
+    .faq-group {
+      margin-top: 3rem;
+    }
+  }
+</style>

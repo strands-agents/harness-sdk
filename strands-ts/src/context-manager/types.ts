@@ -6,6 +6,8 @@ import type { Storage } from '../storage/storage.js'
 import type { Stash } from './stash.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { Message } from '../types/messages.js'
+import type { StrategyPresetName } from './presets.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 
 /**
  * A context reduction strategy that can offload, summarize, or otherwise
@@ -13,6 +15,8 @@ import type { Message } from '../types/messages.js'
  *
  * Strategies are applied in order during `apply()`. Each decides whether
  * to act based on the current context state (utilization, message count, etc.).
+ *
+ * @experimental
  */
 export interface ContextStrategy {
   /** Stable identifier for logging and observability. */
@@ -33,6 +37,8 @@ export interface ContextStrategy {
 
 /**
  * State passed to strategies during apply().
+ *
+ * @experimental
  */
 export interface ContextState {
   /** The agent's current message array (the context window). Strategies mutate this in place. */
@@ -44,15 +50,49 @@ export interface ContextState {
   /** Current context utilization ratio (0-1+). Above 1.0 means overflow. */
   utilization: number
 
+  /**
+   * Set when running in response to a `ContextWindowOverflowError`.
+   * Strategies should bypass utilization gates when true — the provider
+   * already rejected the request, so the estimate is not trustworthy.
+   */
+  overflow?: boolean
+
   /** L1 stash for persisting offloaded content. Present when storage is configured. */
   stash?: Stash
+
+  /** The request this reduction runs for, if any; a nested call that joins it adds to the request's usage, but the request's limits don't apply. */
+  readonly invocationContext?: InvocationContext
 }
 
 /**
  * Configuration for the L1 stash (offloaded content persistence).
+ *
+ * Each agent stashes under `context/<sessionId>/scopes/agent/<agentId>/`. The prefix is dropped
+ * only when a namespaced view from a built-in backend's `namespace()` is passed as this config's
+ * `storage`; that view becomes the exact stash root, so agents given the same view share one
+ * stash. Deleting a session leaves a caller-scoped stash in place, and on in-memory storage each
+ * session snapshot captures and restores the whole view.
+ *
+ * @example
+ * ```typescript
+ * const storage = new S3Storage('my-bucket')
+ *
+ * // Namespaced view passed to the stash: stashes at "team/" (prefix dropped, shared).
+ * new ContextManager({ stash: { storage: storage.namespace('team') } })
+ *
+ * // Plain storage passed to the stash:
+ * // stashes at "context/<sessionId>/scopes/agent/<agentId>/".
+ * new ContextManager({ stash: { storage } })
+ *
+ * // Namespaced view passed as agent-level storage: prefix still applies, under the view:
+ * // stashes at "team/context/<sessionId>/scopes/agent/<agentId>/".
+ * new Agent({ storage: storage.namespace('team'), contextManager: new ContextManager() })
+ * ```
+ *
+ * @experimental
  */
 export interface StashConfig {
-  /** Storage backend. Defaults to InMemoryStorage when omitted. */
+  /** Storage backend. Defaults to the agent's `storage`, then InMemoryStorage, when omitted. */
   storage?: Storage
 
   /**
@@ -65,6 +105,8 @@ export interface StashConfig {
 
 /**
  * Full configuration for a ContextManager instance.
+ *
+ * @experimental
  */
 export interface ContextManagerConfig {
   /**
@@ -72,8 +114,11 @@ export interface ContextManagerConfig {
    * sees the output of the previous. Order determines priority — if two strategies
    * target the same content, the first one to shrink it below the next strategy's
    * threshold wins. When omitted, uses the default pipeline.
+   *
+   * Accepts raw `ContextStrategy` objects, preset name strings (e.g. `'largeToolOffloading'`),
+   * or a mix of both. Preset strings are resolved to their default strategy configurations.
    */
-  strategies?: ContextStrategy[]
+  strategies?: (ContextStrategy | StrategyPresetName)[]
 
   /**
    * L1 stash configuration. The stash persists offloaded content so the agent can

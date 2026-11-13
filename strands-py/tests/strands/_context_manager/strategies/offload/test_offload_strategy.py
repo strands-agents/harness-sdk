@@ -9,6 +9,7 @@ from strands._context_manager.strategies.offload.base import (
     _build_tool_name_map,
     _collect_removable_with_pair,
     _get_oldest_matches,
+    _insert_marker,
     _message_matches_target,
     _repair_alternation,
     _resolve_tool_filter,
@@ -33,6 +34,10 @@ def mock_agent():
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.5)
     agent.messages = []
     return agent
+
+
+def _text(role, text):
+    return Message(role=role, content=[ContentBlock(text=text)])
 
 
 def _make_tool_pair(tool_name="my_tool", tool_use_id="tu-1"):
@@ -150,6 +155,7 @@ class TestCollectRemovableWithPair:
             Message(role="user", content=[ContentBlock(text="start")]),
             assistant_msg,
             user_msg,
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         tru_result = _collect_removable_with_pair(messages, 2)
         assert assistant_msg in tru_result
@@ -181,10 +187,20 @@ class TestCollectRemovableWithPair:
             Message(role="user", content=[ContentBlock(text="start")]),
             assistant_msg,
             user_msg,
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         tru_result = _collect_removable_with_pair(messages, 1)
         assert assistant_msg in tru_result
         assert user_msg in tru_result
+
+    def test_never_collects_last_message(self):
+        messages: Messages = [_text("user", "task"), _text("assistant", "a1"), _text("user", "latest")]
+        assert _collect_removable_with_pair(messages, 2) == []
+
+    def test_skips_tool_use_whose_result_is_last_message(self):
+        assistant_msg, user_msg = _make_tool_pair()
+        messages: Messages = [_text("user", "task"), assistant_msg, user_msg]
+        assert _collect_removable_with_pair(messages, 1) == []
 
     def test_returns_empty_for_out_of_bounds_index(self):
         messages: Messages = [
@@ -226,11 +242,12 @@ class TestSpliceWithPairs:
             Message(role="user", content=[ContentBlock(text="pin")]),
             assistant_msg,
             user_msg,
+            Message(role="assistant", content=[ContentBlock(text="latest")]),
         ]
         removed, lowest = _splice_with_pairs(messages, [user_msg])
         assert removed == 2
         assert lowest == 1
-        assert len(messages) == 1
+        assert len(messages) == 2
 
 
 class TestOffloadBuilder:
@@ -412,6 +429,27 @@ class TestGetOldestMatches:
         ]
         assert _get_oldest_matches(messages, "*", 1, {}, None, None) == []
 
+    def test_ratio_preserves_fraction_of_matches(self):
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="msg1")]),
+            Message(role="assistant", content=[ContentBlock(text="msg2")]),
+            Message(role="user", content=[ContentBlock(text="msg3")]),
+            Message(role="assistant", content=[ContentBlock(text="msg4")]),
+            Message(role="user", content=[ContentBlock(text="msg5")]),
+        ]
+        # 0.7 ratio of 5 matching → ceil(5 * 0.7) = 4 preserved → 1 oldest returned
+        tru_result = _get_oldest_matches(messages, "*", 0.7, {}, None, None)
+        assert len(tru_result) == 1
+        assert tru_result[0] is messages[0]
+
+    def test_ratio_zero_preserves_nothing(self):
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="msg1")]),
+            Message(role="assistant", content=[ContentBlock(text="msg2")]),
+        ]
+        tru_result = _get_oldest_matches(messages, "*", 0, {}, None, None)
+        assert len(tru_result) == 2
+
 
 class TestDropStrategy:
     """Tests for DropStrategy per-block execution."""
@@ -483,6 +521,18 @@ class TestTruncateStrategy:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
         assert await strategy.apply(context) is True
         assert "[Truncated:" in messages[1]["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_leaves_injected_text_in_place(self, mock_agent):
+        strategy = Offload.truncate("*", {"preview_tokens": 50}).when(threshold=100)
+        injected = ContentBlock(injected={"text": "x" * (2500 * 4 + 100), "source": "strands:memory-manager"})
+        user_msg = Message(role="user", content=[ContentBlock(text="ask"), injected])
+        messages: Messages = [user_msg]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        assert await strategy.apply(context) is False
+        assert user_msg["content"] == [ContentBlock(text="ask"), injected]
 
 
 class TestMessageLevelDrop:
@@ -602,6 +652,24 @@ class TestEmergencyTruncateStrategy:
         context = ContextState(messages=messages, agent=mock_agent, utilization=1.1)
         assert await strategy.apply(context) is True
         assert len(messages) < 5
+
+    @pytest.mark.asyncio
+    async def test_leaves_marker_on_assistant_after_cut(self, mock_agent):
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+            Message(role="user", content=[ContentBlock(text="u3")]),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+        assert await strategy.apply(context) is True
+        assert [(m["role"], [b["text"] for b in m["content"]]) for m in messages] == [
+            ("user", ["pin"]),
+            ("assistant", ["a2", "[... 2 messages elided ...]"]),
+            ("user", ["u3"]),
+        ]
 
     @pytest.mark.asyncio
     async def test_does_not_fire_when_under_one(self, mock_agent):
@@ -853,7 +921,7 @@ class TestTruncateStrategyPerMessage:
 
     @pytest.mark.asyncio
     async def test_marker_uses_singular_for_one_message(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8)
+        strategy = Offload.truncate("*").when(utilization=0.8, preserve_recent=2)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -886,3 +954,218 @@ class TestTruncateStrategyPerMessage:
         await strategy.apply(context)
         all_text = " ".join(block.get("text", "") for msg in messages for block in msg["content"])
         assert "messages elided" in all_text
+
+
+class TestOverflowBypass:
+    """Tests for overflow flag bypassing utilization gates."""
+
+    @pytest.mark.asyncio
+    async def test_message_level_strategy_skips_below_utilization(self, mock_agent):
+        strategy = Offload.truncate("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+        assert await strategy.apply(context) is False
+
+    @pytest.mark.asyncio
+    async def test_message_level_strategy_fires_on_overflow(self, mock_agent):
+        strategy = Offload.truncate("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+            Message(role="user", content=[ContentBlock(text="u3")]),
+            Message(role="assistant", content=[ContentBlock(text="a3")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, overflow=True)
+        assert await strategy.apply(context) is True
+
+    @pytest.mark.asyncio
+    async def test_emergency_truncate_fires_on_overflow(self, mock_agent):
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+            Message(role="user", content=[ContentBlock(text="u3")]),
+            Message(role="assistant", content=[ContentBlock(text="a3")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5, overflow=True)
+        assert await strategy.apply(context) is True
+
+    @pytest.mark.asyncio
+    async def test_emergency_truncate_skips_below_utilization_no_overflow(self, mock_agent):
+        strategy = EmergencyTruncateStrategy()
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
+        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.5)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+        assert await strategy.apply(context) is False
+
+
+class TestPinnedMessageProtection:
+    """Tests for pinned message protection in offload strategies."""
+
+    @pytest.mark.asyncio
+    async def test_per_block_skips_pinned_messages(self, mock_agent):
+        strategy = Offload.drop("*").when(threshold=100)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(text="pinned content")],
+                metadata={"custom": {"pinned": True}},
+            ),
+            Message(role="user", content=[ContentBlock(text="unpinned")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+        await strategy.apply(context)
+        assert messages[1]["content"][0]["text"] == "pinned content"
+
+    @pytest.mark.asyncio
+    async def test_message_level_skips_pinned_messages(self, mock_agent):
+        strategy = Offload.truncate("*").when(utilization=0.8)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(text="pinned")],
+                metadata={"custom": {"pinned": True}},
+            ),
+            Message(role="user", content=[ContentBlock(text="q2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+            Message(role="user", content=[ContentBlock(text="q3")]),
+            Message(role="assistant", content=[ContentBlock(text="a3")]),
+            Message(role="user", content=[ContentBlock(text="q4")]),
+            Message(role="assistant", content=[ContentBlock(text="a4")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
+        await strategy.apply(context)
+        pinned_texts = [
+            block.get("text", "")
+            for msg in messages
+            for block in msg["content"]
+            if msg.get("metadata", {}).get("custom", {}).get("pinned")
+        ]
+        assert "pinned" in pinned_texts
+
+    @pytest.mark.asyncio
+    async def test_eager_hook_skips_pinned_message(self, mock_agent):
+        mock_agent.hooks = HookRegistry()
+        strategy = Offload.drop("*").when(threshold=100)
+        strategy.init(mock_agent)
+
+        pinned_msg = Message(
+            role="user",
+            content=[ContentBlock(text="x" * 10000)],
+            metadata={"custom": {"pinned": True}},
+        )
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="first")]),
+            pinned_msg,
+        ]
+        event = MessageAddedEvent(agent=mock_agent, message=pinned_msg)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+        assert pinned_msg["content"][0]["text"] == "x" * 10000
+
+    @pytest.mark.asyncio
+    async def test_repair_alternation_preserves_pinned_metadata(self):
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="a")]),
+            Message(
+                role="user",
+                content=[ContentBlock(text="b")],
+                metadata={"custom": {"pinned": True}},
+            ),
+        ]
+        _repair_alternation(messages)
+        assert len(messages) == 1
+        assert messages[0].get("metadata", {}).get("custom", {}).get("pinned") is True
+
+
+class TestInsertMarker:
+    """Tests for placing removal markers as assistant content outside message 0."""
+
+    def test_inserts_assistant_message_between_user_messages(self):
+        messages: Messages = [_text("user", "task"), _text("user", "u1")]
+        _insert_marker(messages, 1, "marker")
+        assert messages == [_text("user", "task"), _text("assistant", "marker"), _text("user", "u1")]
+
+    def test_appends_to_assistant_message_before_gap(self):
+        original: Message = {**_text("assistant", "a1"), "tracking_id": "msg-1", "metadata": {"custom": {"k": "v"}}}
+        messages: Messages = [_text("user", "task"), original, _text("user", "u1")]
+        _insert_marker(messages, 2, "marker")
+        assert messages[1]["content"] == [ContentBlock(text="a1"), ContentBlock(text="marker")]
+        assert messages[1]["tracking_id"] == "msg-1"
+        assert messages[1]["metadata"] == {"custom": {"k": "v"}}
+        assert original["content"] == [ContentBlock(text="a1")]
+        assert len(messages) == 3
+
+    def test_appends_to_assistant_message_after_gap(self):
+        messages: Messages = [_text("user", "task"), _text("assistant", "a1"), _text("user", "u1")]
+        _insert_marker(messages, 1, "marker")
+        assert messages[1]["content"] == [ContentBlock(text="a1"), ContentBlock(text="marker")]
+        assert len(messages) == 3
+
+    @pytest.mark.parametrize(
+        ("index", "expected"),
+        [(0, ["task", "marker", "u1"]), (5, ["task", "u1", "marker"])],
+    )
+    def test_clamps_index_into_history_after_message_zero(self, index, expected):
+        messages: Messages = [_text("user", "task"), _text("user", "u1")]
+        _insert_marker(messages, index, "marker")
+        assert [message["content"][0]["text"] for message in messages] == expected
+
+
+class TestRepeatedReductionKeepsMessageZeroVerbatim:
+    """Regression tests for https://github.com/strands-agents/harness-sdk/issues/4685."""
+
+    @staticmethod
+    def _turn(index, text_only):
+        if text_only:
+            return [_text("assistant", f"a{index}"), _text("user", f"u{index}")]
+        return list(_make_tool_pair(tool_use_id=f"tu-{index}"))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("text_only", [False, True])
+    @pytest.mark.parametrize(
+        "strategy",
+        [
+            Offload.drop("*").when(utilization=0.7, preserve_recent=3),
+            Offload.drop("*").when(utilization=0.7),
+            Offload.truncate("*").when(utilization=0.7, preserve_recent=3),
+            Offload.truncate("*").when(utilization=0.7),
+            EmergencyTruncateStrategy(),
+        ],
+        ids=["drop", "drop-all", "truncate", "truncate-all", "emergency"],
+    )
+    async def test_message_zero_stays_verbatim(self, mock_agent, strategy, text_only):
+        task = Message(role="user", content=[ContentBlock(text="task")], metadata={"custom": {"pinned": True}})
+        messages: Messages = [task]
+        for index in range(30):
+            turn = self._turn(index, text_only)
+            messages.extend(turn)
+            context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+            await strategy.apply(context)
+            assert messages[-1] == turn[-1]
+        assert messages[0] == Message(
+            role="user", content=[ContentBlock(text="task")], metadata={"custom": {"pinned": True}}
+        )
+        assert len(messages) < 10

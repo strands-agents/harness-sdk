@@ -45,11 +45,11 @@ export class PluginRegistry {
     }
     this._plugins.set(plugin.name, plugin)
 
+    await plugin.initAgent(agent)
+
     const tools = plugin.getTools?.() ?? []
     if (tools.length > 0) {
       agent.toolRegistry.add(tools)
     }
-
-    await plugin.initAgent(agent)
   }
 }

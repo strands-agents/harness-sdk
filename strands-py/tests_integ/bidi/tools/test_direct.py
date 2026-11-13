@@ -3,7 +3,7 @@ import unittest.mock
 import pytest
 
 from strands import tool
-from strands.experimental.bidi.agent import BidiAgent
+from strands.bidi.agent import BidiAgent
 
 
 @pytest.fixture

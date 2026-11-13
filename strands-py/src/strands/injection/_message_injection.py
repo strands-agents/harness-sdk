@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from .types import InjectionContext, InjectionTriggerPredicate
 
 if TYPE_CHECKING:
-    from .._middleware.stages import InvokeModelContext
+    from ..middleware.stages import InvokeModelContext
     from ..types.content import ContentBlock, Message, Messages
 
 logger = logging.getLogger(__name__)
@@ -178,13 +178,16 @@ def _fold_into_last_user_message(messages: Messages, text: str) -> tuple[Message
 
     target = messages[target_index]
     # Some providers concatenate adjacent text blocks, which would run this onto the user's own words.
-    separator = "\n\n" if target["content"] and not text.startswith("\n") else ""
+    has_text = any("text" in block for block in target["content"])
+    separator = "\n\n" if has_text and not text.startswith("\n") else ""
     injected: ContentBlock = {"text": f"{separator}{text}"}
     content = [*target["content"], injected]
 
     folded: Message = {"role": target["role"], "content": content}
     if "metadata" in target:
         folded["metadata"] = target["metadata"]
+    if "tracking_id" in target:
+        folded["tracking_id"] = target["tracking_id"]
 
     result = list(messages)
     result[target_index] = folded

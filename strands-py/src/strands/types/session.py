@@ -11,8 +11,7 @@ from ..interrupt import _InterruptState
 from .content import Message
 
 if TYPE_CHECKING:
-    from ..agent.agent import Agent
-    from ..experimental.bidi.agent.agent import BidiAgent
+    from .agent import LocalAgent
 
 
 class SessionType(str, Enum):
@@ -124,41 +123,25 @@ class SessionAgent:
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @classmethod
-    def from_agent(cls, agent: "Agent") -> "SessionAgent":
-        """Convert an Agent to a SessionAgent."""
+    def from_agent(cls, agent: "LocalAgent") -> "SessionAgent":
+        """Convert a local agent to a SessionAgent."""
+        from ..agent.agent import Agent
+
         if agent.agent_id is None:
             raise ValueError("agent_id needs to be defined.")
-        return cls(
-            agent_id=agent.agent_id,
-            conversation_manager_state=agent.conversation_manager.get_state(),
-            state=agent.state.get(),
-            _internal_state={
+
+        internal_state = {}
+        conversation_manager_state = {}
+        if isinstance(agent, Agent):
+            conversation_manager_state = agent.conversation_manager.get_state()
+            internal_state = {
                 "interrupt_state": agent._interrupt_state.to_dict(),
                 "model_state": agent._model_state,
-            },
-        )
-
-    @classmethod
-    def from_bidi_agent(cls, agent: "BidiAgent") -> "SessionAgent":
-        """Convert a BidiAgent to a SessionAgent.
-
-        Args:
-            agent: BidiAgent to convert
-
-        Returns:
-            SessionAgent with empty conversation_manager_state (BidiAgent doesn't use conversation manager)
-        """
-        if agent.agent_id is None:
-            raise ValueError("agent_id needs to be defined.")
-
-        # BidiAgent doesn't have _interrupt_state yet, so we use empty dict for internal state
-        internal_state = {}
-        if hasattr(agent, "_interrupt_state"):
-            internal_state["interrupt_state"] = agent._interrupt_state.to_dict()
+            }
 
         return cls(
             agent_id=agent.agent_id,
-            conversation_manager_state={},  # BidiAgent has no conversation_manager
+            conversation_manager_state=conversation_manager_state,
             state=agent.state.get(),
             _internal_state=internal_state,
         )
@@ -173,23 +156,17 @@ class SessionAgent:
         """Convert the SessionAgent to a dictionary representation."""
         return encode_bytes_values(asdict(self))  # type: ignore[no-any-return]
 
-    def initialize_internal_state(self, agent: "Agent") -> None:
-        """Initialize internal state of agent."""
+    def initialize_internal_state(self, agent: "LocalAgent") -> None:
+        """Restore internal state for Agent instances."""
+        from ..agent.agent import Agent
+
+        if not isinstance(agent, Agent):
+            return
+
         if "interrupt_state" in self._internal_state:
             agent._interrupt_state = _InterruptState.from_dict(self._internal_state["interrupt_state"])
         if "model_state" in self._internal_state:
             agent._model_state = self._internal_state["model_state"]
-
-    def initialize_bidi_internal_state(self, agent: "BidiAgent") -> None:
-        """Initialize internal state of BidiAgent.
-
-        Args:
-            agent: BidiAgent to initialize internal state for
-        """
-        # BidiAgent doesn't have _interrupt_state yet, so we skip interrupt state restoration
-        # When BidiAgent adds _interrupt_state support, this will automatically work
-        if "interrupt_state" in self._internal_state and hasattr(agent, "_interrupt_state"):
-            agent._interrupt_state = _InterruptState.from_dict(self._internal_state["interrupt_state"])
 
 
 @dataclass

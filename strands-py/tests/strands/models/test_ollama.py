@@ -8,6 +8,7 @@ import pydantic
 import pytest
 
 import strands
+from strands.models.model import CacheConfig
 from strands.models.ollama import OllamaModel
 from strands.types.content import Messages
 from strands.types.exceptions import ContextWindowOverflowException
@@ -608,6 +609,25 @@ async def test_structured_output(ollama_client, model, test_output_model_cls, al
     assert tru_result == exp_result
 
 
+@pytest.mark.asyncio
+async def test_structured_output_shows_the_schema_to_the_model(ollama_client, model, alist):
+    class Person(pydantic.BaseModel):
+        name: str = pydantic.Field(description="NAME-MARKER")
+
+    mock_response = unittest.mock.Mock()
+    mock_response.message.content = '{"name": "John"}'
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=mock_response)
+
+    await alist(model.structured_output(Person, [{"role": "user", "content": [{"text": "hi"}]}], system_prompt="SYS"))
+
+    request = ollama_client.chat.call_args.kwargs
+    exp_system = f"SYS\n\nRespond with JSON that matches this JSON schema:\n{json.dumps(Person.model_json_schema())}"
+    assert (request["messages"][0], request["format"]) == (
+        {"role": "system", "content": exp_system},
+        Person.model_json_schema(),
+    )
+
+
 def test_config_validation_warns_on_unknown_keys(ollama_client, captured_warnings):
     """Test that unknown config keys emit a warning."""
     OllamaModel("http://localhost:11434", model_id="test-model", invalid_param="test")
@@ -809,3 +829,76 @@ async def test_structured_output_non_overflow_response_error_propagates(
     messages = [{"role": "user", "content": [{"text": "test"}]}]
     with pytest.raises(ollama.ResponseError, match="not found"):
         await alist(model.structured_output(test_output_model_cls, messages))
+
+
+def test_cache_config_round_trips(host, model_id, captured_warnings):
+    """cache_config is a valid config field and survives get_config/update_config unchanged."""
+    cache_config = CacheConfig()
+    model = OllamaModel(host, model_id=model_id, cache_config=cache_config)
+
+    assert model.get_config()["cache_config"] is cache_config
+
+    updated = CacheConfig()
+    model.update_config(cache_config=updated)
+    assert model.get_config()["cache_config"] is updated
+
+    assert not any("Invalid configuration parameters" in str(warning.message) for warning in captured_warnings)
+
+
+def test_cache_config_default_is_silent_and_not_routed(host, model_id, messages, captured_warnings):
+    """A CacheConfig whose fields are all default warns about nothing and never reaches the request."""
+    model = OllamaModel(host, model_id=model_id, cache_config=CacheConfig(strategy="auto"))
+
+    request = model.format_request(messages)
+
+    assert "cache_config" not in request
+    assert not any("have no effect" in str(warning.message) for warning in captured_warnings)
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "field"),
+    [
+        (CacheConfig(strategy="anthropic"), "strategy"),
+        (CacheConfig(ttl="1h"), "ttl"),
+        (CacheConfig(system_prompt_ttl="1h"), "system_prompt_ttl"),
+        (CacheConfig(cache_key="tenant-42"), "cache_key"),
+        (CacheConfig(tools_ttl=True), "tools_ttl"),
+    ],
+)
+def test_cache_config_unsupported_field_warns_and_is_not_routed(host, model_id, messages, cache_config, field):
+    """Ollama honors no cache field: a non-default field warns (naming the provider) and never reaches the request."""
+    model = OllamaModel(host, model_id=model_id, cache_config=cache_config)
+
+    with pytest.warns(UserWarning, match=rf"fields \['{field}'\] have no effect on Ollama"):
+        request = model.format_request(messages)
+
+    assert "cache_config" not in request
+
+
+@pytest.mark.parametrize("keep_alive", [0, 0.0, -1, "0", "5m"])
+def test_format_request_preserves_explicit_keep_alive(keep_alive):
+    model = OllamaModel("http://localhost:11434", model_id="test", keep_alive=keep_alive)
+    request = model.format_request([{"role": "user", "content": [{"text": "hello"}]}])
+    assert request["keep_alive"] == keep_alive
+
+
+@pytest.mark.parametrize("config", [{}, {"keep_alive": None}])
+def test_format_request_omits_unset_keep_alive(config):
+    model = OllamaModel("http://localhost:11434", model_id="test", **config)
+    request = model.format_request([{"role": "user", "content": [{"text": "hello"}]}])
+    assert "keep_alive" not in request
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.ollama")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by Ollama" in messages_logged[0]

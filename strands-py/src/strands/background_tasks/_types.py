@@ -1,12 +1,35 @@
-"""Internal background task snapshots."""
+"""Background task configuration and internal task snapshots."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
 from typing_extensions import NotRequired, TypedDict
 
-from strands.types.tools import ToolResultContent
+from strands.types.tools import AgentTool, ToolResultContent
+
+
+class BackgroundTasksConfig(TypedDict, total=False):
+    """Configure background tool execution.
+
+    Attributes:
+        wait_for_completion: Wait for background work before an invocation returns. Defaults to True.
+        agentic: Tools or registered tool names whose execution mode is selected by the model.
+            Defaults to ``["*"]``.
+        always: Tools or registered tool names that always execute in the background.
+        never: Tools or registered tool names that never execute in the background.
+        max_concurrency: Maximum number of physically executing background tasks. Defaults to 4.
+        timeout: Per-execution timeout in seconds. Defaults to infinity.
+    """
+
+    wait_for_completion: bool
+    agentic: Sequence[AgentTool | str]
+    always: Sequence[AgentTool | str]
+    never: Sequence[AgentTool | str]
+    max_concurrency: int
+    timeout: float
+
 
 BackgroundTaskStatus: TypeAlias = Literal[
     "queued",
