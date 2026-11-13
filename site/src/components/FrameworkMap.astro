@@ -56,7 +56,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     </div>
 
     <section class="framework__capabilities" aria-labelledby="framework-capabilities-title">
-      <h3 id="framework-capabilities-title" class="framework__capabilities-label">Specialized projects</h3>
+      <h3 id="framework-capabilities-title" class="framework__capabilities-label">Add capabilities</h3>
 
       <div class="framework__capability-grid">
         {
@@ -98,7 +98,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
   }
 
   .framework__card-meta,
-  .framework__capabilities-label,
   .framework__capability-meta {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 11px;
@@ -238,10 +237,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     padding-top: 18px;
   }
 
-  .framework__install :global(.install) {
-    width: 100%;
-  }
-
   .framework__card-link {
     margin-top: 8px;
   }
@@ -274,7 +269,12 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 
   .framework__capabilities-label {
     margin: 0;
-    color: var(--home-label);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(22px, 2vw, 28px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    color: var(--fg);
   }
 
   .framework__capability-grid {

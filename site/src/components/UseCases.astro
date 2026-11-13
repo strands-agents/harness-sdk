@@ -173,7 +173,6 @@ agent("Ask the reviewer to challenge our launch plan.")`,
                 style={`--case-row: ${index + 1}`}
               >
                 <span class="use-cases__button-meta" aria-hidden="true">
-                  <span>{String(index + 1).padStart(2, '0')}</span>
                   <span class="use-cases__icon" set:html={useCase.icon}></span>
                 </span>
                 <span class="use-cases__button-copy">
@@ -393,15 +392,14 @@ agent("Ask the reviewer to challenge our launch plan.")`,
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+    justify-content: flex-start;
     min-height: 58px;
     padding-left: 11px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
     color: var(--home-label);
+  }
+
+  .use-cases__button:not(.is-active) .use-cases__button-meta {
+    justify-content: center;
   }
 
   .use-cases__icon {

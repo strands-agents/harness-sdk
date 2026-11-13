@@ -59,11 +59,13 @@ describe('homepage machine-readable metadata', () => {
 
     expect(banner?.querySelectorAll('h1 > span').map((line) => line.text.trim())).toEqual([
       'Build agents.',
-      'Control every layer.',
+      'Own every layer.',
     ])
     expect(banner?.querySelector('.banner__intro')?.text).toContain('open-source framework')
     expect(banner?.querySelector('.banner__intro')?.text).toContain('composable tools')
     expect(banner?.querySelector('.banner__intro')?.text).not.toContain('Start with Harness')
+    expect(banner?.querySelector('.banner__intro')?.text).not.toContain('in Python and TypeScript')
+    expect(banner?.querySelector('.banner__eyebrow')?.text.trim()).toBe('Python + TypeScript')
     expect(banner?.querySelector('h1')?.getAttribute('aria-label')).toBeUndefined()
     expect(banner?.querySelectorAll('.banner__cta')).toHaveLength(2)
     expect(banner?.querySelector('.banner__cta--primary')?.getAttribute('href')).toBe('#framework')
@@ -74,6 +76,9 @@ describe('homepage machine-readable metadata', () => {
     expect(banner?.querySelector('.banner__cta--secondary')?.text.trim()).toBe('View on GitHub')
     expect(banner?.querySelector('.banner__install')).toBeNull()
     expect(banner?.querySelector('.banner__dots')).not.toBeNull()
+    expect(homepage.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe(
+      'Strands Agents: Build agents. Own every layer.'
+    )
   })
 
   it('presents Strands as one connected framework rather than peer products', () => {
@@ -83,6 +88,7 @@ describe('homepage machine-readable metadata', () => {
 
     expect(framework?.getAttribute('id')).toBe('framework')
     expect(framework?.querySelector('.framework__intro h2')?.text.trim()).toBe('Build an Agent')
+    expect(framework?.querySelector('.framework__capabilities-label')?.text.trim()).toBe('Add capabilities')
     expect(
       layers.map((layer) => ({
         marker: layer.querySelector('.framework__card-meta span')?.text.trim(),
@@ -105,7 +111,7 @@ describe('homepage machine-readable metadata', () => {
         cta: 'Run the quickstart',
       },
       {
-        marker: 'Build from components',
+        marker: 'Build from primitives',
         slug: '/harness-sdk',
         name: 'Harness SDK',
         description:
@@ -162,6 +168,7 @@ describe('homepage machine-readable metadata', () => {
     const buttons = useCases?.querySelectorAll('[data-use-case-button]') ?? []
     const panels = useCases?.querySelectorAll('[data-use-case-panel]') ?? []
     const variants = useCases?.querySelectorAll('[data-code-variant]') ?? []
+    const icons = useCases?.querySelectorAll('.use-cases__icon') ?? []
 
     expect(cases).toHaveLength(4)
     expect(cases.map((item) => item.querySelector('.use-cases__button-title')?.text.trim())).toEqual([
@@ -175,6 +182,13 @@ describe('homepage machine-readable metadata', () => {
     expect(useCases?.text).not.toContain('Choose a use case to see a complete Harness example')
     expect(homepageHtml.indexOf('use-cases__demo')).toBeLessThan(homepageHtml.indexOf('use-cases__footer'))
     expect(buttons).toHaveLength(4)
+    expect(icons).toHaveLength(4)
+    expect(buttons.map((button) => button.querySelector('.use-cases__button-meta')?.text.trim())).toEqual([
+      '',
+      '',
+      '',
+      '',
+    ])
     expect(buttons.map((button) => button.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'false', 'false'])
     expect(panels).toHaveLength(4)
     expect(panels.map((panel) => panel.getAttribute('aria-hidden'))).toEqual(['false', 'true', 'true', 'true'])

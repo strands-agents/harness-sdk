@@ -40,7 +40,7 @@ export const homepageStartProjects: HomepageProject[] = [
   },
   {
     product: harnessSdk,
-    marker: 'Build from components',
+    marker: 'Build from primitives',
     description:
       'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
     cta: 'Build with the SDK',
