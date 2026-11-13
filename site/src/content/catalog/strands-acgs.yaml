@@ -1,0 +1,10 @@
+name: strands-acgs
+description: "Checks each tool call against ACGS constitution rules before it runs: blocking rules return Deny, and rules that require human review return Confirm."
+integrationType: intervention
+maintainedBy: community
+languages:
+  python:
+    package: strands-acgs
+github: https://github.com/acgs-ai/strands-acgs
+docsUrl: https://github.com/acgs-ai/strands-acgs#readme
+addedDate: 2026-10-19
