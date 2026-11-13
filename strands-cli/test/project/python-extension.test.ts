@@ -1,14 +1,16 @@
 import type { JSONValue } from '@strands-agents/sdk'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentExtensionHost } from '../../src/agent/extension.js'
+import { temporaryCreateExperimentSkill } from '../../src/dev/temporary-evals-fork/create-experiment-skill.js'
 import type { ChatEvent } from '../../src/agent/types.js'
 import { CliConfigStore } from '../../src/config/store.js'
+import { exportSourceProject } from '../../src/project/export.js'
 import { PythonBackend, type PythonOptions } from '../../src/project/python.js'
 import { pythonExecutable as python } from '../fixtures/python-runtime.js'
 
@@ -51,9 +53,7 @@ const withInstructions = (host: AgentExtensionHost, instructions: string): Agent
 const extensionHost = (calls: [string, JSONValue][]): AgentExtensionHost => ({
   extension: {
     instructions: '<strands_dev>\nWorkspace folder: /work/strands-dev\n</strands_dev>',
-    skills: [
-      { name: 'create-experiment', description: 'Create an experiment', instructions: 'Ask, confirm, then call.' },
-    ],
+    skills: [temporaryCreateExperimentSkill()],
     tools: [
       {
         name: 'strands_dev_status',
@@ -94,7 +94,7 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
     calls: [string, JSONValue][],
     options: PythonOptions = {},
     authored = source,
-    host = extensionHost(calls)
+    host: AgentExtensionHost | null = extensionHost(calls)
   ): Promise<PythonBackend> => {
     const entrypoint = join(root, 'agent.py')
     await writeFile(entrypoint, authored)
@@ -103,7 +103,7 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
       CliConfigStore.memory(),
       { cwd: root, interactive: true, ...options },
       AbortSignal.timeout(15_000),
-      host
+      host ?? undefined
     )
     backends.push(backend)
     return backend
@@ -127,6 +127,32 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
     expect(prompt.indexOf('Workspace folder: /work/strands-dev')).toBeGreaterThan(
       prompt.indexOf('You answer refund questions.')
     )
+  })
+
+  it('shouldKeepTheDevSkillOutOfStandaloneExportsAndPlainAgentLoads', { timeout: 30_000 }, async () => {
+    const dev = await open([])
+    expect(dev.skills.map(({ name }) => name)).toContain('create-experiment')
+    expect(text(await turn(dev, 'echo system'))).toContain('<strands_dev>')
+
+    const destination = join(root, 'exported-agent')
+    await exportSourceProject(
+      { root, entrypoint: join(root, 'agent.py'), language: 'python' },
+      'Refunds',
+      'python',
+      [],
+      destination,
+      'directory'
+    )
+    const exported = await readFile(join(destination, 'agent.py'), 'utf8')
+    expect(exported).toBe(source)
+    expect(exported).not.toContain('create-experiment')
+    expect(exported).not.toContain('strands_dev')
+
+    const plain = await open([], {}, source, null)
+    expect(text(await turn(plain, 'echo system'))).not.toContain('<strands_dev>')
+    expect(plain.skills.map(({ name }) => name)).not.toContain('create-experiment')
+    expect(plain.info().tools?.some(({ name }) => name.startsWith('strands_dev_'))).toBe(false)
+    expect(await readFile(join(root, 'agent.py'), 'utf8')).toBe(source)
   })
 
   it('shouldOfferTheSkillEvenWhenTheAgentTurnsSkillsOff', { timeout: 20_000 }, async () => {

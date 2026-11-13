@@ -141,14 +141,12 @@ describe('TEMPORARY experiment generation session', () => {
     expect(experiments.agentSummary()).toBe('agent.py · 1 tool · instructions.md')
   })
 
-  it('shouldSuggestATaskFromTheAgentNameWhenTheAgentHasNoDescription', async () => {
+  it('shouldLeaveTheTaskOpenWhenTheAgentHasNoDescription', async () => {
     const workspace = await workspaceFixture()
     const { experiments } = temporaryDevSessions({ workspace, agent: () => ({}) })
     await experiments.reload()
 
-    expect(experiments.suggested().task).toBe(
-      'Handle user requests as the desk agent, with its instructions and tools.'
-    )
+    expect(experiments.suggested().task).toBe('')
   })
 
   it.each([

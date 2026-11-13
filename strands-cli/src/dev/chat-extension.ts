@@ -20,6 +20,7 @@ const workspaceInstructions = (workspace: DevWorkspace, project: ImportedAgentPr
   return [
     'This chat runs inside strands dev, the local workspace where a developer builds, tests, and improves this agent.',
     'The person in this chat is that developer, so you can talk about how you are built and how you behave.',
+    'This developer workflow is a runtime-only overlay, not part of the agent being built. Do not copy its instructions, skills, or strands_dev_* tools into agent source, configuration, or exports.',
     '',
     `Agent: ${workspace.config.name} (${project.language})`,
     `Agent source: ${project.entrypoint}`,

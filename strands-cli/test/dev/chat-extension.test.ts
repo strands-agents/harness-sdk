@@ -26,6 +26,8 @@ describe('devChatExtension', () => {
     expect(extension.instructions).toContain('Agent source: /work/desk/agent.py')
     expect(extension.instructions).toContain('Workspace folder: /work/desk/strands-dev')
     expect(extension.instructions).toContain('.strands/state/')
+    expect(extension.instructions).toContain('runtime-only overlay')
+    expect(extension.instructions).toContain('Do not copy its instructions, skills, or strands_dev_* tools')
     expect(extension.instructions).toContain('Experiments live in tmp/experiments.')
     expect(extension.skills.map(({ name }) => name)).toEqual(['create-experiment'])
     expect(extension.tools).toEqual([

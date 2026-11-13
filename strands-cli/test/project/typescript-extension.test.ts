@@ -1,14 +1,16 @@
 import type { JSONValue } from '@strands-agents/sdk'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { AgentExtensionHost } from '../../src/agent/extension.js'
+import { temporaryCreateExperimentSkill } from '../../src/dev/temporary-evals-fork/create-experiment-skill.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
 import type { ChatEvent } from '../../src/agent/types.js'
 import { parseArgs } from '../../src/cli/arguments.js'
 import { CliConfigStore } from '../../src/config/store.js'
+import { exportSourceProject } from '../../src/project/export.js'
 import { importAgentProject } from '../../src/project/import.js'
 import { TypescriptBackend } from '../../src/project/typescript-backend.js'
 
@@ -53,9 +55,7 @@ agent.model = new LocalModel()
 const extensionHost = (calls: [string, JSONValue][]): AgentExtensionHost => ({
   extension: {
     instructions: '<strands_dev>\nWorkspace folder: /work/strands-dev\n</strands_dev>',
-    skills: [
-      { name: 'create-experiment', description: 'Create an experiment', instructions: 'Ask, confirm, then call.' },
-    ],
+    skills: [temporaryCreateExperimentSkill()],
     tools: [
       {
         name: 'strands_dev_status',
@@ -88,7 +88,7 @@ describe('TypeScript agent extension', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  const open = async (calls: [string, JSONValue][]): Promise<TypescriptBackend> => {
+  const open = async (calls: [string, JSONValue][], dev = true): Promise<TypescriptBackend> => {
     const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
     const { backend } = await TypescriptBackend.open(
       {
@@ -103,7 +103,7 @@ describe('TypeScript agent extension', () => {
       config,
       new AgentMessaging(),
       AbortSignal.timeout(15_000),
-      extensionHost(calls)
+      dev ? extensionHost(calls) : undefined
     )
     backends.push(backend)
     return backend
@@ -127,6 +127,34 @@ describe('TypeScript agent extension', () => {
     expect(prompt.indexOf('Workspace folder: /work/strands-dev')).toBeGreaterThan(
       prompt.indexOf('You answer refund questions.')
     )
+  })
+
+  it('shouldKeepTheDevSkillOutOfStandaloneExportsAndPlainAgentLoads', { timeout: 30_000 }, async () => {
+    const dev = await open([])
+    expect((await dev.skills.list()).map(({ name }) => name)).toContain('create-experiment')
+    expect(text(await turn(dev, 'echo system'))).toContain('<strands_dev>')
+    expect(JSON.stringify(dev.state.profile)).not.toContain('create-experiment')
+    expect(JSON.stringify(dev.state.profile)).not.toContain('strands_dev')
+
+    const destination = join(root, 'exported-agent')
+    await exportSourceProject(
+      importAgentProject(join(root, 'agent.ts')),
+      'Refunds',
+      'typescript',
+      [],
+      destination,
+      'directory'
+    )
+    const exported = await readFile(join(destination, 'agent.ts'), 'utf8')
+    expect(exported).toBe(source)
+    expect(exported).not.toContain('create-experiment')
+    expect(exported).not.toContain('strands_dev')
+
+    const plain = await open([], false)
+    expect(text(await turn(plain, 'echo system'))).not.toContain('<strands_dev>')
+    expect((await plain.skills.list()).map(({ name }) => name)).not.toContain('create-experiment')
+    expect(plain.info().tools?.some(({ name }) => name.startsWith('strands_dev_'))).toBe(false)
+    expect(await readFile(join(root, 'agent.ts'), 'utf8')).toBe(source)
   })
 
   it('shouldOfferTheSkillEvenWhenTheAgentTurnsSkillsOff', { timeout: 30_000 }, async () => {

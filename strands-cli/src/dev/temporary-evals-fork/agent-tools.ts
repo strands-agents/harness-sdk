@@ -45,7 +45,7 @@ const INSTRUCTIONS = `Experiments, tests, and optimization:
 The developer can open a panel with /experiment, /test, or /optimize, or ask you in plain words. For a plain-words request, use these tools:
 - strands_dev_status: the experiments, the drafts, the running jobs, and the last results. Use it first when you do not know what exists.
 - strands_dev_evaluators: the evaluators that can score this agent, with what each one checks and the settings it needs.
-- strands_dev_create_experiment: generate test cases and save them as an experiment. Follow the create-experiment skill to collect the settings.
+- strands_dev_create_experiment: generate test cases and save them as an experiment. Use the create-experiment skill to help the developer shape a test goal naturally; keep technical defaults in the background.
 - strands_dev_test: run this agent on an experiment and report each case.
 - strands_dev_optimize: tune the instructions or the effort of this agent against an experiment, and report the proposed edits.
 - strands_dev_apply_optimization: write the edits that the developer accepts into the agent source.
