@@ -292,8 +292,24 @@ Each candidate has its own dependency environment and reports directory. Credent
 `candidate.json` records the original agent and baseline fingerprint. The stale-baseline check rejects candidates when the main source changes.
 Creating or editing candidates never switches the dev chat away from the bound agent.
 
-These helpers prepare later optimization work. There is no optimizer command, automatic application, or global import in this change.
-Diff generation and acceptance remain deferred. A future manual import can select the persistent agent as the default for plain `strands`.
+### Experiments, tests, and optimization
+
+Inside a `strands dev` chat:
+
+- `/experiment` creates and reviews sets of test cases. **Create a new experiment** starts a conversation about what to test, rather than running generation immediately.
+- `/test` selects saved experiments, runs the agent on their cases, and shows results and reports.
+- `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
+
+Generation, testing, and optimization call models and can incur charges. Review and approve the proposed run before it starts.
+Running jobs show progress below the chat input. Experiments, drafts, reports, and optimization records live under the workspace's `tmp/` folder.
+
+The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
+
+**Temporary dependency:** the evaluation workflow installs `strands-agents-evals[optimization]` from the pinned
+[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/6c5dd0bd4af93adfdbc02a6f7698e5981572ac2d)
+in a separate Python environment on first use. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
+
+Global import remains deferred. A future manual import can select the persistent agent as the default for plain `strands`.
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
 
 ## Using it
