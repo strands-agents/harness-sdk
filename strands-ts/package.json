@@ -40,6 +40,10 @@
       "types": "./dist/src/models/google/index.d.ts",
       "default": "./dist/src/models/google/index.js"
     },
+    "./decisions/sagemaker": {
+      "types": "./dist/src/decisions/sagemaker.d.ts",
+      "default": "./dist/src/decisions/sagemaker.js"
+    },
     "./models/vercel": {
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
@@ -275,12 +279,13 @@
     "@ai-sdk/amazon-bedrock": "^4.0.129",
     "@ai-sdk/openai": "^3.0.41",
     "@ai-sdk/provider": "^3.0.0",
-    "@anthropic-ai/sdk": "^1.4.0",
+    "@anthropic-ai/sdk": "^1.7.0",
     "@aws-sdk/client-bedrock": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1153.0",
     "@aws-sdk/client-s3": "^3.1153.0",
     "@aws-sdk/client-s3vectors": "^3.1125.0",
+    "@aws-sdk/client-sagemaker-runtime": "^3.1158.0",
     "@aws-sdk/client-secrets-manager": "^3.1153.0",
     "@aws-sdk/client-ssm": "^3.1153.0",
     "@aws-sdk/client-sts": "^3.1153.0",
@@ -347,6 +352,7 @@
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
     "@aws-sdk/client-s3": "^3.1078.0",
     "@aws-sdk/client-s3vectors": "^3.1125.0",
+    "@aws-sdk/client-sagemaker-runtime": "^3.1078.0",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@cedar-policy/cedar-wasm": "^4.0.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
@@ -396,6 +402,9 @@
       "optional": true
     },
     "@aws-sdk/client-s3vectors": {
+      "optional": true
+    },
+    "@aws-sdk/client-sagemaker-runtime": {
       "optional": true
     },
     "@google/genai": {

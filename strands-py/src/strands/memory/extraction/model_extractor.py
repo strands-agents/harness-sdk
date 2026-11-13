@@ -13,6 +13,7 @@ from typing import Any
 
 from opentelemetry import trace as trace_api
 
+from ...models._model_proxy import ModelProxy
 from ...models.model import Model
 from ...telemetry.tracer import get_tracer
 from ...types.content import Message
@@ -83,9 +84,6 @@ class ModelExtractor:
             "content": [{"text": f"Extract facts from the following transcript:\n\n{transcript}"}],
         }
 
-        # Lazy import to avoid a circular import with ``event_loop.streaming``.
-        from ...event_loop.streaming import stream_messages
-
         tracer = get_tracer()
         model_id = model.config.get("model_id") if hasattr(model, "config") else None
         span = tracer.start_model_invoke_span(messages=[prompt], model_id=model_id, system_prompt=self._system_prompt)
@@ -94,11 +92,10 @@ class ModelExtractor:
         stop: Any = None
         try:
             with trace_api.use_span(span, end_on_exit=False):
-                async for event in stream_messages(
-                    model,
-                    self._system_prompt,
+                async for event in ModelProxy(model).stream(
                     [prompt],
-                    tool_specs=[],
+                    [],
+                    self._system_prompt,
                     invocation_context=context.invocation_context if context is not None else None,
                 ):
                     # The terminal ``ModelStopReason`` event carries

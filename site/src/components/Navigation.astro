@@ -20,7 +20,7 @@ const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
 const isExamplesPage = isSampleGuidePath(currentPath);
 
 // The "Docs" dropdown is organized around products (Strands harness, SDK,
-// Shell, Evals) from navigation.yml, so the dropdown and the docs stay
+// Shell, Box, Evals, and Decider) from navigation.yml, so the dropdown and the docs stay
 // aligned. Each product renders as one entry linking to its hub; its full
 // docs sidebar (`nav`) drives the mobile accordion. Labs (experimental projects) has its own docs hub, so
 // it's appended here linking to that page.
@@ -32,7 +32,7 @@ const docsCategories = [
       href: p.href,
       accent: p.accent,
       pages: p.pages,
-      nav: await getProductNav(p.href),
+      nav: await getProductNav(p.href, [p.label, p.name]),
     })),
   )),
   {

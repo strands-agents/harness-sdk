@@ -207,8 +207,8 @@ PR body link to each upstream old-to-new commit comparison.
 Tracked content symlinks expose each product's generated content to Astro. Each
 `externalDocs: <product-id>` entry in `navigation.yml` expands that product's `navigation.json`;
 page lists do not need a second manually maintained copy. Static aliases serve the Box
-quickstart at `/docs/user-guide/box/` and Decider's inference guide at
-`/docs/labs/strands-decider/` until their manifests publish landing pages.
+quickstart at `/docs/user-guide/box/` and Decider's overview at
+`/docs/labs/strands-decider/`.
 
 The generator:
 

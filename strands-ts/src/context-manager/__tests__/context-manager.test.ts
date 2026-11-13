@@ -3,7 +3,7 @@ import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock, OffloadedBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
@@ -127,7 +127,13 @@ describe('ContextManager', () => {
           new ToolResultBlock({
             toolUseId: 'tu-1',
             status: 'success',
-            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: tu-1_0]')],
+            content: [
+              new OffloadedBlock({
+                text: '[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1]',
+                method: 'truncate',
+                ref: 'tu-1',
+              }),
+            ],
           }),
         ],
       })
@@ -136,6 +142,33 @@ describe('ContextManager', () => {
       await cm.initAgent(makeMockAgent({ messages: [preview] }))
 
       expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+    })
+  })
+
+  describe('seeded messages from a session without placeholder metadata', () => {
+    it('does not overwrite a stashed original with a text-only preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      await view.write('msg-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original user text' })))
+      const restored = new Message({
+        role: 'user',
+        content: [
+          new TextBlock('[Truncated: ~2,000 tokens] original [ref: msg-1_0]'),
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1_0]')],
+          }),
+        ],
+        trackingId: 'msg-1',
+      })
+      const cm = new ContextManager({ stash: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [restored] }))
+
+      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+      expect(await cm.stash!.retrieve('msg-1_0')).toStrictEqual({ data: { text: 'original user text' } })
     })
   })
 

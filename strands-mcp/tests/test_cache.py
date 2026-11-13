@@ -170,7 +170,7 @@ class TestLoadLinksIndexing:
 
     @pytest.fixture(autouse=True)
     def loaded(self):
-        with patch("strands_mcp_server.utils.cache.doc_fetcher._get", return_value=LLMS_TXT):
+        with patch("strands_mcp_server.utils.cache.doc_fetcher.fetch_text", return_value=LLMS_TXT):
             with patch("strands_mcp_server.utils.cache.doc_config") as mock_config:
                 mock_config.llm_texts_url = ["https://strandsagents.com/llms.txt"]
                 cache.load_links_only()

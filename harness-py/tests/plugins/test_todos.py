@@ -1,4 +1,7 @@
+from unittest.mock import MagicMock
+
 import pytest
+from strands.middleware.stages import InvokeModelStage
 
 from strands_harness import create_harness
 from strands_harness.plugins import Todos
@@ -65,10 +68,16 @@ def test_reminder_is_none_when_no_todos():
     assert Todos()._render_reminder(_InjCtx(agent)) is None
 
 
-def test_todos_plugin_enabled_by_default():
-    agent = create_harness()
+def test_todos_plugin_contributes_todo_write_when_selected():
+    agent = create_harness(builtin_plugins=["todos"])
     assert any(isinstance(p, TodosClass) for p in agent._plugin_registry._plugins.values())
     assert "todo_write" in agent.tool_registry.registry
+
+
+def test_todos_not_in_defaults():
+    agent = create_harness()
+    assert not any(isinstance(p, TodosClass) for p in agent._plugin_registry._plugins.values())
+    assert "todo_write" not in agent.tool_registry.registry
 
 
 def test_todos_disabled_when_not_selected():
@@ -80,3 +89,11 @@ def test_todos_disabled_when_not_selected():
 def test_unknown_builtin_plugin_raises():
     with pytest.raises(ValueError, match="Unknown built-in plugin"):
         create_harness(builtin_plugins=["nope"])
+
+
+def test_registers_a_context_injector_on_init_agent():
+    agent = MagicMock()
+
+    TodosClass().init_agent(agent)
+
+    assert [call.args[0] for call in agent.add_middleware.call_args_list] == [InvokeModelStage.Input]

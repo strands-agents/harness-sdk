@@ -1,0 +1,71 @@
+---
+title: LLM decision model
+description: "Answer decision model questions with any model provider. LLMDecisionModel turns each ask into one structured output call."
+tags: [decision-models]
+sourceLinks:
+  - path: strands-py/src/strands/decisions/llm_decision_model.py
+  - path: strands-ts/src/decisions/llm-decision-model.ts
+---
+
+`LLMDecisionModel` answers questions with a model you already use, from any
+[model provider](../../model-providers/index.mdx). Each `ask` is a single call to that
+model, outside the agent loop.
+
+## Configuration
+
+| Option | Description |
+| --- | --- |
+| `model` | The model that answers. Defaults to Amazon Bedrock with the SDK's default model. |
+| <Syntax py="system_prompt" ts="systemPrompt" /> | Frames the questions for the model. Defaults to a general prompt for answering closed questions. |
+
+The decision model uses only the model you pass. It doesn't pick up an agent's model or
+[auxiliary model](../../model-providers/index.mdx#auxiliary-model), even when an agent's
+tool or classifier calls it.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import LLMDecisionModel
+from strands.models import BedrockModel
+
+decisions = LLMDecisionModel(
+    model=BedrockModel(
+        model_id="global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        # Constrain the model's tool input to the answer schema
+        strict_tools=True,
+    ),
+    system_prompt="You triage messages sent to an online store's support team.",
+)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/models/llm_imports.ts:configuration_imports"
+
+--8<-- "user-guide/sdk/decision-models/models/llm.ts:configuration"
+```
+
+</Tab>
+</Tabs>
+
+## Answers
+
+The decision model sends all the questions in one
+[structured output](../../agents/structured-output.mdx) call. Each answer is constrained
+to its choices, or `"uncertain"` when the question allows it. An uncertain answer can
+include the model's reason, which the result carries on `Uncertain`.
+
+## Prompt injection
+
+The decision model adds rules after your system prompt that tell the model to treat the
+input as data, not instructions, and to ignore text that tries to change the rules, the
+choices, or the answer. Your system prompt can't remove them.
+
+## Errors
+
+`ask` raises an error when the model returns no answers, omits a question, or returns a
+value outside a question's choices. Errors from the model provider, such as
+throttling, pass through unchanged.

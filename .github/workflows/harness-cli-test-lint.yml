@@ -27,7 +27,7 @@ jobs:
         include:
           - { os: strands-agents_ubuntu-latest_4-core, name: Test and Lint }
           - { os: strands-agents_windows-latest_4-core, name: Test and Lint (Windows) }
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
     defaults:
@@ -72,7 +72,7 @@ jobs:
           package-manager-cache: false
 
       - name: Setup Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
 
@@ -97,8 +97,26 @@ jobs:
       - name: Build
         run: npm run build
 
+      # The step timeout below kills a hung run and its child processes, so record what is running a minute before
+      # it: the 840 s here must stay under that step's 15 minutes.
+      - name: Start hang watchdog
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $snapshot = "Start-Sleep 840; Get-CimInstance Win32_Process | Where-Object CommandLine |" +
+            " Select-Object ProcessId, ParentProcessId, CreationDate, CommandLine | Format-List |" +
+            " Out-File -Width 400 '$env:RUNNER_TEMP\hang-processes.txt'"
+          Start-Process pwsh -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', $snapshot
+
       - name: Lint, format, type-check, and test
+        # Below the job timeout, so a hang fails this step and the job still reports and keeps its logs.
+        timeout-minutes: 15
         run: npm run check
+
+      - name: Show processes from a hung run
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: Get-Content "$env:RUNNER_TEMP\hang-processes.txt" -ErrorAction SilentlyContinue
 
       - name: Test voice adapters against the pinned SDK
         run: npm run test:voice

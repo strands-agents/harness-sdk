@@ -5,6 +5,7 @@ property of the model, and a stale entry costs at most a weaker mechanism. Recor
 from the event loop (AnthropicModel) and from a worker thread (BedrockModel); concurrent records can only repeat one.
 """
 
+import json
 import logging
 import warnings
 from collections.abc import Set
@@ -313,3 +314,13 @@ def _convert_array(remaining: dict[str, Any], converted: dict[str, Any]) -> None
         converted["minItems"] = min_items
     elif min_items is not None:
         remaining["minItems"] = min_items
+
+
+def with_schema_instructions(system_prompt: str | None, schema: dict[str, Any]) -> str:
+    """Return ``system_prompt`` followed by an instruction to answer with JSON matching ``schema``.
+
+    For providers whose schema parameter only constrains decoding: the model never reads that schema, so its field
+    descriptions reach the model only through the prompt.
+    """
+    instructions = f"Respond with JSON that matches this JSON schema:\n{json.dumps(schema, ensure_ascii=False)}"
+    return f"{system_prompt}\n\n{instructions}" if system_prompt else instructions
