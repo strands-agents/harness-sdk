@@ -67,18 +67,18 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('highlights one product under each toolkit pillar', () => {
+  it('places the agent foundations above the supporting toolkit products', () => {
     const toolkit = homepage.querySelector('.toolkit')
-    const pillars = toolkit?.querySelectorAll('.toolkit__section') ?? []
+    const sections = toolkit?.querySelectorAll('.toolkit__section') ?? []
 
     expect(toolkit?.querySelector('.toolkit__cards-title')?.tagName).toBe('H2')
     expect(
-      pillars.map((pillar) => ({
+      sections.map((section) => ({
         title: {
-          tagName: pillar.querySelector('.toolkit__section-title')?.tagName,
-          text: pillar.querySelector('.toolkit__section-title')?.text.trim(),
+          tagName: section.querySelector('.toolkit__section-title')?.tagName,
+          text: section.querySelector('.toolkit__section-title')?.text.trim(),
         },
-        products: pillar.querySelectorAll('.toolkit__card').map((card) => {
+        products: section.querySelectorAll('.toolkit__card').map((card) => {
           const heading = card.querySelector('.toolkit__card-slug')
           const docsLink = card.querySelector('.toolkit__card-read')
           return {
@@ -94,7 +94,7 @@ describe('homepage machine-readable metadata', () => {
       }))
     ).toEqual([
       {
-        title: { tagName: 'H3', text: 'Build' },
+        title: { tagName: 'H3', text: 'Build an agent' },
         products: [
           {
             tagName: 'H4',
@@ -105,10 +105,19 @@ describe('homepage machine-readable metadata', () => {
               ariaLabel: 'Read Strands harness docs',
             },
           },
+          {
+            tagName: 'H4',
+            text: '/harness-sdk',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/user-guide/sdk/'),
+              ariaLabel: 'Read Strands Harness SDK docs',
+            },
+          },
         ],
       },
       {
-        title: { tagName: 'H3', text: 'Control' },
+        title: { tagName: 'H3', text: 'Control and improve your agent' },
         products: [
           {
             tagName: 'H4',
@@ -119,11 +128,6 @@ describe('homepage machine-readable metadata', () => {
               ariaLabel: 'Read Strands Box docs',
             },
           },
-        ],
-      },
-      {
-        title: { tagName: 'H3', text: 'Validate' },
-        products: [
           {
             tagName: 'H4',
             text: '/evals',
@@ -133,9 +137,40 @@ describe('homepage machine-readable metadata', () => {
               ariaLabel: 'Read Strands Evals docs',
             },
           },
+          {
+            tagName: 'H4',
+            text: '/decider',
+            docs: {
+              text: 'Read docs',
+              href: configuredPathWithBase('/docs/labs/strands-decider/overview/'),
+              ariaLabel: 'Read Strands Decider docs',
+            },
+          },
         ],
       },
     ])
+
+    expect(
+      sections.map((section) =>
+        section
+          .querySelector('.toolkit__section-cards')
+          ?.getAttribute('class')
+          ?.split(/\s+/)
+          .find((className) => className.startsWith('toolkit__section-cards--'))
+      )
+    ).toEqual(['toolkit__section-cards--build', 'toolkit__section-cards--tools'])
+    expect(toolkit?.querySelectorAll('.toolkit__card-desc').map((item) => item.text.trim())).toEqual([
+      'Use Strands harness when you want a complete agent with benchmarked defaults you can customize.',
+      'Use the Strands Harness SDK when you want to assemble every part of the agent yourself.',
+      'Run agents in an OS-enforced sandbox with policy checks for commands, network access, and MCP requests.',
+      'Measure quality, diagnose failures, and simulate the users and tools your agent will meet in production.',
+      'Use a small, fast model when you need a choice, a yes-or-no probability, or a score with calibrated confidence.',
+    ])
+    expect(sections[0]?.querySelectorAll('.toolkit__card-feature')).toHaveLength(0)
+    expect(sections[0]?.querySelectorAll('.toolkit__card-tag')).toHaveLength(0)
+    expect(toolkit?.querySelectorAll('[data-toggle]').map((toggle) => toggle.getAttribute('aria-controls'))).toEqual(
+      toolkit?.querySelectorAll('.toolkit__card-expanded').map((details) => details.getAttribute('id'))
+    )
   })
 
   it('promotes distinct recent blog posts', async () => {
