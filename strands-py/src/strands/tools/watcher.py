@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .registry import ToolRegistry
@@ -94,6 +94,22 @@ class ToolWatcher:
                             handler.on_modified(event)
                         except Exception as e:
                             logger.error("exception=<%s> | handler error", str(e))
+
+        def on_created(self, event: Any) -> None:
+            """Reload tools when a new file appears in a watched directory.
+
+            Args:
+                event: The file system event that triggered this handler.
+            """
+            self.on_modified(event)
+
+        def on_moved(self, event: Any) -> None:
+            """Reload tools when a file is renamed or moved into a watched directory.
+
+            Args:
+                event: The file system event that triggered this handler.
+            """
+            self.on_modified(FileModifiedEvent(event.dest_path))
 
     def start(self) -> None:
         """Start watching all tools directories for changes."""
