@@ -1,0 +1,146 @@
+---
+import BoxExamples from './BoxExamples.astro'
+---
+
+<section class="box-running" aria-labelledby="box-running-title">
+  <div class="box-running__inner">
+    <header class="box-running__intro">
+      <p class="box-running__eyebrow">Get running</p>
+      <h2 id="box-running-title">Box the agent you already use.</h2>
+      <p>Install Box, start with a working example, then narrow the boundary for your workload.</p>
+    </header>
+
+    <div class="box-running__steps">
+      <article>
+        <p class="box-running__label">/install</p>
+        <h3>Install Box.</h3>
+        <p>Run the installer for a supported platform.</p>
+      </article>
+      <article>
+        <p class="box-running__label">/configure</p>
+        <h3>Set the boundary.</h3>
+        <p>Define direct access in <code>box.toml</code> and mediated actions in <code>policy.dw</code>.</p>
+      </article>
+      <article>
+        <p class="box-running__label">/run</p>
+        <h3>Review and refine.</h3>
+        <p>Launch the workload, review refused requests, and add only the permits you intend.</p>
+      </article>
+    </div>
+
+    <BoxExamples />
+  </div>
+</section>
+
+<style>
+  .box-running {
+    --box-accent: var(--project-accent, var(--card-accent-purple));
+    padding: var(--home-section-space) var(--home-gutter);
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .box-running__inner {
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+
+  .box-running__intro {
+    max-width: 820px;
+    margin-bottom: clamp(28px, 4vw, 42px);
+  }
+
+  .box-running__eyebrow,
+  .box-running__label {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--box-accent);
+  }
+
+  .box-running__eyebrow {
+    margin-bottom: 12px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+
+  .box-running h2 {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: var(--home-heading-size);
+    font-weight: 600;
+    letter-spacing: var(--home-heading-tracking);
+    line-height: 1;
+  }
+
+  .box-running__intro > p:last-child {
+    max-width: 680px;
+    margin: 18px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: var(--home-body-size);
+    line-height: 1.55;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+  }
+
+  .box-running__steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-block: 1px solid var(--home-rule);
+  }
+
+  .box-running__steps article {
+    min-width: 0;
+    padding: 28px clamp(18px, 2.6vw, 34px);
+  }
+
+  .box-running__steps article:first-child {
+    padding-left: 0;
+  }
+
+  .box-running__steps article:last-child {
+    padding-right: 0;
+  }
+
+  .box-running__steps article + article {
+    border-left: 1px solid var(--home-rule);
+  }
+
+  .box-running h3 {
+    margin: 12px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(23px, 2.2vw, 30px);
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    line-height: 1.08;
+  }
+
+  .box-running__steps article > p:last-child {
+    margin: 14px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+  }
+
+  .box-running__steps code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.84em;
+    color: var(--box-accent);
+  }
+
+  @media (max-width: 900px) {
+    .box-running__steps {
+      grid-template-columns: 1fr;
+    }
+
+    .box-running__steps article {
+      padding: 24px 0;
+    }
+
+    .box-running__steps article + article {
+      border-top: 1px solid var(--home-rule);
+      border-left: 0;
+    }
+  }
+</style>

@@ -1,0 +1,480 @@
+---
+import { Code } from 'astro:components'
+import arrow from '../../assets/banner/arrow.svg?raw'
+import { BOX_EXAMPLES } from '../../config/box-landing'
+import { pathWithBase } from '../../util/links'
+---
+
+<div class="box-examples" aria-labelledby="box-examples-title" data-box-examples>
+  <header class="box-examples__intro">
+    <p>Run an example</p>
+    <h3 id="box-examples-title">See Box around a real agent.</h3>
+  </header>
+
+  <div class="box-examples__demo">
+    {
+      BOX_EXAMPLES.map((example, index) => {
+        const isActive = index === 0
+        const buttonId = `box-example-${example.id}`
+        const panelId = `${buttonId}-panel`
+
+        return (
+          <article class="box-examples__case" data-box-example={example.id}>
+            <button
+              id={buttonId}
+              class:list={['box-examples__button', isActive && 'is-active']}
+              type="button"
+              aria-expanded={isActive ? 'true' : 'false'}
+              aria-controls={panelId}
+              data-box-example-button
+              style={`--example-row: ${index + 1}`}
+            >
+              <span class="box-examples__slug">/{example.id}</span>
+              <span class="box-examples__name">{example.label}</span>
+              <span class="box-examples__description">{example.description}</span>
+            </button>
+
+            <div
+              id={panelId}
+              class="box-examples__panel"
+              role="region"
+              aria-labelledby={buttonId}
+              aria-hidden={isActive ? 'false' : 'true'}
+              data-box-example-panel
+              data-box-example-command={example.command}
+              hidden={!isActive}
+            >
+              <header class="box-examples__terminal-header">
+                <div class="box-examples__terminal-dots" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <p>{example.filename}</p>
+                <button
+                  class="box-examples__copy"
+                  type="button"
+                  aria-label={`Copy the ${example.label} example command`}
+                  data-box-example-copy
+                >
+                  <svg viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                    <rect x="6" y="2" width="9" height="11" rx="1.5" stroke="currentColor"></rect>
+                    <rect
+                      class="box-examples__copy-front"
+                      x="3"
+                      y="5"
+                      width="9"
+                      height="11"
+                      rx="1.5"
+                      stroke="currentColor"
+                    ></rect>
+                  </svg>
+                  <span data-box-example-copy-label>copy</span>
+                </button>
+              </header>
+
+              <div class="box-examples__code">
+                <Code
+                  code={example.command}
+                  lang="bash"
+                  themes={{ light: 'github-light', dark: 'github-dark' }}
+                  defaultColor={false}
+                  class="box-examples__source"
+                />
+              </div>
+
+              <footer class="box-examples__panel-footer">
+                <p>Complete the guide setup, then run this configured example.</p>
+                <a href={pathWithBase(example.href)}>
+                  Open full guide
+                  <span set:html={arrow} aria-hidden="true"></span>
+                </a>
+              </footer>
+              <p class="sr-only" aria-live="polite" aria-atomic="true" data-box-example-copy-status></p>
+            </div>
+          </article>
+        )
+      })
+    }
+  </div>
+</div>
+
+<style>
+  .box-examples {
+    --box-accent: var(--project-accent, var(--card-accent-purple));
+    margin-top: clamp(44px, 6vw, 72px);
+  }
+
+  .box-examples__intro {
+    margin-bottom: 20px;
+  }
+
+  .box-examples__intro > p,
+  .box-examples__slug {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--box-accent);
+  }
+
+  .box-examples__intro > p {
+    margin-bottom: 10px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+
+  .box-examples__intro h3 {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(30px, 3.2vw, 44px);
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    line-height: 1.04;
+  }
+
+  .box-examples__demo {
+    display: grid;
+    grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.3fr);
+    overflow: hidden;
+    border: 1px solid rgb(255 255 255 / 15%);
+    border-radius: 20px;
+    background: #101010;
+    color: var(--strands-white);
+  }
+
+  .box-examples__case {
+    display: contents;
+  }
+
+  .box-examples__button {
+    position: relative;
+    grid-column: 1;
+    grid-row: var(--example-row);
+    display: flex;
+    min-height: 122px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 22px 28px;
+    border: 0;
+    border-right: 1px solid rgb(255 255 255 / 15%);
+    border-bottom: 1px solid rgb(255 255 255 / 15%);
+    background: transparent;
+    color: rgb(255 255 255 / 66%);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      background-color 160ms ease,
+      color 160ms ease;
+  }
+
+  .box-examples__case:last-child .box-examples__button {
+    border-bottom: 0;
+  }
+
+  .box-examples__button::before {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--box-accent);
+    opacity: 0;
+    content: '';
+  }
+
+  .box-examples__button:hover,
+  .box-examples__button.is-active {
+    background: color-mix(in srgb, var(--box-accent) 8%, transparent);
+    color: var(--strands-white);
+  }
+
+  .box-examples__button.is-active::before {
+    opacity: 1;
+  }
+
+  .box-examples__button:focus-visible {
+    z-index: 1;
+    outline: 2px solid var(--box-accent);
+    outline-offset: -2px;
+  }
+
+  .box-examples__name {
+    margin-top: 10px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 23px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.08;
+  }
+
+  .box-examples__description {
+    max-width: 34ch;
+    margin-top: 8px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    color: rgb(255 255 255 / 58%);
+  }
+
+  .box-examples__button.is-active .box-examples__description {
+    color: rgb(255 255 255 / 72%);
+  }
+
+  .box-examples__panel {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    display: flex;
+    min-width: 0;
+    min-height: 366px;
+    flex-direction: column;
+    background: #101010;
+    color: var(--strands-white);
+  }
+
+  .box-examples__panel[hidden] {
+    display: none;
+  }
+
+  .box-examples__terminal-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 58px;
+    padding: 8px 12px 8px 18px;
+    border-bottom: 1px solid rgb(255 255 255 / 12%);
+    background: #171717;
+  }
+
+  .box-examples__terminal-header > p {
+    min-width: 0;
+    flex: 1;
+    margin: 0;
+    overflow: hidden;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    color: rgb(255 255 255 / 68%);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .box-examples__terminal-dots {
+    display: flex;
+    flex: none;
+    gap: 6px;
+  }
+
+  .box-examples__terminal-dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .box-examples__terminal-dots span:nth-child(1) {
+    background: #eb5a61;
+  }
+
+  .box-examples__terminal-dots span:nth-child(2) {
+    background: #eebd43;
+  }
+
+  .box-examples__terminal-dots span:nth-child(3) {
+    background: #52cc72;
+  }
+
+  .box-examples__copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 68px;
+    min-height: 40px;
+    padding: 7px 11px;
+    border: 1px solid rgb(255 255 255 / 18%);
+    border-radius: 999px;
+    background: #101010;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    color: rgb(255 255 255 / 72%);
+    cursor: pointer;
+  }
+
+  .box-examples__copy:hover {
+    border-color: var(--box-accent);
+    color: var(--strands-white);
+  }
+
+  .box-examples__copy:focus-visible {
+    outline: 2px solid var(--box-accent);
+    outline-offset: 2px;
+  }
+
+  .box-examples__copy.is-copied {
+    border-color: var(--box-accent);
+    color: var(--box-accent);
+  }
+
+  .box-examples__copy svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .box-examples__copy-front {
+    fill: #101010;
+  }
+
+  .box-examples__code {
+    min-height: 190px;
+    flex: 1;
+    overflow: auto;
+    scrollbar-color: rgb(255 255 255 / 18%) transparent;
+    scrollbar-width: thin;
+  }
+
+  .box-examples__code :global(.astro-code-themes) {
+    color: var(--shiki-dark);
+    background-color: var(--shiki-dark-bg);
+  }
+
+  .box-examples__code :global(.astro-code-themes span) {
+    color: var(--shiki-dark);
+  }
+
+  .box-examples__code :global(.box-examples__source) {
+    min-width: max-content;
+    min-height: 100%;
+    margin: 0;
+    padding: clamp(28px, 4vw, 46px);
+    border: 0;
+    border-radius: 0;
+    background: transparent !important;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(12px, 1.1vw, 14px);
+    line-height: 1.7;
+  }
+
+  .box-examples__panel-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 18px 22px;
+    border-top: 1px solid rgb(255 255 255 / 12%);
+  }
+
+  .box-examples__panel-footer p {
+    max-width: 44ch;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    color: rgb(255 255 255 / 58%);
+  }
+
+  .box-examples__panel-footer a {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--box-accent);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .box-examples__panel-footer a:hover {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  .box-examples__panel-footer a span {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+  }
+
+  .box-examples__panel-footer a span :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 767px) {
+    .box-examples__demo {
+      display: block;
+    }
+
+    .box-examples__case {
+      display: block;
+    }
+
+    .box-examples__button {
+      width: 100%;
+      min-height: 88px;
+      padding: 18px 20px;
+      border-right: 0;
+      border-bottom: 1px solid rgb(255 255 255 / 15%);
+    }
+
+    .box-examples__case:last-child .box-examples__button {
+      border-bottom: 1px solid rgb(255 255 255 / 15%);
+    }
+
+    .box-examples__button:not(.is-active) .box-examples__description {
+      display: none;
+    }
+
+    .box-examples__panel {
+      min-height: 0;
+      border-bottom: 1px solid rgb(255 255 255 / 15%);
+    }
+
+    .box-examples__code {
+      min-height: 170px;
+    }
+
+    .box-examples__code :global(.box-examples__source) {
+      padding: 28px 20px;
+      font-size: 11px;
+    }
+
+    .box-examples__panel-footer {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+
+  @media (max-width: 430px) {
+    .box-examples__terminal-dots {
+      display: none;
+    }
+
+    .box-examples__copy {
+      min-width: 44px;
+    }
+
+    .box-examples__copy svg {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  import { initializeBoxExamples } from '../../util/box-examples'
+
+  initializeBoxExamples()
+  document.addEventListener('astro:page-load', () => initializeBoxExamples())
+</script>

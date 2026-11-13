@@ -54,11 +54,38 @@ const list = (...items: FaqInline[][]): FaqList => ({ kind: 'list', items })
 
 export const faqItems: FaqItem[] = [
   {
+    id: 'what-is-strands',
+    category: 'choose',
+    question: 'What is Strands?',
+    featuredSummary:
+      'Strands is an open-source toolkit for building, running, and improving AI agents. Harness provides a complete agent, and the Harness SDK gives direct control. Other Strands projects work independently or together.',
+    answer: [
+      paragraph(
+        'Strands is an open-source toolkit for building, running, and improving AI agents in Python and TypeScript. Its projects cover the agent loop, tools, session management, memory, multi-agent patterns, evaluation, isolated execution, and focused decisions.'
+      ),
+      paragraph(
+        'Use ',
+        link('Strands harness', '/docs/user-guide/harness/'),
+        ' for a complete agent with tuned defaults, or use the ',
+        link('Harness SDK', '/docs/user-guide/sdk/quickstart/overview/'),
+        ' to choose and wire the components yourself. Add ',
+        link('Box', '/box/'),
+        ', ',
+        link('Shell', '/docs/user-guide/shell/'),
+        ', ',
+        link('Evals', '/docs/user-guide/evals-sdk/'),
+        ', or ',
+        link('Decider', '/docs/labs/strands-decider/overview/'),
+        ' when your application needs them.'
+      ),
+    ],
+  },
+  {
     id: 'harness-or-sdk',
     category: 'choose',
-    question: 'Should I use Strands harness or the Strands Harness SDK?',
+    question: 'Should I use Harness or the Harness SDK?',
     featuredSummary:
-      'Strands harness gives you a complete agent harness with defaults you can replace. Use the SDK when you want to choose and wire the components yourself.',
+      'Use Harness for a complete agent with tuned defaults for tools, context management, session management, memory, and the system prompt. Use the Harness SDK when you want to choose and wire those components yourself.',
     answer: [
       paragraph(
         link('Strands harness', '/docs/user-guide/harness/'),
@@ -69,6 +96,42 @@ export const faqItems: FaqItem[] = [
         link('replace individual components later', '/docs/user-guide/harness/composing-with-sdk/'),
         '.'
       ),
+    ],
+  },
+  {
+    id: 'customize-harness',
+    category: 'choose',
+    question: 'Can I customize Harness without starting over?',
+    featuredSummary:
+      'Yes. Replace individual Harness defaults with Harness SDK components as your needs grow, without rebuilding the parts that already work.',
+    answer: [
+      paragraph(
+        'Replace individual Harness defaults for tools, context management, session management, memory, or the system prompt with Harness SDK components. The rest of the assembled agent stays in place.'
+      ),
+      paragraph(
+        'The ',
+        link('composing with the Harness SDK guide', '/docs/user-guide/harness/composing-with-sdk/'),
+        ' shows how to override one component at a time as your application grows.'
+      ),
+    ],
+  },
+  {
+    id: 'strands-projects-fit',
+    category: 'choose',
+    question: 'How do Box, Shell, Evals, and Decider fit?',
+    featuredSummary:
+      'They are optional projects: Box isolates agent work, Shell mediates command and resource access, Evals measures agent behavior, and Decider handles routing, classification, and scoring.',
+    answer: [
+      list(
+        [link('Box', '/box/'), ' runs agent work in OS-isolated sandboxes.'],
+        [link('Shell', '/docs/user-guide/shell/'), ' mediates command, filesystem, network, and credential access.'],
+        [link('Evals', '/docs/user-guide/evals-sdk/'), ' measures agent output and behavior across repeatable cases.'],
+        [
+          link('Decider', '/docs/labs/strands-decider/overview/'),
+          ' routes, classifies, or scores known outcomes with confidence.',
+        ]
+      ),
+      paragraph('Add only the projects your application needs. Each works alongside Harness and the Harness SDK.'),
     ],
   },
   {
@@ -92,8 +155,6 @@ export const faqItems: FaqItem[] = [
     id: 'python-or-typescript',
     category: 'choose',
     question: 'Should I use Python or TypeScript?',
-    featuredSummary:
-      'Choose the SDK that matches your runtime. Both cover the core agent loop; check the feature pages for gaps such as Python-only bidirectional agents.',
     answer: [
       paragraph(
         "Use the SDK that matches your application's runtime. Both implement the core agent loop and support tools, MCP tools, streaming, structured output, sessions, and the main multi-agent patterns."
@@ -205,8 +266,6 @@ export const faqItems: FaqItem[] = [
     id: 'custom-or-mcp-tool',
     category: 'build',
     question: 'Should I build a custom tool or use an MCP tool?',
-    featuredSummary:
-      'Use a custom tool for code registered directly with an agent. Use an MCP tool when the capability comes from an MCP server. You can use both together.',
     answer: [
       paragraph(
         'Use a ',
@@ -423,8 +482,6 @@ export const faqItems: FaqItem[] = [
     id: 'evaluate-before-production',
     category: 'run',
     question: 'How do I evaluate a Strands agent before production?',
-    featuredSummary:
-      "Use Strands Evals to run repeatable cases, score the agent's output and behavior, and diagnose failed runs before production.",
     answer: [
       paragraph(
         'Use ',
@@ -441,9 +498,9 @@ export const faqItems: FaqItem[] = [
   {
     id: 'deploy-strands-agent',
     category: 'run',
-    question: 'Where can I deploy a Strands agent?',
+    question: 'Where can I run a Strands agent?',
     featuredSummary:
-      'Strands agents run inside your application process, which you can deploy to a serverless platform, a container or Kubernetes environment, or a managed agent runtime.',
+      'Strands runs inside your application process. Deploy that application to serverless, containers, Kubernetes, or a managed agent runtime.',
     answer: [
       paragraph(
         'Strands agents run in your application process. Deploy the application behind the entry point required by the target environment. The ',

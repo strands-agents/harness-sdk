@@ -1,10 +1,6 @@
 /**
- * Shared copy-to-clipboard button wiring with "copied!" feedback, reused by the
- * code terminals.
- *
- * (InstallCommand.astro keeps its own inline copy handler: its script is
- * `is:inline` so it can render the pip/npm command before paint, and inline
- * scripts can't import this module.)
+ * Shared copy-to-clipboard button wiring with "copied!" feedback, reused by
+ * code terminals and install commands.
  */
 /**
  * Analytics descriptor for a copy button. On a successful copy the helper fires
@@ -28,6 +24,8 @@ export interface CopyButtonOptions {
   getText: () => string
   /** Element whose text shows the copy/copied label. Defaults to the button itself. */
   label?: HTMLElement | null
+  /** Optional live region that announces copy success or failure. */
+  status?: HTMLElement | null
   /** Class toggled on the button while in the copied state. */
   activeClass?: string
   idleText?: string
@@ -41,6 +39,7 @@ export function attachCopyButton(button: HTMLElement, options: CopyButtonOptions
   const {
     getText,
     label = null,
+    status = null,
     activeClass = 'is-copied',
     idleText = 'copy',
     copiedText = 'copied!',
@@ -58,10 +57,12 @@ export function attachCopyButton(button: HTMLElement, options: CopyButtonOptions
       .then(() => {
         button.classList.add(activeClass)
         target.textContent = copiedText
+        if (status) status.textContent = copiedText
         if (resetTimer) window.clearTimeout(resetTimer)
         resetTimer = window.setTimeout(() => {
           button.classList.remove(activeClass)
           target.textContent = idleText
+          if (status) status.textContent = ''
         }, resetMs)
 
         if (track) {
@@ -73,9 +74,11 @@ export function attachCopyButton(button: HTMLElement, options: CopyButtonOptions
       .catch((err) => {
         console.error('Copy to clipboard failed:', err)
         target.textContent = 'failed'
+        if (status) status.textContent = 'Copy failed'
         if (resetTimer) window.clearTimeout(resetTimer)
         resetTimer = window.setTimeout(() => {
           target.textContent = idleText
+          if (status) status.textContent = ''
         }, resetMs)
       })
   })

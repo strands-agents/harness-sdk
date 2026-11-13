@@ -24,7 +24,7 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 
 **Why:** The sidebar is organized around products (Strands harness, SDK, Shell, Evals SDK) plus Examples and Community. Without this middleware, every page would show the entire tree. The middleware scopes it to the current section (matched by the longest `basePath` in `navigation.yml`'s `navbar`), so more specific paths win. Each product's sidebar follows the same shape — Get started → Build guides → Run guides → Components → Reference. First-level bands always render open; depth ≥ 1 subgroups collapse by default (see `applyCollapse()`), and no first-level band sets `collapsed:`. The SDK is the largest scope — the SDK concepts, deploy, observability, and safety pages plus the generated API reference (`/docs/api/`) all resolve to it — while Strands harness, Shell, and Evals SDK each scope to their own product pages under `user-guide/`.
 
-**Product scoping, the switcher & hubs:** The scoped sidebar renders as the normal Starlight left rail. On product pages, `Sidebar.astro` leads with a **product switcher** (the current product slug, e.g. `/harness`, opening the full product list) so you can jump products without leaving the rail. The `PageTitle` override (`src/components/overrides/PageTitle.astro`) renders a product's hub page (`currentPath === product.href`) as a lightweight hero (slug eyebrow, H1, tagline, Quickstart CTA) and every other product page with a small slug eyebrow above the H1. The current product is resolved by `currentProduct()` (`src/util/current-product.ts`) using the same longest-`basePath` rule. Products are declared once in `navigation.yml` under `products:` (the single source of truth for the header "Products" dropdown), and per-product `navbar` `basePath` entries drive the scoping. API/Blog/Changelog pages keep their traditional left sidebar.
+**Product scoping, switchers, and landing pages:** The scoped sidebar renders as the normal Starlight left rail. On product docs pages, `Sidebar.astro` leads with the current product slug (for example, `/harness`) linked to that product's public landing page. A product's `href` in `navigation.yml` controls that landing link, while the matching `navbar` entry owns the docs root and `basePath` values used for sidebar scoping. `docsHrefForProduct()` (`src/config/navbar.ts`) keeps mobile docs navigation on the docs root when a product has a separate landing page. The current docs product is resolved by `currentProduct()` (`src/util/current-product.ts`) using the same longest-`basePath` rule. If a product landing page and docs root share a URL, the `PageTitle` override (`src/components/overrides/PageTitle.astro`) renders the docs root as a lightweight hero. API, Blog, and Changelog pages keep their traditional left sidebar.
 
 **Right table of contents:** Disabled globally via `tableOfContents: false` in `astro.config.mjs`, so no page renders the right "On this page" rail.
 
@@ -714,42 +714,21 @@ extend: z.object({
 This allows the content collection to validate and expose the category for sidebar generation.
 
 
-## Custom Landing Page
+## Standalone Marketing Pages
 
-The landing page uses a custom layout that provides the Starlight header without the full documentation page structure, allowing for full-width marketing content.
+Standalone marketing pages use the site header, search, analytics, theme support, and footer without Starlight's documentation sidebar or content constraints.
 
-### Landing Layout (`src/layouts/LandingLayout.astro`)
+### Project Landing Layout (`src/layouts/ProjectLandingLayout.astro`)
 
-**What it does:** Provides a minimal layout with the Starlight header, theme support, and CSS variables, but without the sidebar, table of contents, or content constraints of documentation pages.
+`ProjectLandingLayout.astro` is the shared shell for product landing pages. It owns canonical and social metadata, the Markdown alternate link, structured data, the announcement banner, theme initialization, analytics, and the global footer. A page can set a product accent that carries through the header, page sections, footer, and footer transition without changing the default Strands theme elsewhere.
 
-**Key features:**
-- Mocks `Astro.locals.starlightRoute` with minimal data needed for the Header component
-- Mocks `Astro.locals.t` translation function (with `.all()` method for Search component)
-- Includes `SiteScripts` for Shortbread consent and WebSDK
+### Homepage (`src/pages/index.astro`)
 
-**Usage:**
-```astro
----
-import LandingLayout from '../layouts/LandingLayout.astro'
----
+The homepage keeps its purpose-built layout and section components because its navigation, social proof, examples, FAQ, and footer transitions are unique to the site overview.
 
-<LandingLayout title="Page Title" description="Optional description">
-  <!-- Full-width content here -->
-</LandingLayout>
-```
+### Box Landing Page (`src/pages/box.astro`)
 
-### Landing Page (`src/pages/index.astro`)
-
-The main landing page includes:
-- Animated parallax curves background (replicating strandsagents.com effect)
-- Hero section with frosted glass effect
-- Feature cards that expand on hover to show descriptions
-- Testimonials slider with fade transitions and auto-play
-- Footer with `Copyright` component (left-aligned, `--sl-color-bg-nav` background)
-
-**Assets:**
-- `src/assets/curve-primary.svg` and `src/assets/curve-secondary.svg` - Animated strand patterns
-- `src/assets/icons/icon-*.svg` - Feature card icons
+The Box page composes a focused hero, boundary explanation, and getting-started path from `src/components/box/` inside `ProjectLandingLayout.astro`. Its Box-purple accent includes the header wordmark and interactions, the hero install command, section details, and the footer with its rising side transition. Its route is `/box/`, while Box documentation remains scoped under `/docs/user-guide/box/`. `src/pages/box/index.md.ts` publishes the same page content as Markdown for agents and text-first clients.
 
 ## Testimonials Content Collection
 

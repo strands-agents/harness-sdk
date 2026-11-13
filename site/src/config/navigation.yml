@@ -148,11 +148,20 @@ products:
     accent: purple
     name: Strands Box
     slug: "/box"
-    href: /docs/user-guide/box/
+    href: /box/
     description: An agent sandbox that pairs OS containment with Dogwood policy.
     repository: https://github.com/strands-agents/box
     languages:
       - Rust
+    pages:
+      - label: Overview
+        href: /box/
+      - label: Quickstart
+        href: /docs/user-guide/box/quickstart/
+      - label: Security model
+        href: /docs/user-guide/box/security/
+      - label: Configuration reference
+        href: /docs/user-guide/box/reference/configuration/
   - label: Shell
     accent: yellow
     name: Strands Shell

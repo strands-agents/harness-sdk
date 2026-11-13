@@ -1,598 +1,558 @@
 ---
-import { getCollection, render } from 'astro:content';
-import chevron from '../assets/prove-cases/chevron.svg?raw';
+import { getCollection, render } from 'astro:content'
 
-const entries = (await getCollection('testimonials')).sort(
-  (a, b) => a.data.order - b.data.order
-);
+const entries = (await getCollection('testimonials')).sort((a, b) => a.data.order - b.data.order)
+
+if (entries.length === 0) {
+  throw new Error('Expected at least one testimonial')
+}
+
 const testimonials = await Promise.all(
-  entries.map(async (entry) => ({
-    ...entry.data,
-    Content: (await render(entry)).Content,
-  }))
-);
+  entries.map(async (entry) => {
+    const { Content } = await render(entry)
+    return { Content, testimonial: entry.data }
+  })
+)
+
+const total = String(testimonials.length).padStart(2, '0')
 ---
 
-<section class="prove" aria-label="Testimonials" data-carousel>
-  <div class="prove__viewport">
-    <div class="prove__track" data-track>
-      {testimonials.map(({ Content, ...t }) => (
-        <article class="prove__card prove__card--main" data-slide>
-          <div class="prove__main-header">
-            <svg
-              class="prove__quote"
-              viewBox="0 0 31 25"
-              fill="none"
-              aria-hidden="true"
-            >
+<section
+  class="prove"
+  aria-labelledby="prove-title"
+  data-testimonial-browser
+  data-testimonial-interval="9000"
+>
+  <div class="prove__inner">
+    <header class="prove__intro">
+      <div class="prove__heading">
+        <p class="prove__eyebrow">Used in production</p>
+        <h2 id="prove-title">Teams run Strands in production.</h2>
+      </div>
+
+      <div class="prove__controls" data-testimonial-controls hidden>
+        <p class="prove__counter" aria-live="off">
+          <span data-testimonial-current>01</span>
+          <span aria-hidden="true">/</span>
+          <span>{total}</span>
+          <span class="sr-only">stories</span>
+        </p>
+        <div class="prove__buttons">
+          <button
+            class="prove__button"
+            type="button"
+            aria-label="Pause automatic story rotation"
+            aria-pressed="false"
+            aria-controls="prove-stories"
+            data-testimonial-toggle
+          >
+            <svg class="prove__icon prove__icon--pause" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5.5 3v10M10.5 3v10"></path>
+            </svg>
+            <svg class="prove__icon prove__icon--play" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="m5 3 7 5-7 5V3z"></path>
+            </svg>
+          </button>
+          <button
+            class="prove__button"
+            type="button"
+            aria-label="Previous story"
+            aria-controls="prove-stories"
+            data-testimonial-previous
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="m10.5 3-5 5 5 5"></path>
+            </svg>
+          </button>
+          <button
+            class="prove__button"
+            type="button"
+            aria-label="Next story"
+            aria-controls="prove-stories"
+            data-testimonial-next
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="m5.5 3 5 5-5 5"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="prove__stories" id="prove-stories" aria-live="off">
+      {
+        testimonials.map(({ Content, testimonial }, index) => (
+          <article
+            class="prove__story"
+            role="group"
+            aria-label={`${index + 1} of ${testimonials.length}: Story from ${testimonial.name}`}
+            data-testimonial-story
+          >
+            <svg class="prove__mark" viewBox="0 0 31 25" fill="none" aria-hidden="true">
               <path
-                d="M0 25V12.5C0 5.596 5.596 0 12.5 0V6.25c-3.452 0-6.25 2.798-6.25 6.25H12.5V25H0zm18.5 0V12.5c0-6.904 5.596-12.5 12.5-12.5v6.25c-3.452 0-6.25 2.798-6.25 6.25H31V25H18.5z"
-                fill="var(--strands-green-3)"
+                d="M0 25V12.5C0 5.596 5.596 0 12.5 0V6.25c-3.452 0-6.25 2.798-6.25 6.25H12.5V25H0zm18.5 0V12.5C18.5 5.596 24.096 0 31 0v6.25c-3.452 0-6.25 2.798-6.25 6.25H31V25H18.5z"
+                fill="currentColor"
               />
             </svg>
-          </div>
-          <blockquote class="prove__main-quote">
-            <Content />
-          </blockquote>
-          <footer class="prove__main-footer">
-            <span class="prove__main-divider" aria-hidden="true"></span>
-            <div class="prove__main-attribution">
-              {t.logo && (
-                <span class="prove__main-logos" aria-hidden="true">
-                  <img
-                    class="prove__main-logo prove__main-logo--light"
-                    src={t.logo.src}
-                    alt=""
-                    loading="lazy"
-                  />
-                  {t.dark_logo && (
-                    <img
-                      class="prove__main-logo prove__main-logo--dark"
-                      src={t.dark_logo.src}
-                      alt=""
-                      loading="lazy"
-                    />
-                  )}
-                </span>
-              )}
-              <div class="prove__main-attribution-text">
-                <p class="prove__main-name">{t.name}</p>
-                {t.title && <p class="prove__main-role">{t.title}</p>}
-              </div>
-            </div>
-          </footer>
-        </article>
-      ))}
-    </div>
-  </div>
 
-  <div class="prove__controls">
-    <div class="prove__progress" data-progress>
-      <span class="prove__progress-track" aria-hidden="true"></span>
-      <span class="prove__progress-fill" data-progress-fill aria-hidden="true"></span>
+            <blockquote class="prove__quote">
+              <Content />
+            </blockquote>
+
+            <footer class="prove__attribution">
+              <div class="prove__person">
+                {
+                  testimonial.logo && (
+                    <span class="prove__logos" aria-hidden="true">
+                      <img
+                        class="prove__logo prove__logo--light"
+                        src={testimonial.logo.src}
+                        alt=""
+                        loading="lazy"
+                      />
+                      {testimonial.dark_logo && (
+                        <img
+                          class="prove__logo prove__logo--dark"
+                          src={testimonial.dark_logo.src}
+                          alt=""
+                          loading="lazy"
+                        />
+                      )}
+                    </span>
+                  )
+                }
+                <div class="prove__attribution-text">
+                  <p class="prove__name">{testimonial.name}</p>
+                  {testimonial.title && <p class="prove__role">{testimonial.title}</p>}
+                </div>
+              </div>
+              {
+                testimonial.link && (
+                  <a class="prove__source" href={testimonial.link} target="_blank" rel="noopener noreferrer">
+                    Read the story
+                    <span aria-hidden="true">↗</span>
+                    <span class="sr-only">(opens in a new tab)</span>
+                  </a>
+                )
+              }
+            </footer>
+          </article>
+        ))
+      }
     </div>
-    <div class="prove__chevrons">
-      <button
-        type="button"
-        class="prove__chevron prove__chevron--prev"
-        data-prev
-        aria-label="Previous"
-      >
-        <span class="prove__chevron-icon" set:html={chevron} />
-      </button>
-      <button
-        type="button"
-        class="prove__chevron prove__chevron--next"
-        data-next
-        aria-label="Next"
-      >
-        <span class="prove__chevron-icon" set:html={chevron} />
-      </button>
-    </div>
+    <p class="sr-only" aria-live="polite" aria-atomic="true" data-testimonial-status></p>
   </div>
 </section>
 
 <style>
   .prove {
-    position: relative;
+    padding: var(--home-section-space-compact) var(--home-gutter);
     background: var(--bg);
-    padding: 69px 0 45px;
-    overflow: hidden;
   }
 
-  .prove__viewport {
-    overflow: hidden;
-    padding: 0 100px;
-  }
-
-  .prove__track {
-    display: flex;
-    align-items: stretch;
-    gap: 60px;
-    transition: transform 0.4s ease;
-    will-change: transform;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .prove__track {
-      transition: none;
-    }
-  }
-
-  .prove__card {
-    flex: none;
-    box-sizing: border-box;
-    border-radius: 24px;
-    color: var(--fg);
-  }
-
-  .prove__card--main {
-    position: relative;
-    width: 890px;
-    min-height: 500px;
-    background: var(--bg);
-    border: 1px solid var(--strands-green-3);
-    padding: 55px 47px 0;
+  .prove__inner {
     display: flex;
     flex-direction: column;
+    max-width: var(--home-content-width);
+    margin: 0 auto;
   }
 
-  .prove__main-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 32px;
+  .prove__intro {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 24px 40px;
+    margin-bottom: clamp(22px, 3vw, 32px);
   }
 
-  .prove__quote {
-    width: 31px;
-    height: 25px;
-  }
-
-  .prove__main-logos {
-    display: inline-flex;
-    align-items: center;
-    flex: none;
-  }
-
-  .prove__main-logo {
-    display: block;
-    height: 28px;
-    width: auto;
-    max-width: 140px;
-    object-fit: contain;
-  }
-
-  .prove__main-logo--dark {
-    display: none;
-  }
-
-  :global([data-theme='dark']) .prove__main-logos:has(.prove__main-logo--dark)
-    .prove__main-logo--light {
-    display: none;
-  }
-
-  :global([data-theme='dark']) .prove__main-logo--dark {
-    display: block;
-  }
-
-  .prove__main-quote {
-    margin: 0;
-    flex: 1;
-    overflow: hidden;
-  }
-
-  .prove__main-quote :global(p) {
-    margin: 0;
+  .prove__eyebrow {
+    margin: 0 0 12px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 400;
-    font-size: 18px;
-    line-height: 1.4;
-    color: var(--fg);
-  }
-
-  .prove__main-quote :global(a) {
-    color: inherit;
-  }
-
-  .prove__main-footer {
-    padding: 32px 0 40px;
-  }
-
-  .prove__main-divider {
-    display: block;
-    width: 794px;
-    max-width: 100%;
-    height: 1px;
-    background: var(--divider);
-    margin-bottom: 32px;
-  }
-
-  .prove__main-attribution {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .prove__main-attribution-text {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .prove__main-name {
-    margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
     font-weight: 700;
-    font-size: 18px;
-    line-height: 1.4;
-    color: var(--fg);
+    letter-spacing: 0.11em;
+    line-height: 1.3;
+    text-transform: uppercase;
+    color: var(--home-label);
   }
 
-  .prove__main-role {
+  .prove__intro h2 {
+    max-width: 820px;
     margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 14px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(38px, 4.2vw, 58px);
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    line-height: 0.98;
     color: var(--fg);
-    opacity: 0.8;
+    text-wrap: balance;
   }
 
   .prove__controls {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    max-width: 1280px;
-    margin: 55px auto 0;
-    padding: 0 55px;
+    gap: 12px;
+    padding: 5px;
+    border: 1px solid var(--home-rule);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--fg) 3%, transparent);
   }
 
-  .prove__progress {
-    position: relative;
-    width: 257px;
-    height: 21px;
+  .prove__controls[hidden] {
+    display: none;
+  }
+
+  .prove__counter {
     display: flex;
-    align-items: center;
+    gap: 6px;
+    margin: 0 3px 0 10px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    color: color-mix(in srgb, var(--fg) 58%, transparent);
   }
 
-  .prove__progress-track {
-    position: absolute;
-    inset: 0;
-    top: 50%;
-    height: 3px;
-    transform: translateY(-50%);
-    background: var(--strands-grey-200);
-    border-radius: 2px;
-  }
-
-  .prove__progress-fill {
-    position: absolute;
-    top: 50%;
-    left: 0;
-    height: 3px;
-    width: 68px;
-    background: var(--strands-pink);
-    border-radius: 2px;
-    transform: translateY(-50%);
-    transition: width 0.4s ease, left 0.4s ease;
-  }
-
-  .prove__chevrons {
+  .prove__buttons {
     display: flex;
-    gap: 10px;
+    gap: 4px;
   }
 
-  .prove__chevron {
+  .prove__button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 47px;
-    height: 47px;
-    background: transparent;
-    border: 1px solid var(--fg);
-    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
     color: var(--fg);
     cursor: pointer;
-    transition: background 0.15s ease;
+    transition:
+      border-color 160ms ease,
+      background-color 160ms ease;
   }
 
-  .prove__chevron:hover {
+  .prove__button:hover {
     background: color-mix(in srgb, var(--fg) 10%, transparent);
   }
 
-  .prove__chevron[disabled] {
-    opacity: 0.4;
-    cursor: not-allowed;
+  .prove__button:focus-visible {
+    outline: 2px solid var(--accent-green);
+    outline-offset: 3px;
   }
 
-  .prove__chevron-icon {
+  .prove__button svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
+  }
+
+  .prove__icon--play {
+    display: none;
+  }
+
+  .prove__button[data-paused='true'] .prove__icon--pause {
+    display: none;
+  }
+
+  .prove__button[data-paused='true'] .prove__icon--play {
+    display: block;
+  }
+
+  .prove__stories {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    min-width: 0;
+    overflow: hidden;
+    border-radius: var(--home-radius-large);
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-green) 10%, var(--card-bg)) 0%,
+      color-mix(in srgb, var(--accent-green) 3%, var(--bg)) 100%
+    );
+  }
+
+  .prove__stories::before {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    left: 0;
+    width: clamp(72px, 9vw, 120px);
+    height: 4px;
+    border-radius: 0 0 4px;
+    background: var(--accent-green);
+    content: '';
+  }
+
+  .prove__story {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    min-height: 360px;
+    flex-direction: column;
+    padding: clamp(38px, 5vw, 68px);
+    border-bottom: 1px solid var(--home-rule);
+    opacity: 1;
+    visibility: visible;
+    transition:
+      opacity 180ms ease,
+      visibility 0s linear;
+  }
+
+  .prove__story:last-child {
+    border-bottom: 0;
+  }
+
+  .prove[data-initialized='true'] .prove__stories {
+    min-height: 360px;
+  }
+
+  .prove[data-initialized='true'] .prove__story {
+    grid-area: 1 / 1;
+    min-height: 100%;
+    border-bottom: 0;
+  }
+
+  .prove[data-initialized='true'] .prove__story[aria-hidden='true'] {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      opacity 180ms ease,
+      visibility 0s linear 180ms;
+  }
+
+  .prove__mark {
+    position: absolute;
+    z-index: -1;
+    top: clamp(28px, 4vw, 52px);
+    right: clamp(28px, 5vw, 72px);
+    width: clamp(70px, 9vw, 112px);
+    height: auto;
+    color: var(--accent-green);
+    opacity: 0.12;
+  }
+
+  .prove__quote {
+    max-width: 1020px;
+    margin: 0 0 clamp(36px, 5vw, 58px);
+  }
+
+  .prove__quote :global(p) {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(20px, 1.75vw, 25px);
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--fg);
+  }
+
+  .prove__quote :global(a) {
+    color: inherit;
+    text-underline-offset: 0.18em;
+  }
+
+  .prove__attribution {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-top: auto;
+  }
+
+  .prove__person {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 18px;
+  }
+
+  .prove__logos {
     display: inline-flex;
-    width: 23px;
-    height: 23px;
+    flex: none;
+    align-items: center;
   }
 
-  .prove__chevron-icon :global(svg) {
-    width: 100%;
-    height: 100%;
+  .prove__logo {
+    display: block;
+    width: auto;
+    height: 25px;
+    max-width: 132px;
+    object-fit: contain;
   }
 
-  .prove__chevron--prev .prove__chevron-icon {
-    transform: rotate(180deg);
+  .prove__logo--dark {
+    display: none;
   }
 
-  @media (max-width: 1023px) {
-    .prove {
-      padding: 32px 0;
+  :global([data-theme='dark']) .prove__logos:has(.prove__logo--dark) .prove__logo--light {
+    display: none;
+  }
+
+  :global([data-theme='dark']) .prove__logo--dark {
+    display: block;
+  }
+
+  .prove__attribution-text {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .prove__name,
+  .prove__role {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    line-height: 1.4;
+    color: var(--fg);
+  }
+
+  .prove__name {
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .prove__role {
+    font-size: 11px;
+    opacity: 0.68;
+  }
+
+  .prove__source {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    width: fit-content;
+    flex: none;
+    min-height: 36px;
+    margin-left: auto;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--fg) 6%, transparent);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    color: var(--accent-green);
+    text-decoration: none;
+    text-transform: uppercase;
+  }
+
+  .prove__source:hover {
+    background: color-mix(in srgb, var(--fg) 11%, transparent);
+  }
+
+  .prove__source:focus-visible {
+    outline: 2px solid var(--accent-green);
+    outline-offset: 3px;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 767px) {
+    .prove__intro {
+      grid-template-columns: 1fr;
+      align-items: start;
+      gap: 18px;
+      margin-bottom: 20px;
     }
 
-    .prove__viewport {
-      padding: 0 19px;
-    }
-
-    .prove__track {
-      gap: 16px;
-      align-items: stretch;
-    }
-
-    .prove__card--main {
-      width: calc(100vw - 38px);
-      max-width: 402px;
-      height: auto;
-      min-height: 340px;
-      padding: 24px 20px;
-    }
-
-    .prove__main-header {
-      margin-bottom: 16px;
-    }
-
-    .prove__main-logo {
-      height: 24px;
-      max-width: 140px;
-    }
-
-    .prove__main-quote :global(p) {
-      font-size: 13px;
-      line-height: 1.45;
-    }
-
-    .prove__main-footer {
-      padding: 16px 0 0;
-    }
-
-    .prove__main-divider {
-      margin-bottom: 16px;
+    .prove__intro h2 {
+      max-width: 520px;
+      font-size: clamp(32px, 10vw, 40px);
     }
 
     .prove__controls {
+      justify-self: start;
+    }
+
+    .prove__stories {
+      min-height: 0;
+      border-radius: var(--home-radius-medium);
+    }
+
+    .prove__story {
+      padding: 30px 24px 26px;
+    }
+
+    .prove__quote {
+      margin-bottom: 32px;
+    }
+
+    .prove__quote :global(p) {
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    .prove__attribution {
+      align-items: flex-start;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      margin: 22px auto 0;
-      padding: 0 19px;
+      gap: 14px;
     }
 
-    .prove__progress {
-      flex: 1 1 auto;
-      width: auto;
-      max-width: 257px;
+    .prove__person {
+      gap: 14px;
     }
 
-    .prove__chevrons {
-      gap: 10.43px;
+    .prove__logo {
+      height: 22px;
+      max-width: 110px;
+    }
+
+    .prove__source {
+      min-height: 34px;
+      margin-left: 0;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .prove__controls {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .prove__story {
+      padding-inline: 20px;
+    }
+
+    .prove__mark {
+      top: 22px;
+      right: 20px;
+      width: 62px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .prove__button,
+    .prove__story {
+      transition: none;
     }
   }
 </style>
 
 <script>
-  // Infinite-loop carousel. To make the loop seamless we clone every real
-  // slide once on each end, so the DOM order is:
-  //   [clone(N-1)] [clone(0)] [clone(1)] ... [real(0)] [real(1)] ... [real(N-1)] [clone(0)] [clone(1)] ...
-  // We only navigate through the real range; when the user goes past either
-  // edge we let the transition finish onto a clone, then snap back to the
-  // matching real slide with transitions disabled — the user never sees
-  // the jump because the clone and real slide are visually identical.
-  const carousels = document.querySelectorAll<HTMLElement>('[data-carousel]');
-  carousels.forEach((carousel) => {
-    const track = carousel.querySelector<HTMLElement>('[data-track]');
-    const originals = Array.from(
-      carousel.querySelectorAll<HTMLElement>('[data-slide]')
-    );
-    const prev = carousel.querySelector<HTMLButtonElement>('[data-prev]');
-    const next = carousel.querySelector<HTMLButtonElement>('[data-next]');
-    const fill = carousel.querySelector<HTMLElement>('[data-progress-fill]');
-    if (!track || !originals.length || !prev || !next || !fill) return;
+  import { initializeTestimonialBrowsers } from '../util/homepage-testimonials'
 
-    const N = originals.length;
-
-    // Clone every real slide onto both ends. Clones aren't focusable and
-    // aren't announced by AT.
-    const cloneFor = (el: HTMLElement) => {
-      const clone = el.cloneNode(true) as HTMLElement;
-      clone.setAttribute('aria-hidden', 'true');
-      clone.setAttribute('data-clone', '');
-      clone
-        .querySelectorAll<HTMLElement>('a, button, [tabindex]')
-        .forEach((f) => f.setAttribute('tabindex', '-1'));
-      return clone;
-    };
-    // Prepend clones (in original order) BEFORE the first real slide.
-    originals.forEach((el) => track.insertBefore(cloneFor(el), originals[0]));
-    // Append clones (in original order) AFTER the last real slide.
-    originals.forEach((el) => track.appendChild(cloneFor(el)));
-
-    const allSlides = Array.from(
-      track.querySelectorAll<HTMLElement>('[data-slide]')
-    );
-    // Real slides now occupy positions [N .. 2N-1] in allSlides.
-    const realStart = N;
-
-    // logicalIndex: 0..N-1 (which real slide is centered).
-    // renderIndex: position in allSlides currently targeted (can drift into
-    // the clone ranges on either side, then snaps back after transitionend).
-    // Desktop starts on the second card so the first and third sit as the
-    // flanking side cards. Mobile starts on the first card (no side cards).
-    const isMobile = window.matchMedia('(max-width: 1023px)').matches;
-    let logicalIndex = isMobile ? 0 : 1 % N;
-    let renderIndex = realStart + logicalIndex;
-    let animating = false;
-    let settleTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function currentTranslateX(): number {
-      // Read the transform already applied to the track so we can compute a
-      // relative nudge from measured rects (below).
-      const t = getComputedStyle(track).transform;
-      if (!t || t === 'none') return 0;
-      try {
-        return new DOMMatrixReadOnly(t).m41;
-      } catch {
-        return 0;
-      }
-    }
-
-    function positionTo(idx: number, withTransition: boolean) {
-      const viewport = carousel.querySelector<HTMLElement>('.prove__viewport');
-      const target = allSlides[idx];
-      if (!viewport) return;
-      // Center via measured rects + the current transform, rather than
-      // offsetLeft. offsetLeft is relative to the offset parent and ignores the
-      // viewport's horizontal padding, which left the card ~19px off-center on
-      // mobile. Rect deltas are immune to that padding/border mismatch.
-      const vpRect = viewport.getBoundingClientRect();
-      const tRect = target.getBoundingClientRect();
-      const viewportCenter = vpRect.left + vpRect.width / 2;
-      const targetCenter = tRect.left + tRect.width / 2;
-      const offset = currentTranslateX() + (viewportCenter - targetCenter);
-      if (!withTransition) {
-        track.style.transition = 'none';
-        track.style.transform = `translateX(${offset}px)`;
-        // Force reflow so the next transform picks up transitions again.
-        void track.offsetWidth;
-        track.style.transition = '';
-      } else {
-        track.style.transform = `translateX(${offset}px)`;
-      }
-    }
-
-    function updateProgress() {
-      // Guard N === 1, which would otherwise divide by zero.
-      const pct = N > 1 ? logicalIndex / (N - 1) : 0;
-      // Measured rather than hardcoded so the bar can shrink on narrow
-      // viewports without the fill drifting out of alignment.
-      const trackWidth = fill.parentElement?.clientWidth ?? 257;
-      const fillWidth = fill.offsetWidth || 68;
-      fill.style.left = `${pct * (trackWidth - fillWidth)}px`;
-    }
-
-    function go(delta: number) {
-      if (animating) return;
-      logicalIndex = (logicalIndex + delta + N) % N;
-      // Move renderIndex by delta so it can cross into a clone range for
-      // the animation, then snap back to the real range after the
-      // transition completes.
-      renderIndex += delta;
-      animating = true;
-      positionTo(renderIndex, true);
-      updateProgress();
-      // Safety net: if no transitionend arrives, settle anyway. Without
-      // this, `animating` latches on forever and every control goes dead —
-      // which is exactly what happens under prefers-reduced-motion, where
-      // .prove__track has `transition: none` so the event never fires.
-      if (settleTimer !== null) clearTimeout(settleTimer);
-      settleTimer = setTimeout(settle, 600);
-    }
-
-    function settle() {
-      if (settleTimer !== null) {
-        clearTimeout(settleTimer);
-        settleTimer = null;
-      }
-      animating = false;
-      // If we drifted into a clone range, snap to the matching real slide.
-      if (renderIndex < realStart || renderIndex >= realStart + N) {
-        renderIndex = realStart + logicalIndex;
-        positionTo(renderIndex, false);
-      }
-    }
-
-    track.addEventListener('transitionend', (e) => {
-      if (e.propertyName !== 'transform') return;
-      settle();
-    });
-
-    prev.addEventListener('click', () => {
-      stop();
-      go(-1);
-    });
-    next.addEventListener('click', () => {
-      stop();
-      go(1);
-    });
-
-    // Auto-rotation. No play/pause control (design decision) — does NOT
-    // satisfy WCAG 2.2.2. Fix: add a control as first child of .prove__controls.
-
-    const ROTATE_MS = 7000; // longer than typical — text-heavy cards need reading time
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-
-    let timer: ReturnType<typeof setInterval> | null = null;
-    // Sticky. Once the user takes control, rotation stays off.
-    let userStopped = false;
-    let hovering = false;
-
-    function clearTimer() {
-      if (timer !== null) {
-        clearInterval(timer);
-        timer = null;
-      }
-    }
-
-    // (Re)start ticking if nothing currently forbids it. Transient blockers
-    // (hover, hidden tab) leave userStopped untouched so rotation resumes.
-    function tick() {
-      clearTimer();
-      if (userStopped || reduceMotion.matches) return;
-      if (hovering || document.hidden) return;
-      timer = setInterval(() => go(1), ROTATE_MS);
-    }
-
-    function stop() {
-      userStopped = true;
-      clearTimer();
-    }
-
-    carousel.addEventListener('mouseenter', () => {
-      hovering = true;
-      clearTimer();
-    });
-
-    carousel.addEventListener('mouseleave', () => {
-      hovering = false;
-      tick();
-    });
-
-    carousel.addEventListener('focusin', stop);
-
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) clearTimer();
-      else tick();
-    });
-
-    reduceMotion.addEventListener('change', () => {
-      if (reduceMotion.matches) clearTimer();
-    });
-
-    window.addEventListener('resize', () => {
-      // Reposition without animating so a resize doesn't slide.
-      positionTo(renderIndex, false);
-      updateProgress();
-    });
-
-    // Initial paint. Wait a frame so clones' layout is computed.
-    requestAnimationFrame(() => {
-      positionTo(renderIndex, false);
-      updateProgress();
-      tick();
-    });
-  });
+  initializeTestimonialBrowsers()
+  document.addEventListener('astro:page-load', () => initializeTestimonialBrowsers())
 </script>

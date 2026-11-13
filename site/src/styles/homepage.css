@@ -1,0 +1,22 @@
+:root {
+  --home-content-width: 1332px;
+  --home-gutter: clamp(19px, 4vw, 55px);
+  --home-section-space: clamp(52px, 5.5vw, 76px);
+  --home-section-space-compact: clamp(34px, 4vw, 48px);
+  --home-radius-large: 24px;
+  --home-radius-medium: 18px;
+  --home-heading-size: clamp(40px, 4.2vw, 60px);
+  --home-heading-tracking: -0.052em;
+  --home-body-size: clamp(16px, 1.3vw, 18px);
+  --home-label: var(--eyebrow);
+  --home-rule: var(--border);
+}
+
+@media (max-width: 767px) {
+  :root {
+    --home-section-space: 48px;
+    --home-section-space-compact: 32px;
+    --home-heading-size: clamp(36px, 10vw, 48px);
+    --home-body-size: 16px;
+  }
+}

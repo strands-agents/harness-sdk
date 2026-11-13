@@ -1,0 +1,351 @@
+---
+import arrow from '../assets/banner/arrow.svg?raw'
+import { homepageCapabilities, homepageStartProjects } from '../config/homepage'
+import InstallCommand from './InstallCommand.astro'
+
+const [harness, harnessSdk] = homepageStartProjects
+if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
+---
+
+<section class="framework" id="framework" aria-labelledby="framework-title">
+  <div class="framework__inner">
+    <header class="framework__intro">
+      <h2 id="framework-title">Build an agent</h2>
+    </header>
+
+    <div class="framework__start-grid">
+      <article class="framework__layer framework__layer--primary" data-accent={harness.product.accent}>
+        <div class="framework__card-copy">
+          <h3 class="framework__product-title">{harness.product.slug}</h3>
+          <p>{harness.description}</p>
+        </div>
+        <div class="framework__install">
+          <InstallCommand
+            compact
+            pip="pip install strands-harness"
+            npm="npm install @strands-agents/harness"
+          />
+        </div>
+        <a class="framework__card-link" href={harness.href}>
+          {harness.cta}
+          <span set:html={arrow} />
+        </a>
+      </article>
+
+      <article class="framework__layer framework__layer--secondary" data-accent={harnessSdk.product.accent}>
+        <div class="framework__card-copy">
+          <h3 class="framework__product-title">{harnessSdk.product.slug}</h3>
+          <p>{harnessSdk.description}</p>
+        </div>
+        <div class="framework__install">
+          <InstallCommand compact pip="pip install strands-agents" npm="npm install @strands-agents/sdk" />
+        </div>
+        <a class="framework__card-link" href={harnessSdk.href}>
+          {harnessSdk.cta}
+          <span set:html={arrow} />
+        </a>
+      </article>
+    </div>
+
+    <section class="framework__capabilities" aria-labelledby="framework-capabilities-title">
+      <h3 id="framework-capabilities-title" class="framework__capabilities-label">More Strands projects</h3>
+
+      <div class="framework__capability-grid">
+        {
+          homepageCapabilities.map(({ product, description, cta, href }) => (
+            <article class="framework__capability" data-accent={product.accent}>
+              <h4 class="framework__product-title">{product.slug}</h4>
+              <p>{description}</p>
+              <a href={href}>
+                {cta}
+                <span set:html={arrow} />
+              </a>
+            </article>
+          ))
+        }
+      </div>
+    </section>
+  </div>
+</section>
+
+<style>
+  .framework {
+    width: 100%;
+    padding: var(--home-section-space) var(--home-gutter);
+    scroll-margin-top: 92px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .framework__inner {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(24px, 3vw, 34px);
+    max-width: var(--home-content-width);
+    margin: 0 auto;
+  }
+
+  .framework__intro h2 {
+    max-width: 720px;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(36px, 3.6vw, 50px);
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    line-height: 1.02;
+    text-wrap: balance;
+  }
+
+  [data-accent='orange'] {
+    --framework-accent: var(--card-accent-orange);
+  }
+
+  [data-accent='teal'] {
+    --framework-accent: var(--card-accent-teal);
+  }
+
+  [data-accent='purple'] {
+    --framework-accent: var(--card-accent-purple);
+  }
+
+  [data-accent='yellow'] {
+    --framework-accent: var(--card-accent-yellow);
+  }
+
+  [data-accent='pink'] {
+    --framework-accent: var(--card-accent-pink);
+  }
+
+  [data-accent='red'] {
+    --framework-accent: var(--card-accent-red);
+  }
+
+  .framework__start-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    border-block: 1px solid var(--home-rule);
+  }
+
+  .framework__layer {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 248px;
+    padding: clamp(20px, 2.2vw, 26px);
+    overflow: hidden;
+  }
+
+  .framework__layer::before,
+  .framework__capability::before {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: var(--framework-accent);
+    content: '';
+  }
+
+  .framework__layer--primary {
+    background: color-mix(in srgb, var(--framework-accent) 8%, var(--card-bg));
+  }
+
+  .framework__layer--secondary {
+    border-left: 1px solid var(--home-rule);
+    background: color-mix(in srgb, var(--framework-accent) 3%, var(--bg));
+  }
+
+  .framework__card-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .framework__card-copy .framework__product-title {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(28px, 2.8vw, 38px);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1;
+    color: var(--framework-accent);
+    text-transform: lowercase;
+  }
+
+  .framework__card-copy > p:last-child {
+    max-width: 52ch;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+  }
+
+  .framework__card-link,
+  .framework__capability a {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    width: fit-content;
+    min-height: 44px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  .framework__install {
+    width: 100%;
+    margin-top: auto;
+    padding-top: 18px;
+  }
+
+  .framework__card-link {
+    margin-top: 8px;
+  }
+
+  .framework__card-link :global(svg),
+  .framework__capability a :global(svg) {
+    width: 13px;
+    height: 13px;
+    transition: transform 160ms ease;
+  }
+
+  .framework__card-link:hover :global(svg),
+  .framework__card-link:focus-visible :global(svg),
+  .framework__capability a:hover :global(svg),
+  .framework__capability a:focus-visible :global(svg) {
+    transform: translateX(3px);
+  }
+
+  .framework__card-link:focus-visible,
+  .framework__capability a:focus-visible {
+    outline: 2px solid var(--framework-accent);
+    outline-offset: 5px;
+  }
+
+  .framework__capabilities {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .framework__capabilities-label {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(22px, 2vw, 28px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    color: var(--fg);
+  }
+
+  .framework__capability-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-block: 1px solid var(--home-rule);
+  }
+
+  .framework__capability {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+    padding: 20px;
+  }
+
+  .framework__capability + .framework__capability {
+    border-left: 1px solid var(--home-rule);
+  }
+
+  .framework__capability .framework__product-title {
+    margin: 0 0 10px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(24px, 2vw, 30px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    color: var(--framework-accent);
+    text-transform: lowercase;
+  }
+
+  .framework__capability > p {
+    max-width: 31ch;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 65%, transparent);
+  }
+
+  .framework__capability a {
+    margin-top: auto;
+    padding-top: 10px;
+  }
+
+  @media (max-width: 720px) {
+    .framework__inner {
+      gap: 28px;
+    }
+
+    .framework__intro h2 {
+      font-size: clamp(36px, 10vw, 48px);
+    }
+
+    .framework__start-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .framework__layer {
+      min-height: 0;
+      padding: 20px;
+    }
+
+    .framework__layer--secondary {
+      border-top: 1px solid var(--home-rule);
+      border-left: 0;
+    }
+
+    .framework__card-copy {
+      gap: 8px;
+    }
+
+    .framework__card-copy h3 {
+      font-size: 32px;
+    }
+
+    .framework__card-link {
+      margin-top: 6px;
+    }
+
+    .framework__install {
+      padding-top: 16px;
+    }
+
+    .framework__capability {
+      min-height: 0;
+      padding: 18px 16px;
+    }
+
+    .framework__capability-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .framework__capability + .framework__capability {
+      border-top: 1px solid var(--home-rule);
+      border-left: 0;
+    }
+
+    .framework__capability > p {
+      max-width: 46ch;
+      font-size: 13px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .framework__card-link :global(svg),
+    .framework__capability a :global(svg) {
+      transition: none;
+    }
+  }
+</style>

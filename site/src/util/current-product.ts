@@ -1,10 +1,10 @@
 import { navLinks, products } from '../config/navbar'
 import type { Product } from '../sidebar'
 
-// Sections that are products (have a slug + hub). Examples/Community are docs
+// Sections that are products (have a slug + docs scope). Examples/Community are docs
 // sections but not products, so they get no product eyebrow/switcher.
 // Must match the navbar labels in navigation.yml exactly; a stale entry silently
-// drops that product's hub hero and sidebar box.
+// drops that product's docs navigation treatment.
 const PRODUCT_LABELS = new Set(['Harness', 'Harness SDK', 'Shell', 'Box', 'Evals', 'Decider'])
 
 /**

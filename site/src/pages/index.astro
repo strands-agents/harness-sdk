@@ -3,11 +3,10 @@ import Navigation from '../components/Navigation.astro';
 import Search from '@astrojs/starlight/components/Search.astro';
 import AnnouncementBanner from '../components/AnnouncementBanner.astro';
 import Banner from '../components/Banner.astro';
-import InteractiveToolkit from '../components/InteractiveToolkit.astro';
+import FrameworkMap from '../components/FrameworkMap.astro';
 import LogoFarm from '../components/LogoFarm.astro';
 import UseCases from '../components/UseCases.astro';
 import ProveCases from '../components/ProveCases.astro';
-import CommunityHub from '../components/CommunityHub.astro';
 import HomeFaq from '../components/HomeFaq.astro';
 import NextSteps from '../components/NextSteps.astro';
 import Footer from '../components/Footer.astro';
@@ -16,6 +15,7 @@ import Analytics from '../components/Analytics.astro';
 import { products } from '../config/navbar';
 import { baseSchemas, productSchema, serializeJsonLd } from '../util/structured-data';
 import '../styles/fonts.css';
+import '../styles/homepage.css';
 
 // Base-path-aware favicon href — matches the docs override in Head.astro so
 // the homepage doesn't 404 under a prefixed deploy path.
@@ -28,9 +28,9 @@ const markdownHref = `${base.replace(/\/$/, '')}/index.md`;
 // Standalone pages don't inherit Starlight's head, so declare the shared
 // /og-image.png share card here too (docs/blog get theirs from Starlight).
 const ogImageHref = new URL('og-image.png', Astro.site ?? 'https://strandsagents.com').href;
-const pageTitle = 'Strands Agents | The open source toolkit for production AI agents';
+const pageTitle = 'Strands Agents | Open-source agent toolkit';
 const pageDescription =
-  'Strands is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness, policy-enforced sandboxing, and evals.';
+  'Strands is an open-source toolkit for building, running, and improving AI agents in Python and TypeScript. Build with Harness or compose the agent loop with the Harness SDK.';
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
 const structuredData = {
   '@context': 'https://schema.org',
@@ -55,7 +55,7 @@ const structuredData = {
     <meta property="og:image" content={ogImageHref} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Strands Agents — the open source toolkit for production agents" />
+    <meta property="og:image:alt" content="Strands Agents: Build agents. Own every layer." />
     <meta name="twitter:card" content="summary_large_image" />
     {Astro.site?.origin !== 'https://strandsagents.com' && <meta name="robots" content="noindex, nofollow" />}
     <meta name="twitter:title" content={pageTitle} />
@@ -91,16 +91,15 @@ const structuredData = {
     </div>
     <main>
       <Banner />
-      <InteractiveToolkit />
+      <FrameworkMap />
       <LogoFarm />
       <UseCases />
       <ProveCases />
-      <CommunityHub />
       <HomeFaq />
       <NextSteps />
     </main>
-    {/* NextSteps already provides the green curved transition on the homepage. */}
-    <Footer topShape={false} />
+    {/* NextSteps provides the green side transition and the full Harness install action. */}
+    <Footer topShape={false} showInstall={false} />
   </body>
 </html>
 
@@ -132,8 +131,7 @@ const structuredData = {
     transition: background-color 0.15s ease, color 0.15s ease;
   }
 
-  /* Prevent horizontal scroll from off-canvas decorative shapes (like the
-     NextSteps green corners) on narrow viewports. */
+  /* Prevent horizontal scroll from off-canvas decorative elements on narrow viewports. */
   body {
     overflow-x: hidden;
   }

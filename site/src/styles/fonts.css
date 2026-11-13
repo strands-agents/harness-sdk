@@ -93,6 +93,8 @@
      shrinks to 20px normal (needs 4.5:1), so use #767373 (4.7:1). */
   --use-case-muted: #767373;
   --surface-green: #e6f6e7; /* Strands Seafoam Green */
+  --surface-purple: #ede9fe;
+  --surface-purple-fg: var(--strands-black);
   /* Banner halftone dots on the white light-mode bg — seafoam was nearly
      invisible, so use a mid brand green that reads clearly yet stays subtle. */
   --halftone-dot: #9fd9b0;
@@ -176,6 +178,8 @@
      pure #00cc60 glares against the black page in dark mode. Muted green still
      clears AA for the black text these surfaces carry. */
   --surface-green: color-mix(in srgb, var(--strands-green) 74%, #000);
+  --surface-purple: #8c74d4;
+  --surface-purple-fg: var(--strands-black);
   --halftone-dot: var(--strands-green); /* dark mode: full brand green */
   --toggle-bg: var(--strands-charcoal-1);
   --toggle-active-bg: var(--strands-green);

@@ -1,0 +1,303 @@
+---
+import { Code } from 'astro:components'
+import arrow from '../../assets/banner/arrow.svg?raw'
+import { BOX_CONFIG_SNIPPET, BOX_LINKS, BOX_POLICY_SNIPPET } from '../../config/box-landing'
+import { pathWithBase } from '../../util/links'
+---
+
+<section class="box-how" aria-labelledby="box-how-title">
+  <div class="box-how__inner">
+    <header class="box-how__intro">
+      <p class="box-how__eyebrow">How it works</p>
+      <h2 id="box-how-title">Two files define the boundary.</h2>
+      <p>
+        <code>box.toml</code> limits what the workload can reach directly. <code>policy.dw</code> decides mediated
+        requests while it runs.
+      </p>
+    </header>
+
+    <div class="box-how__layers">
+      <article class="box-how__layer">
+        <p class="box-how__file">/box.toml</p>
+        <h3>Set direct access.</h3>
+        <p>
+          Choose the agent command, workspace, programs, environment, and readable or writable paths. The operating
+          system applies those limits before the process starts.
+        </p>
+        <div class="box-how__example">
+          <Code
+            code={BOX_CONFIG_SNIPPET}
+            lang="toml"
+            themes={{ light: 'github-light', dark: 'github-dark' }}
+            defaultColor={false}
+            class="box-how__code"
+          />
+        </div>
+        <a href={pathWithBase(BOX_LINKS.configuration)}>
+          Configure Box
+          <span set:html={arrow} aria-hidden="true"></span>
+        </a>
+      </article>
+
+      <article class="box-how__layer">
+        <p class="box-how__file">/policy.dw</p>
+        <h3>Decide mediated requests.</h3>
+        <p>
+          Permit or forbid commands, file operations, network requests, and MCP calls routed through Box. Requests
+          without a matching permit are refused.
+        </p>
+        <div class="box-how__example">
+          <Code
+            code={BOX_POLICY_SNIPPET}
+            lang="text"
+            themes={{ light: 'github-light', dark: 'github-dark' }}
+            defaultColor={false}
+            class="box-how__code"
+          />
+        </div>
+        <a href={pathWithBase(BOX_LINKS.policy)}>
+          Write a policy
+          <span set:html={arrow} aria-hidden="true"></span>
+        </a>
+      </article>
+    </div>
+
+    <div class="box-how__note">
+      <p>Box records policy decisions so you can see which rule matched—or why a request was refused.</p>
+      <div>
+        <a href={pathWithBase(BOX_LINKS.decisions)}>Read the decision log</a>
+        <a href={pathWithBase(BOX_LINKS.security)}>Security model</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .box-how {
+    --box-accent: var(--project-accent, var(--card-accent-purple));
+    padding: var(--home-section-space) var(--home-gutter);
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .box-how__inner {
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+
+  .box-how__intro {
+    max-width: 880px;
+    margin-bottom: clamp(28px, 4vw, 42px);
+  }
+
+  .box-how__eyebrow {
+    margin: 0 0 12px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--box-accent);
+  }
+
+  .box-how h2 {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: var(--home-heading-size);
+    font-weight: 600;
+    letter-spacing: var(--home-heading-tracking);
+    line-height: 1;
+  }
+
+  .box-how__intro > p:last-child {
+    max-width: 720px;
+    margin: 18px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: var(--home-body-size);
+    line-height: 1.55;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+  }
+
+  .box-how__intro code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.86em;
+    color: var(--box-accent);
+  }
+
+  .box-how__layers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .box-how__layer {
+    display: flex;
+    flex-direction: column;
+    padding: clamp(28px, 4vw, 40px);
+    border: 1px solid var(--home-rule);
+    border-top: 4px solid var(--box-accent);
+    border-radius: var(--home-radius-medium);
+    background: color-mix(in srgb, var(--box-accent) 4%, var(--bg));
+  }
+
+  .box-how__file {
+    margin: 0 0 18px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--box-accent);
+  }
+
+  .box-how h3 {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(28px, 2.8vw, 38px);
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    line-height: 1.05;
+  }
+
+  .box-how__layer > p:not(.box-how__file) {
+    max-width: 50ch;
+    margin: 16px 0 24px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+  }
+
+  .box-how__example {
+    --box-code-bg: #fff;
+    --box-code-border: #d0d7de;
+
+    max-width: 100%;
+    margin-bottom: 26px;
+    overflow-x: auto;
+    border: 1px solid var(--box-code-border);
+    border-radius: 16px;
+    background: var(--box-code-bg);
+    scrollbar-color: color-mix(in srgb, var(--fg) 24%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+
+  :global(:root[data-theme='dark']) .box-how__example {
+    --box-code-bg: #101312;
+    --box-code-border: rgb(255 255 255 / 14%);
+  }
+
+  .box-how__example :global(.astro-code-themes) {
+    color: var(--shiki-light);
+    background-color: var(--shiki-light-bg);
+  }
+
+  .box-how__example :global(.astro-code-themes span) {
+    color: var(--shiki-light);
+  }
+
+  :global(:root[data-theme='dark']) .box-how__example :global(.astro-code-themes) {
+    color: var(--shiki-dark);
+    background-color: var(--shiki-dark-bg);
+  }
+
+  :global(:root[data-theme='dark']) .box-how__example :global(.astro-code-themes span) {
+    color: var(--shiki-dark);
+  }
+
+  .box-how__example :global(.box-how__code) {
+    min-width: max-content;
+    margin: 0;
+    padding: 18px 20px;
+    border: 0;
+    border-radius: 0;
+    background: transparent !important;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    line-height: 1.65;
+  }
+
+  .box-how__layer > a {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    margin-top: auto;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--box-accent);
+    text-decoration: none;
+  }
+
+  .box-how__layer > a:hover,
+  .box-how__note a:hover {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  .box-how__layer > a span {
+    display: inline-flex;
+    width: 12px;
+    height: 10px;
+  }
+
+  .box-how__layer > a span :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .box-how__note {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    margin-top: 22px;
+    padding-top: 22px;
+    border-top: 1px solid var(--home-rule);
+  }
+
+  .box-how__note p {
+    max-width: 680px;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+  }
+
+  .box-how__note div {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 12px 22px;
+  }
+
+  .box-how__note a {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--box-accent);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 760px) {
+    .box-how__layers {
+      grid-template-columns: 1fr;
+    }
+
+    .box-how__note {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .box-how__note div {
+      justify-content: flex-start;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .box-how__layer {
+      padding: 28px 22px;
+    }
+  }
+</style>

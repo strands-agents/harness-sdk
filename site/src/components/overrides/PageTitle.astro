@@ -2,9 +2,9 @@
 import { currentProduct } from '../../util/current-product'
 
 // Page title area. Three shapes:
-//  - Product hub (the product's own href): a lightweight hero — product-name
-//    H1, one-line value prop, and a primary Quickstart CTA — with
-//    the hub's cards/prose rendering below and the scoped sidebar alongside.
+//  - Product docs hub (when its landing page and docs root share a URL): a
+//    lightweight hero with the product-name H1, one-line value prop, and a
+//    primary Quickstart CTA.
 //  - Product subpage: the H1 with a small "/shell" slug eyebrow above it.
 //  - Everything else (blog, changelog, non-product): a plain H1.
 const route = Astro.locals.starlightRoute
@@ -16,8 +16,8 @@ const titleParts = /\s/.test(title) ? [title] : title.split(/(?<=[._])/)
 const product = currentProduct(currentPath)
 const onHub = !!product && currentPath === product.href
 
-// Primary CTA for the hub hero: the product's Quickstart page if it has one,
-// else its first page that isn't the hub itself.
+// Primary CTA for the docs hub hero: the product's Quickstart page if it has
+// one, else its first page that isn't the hub itself.
 const ctaHref =
   product?.pages?.find((p) => /quickstart/i.test(p.label))?.href ??
   product?.pages?.find((p) => p.href !== product.href)?.href ??
@@ -52,7 +52,7 @@ const ctaHref =
     color: var(--sl-color-white);
   }
 
-  /* ---------- Product hub hero ---------- */
+  /* ---------- Product docs hub hero ---------- */
   .hub-hero {
     display: flex;
     flex-direction: column;

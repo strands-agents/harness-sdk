@@ -62,7 +62,7 @@ const { id, categories } = Astro.props;
     flex-direction: column;
     gap: 12px;
     background: var(--bg);
-    border: 1px solid var(--accent-green);
+    border: 1px solid var(--nav-accent, var(--accent-green));
     border-top: none;
     padding: 24px 32px 32px var(--nav-tab-pad, 20px);
     z-index: 100;
@@ -95,7 +95,7 @@ const { id, categories } = Astro.props;
   }
 
   .nav-menu__cat:hover .nav-menu__cat-title {
-    color: var(--cat-accent, var(--accent-green));
+    color: var(--cat-accent, var(--nav-accent, var(--accent-green)));
     opacity: 0.8;
   }
 
