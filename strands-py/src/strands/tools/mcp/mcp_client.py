@@ -16,11 +16,12 @@ import os
 import re
 import sys
 import threading
+import time
 import uuid
 from asyncio import AbstractEventLoop
 from collections.abc import Callable, Coroutine, Sequence
 from concurrent import futures
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
 from importlib.metadata import version as pkg_version
 from pathlib import Path
@@ -129,6 +130,23 @@ class _MCPCallCancelledError(RuntimeError):
     """Raised internally when a per-call MCP cancellation signal is observed."""
 
 
+def _raise_if_call_cancelled(cancel_signal: threading.Event | None) -> None:
+    """Stop this call when its caller signals cancellation."""
+    if cancel_signal is not None and cancel_signal.is_set():
+        raise _MCPCallCancelledError("Tool execution cancelled")
+
+
+class _MCPConnectionClosedError(RuntimeError):
+    """Raised internally when the session's event loop closed before an MCP call completed."""
+
+
+def _fail_pending_call(future: "futures.Future[Any]") -> None:
+    """Fail a call whose event loop stopped before finishing it, so its caller does not wait forever."""
+    if not future.done():
+        with suppress(futures.InvalidStateError):
+            future.set_exception(_MCPConnectionClosedError("Connection to the MCP server was closed"))
+
+
 class _ToolFilterCallback(Protocol):
     def __call__(self, tool: AgentTool, **kwargs: Any) -> bool: ...
 
@@ -168,7 +186,8 @@ class MCPServerConfig(TypedDict, total=False):
     'disabled' skips the server entirely. 'continue_on_error' keeps the rest of the servers usable
     when this one fails: a config-resolution failure (e.g. a missing env var) skips it during
     load_servers instead of raising, and a connection failure yields no tools instead of raising
-    when the agent loads them.
+    when the agent loads them. 'auto_reconnect' rebuilds a dropped session around a tool call and
+    retries the call once (see MCPClient).
     """
 
     command: str
@@ -181,6 +200,7 @@ class MCPServerConfig(TypedDict, total=False):
     auth: MCPClientCredentials
     disabled: bool
     continue_on_error: bool
+    auto_reconnect: bool
     prefix: str
     tool_filters: ToolFilters
     startup_timeout: int
@@ -210,7 +230,28 @@ _NON_FATAL_ERROR_PATTERNS = [
     "unknown request id",
 ]
 
+# The error the streamable HTTP transports produce when the server no longer knows the session (a 404
+# after a server restart): the connection is alive but every call on it will fail. Matching the code
+# too keeps a tool's own "session not found" failure from tearing the transport down. The mcp 1.x
+# transport emits INVALID_REQUEST with the sign dropped.
+_SESSION_LOST_ERROR_CODES = {-32600, 32600}
+_SESSION_LOST_ERROR_PATTERNS = [
+    "session terminated",
+    "session not found",
+]
+# mcp's CONNECTION_CLOSED, sent to calls pending when the session's streams close. Servers also use
+# -32000 for their own errors, so the message must match too.
+_CONNECTION_CLOSED_ERROR_CODE = -32000
+
 _TOOLS_CHANGED_DEBOUNCE_SECONDS = 0.3
+
+# auto_reconnect: connection attempts per rebuild, with the delay doubling between them (0.5s, 1s, 2s)
+# so a server that is still restarting when the drop is noticed gets a chance to come back. A rebuild
+# that fails within the cooldown of the previous failure makes a single attempt instead, so callers
+# queued behind a failed rebuild fail fast rather than each sitting out the whole backoff.
+_RECONNECT_MAX_ATTEMPTS = 4
+_RECONNECT_INITIAL_DELAY_SECONDS = 0.5
+_RECONNECT_FAILURE_COOLDOWN_SECONDS = 5.0
 
 
 class MCPClient(ToolProvider):
@@ -320,6 +361,7 @@ class MCPClient(ToolProvider):
         tasks_config: TasksConfig | None = None,
         on_tools_changed: ToolsChanged | None = None,
         meta: dict[str, Any] | None = None,
+        auto_reconnect: bool = False,
     ) -> None:
         """Initialize a new MCP Server connection.
 
@@ -368,6 +410,14 @@ class MCPClient(ToolProvider):
                 `call_tool_sync`/`call_tool_async`, including model-driven calls dispatched via `MCPAgentTool`,
                 which routes through `call_tool_async`. Trace context is merged on top. A per-call `meta`
                 argument to either method takes precedence over this client-level value.
+            auto_reconnect: When True, a tool call that finds the session dropped (the transport
+                closed, timed out, or the server reports the session as terminated) tears the
+                connection down, opens a fresh one through the transport callable, and retries the
+                call once before surfacing an error result. A refused connection is attempted up to
+                four times with exponential backoff (0.5s, 1s, 2s), within one ``startup_timeout``
+                budget for the whole rebuild. Concurrent calls share one reconnect.
+                A call that already reached the server may run twice, so leave this off for servers
+                whose tools are not safe to repeat or that keep per-session state. Defaults to False.
 
         Raises:
             ValueError: If neither or both of `transport_callable` and `url` are provided, if
@@ -386,6 +436,17 @@ class MCPClient(ToolProvider):
         self._elicitation_callback = elicitation_callback
         self._progress_callback = progress_callback
         self._meta = meta
+        self._auto_reconnect = auto_reconnect
+        # Re-entrant: _reconnect holds it across its own stop() and start().
+        self._reconnect_lock = threading.RLock()
+        self._reconnect_failed_at: float | None = None
+        # Set while _reconnect rebuilds the connection, so its stop() keeps the provider bookkeeping.
+        self._rebuilding = False
+        # Calls handed to the background loop and not finished yet; failed if the loop stops first.
+        self._inflight_calls: set[futures.Future[Any]] = set()
+        # True after a reconnect attempt failed, so the next tool call tries again instead of
+        # treating the (now stopped) client as never started.
+        self._session_lost = False
         self._on_tools_changed = on_tools_changed
         self._tools_refresh_in_progress = False
         self._tools_refresh_pending = False
@@ -451,6 +512,11 @@ class MCPClient(ToolProvider):
         Raises:
             Exception: If the MCP connection fails to initialize within the timeout period
         """
+        with self._reconnect_lock:
+            return self._start()
+
+    def _start(self, timeout: float | None = None) -> "MCPClient":
+        timeout = self._startup_timeout if timeout is None else timeout
         if self._is_session_active():
             raise MCPClientInitializationError("the client session is currently running")
 
@@ -465,15 +531,15 @@ class MCPClient(ToolProvider):
         self._log_debug_with_thread("background thread started, waiting for ready event")
         try:
             # Blocking main thread until session is initialized in other thread or if the thread stops
-            self._init_future.result(timeout=self._startup_timeout)
+            self._init_future.result(timeout=timeout)
+            self._session_lost = False
+            self._reconnect_failed_at = None
             self._log_debug_with_thread("the client initialization was successful")
         except futures.TimeoutError as e:
             logger.exception("client initialization timed out")
             # Pass None for exc_type, exc_val, exc_tb since this isn't a context manager exit
             self.stop(None, None, None)
-            raise MCPClientInitializationError(
-                f"background thread did not start in {self._startup_timeout} seconds"
-            ) from e
+            raise MCPClientInitializationError(f"background thread did not start in {timeout:g} seconds") from e
         except Exception as e:
             logger.exception("client failed to initialize")
             # Pass None for exc_type, exc_val, exc_tb since this isn't a context manager exit
@@ -665,6 +731,19 @@ class MCPClient(ToolProvider):
             exc_val: Exception value if an exception was raised in the context
             exc_tb: Exception traceback if an exception was raised in the context
         """
+        # Waiting on the lock here would deadlock against a reconnect joining this very thread
+        # (e.g. a GC finalizer running on it); fail like the join itself would.
+        if self._background_thread is not None and threading.current_thread() is self._background_thread:
+            raise RuntimeError("cannot stop the MCP client from its own background thread")
+        with self._reconnect_lock:
+            self._stop(exc_type, exc_val, exc_tb)
+
+    def _stop(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self._log_debug_with_thread("exiting MCPClient context")
 
         # Skip cleanup during interpreter finalization. On Python 3.14+, joining a
@@ -678,16 +757,17 @@ class MCPClient(ToolProvider):
 
         # Only try to signal close future if we have a background thread
         if self._background_thread is not None:
-            # Signal close future if event loop exists
-            if self._background_thread_event_loop is not None:
+            # Signal close future if the event loop is still running; a loop whose thread already
+            # exited (the connection dropped) would never run the coroutine.
+            if self._background_thread_event_loop is not None and self._background_thread.is_alive():
 
-                async def _set_close_event() -> None:
+                def _set_close_event() -> None:
                     if self._close_future and not self._close_future.done():
                         self._close_future.set_result(None)
 
                 # Not calling _invoke_on_background_thread since the session does not need to exist
                 # we only need the thread and event loop to exist.
-                asyncio.run_coroutine_threadsafe(coro=_set_close_event(), loop=self._background_thread_event_loop)
+                self._background_thread_event_loop.call_soon_threadsafe(_set_close_event)
 
             self._log_debug_with_thread("waiting for background thread to join")
             self._background_thread.join()
@@ -703,10 +783,12 @@ class MCPClient(ToolProvider):
         self._background_thread_session = None
         self._background_thread_event_loop = None
         self._session_id = uuid.uuid4()
-        self._loaded_tools = None
-        self._tool_provider_started = False
-        self._connection_failed = False
-        self._consumers = set()
+        self._session_lost = False
+        if not self._rebuilding:
+            self._loaded_tools = None
+            self._tool_provider_started = False
+            self._connection_failed = False
+            self._consumers = set()
         self._background_cleanup_tasks.clear()
         self._server_task_capable = None
         self._tool_task_support_cache = {}
@@ -947,7 +1029,7 @@ class MCPClient(ToolProvider):
 
         # Inject once, before branching, so both the task-augmented and direct
         # call paths below carry the same enriched meta. This is safe on the
-        # caller's thread: asyncio.run_coroutine_threadsafe, used to hand the
+        # caller's thread: loop.call_soon_threadsafe, used to hand the
         # resulting coroutine to the background loop, copies the caller's
         # contextvars, so the caller's active span is still current when the
         # coroutine runs on the background thread.
@@ -1052,18 +1134,26 @@ class MCPClient(ToolProvider):
                 cancels before the MCP request starts. If set while the request is in flight,
                 cancellation wins over a concurrently arriving result. The returned error result has
                 ``cancelled=True``. Remote cancellation is best-effort and bounded; the shared MCP
-                session remains reusable. Clear the event before reusing it for another call.
+                session remains reusable. During reconnect, cancellation interrupts waiting and
+                backoff; a connection attempt already underway finishes without replaying this call.
+                Clear the event before reusing it for another call.
 
         Returns:
             MCPToolResult: The tool result. Locally observed cancellation returns an error result with
                 ``cancelled=True`` rather than raising. Cancelling the outer asyncio task is separate
-                and still raises ``asyncio.CancelledError`` for ``call_tool_async``.
+                and still raises ``asyncio.CancelledError`` for ``call_tool_async``. With
+                ``auto_reconnect``, a dropped session is rebuilt and the call re-sent once; a failure
+                to do so is returned as an error result.
+
+        Raises:
+            MCPClientInitializationError: If the client is not running and ``auto_reconnect`` cannot
+                rebuild the session (the client was never started or was stopped).
         """
         self._log_debug_with_thread("calling MCP tool '%s' synchronously with tool_use_id=%s", name, tool_use_id)
-        if not self._is_session_active():
-            raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+        self._check_session_for_tool_call()
 
-        try:
+        def run_call() -> MCPCallToolResult:
+            _raise_if_call_cancelled(cancel_signal)
             cancellation_state = _CallCancellationState()
             coro = self._create_call_tool_coroutine(
                 name,
@@ -1073,12 +1163,32 @@ class MCPClient(ToolProvider):
                 progress_callback=progress_callback,
                 cancellation_state=cancellation_state,
             )
-            call_tool_result: MCPCallToolResult = self._invoke_on_background_thread(
+            return self._invoke_on_background_thread(
                 coro, cancel_signal=cancel_signal, cancellation_state=cancellation_state
             ).result()
-            return self._handle_tool_result(tool_use_id, call_tool_result)
+
+        retry_allowed = self._auto_reconnect
+        session_id = self._session_id
+        try:
+            if self._auto_reconnect and not self._is_session_ready():
+                # One rebuild per call: a failed or completed rebuild here ends the budget, a rebuild
+                # another caller already finished does not.
+                retry_allowed = False
+                retry_allowed = not self._reconnect(None, cancel_signal=cancel_signal)
+                session_id = self._session_id
+            return self._handle_tool_result(tool_use_id, run_call())
         except Exception as e:
-            logger.exception("tool execution failed")
+            if not (retry_allowed and self._is_session_lost_error(e)):
+                logger.exception("tool execution failed")
+                return self._handle_tool_execution_error(tool_use_id, e)
+            logger.warning("tool_name=<%s>, error=<%s> | mcp session lost, retrying tool call once", name, e)
+            broken_session_id = session_id if self._is_session_terminated_error(e) else None
+
+        try:
+            self._reconnect(broken_session_id, cancel_signal=cancel_signal)
+            return self._handle_tool_result(tool_use_id, run_call())
+        except Exception as e:
+            logger.exception("tool execution failed after reconnect")
             return self._handle_tool_execution_error(tool_use_id, e)
 
     async def call_tool_async(
@@ -1117,18 +1227,26 @@ class MCPClient(ToolProvider):
                 cancels before the MCP request starts. If set while the request is in flight,
                 cancellation wins over a concurrently arriving result. The returned error result has
                 ``cancelled=True``. Remote cancellation is best-effort and bounded; the shared MCP
-                session remains reusable. Clear the event before reusing it for another call.
+                session remains reusable. During reconnect, cancellation interrupts waiting and
+                backoff; a connection attempt already underway finishes without replaying this call.
+                Clear the event before reusing it for another call.
 
         Returns:
             MCPToolResult: The tool result. Locally observed cancellation returns an error result with
                 ``cancelled=True`` rather than raising. Cancelling the outer asyncio task is separate
-                and still raises ``asyncio.CancelledError`` for ``call_tool_async``.
+                and still raises ``asyncio.CancelledError`` for ``call_tool_async``. With
+                ``auto_reconnect``, a dropped session is rebuilt and the call re-sent once; a failure
+                to do so is returned as an error result.
+
+        Raises:
+            MCPClientInitializationError: If the client is not running and ``auto_reconnect`` cannot
+                rebuild the session (the client was never started or was stopped).
         """
         self._log_debug_with_thread("calling MCP tool '%s' asynchronously with tool_use_id=%s", name, tool_use_id)
-        if not self._is_session_active():
-            raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+        self._check_session_for_tool_call()
 
-        try:
+        async def run_call() -> MCPCallToolResult:
+            _raise_if_call_cancelled(cancel_signal)
             cancellation_state = _CallCancellationState()
             coro = self._create_call_tool_coroutine(
                 name,
@@ -1141,10 +1259,30 @@ class MCPClient(ToolProvider):
             future = self._invoke_on_background_thread(
                 coro, cancel_signal=cancel_signal, cancellation_state=cancellation_state
             )
-            call_tool_result: MCPCallToolResult = await asyncio.wrap_future(future)
-            return self._handle_tool_result(tool_use_id, call_tool_result)
+            return await asyncio.wrap_future(future)
+
+        retry_allowed = self._auto_reconnect
+        session_id = self._session_id
+        try:
+            if self._auto_reconnect and not self._is_session_ready():
+                # One rebuild per call: a failed or completed rebuild here ends the budget, a rebuild
+                # another caller already finished does not.
+                retry_allowed = False
+                retry_allowed = not await asyncio.to_thread(self._reconnect, None, cancel_signal=cancel_signal)
+                session_id = self._session_id
+            return self._handle_tool_result(tool_use_id, await run_call())
         except Exception as e:
-            logger.exception("tool execution failed")
+            if not (retry_allowed and self._is_session_lost_error(e)):
+                logger.exception("tool execution failed")
+                return self._handle_tool_execution_error(tool_use_id, e)
+            logger.warning("tool_name=<%s>, error=<%s> | mcp session lost, retrying tool call once", name, e)
+            broken_session_id = session_id if self._is_session_terminated_error(e) else None
+
+        try:
+            await asyncio.to_thread(self._reconnect, broken_session_id, cancel_signal=cancel_signal)
+            return self._handle_tool_result(tool_use_id, await run_call())
+        except Exception as e:
+            logger.exception("tool execution failed after reconnect")
             return self._handle_tool_execution_error(tool_use_id, e)
 
     def submit_tool_sync(
@@ -1381,6 +1519,125 @@ class MCPClient(ToolProvider):
         return await asyncio.wrap_future(
             self._invoke_on_background_thread(self._cancel_task_async(task_id, read_timeout_seconds))
         )
+
+    def _check_session_for_tool_call(self) -> None:
+        """Raise unless the session is active or ``auto_reconnect`` can rebuild it."""
+        if not self._is_session_active() and not self._can_reconnect():
+            raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+
+    def _can_reconnect(self) -> bool:
+        """Whether a dropped session may be rebuilt: ``auto_reconnect`` is on and the client was started."""
+        return self._auto_reconnect and (self._background_thread is not None or self._session_lost or self._rebuilding)
+
+    def _is_session_ready(self) -> bool:
+        """Whether the session is active and has finished its handshake, so calls can be dispatched to it."""
+        return self._is_session_active() and self._background_thread_session is not None
+
+    def _is_session_lost_error(self, error: Exception) -> bool:
+        """Whether a failed tool call points at a dropped session rather than at the tool itself."""
+        lost_errors = (
+            _MCPConnectionClosedError,
+            MCPClientInitializationError,
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+        )
+        if isinstance(error, lost_errors):
+            return True
+        if (
+            isinstance(error, MCPError)
+            and error.error.code == _CONNECTION_CLOSED_ERROR_CODE
+            and "connection closed" in error.error.message.lower()
+        ):
+            return True
+        return self._is_session_terminated_error(error)
+
+    def _is_session_terminated_error(self, error: Exception) -> bool:
+        """Whether the server rejected the call because it no longer knows this session (transport still alive)."""
+        if not isinstance(error, MCPError) or error.error.code not in _SESSION_LOST_ERROR_CODES:
+            return False
+        error_msg = error.error.message.lower()
+        return any(pattern in error_msg for pattern in _SESSION_LOST_ERROR_PATTERNS)
+
+    def _reconnect(self, broken_session_id: uuid.UUID | None, cancel_signal: threading.Event | None = None) -> bool:
+        """Rebuild the connection unless a usable session is already up.
+
+        ``broken_session_id`` names a session whose transport is alive but which the server has
+        terminated; it is replaced even though it looks active. With ``None``, any ready session
+        is accepted, so concurrent callers that saw the same drop share a single reconnect.
+
+        Returns:
+            True if this call rebuilt the connection, False if a usable session was already up.
+
+        Raises:
+            MCPClientInitializationError: If the client was stopped meanwhile or the new connection fails.
+        """
+        _raise_if_call_cancelled(cancel_signal)
+        while not self._reconnect_lock.acquire(timeout=0.05):
+            _raise_if_call_cancelled(cancel_signal)
+        try:
+            _raise_if_call_cancelled(cancel_signal)
+            if self._is_session_ready() and self._session_id != broken_session_id:
+                return False
+            if not self._can_reconnect():
+                raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+            logger.warning("session_id=<%s> | mcp session lost, reconnecting", self._session_id)
+
+            self._rebuilding = True
+            try:
+                try:
+                    self.stop(None, None, None)
+                except RuntimeError as close_error:
+                    logger.debug("error=<%s> | lost session closed with error", close_error.__cause__)
+                self._start_with_backoff(cancel_signal=cancel_signal)
+            except _MCPCallCancelledError:
+                self._session_lost = not self._is_session_ready()
+                raise
+            except Exception:
+                self._session_lost = True
+                self._reconnect_failed_at = time.monotonic()
+                raise
+            finally:
+                self._rebuilding = False
+            return True
+        finally:
+            self._reconnect_lock.release()
+
+    def _start_with_backoff(self, cancel_signal: threading.Event | None = None) -> None:
+        """Call ``start()`` up to ``_RECONNECT_MAX_ATTEMPTS`` times, doubling the delay between attempts.
+
+        The whole rebuild shares one ``startup_timeout`` budget, so only fast failures (e.g.
+        connection refused) are retried; an attempt that waited the server out is the last. A single
+        attempt is made when the previous rebuild failed less than
+        ``_RECONNECT_FAILURE_COOLDOWN_SECONDS`` ago.
+        """
+        recently_failed = (
+            self._reconnect_failed_at is not None
+            and time.monotonic() - self._reconnect_failed_at < _RECONNECT_FAILURE_COOLDOWN_SECONDS
+        )
+        max_attempts = 1 if recently_failed else _RECONNECT_MAX_ATTEMPTS
+        deadline = time.monotonic() + self._startup_timeout
+        for attempt in range(1, max_attempts + 1):
+            _raise_if_call_cancelled(cancel_signal)
+            try:
+                self._start(timeout=deadline - time.monotonic())
+                _raise_if_call_cancelled(cancel_signal)
+                return
+            except MCPClientInitializationError as e:
+                _raise_if_call_cancelled(cancel_signal)
+                delay = _RECONNECT_INITIAL_DELAY_SECONDS * 2 ** (attempt - 1)
+                if attempt == max_attempts or time.monotonic() + delay >= deadline:
+                    raise
+                logger.warning(
+                    "attempt=<%d/%d>, delay=<%.1fs>, error=<%s> | mcp reconnect failed, retrying",
+                    attempt,
+                    max_attempts,
+                    delay,
+                    e,
+                )
+                if cancel_signal is None:
+                    time.sleep(delay)
+                else:
+                    cancel_signal.wait(delay)
 
     def _handle_tool_execution_error(self, tool_use_id: str, exception: Exception) -> MCPToolResult:
         """Create error ToolResult with consistent logging and elicitation callback support.
@@ -1643,7 +1900,14 @@ class MCPClient(ToolProvider):
         asyncio._set_running_loop(None)
         self._background_thread_event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._background_thread_event_loop)
-        self._background_thread_event_loop.run_until_complete(self._async_background_thread())
+        loop = self._background_thread_event_loop
+        loop.run_until_complete(self._async_background_thread())
+        # Let calls woken by the closed session finish here; fail the rest, which would otherwise never complete.
+        pending = asyncio.all_tasks(loop)
+        if pending:
+            loop.run_until_complete(asyncio.wait(pending, timeout=2))
+        for future in list(self._inflight_calls):
+            _fail_pending_call(future)
         self._log_debug_with_thread("background task event loop finished")
 
     def map_mcp_content_to_tool_result_content(
@@ -1831,6 +2095,70 @@ class MCPClient(ToolProvider):
         except Exception as error:
             self._log_debug_with_thread("error=<%s> | failed to notify MCP server of cancellation", str(error))
 
+    async def _await_mcp_call(
+        self,
+        invoke_event: asyncio.Task[T],
+        close_future: asyncio.Future[None],
+        cancel_signal: threading.Event | None,
+        cancellation_state: _CallCancellationState | None,
+    ) -> T:
+        """Wait for a running MCP request and clean up cancellation on its event loop."""
+        invoke_cancel_requested = False
+        cancel_event: asyncio.Task[None] | None = None
+
+        if cancel_signal is not None:
+
+            async def wait_for_cancel() -> None:
+                # threading.Event has no async notification hook. Poll on this loop rather than
+                # running Event.wait() in an executor: cancelling that await cannot stop a worker
+                # already blocked in Event.wait(), so successful calls could strand worker threads.
+                while not cancel_signal.is_set():
+                    await asyncio.sleep(0.05)
+
+            cancel_event = asyncio.create_task(wait_for_cancel())
+
+        tasks: list[asyncio.Task[Any] | asyncio.Future[Any]] = [invoke_event, close_future]
+        if cancel_event is not None:
+            tasks.append(cancel_event)
+
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+            if cancel_signal is not None and cancel_signal.is_set():
+                self._log_debug_with_thread("cancellation detected during MCP invocation")
+                invoke_cancel_requested = True
+                invoke_event.cancel()
+                _, pending = await asyncio.wait({invoke_event}, timeout=1)
+                if pending:
+                    self._log_debug_with_thread("timed out cleaning up cancelled MCP invocation")
+                if cancellation_state is not None:
+                    await self._cancel_tool_call(cancellation_state)
+                raise _MCPCallCancelledError("Tool execution cancelled")
+            if invoke_event in done:
+                return await invoke_event
+
+            self._log_debug_with_thread("event loop for the server closed before the invoke completed")
+            invoke_event.cancel()
+            await asyncio.wait({invoke_event}, timeout=1)
+            raise _MCPConnectionClosedError("Connection to the MCP server was closed")
+        finally:
+            if not invoke_event.done() and not invoke_cancel_requested:
+                invoke_event.cancel()
+                # asyncio.wait reports expiration through pending; it does not raise TimeoutError.
+                # The original caller cancellation or exception continues after this bounded cleanup.
+                _, pending = await asyncio.wait({invoke_event}, timeout=1)
+                if pending:
+                    self._log_debug_with_thread("MCP invocation did not finish within bounded cancellation cleanup")
+                if cancellation_state is not None:
+                    await self._cancel_tool_call(cancellation_state)
+            else:
+                pending = {invoke_event} if not invoke_event.done() else set()
+            if pending:
+                self._track_background_cleanup_task(invoke_event)
+            if cancel_event is not None and not cancel_event.done():
+                cancel_event.cancel()
+                await asyncio.gather(cancel_event, return_exceptions=True)
+
     def _invoke_on_background_thread(
         self,
         coro: Coroutine[Any, Any, T],
@@ -1839,77 +2167,79 @@ class MCPClient(ToolProvider):
     ) -> futures.Future[T]:
         # save a reference to this so that even if it's reset we have the original
         close_future = self._close_future
+        # Read once: a concurrent stop() may reset the field after this check.
+        loop = self._background_thread_event_loop
 
-        if (
-            self._background_thread_session is None
-            or self._background_thread_event_loop is None
-            or close_future is None
-        ):
+        if self._background_thread_session is None or loop is None or close_future is None:
+            coro.close()
             raise MCPClientInitializationError("the client session was not initialized")
 
+        invocation_started = False
+
         async def run_async() -> T:
-            if cancel_signal is not None and cancel_signal.is_set():
-                coro.close()
-                raise _MCPCallCancelledError("Tool execution cancelled")
-
+            nonlocal invocation_started
+            _raise_if_call_cancelled(cancel_signal)
             invoke_event = asyncio.create_task(coro)
-            invoke_cancel_requested = False
-            cancel_event: asyncio.Task[None] | None = None
+            invocation_started = True
+            return await self._await_mcp_call(invoke_event, close_future, cancel_signal, cancellation_state)
 
-            if cancel_signal is not None:
+        invoke_future: futures.Future[T] = futures.Future()
+        invoke_task: asyncio.Task[T] | None = None
+        submission_lock = threading.Lock()
 
-                async def wait_for_cancel() -> None:
-                    # threading.Event has no async notification hook. Poll on this loop rather than
-                    # running Event.wait() in an executor: cancelling that await cannot stop a worker
-                    # already blocked in Event.wait(), so successful calls could strand worker threads.
-                    while not cancel_signal.is_set():
-                        await asyncio.sleep(0.05)
-
-                cancel_event = asyncio.create_task(wait_for_cancel())
-
-            tasks: list[asyncio.Task[Any] | asyncio.Future[Any]] = [invoke_event, close_future]
-            if cancel_event is not None:
-                tasks.append(cancel_event)
-
-            try:
-                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-
-                if cancel_signal is not None and cancel_signal.is_set():
-                    self._log_debug_with_thread("cancellation detected during MCP invocation")
-                    invoke_cancel_requested = True
-                    invoke_event.cancel()
-                    _, pending = await asyncio.wait({invoke_event}, timeout=1)
-                    if pending:
-                        self._log_debug_with_thread("timed out cleaning up cancelled MCP invocation")
-                    if cancellation_state is not None:
-                        await self._cancel_tool_call(cancellation_state)
-                    raise _MCPCallCancelledError("Tool execution cancelled")
-                if invoke_event in done:
-                    return await invoke_event
-
-                self._log_debug_with_thread("event loop for the server closed before the invoke completed")
-                invoke_event.cancel()
-                await asyncio.wait({invoke_event}, timeout=1)
-                raise RuntimeError("Connection to the MCP server was closed")
-            finally:
-                if not invoke_event.done() and not invoke_cancel_requested:
-                    invoke_event.cancel()
-                    # asyncio.wait reports expiration through pending; it does not raise TimeoutError.
-                    # The original caller cancellation or exception continues after this bounded cleanup.
-                    _, pending = await asyncio.wait({invoke_event}, timeout=1)
-                    if pending:
-                        self._log_debug_with_thread("MCP invocation did not finish within bounded cancellation cleanup")
-                    if cancellation_state is not None:
-                        await self._cancel_tool_call(cancellation_state)
+        def finish_task(task: asyncio.Task[T]) -> None:
+            if not invocation_started:
+                coro.close()
+            error = None if task.cancelled() else task.exception()
+            with suppress(futures.InvalidStateError):
+                if task.cancelled():
+                    invoke_future.cancel()
+                elif error is not None:
+                    invoke_future.set_exception(error)
                 else:
-                    pending = {invoke_event} if not invoke_event.done() else set()
-                if pending:
-                    self._track_background_cleanup_task(invoke_event)
-                if cancel_event is not None and not cancel_event.done():
-                    cancel_event.cancel()
-                    await asyncio.gather(cancel_event, return_exceptions=True)
+                    invoke_future.set_result(task.result())
 
-        invoke_future = asyncio.run_coroutine_threadsafe(coro=run_async(), loop=self._background_thread_event_loop)
+        def finish_future(future: futures.Future[T]) -> None:
+            self._inflight_calls.discard(future)
+            with submission_lock:
+                task = invoke_task
+                if task is None:
+                    coro.close()
+            if future.cancelled() and task is not None:
+                with suppress(RuntimeError):
+                    loop.call_soon_threadsafe(task.cancel)
+
+        def submit_call() -> None:
+            nonlocal invoke_task
+            # Shutdown completes close_future before draining tasks; no new task may follow that drain.
+            if close_future.done():
+                _fail_pending_call(invoke_future)
+                return
+            with submission_lock:
+                if invoke_future.done():
+                    return
+                call = run_async()
+                try:
+                    invoke_task = loop.create_task(call)
+                except Exception as error:
+                    call.close()
+                    submission_error = error
+                else:
+                    invoke_task.add_done_callback(finish_task)
+                    return
+            with suppress(futures.InvalidStateError):
+                invoke_future.set_exception(submission_error)
+
+        self._inflight_calls.add(invoke_future)
+        invoke_future.add_done_callback(finish_future)
+        try:
+            loop.call_soon_threadsafe(submit_call)
+        except RuntimeError as e:  # a concurrent stop() or reconnect closed the loop
+            _fail_pending_call(invoke_future)
+            raise _MCPConnectionClosedError("Connection to the MCP server was closed") from e
+        # The loop may have stopped after its in-flight calls were failed; this one would never run.
+        if not loop.is_running():
+            _fail_pending_call(invoke_future)
         return invoke_future
 
     def _should_include_tool_with_filters(self, tool: MCPAgentTool, filters: ToolFilters | None) -> bool:
@@ -2638,6 +2968,7 @@ def _build_client_from_config(
         application_name=server.get("application_name", name),
         application_version=server.get("application_version"),
         continue_on_error=server.get("continue_on_error", continue_on_error),
+        auto_reconnect=server.get("auto_reconnect", False),
     )
 
 
