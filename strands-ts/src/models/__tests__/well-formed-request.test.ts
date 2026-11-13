@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  GuardContentBlock,
+  InjectedBlock,
   JsonBlock,
   Message,
+  OffloadedBlock,
   ReasoningBlock,
+  SummaryBlock,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
   type ContentBlock,
 } from '../../types/messages.js'
-import { ImageBlock } from '../../types/media.js'
+import { CitationsBlock } from '../../types/citations.js'
+import { DocumentBlock, ImageBlock } from '../../types/media.js'
 import { buildPreview } from '../../context-manager/methods/truncate.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { wellFormedRequest } from '../well-formed-request.js'
@@ -110,6 +115,39 @@ describe('wellFormedRequest', () => {
       const [messages] = wellFormedRequest([userMessage(new UnknownBlock(`a${LONE_HIGH}`) as unknown as ContentBlock)])
 
       expect(messages[0]!.content).toStrictEqual([new UnknownBlock(`a${REPLACEMENT}`)])
+    })
+
+    it('repairs each content block type into the instance its constructor would build', () => {
+      const blocks = (char: string): ContentBlock[] => [
+        new TextBlock(`t${char}`),
+        new OffloadedBlock({ text: `o${char}`, method: 'truncate', ref: 'tu-1', tokens: 10 }),
+        new ToolUseBlock({ name: 'lookup', toolUseId: 't1', input: { query: `q${char}` } }),
+        new ToolResultBlock({
+          toolUseId: 't1',
+          status: 'success',
+          content: [new TextBlock(`x${char}`), new JsonBlock({ json: { k: `j${char}` } })],
+        }),
+        new ReasoningBlock({ text: `r${char}` }),
+        new GuardContentBlock({ text: { qualifiers: ['query'], text: `g${char}` } }),
+        new DocumentBlock({ name: 'notes', format: 'txt', source: { text: `d${char}` } }),
+        new CitationsBlock({
+          citations: [
+            {
+              location: { type: 'documentChar', documentIndex: 0, start: 0, end: 1 },
+              source: 'notes',
+              sourceContent: [{ text: `s${char}` }],
+              title: 'notes',
+            },
+          ],
+          content: [{ text: `c${char}` }],
+        }),
+        new InjectedBlock({ text: `i${char}`, source: 'memory' }),
+        new SummaryBlock({ text: `m${char}` }),
+      ]
+
+      const [messages] = wellFormedRequest([userMessage(...blocks(LONE_HIGH))])
+
+      expect(messages[0]!.content).toStrictEqual(blocks(REPLACEMENT))
     })
 
     it('replaces them in the system prompt and tool specs and keeps other options', () => {
