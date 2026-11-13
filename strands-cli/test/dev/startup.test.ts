@@ -260,6 +260,63 @@ describe('dev startup screen', () => {
     }
   })
 
+  it.each([
+    [60, 30],
+    [120, 38],
+    [120, 45],
+  ])('shouldShowEveryPickerSectionBelowTheLogoAt%sColumnsAnd%sRows', async (columns, rows) => {
+    const input = ttyInput()
+    const output = ttyOutput(columns, rows)
+    const frame = captureFrame(output)
+    const running = runInkChat(
+      async (): Promise<never> => {
+        throw new Error('Unexpected agent startup')
+      },
+      {
+        input,
+        output,
+        errorOutput: output,
+        intro: false,
+        config: CliConfigStore.memory({}, { animations: false }),
+        renderApp: render as RenderApp,
+        prepare: async (screen) => {
+          await chooseHarness(
+            {
+              cli: { name: 'Saved CLI' },
+              folderFor: () => ({ path: '/work/strands-dev', detected: true }),
+              harnesses: Array.from({ length: 12 }, (_, index) => ({
+                name: `Project ${index + 1}`,
+                entrypoint: `/project-${index + 1}/agent.py`,
+                root: `/project-${index + 1}`,
+                language: 'python' as const,
+              })),
+            },
+            screen,
+            vi.fn()
+          )
+          return false
+        },
+      }
+    )
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+      const text = frame().join('\n')
+      expect(text).toContain('Base CLI')
+      expect(text).toContain('Discovered Harnesses (12)')
+      expect(text).toContain('Global Harness')
+      expect(text).toContain('New Harness')
+      expect(text).toContain('Workspace: /work/strands-dev')
+      expect(text).toContain('Source:')
+      expect(text).toContain('Create a new harness')
+      expect(text).toContain('↑↓ scroll')
+      expect(text).toMatch(STRANDS_WORDMARK)
+      expect(frame().filter((line) => line.trim()).length).toBeLessThanOrEqual(rows)
+    } finally {
+      input.write('\u0003')
+      await running
+    }
+  })
+
   it('shouldCancelPreparationWithoutStartingAnAgentWhenControlCIsPressed', async () => {
     const input = ttyInput()
     const output = ttyOutput(120, 35)

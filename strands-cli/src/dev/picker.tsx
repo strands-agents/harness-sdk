@@ -86,22 +86,46 @@ const choiceLabel = (choice: HarnessChoice, cli?: BaseCliOption): string =>
       ? `${choice.harness.name} (${choice.harness.entrypoint})`
       : `New ${choice.language} harness ${choice.name}`
 const MAX_VISIBLE_ROWS = 7
-const SOURCE_DETAIL_HEIGHT = 3
 const SELECTED_AGENT_HEIGHT = 3
 
-const windowHeight = (rows: readonly PickerRow[], count: number): number =>
-  Math.max(
-    ...Array.from(
-      { length: rows.length - count + 1 },
-      (_, start) => count + 2 * new Set(rows.slice(start, start + count).map(({ group }) => group)).size - 1
-    )
+// The three sections stay visible; only the discovered harnesses scroll.
+const pickerWindow = (
+  rows: readonly PickerRow[],
+  selection: number,
+  listRows: number
+): {
+  visible: PickerRow[]
+  height: number
+  chromeSavings: number
+  sectionGap: number
+  projectRange: string | undefined
+} => {
+  const projects = rows.filter((row) => row.choice?.kind === 'discovered')
+  const pinned = rows.length - projects.length
+  const groups = new Set(rows.map(({ group }) => group)).size
+  const minimum = pinned + Math.min(1, projects.length) + 2 * groups - 1
+  // Reclaim decorative gaps before sacrificing space between the sections.
+  const chromeSavings = Math.min(3, Math.max(0, minimum - listRows))
+  const budget = listRows + chromeSavings
+  const sectionGap = minimum <= budget ? 1 : 0
+  const overhead = groups + sectionGap * (groups - 1)
+  const capacity = Math.min(
+    projects.length,
+    Math.max(1, MAX_VISIBLE_ROWS - pinned),
+    Math.max(1, budget - pinned - overhead)
   )
-
-const visibleCapacity = (rows: readonly PickerRow[], listRows: number): number => {
-  const most = Math.min(MAX_VISIBLE_ROWS, rows.length)
-  return (
-    Array.from({ length: most }, (_, index) => most - index).find((count) => windowHeight(rows, count) <= listRows) ?? 1
-  )
+  const projectSelection =
+    rows[selection]?.key === CREATE_ROW ? projects.length - 1 : projects.indexOf(rows[selection]!)
+  const start = Math.min(Math.max(0, projectSelection - capacity + 1), Math.max(0, projects.length - capacity))
+  const visibleProjects = projects.slice(start, start + capacity)
+  const visible = rows.filter((row) => row.choice?.kind !== 'discovered' || visibleProjects.includes(row))
+  return {
+    visible,
+    chromeSavings,
+    sectionGap,
+    height: visible.length + overhead,
+    projectRange: projects.length > capacity ? `${start + 1}–${start + capacity} of ${projects.length}` : undefined,
+  }
 }
 
 type FormField = 'name' | 'language'
@@ -167,11 +191,11 @@ export const HarnessPicker = ({
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
   const folderOf = (choice?: HarnessChoice): FolderSuggestion | undefined => (choice ? folderFor?.(choice) : undefined)
-  const { accent, success, error: errorColor, warning: warningColor, selection: selectionColor, border } = useTheme()
+  const { accent, success, error: errorColor, warning: warningColor, selection: selectionColor } = useTheme()
   const { columns } = useTerminalSize()
   const availableRows = useStartupContentRows()
-  const discoveredGroup = `DISCOVERED PROJECTS${harnesses.length ? ` (${harnesses.length})` : ''}`
-  const discoveryNote = discovery !== undefined && (discovery !== 'done' || harnesses.length === 0)
+  const discoveredGroup = `Discovered Harnesses${harnesses.length ? ` (${harnesses.length})` : ''}`
+  const discoveryNote = harnesses.length === 0 || (discovery !== undefined && discovery !== 'done')
   const rows: PickerRow[] = [
     ...(cli
       ? [
@@ -179,7 +203,7 @@ export const HarnessPicker = ({
             key: CLI_ROW,
             label: `Base CLI · ${sanitizeTerminalText(cli.name)}`,
             detail: sanitizeTerminalText(cli.path ?? userConfigPath()),
-            group: 'CLI DEFAULT',
+            group: 'Global Harness',
             language: '',
             choice: { kind: 'cli' } as const,
           },
@@ -211,7 +235,7 @@ export const HarnessPicker = ({
       detail: newProject
         ? `Creates ${sanitizeTerminalText(newProject)} from your saved profile.`
         : 'Start a separate project from your saved profile.',
-      group: 'NEW PROJECT',
+      group: 'New Harness',
       language: '',
     },
   ]
@@ -322,8 +346,7 @@ export const HarnessPicker = ({
   const globalNotice = 'Manual import applies these changes globally to plain strands.'
   const localNotice = 'Until then, development changes stay in this local workspace.'
   const projectNotice = 'Local project only. Your CLI default stays unchanged.'
-  const detailNoteRows = (showsFolder: boolean): number =>
-    Number(showsFolder) + (cli ? lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice))
+  const detailNoteRows = cli ? lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice)
   const step = placing ? 'folder' : creating ? 'name' : 'list'
   const createsInPlace = opensAtOnce(folderOf({ kind: 'create', name, language }))
   const languageModelNotice = modelNotice?.(language)
@@ -353,6 +376,10 @@ export const HarnessPicker = ({
   const hint = busy
     ? 'Preparing workspace… · Esc cancel'
     : [screens[step].hint, failureCopyHint, `Esc ${step === 'folder' ? 'back' : 'cancel'}`].filter(Boolean).join(' · ')
+  const selectedChoice = selected.choice ?? { kind: 'create' as const, language, name }
+  const selectedFolder = folderOf(selectedChoice)?.path
+  const hasWorkspace = rows.some((row) => folderOf(row.choice ?? { kind: 'create', language, name }) !== undefined)
+  const detailHeight = hasWorkspace ? 2 : 1
   const listRows =
     availableRows -
     2 -
@@ -361,7 +388,7 @@ export const HarnessPicker = ({
     1 -
     lineCount(hint) -
     1 -
-    SOURCE_DETAIL_HEIGHT
+    detailHeight
   const notes = [folderNote(folder.value.trim(), folder.suggested)]
   const folderHeight =
     2 +
@@ -375,18 +402,19 @@ export const HarnessPicker = ({
     placing && placing.kind !== 'create' && availableRows - folderHeight >= SELECTED_AGENT_HEIGHT
       ? selected.detail
       : undefined
-  const capacity = visibleCapacity(rows, listRows)
-  const listHeight = windowHeight(rows, capacity)
-  const start = Math.min(Math.max(0, selection - capacity + 1), Math.max(0, rows.length - capacity))
-  const visible = rows.slice(start, start + capacity)
-  const detailNotes =
-    capacity === Math.min(MAX_VISIBLE_ROWS, rows.length)
-      ? (folderFor ? [true, false] : [false])
-          .map((showsFolder) => ({ showsFolder, rows: detailNoteRows(showsFolder) }))
-          .find(({ rows: needed }) => needed <= listRows - listHeight)
-      : undefined
-  const detailHeight = SOURCE_DETAIL_HEIGHT + (detailNotes?.rows ?? 0)
-  const selectedFolder = folderOf(selected.choice)?.path
+  const {
+    visible,
+    chromeSavings,
+    sectionGap,
+    height: listHeight,
+    projectRange,
+  } = pickerWindow(rows, selection, listRows)
+  const detailNotes = visible.length === rows.length && listRows - listHeight >= detailNoteRows
+  const detailSource = selected.choice
+    ? selected.detail
+    : newProject
+      ? sanitizeTerminalText(newProject)
+      : selected.detail
   if (replacing)
     return (
       <WorkspaceReplacementConfirmation
@@ -413,7 +441,7 @@ export const HarnessPicker = ({
           </Text>
         </Box>
       ) : null}
-      <Box marginBottom={1} justifyContent="space-between">
+      <Box marginBottom={step === 'list' && chromeSavings > 0 ? 0 : 1} justifyContent="space-between">
         <Text bold color={step === 'folder' ? success : accent}>
           {heading}
         </Text>
@@ -462,28 +490,39 @@ export const HarnessPicker = ({
         <>
           <Box flexDirection="column" height={listHeight} flexShrink={0}>
             {visible.map((row, index) => (
-              <Box key={start + index} flexDirection="column">
+              <Box
+                key={row.key}
+                flexDirection="column"
+                marginTop={index > 0 && visible[index - 1]?.group !== row.group ? sectionGap : 0}
+              >
                 {index === 0 || visible[index - 1]?.group !== row.group ? (
-                  <Box marginTop={index === 0 ? 0 : 1}>
-                    <Text dimColor>{row.group}</Text>
+                  <Box>
+                    <Text bold wrap="truncate-end">
+                      {row.group}
+                      {projectRange && row.group === discoveredGroup ? ` · ${projectRange} · ↑↓ scroll` : ''}
+                    </Text>
                   </Box>
                 ) : null}
-                {row.key === DISCOVERY_ROW && discovery !== undefined ? (
-                  <Box paddingX={1}>
-                    <DiscoveryStatus discovery={discovery} count={harnesses.length} warningColor={warningColor} />
+                {row.key === DISCOVERY_ROW ? (
+                  <Box paddingLeft={3} paddingRight={1}>
+                    <DiscoveryStatus
+                      discovery={discovery ?? 'done'}
+                      count={harnesses.length}
+                      warningColor={warningColor}
+                    />
                   </Box>
                 ) : (
                   <Box
                     paddingX={1}
                     justifyContent="space-between"
-                    {...(start + index === selection ? { backgroundColor: selectionColor } : {})}
+                    {...(row.key === selected.key ? { backgroundColor: selectionColor } : {})}
                   >
                     <Text
-                      bold={start + index === selection}
-                      {...(start + index === selection ? { color: accent } : {})}
+                      bold={row.key === selected.key}
+                      {...(row.key === selected.key ? { color: accent } : {})}
                       wrap="truncate-end"
                     >
-                      {start + index === selection ? '›' : ' '} {row.label}
+                      {row.key === selected.key ? '›' : ' '} {row.label}
                     </Text>
                     {row.language ? <Text dimColor> {row.language}</Text> : null}
                   </Box>
@@ -493,26 +532,20 @@ export const HarnessPicker = ({
           </Box>
           <Box
             flexDirection="column"
-            borderStyle="single"
-            borderColor={border}
-            borderLeft={false}
-            borderRight={false}
-            borderBottom={false}
-            marginTop={1}
-            paddingTop={1}
-            height={detailHeight}
+            marginTop={chromeSavings > 2 ? 0 : 1}
+            height={detailHeight + (detailNotes ? detailNoteRows : 0)}
             flexShrink={0}
           >
             <Text dimColor wrap="truncate-middle">
-              {selected.choice ? `Source: ${selected.detail}` : selected.detail}
+              {selected.choice || newProject ? `Source: ${detailSource}` : detailSource}
             </Text>
+            {hasWorkspace ? (
+              <Text dimColor wrap="truncate-middle">
+                Workspace: {selectedFolder ? sanitizeTerminalText(selectedFolder) : 'New project'}
+              </Text>
+            ) : null}
             {detailNotes && selected.choice ? (
               <>
-                {detailNotes.showsFolder && selectedFolder !== undefined ? (
-                  <Text dimColor wrap="truncate-middle">
-                    Workspace: {sanitizeTerminalText(selectedFolder)}
-                  </Text>
-                ) : null}
                 {selected.choice.kind === 'cli' ? (
                   <>
                     <Text>{globalNotice}</Text>
@@ -527,7 +560,7 @@ export const HarnessPicker = ({
         </>
       )}
       {failure ? <Text color={errorColor}>{failure}</Text> : null}
-      <Box marginTop={1}>
+      <Box marginTop={step === 'list' && chromeSavings > 1 ? 0 : 1}>
         <Text dimColor>{hint}</Text>
       </Box>
     </Box>
