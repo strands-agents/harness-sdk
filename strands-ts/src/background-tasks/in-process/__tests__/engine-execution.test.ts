@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createAdmission, createEngine, createResult, deferred, expectTask } from './engine-test-helpers.js'
 import type { InProcessTaskExecutionOutcome, InProcessTaskRecord } from '../types.js'
+import { logger } from '../../../logging/logger.js'
 
 describe('InProcessTaskEngine', () => {
   describe('admission and updates', () => {
     it('prevents task update callbacks from mutating engine-owned state', async () => {
+      using warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       const statuses: InProcessTaskRecord['status'][] = []
       const engine = createEngine(
         async ({ toolName }) => ({ status: 'completed', result: createResult(toolName.toUpperCase()) }),
@@ -24,6 +26,9 @@ describe('InProcessTaskEngine', () => {
       expectTask(completed, admitted, { status: 'completed', result: createResult('HELLO') })
       expect(engine.list()).toEqual([completed])
       expect(statuses).toEqual(['queued', 'working', 'completed'])
+      expect(warn).toHaveBeenCalledWith(
+        `task_id=<${admitted.taskId}>, error=<Error: notification failed> | background task update notification failed`
+      )
 
       completed.status = 'cancelled'
       engine.list()[0]!.status = 'failed'
