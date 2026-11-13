@@ -1,6 +1,7 @@
 """Tests for LocalFileStorage."""
 
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -71,7 +72,11 @@ class TestLocalFileStorage:
 
     @pytest.mark.asyncio
     async def test_list_empty_dir(self, storage):
-        assert await storage.list("") == []
+        tru_keys = await storage.list("")
+        exp_keys = []
+        assert tru_keys == exp_keys
+        tru_keys = await storage.namespace("missing").list("")
+        assert tru_keys == exp_keys
 
     @pytest.mark.asyncio
     async def test_rejects_path_traversal(self, storage):
@@ -274,14 +279,24 @@ class TestLocalFileStorage:
             await storage.delete("key.txt")
 
     @pytest.mark.asyncio
-    async def test_list_error_raises_storage_error(self, tmp_path):
-        from unittest.mock import AsyncMock, MagicMock
-
-        sandbox = MagicMock()
-        sandbox.list_files = AsyncMock(side_effect=PermissionError("forbidden"))
+    @pytest.mark.parametrize("failure_source", ["host_scan", "host_stat", "sandbox"])
+    async def test_list_error_raises_storage_error(self, tmp_path, monkeypatch, failure_source):
+        # Listing access failures surface as StorageError (#4837).
+        error = PermissionError("forbidden")
+        sandbox = None
+        if failure_source == "sandbox":
+            sandbox = MagicMock()
+            sandbox.list_files = AsyncMock(side_effect=error)
+        elif failure_source == "host_stat":
+            monkeypatch.setattr(Path, "stat", MagicMock(side_effect=error))
+        else:
+            monkeypatch.setattr(os, "scandir", MagicMock(side_effect=error))
         storage = LocalFileStorage(str(tmp_path) + "/", sandbox=sandbox)
-        with pytest.raises(StorageError):
+        with pytest.raises(StorageError, match="Failed to list keys") as exc_info:
             await storage.list("")
+        tru_cause = exc_info.value.__cause__
+        exp_cause = error
+        assert tru_cause is exp_cause
 
     @pytest.mark.asyncio
     async def test_write_atomic_cleanup_on_replace_failure(self, tmp_path, monkeypatch):
