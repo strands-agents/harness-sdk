@@ -26,6 +26,8 @@ describe('dev-only experiment guidance', () => {
     expect(instructions).toContain('source, saved instructions, configuration, or exports')
     expect(instructions).toContain('Never start a paid run based only on opening Create a new experiment')
     expect(instructions).toContain('without approval')
+    expect(instructions).toContain('does not inherit the chat provider')
+    expect(instructions).toContain('Never copy the chat model name')
   })
 })
 

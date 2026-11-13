@@ -83,6 +83,35 @@ const generating = (cases: number, events: readonly object[] = []) =>
 const NOW = new Date('2026-11-12T15:30:12Z')
 
 describe('TEMPORARY experiment generation', () => {
+  it('shouldRejectAnUnsupportedConnectionBeforePreparingTheEnvironment', async () => {
+    const workspace = await workspaceFixture()
+    const run = vi.fn()
+    const spawn = vi.fn()
+    await expect(
+      generateTemporaryExperiment(
+        {
+          workspace,
+          settings: settings({ model: 'openai.gpt-6.1-sol' }),
+          context: 'diagnostic agent',
+          files: { draft: '/unused/draft', log: '/unused/log', progress: '/unused/progress' },
+        },
+        { run, spawnGenerator: spawn }
+      )
+    ).rejects.toThrow('separate AWS Bedrock connection')
+    expect(run).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('shouldRemoveOnlyAnExplicitBedrockProviderPrefixForTheEvalsCli', () => {
+    const args = temporaryGenerateArguments(
+      settings({ model: 'bedrock/openai.gpt-oss-120b-1:0' }),
+      'context',
+      { draft: 'd', log: 'l', progress: 'p' },
+      'python'
+    )
+    expect(args[args.indexOf('--model') + 1]).toBe('openai.gpt-oss-120b-1:0')
+  })
+
   it('shouldPassEveryGeneratorSettingWhenTheyDifferFromTheDefaults', () => {
     const files = { draft: '/d/refunds.json', log: '/d/refunds.log', progress: '/d/refunds.progress.jsonl' }
 

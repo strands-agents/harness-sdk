@@ -18,6 +18,7 @@ import {
   type Review,
 } from '../panels/model.js'
 import { temporaryAgentContext } from './agent-context.js'
+import { generatorModelProblem } from './generator-model.js'
 import { temporaryCreateExperimentPrompt, temporaryRetryExperimentPrompt } from './create-experiment-skill.js'
 import { temporaryExperimentsFolder, temporaryWorkspaceDirectory } from './evals-process.js'
 import {
@@ -86,14 +87,6 @@ interface OpenReview {
   readonly raw: TemporaryExperimentDocument
   readonly cases: readonly ReviewCase[]
   readonly notice?: Notice
-}
-
-const BEDROCK_MODEL =
-  /^(?:(?:us|eu|apac|global|jp|au|ca|us-gov)\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|deepseek|qwen|openai|writer)\.[\w.:-]+$/u
-
-const generatorModel = (model: string | undefined): string => {
-  const bare = (model ?? '').replace(/^bedrock\//u, '')
-  return BEDROCK_MODEL.test(bare) ? bare : ''
 }
 
 const reviewCases = (raw: TemporaryExperimentDocument, saved: boolean): ReviewCase[] =>
@@ -403,7 +396,8 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       cases: DEFAULT_CASES,
       topics: 0,
       evaluators: [{ name: 'OutputEvaluator' }],
-      model: generatorModel(facts.model),
+      // A model ID alone does not identify the chat provider or its credentials.
+      model: '',
       parallel: DEFAULT_PARALLEL,
       expectedOutput: true,
       expectedTrajectory: false,
@@ -431,12 +425,12 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     return `${NAME_STEM}-${number}`
   }
 
-  private problemWith({ name, task }: GenerationSettings, replace: string | undefined): string | undefined {
+  private problemWith({ name, task, model }: GenerationSettings, replace: string | undefined): string | undefined {
     if (!isTemporaryExperimentName(name))
       return 'Name the experiment with letters, numbers, dots, dashes, and underscores, for example refunds-v1.'
     if (this.isTaken(name, replace)) return `An experiment named ${name} exists already. Choose another name.`
     if (!task) return 'Describe the task of the agent, for example "Answer refund questions for an online store".'
-    return undefined
+    return generatorModelProblem(model)
   }
 
   private start(settings: GenerationSettings): Job {

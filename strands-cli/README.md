@@ -307,7 +307,7 @@ The experiment skill, workspace instructions, and `strands_dev_*` tools are inje
 
 **Temporary dependency:** the evaluation workflow installs `strands-agents-evals[optimization]` from the pinned
 [`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/6c5dd0bd4af93adfdbc02a6f7698e5981572ac2d)
-in a separate Python environment on first use. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
+in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
 
 Global import remains deferred. A future manual import can select the persistent agent as the default for plain `strands`.
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.

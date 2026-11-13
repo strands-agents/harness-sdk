@@ -33,7 +33,7 @@ Translate the agreed goal into a concrete task and any useful scenario context f
 
 An experiment can use several evaluators, and each one scores every case, so two evaluators give two scores for each case. Name the ones that you propose, and say in plain words what each one checks. A rubric judge such as OutputEvaluator scores free text against a rubric that the generator writes from the context. A check such as Contains compares the answer with a value and calls no model. The unavailable list holds the evaluators that cannot score this agent: give that reason if the developer asks for one, and offer the nearest evaluator that works. /optimize scores with the final answer only, so propose OutputEvaluator, Contains, Equals, or StartsWith when the developer plans to optimize this experiment.
 
-Before generation, briefly describe what the cases will test and how many you will create. Say the model calls, the time, and the file that the run writes, then ask whether to proceed. Include a relevant assumption if needed, not a dump of all settings. If the developer has already approved this specific proposal, proceed without asking again. Never start a paid run based only on opening Create a new experiment.
+Before generation, briefly describe what the cases will test and how many you will create. Explain that generation uses a separate AWS Bedrock model, name the chosen model (or the evals SDK default), and say the model calls, the time, and the file that the run writes before asking whether to proceed. The generator does not inherit the chat provider, endpoint, credentials, or model. Never copy the chat model name into generation settings merely because it is available in chat. If the developer requests the same non-Bedrock chat model, explain that this integration does not support that connection; do not silently substitute a provider. Include a relevant assumption if needed, not a dump of all settings. If the developer has already approved this specific proposal, proceed without asking again. Never start a paid run based only on opening Create a new experiment.
 
 ## Generate and hand back control
 
@@ -46,7 +46,7 @@ Tool settings reference (use silently unless asked):
 - cases: 1–50, default 10; topics: 0 disables grouping.
 - evaluators: use strands_dev_evaluators for names and required settings.
 - expectedOutput: default on; expectedTrajectory, expectedInteractions, metadata: default off.
-- model: suggested Bedrock model or strands default; parallel: 1–10, default 4.
+- model: explicitly selected Bedrock model or the evals Python SDK default, never inferred from the chat model; parallel: 1–10, default 4.
 - name: available letters, numbers, dots, dashes, and underscores.`
 
 export const temporaryCreateExperimentSkill = (): AgentExtensionSkill => ({
@@ -72,7 +72,7 @@ const settingsSummary = (settings: GenerationSettings): string =>
     `expected trajectory ${onOff(settings.expectedTrajectory)}`,
     `expected interactions ${onOff(settings.expectedInteractions)}`,
     `metadata ${onOff(settings.metadata)}`,
-    `model ${settings.model || 'the strands default'}`,
+    `Bedrock generator model ${settings.model || 'the evals Python SDK default'}`,
     `${settings.parallel} at once`,
   ].join(', ')
 

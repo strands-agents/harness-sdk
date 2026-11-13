@@ -154,7 +154,7 @@ const homeItem = (row: HomeRow, now: number): ListItem => {
 
 const homeNote = (row: HomeRow | undefined): string => {
   if (!row || row.kind === 'new')
-    return 'The agent asks what to test, confirms the settings, then runs ExperimentGenerator.'
+    return 'Describe what to test, then approve generation with a separate AWS Bedrock model. Your chat model stays unchanged.'
   if (row.kind === 'saved') return `${row.experiment.path} · Enter opens it in the editor`
   const { generation } = row
   if (generation.phase === 'failed') return 'Enter shows why it stopped and how to fix it.'

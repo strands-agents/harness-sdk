@@ -211,6 +211,12 @@ describe('TEMPORARY dev chat part', () => {
     const status = await call('strands_dev_status')
 
     expect(status).toMatchObject({
+      newExperiment: {
+        name: 'experiment-2',
+        task: 'Answer refund questions',
+        agentContext: 'agent.py · 1 tool',
+        generator: { provider: 'bedrock', defaultModel: 'evals Python SDK default (not the chat model)' },
+      },
       experimentsFolder: 'strands-dev/tmp/experiments',
       experiments: [
         {
@@ -222,7 +228,6 @@ describe('TEMPORARY dev chat part', () => {
       ],
       generations: [],
       optimization: { step: 'idle' },
-      newExperiment: { name: 'experiment-2', task: 'Answer refund questions', agentContext: 'agent.py · 1 tool' },
     })
   })
 

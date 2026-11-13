@@ -264,7 +264,15 @@ const statusTool = (sessions: Sessions): DevChatTool => ({
       ),
       generations: generations.map(generationStatus),
       optimization: optimizationStatus(optimize.snapshot()),
-      newExperiment: { ...experiments.suggested(), agentContext: experiments.agentSummary() },
+      newExperiment: {
+        ...experiments.suggested(),
+        agentContext: experiments.agentSummary(),
+        generator: {
+          provider: 'bedrock',
+          connection: 'Separate AWS connection; does not inherit the chat provider, endpoint, or credentials.',
+          defaultModel: 'evals Python SDK default (not the chat model)',
+        },
+      },
     })
   },
 })
@@ -318,7 +326,11 @@ const createTool = (sessions: Sessions): DevChatTool => ({
           required: ['name'],
         },
       },
-      model: { type: 'string', description: 'Bedrock model ID that writes the cases. Empty uses the strands default.' },
+      model: {
+        type: 'string',
+        description:
+          'Separate AWS Bedrock generator model, not the chat model. Empty uses the evals Python SDK default. OpenAI-on-Bedrock IDs require bedrock/ prefix. AWS access is required.',
+      },
       parallel: { type: 'integer', minimum: 1, maximum: MAX_PARALLEL, description: 'Cases written at once.' },
       expectedOutput: { type: 'boolean' },
       expectedTrajectory: { type: 'boolean' },

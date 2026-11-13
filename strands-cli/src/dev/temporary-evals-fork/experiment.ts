@@ -1,3 +1,4 @@
+import { generatorModelId } from './generator-model.js'
 import { existsSync } from 'node:fs'
 import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -99,7 +100,7 @@ export const temporaryGenerateArguments = (
   ...temporaryEvaluatorArguments(settings.evaluators),
   '--temporary-agent-language',
   language,
-  ...(settings.model ? ['--model', settings.model] : []),
+  ...(settings.model.trim() ? ['--model', generatorModelId(settings.model)] : []),
   '--max-parallel-num-cases',
   String(settings.parallel),
   ...(settings.expectedOutput ? [] : ['--no-expected-output']),
@@ -156,6 +157,7 @@ export const generateTemporaryExperiment = async (
   dependencies: TemporaryExperimentDependencies = {}
 ): Promise<TemporaryGenerationOutcome> => {
   const { workspace, settings, context, files, environment = process.env, signal } = request
+  generatorModelId(settings.model) // Validate before installing dependencies or starting a paid job.
   const onEvent = request.onEvent ?? ignoreProgress
   const directory = temporaryWorkspaceDirectory(workspace)
   const python = await prepareTemporaryOptimizerEnvironment(

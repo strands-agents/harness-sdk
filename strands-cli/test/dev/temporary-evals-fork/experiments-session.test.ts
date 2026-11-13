@@ -134,7 +134,7 @@ describe('TEMPORARY experiment generation session', () => {
     expect(settings).toMatchObject({
       name: 'experiment-1',
       task: 'Answers refund questions',
-      model: 'us.anthropic.claude-test',
+      model: '',
       cases: 10,
       evaluators: [{ name: 'OutputEvaluator' }],
     })
@@ -150,14 +150,16 @@ describe('TEMPORARY experiment generation session', () => {
   })
 
   it.each([
-    ['global.anthropic.claude-sonnet-4-5-20250929-v1:0', 'global.anthropic.claude-sonnet-4-5-20250929-v1:0'],
-    ['amazon.nova-pro-v1:0', 'amazon.nova-pro-v1:0'],
-    ['echo', ''],
-    ['openai/gpt-5', ''],
-  ])('shouldSuggestTheChatModel%sOnlyWhenBedrockCanRunIt', async (model, suggested) => {
-    const { experiments } = await setup(model)
-
-    expect(experiments.suggested().model).toBe(suggested)
+    'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'amazon.nova-pro-v1:0',
+    'echo',
+    'openai/gpt-5',
+    'openai.gpt-6.1-sol',
+  ])('shouldNotInferTheGeneratorConnectionFromChatModel%s', async (model) => {
+    const workspace = await workspaceFixture()
+    const { experiments } = temporaryDevSessions({ workspace, agent: () => ({ model }) })
+    await experiments.reload()
+    expect(experiments.suggested().model).toBe('')
   })
 
   it('shouldShowLiveProgressAndThenADraftToReviewWhenAGenerationRuns', async () => {
@@ -415,6 +417,15 @@ describe('TEMPORARY experiment generation session', () => {
     expect(generator.spawn).not.toHaveBeenCalled()
   })
 
+  it('shouldRejectTheAmbiguousChatModelBeforeSchedulingAnyGeneration', async () => {
+    const { experiments, generator, start } = await setup()
+    const settings = { ...experiments.suggested(), name: 'diagnostic', model: 'openai.gpt-6.1-sol' }
+    await expect(experiments.createExperiment(settings)).rejects.toThrow('not the chat provider')
+    expect(start(settings)).toContain('not the chat provider')
+    expect(generator.spawn).not.toHaveBeenCalled()
+    expect(experiments.snapshot().generations).toEqual([])
+  })
+
   it('shouldGiveTheCauseAndTheLogToTheChatWhenTheGenerationFails', async () => {
     const { experiments, generator } = await setup()
     const denied = 'AccessDeniedException: You do not have access to the model with the specified model ID.'
@@ -425,7 +436,7 @@ describe('TEMPORARY experiment generation session', () => {
     await generator.runs[0]!.finish([])
 
     await expect(created).rejects.toThrow(
-      /stopped: Bedrock denied access to us\.anthropic\.claude-test\.\nstrands-evals said: AccessDeniedException.*\nLog: strands-dev\/tmp\/experiments\/drafts\/\d{8}-\d{6}-refunds\.log/su
+      /stopped: Bedrock denied access to the default model\.\nstrands-evals said: AccessDeniedException.*\nLog: strands-dev\/tmp\/experiments\/drafts\/\d{8}-\d{6}-refunds\.log/su
     )
   })
 
@@ -461,7 +472,7 @@ describe('TEMPORARY experiment generation session', () => {
     start({
       name: 'refunds',
       cases: 3,
-      model: 'openai.gpt-6.1-sol',
+      model: 'bedrock/openai.gpt-oss-120b-1:0',
       evaluators: [{ name: 'OutputEvaluator' }, { name: 'ToolCalled', settings: { tool_name: 'lookup_order' } }],
       expectedTrajectory: true,
     })
@@ -474,10 +485,10 @@ describe('TEMPORARY experiment generation session', () => {
 
     expect(experiments.snapshot().generations).toEqual([])
     expect(context.submit).toHaveBeenCalledWith(
-      '$create-experiment The experiment refunds stopped: Bedrock cannot use openai.gpt-6.1-sol. ' +
+      '$create-experiment The experiment refunds stopped: Bedrock cannot use bedrock/openai.gpt-oss-120b-1:0. ' +
         'Its settings were: task "Answers refund questions", 3 cases, 0 topics, ' +
         'evaluators OutputEvaluator and ToolCalled {"tool_name":"lookup_order"}, expected output on, ' +
-        'expected trajectory on, expected interactions off, metadata off, model openai.gpt-6.1-sol, 4 at once. ' +
+        'expected trajectory on, expected interactions off, metadata off, Bedrock generator model bedrock/openai.gpt-oss-120b-1:0, 4 at once. ' +
         'Help me fix the settings, then generate it again.'
     )
   })
