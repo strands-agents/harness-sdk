@@ -9,6 +9,7 @@ import pytest
 
 from strands._context_manager.placeholder import (
     REMOVED_MESSAGES,
+    format_offloaded,
     format_summarized,
     offload_placeholder,
 )
@@ -298,37 +299,6 @@ class TestSummarizeStrategyPerBlock:
         assert await strategy.apply(context) is False
 
     @pytest.mark.asyncio
-    async def test_replaces_media_block_with_marker(self, mock_agent):
-        strategy = Offload.summarize("media").when(block_threshold=100)
-        messages: Messages = [
-            Message(role="user", content=[ContentBlock(text="pin")]),
-            Message(
-                role="user",
-                content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
-            ),
-        ]
-        mock_agent.messages = messages
-        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
-        assert await strategy.apply(context) is True
-        assert "[Summarized:" in messages[1]["content"][0]["text"]
-
-    @pytest.mark.asyncio
-    async def test_falls_back_to_offloaded_when_media_summary_empty(self, mock_agent):
-        mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("media").when(block_threshold=100)
-        messages: Messages = [
-            Message(role="user", content=[ContentBlock(text="pin")]),
-            Message(
-                role="user",
-                content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
-            ),
-        ]
-        mock_agent.messages = messages
-        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
-        assert await strategy.apply(context) is True
-        assert "[Offloaded:" in messages[1]["content"][0]["text"]
-
-    @pytest.mark.asyncio
     async def test_keeps_block_and_continues_pass_when_summarization_fails(self, mock_agent, caplog):
         summary_stream = _make_stream_events("Summary of content.")
         calls = iter([RuntimeError("rejected"), None])
@@ -415,38 +385,32 @@ class TestSummarizeStrategyPerBlock:
 
         assert messages[1] == TestClientSideSummariesUseModelSummarize._summarized_tool_result("first")
 
-    @pytest.mark.asyncio
-    async def test_offloads_video_block_without_summarizing(self, mock_agent):
-        mock_agent.model.stream = unittest.mock.Mock()
-        strategy = Offload.summarize("media").when(block_threshold=100)
-        messages: Messages = [
-            Message(role="user", content=[ContentBlock(video={"format": "mp4", "source": {"bytes": b"video"}})]),
-        ]
-        mock_agent.messages = messages
-        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
-
-        assert await strategy.apply(context) is True
-        assert messages[0]["content"][0]["text"].startswith("[Offloaded:")
-        mock_agent.model.stream.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_offloads_media_block_when_summarization_fails(self, mock_agent, caplog):
-        # guards against summarizer failures being hidden by a lossy retry (#5291)
-        mock_agent.model.stream = unittest.mock.Mock(side_effect=RuntimeError("images unsupported"))
-        strategy = Offload.summarize("media").when(block_threshold=100)
-        messages: Messages = [
-            Message(
-                role="user",
-                content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
+    @pytest.mark.parametrize(
+        ("media", "kind", "summarize"),
+        [
+            ({"video": {"format": "mp4", "source": {"bytes": b"\x00" * 4000}}}, "video", _mock_summarize()),
+            (
+                {"image": {"format": "png", "source": {"bytes": b"\x00" * 4000}}},
+                "image",
+                unittest.mock.AsyncMock(side_effect=RuntimeError("images unsupported")),
             ),
-        ]
-        mock_agent.messages = messages
-        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+        ],
+        ids=["a video block is offloaded without summarizing it", "a media block whose summarization failed"],
+    )
+    @pytest.mark.asyncio
+    async def test_offloads_media_it_cannot_summarize(self, caplog, media, kind, summarize):
+        messages = [_text("user", "task"), Message(role="user", content=[ContentBlock(**media)]), _text("user", "last")]
+        model = heuristic_model(summarize=summarize)
+        strategy = Offload.summarize("media", {"model": model}).when(context_utilization="50%", block_threshold=10)
+        tokens = heuristic_count_tokens([messages[1]])
 
         with caplog.at_level(logging.WARNING):
-            assert await strategy.apply(context) is True
-        assert "[Offloaded:" in messages[0]["content"][0]["text"]
-        assert "error=<images unsupported>" in caplog.text
+            assert await strategy.apply(_context(messages, 0.9)) is True
+
+        assert messages[1]["content"] == [
+            offload_placeholder("summarize", format_offloaded(tokens, kind), None, tokens)
+        ]
+        assert (kind == "video") is not summarize.await_count
 
 
 class TestSummarizeStrategyMessageLevel:
@@ -875,7 +839,7 @@ class TestServerSideSummary:
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(
                 role="assistant",
-                content=[ContentBlock(text="[Summarized: 3 messages, ~5,000 tokens]\n\nwritten client-side")],
+                content=[_marker("written client-side")],
             ),
             Message(role="user", content=[ContentBlock(text="recent")]),
         ]
@@ -1052,7 +1016,7 @@ class TestClientSideSummariesUseModelSummarize:
 
     @staticmethod
     def _summarized_tool_result(summary: str) -> Message:
-        marker = f"[Summarized: tool result, ~5,000 tokens]\n\n{summary}"
+        marker = offload_placeholder("summarize", format_summarized("tool result", 5000, summary), None, 5000)
         return Message(
             role="user",
             content=[ContentBlock(toolResult=ToolResult(toolUseId="t1", status="success", content=[{"text": marker}]))],
