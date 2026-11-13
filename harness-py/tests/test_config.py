@@ -129,7 +129,7 @@ def test_config_maps_to_harness_agent_kwargs(tmp_path):
 
 def test_config_every_create_harness_parameter_has_a_bridge_key_or_is_factory_only():
     """§4: each ``create_harness`` parameter is reachable from JSON or deliberately code-only."""
-    factory_only = {"tools", "mcp_servers", "plugins", "background_tasks"}
+    factory_only = {"tools", "mcp_servers", "plugins", "background_tasks", "verify"}
     bridged = {
         "instructions": "instructions",
         "model": "model",

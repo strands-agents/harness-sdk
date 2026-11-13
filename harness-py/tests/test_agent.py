@@ -497,6 +497,8 @@ def test_root_exports_match_the_spec_table():
         "SubagentConfig",
         "SessionConfig",
         "MemoryConfig",
+        "VerifyConfig",
+        "VerifyOption",
         "ContextManagerConfig",
         "ContextManagerOption",
     }
