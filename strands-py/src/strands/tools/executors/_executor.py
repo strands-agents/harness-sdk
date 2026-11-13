@@ -228,9 +228,19 @@ class ToolExecutor(abc.ABC):
                 yield ToolInterruptEvent(tool_use, interrupts)
                 return
 
-            if before_event.cancel_tool:
+            # A cancel that arrives while BeforeToolCallEvent hooks are awaiting must
+            # skip the tool the same way as cancel_tool / the before-tool checkpoint.
+            # Prefer _observe_cancellation so invoke()-linked external signals are included.
+            signal_cancel = bool(agent._observe_cancellation())
+            if before_event.cancel_tool or signal_cancel:
                 cancel_message = (
-                    before_event.cancel_tool if isinstance(before_event.cancel_tool, str) else "tool cancelled by user"
+                    before_event.cancel_tool
+                    if isinstance(before_event.cancel_tool, str)
+                    else (
+                        "tool cancelled by user"
+                        if before_event.cancel_tool
+                        else "Tool execution cancelled"
+                    )
                 )
                 yield ToolCancelEvent(tool_use, cancel_message)
 

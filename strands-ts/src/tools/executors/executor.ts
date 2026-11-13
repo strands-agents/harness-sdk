@@ -142,9 +142,16 @@ export abstract class ToolExecutor {
         beforeToolCallEvent.selectedTool ??
         (toolUse.name !== toolUseBlock.name ? options.agent.toolRegistry.get(toolUse.name) : registryTool)
 
-      if (beforeToolCallEvent.cancel) {
-        const cancelMessage =
-          typeof beforeToolCallEvent.cancel === 'string' ? beforeToolCallEvent.cancel : 'Tool cancelled by hook'
+      // Hook cancel and a cancel that arrived while the before-hook awaited share
+      // one path: skip the tool the same way as the documented before-tool checkpoint.
+      const signalCancel = options.cancelSignal.aborted
+      const hookCancel = beforeToolCallEvent.cancel
+      if (hookCancel || signalCancel) {
+        const cancelMessage = hookCancel
+          ? typeof hookCancel === 'string'
+            ? hookCancel
+            : 'Tool cancelled by hook'
+          : 'Tool execution cancelled'
         const cancelResult = new ToolResultBlock({
           toolUseId: toolUse.toolUseId,
           status: 'error',
