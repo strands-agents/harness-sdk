@@ -331,7 +331,7 @@ class SubagentTool extends Tool {
       return "Parameter 'instructions' must be a string."
     }
     const build = this._builder ?? _defaultBuilder(parent as Agent)
-    const child = build(spec)
+    const child = await build(spec)
     child.appState.set(DEPTH_STATE_KEY, depth - 1)
     const { mode, lastMessages } = this._resolveContext(raw)
 
@@ -373,7 +373,7 @@ class SubagentTool extends Tool {
     const build = this._builder ?? _defaultBuilder(parent as Agent)
     let child: Agent | undefined
     try {
-      child = build(spec)
+      child = await build(spec)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       logger.warn(

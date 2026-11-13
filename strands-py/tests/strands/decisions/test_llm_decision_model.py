@@ -288,6 +288,24 @@ async def test_passes_a_message_history_straight_through():
 
 
 @pytest.mark.asyncio
+async def test_sends_injected_blocks_in_a_message_history_the_way_the_agent_does():
+    model = RecordingModel({"q": "true"})
+    history: Messages = [
+        {
+            "role": "user",
+            "content": [{"text": "earlier"}, {"injected": {"text": "cwd: /repo", "source": "env"}}],
+            "tracking_id": "msg-1",
+        },
+    ]
+
+    await LLMDecisionModel(model=model).ask(history, {"q": {"question": "in a repo?", "choices": "boolean"}})
+
+    assert model.calls[0]["prompt"] == [
+        {"role": "user", "content": [{"text": "earlier"}, {"text": "\n\ncwd: /repo"}], "tracking_id": "msg-1"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_includes_the_untrusted_state_defense_in_the_system_prompt():
     model = RecordingModel({"q": "true"})
     decision = LLMDecisionModel(model=model)

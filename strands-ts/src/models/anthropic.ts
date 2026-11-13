@@ -91,6 +91,21 @@ const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html'
 // @see https://platform.claude.com/docs/en/api/migration-2026-10-21
 const SAMPLING_PARAMS_REMOVED_VERSION = '2026-10-21'
 const REMOVED_SAMPLING_PARAMS = ['temperature', 'top_p', 'top_k']
+// InvokeModel on bedrock-runtime takes its own API version in the body, which still accepts the sampling params.
+// An `anthropic_version` set in `params` wins.
+const BEDROCK_INVOKE_MODEL_API_VERSION = 'bedrock-2023-05-31'
+const BEDROCK_THROTTLING_EVENTS = ['throttlingException', 'serviceUnavailableException']
+
+// An `AnthropicBedrock` client (bedrock-runtime InvokeModel), found without importing the optional
+// `@anthropic-ai/bedrock-sdk`: by class name, or by its bedrock-runtime base URL when a bundler renamed the class.
+// The Mantle client is a separate class on a bedrock-mantle host and takes the Anthropic API versions.
+function isBedrockRuntimeClient(client: unknown): boolean {
+  for (let proto = Object.getPrototypeOf(client); proto; proto = Object.getPrototypeOf(proto)) {
+    if ((proto as { constructor?: { name?: string } }).constructor?.name === 'AnthropicBedrock') return true
+  }
+  const baseURL = (client as { baseURL?: unknown } | null)?.baseURL
+  return typeof baseURL === 'string' && /\bbedrock-runtime\./.test(baseURL)
+}
 
 /**
  * Validates that `anthropicTools` does not contain function tool definitions.
@@ -681,7 +696,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Maps a context overflow or a 429 to the SDK's error types; any other error is normalized. */
+  /** Maps a context overflow or a throttle to the SDK's error types; any other error is normalized. */
   private _translateError(unknownError: unknown): Error {
     const error = normalizeError(unknownError)
 
@@ -690,8 +705,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       return new ContextWindowOverflowError(error.message)
     }
 
-    const err = unknownError as Error & { status?: number }
-    if (err.status === 429) {
+    const err = unknownError as Error & { status?: number; type?: string }
+    // Bedrock sends a throttle that arrives mid-stream as an exception frame, which has no status.
+    if (err.status === 429 || BEDROCK_THROTTLING_EVENTS.includes(err.type ?? '')) {
       const message = error.message ?? 'Request was throttled by the model provider'
       logger.debug(`throttled | error_message=<${message}>`)
       return new ModelThrottledError(message, { cause: err })
@@ -1049,6 +1065,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.topP !== undefined) sampling.top_p = this._config.topP
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     Object.assign(request, sampling, this._config.params)
+    if (isBedrockRuntimeClient(this._client)) {
+      const body = request as unknown as Record<string, unknown>
+      body.anthropic_version ??= BEDROCK_INVOKE_MODEL_API_VERSION
+    }
     this._rejectRemovedSamplingParams(request)
     const dropBlockThinking = this._dropsStaleThinking()
       ? thinkingWithDropBlock(request.thinking, isToolForced(request))

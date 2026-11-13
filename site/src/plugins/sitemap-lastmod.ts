@@ -76,7 +76,7 @@ export function newestDateUnder(lastModMap: Map<string, string>, pathPrefix: str
 // Blog tag/author archives are noindexed thin content — keep them out of the
 // sitemap so it only lists indexable URLs. Anchored to the deploy base path
 // (subpath previews) so a content page like /docs/blog/tags/ can't be caught.
-const EXCLUDED_ROUTES = ['blog/tags/', 'blog/authors/']
+const EXCLUDED_ROUTES = ['blog/tags/', 'blog/authors/', 'frogs/']
 const basePath = (process.env.ASTRO_BASE_PATH || '/').replace(/\/+$/, '')
 
 export function sitemapWithLastmod(contentDir: string = 'src/content') {

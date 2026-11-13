@@ -234,7 +234,7 @@ describe('ContextInjector', () => {
         .addTurn({ type: 'textBlock', text: 'two' })
         .addTurn({ type: 'textBlock', text: 'three' })
       const { agent, requests } = setup(model, { renderContent: async () => text }, [], {
-        contextManager: { strategies: [Offload.summarize('*').when({ threshold: 20 })] },
+        contextManager: { strategies: [Offload.summarize('userText').when({ blockThreshold: 20 })] },
       })
 
       await agent.invoke('first')

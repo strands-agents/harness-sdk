@@ -94,7 +94,7 @@ def test__init__auto_populates_context_window_limit(mistral_client):
 
     model = MistralModel(model_id="mistral-large-latest", max_tokens=1)
 
-    assert model.get_config().get("context_window_limit") == 262_144
+    assert model.get_config().get("context_window_limit") == 1_048_576
 
 
 def test__init__explicit_context_window_limit_not_overridden(mistral_client):

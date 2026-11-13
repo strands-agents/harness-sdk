@@ -150,6 +150,7 @@ def test_prefix_and_startup_timeout_passed(mock_client, transports):
         "tool_filters": None,
         "prefix": "p",
         "continue_on_error": False,
+        "auto_reconnect": False,
         "application_name": "srv",
         "application_version": None,
     }
@@ -162,9 +163,15 @@ def test_default_startup_timeout(mock_client, transports):
         "tool_filters": None,
         "prefix": None,
         "continue_on_error": False,
+        "auto_reconnect": False,
         "application_name": "srv",
         "application_version": None,
     }
+
+
+def test_auto_reconnect_passed(mock_client, transports):
+    MCPClient.load_servers({"srv": {"command": "node", "auto_reconnect": True}})
+    assert mock_client[0][1]["auto_reconnect"] is True
 
 
 def test_prefix_with_server_name_uses_config_key(mock_client, transports):

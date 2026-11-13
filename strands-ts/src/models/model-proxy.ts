@@ -3,6 +3,7 @@ import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types
 import { latestUserIndex } from './model.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
+import { wellFormedRequest } from './well-formed-request.js'
 
 /**
  * SDK-internal wrapper that sends a model call's messages in the form models accept and
@@ -16,7 +17,8 @@ import type { ModelStreamEvent } from './streaming.js'
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
  * of the earlier ones. A tool result whose content is all `UnknownBlock`s gets a placeholder text, since
- * providers skip unknown blocks and some reject an empty tool result.
+ * providers skip unknown blocks and some reject an empty tool result. Lone UTF-16 surrogates in the messages,
+ * system prompt, and tool specs are sent as U+FFFD, since some providers reject a whole request over one.
  *
  * @internal
  */
@@ -46,8 +48,7 @@ export class ModelProxy {
     // The cache point stays ahead of injected text, which the next call no longer sends.
     const keepsCachePoint = dynamicTrailingBlocks > (options?.dynamicTrailingBlocks ?? 0)
     const result = yield* this._model.streamAggregated(
-      prepared,
-      keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options
+      ...wellFormedRequest(prepared, keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options)
     )
     this._record(result, invocationContext)
     return result
@@ -61,7 +62,7 @@ export class ModelProxy {
    * @returns The wrapped model's count
    */
   countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    return this._model.countTokens(this._prepare(messages).messages, options)
+    return this._model.countTokens(...wellFormedRequest(this._prepare(messages).messages, options))
   }
 
   private _prepare(messages: Message[]): RenderedMessages {
