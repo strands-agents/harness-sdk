@@ -26,7 +26,9 @@ jobs:
       matrix:
         include:
           - { os: strands-agents_ubuntu-latest_4-core, name: Test and Lint }
-          - { os: strands-agents_windows-latest_4-core, name: Test and Lint (Windows) }
+          # Windows runs the suite on one worker and takes over 10 minutes for all of it, so it is split in two.
+          - { os: strands-agents_windows-latest_4-core, name: Test (Windows 1/2), shard: 1/2 }
+          - { os: strands-agents_windows-latest_4-core, name: Test (Windows 2/2), shard: 2/2 }
     timeout-minutes: 25
     permissions:
       contents: read
@@ -109,9 +111,15 @@ jobs:
           Start-Process pwsh -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', $snapshot
 
       - name: Lint, format, type-check, and test
+        if: ${{ !matrix.shard }}
         # Below the job timeout, so a hang fails this step and the job still reports and keeps its logs.
         timeout-minutes: 15
         run: npm run check
+
+      - name: Test
+        if: ${{ matrix.shard }}
+        timeout-minutes: 15
+        run: npx vitest run --coverage --shard=${{ matrix.shard }}
 
       - name: Show processes from a hung run
         if: failure() && runner.os == 'Windows'
