@@ -377,6 +377,20 @@ async def test_graph_tool_builder_failure_on_resume_raises_the_interrupt_again_a
 
 
 @pytest.mark.asyncio
+async def test_graph_tool_awaits_async_builder():
+    specs = []
+
+    async def builder(spec):
+        specs.append(spec)
+        return _builder(spec)
+
+    with _patch():
+        await _events(make_graph(builder=builder), {"task": "t", "nodes": [{"name": "a"}, {"name": "b"}], "edges": []})
+
+    assert [spec.name for spec in specs] == ["a", "b"]
+
+
+@pytest.mark.asyncio
 async def test_graph_tool_defaults_to_first_preset():
     specs = []
 

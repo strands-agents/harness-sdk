@@ -43,18 +43,18 @@ The default tool, produced by `makeSubagent()`: the `generalist` preset, free-fo
 
 ### `makeSubagent(options?)`
 
-| Option          | Type                         | Default                        | Description                                                                            |
-| --------------- | ---------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `builder`       | `(spec: AgentSpec) => Agent` | (inherits from parent)         | Turns a resolved spec into a child agent.                                              |
-| `presets`       | `Record<string, Preset>`     | `{ generalist: GENERALIST }`   | Named roles the model selects via `agent_type`. Pass `{}` to disable presets.          |
-| `defaultPreset` | `string`                     | first preset                   | Preset used when the model omits `agent_type`.                                         |
-| `instructions`  | `Open \| Choice \| Fixed`    | `new Open()`                   | Policy for the child's system prompt.                                                  |
-| `tools`         | `Choice \| Fixed \| Inherit` | `new Inherit()`                | Policy for the child's tools. A `Choice` must be `multiple`.                           |
-| `model`         | `Inherit \| Choice \| Fixed` | `new Inherit()`                | Policy for the child's model.                                                          |
-| `context`       | `Fixed \| Choice`            | `new Fixed('none')`            | How much of the parent's conversation the child sees: `'none'`, `'all'`, `'no_tools'`. |
-| `maxDepth`      | `number`                     | `2`                            | Upper bound on nested delegation levels. Must be a positive integer.                   |
-| `name`          | `string`                     | `subagent`                     | Tool name.                                                                             |
-| `description`   | `string`                     | `DEFAULT_SUBAGENT_DESCRIPTION` | Tool description.                                                                      |
+| Option          | Type                                           | Default                        | Description                                                                            |
+| --------------- | ---------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
+| `builder`       | `(spec: AgentSpec) => Agent \| Promise<Agent>` | (inherits from parent)         | Turns a resolved spec into a child agent.                                              |
+| `presets`       | `Record<string, Preset>`                       | `{ generalist: GENERALIST }`   | Named roles the model selects via `agent_type`. Pass `{}` to disable presets.          |
+| `defaultPreset` | `string`                                       | first preset                   | Preset used when the model omits `agent_type`.                                         |
+| `instructions`  | `Open \| Choice \| Fixed`                      | `new Open()`                   | Policy for the child's system prompt.                                                  |
+| `tools`         | `Choice \| Fixed \| Inherit`                   | `new Inherit()`                | Policy for the child's tools. A `Choice` must be `multiple`.                           |
+| `model`         | `Inherit \| Choice \| Fixed`                   | `new Inherit()`                | Policy for the child's model.                                                          |
+| `context`       | `Fixed \| Choice`                              | `new Fixed('none')`            | How much of the parent's conversation the child sees: `'none'`, `'all'`, `'no_tools'`. |
+| `maxDepth`      | `number`                                       | `2`                            | Upper bound on nested delegation levels. Must be a positive integer.                   |
+| `name`          | `string`                                       | `subagent`                     | Tool name.                                                                             |
+| `description`   | `string`                                       | `DEFAULT_SUBAGENT_DESCRIPTION` | Tool description.                                                                      |
 
 Throws if `name` or `description` is empty, `maxDepth` is not a positive integer, `defaultPreset` is not one of `presets`, a `context` mode is not `'none'`, `'all'`, or `'no_tools'`, or a `Choice` axis has no options, or a `tools` `Choice` is not `multiple`.
 
@@ -76,6 +76,6 @@ Only `task` is always present; the others appear depending on the configured pol
 
 ### Output
 
-Returns the child's final response as text. Returns an error result when `task` is missing, `agent_type` is unknown, the depth limit is reached, or the child throws or is cancelled.
+Returns the child's final response as text. Returns an error result when `task` is missing, `agent_type` is unknown, the depth limit is reached, the child throws or is cancelled, or the child stops on a limit, a content filter, or a refusal (with any partial output).
 
 If the child stops on an interrupt, it is raised on the parent with the id `subagent:<toolUseId>:<childInterruptId>` (`toolUseId` URI-encoded). The child's interrupted turn is stored in the parent's interrupt state, so resuming the parent rebuilds the child from the same input (calling `builder` again) and resumes it, including after the parent is restored from a session.

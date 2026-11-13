@@ -1716,6 +1716,45 @@ async def test_stream_messages_keeps_summary_block_for_model_with_server_side_su
 
 
 @pytest.mark.asyncio
+async def test_stream_messages_keeps_the_cache_point_ahead_of_the_latest_injected_text(agenerator, alist):
+    mock_model = unittest.mock.MagicMock()
+    mock_model.model_info.capabilities.temporary_messages = False
+    mock_model.stream.side_effect = lambda *args, **kwargs: agenerator([{"contentBlockStop": {}}])
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "Refactor."},
+                {"injected": {"text": "reminder", "source": "test"}},
+                {"text": "\n\nper-call text"},
+            ],
+        }
+    ]
+
+    await alist(
+        strands.event_loop.streaming.stream_messages(
+            mock_model, system_prompt=None, messages=messages, tool_specs=None, dynamic_trailing_blocks=1
+        )
+    )
+    await alist(
+        strands.event_loop.streaming.stream_messages(
+            mock_model,
+            system_prompt=None,
+            messages=[*messages, {"role": "assistant", "content": [{"text": "Sure"}]}],
+            tool_specs=None,
+        )
+    )
+
+    tru_trailing = [call.kwargs.get("dynamic_trailing_blocks") for call in mock_model.stream.call_args_list]
+    assert tru_trailing == [2, 2]
+    assert mock_model.stream.call_args_list[0][0][0][0]["content"] == [
+        {"text": "Refactor."},
+        {"text": "\n\nreminder"},
+        {"text": "\n\nper-call text"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_stream_messages_with_system_prompt_content(agenerator, alist):
     """Test stream_messages with SystemContentBlock input."""
     mock_model = unittest.mock.MagicMock()

@@ -21,7 +21,8 @@ export const DEFAULT_BUILTIN_TOOLS = [
   'subagent',
 ] as const
 
-export const DEFAULT_BUILTIN_PLUGINS = ['todos', 'environment'] as const
+/** Built-in plugins enabled when `builtinPlugins` is omitted (`todos` is opt-in). */
+export const DEFAULT_BUILTIN_PLUGINS = ['environment'] as const
 
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2
 

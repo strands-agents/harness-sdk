@@ -9,12 +9,14 @@ import unittest.mock
 import warnings
 
 import anthropic
+import httpx
 import pydantic
 import pytest
 
 import strands
 from strands.agent.agent_metadata import AgentMetadata
 from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
+from strands.models._model_proxy import ModelProxy
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
 from strands.tools import convert_pydantic_to_tool_spec
@@ -1301,6 +1303,91 @@ async def test_stream_maps_retry_error_to_sdk_exception(anthropic_client, alist,
         await alist(model.stream(messages))
 
     assert anthropic_client.messages.stream.call_count == 2
+
+
+def _mid_stream_error(error_type, message="Too many requests"):
+    response = httpx.Response(200, request=httpx.Request("POST", "https://bedrock-runtime.us-west-2.amazonaws.com"))
+    body = {"type": "error", "error": {"type": error_type, "message": message}}
+    return anthropic.APIStatusError(str(body), response=response, body=body)
+
+
+@pytest.mark.parametrize(
+    ("error", "exp_exception"),
+    [
+        (_mid_stream_error("throttlingException"), ModelThrottledException),
+        (_mid_stream_error("serviceUnavailableException"), ModelThrottledException),
+        (
+            _mid_stream_error("validationException", "Input is too long for requested model."),
+            ContextWindowOverflowException,
+        ),
+        (ValueError("throttlingException: Too many requests"), ModelThrottledException),
+        (
+            ValueError("validationException: prompt is too long: 260024 tokens > 200000 maximum"),
+            ContextWindowOverflowException,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_maps_a_mid_stream_bedrock_error_to_sdk_exception(
+    anthropic_client, alist, messages, error, exp_exception
+):
+    anthropic_client.messages.stream.side_effect = error
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(exp_exception) as raised:
+        await alist(model.stream(messages))
+    assert raised.value.__cause__ is error
+
+
+@pytest.mark.asyncio
+async def test_stream_reraises_other_mid_stream_errors(anthropic_client, alist, messages):
+    error = _mid_stream_error("validationException")
+    anthropic_client.messages.stream.side_effect = error
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(anthropic.APIStatusError) as raised:
+        await alist(model.stream(messages))
+    assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_stream_reraises_an_unrelated_value_error(anthropic_client, alist, messages):
+    error = ValueError("something else")
+    anthropic_client.messages.stream.side_effect = error
+    model = AnthropicModel(model_id="m1", max_tokens=1)
+
+    with pytest.raises(ValueError) as raised:
+        await alist(model.stream(messages))
+    assert raised.value is error
+
+
+@pytest.mark.parametrize(
+    ("client", "params", "exp_version"),
+    [
+        (anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"), {}, "bedrock-2023-05-31"),
+        (
+            anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"),
+            {"extra_body": {"anthropic_version": "bedrock-2099-01-01"}},
+            "bedrock-2099-01-01",
+        ),
+        (anthropic.AsyncAnthropic(api_key="k"), {}, None),
+        pytest.param(
+            "mantle",
+            {},
+            None,
+            marks=pytest.mark.skipif(
+                not hasattr(anthropic, "AsyncAnthropicBedrockMantle"),
+                reason="anthropic before 0.91 has no Mantle client",
+            ),
+        ),
+    ],
+)
+def test_format_request_pins_the_invoke_model_api_version_on_a_bedrock_client(messages, client, params, exp_version):
+    if client == "mantle":
+        client = anthropic.AsyncAnthropicBedrockMantle(aws_region="us-west-2")
+    model = AnthropicModel(model_id="m1", max_tokens=1, params=params, client=client)
+
+    assert model.format_request(messages).get("extra_body", {}).get("anthropic_version") == exp_version
 
 
 @pytest.mark.asyncio
@@ -3670,3 +3757,134 @@ def test_format_request_with_stubbed_client(model, messages, client):
 
     assert tru_request["extra_body"] == {"temperature": 0.2}
     assert model._api_version() is None
+
+
+def _injected(text):
+    return {"injected": {"text": text, "source": "test"}}
+
+
+def _turn_scoped(*texts):
+    return {
+        "role": "system",
+        "content": [{"type": "text", "text": text} for text in texts],
+        "clear_at": "next_user_message",
+    }
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        ("claude-opus-5-5", True),
+        ("claude-opus-5-5-20260401", True),
+        ("claude-sonnet-5", False),
+        ("claude-sonnet-4-6", False),
+    ],
+)
+def test_model_info_reports_temporary_messages_from_the_shared_model_info(anthropic_client, model_id, expected):
+    _ = anthropic_client
+
+    model = AnthropicModel(model_id=model_id, max_tokens=1)
+
+    assert model.model_info.capabilities.temporary_messages is expected
+
+
+def test_model_info_lets_the_model_info_config_turn_temporary_messages_off(anthropic_client):
+    _ = anthropic_client
+
+    model = AnthropicModel(
+        model_id="claude-opus-5-5",
+        max_tokens=1,
+        model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=False)),
+    )
+
+    assert model.model_info.capabilities.temporary_messages is False
+
+
+def test_format_request_sends_each_user_message_its_injected_text_as_a_turn_scoped_system_message_after_it(
+    anthropic_client,
+):
+    anthropic_client.default_headers = {"anthropic-beta": "interleaved-thinking-2025-05-14"}
+    model = AnthropicModel(model_id="claude-opus-5-5", max_tokens=1, cache_config=CacheConfig(strategy="auto"))
+    messages = [
+        {"role": "user", "content": [{"text": "first"}, _injected("one")]},
+        {"role": "assistant", "content": [{"text": "ok"}]},
+        {"role": "user", "content": [{"text": "second"}, _injected("two"), _injected("three")]},
+    ]
+
+    request = model.format_request(messages)
+
+    assert request["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "first"}]},
+        _turn_scoped("one"),
+        {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+        {"role": "user", "content": [{"type": "text", "text": "second", "cache_control": {"type": "ephemeral"}}]},
+        _turn_scoped("two", "three"),
+    ]
+    assert request["extra_headers"] == {
+        "anthropic-beta": "interleaved-thinking-2025-05-14,mid-conversation-system-clear-at-2026-08-21"
+    }
+
+
+def test_format_request_leaves_out_the_system_message_of_a_user_message_followed_directly_by_another(anthropic_client):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="claude-opus-5-5", max_tokens=1)
+    messages = [
+        {"role": "user", "content": [{"text": "first"}, _injected("one")]},
+        {"role": "user", "content": [{"text": "second"}, _injected("two")]},
+    ]
+
+    request = model.format_request(messages)
+
+    assert request["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "first"}]},
+        {"role": "user", "content": [{"type": "text", "text": "second"}]},
+        _turn_scoped("two"),
+    ]
+
+
+def test_format_request_sends_no_injected_text_and_no_beta_to_a_model_without_temporary_messages(anthropic_client):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
+    messages = [{"role": "user", "content": [{"text": "first"}, _injected("one")]}]
+
+    request = model.format_request(messages)
+
+    assert request["messages"] == [{"role": "user", "content": [{"type": "text", "text": "first"}]}]
+    assert "extra_headers" not in request
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_leaves_cleared_injected_blocks_out_of_the_token_estimate(anthropic_client):
+    _ = anthropic_client
+    model = AnthropicModel(model_id="claude-opus-5-5", max_tokens=1)
+
+    def conversation(first):
+        return [
+            first,
+            {"role": "assistant", "content": [{"text": "ok"}]},
+            {"role": "user", "content": [{"text": "second"}, _injected("two")]},
+        ]
+
+    with_earlier = conversation({"role": "user", "content": [{"text": "first"}, _injected("x" * 400)]})
+    without_earlier = conversation({"role": "user", "content": [{"text": "first"}]})
+
+    proxy = ModelProxy(model)
+    assert await proxy.count_tokens(with_earlier) == await proxy.count_tokens(without_earlier)
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_counts_the_system_message_natively_with_the_beta(anthropic_client):
+    anthropic_client.default_headers = {}
+    response = unittest.mock.MagicMock()
+    response.input_tokens = 9
+    anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(return_value=response)
+    model = AnthropicModel(model_id="claude-opus-5-5", max_tokens=1, use_native_token_count=True)
+    messages = [{"role": "user", "content": [{"text": "first"}, _injected("one")]}]
+
+    assert await model.count_tokens(messages) == 9
+    anthropic_client.messages.count_tokens.assert_awaited_once_with(
+        model="claude-opus-5-5",
+        messages=[{"role": "user", "content": [{"type": "text", "text": "first"}]}, _turn_scoped("one")],
+        tools=[],
+        extra_headers={"anthropic-beta": "mid-conversation-system-clear-at-2026-08-21"},
+    )

@@ -375,6 +375,20 @@ async def test_context_all_merges_the_task_into_a_trailing_user_turn():
 
 
 @pytest.mark.asyncio
+async def test_context_all_drops_the_parents_injected_blocks():
+    child = _FakeChild(_FakeResult())
+    messages = [
+        {"role": "user", "content": [{"text": "go"}, {"injected": {"text": "<todos>v1</todos>", "source": "todos"}}]},
+    ]
+    parent = SimpleNamespace(state=AgentState(), messages=messages)
+    tool = make_subagent(builder=lambda spec: child, context=Choice(["none", "all"]))
+    await _events(tool, {"task": "x", "context": "all"}, parent=parent)
+    prompt = child.prompts[0]
+    assert "injected" not in str(prompt)
+    assert prompt[0]["content"][0] == {"text": "go"}
+
+
+@pytest.mark.asyncio
 async def test_context_all_drops_the_parents_reasoning_blocks():
     # Reasoning blocks are the parent model's own signed state; Bedrock rejects them on another model
     # ("User messages cannot contain reasoning content"), so the fork never carries them.

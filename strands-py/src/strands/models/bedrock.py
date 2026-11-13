@@ -975,6 +975,7 @@ class BedrockModel(Model):
 
         filtered_unknown_members = False
         dropped_reasoning_content = False
+        skipped_injected = False
 
         # Pre-compute the index of the last user message containing text or image content.
         # This ensures guardContent wrapping is maintained across tool execution cycles, where
@@ -990,6 +991,11 @@ class BedrockModel(Model):
                 # Filter out SDK_UNKNOWN_MEMBER content blocks
                 if "SDK_UNKNOWN_MEMBER" in content_block:
                     filtered_unknown_members = True
+                    continue
+
+                # Only a direct model call or a model_info override that turns temporary_messages on gets here.
+                if "injected" in content_block:
+                    skipped_injected = True
                     continue
 
                 if "reasoningContent" in content_block and self._rejects_reasoning_block(
@@ -1039,6 +1045,8 @@ class BedrockModel(Model):
             logger.warning(
                 "Filtered out SDK_UNKNOWN_MEMBER content blocks from messages, consider upgrading boto3 version"
             )
+        if skipped_injected:
+            logger.warning("block_type=<injected> | bedrock does not send injected blocks | skipping it")
         if dropped_reasoning_content:
             logger.debug(
                 "model_id=<%s> | dropped reasoningContent blocks the model does not accept", self.config["model_id"]

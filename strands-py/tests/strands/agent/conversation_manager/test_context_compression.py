@@ -181,15 +181,15 @@ class TestGenerateSummary:
         model = mock_model("Summary")
         await generate_summary([text_msg("user", "hello")], model)
 
-        _, kwargs = model.stream.call_args
-        assert kwargs["system_prompt"] == DEFAULT_SUMMARIZATION_PROMPT
+        args, _ = model.stream.call_args
+        assert args[2] == DEFAULT_SUMMARIZATION_PROMPT
 
     async def test_passes_a_custom_system_prompt(self):
         model = mock_model("Summary")
         await generate_summary([text_msg("user", "hello")], model, "Custom prompt")
 
-        _, kwargs = model.stream.call_args
-        assert kwargs["system_prompt"] == "Custom prompt"
+        args, _ = model.stream.call_args
+        assert args[2] == "Custom prompt"
 
     async def test_appends_summarization_request_message(self):
         model = mock_model("Summary")
