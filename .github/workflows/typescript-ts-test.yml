@@ -13,7 +13,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ matrix.os }}
-    # The slowest leg takes about 9 min; 30 min caps a hung test run instead of the 6-hour default.
+    # The Windows legs take about 9 min and the slowest passing run took 17; 30 min replaces the 6-hour default.
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -41,6 +41,8 @@ jobs:
         run: npm run test:browser:install
 
       - name: Run unit tests
+        # Below the job timeout, so a hung run fails this step by name and the artifacts still upload.
+        timeout-minutes: 20
         run: npm run test:all:coverage
 
       - name: Upload test artifacts
