@@ -4,13 +4,14 @@
 """
 
 import asyncio
+import importlib
 import json
 import logging
 import os
 import threading
 import warnings
-from collections.abc import AsyncGenerator, Callable, Iterable, ValuesView
-from typing import Any, Literal, TypeVar, cast
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, ValuesView
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, cast
 
 import boto3
 from botocore import UNSIGNED
@@ -26,7 +27,10 @@ from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
 from ..tools._tool_helpers import noop_tool
 from ..tools.structured_output._structured_output_context import json_object_from_message
-from ..types.content import CachePoint, ContentBlock, Messages, ReasoningContentBlock, SystemContentBlock
+
+# Aliased because ``BedrockModel.Messages`` would shadow the type inside the class body.
+from ..types.content import CachePoint, ContentBlock, ReasoningContentBlock, SystemContentBlock
+from ..types.content import Messages as MessageList
 from ..types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -45,7 +49,7 @@ from ._native_output import (
 )
 from ._strict_schema import ensure_strict_json_schema
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
-from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
+from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys, validate_region
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
 
 logger = logging.getLogger(__name__)
@@ -54,6 +58,29 @@ logger = logging.getLogger(__name__)
 DEFAULT_BEDROCK_MODEL_ID = "global.anthropic.claude-sonnet-4-6"
 _DEFAULT_BEDROCK_MODEL_ID = "{}.anthropic.claude-sonnet-4-6"
 DEFAULT_BEDROCK_REGION = "us-west-2"
+
+BedrockEndpoint = Literal["bedrock-runtime", "bedrock-mantle"]
+"""The Bedrock endpoint families that serve the Messages, Chat Completions, and Responses APIs."""
+
+
+def _resolve_bedrock_region(region_name: str | None) -> str:
+    """Resolve the region the way ``BedrockModel`` does, validated for use in an endpoint URL."""
+    region = region_name or boto3.Session().region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+    return validate_region(region)
+
+
+def _check_bedrock_options(owner: str, model_config: Mapping[str, Any], parent_options: set[str]) -> None:
+    """Reject parent-provider options the nested Bedrock classes set themselves, and imported models.
+
+    Raises:
+        ValueError: If ``model_config`` holds one of ``parent_options``, or the model is an imported model.
+    """
+    if passed := parent_options & set(model_config):
+        raise ValueError(f"options=<{sorted(passed)}> | not supported by {owner}, use the Bedrock options instead")
+    model_id = str(model_config.get("model_id") or "")
+    if ":imported-model/" in model_id:
+        raise ValueError(f"model_id=<{model_id}> | imported models are served only through InvokeModel")
+
 
 _BEDROCK_VIDEO_FORMAT_ALIASES = {
     "3gp": "three_gp",
@@ -209,6 +236,30 @@ def _request_with_drop_block(request: dict[str, Any]) -> dict[str, Any] | None:
     return {**request, "additionalModelRequestFields": {**fields, "anthropic_beta": betas, "thinking": thinking}}
 
 
+class _LazyModelClass:
+    """Resolves a nested ``BedrockModel`` class on first access, so its optional SDK is only imported when used."""
+
+    def __init__(self, module: str, name: str, package: str) -> None:
+        self._module = module
+        self._name = name
+        self._package = package
+
+    def __set_name__(self, owner: type, attribute: str) -> None:
+        self._attribute = f"{owner.__name__}.{attribute}"
+
+    def __get__(self, instance: object, owner: type) -> Any:
+        # AttributeError, not ImportError, so hasattr, help(), and inspect treat the class as absent.
+        try:
+            module = importlib.import_module(self._module, __package__)
+        except ImportError as error:
+            if error.name == self._package:
+                reason = f"uses the {self._package} SDK, which is not installed: pip install {self._package}"
+            else:
+                reason = f"is unavailable: {error}"
+            raise AttributeError(f"{self._attribute} {reason}") from error
+        return getattr(module, self._name)
+
+
 class BedrockModel(Model):
     """AWS Bedrock model provider implementation.
 
@@ -222,6 +273,17 @@ class BedrockModel(Model):
     """
 
     _supports_structured_output = True
+
+    ConverseStream: ClassVar[type["BedrockModel"]]
+    """This class: the Converse API."""
+    if TYPE_CHECKING:
+        from ._bedrock_messages import BedrockMessagesModel as Messages
+        from ._bedrock_openai import BedrockChatCompletionsModel as ChatCompletions
+        from ._bedrock_openai_responses import BedrockResponsesModel as Responses
+    else:
+        Messages = _LazyModelClass("._bedrock_messages", "BedrockMessagesModel", "anthropic")
+        ChatCompletions = _LazyModelClass("._bedrock_openai", "BedrockChatCompletionsModel", "openai")
+        Responses = _LazyModelClass("._bedrock_openai_responses", "BedrockResponsesModel", "openai")
 
     class BedrockConfig(BaseModelConfig, total=False):
         """Configuration options for Bedrock models.
@@ -444,7 +506,7 @@ class BedrockModel(Model):
 
     def format_request(
         self,
-        messages: Messages,
+        messages: MessageList,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         tool_choice: ToolChoice | None = None,
@@ -906,7 +968,7 @@ class BedrockModel(Model):
 
             logger.debug("msg_idx=<%s> | added cache point to last user message", last_user_idx)
 
-    def _find_last_user_text_message_index(self, messages: Messages) -> int | None:
+    def _find_last_user_text_message_index(self, messages: MessageList) -> int | None:
         """Find the index of the last user message containing text or image content.
 
         This is used for guardrail_latest_message to ensure that guardContent wrapping
@@ -946,7 +1008,7 @@ class BedrockModel(Model):
             return True
         return signed
 
-    def _format_bedrock_messages(self, messages: Messages, dynamic_trailing_blocks: int = 0) -> list[dict[str, Any]]:
+    def _format_bedrock_messages(self, messages: MessageList, dynamic_trailing_blocks: int = 0) -> list[dict[str, Any]]:
         """Format messages for Bedrock API compatibility.
 
         This function ensures messages conform to Bedrock's expected format by:
@@ -1470,7 +1532,7 @@ class BedrockModel(Model):
     @override
     async def count_tokens(
         self,
-        messages: Messages,
+        messages: MessageList,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt: str | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
@@ -1552,7 +1614,7 @@ class BedrockModel(Model):
     @override
     async def stream(
         self,
-        messages: Messages,
+        messages: MessageList,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt: str | None = None,
         *,
@@ -1639,7 +1701,7 @@ class BedrockModel(Model):
     def _stream(
         self,
         callback: Callable[..., None],
-        messages: Messages,
+        messages: MessageList,
         tool_specs: list[ToolSpec] | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         tool_choice: ToolChoice | None = None,
@@ -1931,7 +1993,7 @@ class BedrockModel(Model):
     async def structured_output(
         self,
         output_model: type[T],
-        prompt: Messages,
+        prompt: MessageList,
         system_prompt: str | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, T | Any], None]:
@@ -2032,3 +2094,6 @@ class BedrockModel(Model):
             stacklevel=2,
         )
         return default_model_id
+
+
+BedrockModel.ConverseStream = BedrockModel
