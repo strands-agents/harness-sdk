@@ -1390,7 +1390,7 @@ class _ScriptedModel(Model):
         yield {"contentBlockStart": {"start": {}}}
         yield {"contentBlockDelta": {"delta": {"text": turn["text"]}}}
         yield {"contentBlockStop": {}}
-        yield {"messageStop": {"stopReason": "end_turn"}}
+        yield {"messageStop": {"stopReason": turn.get("stop", "end_turn")}}
 
 
 _executions: list[str] = []
@@ -1450,3 +1450,12 @@ def test_subagent_child_interrupt_surfaces_on_the_parent_and_resumes():
     assert str(result).strip() == "parent done"
     assert _executions == ["prod"]
     assert parent.messages[-2]["content"][0]["toolResult"]["content"] == [{"text": "child done\n"}]
+
+
+def test_subagent_content_filtered_child_is_a_tool_error():
+    # Pins the strands-agents>=1.65.0 floor: older SDKs report a filtered child as success.
+    parent = _delegating_harness([{"text": "partial", "stop": "content_filtered"}])
+    parent("go")
+    tool_result = parent.messages[-2]["content"][0]["toolResult"]
+    assert tool_result["status"] == "error"
+    assert "stop_reason=content_filtered" in tool_result["content"][0]["text"]
