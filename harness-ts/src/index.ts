@@ -44,7 +44,6 @@ export {
   AgentSpec,
   Choice,
   DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
-  edit,
   exaWebSearch,
   Fixed,
   Inherit,
@@ -56,8 +55,6 @@ export {
   Option,
   Preset,
   programmaticToolCaller,
-  read,
-  write,
 } from './tools/index.js'
 export type {
   AgentBuilder,
