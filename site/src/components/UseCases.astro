@@ -773,77 +773,8 @@ agent("Ask the reviewer to challenge our launch plan.")`,
 </style>
 
 <script>
-  import { attachCopyButton } from '../util/clipboard'
-  import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../util/language-preference'
-
-  type Language = 'TypeScript' | 'Python'
-
-  function currentLanguage(): Language {
-    try {
-      return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python' ? 'Python' : DEFAULT_LANGUAGE_LABEL
-    } catch {
-      return DEFAULT_LANGUAGE_LABEL
-    }
-  }
-
-  function initializeUseCases() {
-    document.querySelectorAll<HTMLElement>('[data-use-cases]').forEach((section) => {
-      if (section.dataset.initialized === 'true') return
-
-      const cases = Array.from(section.querySelectorAll<HTMLElement>('[data-use-case]'))
-      let language: Language = currentLanguage()
-
-      function showCase(selected: HTMLElement) {
-        cases.forEach((useCase) => {
-          const isActive = useCase === selected
-          const button = useCase.querySelector<HTMLButtonElement>('[data-use-case-button]')
-          const panel = useCase.querySelector<HTMLElement>('[data-use-case-panel]')
-
-          button?.classList.toggle('is-active', isActive)
-          button?.setAttribute('aria-expanded', isActive ? 'true' : 'false')
-          if (panel) {
-            panel.hidden = !isActive
-            panel.setAttribute('aria-hidden', isActive ? 'false' : 'true')
-          }
-        })
-      }
-
-      function showLanguage(nextLanguage: Language) {
-        language = nextLanguage
-        section.querySelectorAll<HTMLElement>('[data-code-variant]').forEach((variant) => {
-          variant.hidden = variant.dataset.codeVariant !== language
-        })
-        section.querySelectorAll<HTMLElement>('[data-code-filename]').forEach((filename) => {
-          filename.hidden = filename.dataset.codeFilename !== language
-        })
-      }
-
-      cases.forEach((useCase) => {
-        useCase.querySelector<HTMLButtonElement>('[data-use-case-button]')?.addEventListener('click', () => {
-          showCase(useCase)
-        })
-
-        const copyButton = useCase.querySelector<HTMLButtonElement>('[data-code-copy]')
-        if (copyButton) {
-          attachCopyButton(copyButton, {
-            label: copyButton.querySelector<HTMLElement>('[data-code-copy-label]'),
-            getText: () =>
-              useCase.querySelector<HTMLElement>('[data-code-variant]:not([hidden]) code')?.textContent ?? '',
-            track: { surface: 'code:use-cases', detail: () => language },
-          })
-        }
-      })
-
-      window.addEventListener('lang-change', (event: Event) => {
-        const nextLanguage = (event as CustomEvent).detail === 'Python' ? 'Python' : 'TypeScript'
-        showLanguage(nextLanguage)
-      })
-
-      showLanguage(language)
-      section.dataset.initialized = 'true'
-    })
-  }
+  import { initializeUseCases } from '../util/homepage-use-cases'
 
   initializeUseCases()
-  document.addEventListener('astro:page-load', initializeUseCases)
+  document.addEventListener('astro:page-load', () => initializeUseCases())
 </script>

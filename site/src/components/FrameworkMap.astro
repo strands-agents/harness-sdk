@@ -1,44 +1,9 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
-import { products } from '../config/navbar'
+import { homepageCapabilities, homepageStartProjects } from '../config/homepage'
 
-function productFor(slug: string) {
-  const product = products.find((candidate) => candidate.slug === slug)
-  if (!product) throw new Error(`Missing framework product: ${slug}`)
-  return product
-}
-
-const harness = productFor('/harness')
-const harnessQuickstart = harness.pages?.find((page) => page.label === 'Quickstart')
-if (!harnessQuickstart) throw new Error('Missing Harness quickstart')
-
-const sdk = productFor('/harness-sdk')
-const capabilities = [
-  {
-    product: productFor('/box'),
-    verb: 'Isolate',
-    description: 'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
-    cta: 'Use Strands Box',
-  },
-  {
-    product: productFor('/shell'),
-    verb: 'Execute',
-    description: 'Give agents an in-process shell that mediates filesystem, network, and credential access.',
-    cta: 'Use Strands Shell',
-  },
-  {
-    product: productFor('/evals'),
-    verb: 'Evaluate',
-    description: 'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
-    cta: 'Run an evaluation',
-  },
-  {
-    product: productFor('/decider'),
-    verb: 'Decide',
-    description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
-    cta: 'Try Decider',
-  },
-]
+const [harness, harnessSdk] = homepageStartProjects
+if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 ---
 
 <section class="framework" id="framework" aria-labelledby="framework-title">
@@ -50,33 +15,33 @@ const capabilities = [
       </div>
     </header>
 
-    <div class="framework__start-grid" aria-label="Choose where to start">
-      <article class="framework__layer framework__layer--primary" data-accent={harness.accent}>
+    <div class="framework__start-grid">
+      <article class="framework__layer framework__layer--primary" data-accent={harness.product.accent}>
         <div class="framework__card-meta">
-          <span>Recommended</span>
-          <strong>{harness.slug}</strong>
+          <span>{harness.marker}</span>
+          <strong>{harness.product.slug}</strong>
         </div>
         <div class="framework__card-copy">
-          <h3>{harness.label}</h3>
-          <p>A complete agent with tools, context management, session management, memory, and a system prompt.</p>
+          <h3>{harness.product.label}</h3>
+          <p>{harness.description}</p>
         </div>
-        <a class="framework__card-link" href={harnessQuickstart.href} aria-label={`Create an agent with ${harness.name}`}>
-          Run the quickstart
+        <a class="framework__card-link" href={harness.href}>
+          {harness.cta}
           <span set:html={arrow} />
         </a>
       </article>
 
-      <article class="framework__layer framework__layer--secondary" data-accent={sdk.accent}>
+      <article class="framework__layer framework__layer--secondary" data-accent={harnessSdk.product.accent}>
         <div class="framework__card-meta">
-          <span>Direct control</span>
-          <strong>{sdk.slug}</strong>
+          <span>{harnessSdk.marker}</span>
+          <strong>{harnessSdk.product.slug}</strong>
         </div>
         <div class="framework__card-copy">
-          <h3>{sdk.label}</h3>
-          <p>Choose and wire the model, tools, context management, session management, memory, and hooks.</p>
+          <h3>{harnessSdk.product.label}</h3>
+          <p>{harnessSdk.description}</p>
         </div>
-        <a class="framework__card-link" href={sdk.href} aria-label={`Explore ${sdk.name}`}>
-          Explore the SDK
+        <a class="framework__card-link" href={harnessSdk.href}>
+          {harnessSdk.cta}
           <span set:html={arrow} />
         </a>
       </article>
@@ -90,15 +55,15 @@ const capabilities = [
 
       <div class="framework__capability-grid">
         {
-          capabilities.map(({ product, verb, description, cta }) => (
+          homepageCapabilities.map(({ product, marker, description, cta, href }) => (
             <article class="framework__capability" data-accent={product.accent}>
               <div class="framework__capability-meta">
-                <span>{verb}</span>
+                <span>{marker}</span>
                 <span>{product.slug}</span>
               </div>
               <h4>{product.label}</h4>
               <p>{description}</p>
-              <a href={product.href} aria-label={cta}>
+              <a href={href}>
                 {cta}
                 <span set:html={arrow} />
               </a>

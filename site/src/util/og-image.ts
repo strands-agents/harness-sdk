@@ -36,8 +36,7 @@ const FROG_URI = svgUri(frogSvg.replaceAll('currentColor', GREEN))
 const WORDMARK_URI = svgUri(wordmarkSvg.replaceAll('currentColor', GREEN))
 
 // Halftone dot field echoing the homepage banner: a grid of green dots whose
-// opacity fades along a 115° diagonal, densest at the top-left. Generated
-// rather than reusing the banner's halftone.svg (~3MB).
+// opacity fades along a 115° diagonal, densest at the top-left.
 function halftoneUri(): string {
   const gap = 22
   const peakAlpha = 0.42
