@@ -32,17 +32,18 @@ const decider = productFor('/decider')
 export const homepageStartProjects: HomepageProject[] = [
   {
     product: harness,
-    marker: 'Recommended',
-    description: 'A complete agent with tools, context management, session management, memory, and a system prompt.',
+    marker: 'Start here',
+    description: 'Start with a complete agent and tested defaults. Replace individual components as your needs grow.',
     cta: 'Run the quickstart',
     href: productPage(harness, 'Quickstart'),
     markdownHref: '/docs/user-guide/harness/quickstart/index.md',
   },
   {
     product: harnessSdk,
-    marker: 'Direct control',
-    description: 'Choose and wire the model, tools, context management, session management, memory, and hooks.',
-    cta: 'Explore the SDK',
+    marker: 'Build from components',
+    description:
+      'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
+    cta: 'Build with the SDK',
     href: harnessSdk.href,
     markdownHref: '/docs/user-guide/sdk/quickstart/overview/index.md',
   },

@@ -88,20 +88,31 @@ describe('homepage machine-readable metadata', () => {
         marker: layer.querySelector('.framework__card-meta span')?.text.trim(),
         slug: layer.querySelector('.framework__card-meta strong')?.text.trim(),
         name: layer.querySelector('h3')?.text.trim(),
+        description: layer.querySelector('.framework__card-copy p')?.text.trim(),
+        installCommands: layer.querySelectorAll('[data-install-variant]').map((command) => command.text.trim()),
         href: layer.querySelector('.framework__card-link')?.getAttribute('href'),
+        cta: layer.querySelector('.framework__card-link')?.text.trim(),
       }))
     ).toEqual([
       {
-        marker: 'Recommended',
+        marker: 'Start here',
         slug: '/harness',
         name: 'Harness',
+        description:
+          'Start with a complete agent and tested defaults. Replace individual components as your needs grow.',
+        installCommands: ['pip install strands-harness', 'npm install @strands-agents/harness'],
         href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
+        cta: 'Run the quickstart',
       },
       {
-        marker: 'Direct control',
+        marker: 'Build from components',
         slug: '/harness-sdk',
         name: 'Harness SDK',
+        description:
+          'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
+        installCommands: ['pip install strands-agents', 'npm install @strands-agents/sdk'],
         href: configuredPathWithBase('/docs/user-guide/sdk/'),
+        cta: 'Build with the SDK',
       },
     ])
     expect(
@@ -139,7 +150,7 @@ describe('homepage machine-readable metadata', () => {
     const logoFarm = homepage.querySelector('.logo-farm')
     const logos = logoFarm?.querySelectorAll('.logo-farm__cell') ?? []
 
-    expect(logoFarm?.querySelector('.logo-farm__label')?.text.trim()).toBe('Teams building agents with Strands')
+    expect(logoFarm?.querySelector('.logo-farm__label')?.text.trim()).toBe('Build with')
     expect(logos).toHaveLength(8)
     expect(logos[0]?.getAttribute('data-logo')).toBe('AWS')
     expect(logos[0]?.getAttribute('href')).toBe('https://aws.amazon.com/')

@@ -1,6 +1,7 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
 import { homepageCapabilities, homepageStartProjects } from '../config/homepage'
+import InstallCommand from './InstallCommand.astro'
 
 const [harness, harnessSdk] = homepageStartProjects
 if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
@@ -22,6 +23,13 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
           <h3>{harness.product.label}</h3>
           <p>{harness.description}</p>
         </div>
+        <div class="framework__install">
+          <InstallCommand
+            compact
+            pip="pip install strands-harness"
+            npm="npm install @strands-agents/harness"
+          />
+        </div>
         <a class="framework__card-link" href={harness.href}>
           {harness.cta}
           <span set:html={arrow} />
@@ -36,6 +44,9 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
         <div class="framework__card-copy">
           <h3>{harnessSdk.product.label}</h3>
           <p>{harnessSdk.description}</p>
+        </div>
+        <div class="framework__install">
+          <InstallCommand compact pip="pip install strands-agents" npm="npm install @strands-agents/sdk" />
         </div>
         <a class="framework__card-link" href={harnessSdk.href}>
           {harnessSdk.cta}
@@ -72,7 +83,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 <style>
   .framework {
     width: 100%;
-    padding: clamp(52px, 5.5vw, 76px) var(--home-gutter);
+    padding: var(--home-section-space) var(--home-gutter);
     scroll-margin-top: 92px;
     background: var(--bg);
     color: var(--fg);
@@ -142,7 +153,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     position: relative;
     display: flex;
     flex-direction: column;
-    min-height: 178px;
+    min-height: 248px;
     padding: clamp(20px, 2.2vw, 26px);
     overflow: hidden;
   }
@@ -213,14 +224,26 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     gap: 9px;
     width: fit-content;
     min-height: 44px;
-    margin-top: auto;
-    padding-top: 12px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
     color: var(--fg);
     text-decoration: none;
+  }
+
+  .framework__install {
+    width: 100%;
+    margin-top: auto;
+    padding-top: 18px;
+  }
+
+  .framework__install :global(.install) {
+    width: 100%;
+  }
+
+  .framework__card-link {
+    margin-top: 8px;
   }
 
   .framework__card-link :global(svg),
@@ -303,6 +326,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
   }
 
   .framework__capability a {
+    margin-top: auto;
     padding-top: 10px;
   }
 
@@ -322,10 +346,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
   }
 
   @media (max-width: 720px) {
-    .framework {
-      padding-block: 44px;
-    }
-
     .framework__inner {
       gap: 28px;
     }
@@ -361,7 +381,11 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     }
 
     .framework__card-link {
-      margin-top: 8px;
+      margin-top: 6px;
+    }
+
+    .framework__install {
+      padding-top: 16px;
     }
 
     .framework__capability {

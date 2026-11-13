@@ -46,7 +46,7 @@ const logos = [
 
 <section class="logo-farm" aria-label="Companies using Strands">
   <div class="logo-farm__inner">
-    <p class="logo-farm__label">Teams building agents with Strands</p>
+    <p class="logo-farm__label">Build with</p>
     <div class="logo-farm__row">
       {logos.map((logo) => (
         <a
@@ -69,7 +69,7 @@ const logos = [
     background: var(--bg);
     color: var(--fg);
     width: 100%;
-    padding: 20px var(--home-gutter) 0;
+    padding: var(--home-section-space-compact) var(--home-gutter) 0;
   }
 
   .logo-farm__inner {
@@ -77,7 +77,7 @@ const logos = [
     flex-direction: column;
     gap: 14px;
     max-width: var(--home-content-width);
-    padding-bottom: 22px;
+    padding-bottom: var(--home-section-space-compact);
     border-bottom: 1px solid var(--home-rule);
     margin: 0 auto;
   }
@@ -200,13 +200,8 @@ const logos = [
   }
 
   @media (max-width: 767px) {
-    .logo-farm {
-      padding-block: 16px 0;
-    }
-
     .logo-farm__inner {
       gap: 10px;
-      padding-bottom: 18px;
     }
 
     .logo-farm__label {

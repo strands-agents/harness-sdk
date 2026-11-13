@@ -6,21 +6,26 @@
  * toggles broadcast (same channel as the banner/UseCases terminal). The copy
  * button writes the *visible* command, so users always copy what they see.
  *
- * Rendered in two places (homepage banner + site footer); the inline script is
- * idempotent and event-driven, so multiple instances stay in sync.
+ * The inline script is idempotent and event-driven, so multiple instances stay
+ * in sync.
  */
 import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
 
-// Defaults install the SDK; callers (e.g. the homepage banner) can override to
-// lead with another package such as Strands harness.
+// Defaults install the SDK; callers can override these values for another
+// package such as Strands harness.
 interface Props {
   pip?: string
   npm?: string
+  compact?: boolean
 }
-const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strands-agents/sdk' } = Astro.props
+const {
+  pip: PIP = 'pip install strands-agents',
+  npm: NPM = 'npm install @strands-agents/sdk',
+  compact = false,
+} = Astro.props
 ---
 
-<div class="install" data-install>
+<div class:list={['install', { 'install--compact': compact }]} data-install>
   <code class="install__cmd">
     <span class="install__prompt" aria-hidden="true">$</span>
     <span class="install__text">
@@ -104,6 +109,25 @@ const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strand
     background: var(--toggle-active-bg);
     border-color: transparent;
     color: var(--strands-black);
+  }
+
+  .install--compact {
+    gap: 6px;
+    padding: 5px 5px 5px 10px;
+    border-radius: 10px;
+  }
+
+  .install--compact .install__cmd {
+    flex: 1;
+    font-size: 11px;
+  }
+
+  .install--compact .install__copy {
+    min-height: 36px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
   }
 </style>
 

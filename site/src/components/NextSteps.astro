@@ -46,7 +46,7 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
   .next-steps {
     position: relative;
     min-height: 410px;
-    padding: clamp(50px, 5.5vw, 72px) var(--home-gutter) clamp(54px, 6vw, 76px);
+    padding: var(--home-section-space) var(--home-gutter) clamp(58px, 6vw, 80px);
     overflow: hidden;
     background: var(--strands-black);
     color: var(--strands-white);
@@ -238,7 +238,7 @@ if (!harness || !quickstart) throw new Error('Missing Harness navigation targets
 
   @media (max-width: 767px) {
     .next-steps {
-      padding-block: 42px 74px;
+      padding-block: var(--home-section-space) 78px;
     }
 
     .next-steps__content {
