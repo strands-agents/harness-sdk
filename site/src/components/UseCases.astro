@@ -151,22 +151,7 @@ agent("Ask the reviewer to challenge our launch plan.")`,
   <div class="use-cases__inner">
     <header class="use-cases__intro">
       <p class="use-cases__eyebrow">See it in code</p>
-      <div class="use-cases__intro-grid">
-        <h2 id="use-cases-title">Build agents for real work.</h2>
-        <div class="use-cases__summary">
-          <p>Choose a use case to see a complete Harness example in Python or TypeScript.</p>
-          <a
-            class="use-cases__link"
-            href="https://github.com/strands-agents/samples"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Browse all examples
-            <span class="use-cases__arrow" set:html={arrow} aria-hidden="true"></span>
-            <span class="sr-only">(opens in a new tab)</span>
-          </a>
-        </div>
-      </div>
+      <h2 id="use-cases-title">Build agents for real work.</h2>
     </header>
 
     <div class="use-cases__demo">
@@ -250,6 +235,18 @@ agent("Ask the reviewer to challenge our launch plan.")`,
         })
       }
     </div>
+    <div class="use-cases__footer">
+      <a
+        class="use-cases__link"
+        href="https://github.com/strands-agents/samples"
+        target="_blank"
+        rel="noreferrer"
+      >
+        Browse all examples
+        <span class="use-cases__arrow" set:html={arrow} aria-hidden="true"></span>
+        <span class="sr-only">(opens in a new tab)</span>
+      </a>
+    </div>
   </div>
 </section>
 
@@ -266,7 +263,7 @@ agent("Ask the reviewer to challenge our launch plan.")`,
   }
 
   .use-cases__intro {
-    margin-bottom: clamp(24px, 3vw, 34px);
+    margin-bottom: clamp(16px, 2vw, 22px);
   }
 
   .use-cases__eyebrow {
@@ -280,13 +277,6 @@ agent("Ask the reviewer to challenge our launch plan.")`,
     color: var(--home-label);
   }
 
-  .use-cases__intro-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
-    align-items: start;
-    gap: clamp(32px, 6vw, 82px);
-  }
-
   .use-cases h2 {
     max-width: 680px;
     margin: 0;
@@ -298,20 +288,10 @@ agent("Ask the reviewer to challenge our launch plan.")`,
     text-wrap: balance;
   }
 
-  .use-cases__summary {
+  .use-cases__footer {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .use-cases__summary p {
-    max-width: 43ch;
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: var(--home-body-size);
-    line-height: 1.5;
-    color: color-mix(in srgb, var(--fg) 72%, transparent);
+    justify-content: flex-end;
+    margin-top: 12px;
   }
 
   .use-cases__link {
@@ -625,16 +605,6 @@ agent("Ask the reviewer to challenge our launch plan.")`,
   }
 
   @media (max-width: 900px) {
-    .use-cases__intro-grid {
-      grid-template-columns: 1fr;
-      align-items: start;
-      gap: 12px;
-    }
-
-    .use-cases__summary {
-      max-width: 620px;
-    }
-
     .use-cases__demo {
       grid-template-columns: minmax(250px, 0.72fr) minmax(0, 1.28fr);
     }
@@ -660,7 +630,7 @@ agent("Ask the reviewer to challenge our launch plan.")`,
 
   @media (max-width: 767px) {
     .use-cases__intro {
-      margin-bottom: 22px;
+      margin-bottom: 18px;
     }
 
     .use-cases h2 {

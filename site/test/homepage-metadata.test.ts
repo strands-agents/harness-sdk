@@ -107,13 +107,14 @@ describe('homepage machine-readable metadata', () => {
     expect(
       capabilityItems.map((item) => ({
         name: item.querySelector('h4')?.text.trim(),
+        slug: item.querySelector('.framework__product-slug')?.text.trim(),
         href: item.querySelector('a')?.getAttribute('href'),
       }))
     ).toEqual([
-      { name: 'Box', href: configuredPathWithBase('/docs/user-guide/box/') },
-      { name: 'Shell', href: configuredPathWithBase('/docs/user-guide/shell/') },
-      { name: 'Evals', href: configuredPathWithBase('/docs/user-guide/evals-sdk/') },
-      { name: 'Decider', href: configuredPathWithBase('/docs/labs/strands-decider/overview/') },
+      { name: 'Box', slug: '/box', href: configuredPathWithBase('/docs/user-guide/box/') },
+      { name: 'Shell', slug: '/shell', href: configuredPathWithBase('/docs/user-guide/shell/') },
+      { name: 'Evals', slug: '/evals', href: configuredPathWithBase('/docs/user-guide/evals-sdk/') },
+      { name: 'Decider', slug: '/decider', href: configuredPathWithBase('/docs/labs/strands-decider/overview/') },
     ])
     expect(
       capabilityItems
@@ -122,6 +123,13 @@ describe('homepage machine-readable metadata', () => {
         ?.text.trim()
     ).toBe('/decider')
     expect(framework?.text).not.toContain('Experimental')
+    expect(framework?.text).not.toContain('Your first agent')
+    expect(framework?.text).not.toContain('Add only what your agent needs.')
+    expect(
+      framework
+        ?.querySelectorAll('.framework__product-slug')
+        .every((slug) => slug.text.trim() === slug.text.trim().toLowerCase())
+    ).toBe(true)
     expect(framework?.querySelector('.framework__labs')).toBeNull()
     expect(homepageHtml.indexOf('class="framework ')).toBeLessThan(homepageHtml.indexOf('class="logo-farm '))
     expect(homepageHtml.indexOf('class="logo-farm ')).toBeLessThan(homepageHtml.indexOf('class="use-cases '))
@@ -151,7 +159,10 @@ describe('homepage machine-readable metadata', () => {
       'Research the web',
       'Coordinate agents',
     ])
-    expect(useCases?.querySelector('a')?.getAttribute('href')).toBe('https://github.com/strands-agents/samples')
+    const examplesLink = useCases?.querySelector('.use-cases__link')
+    expect(examplesLink?.getAttribute('href')).toBe('https://github.com/strands-agents/samples')
+    expect(useCases?.text).not.toContain('Choose a use case to see a complete Harness example')
+    expect(homepageHtml.indexOf('use-cases__demo')).toBeLessThan(homepageHtml.indexOf('use-cases__footer'))
     expect(buttons).toHaveLength(4)
     expect(buttons.map((button) => button.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'false', 'false'])
     expect(panels).toHaveLength(4)

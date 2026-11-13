@@ -9,17 +9,14 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 <section class="framework" id="framework" aria-labelledby="framework-title">
   <div class="framework__inner">
     <header class="framework__intro">
-      <p class="framework__eyebrow">Your first agent</p>
-      <div class="framework__intro-grid">
-        <h2 id="framework-title">Build an Agent</h2>
-      </div>
+      <h2 id="framework-title">Build an Agent</h2>
     </header>
 
     <div class="framework__start-grid">
       <article class="framework__layer framework__layer--primary" data-accent={harness.product.accent}>
         <div class="framework__card-meta">
           <span>{harness.marker}</span>
-          <strong>{harness.product.slug}</strong>
+          <strong class="framework__product-slug">{harness.product.slug}</strong>
         </div>
         <div class="framework__card-copy">
           <h3>{harness.product.label}</h3>
@@ -34,7 +31,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
       <article class="framework__layer framework__layer--secondary" data-accent={harnessSdk.product.accent}>
         <div class="framework__card-meta">
           <span>{harnessSdk.marker}</span>
-          <strong>{harnessSdk.product.slug}</strong>
+          <strong class="framework__product-slug">{harnessSdk.product.slug}</strong>
         </div>
         <div class="framework__card-copy">
           <h3>{harnessSdk.product.label}</h3>
@@ -48,10 +45,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     </div>
 
     <section class="framework__capabilities" aria-labelledby="framework-capabilities-title">
-      <header class="framework__capabilities-heading">
-        <p>Specialized projects</p>
-        <h3 id="framework-capabilities-title">Add only what your agent needs.</h3>
-      </header>
+      <h3 id="framework-capabilities-title" class="framework__capabilities-label">Specialized projects</h3>
 
       <div class="framework__capability-grid">
         {
@@ -59,7 +53,7 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
             <article class="framework__capability" data-accent={product.accent}>
               <div class="framework__capability-meta">
                 <span>{marker}</span>
-                <span>{product.slug}</span>
+                <span class="framework__product-slug">{product.slug}</span>
               </div>
               <h4>{product.label}</h4>
               <p>{description}</p>
@@ -92,15 +86,8 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     margin: 0 auto;
   }
 
-  .framework__intro {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-
-  .framework__eyebrow,
   .framework__card-meta,
-  .framework__capabilities-heading > p,
+  .framework__capabilities-label,
   .framework__capability-meta {
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 11px;
@@ -108,17 +95,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     letter-spacing: 0.11em;
     line-height: 1.35;
     text-transform: uppercase;
-  }
-
-  .framework__eyebrow {
-    margin: 0;
-    color: var(--home-label);
-  }
-
-  .framework__intro-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
   }
 
   .framework__intro h2 {
@@ -202,6 +178,10 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     color: color-mix(in srgb, var(--fg) 52%, transparent);
   }
 
+  .framework__product-slug {
+    text-transform: lowercase;
+  }
+
   .framework__card-copy {
     display: flex;
     flex-direction: column;
@@ -269,25 +249,9 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
     gap: 14px;
   }
 
-  .framework__capabilities-heading {
-    display: flex;
-    justify-content: space-between;
-    gap: 24px;
-    align-items: end;
-  }
-
-  .framework__capabilities-heading > p {
+  .framework__capabilities-label {
     margin: 0;
     color: var(--home-label);
-  }
-
-  .framework__capabilities-heading h3 {
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(22px, 2.4vw, 32px);
-    font-weight: 600;
-    letter-spacing: -0.025em;
-    line-height: 1.1;
   }
 
   .framework__capability-grid {
@@ -398,12 +362,6 @@ if (!harness || !harnessSdk) throw new Error('Missing homepage start projects')
 
     .framework__card-link {
       margin-top: 8px;
-    }
-
-    .framework__capabilities-heading {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 9px;
     }
 
     .framework__capability {
