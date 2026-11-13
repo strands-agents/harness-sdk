@@ -4,7 +4,7 @@ from typing import cast
 from uuid import uuid4
 
 from a2a.types import Message as A2AMessage
-from a2a.types import Part, Role, TaskArtifactUpdateEvent, TaskState, TaskStatusUpdateEvent, TextPart
+from a2a.types import Part, Role, Task, TaskArtifactUpdateEvent, TaskState, TaskStatusUpdateEvent, TextPart
 
 from ...agent.agent_result import AgentResult
 from ...telemetry.metrics import EventLoopMetrics
@@ -116,10 +116,13 @@ def _extract_task_state(response: A2AResponse) -> TaskState | None:
         The TaskState if available, None otherwise.
     """
     if isinstance(response, tuple) and len(response) == 2:
-        _task, update_event = response
+        task, update_event = response
         if isinstance(update_event, TaskStatusUpdateEvent):
             if update_event.status and hasattr(update_event.status, "state"):
                 return update_event.status.state
+        # Non-streaming responses carry the state on the task itself
+        if update_event is None and isinstance(task, Task):
+            return task.status.state
     return None
 
 

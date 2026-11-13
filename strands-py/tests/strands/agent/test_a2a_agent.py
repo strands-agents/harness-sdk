@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 from a2a.client import ClientConfig
-from a2a.types import AgentCard, Message, Part, Role, TaskState, TextPart
+from a2a.types import AgentCard, Message, Part, Role, Task, TaskState, TaskStatus, TaskStatusUpdateEvent, TextPart
 
 from strands.agent.a2a_agent import A2AAgent
 from strands.agent.agent_result import AgentResult
@@ -714,6 +714,40 @@ async def test_stream_async_falls_back_to_last_event(a2a_agent, mock_agent_card)
             # Should have 1 stream event + 1 result event (falls back to last)
             assert len(events) == 2
             assert "result" in events[1]
+
+
+def _input_required_events(streaming: bool) -> list[tuple[Task, TaskStatusUpdateEvent | None]]:
+    """Build the client events for a remote task that pauses for input."""
+    status = TaskStatus(
+        state=TaskState.input_required,
+        message=Message(message_id="m1", role=Role.agent, parts=[Part(TextPart(kind="text", text="need approval"))]),
+    )
+    task = Task(id="t1", context_id="c1", status=status)
+    if not streaming:
+        return [(task, None)]
+
+    working_task = Task(id="t1", context_id="c1", status=TaskStatus(state=TaskState.working))
+    update_event = TaskStatusUpdateEvent(task_id="t1", context_id="c1", status=status, final=True)
+    return [(working_task, None), (task, update_event)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [True, False])
+async def test_invoke_async_input_required_maps_to_interrupt(a2a_agent, mock_agent_card, streaming):
+    """Streaming and non-streaming remote agents report a paused task the same way."""
+    events = _input_required_events(streaming)
+
+    async def mock_send_message(*args, **kwargs):
+        for event in events:
+            yield event
+
+    with patch.object(a2a_agent, "get_agent_card", return_value=mock_agent_card):
+        async with mock_a2a_client_context(mock_send_message):
+            tru_result = await a2a_agent.invoke_async("Hello")
+
+    assert tru_result.stop_reason == "interrupt"
+    assert tru_result.state == {"a2a_task_state": "input-required"}
+    assert tru_result.message == {"role": "assistant", "content": [{"text": "need approval"}]}
 
 
 # =========================================================================

@@ -444,6 +444,36 @@ def test_extract_task_state_from_message_returns_none():
     assert state is None
 
 
+@pytest.mark.parametrize(
+    ("task_state", "exp_stop_reason"),
+    [
+        (TaskState.input_required, "interrupt"),
+        (TaskState.failed, "end_turn"),
+    ],
+)
+def test_convert_response_task_without_update_event_uses_task_state(task_state, exp_stop_reason):
+    """A (Task, None) response, as returned for non-streaming agents, takes its state from the task."""
+    task = Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(
+            state=task_state,
+            message=A2AMessage(
+                kind="message",
+                role=Role.agent,
+                parts=[Part(TextPart(kind="text", text="status detail"))],
+                message_id="m1",
+            ),
+        ),
+    )
+
+    tru_result = convert_response_to_agent_result((task, None))
+
+    assert tru_result.stop_reason == exp_stop_reason
+    assert tru_result.state == {"a2a_task_state": task_state.value}
+    assert tru_result.message["content"] == [{"text": "status detail"}]
+
+
 # =========================================================================
 # DEVIL'S ADVOCATE FINDINGS — Tests addressing review gaps
 # =========================================================================
