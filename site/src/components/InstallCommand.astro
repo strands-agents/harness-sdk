@@ -105,6 +105,37 @@ const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strand
     border-color: transparent;
     color: var(--strands-black);
   }
+
+  @media (max-width: 480px) {
+    .install {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      width: 100%;
+      padding: 12px;
+      border-radius: 18px;
+    }
+
+    .install__cmd {
+      width: 100%;
+      padding-bottom: 3px;
+      font-size: 12px;
+      scrollbar-width: thin;
+    }
+
+    .install__cmd::-webkit-scrollbar {
+      display: block;
+      height: 4px;
+    }
+
+    .install__cmd::-webkit-scrollbar-thumb {
+      background: var(--toggle-inactive-border);
+      border-radius: 999px;
+    }
+
+    .install__copy {
+      justify-self: end;
+    }
+  }
 </style>
 
 <script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY, DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL }}>

@@ -1,0 +1,483 @@
+---
+import arrow from '../assets/banner/arrow.svg?raw'
+import { products } from '../config/navbar'
+
+function productFor(slug: string) {
+  const product = products.find((candidate) => candidate.slug === slug)
+  if (!product) throw new Error(`Missing framework product: ${slug}`)
+  return product
+}
+
+const harness = productFor('/harness')
+const harnessQuickstart = harness.pages?.find((page) => page.label === 'Quickstart')
+if (!harnessQuickstart) throw new Error('Missing Harness quickstart')
+
+const sdk = productFor('/harness-sdk')
+const capabilities = [
+  {
+    product: productFor('/box'),
+    verb: 'Isolate',
+    description: 'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
+    cta: 'Use Strands Box',
+  },
+  {
+    product: productFor('/shell'),
+    verb: 'Execute',
+    description: 'Give agents an in-process shell that mediates filesystem, network, and credential access.',
+    cta: 'Use Strands Shell',
+  },
+  {
+    product: productFor('/evals'),
+    verb: 'Evaluate',
+    description: 'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
+    cta: 'Run an evaluation',
+  },
+  {
+    product: productFor('/decider'),
+    verb: 'Decide',
+    description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
+    cta: 'Try Decider',
+  },
+]
+---
+
+<section class="framework" id="framework" aria-labelledby="framework-title">
+  <div class="framework__inner">
+    <header class="framework__intro">
+      <p class="framework__eyebrow">Your first agent</p>
+      <div class="framework__intro-grid">
+        <h2 id="framework-title">Build an Agent</h2>
+      </div>
+    </header>
+
+    <div class="framework__start-grid" aria-label="Choose where to start">
+      <article class="framework__layer framework__layer--primary" data-accent={harness.accent}>
+        <div class="framework__card-meta">
+          <span>Recommended</span>
+          <strong>{harness.slug}</strong>
+        </div>
+        <div class="framework__card-copy">
+          <h3>{harness.label}</h3>
+          <p>A complete agent with tools, context management, session management, memory, and a system prompt.</p>
+        </div>
+        <a class="framework__card-link" href={harnessQuickstart.href} aria-label={`Create an agent with ${harness.name}`}>
+          Run the quickstart
+          <span set:html={arrow} />
+        </a>
+      </article>
+
+      <article class="framework__layer framework__layer--secondary" data-accent={sdk.accent}>
+        <div class="framework__card-meta">
+          <span>Direct control</span>
+          <strong>{sdk.slug}</strong>
+        </div>
+        <div class="framework__card-copy">
+          <h3>{sdk.label}</h3>
+          <p>Choose and wire the model, tools, context management, session management, memory, and hooks.</p>
+        </div>
+        <a class="framework__card-link" href={sdk.href} aria-label={`Explore ${sdk.name}`}>
+          Explore the SDK
+          <span set:html={arrow} />
+        </a>
+      </article>
+    </div>
+
+    <section class="framework__capabilities" aria-labelledby="framework-capabilities-title">
+      <header class="framework__capabilities-heading">
+        <p>Specialized projects</p>
+        <h3 id="framework-capabilities-title">Add only what your agent needs.</h3>
+      </header>
+
+      <div class="framework__capability-grid">
+        {
+          capabilities.map(({ product, verb, description, cta }) => (
+            <article class="framework__capability" data-accent={product.accent}>
+              <div class="framework__capability-meta">
+                <span>{verb}</span>
+                <span>{product.slug}</span>
+              </div>
+              <h4>{product.label}</h4>
+              <p>{description}</p>
+              <a href={product.href} aria-label={cta}>
+                {cta}
+                <span set:html={arrow} />
+              </a>
+            </article>
+          ))
+        }
+      </div>
+    </section>
+  </div>
+</section>
+
+<style>
+  .framework {
+    width: 100%;
+    padding: clamp(52px, 5.5vw, 76px) var(--home-gutter);
+    scroll-margin-top: 92px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .framework__inner {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(24px, 3vw, 34px);
+    max-width: var(--home-content-width);
+    margin: 0 auto;
+  }
+
+  .framework__intro {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .framework__eyebrow,
+  .framework__card-meta,
+  .framework__capabilities-heading > p,
+  .framework__capability-meta {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    line-height: 1.35;
+    text-transform: uppercase;
+  }
+
+  .framework__eyebrow {
+    margin: 0;
+    color: var(--home-label);
+  }
+
+  .framework__intro-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .framework__intro h2 {
+    max-width: 720px;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(36px, 3.6vw, 50px);
+    font-weight: 600;
+    letter-spacing: -0.045em;
+    line-height: 1.02;
+    text-wrap: balance;
+  }
+
+  [data-accent='orange'] {
+    --framework-accent: var(--card-accent-orange);
+  }
+
+  [data-accent='teal'] {
+    --framework-accent: var(--card-accent-teal);
+  }
+
+  [data-accent='purple'] {
+    --framework-accent: var(--card-accent-purple);
+  }
+
+  [data-accent='yellow'] {
+    --framework-accent: var(--card-accent-yellow);
+  }
+
+  [data-accent='pink'] {
+    --framework-accent: var(--card-accent-pink);
+  }
+
+  [data-accent='red'] {
+    --framework-accent: var(--card-accent-red);
+  }
+
+  .framework__start-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    border-block: 1px solid var(--home-rule);
+  }
+
+  .framework__layer {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 178px;
+    padding: clamp(20px, 2.2vw, 26px);
+    overflow: hidden;
+  }
+
+  .framework__layer::before,
+  .framework__capability::before {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: var(--framework-accent);
+    content: '';
+  }
+
+  .framework__layer--primary {
+    background: color-mix(in srgb, var(--framework-accent) 8%, var(--card-bg));
+  }
+
+  .framework__layer--secondary {
+    border-left: 1px solid var(--home-rule);
+    background: color-mix(in srgb, var(--framework-accent) 3%, var(--bg));
+  }
+
+  .framework__card-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+    color: var(--framework-accent);
+  }
+
+  .framework__card-meta strong {
+    font: inherit;
+    color: color-mix(in srgb, var(--fg) 52%, transparent);
+  }
+
+  .framework__card-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .framework__card-copy h3 {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(28px, 2.8vw, 38px);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1;
+  }
+
+  .framework__card-copy > p:last-child {
+    max-width: 52ch;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+  }
+
+  .framework__card-link,
+  .framework__capability a {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    width: fit-content;
+    min-height: 44px;
+    margin-top: auto;
+    padding-top: 12px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  .framework__card-link :global(svg),
+  .framework__capability a :global(svg) {
+    width: 13px;
+    height: 13px;
+    transition: transform 160ms ease;
+  }
+
+  .framework__card-link:hover :global(svg),
+  .framework__card-link:focus-visible :global(svg),
+  .framework__capability a:hover :global(svg),
+  .framework__capability a:focus-visible :global(svg) {
+    transform: translateX(3px);
+  }
+
+  .framework__card-link:focus-visible,
+  .framework__capability a:focus-visible {
+    outline: 2px solid var(--framework-accent);
+    outline-offset: 5px;
+  }
+
+  .framework__capabilities {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .framework__capabilities-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+    align-items: end;
+  }
+
+  .framework__capabilities-heading > p {
+    margin: 0;
+    color: var(--home-label);
+  }
+
+  .framework__capabilities-heading h3 {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(22px, 2.4vw, 32px);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+  }
+
+  .framework__capability-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-block: 1px solid var(--home-rule);
+  }
+
+  .framework__capability {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+    padding: 20px;
+  }
+
+  .framework__capability + .framework__capability {
+    border-left: 1px solid var(--home-rule);
+  }
+
+  .framework__capability-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 20px;
+    color: var(--framework-accent);
+  }
+
+  .framework__capability-meta span:last-child {
+    color: color-mix(in srgb, var(--fg) 44%, transparent);
+  }
+
+  .framework__capability h4 {
+    margin: 0 0 10px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(24px, 2vw, 30px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+  }
+
+  .framework__capability > p {
+    max-width: 31ch;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 65%, transparent);
+  }
+
+  .framework__capability a {
+    padding-top: 10px;
+  }
+
+  @media (max-width: 980px) {
+    .framework__capability-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .framework__capability:nth-child(3) {
+      border-left: 0;
+      border-top: 1px solid var(--home-rule);
+    }
+
+    .framework__capability:nth-child(4) {
+      border-top: 1px solid var(--home-rule);
+    }
+  }
+
+  @media (max-width: 720px) {
+    .framework {
+      padding-block: 44px;
+    }
+
+    .framework__inner {
+      gap: 28px;
+    }
+
+    .framework__intro h2 {
+      font-size: clamp(36px, 10vw, 48px);
+    }
+
+    .framework__start-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .framework__layer {
+      min-height: 0;
+      padding: 20px;
+    }
+
+    .framework__layer--secondary {
+      border-top: 1px solid var(--home-rule);
+      border-left: 0;
+    }
+
+    .framework__card-meta {
+      margin-bottom: 14px;
+    }
+
+    .framework__card-copy {
+      gap: 8px;
+    }
+
+    .framework__card-copy h3 {
+      font-size: 32px;
+    }
+
+    .framework__card-link {
+      margin-top: 8px;
+    }
+
+    .framework__capabilities-heading {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .framework__capability {
+      min-height: 210px;
+      padding: 18px 16px;
+    }
+
+    .framework__capability-meta {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 16px;
+    }
+
+    .framework__capability > p {
+      max-width: 46ch;
+      font-size: 13px;
+    }
+  }
+
+  @media (max-width: 340px) {
+    .framework__capability-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .framework__capability {
+      min-height: 0;
+    }
+
+    .framework__capability + .framework__capability {
+      border-top: 1px solid var(--home-rule);
+      border-left: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .framework__card-link :global(svg),
+    .framework__capability a :global(svg) {
+      transition: none;
+    }
+  }
+</style>

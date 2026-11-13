@@ -1,4 +1,5 @@
 ---
+import aws from '../assets/footer/aws.svg?raw';
 import databricks from '../assets/logos/databricks.svg?raw';
 import datadog from '../assets/logos/datadog.svg?raw';
 import jefferies from '../assets/logos/jefferies.svg?raw';
@@ -8,6 +9,11 @@ import nttDocomo from '../assets/logos/ntt-docomo.svg?raw';
 import thrad from '../assets/logos/thrad.svg?raw';
 
 const logos = [
+  {
+    name: 'AWS',
+    svg: aws,
+    href: 'https://aws.amazon.com/',
+  },
   {
     name: 'Jefferies',
     svg: jefferies,
@@ -40,6 +46,7 @@ const logos = [
 
 <section class="logo-farm" aria-label="Companies using Strands">
   <div class="logo-farm__inner">
+    <p class="logo-farm__label">Teams building agents with Strands</p>
     <div class="logo-farm__row">
       {logos.map((logo) => (
         <a
@@ -62,44 +69,69 @@ const logos = [
     background: var(--bg);
     color: var(--fg);
     width: 100%;
-    padding: 79px 55px;
+    padding: 20px var(--home-gutter) 22px;
+    border-bottom: 1px solid var(--home-rule);
   }
 
   .logo-farm__inner {
     display: flex;
     flex-direction: column;
-    gap: 47px;
-    max-width: 1332px;
+    gap: 14px;
+    max-width: var(--home-content-width);
     margin: 0 auto;
   }
 
-  /* Logos keep their natural widths; the row wraps and stays centered when it runs out of room. */
+  .logo-farm__label {
+    display: grid;
+    grid-template-columns: minmax(24px, 1fr) auto minmax(24px, 1fr);
+    align-items: center;
+    gap: clamp(12px, 2vw, 24px);
+    width: 100%;
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    line-height: 1.5;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--fg) 56%, transparent);
+    text-align: center;
+  }
+
+  .logo-farm__label::before,
+  .logo-farm__label::after {
+    height: 1px;
+    background: var(--home-rule);
+    content: '';
+  }
+
   .logo-farm__row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: center;
-    gap: 32px 36px;
+    justify-content: space-between;
+    gap: 12px clamp(20px, 2.4vw, 36px);
   }
 
   .logo-farm__cell {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 56px;
+    min-height: 44px;
+    padding: 4px;
     color: inherit;
     text-decoration: none;
-    border-radius: 8px;
+    border-radius: 4px;
   }
 
   .logo-farm__cell:hover .logo-farm__logo,
   .logo-farm__cell:focus-visible .logo-farm__logo {
-    filter: drop-shadow(0 0 4px var(--strands-green)) drop-shadow(0 0 14px var(--strands-green));
-    transform: scale(1.05);
+    opacity: 1;
+    transform: translateY(-1px);
   }
 
   .logo-farm__cell:focus-visible {
-    outline: 2px solid var(--strands-green);
+    outline: 2px solid var(--accent-green);
     outline-offset: 6px;
   }
 
@@ -119,75 +151,108 @@ const logos = [
     align-items: center;
     justify-content: center;
     max-width: 100%;
+    opacity: 0.72;
     transition:
-      filter 0.25s ease,
+      opacity 0.2s ease,
       transform 0.25s ease;
   }
 
   .logo-farm__logo :global(svg) {
     display: block;
     width: auto;
-    height: 32px;
+    height: 25px;
     max-width: 100%;
+  }
+
+  .logo-farm__cell[data-logo='AWS'] .logo-farm__logo :global(svg) {
+    height: 30px;
+  }
+
+  .logo-farm__cell[data-logo='AWS'] .logo-farm__logo :global(path) {
+    fill: currentColor;
   }
 
   /* Neo4j's lowercase wordmark with a descender reads small at the shared height. */
   .logo-farm__cell[data-logo='Neo4j'] :global(svg) {
-    height: 40px;
+    height: 31px;
   }
 
   /* The Bits mascot is taller than the wordmark, so the lockup needs more height to match. */
   .logo-farm__cell[data-logo='Datadog'] :global(svg) {
-    height: 44px;
+    height: 34px;
   }
 
   /* The small "NTT" above the wordmark takes up part of the height. */
   .logo-farm__cell[data-logo='NTT Docomo'] :global(svg) {
-    height: 36px;
+    height: 29px;
   }
 
   /* The "TROWE" line under "MRH" takes up part of the height. */
   .logo-farm__cell[data-logo='MRH Trowe'] :global(svg) {
-    height: 40px;
+    height: 31px;
+  }
+
+  @media (max-width: 1023px) {
+    .logo-farm__row {
+      justify-content: center;
+    }
   }
 
   @media (max-width: 767px) {
     .logo-farm {
-      padding: 40px 19px;
+      padding-block: 16px 18px;
     }
 
     .logo-farm__inner {
-      gap: 32px;
+      gap: 10px;
     }
 
-    /* Three per row on phones, with any short final row centered. */
+    .logo-farm__label {
+      gap: 10px;
+      font-size: 9px;
+    }
+
     .logo-farm__row {
-      gap: 24px 16px;
+      display: flex;
+      justify-content: flex-start;
+      flex-wrap: nowrap;
+      gap: 18px;
+      margin-inline: calc(-1 * var(--home-gutter));
+      padding-inline: var(--home-gutter);
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+      scrollbar-width: thin;
     }
 
     .logo-farm__cell {
-      width: calc((100% - 32px) / 3);
-      height: 40px;
+      flex: 0 0 auto;
+      min-width: 88px;
+      min-height: 44px;
     }
 
     .logo-farm__logo :global(svg) {
+      height: 17px;
+    }
+
+    .logo-farm__cell[data-logo='AWS'] .logo-farm__logo :global(svg) {
       height: 20px;
     }
 
     .logo-farm__cell[data-logo='Neo4j'] :global(svg) {
-      height: 26px;
-    }
-
-    .logo-farm__cell[data-logo='Datadog'] :global(svg) {
-      height: 28px;
-    }
-
-    .logo-farm__cell[data-logo='NTT Docomo'] :global(svg) {
       height: 22px;
     }
 
-    .logo-farm__cell[data-logo='MRH Trowe'] :global(svg) {
-      height: 26px;
+    .logo-farm__cell[data-logo='Datadog'] :global(svg) {
+      height: 24px;
     }
+
+    .logo-farm__cell[data-logo='NTT Docomo'] :global(svg) {
+      height: 19px;
+    }
+
+    .logo-farm__cell[data-logo='MRH Trowe'] :global(svg) {
+      height: 22px;
+    }
+
   }
 </style>

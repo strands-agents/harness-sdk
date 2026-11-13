@@ -12,9 +12,12 @@ interface Props {
   // page's footer has the homepage's curved top edge; the homepage itself opts
   // out because its NextSteps section already provides the transition.
   topShape?: boolean
+  // The homepage already ends with a dedicated Harness install action, so it
+  // can hide the repeated footer command while docs pages keep it.
+  showInstall?: boolean
 }
 
-const { topShape = true } = Astro.props
+const { topShape = true, showInstall = true } = Astro.props
 
 const columns = [
   {
@@ -79,10 +82,14 @@ const columns = [
 }
 <footer class="footer">
   <div class="footer__inner">
-    <div class="footer__get-started">
-      <p class="footer__get-started-label">Start building in seconds</p>
-      <InstallCommand />
-    </div>
+    {
+      showInstall && (
+        <div class="footer__get-started">
+          <p class="footer__get-started-label">Install Strands harness</p>
+          <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
+        </div>
+      )
+    }
     <div class="footer__columns">
       {columns.map((col) => (
         <div class="footer__column">
@@ -192,7 +199,7 @@ const columns = [
   .footer {
     background: var(--surface-green);
     color: var(--strands-black);
-    padding: 60px 55px 32px;
+    padding: 48px 55px 28px;
     overflow: hidden;
   }
 
@@ -207,7 +214,7 @@ const columns = [
     flex-direction: column;
     gap: 12px;
     max-width: 420px;
-    margin-bottom: 48px;
+    margin-bottom: 40px;
   }
 
   .footer__get-started-label {
@@ -215,7 +222,7 @@ const columns = [
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 14px;
     font-weight: 500;
-    color: var(--fg);
+    color: var(--strands-black);
   }
 
   .footer__columns {
@@ -252,7 +259,7 @@ const columns = [
   .footer__link {
     display: inline-block;
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 20px;
+    font-size: 18px;
     line-height: 1.4;
     color: var(--strands-black);
     text-decoration: none;
@@ -273,7 +280,7 @@ const columns = [
     flex-wrap: wrap;
     gap: 0.35em;
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 20px;
+    font-size: 18px;
     line-height: 1.4;
     color: var(--strands-black);
   }
@@ -303,7 +310,7 @@ const columns = [
 
   .footer__wordmark {
     display: block;
-    margin: 60px 0 40px;
+    margin: 48px 0 32px;
     line-height: 0;
   }
 
@@ -374,6 +381,25 @@ const columns = [
 
     .footer__shape--mobile {
       display: block;
+    }
+
+    .footer {
+      padding: 48px 32px 24px;
+    }
+
+    .footer__columns {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 32px 24px;
+    }
+
+    .footer__bottom {
+      align-items: flex-start;
+      gap: 32px;
+    }
+
+    .footer__legal {
+      flex-wrap: wrap;
+      gap: 16px 24px;
     }
   }
 
