@@ -2,7 +2,8 @@
 
 from strands import Agent, tool
 from strands.multiagent import GraphBuilder
-from strands.session import FileSessionManager
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
 
 
 # --8<-- [start:graph_migrated]
@@ -51,7 +52,7 @@ def run_case(case_id: str, prompt: str):
 
     # case_id is the session id: an interrupted graph resumes from it on the next call
     builder.set_session_manager(
-        FileSessionManager(session_id=case_id, storage_dir="./cases/")
+        SnapshotSessionManager(session_id=case_id, storage=LocalFileStorage("./cases/"))
     )
     # The task text is what the model sees, so the case id is prefixed onto it.
     return builder.build()(f"Case {case_id}: {prompt}")

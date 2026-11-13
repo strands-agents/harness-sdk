@@ -41,6 +41,12 @@ def s3_manager(mocked_aws, s3_bucket):
     yield S3SessionManager(session_id="test", bucket=s3_bucket, prefix="sessions/", region_name="us-west-2")
 
 
+def test__init__emits_deprecation_warning(mocked_aws, s3_bucket):
+    """S3SessionManager is deprecated in favor of SnapshotSessionManager."""
+    with pytest.warns(DeprecationWarning, match="S3SessionManager is deprecated"):
+        S3SessionManager(session_id="test", bucket=s3_bucket, region_name="us-west-2")
+
+
 @pytest.fixture
 def sample_session():
     """Create sample session for testing."""
