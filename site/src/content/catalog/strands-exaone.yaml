@@ -7,4 +7,5 @@ languages:
   typescript:
     package: strands-exaone
 github: https://github.com/ykoh42/exaone-integrations
+docsUrl: https://github.com/ykoh42/exaone-integrations#get-started
 addedDate: 2026-11-13
