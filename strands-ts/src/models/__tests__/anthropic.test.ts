@@ -4,7 +4,7 @@ import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
 import { ModelProxy } from '../model-proxy.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError, NotImplementedError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
   Message,
@@ -16,15 +16,18 @@ import {
   ReasoningBlock,
   InjectedBlock,
   SummaryBlock,
+  OffloadedBlock,
+  UnknownBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
+import { createEmptyUsage } from '../streaming.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { z } from 'zod'
 import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
 import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
-import type { StreamOptions } from '../model.js'
+import { Model, type StreamOptions } from '../model.js'
 
 /**
  * Helper to create a mock Anthropic client with streaming support
@@ -39,7 +42,8 @@ function createMockClient(streamGenerator: () => AsyncGenerator<unknown>): Anthr
 }
 
 // Mock the Anthropic SDK
-vi.mock('@anthropic-ai/sdk', () => {
+vi.mock('@anthropic-ai/sdk', async (importOriginal) => {
+  const { default: actual } = await importOriginal<typeof import('@anthropic-ai/sdk')>()
   const mockConstructor = vi.fn(function () {
     return {
       messages: {
@@ -48,8 +52,16 @@ vi.mock('@anthropic-ai/sdk', () => {
       },
     }
   })
+  // The real error classes, so `instanceof Anthropic.APIError` works against the mock.
+  const { APIError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, InternalServerError } = actual
   return {
-    default: mockConstructor,
+    default: Object.assign(mockConstructor, {
+      APIError,
+      APIConnectionError,
+      APIConnectionTimeoutError,
+      BadRequestError,
+      InternalServerError,
+    }),
   }
 })
 
@@ -584,6 +596,86 @@ describe('AnthropicModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('Rate limit exceeded')
     })
+
+    it.each(['throttlingException', 'serviceUnavailableException'])(
+      'maps a mid-stream Bedrock %s to ModelThrottledError',
+      async (type) => {
+        const mockClient = createMockClient(async function* () {
+          yield { type: 'ping' }
+          throw Object.assign(new Error('Too many tokens'), { type })
+        })
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+      }
+    )
+  })
+
+  describe('Bedrock InvokeModel API version', () => {
+    // Stands in for @anthropic-ai/bedrock-sdk's client, which the provider recognizes by class name.
+    class AnthropicBedrock {}
+    const bedrockClient = (): Anthropic =>
+      Object.assign(
+        Object.create(AnthropicBedrock.prototype),
+        createMockClient(async function* () {})
+      ) as Anthropic
+    const sentBody = async (provider: AnthropicModel, client: Anthropic): Promise<Record<string, unknown>> => {
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      return vi.mocked(client.messages.stream).mock.calls[0]![0] as unknown as Record<string, unknown>
+    }
+
+    it('pins bedrock-2023-05-31 on an AnthropicBedrock client, keeping the sampling params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(new AnthropicModel({ client, temperature: 0.2 }), client)
+      expect(body).toMatchObject({ anthropic_version: 'bedrock-2023-05-31', temperature: 0.2 })
+    })
+
+    it('keeps an anthropic_version set in params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(
+        new AnthropicModel({ client, params: { anthropic_version: 'bedrock-2099-01-01' } }),
+        client
+      )
+      expect(body.anthropic_version).toBe('bedrock-2099-01-01')
+    })
+
+    it('pins the version on a subclass, and on a renamed class with a bedrock-runtime base URL', async () => {
+      class Subclass extends AnthropicBedrock {}
+      const subclass = Object.assign(
+        Object.create(Subclass.prototype),
+        createMockClient(async function* () {})
+      )
+      expect((await sentBody(new AnthropicModel({ client: subclass }), subclass)).anthropic_version).toBe(
+        'bedrock-2023-05-31'
+      )
+      const renamed = Object.assign(
+        createMockClient(async function* () {}),
+        {
+          baseURL: 'https://bedrock-runtime.us-west-2.amazonaws.com',
+        }
+      )
+      expect((await sentBody(new AnthropicModel({ client: renamed }), renamed)).anthropic_version).toBe(
+        'bedrock-2023-05-31'
+      )
+    })
+
+    it('sends no anthropic_version on the Mantle client', async () => {
+      class AnthropicBedrockMantle {}
+      const mantle = Object.assign(
+        Object.create(AnthropicBedrockMantle.prototype),
+        createMockClient(async function* () {}),
+        {
+          baseURL: 'https://bedrock-mantle.us-west-2.api.aws/anthropic',
+        }
+      )
+      expect(await sentBody(new AnthropicModel({ client: mantle }), mantle)).not.toHaveProperty('anthropic_version')
+    })
+
+    it('sends no anthropic_version on another client', async () => {
+      const client = createMockClient(async function* () {})
+      expect(await sentBody(new AnthropicModel({ client }), client)).not.toHaveProperty('anthropic_version')
+    })
   })
 
   describe('stale thinking recovery', () => {
@@ -592,6 +684,12 @@ describe('AnthropicModel', () => {
     const bindingError = Object.assign(new Error(bindingMessage), { status: 400 })
     const dropBlockThinking = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const forced = {
+      toolSpecs: [
+        { name: 'calc', description: 'Calculator', inputSchema: { type: 'object' as const, properties: {} } },
+      ],
+      toolChoice: { any: {} },
+    }
 
     const createRejectingOnceClient = (error: Error = bindingError, retryError?: Error) => {
       let calls = 0
@@ -701,13 +799,48 @@ describe('AnthropicModel', () => {
         name: 'a caller-set block_binding',
         params: { thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } },
       },
-      { name: 'no thinking config', params: undefined },
-    ])('re-throws the binding error with $name', async ({ params }) => {
+      { name: 'a forced tool and no thinking config', params: undefined, options: forced },
+    ])('re-throws the binding error with $name', async ({ params, options }) => {
       const { stream, client } = createRejectingOnceClient()
       const provider = new AnthropicModel({ client, modelId: 'm1', ...(params && { params }) })
 
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(
+        'bound to a different conversation'
+      )
       expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('retries with adaptive thinking when no thinking config is set', async () => {
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+
+      await collectIterator(provider.stream(messages))
+      await collectIterator(provider.stream(messages))
+      await collectIterator(provider.stream(messages, forced))
+
+      const expectedOptions = { headers: { 'anthropic-beta': 'thinking-binding-controls-2026-08-01' } }
+      expect(stream.mock.calls.map((call: unknown[]) => [(call[0] as any).thinking, call[1]])).toStrictEqual([
+        [undefined, undefined],
+        [dropBlockThinking, expectedOptions],
+        [dropBlockThinking, expectedOptions],
+        [undefined, expectedOptions],
+      ])
+    })
+
+    it('does not keep drop_block on after a rejected retry', async () => {
+      const temperatureError = Object.assign(new Error('400 `temperature` may only be set to 1'), { status: 400 })
+      const { stream, client } = createRejectingOnceClient(bindingError, temperatureError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { temperature: 0.2 } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature')
+      stream.mockImplementation(() =>
+        (async function* () {
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      await collectIterator(provider.stream(messages))
+
+      expect((stream.mock.calls.at(-1) as unknown[])[0]).not.toHaveProperty('thinking')
     })
 
     it('re-throws the binding message on a non-400 error', async () => {
@@ -932,6 +1065,25 @@ describe('AnthropicModel', () => {
       expect('trackingId' in captured.request.messages[0]).toBe(false)
     })
 
+    it('sends an offloaded block as the text the model receives, at top level and inside a tool result', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ modelId: 'claude-3-opus', maxTokens: 1000, client: mockClient })
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [placeholder, new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: '[Dropped] [ref: tu-1]' },
+        { type: 'tool_result', tool_use_id: 'tu-1', is_error: false, content: '[Dropped] [ref: tu-1]' },
+      ])
+    })
+
     it('formats tools correctly', async () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({ client: mockClient })
@@ -971,6 +1123,21 @@ describe('AnthropicModel', () => {
         { type: 'thinking', thinking: '', signature: 'sig-abc' },
         { type: 'text', text: 'answer' },
       ])
+    })
+
+    it('skips unknown blocks', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }])
     })
 
     describe('Prompt Caching (Lookahead logic)', () => {
@@ -3419,7 +3586,7 @@ describe('AnthropicModel server-side summary', () => {
     const model = compactionModel(client)
     model.updateConfig({ params: { context_management: { edits: [] } } })
 
-    const block = await model.summarize(messages, {
+    const result = await model.summarize(messages, {
       systemPrompt: 'sys',
       toolSpecs: [toolSpec],
       instructions: 'keep ids',
@@ -3438,7 +3605,7 @@ describe('AnthropicModel server-side summary', () => {
       compaction: { type: 'summarize', instructions: 'keep ids' },
     })
     expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
-    expect(block).toEqual(storedCompaction('the summary', 's1'))
+    expect(result).toEqual({ content: [storedCompaction('the summary', 's1')] })
   })
 
   it.each([
@@ -3459,20 +3626,184 @@ describe('AnthropicModel server-side summary', () => {
     ).rejects.toThrow(type)
   })
 
-  it('throws NotImplementedError for a client without the beta messages API', async () => {
-    const client = { messages: { stream: vi.fn() } } as unknown as Anthropic
+  const compactionUsage = {
+    input_tokens: 100,
+    output_tokens: 20,
+    cache_read_input_tokens: 30,
+    cache_creation_input_tokens: 5,
+  }
+  const formattedCompactionUsage = {
+    inputTokens: 100,
+    outputTokens: 20,
+    totalTokens: 155,
+    cacheReadInputTokens: 30,
+    cacheWriteInputTokens: 5,
+  }
+  const hi = (): Message[] => [new Message({ role: 'user', content: [new TextBlock('hi')] })]
+  const agentMetadata = { sessionId: 'session' }
+  const baseResult = {
+    content: [new SummaryBlock({ text: 'client-side' })],
+    usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+  }
 
-    await expect(
-      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
-    ).rejects.toThrow(NotImplementedError)
+  it('returns the compaction usage', async () => {
+    const { client } = compactionClient({
+      stop_reason: 'compaction',
+      content: [{ type: 'compaction', content: 'the summary' }],
+      usage: compactionUsage,
+    })
+
+    const result = await compactionModel(client).summarize(hi())
+
+    expect(result).toEqual({
+      content: [new SummaryBlock({ provider: 'anthropic', text: 'the summary' })],
+      usage: formattedCompactionUsage,
+    })
   })
 
-  it('throws without a compaction block', async () => {
-    const { client } = compactionClient({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'x' }] })
+  it('counts the compaction iterations usage', async () => {
+    const zero = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+    const { client } = compactionClient({
+      stop_reason: 'compaction',
+      content: [{ type: 'compaction', content: 'the summary' }],
+      usage: { ...zero, iterations: [{ ...compactionUsage, type: 'compaction' }] },
+    })
 
-    await expect(
-      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
-    ).rejects.toThrow('compaction returned no summary')
+    const result = await compactionModel(client).summarize(hi())
+
+    expect(result).toEqual({
+      content: [new SummaryBlock({ provider: 'anthropic', text: 'the summary' })],
+      usage: formattedCompactionUsage,
+    })
+  })
+
+  it.each([
+    { name: 'no summary', response: { stop_reason: 'end_turn', content: [] } },
+    { name: 'text only', response: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'x' }] } },
+  ])('uses the base implementation without a compaction block: $name', async ({ response }) => {
+    const { client } = compactionClient({ ...response, usage: compactionUsage })
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize').mockResolvedValue(baseResult)
+    const messages = hi()
+    const options = { instructions: 'keep ids', agentMetadata }
+
+    const result = await compactionModel(client).summarize(messages, options)
+
+    expect(baseSummarize).toHaveBeenCalledTimes(1)
+    expect(baseSummarize).toHaveBeenCalledWith(messages, options)
+    expect(result).toEqual({
+      content: baseResult.content,
+      usage: {
+        inputTokens: 110,
+        outputTokens: 25,
+        totalTokens: 170,
+        cacheReadInputTokens: 30,
+        cacheWriteInputTokens: 5,
+      },
+    })
+    baseSummarize.mockRestore()
+  })
+
+  it.each([
+    {
+      name: 'rejected',
+      error: new Anthropic.BadRequestError(
+        400,
+        undefined,
+        'does not support the compaction strategy',
+        new Headers()
+      ) as Error,
+    },
+    { name: 'overloaded', error: new Anthropic.InternalServerError(529, undefined, 'overloaded', new Headers()) },
+    { name: 'timeout', error: new Anthropic.APIConnectionTimeoutError() },
+    { name: 'connection', error: new Anthropic.APIConnectionError({ message: 'connection' }) },
+  ])('uses the base implementation when compaction fails: $name', async ({ error }) => {
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: { messages: { stream: vi.fn(() => ({ finalMessage: async () => Promise.reject(error) })) } },
+    } as unknown as Anthropic
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize').mockResolvedValue(baseResult)
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await compactionModel(client).summarize(hi())
+
+    expect(result).toEqual(baseResult)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('compaction request failed | summarizing client-side'))
+    baseSummarize.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('sends no client-side request after a cancel during compaction', async () => {
+    const controller = new AbortController()
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: {
+        messages: {
+          stream: vi.fn(() => ({
+            finalMessage: async () => {
+              controller.abort()
+              throw new Anthropic.APIConnectionError({ message: 'aborted' })
+            },
+          })),
+        },
+      },
+    } as unknown as Anthropic
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await compactionModel(client).summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: createEmptyUsage() })
+    expect(client.messages.stream).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('throws errors other than an API error', async () => {
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: {
+        messages: { stream: vi.fn(() => ({ finalMessage: async () => Promise.reject(new Error('overloaded')) })) },
+      },
+    } as unknown as Anthropic
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize')
+
+    await expect(compactionModel(client).summarize(hi())).rejects.toThrow('overloaded')
+
+    expect(baseSummarize).not.toHaveBeenCalled()
+    baseSummarize.mockRestore()
+  })
+
+  it('uses the base implementation for a client without the beta messages API', async () => {
+    const client = { messages: { stream: vi.fn() } } as unknown as Anthropic
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize').mockResolvedValue(baseResult)
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await compactionModel(client).summarize(hi())
+
+    expect(result).toEqual(baseResult)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('client has no beta messages API'))
+    baseSummarize.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it.each([
+    { name: 'unlisted', config: { modelId: 'claude-sonnet-4-5' } },
+    {
+      name: 'turned off',
+      config: { modelId: 'claude-sonnet-5-5', modelInfo: { capabilities: { serverSideSummary: false } } },
+    },
+  ])('uses the base implementation without the capability: $name', async ({ config }) => {
+    const { client } = compactionClient({})
+    const model = new AnthropicModel({ client, maxTokens: 1, ...config })
+    const messages = hi()
+    const options = { systemPrompt: 'sys', instructions: 'keep ids', agentMetadata }
+    const result = { content: [new SummaryBlock({ text: 'client-side' })] }
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize').mockResolvedValue(result)
+
+    expect(await model.summarize(messages, options)).toBe(result)
+
+    expect(baseSummarize).toHaveBeenCalledTimes(1)
+    expect(baseSummarize).toHaveBeenCalledWith(messages, options)
+    expect(client.beta.messages.stream).not.toHaveBeenCalled()
+    baseSummarize.mockRestore()
   })
 
   it('sends messages from the last compaction block', async () => {
@@ -3535,10 +3866,10 @@ describe('AnthropicModel server-side summary', () => {
     expect(model.modelInfo.capabilities?.serverSideSummary).toBe(true)
   })
 
-  it.each(['claude-sonnet-4-5', 'm1'])('turns server-side summary off for other model %s', (modelId) => {
+  it.each(['claude-sonnet-4-5', 'm1'])('leaves server-side summary unknown for other model %s', (modelId) => {
     const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
 
-    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(false)
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBeUndefined()
   })
 
   it('sends the compaction text without the capability', async () => {

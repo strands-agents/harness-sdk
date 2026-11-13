@@ -73,6 +73,8 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
 │   │   ├── CourseNotice.astro    # Course recording and example update notices
+│   │   ├── FaqAnswer.astro       # Shared renderer for structured FAQ answers
+│   │   ├── HomeFaq.astro         # Five-question homepage FAQ preview
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
 │   │   ├── samples/              # Native Starlight page wrapper for generated sample guides
@@ -102,6 +104,8 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
 │   ├── layouts/                  # Custom layouts
 │   ├── pages/                    # Astro pages, including generated /examples routes
+│   │   ├── faq.astro             # Standalone FAQ page
+│   │   └── faq/index.md.ts       # Machine-readable FAQ endpoint
 │   ├── plugins/                  # Remark/Rehype plugins
 │   ├── styles/                   # Global styles
 │   └── util/                     # Utility functions

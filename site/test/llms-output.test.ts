@@ -82,6 +82,13 @@ describe('llms.txt builder', () => {
 })
 
 describe('llms.txt output', () => {
+  it('keeps external FAQ sources valid in llms-full.txt', () => {
+    const llmsFull = readFileSync(new URL('../dist/llms-full.txt', import.meta.url), 'utf8')
+
+    expect(llmsFull).toContain('](https://github.com/strands-labs/robots)')
+    expect(llmsFull).not.toContain('/https://github.com/strands-labs/')
+  })
+
   it('publishes every live documentation page in llms.txt automatically', async () => {
     const llms = readFileSync(new URL('../dist/llms.txt', import.meta.url), 'utf8')
     const docs = await getCollection('docs', ({ id, data }) => id !== '404' && !data.draft)

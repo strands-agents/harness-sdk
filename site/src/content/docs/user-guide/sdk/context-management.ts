@@ -23,9 +23,11 @@ async function explicit() {
     contextManager: {
       strategies: [
         // Offload large tool results; keep a 500-token preview in context
-        Offload.truncate('toolResults', { previewTokens: 500 }).when({ threshold: 2500 }),
+        Offload.truncate('toolResults', { previewTokens: 500 }).when({
+          blockThreshold: 2500,
+        }),
         // Summarize older messages when the window reaches 85% utilization
-        Offload.summarize('*').when({ utilization: 0.85, preserveRecent: 2 }),
+        Offload.summarize('*').when({ contextUtilization: '85%', preserveRecent: 2 }),
       ],
       // Stash keeps originals and registers a retrieve_context tool.
       // Omit for in-memory storage, or provide durable storage.
@@ -53,7 +55,7 @@ async function customSummarizationModel() {
         Offload.summarize('*', {
           model: new BedrockModel({ modelId: 'us.amazon.nova-lite-v1:0' }),
           systemPrompt: 'Summarize preserving tool outputs, errors, and IDs.',
-        }).when({ utilization: 0.85, preserveRecent: 2 }),
+        }).when({ contextUtilization: '85%', preserveRecent: 2 }),
       ],
       stash: false,
     },

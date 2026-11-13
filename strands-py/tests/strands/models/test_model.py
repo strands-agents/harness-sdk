@@ -1,15 +1,19 @@
 import json
+import logging
 import math
+import threading
 import warnings
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
 
+from strands.agent.agent_metadata import AgentMetadata
 from strands.hooks.events import AfterInvocationEvent
-from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
 from strands.models import Model as SAModel
 from strands.models._model_info import lookup_model_info
+from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.models.model import _estimate_tokens_with_heuristic, _ModelPlugin
 
 
@@ -239,8 +243,10 @@ class TestModelInfo:
     def provider(self):
         return ConfigurableModel()
 
-    def test_is_all_unknown_without_a_model_id_and_unknown_stateful_reads_as_false(self, provider):
-        assert provider.model_info == ModelInfo()
+    def test_knows_only_that_temporary_messages_are_off_without_a_model_id_and_unknown_stateful_reads_as_false(
+        self, provider
+    ):
+        assert provider.model_info == ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))
         assert provider.stateful is False
 
     def test_resolves_facts_from_the_shared_model_info_by_model_id(self, provider):
@@ -249,10 +255,15 @@ class TestModelInfo:
         assert provider.model_info.limits.context_window == 1_000_000
         assert provider.model_info.capabilities.prompt_caching == "cache_points"
 
+    def test_leaves_temporary_messages_off_for_a_model_the_shared_data_says_takes_them(self, provider):
+        provider.update_config(model_id="vertex.claude-opus-5-5")
+
+        assert provider.model_info.capabilities.temporary_messages is False
+
     def test_treats_a_non_string_model_id_as_unknown(self, provider):
         provider.update_config(model_id=1234)
 
-        assert provider.model_info == ModelInfo()
+        assert provider.model_info == ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))
         assert provider.stateful is False
 
     def test_lookup_treats_a_non_string_model_id_as_unknown(self):
@@ -619,6 +630,28 @@ async def test_count_tokens_citations_block(model):
 
 
 @pytest.mark.asyncio
+async def test_count_tokens_injected_block(model):
+    messages = [{"role": "user", "content": [{"injected": {"text": "cwd: /repo, date: today", "source": "test"}}]}]
+
+    result = await model.count_tokens(messages=messages)
+
+    assert result == math.ceil(len("cwd: /repo, date: today") / 4)
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_counts_only_the_injected_blocks_of_the_latest_user_message(model):
+    messages = [
+        {"role": "user", "content": [{"injected": {"text": "x" * 400, "source": "test"}}]},
+        {"role": "assistant", "content": [{"text": "ok"}]},
+        {"role": "user", "content": [{"injected": {"text": "cwd: /repo", "source": "test"}}]},
+    ]
+
+    result = await model.count_tokens(messages=messages)
+
+    assert result == math.ceil(len("ok") / 4) + math.ceil(len("cwd: /repo") / 4)
+
+
+@pytest.mark.asyncio
 async def test_count_tokens_system_prompt_content(model):
     result = await model.count_tokens(
         messages=[],
@@ -798,10 +831,228 @@ class TestCacheConfig:
         assert CacheConfig(cache_key="tenant-42").cache_key == "tenant-42"
 
 
+class RecordingModel(TestModel):
+    """Replies with ``reply`` blocks and ``stop_reason``, recording each stream call."""
+
+    def __init__(self, reply=("the summary",), stop_reason="end_turn", error=None, usage=None):
+        self.reply = reply
+        self.stop_reason = stop_reason
+        self.error = error
+        self.usage = usage
+        self.calls = []
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.calls.append({"messages": messages, "tool_specs": tool_specs, "system_prompt": system_prompt, **kwargs})
+        if self.error:
+            raise self.error
+        yield {"messageStart": {"role": "assistant"}}
+        for text in self.reply:
+            yield {"contentBlockStart": {"start": {}}}
+            yield {"contentBlockDelta": {"delta": {"text": text}}}
+            yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": self.stop_reason}}
+        if self.usage:
+            yield {"metadata": {"usage": self.usage, "metrics": {"latencyMs": 0}}}
+
+
+HISTORY = [
+    {"role": "user", "content": [{"text": "task"}]},
+    {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {"q": "x"}}}]},
+    {
+        "role": "user",
+        "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "42"}]}}],
+    },
+]
+
+
 @pytest.mark.asyncio
-async def test_summarize_base_has_no_server_side_summary(model):
-    with pytest.raises(NotImplementedError, match="model has no server-side summary"):
+async def test_summarize_base_replays_the_request_with_the_instructions_closing_it(tool_specs):
+    model = RecordingModel(reply=("first", "second"))
+    prompt_content = [{"text": "live prompt"}, {"cachePoint": {"type": "default"}}]
+
+    result = await model.summarize(
+        HISTORY,
+        tool_specs=tool_specs,
+        system_prompt="live prompt",
+        system_prompt_content=prompt_content,
+        instructions="Summarize briefly.",
+    )
+
+    assert result == SummarizeResult(
+        content=[{"summary": {"provider": None, "text": "first\nsecond"}}],
+        usage={"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+    )
+    [call] = model.calls
+    assert call["messages"] == [
+        *HISTORY[:2],
+        {"role": "user", "content": [*HISTORY[2]["content"], {"text": f"{_SUMMARIZE_GUARD}\n\nSummarize briefly."}]},
+    ]
+    assert call["tool_specs"] == tool_specs
+    assert call["system_prompt"] == "live prompt"
+    assert call["system_prompt_content"] == prompt_content
+    assert HISTORY[2]["content"] == [
+        {"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "42"}]}}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_sends_the_agent_metadata():
+    model = RecordingModel()
+    agent_metadata = AgentMetadata(session_id="session")
+
+    await model.summarize(HISTORY[:2], agent_metadata=agent_metadata)
+
+    assert model.calls == [
+        {
+            "messages": [
+                *HISTORY[:2],
+                {"role": "user", "content": [{"text": f"{_SUMMARIZE_GUARD}\n\n{DEFAULT_SUMMARIZE_INSTRUCTIONS}"}]},
+            ],
+            "tool_specs": None,
+            "system_prompt": None,
+            "tool_choice": None,
+            "system_prompt_content": None,
+            "invocation_state": None,
+            "model_state": None,
+            "cancel_signal": None,
+            "agent_metadata": agent_metadata,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_sends_only_the_latest_injected_text():
+    model = RecordingModel()
+    history = [
+        {"role": "user", "content": [{"text": "task"}, {"injected": {"text": "<todos>v1</todos>", "source": "todos"}}]},
+        {"role": "assistant", "content": [{"text": "working"}]},
+        {"role": "user", "content": [{"text": "next"}, {"injected": {"text": "<todos>v2</todos>", "source": "todos"}}]},
+    ]
+
+    await model.summarize(history, instructions="Summarize briefly.")
+
+    assert model.calls[0]["messages"] == [
+        {"role": "user", "content": [{"text": "task"}]},
+        {"role": "assistant", "content": [{"text": "working"}]},
+        {
+            "role": "user",
+            "content": [
+                {"text": "next"},
+                {"text": "\n\n<todos>v2</todos>"},
+                {"text": f"{_SUMMARIZE_GUARD}\n\nSummarize briefly."},
+            ],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_adds_a_user_turn_after_an_assistant_turn():
+    model = RecordingModel()
+
+    await model.summarize(HISTORY[:2], instructions="Summarize briefly.")
+
+    assert model.calls[0]["messages"] == [
+        *HISTORY[:2],
+        {"role": "user", "content": [{"text": f"{_SUMMARIZE_GUARD}\n\nSummarize briefly."}]},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instructions", [None, ""])
+async def test_summarize_base_sends_no_system_prompt_and_the_default_instructions(instructions):
+    model = RecordingModel()
+
+    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], instructions=instructions)
+
+    assert model.calls[0]["system_prompt"] is None
+    assert model.calls[0]["system_prompt_content"] is None
+    assert model.calls[0]["messages"][-1]["content"][-1] == {
+        "text": f"{_SUMMARIZE_GUARD}\n\n{DEFAULT_SUMMARIZE_INSTRUCTIONS}"
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["tool_use", "guardrail_intervened", "content_filtered"])
+async def test_summarize_base_returns_an_empty_summary_for_an_unfinished_reply(stop_reason, caplog):
+    model = RecordingModel(
+        reply=("canned",), stop_reason=stop_reason, usage={"inputTokens": 10, "outputTokens": 1, "totalTokens": 11}
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == SummarizeResult(content=[], usage={"inputTokens": 10, "outputTokens": 1, "totalTokens": 11})
+    assert f"stop_reason=<{stop_reason}> | summary reply did not finish" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_returns_an_empty_summary_when_cancelled_mid_stream():
+    cancel_signal = threading.Event()
+
+    class CancellingModel(RecordingModel):
+        async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockStart": {"start": {}}}
+            yield {"contentBlockDelta": {"delta": {"text": "partial"}}}
+            cancel_signal.set()
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+
+    result = await CancellingModel().summarize(
+        [{"role": "user", "content": [{"text": "hi"}]}], cancel_signal=cancel_signal
+    )
+
+    assert result.content == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["max_tokens", "stop_sequence"])
+async def test_summarize_base_keeps_a_reply_that_stopped_at_a_limit(stop_reason):
+    model = RecordingModel(reply=("partial",), stop_reason=stop_reason)
+
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == SummarizeResult(
+        content=[{"summary": {"provider": None, "text": "partial"}}],
+        usage={"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+    )
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_returns_an_empty_summary_when_the_reply_holds_no_text():
+    model = RecordingModel(reply=("  ",), usage={"inputTokens": 10, "outputTokens": 1, "totalTokens": 11})
+
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result == SummarizeResult(content=[], usage={"inputTokens": 10, "outputTokens": 1, "totalTokens": 11})
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_returns_its_usage():
+    model = RecordingModel(usage={"inputTokens": 10, "outputTokens": 5, "totalTokens": 15})
+
+    result = await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert result.usage == {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_forwards_the_cancel_signal():
+    model = RecordingModel()
+    cancel_signal = threading.Event()
+
+    await model.summarize([{"role": "user", "content": [{"text": "hi"}]}], cancel_signal=cancel_signal)
+
+    assert model.calls[0]["cancel_signal"] is cancel_signal
+
+
+@pytest.mark.asyncio
+async def test_summarize_base_propagates_stream_errors():
+    model = RecordingModel(error=RuntimeError("images unsupported"))
+
+    with pytest.raises(RuntimeError, match="images unsupported"):
         await model.summarize([{"role": "user", "content": [{"text": "hi"}]}])
+    assert len(model.calls) == 1
 
 
 def test_heuristic_counts_summary_text():

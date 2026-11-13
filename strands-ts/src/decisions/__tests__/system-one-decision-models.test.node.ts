@@ -296,6 +296,19 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect((error as Error).cause).toBeDefined()
     })
 
+    it('sends an oversized request and maps the server HTTP 413 to ContextWindowOverflowError', async () => {
+      const fetch = fakeFetch({ error: 'request body too large' }, { status: 413 })
+      const decision = create({ apiKey: 'test-key', fetch })
+
+      const error = await decision.ask('x'.repeat(64 * 1024), { q: { question: 'ok?', choices: 'boolean' } }).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+
+      expect(error).toBeInstanceOf(ContextWindowOverflowError)
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
     it('wraps transport failures as ModelError with the original cause', async () => {
       const fetch = vi.fn(async (): Promise<Response> => {
         throw new Error('offline')
@@ -354,6 +367,46 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
             q: { type: 'choice', choice: 'a', probabilities: { a: 0.4, b: 0.4 }, confidence: 0.1 },
           })
         ),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } })).rejects.toThrow(
+        /must sum to 1/
+      )
+    })
+
+    it('accepts Choice probabilities rounded to 4 decimals', async () => {
+      // Live strands-decider output: ten probabilities rounded to 4 decimals sum to 1.0001.
+      const probabilities = {
+        payments: 0.1056,
+        fraud: 0.0067,
+        onboarding: 0.0053,
+        tax: 0.0032,
+        identity: 0.0035,
+        payouts: 0.8215,
+        disputes: 0.0089,
+        refunds: 0.0076,
+        pricing: 0.0031,
+        support: 0.0347,
+      }
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody({ q: { type: 'choice', choice: 'payouts', probabilities, confidence: 0.8017 } })),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'pick?', choices: Object.keys(probabilities) } })
+
+      expect(result.answers).toEqual({ q: 'payouts' })
+    })
+
+    it.each([
+      // Rounded to 4 decimals, but the sum is past the rounding bound of 2 * 5e-5.
+      { a: 0.5001, b: 0.5001 },
+      // Within the rounding bound, but rounding can't produce values off the 4-decimal grid.
+      { a: 0.50003, b: 0.50003 },
+    ])('rejects Choice probabilities %o that sum just past the bound', async (probabilities) => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody({ q: { type: 'choice', choice: 'a', probabilities, confidence: 0 } })),
       })
 
       await expect(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } })).rejects.toThrow(
@@ -433,19 +486,6 @@ describe('DecisionsAPIDecisionModel', () => {
       )
 
       await expect(decision.ask('state', questions)).rejects.toThrow(/at most 8 questions/)
-      expect(fetch).not.toHaveBeenCalled()
-    })
-
-    it('enforces the provider request-body limit before sending', async () => {
-      const fetch = fakeFetch(responseBody({}))
-      const decision = new DecisionsAPIDecisionModel({ apiKey: 'test-key', fetch })
-
-      const error = await decision.ask('x'.repeat(33 * 1024), { q: { question: 'ok?', choices: 'boolean' } }).then(
-        () => undefined,
-        (caught: unknown) => caught
-      )
-
-      expect(error).toBeInstanceOf(ContextWindowOverflowError)
       expect(fetch).not.toHaveBeenCalled()
     })
   })

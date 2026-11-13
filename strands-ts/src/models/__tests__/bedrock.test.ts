@@ -11,7 +11,14 @@ import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
 import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
-import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
+import {
+  Message,
+  ReasoningBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  JsonBlock,
+  UnknownBlock,
+} from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
 import { TextBlock, GuardContentBlock, CachePointBlock, InjectedBlock } from '../../types/messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
@@ -881,6 +888,44 @@ describe('BedrockModel', () => {
         toolConfig: BEDROCK_NOOP_TOOL_CONFIG,
         modelId: expect.any(String),
       })
+    })
+
+    it('skips unknown blocks', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(mockConverseStreamCommand).toHaveBeenLastCalledWith({
+        inferenceConfig: { maxTokens: 128_000 },
+        modelId: expect.any(String),
+        messages: [{ role: 'user', content: [{ text: 'Hello' }] }],
+      })
+    })
+
+    it('skips unknown content in a tool result', async () => {
+      const provider = new BedrockModel()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'id-1',
+              status: 'success',
+              content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+            }),
+          ],
+        }),
+      ]
+      await collectIterator(provider.stream(messages))
+      expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toEqual([
+        { toolResult: { toolUseId: 'id-1', content: [{ text: 'loaded' }], status: 'success' } },
+      ])
     })
 
     it('injects noop tool config when messages have tool blocks but no toolSpecs', async () => {
@@ -1867,15 +1912,18 @@ describe('BedrockModel', () => {
         expect(sentRequests().map(mechanismOf)).toStrictEqual(['forced', 'auto'])
       })
 
-      it('starts at native output for a model the shared model info says cannot be forced', async () => {
-        const mockSend = mockRejections()
-        const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
+      it.each(['us.anthropic.claude-opus-5-5', 'global.anthropic.claude-haiku-5-5'])(
+        'starts at native output for %s, which the shared model info says cannot be forced',
+        async (modelId) => {
+          const mockSend = mockRejections()
+          const provider = new BedrockModel({ modelId })
 
-        await collectIterator(provider.stream(messages, structuredOutputOptions))
+          await collectIterator(provider.stream(messages, structuredOutputOptions))
 
-        expect(mockSend).toHaveBeenCalledTimes(1)
-        expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
-      })
+          expect(mockSend).toHaveBeenCalledTimes(1)
+          expect(sentRequests().map(mechanismOf)).toStrictEqual(['native'])
+        }
+      )
 
       it('skips native output when the info override says the model lacks it', async () => {
         mockRejections(forcedRejection)
@@ -1974,6 +2022,12 @@ describe('BedrockModel', () => {
         anthropic_beta: ['other-beta', 'thinking-binding-controls-2026-08-01'],
       }
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const forced = {
+        toolSpecs: [
+          { name: 'calc', description: 'Calculator', inputSchema: { type: 'object' as const, properties: {} } },
+        ],
+        toolChoice: { any: {} },
+      }
       const sentFields = (command: typeof ConverseStreamCommand | typeof ConverseCommand): unknown[] =>
         vi.mocked(command).mock.calls.map((call) => call[0].additionalModelRequestFields)
 
@@ -2015,15 +2069,77 @@ describe('BedrockModel', () => {
           name: 'a caller-set block_binding',
           fields: { thinking: { ...thinking, block_binding: { prefix_mismatch_behavior: 'error' } } },
         },
-        { name: 'no thinking config', fields: { reasoning_config: { type: 'enabled' } } },
-        { name: 'no additional request fields', fields: undefined },
-      ])('re-throws the binding error with $name', async ({ fields }) => {
+        { name: 'a forced tool and no thinking config', fields: undefined, options: forced },
+      ])('re-throws the binding error with $name', async ({ fields, options }) => {
         const mockSend = vi.fn().mockRejectedValue(bindingError)
         mockBedrockClientImplementation({ send: mockSend })
         const provider = new BedrockModel({ modelId: 'm1', ...(fields && { additionalRequestFields: fields }) })
 
-        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+        await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(
+          'bound to a different conversation'
+        )
         expect(mockSend).toHaveBeenCalledOnce()
+      })
+
+      it('retries with adaptive thinking when no thinking config is set', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1' })
+
+        await collectIterator(provider.stream(messages))
+        await collectIterator(provider.stream(messages))
+        await collectIterator(provider.stream(messages, forced))
+
+        const syntheticFields = {
+          thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+          anthropic_beta: ['thinking-binding-controls-2026-08-01'],
+        }
+        expect(sentFields(ConverseStreamCommand)).toStrictEqual([
+          undefined,
+          syntheticFields,
+          syntheticFields,
+          undefined,
+        ])
+      })
+
+      it('keeps drop_block on for thinking set in additionalArgs', async () => {
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({
+          modelId: 'm1',
+          additionalArgs: { additionalModelRequestFields: { thinking, anthropic_beta: ['other-beta'] } },
+        })
+
+        await collectIterator(provider.stream(messages))
+        await collectIterator(provider.stream(messages))
+
+        expect(mockSend).toHaveBeenCalledTimes(3)
+        expect(sentFields(ConverseStreamCommand).at(-1)).toStrictEqual(dropBlockFields)
+      })
+
+      it('does not keep drop_block on after a rejected retry', async () => {
+        const temperatureError = new ValidationException({
+          message: '`temperature` may only be set to 1',
+          $metadata: {},
+        })
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockRejectedValueOnce(temperatureError)
+          .mockResolvedValue({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', temperature: 0.2 })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature')
+        await collectIterator(provider.stream(messages))
+
+        expect(sentFields(ConverseStreamCommand).at(-1)).toBeUndefined()
       })
 
       it('re-throws the binding message on a non-validation error', async () => {
@@ -2083,7 +2199,7 @@ describe('BedrockModel', () => {
         const provider = new BedrockModel({ modelId: 'm1', additionalRequestFields: { thinking } })
         await collectIterator(provider.stream(messages))
 
-        await collectIterator(provider.stream(messages, { toolChoice: { any: {} } }))
+        await collectIterator(provider.stream(messages, forced))
 
         expect(sentFields(ConverseStreamCommand).at(-1)).toBeUndefined()
       })

@@ -30,6 +30,7 @@ export const PRODUCT_RELEASE_STREAM: Record<string, Sdk | null> = {
   Shell: 'shell',
   Box: 'box',
   Evals: 'evals',
+  Decider: null,
 }
 
 /** Products released as separate per-language streams; only these carry `language`. */
