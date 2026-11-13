@@ -214,14 +214,15 @@ not accepted here: side calls run outside the agent loop the router attaches to.
 
 ### Model info
 
-Each provider reports what the SDK knows about its model as
-<Syntax py="model.model_info" ts="model.modelInfo" />: the context window, the output
-limit, and capabilities such as prompt caching. The SDK looks up the model ID in the
-[shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json),
-so an ID it can't map to a model, such as an application inference profile ARN or a proxy
-alias, gets defaults, including a 200,000-token context window. Set
-<Syntax py="model_info" ts="modelInfo" /> to fill in what you know; it wins over
-everything else:
+When the SDK can't recognize your model ID, tell it the model's limits and capabilities
+with <Syntax py="model_info" ts="modelInfo" />. Each provider reports what the SDK knows
+about its model as <Syntax py="model.model_info" ts="model.modelInfo" />: the context
+window, the output limit, and capabilities such as prompt caching. The SDK looks up the
+model ID in the
+[shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json).
+An ID it can't map to a model, such as an application inference profile ARN or a proxy
+alias, reports nothing, and the SDK falls back to defaults such as a 200,000-token context
+window. Your <Syntax py="model_info" ts="modelInfo" /> wins over everything else:
 
 <Tabs>
 <Tab label="Python">

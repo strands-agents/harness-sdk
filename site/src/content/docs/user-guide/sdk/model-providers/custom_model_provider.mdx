@@ -529,8 +529,10 @@ Map your API's failures onto the SDK's exceptions so the agent loop can react. H
 
 ### Model Info
 
-The base `Model` class reports what the SDK knows about your configured model, such as its
-context window, by looking up the model ID in
+To tell the agent what your service supports, report it through
+<Syntax py="model_info" ts="modelInfo" />. The base `Model` class fills in what the SDK
+already knows about your configured model, such as its context window, by looking up the
+model ID in
 [`shared/model-info.json`](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json).
 Python reads the ID from `get_config()["model_id"]`; TypeScript reads the `modelId`
 getter. Store your default model ID in the config so an unconfigured provider still gets
@@ -540,9 +542,9 @@ Override <Syntax py="model_info" ts="modelInfo" /> for what your service does di
 Put your facts over the base result and the user's
 <Syntax py="model_info" ts="modelInfo" /> config over yours, so their override still
 wins. Most providers need at least this one: turn off
-<Syntax py="server_side_summary" ts="serverSideSummary" /> unless you override
-<Syntax py="summarize" ts="summarize" />, as every built-in provider except Anthropic
-does.
+<Syntax py="server_side_summary" ts="serverSideSummary" /> unless your service summarizes
+server-side and you override <Syntax py="summarize" ts="summarize" /> to use it. Every
+built-in provider except Anthropic turns it off.
 
 <Tabs>
 <Tab label="Python">
@@ -573,7 +575,8 @@ class CustomModel(Model):
 </Tabs>
 
 Report <Syntax py="stateful" ts="stateful" /> as `true` only if your service keeps
-conversation state: the agent then sends only the latest message. Don't read
+conversation state: the agent then sends only the latest message and rejects a
+conversation or context manager. Don't read
 <Syntax py="self.stateful" ts="this.stateful" /> inside the override, because it reads
 <Syntax py="model_info" ts="modelInfo" />. Limits you report win over the user's
 <Syntax py="context_window_limit" ts="contextWindowLimit" />, so if they don't depend on

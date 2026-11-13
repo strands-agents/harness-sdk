@@ -265,7 +265,7 @@ class CustomModelInfoExample extends Model<BaseModelConfig> {
     return mergeModelInfo(
       super.modelInfo,
       { capabilities: { serverSideSummary: false } },
-      this._config.modelInfo
+      this.getConfig().modelInfo
     )
   }
   // --8<-- [end:model_info]

@@ -68,10 +68,10 @@ function defined<T extends object>(section: T): T | undefined {
 /**
  * Merges partial records, later defined fields winning. Undefined and missing fields inherit.
  * A provider overriding {@link Model.modelInfo} uses it to layer its facts and then the user's override:
- * `mergeModelInfo(super.modelInfo, { capabilities: { serverSideSummary: false } }, this._config.modelInfo)`.
+ * `mergeModelInfo(super.modelInfo, { capabilities: { serverSideSummary: false } }, this.getConfig().modelInfo)`.
  *
- * @param parts - Partial records, in order of increasing precedence
- * @returns A new frozen record containing only the fields that are known
+ * @param parts - Partial records, in order of increasing precedence; `undefined` parts are skipped
+ * @returns A new frozen record with only the known fields; a section nothing is known about is omitted
  */
 export function mergeModelInfo(...parts: (ModelInfo | undefined)[]): ModelInfo {
   const capabilities: Record<string, unknown> = {}
