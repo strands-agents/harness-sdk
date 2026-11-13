@@ -61,6 +61,27 @@ afterEach(async () => {
   if (temporary) await rm(temporary, { recursive: true, force: true })
 })
 
+it.each([
+  [
+    'npm error code E401',
+    'npm error code E401\nnpm error Unable to authenticate, your authentication token seems to be invalid.',
+  ],
+  ['installer timed out after 180 seconds', 'python3 installer timed out after 180 seconds'],
+])('names the installer failure %s in the message it shows', async (shown, stderr) => {
+  temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
+  stubHome(temporary)
+  const archive = join(temporary, 'agent.zip')
+  await writeFile(archive, zipSync({ 'agent.ts': strToU8(''), 'package.json': strToU8('{"private":true}') }))
+  const project = importAgentProject(archive)
+  execute.mockImplementation((_command, _args, _options, callback) => callback(new Error(stderr)))
+
+  const failure = await prepareArchiveDependencies(project.root, 'typescript').catch((error: unknown) => error)
+
+  expect((failure as Error).message).toContain("Could not install the agent's dependencies.")
+  expect((failure as Error).message).toContain(shown)
+  expect((failure as Error).message).toContain('then launch Strands again.')
+})
+
 // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4488017925
 it.each(['timeout', 'stdout', 'stderr', 'signal'] as const)(
   'rejects installer %s failures, retains ownership until close, and allows retry',

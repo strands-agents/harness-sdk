@@ -16,6 +16,7 @@ import {
   temporaryTestJobs,
 } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
+import { watchAgentProject } from '../../../src/project/watch.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
@@ -339,6 +340,37 @@ describe('TEMPORARY dev sessions', () => {
       review: { edits: [expect.objectContaining({ after: WINNER })] },
     })
     expect(existsSync(join(workspace.root, 'instructions.md'))).toBe(true)
+  })
+
+  it('shouldPutAnAppliedEditWhereTheAgentWatcherReloadsItAndKeepRunRecordsOutOfIt', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const reloaded: string[] = []
+    const failures: string[] = []
+    const stopWatching = watchAgentProject(
+      { root: workspace.root, entrypoint: workspace.entrypoint, language: 'typescript' },
+      (paths) => reloaded.push(...paths),
+      (error) => failures.push(error.message),
+      [workspace.directory!]
+    )
+    try {
+      sessions.optimize.plan(experiment)
+      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+      sessions.optimize.start()
+      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+
+      sessions.optimize.apply()
+
+      await vi.waitFor(() =>
+        expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+      )
+      await vi.waitFor(() => expect(reloaded).toContain('instructions.md'), { timeout: 5000 })
+      expect(failures).toEqual([])
+      expect(reloaded.filter((path) => path.includes('study.jsonl') || path.includes('strands-dev'))).toEqual([])
+    } finally {
+      stopWatching()
+    }
   })
 
   it('shouldReportACancellationWhenTheUserStopsBeforeTheFirstResult', async () => {

@@ -352,6 +352,15 @@ async function runInstaller(
   })
 }
 
+const INSTALLER_DIAGNOSTIC =
+  /^(?:npm (?:error|ERR!)|ERROR:|error:|[A-Za-z.]*Error:)|installer timed out after|installer output exceeded/u
+
+const installerDiagnostic = (error: unknown): string => {
+  const lines = (error instanceof Error ? error.message : String(error)).split('\n').map((line) => line.trim())
+  const found = lines.find((line) => INSTALLER_DIAGNOSTIC.test(line))
+  return found ? found.slice(0, 300) : ''
+}
+
 async function installDependencies(root: string, language: AgentProjectLanguage, lockPath: string): Promise<void> {
   const manifests =
     language === 'typescript'
@@ -431,7 +440,13 @@ async function installDependencies(root: string, language: AgentProjectLanguage,
         : []),
     ].join(', then ')
     throw new Error(
-      `Could not install the agent's dependencies. In ${root}, run ${setup}, then launch Strands again.`,
+      [
+        `Could not install the agent's dependencies.`,
+        installerDiagnostic(error),
+        `In ${root}, run ${setup}, then launch Strands again.`,
+      ]
+        .filter(Boolean)
+        .join(' '),
       {
         cause: error,
       }
