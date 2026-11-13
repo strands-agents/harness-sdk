@@ -9,6 +9,8 @@ import {
   ToolUseBlock,
   CachePointBlock,
   InjectedBlock,
+  SummaryBlock,
+  OffloadedBlock,
 } from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
@@ -197,6 +199,26 @@ describe('Tracer', () => {
       expect(inputMessages).toStrictEqual([
         { role: 'user', parts: [{ type: 'text', content: 'Hello' }] },
         { role: 'assistant', parts: [{ type: 'text', content: 'Hi' }] },
+      ])
+    })
+
+    it('records an offloaded block as the text the model receives', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+
+      tracer.startAgentSpan({
+        messages: [
+          new Message({
+            role: 'user',
+            content: [new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })],
+          }),
+        ],
+        agentName: 'test-agent',
+      })
+
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      expect(JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))).toStrictEqual([
+        { role: 'user', parts: [{ type: 'text', content: '[Dropped] [ref: tu-1]' }] },
       ])
     })
 
@@ -937,6 +959,18 @@ describe('Tracer', () => {
         { type: 'text', content: 'Hi' },
         { type: 'text', content: 'cwd: /repo' },
       ])
+    })
+
+    it('maps summary blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({ role: 'assistant', content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([{ type: 'text', content: 'compacted' }])
     })
 
     it('serializes text block content in stable convention events', () => {

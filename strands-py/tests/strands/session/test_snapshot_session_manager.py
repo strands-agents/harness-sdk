@@ -47,6 +47,7 @@ from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types._snapshot import Snapshot
 from strands.types.content import ContentBlock
 from strands.types.exceptions import ContextWindowOverflowException, SnapshotException
+from strands.vended_plugins.context_injector import ContextInjector
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -2074,3 +2075,34 @@ async def test_bidi_agent_delete_session_removes_snapshots(storage):
 
     assert await storage.list(f"session/{_session_prefix('s1')}") == []
     assert _texts(_bidi_agent(SnapshotSessionManager("s1", storage=storage))) == []
+
+
+@pytest.mark.asyncio
+async def test_message_mode_saves_injected_text_with_the_next_added_message(storage):
+    saved: list[list[dict]] = []
+    original = storage.write
+
+    async def _spy(key, data, **kwargs):
+        saved.append(json.loads(data)["data"]["messages"])
+        await original(key, data, **kwargs)
+
+    storage.write = _spy  # type: ignore[method-assign]
+    agent = Agent(
+        model=_model("ok"),
+        session_manager=SnapshotSessionManager("s1", storage=storage, save_latest_on="message"),
+        agent_id="a1",
+        callback_handler=None,
+        plugins=[ContextInjector(lambda context: "cwd: /repo")],
+    )
+    saved.clear()
+
+    await agent.invoke_async("ask")
+
+    injected = {"injected": {"text": "cwd: /repo", "source": "strands:context-injector"}}
+    # Saved once when the user message was added, before the write.
+    assert [message["content"] for message in saved[0]] == [[{"text": "ask"}]]
+    # Every save from the reply on holds the text.
+    with_reply = [messages for messages in saved if len(messages) == 2]
+    assert with_reply
+    for messages in with_reply:
+        assert messages[0]["content"] == [{"text": "ask"}, injected]

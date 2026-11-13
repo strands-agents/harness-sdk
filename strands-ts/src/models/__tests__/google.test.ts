@@ -11,6 +11,8 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  OffloadedBlock,
+  UnknownBlock,
 } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import { formatMessages, mapChunkToEvents } from '../google/adapters.js'
@@ -86,6 +88,18 @@ function setupStreamTest(streamGenerator: () => AsyncGenerator<Record<string, un
 function formatBlock(block: ContentBlock, role: 'user' | 'assistant' = 'user'): ReturnType<typeof formatMessages> {
   return formatMessages([new Message({ role, content: [block] })])
 }
+
+describe('offloaded blocks', () => {
+  it('sends an offloaded block as the text the model receives, at top level and inside a tool result', () => {
+    const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+
+    expect(formatBlock(placeholder)[0]!.parts).toEqual([{ text: '[Dropped] [ref: tu-1]' }])
+    const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })
+    expect(formatBlock(toolResult)[0]!.parts![0]!.functionResponse?.response).toEqual({
+      output: [{ text: '[Dropped] [ref: tu-1]' }],
+    })
+  })
+})
 
 describe('GoogleModel', () => {
   beforeEach(() => {
@@ -828,6 +842,12 @@ describe('GoogleModel', () => {
 
         expect(contents).toHaveLength(0)
         warnSpy.mockRestore()
+      })
+
+      it('skips unknown blocks', () => {
+        const contents = formatBlock(new UnknownBlock({ futureBlock: { value: 1 } }))
+
+        expect(contents).toHaveLength(0)
       })
 
       it('formats tool use blocks as function calls', () => {

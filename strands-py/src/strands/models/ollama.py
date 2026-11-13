@@ -19,6 +19,7 @@ from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._native_output import with_schema_instructions
 from ._validation import (
     _has_location_source,
     _log_skipped_blocks,
@@ -408,8 +409,11 @@ class OllamaModel(Model):
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
         """
-        formatted_request = self.format_request(messages=prompt, system_prompt=system_prompt)
-        formatted_request["format"] = output_model.model_json_schema()
+        schema = output_model.model_json_schema()
+        formatted_request = self.format_request(
+            messages=prompt, system_prompt=with_schema_instructions(system_prompt, schema)
+        )
+        formatted_request["format"] = schema
         formatted_request["stream"] = False
 
         client = ollama.AsyncClient(self.host, **self.client_args)

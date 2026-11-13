@@ -154,7 +154,7 @@ export function makeSwarm({
       const build = builder ?? _defaultBuilder(toolContext.agent as unknown as Agent)
       let agents: Agent[]
       try {
-        agents = buildAgents(specs, build)
+        agents = await buildAgents(specs, build)
       } catch (error) {
         if (!streamer.isResuming()) throw error
         const message = error instanceof Error ? error.message : String(error)
@@ -277,16 +277,18 @@ function resolveSwarm(
  * @returns One agent per spec.
  * @throws Error if the builder fails.
  */
-function buildAgents(specs: AgentSpec[], builder: AgentBuilder): Agent[] {
-  return specs.map((spec) => {
-    const agent = builder(spec)
+async function buildAgents(specs: AgentSpec[], builder: AgentBuilder): Promise<Agent[]> {
+  const agents: Agent[] = []
+  for (const spec of specs) {
+    const agent = await builder(spec)
     for (const agentTool of agent.toolRegistry.list()) {
       if (SWARM_TOOLS.has(agentTool)) {
         agent.toolRegistry.remove(agentTool.name)
       }
     }
-    return agent
-  })
+    agents.push(agent)
+  }
+  return agents
 }
 
 /**

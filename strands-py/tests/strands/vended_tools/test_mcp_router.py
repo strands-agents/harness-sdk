@@ -289,6 +289,107 @@ class TestSessionLifecycle:
                 await tool(command="call_tool", connection_id="c1", tool_context=_tool_context(agent))
 
     @pytest.mark.asyncio
+    async def test_call_tool_for_unlisted_tool_is_rejected(self, _mcp_instance: MCPClient, _mock_session: Any) -> None:
+        _mock_session.list_tools.return_value = ListToolsResult(
+            tools=[MCPTool(name="echo", inputSchema={"type": "object", "properties": {}})]
+        )
+        tool = make_mcp_router(servers={"mcp": {"url": "https://mcp.example.com/mcp"}})
+        agent = _StubAgent()
+        with patch.object(MCPClient, "load_servers", return_value=[_mcp_instance]):
+            await tool(command="connect", server_name="mcp", connection_id="c1", tool_context=_tool_context(agent))
+            with pytest.raises(MCPRouterToolError, match="'missing' is not available on connection 'c1'"):
+                await tool(
+                    command="call_tool", connection_id="c1", tool_name="missing", tool_context=_tool_context(agent)
+                )
+
+        _mock_session.call_tool.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "tool_filters",
+        [
+            pytest.param({"rejected": ["delete_everything"]}, id="rejected"),
+            pytest.param({"allowed": ["list_items"]}, id="allowed"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_call_tool_enforces_tool_filters(
+        self, _mock_transport: Any, _mock_session: Any, tool_filters: dict[str, Any]
+    ) -> None:
+        """A tool excluded by the server config's tool_filters is neither listed nor callable."""
+        schema = {"type": "object", "properties": {}}
+        _mock_session.list_tools.return_value = ListToolsResult(
+            tools=[
+                MCPTool(name="list_items", inputSchema=schema),
+                MCPTool(name="delete_everything", inputSchema=schema),
+            ]
+        )
+        _mock_session.call_tool.return_value = MCPCallToolResult(content=[MCPTextContent(type="text", text="ok")])
+        loaded: list[MCPClient] = []
+        real_load_servers = MCPClient.load_servers
+
+        def _load(config: dict[str, Any]) -> list[MCPClient]:
+            clients = real_load_servers(config)
+            for client in clients:
+                client._transport_callable = _mock_transport
+            loaded.extend(clients)
+            return clients
+
+        tool = make_mcp_router(
+            servers={"mcp": {"url": "https://mcp.example.com/mcp", "tool_filters": tool_filters}},
+        )
+        agent = _StubAgent()
+
+        try:
+            with patch.object(MCPClient, "load_servers", side_effect=_load):
+                await tool(command="connect", server_name="mcp", connection_id="c1", tool_context=_tool_context(agent))
+                tru_tools = await tool(command="list_tools", connection_id="c1", tool_context=_tool_context(agent))
+                with pytest.raises(MCPRouterToolError, match="'delete_everything' is not available"):
+                    await tool(
+                        command="call_tool",
+                        connection_id="c1",
+                        tool_name="delete_everything",
+                        tool_context=_tool_context(agent),
+                    )
+                tru_call = await tool(
+                    command="call_tool", connection_id="c1", tool_name="list_items", tool_context=_tool_context(agent)
+                )
+        finally:
+            for client in loaded:
+                client.stop(None, None, None)
+
+        assert [spec["name"] for spec in tru_tools] == ["list_items"]
+        assert tru_call["content"][0]["text"] == "ok"
+        tru_called = [call.args[0] for call in _mock_session.call_tool.call_args_list]
+        exp_called = ["list_items"]
+        assert tru_called == exp_called
+
+    @pytest.mark.asyncio
+    async def test_call_tool_lists_only_when_name_not_yet_listed(
+        self, _mcp_instance: MCPClient, _mock_session: Any
+    ) -> None:
+        schema = {"type": "object", "properties": {}}
+        _mock_session.list_tools.return_value = ListToolsResult(tools=[MCPTool(name="echo", inputSchema=schema)])
+        _mock_session.call_tool.return_value = MCPCallToolResult(content=[])
+        tool = make_mcp_router(servers={"mcp": {"url": "https://mcp.example.com/mcp"}})
+        agent = _StubAgent()
+
+        with patch.object(MCPClient, "load_servers", return_value=[_mcp_instance]):
+            await tool(command="connect", server_name="mcp", connection_id="c1", tool_context=_tool_context(agent))
+            await tool(command="call_tool", connection_id="c1", tool_name="echo", tool_context=_tool_context(agent))
+            await tool(command="call_tool", connection_id="c1", tool_name="echo", tool_context=_tool_context(agent))
+            assert _mock_session.list_tools.call_count == 1
+
+            _mock_session.list_tools.return_value = ListToolsResult(
+                tools=[MCPTool(name="echo", inputSchema=schema), MCPTool(name="added", inputSchema=schema)]
+            )
+            await tool(command="call_tool", connection_id="c1", tool_name="added", tool_context=_tool_context(agent))
+
+        assert _mock_session.list_tools.call_count == 2
+        tru_called = [call.args[0] for call in _mock_session.call_tool.call_args_list]
+        exp_called = ["echo", "echo", "added"]
+        assert tru_called == exp_called
+
+    @pytest.mark.asyncio
     async def test_disconnect_when_stop_raises_still_evicts(self) -> None:
         """RuntimeError from stop() must not prevent connection eviction."""
         tool = make_mcp_router(servers={"mcp": {"url": "https://mcp.example.com/mcp"}})
@@ -317,6 +418,9 @@ class TestSessionLifecycle:
             captured["cancel_signal"] = kwargs.get("cancel_signal")
             return await original(*args, **kwargs)
 
+        _mock_session.list_tools.return_value = ListToolsResult(
+            tools=[MCPTool(name="slow", inputSchema={"type": "object", "properties": {}})]
+        )
         _mock_session.call_tool.return_value = MCPCallToolResult(content=[])
 
         cancel = threading.Event()

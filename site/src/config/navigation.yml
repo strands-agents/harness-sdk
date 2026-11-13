@@ -13,7 +13,7 @@
 # from it for 30 days.
 #
 # IA: the docs are organized around products (Strands harness, SDK, Shell, Box,
-# Evals SDK). Each product's basePath(s) scope the left sidebar (via
+# Evals SDK, Decider). Each product's basePath(s) scope the left sidebar (via
 # route-middleware) to just that product's pages, and every product's sidebar
 # follows the same shape: Get started -> Build guides -> Run guides ->
 # Components -> Reference. First-level bands always render open; depth>=1 subgroups
@@ -55,6 +55,10 @@ navbar:
     href: /docs/user-guide/evals-sdk/
     basePath:
       - /docs/user-guide/evals-sdk/
+  - label: Decider
+    href: /docs/labs/strands-decider/overview/
+    basePath:
+      - /docs/labs/strands-decider/
   # Fallback: any /docs/user-guide/ page not matched by a product above still
   # resolves here (shortest match, so it never overrides a product) rather than
   # getting an empty sidebar.
@@ -189,6 +193,26 @@ products:
         href: /docs/user-guide/evals-sdk/evaluators/
       - label: CLI reference
         href: /docs/user-guide/evals-sdk/cli/
+  - label: Decider
+    accent: red
+    name: Strands Decider
+    slug: "/decider"
+    href: /docs/labs/strands-decider/overview/
+    description: A small, fast decision model for agentic AI.
+    repository: https://github.com/strands-labs/strands-decider
+    languages:
+      - Python
+    pages:
+      - label: Overview
+        href: /docs/labs/strands-decider/overview/
+      - label: Quickstart
+        href: /docs/labs/strands-decider/inference/
+      - label: Images
+        href: /docs/labs/strands-decider/images/
+      - label: Architecture
+        href: /docs/labs/strands-decider/architecture/
+      - label: Model names
+        href: /docs/labs/strands-decider/model-names/
 
 sidebar:
   # Product-scoped sidebar. Each top-level group below is a product; the route
@@ -281,6 +305,8 @@ sidebar:
                 slug: docs/user-guide/sdk/agents/structured-output
               - label: "Stream responses"
                 slug: docs/user-guide/sdk/streaming
+              - label: "Stream to the browser"
+                slug: docs/user-guide/sdk/streaming/streaming-to-the-browser-guide
           - label: "Manage the context window"
             slug: docs/user-guide/sdk/context-management
           - label: "Approve before your agent acts"
@@ -389,6 +415,20 @@ sidebar:
               - docs/user-guide/sdk/model-providers/vercel
               - docs/user-guide/sdk/model-providers/writer
               - docs/user-guide/sdk/model-providers/custom_model_provider
+          - label: Decision models
+            addedDate: 2026-11-10
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/sdk/decision-models
+              - docs/user-guide/sdk/decision-models/quickstart
+              - docs/user-guide/sdk/decision-models/questions
+              - docs/user-guide/sdk/decision-models/agents
+              - docs/user-guide/sdk/decision-models/observability
+              - label: Models
+                items:
+                  - label: "Overview"
+                    slug: docs/user-guide/sdk/decision-models/models
+                  - docs/user-guide/sdk/decision-models/models/llm
           - label: Tools
             items:
               - docs/user-guide/sdk/tools/tool-results

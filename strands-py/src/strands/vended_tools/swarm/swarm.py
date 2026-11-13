@@ -26,6 +26,7 @@ from ...multiagent.spec import (
     Inherit,
     Open,
     Preset,
+    _build_agent,
     _default_builder,
     _resolve_specs,
     _to_schema_properties,
@@ -101,7 +102,7 @@ def make_swarm(
     Args:
         name: Tool name shown to the model.
         description: Tool description shown to the model.
-        builder: Callable that turns an :class:`AgentSpec` into an ``Agent``.
+        builder: Callable, sync or async, that turns an :class:`AgentSpec` into an ``Agent``.
             When ``None`` a default builder is used that creates an ``Agent``
             inheriting the caller's model with the spec's instructions and tools.
         presets: Named roles the model can select via ``agent_type``.
@@ -187,7 +188,7 @@ def make_swarm(
         child_agents = {}
         try:
             for spec in specs:
-                child = build(spec)
+                child = await _build_agent(build, spec)
                 for tool_name, child_tool in list(child.tool_registry.registry.items()):
                     if tool_name in _EXCLUDED_TOOLS or child_tool in _SWARM_TOOLS:
                         child.tool_registry.remove(tool_name)

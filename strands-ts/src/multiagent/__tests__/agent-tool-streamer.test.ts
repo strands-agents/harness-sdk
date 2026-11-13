@@ -17,7 +17,7 @@ import {
 } from '../agent-tool-streamer.js'
 import { MultiAgentResult, MultiAgentState, Status } from '../state.js'
 import { Swarm } from '../swarm.js'
-import type { StopReason } from '../../types/messages.js'
+import { Message, type StopReason } from '../../types/messages.js'
 import { SNAPSHOT_SCHEMA_VERSION } from '../../types/snapshot.js'
 
 const TURNS_KEY = 'subAgentInterruptedTurns'
@@ -72,6 +72,36 @@ function resumingParent(turn?: unknown): InterruptState {
   state.resume([new InterruptResponseContent({ interruptId: 'test:t:approval', response: 'approved' })])
   return state
 }
+
+describe('ChildAgentAdapter', () => {
+  const child = (): Agent => new Agent({ model: new MockMessageModel(), printer: false })
+
+  it.each(['contentFiltered', 'refusal'] as const)('reports %s with the partial output', (stopReason) => {
+    const result = new AgentResult({
+      stopReason,
+      lastMessage: textMessage('assistant', 'partial answer\n\n'),
+      invocationState: {},
+    })
+
+    expect(AGENT_ADAPTER.classify(child(), result)).toBe(
+      `Child stopped before finishing (stopReason=${stopReason}).\n\nPartial output:\npartial answer`
+    )
+  })
+
+  it.each(['contentFiltered', 'refusal'] as const)('reports %s without partial output', (stopReason) => {
+    const result = new AgentResult({
+      stopReason,
+      lastMessage: new Message({ role: 'assistant', content: [] }),
+      invocationState: {},
+    })
+
+    expect(AGENT_ADAPTER.classify(child(), result)).toBe(`Child stopped before finishing (stopReason=${stopReason}).`)
+  })
+
+  it.each(['endTurn', 'guardrailIntervened'] as const)('treats %s as success', (stopReason) => {
+    expect(AGENT_ADAPTER.classify(child(), agentResult(stopReason))).toBeUndefined()
+  })
+})
 
 describe('ChildMultiAgentAdapter', () => {
   it('classifies interrupts', () => {

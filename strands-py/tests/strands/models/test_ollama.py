@@ -609,6 +609,25 @@ async def test_structured_output(ollama_client, model, test_output_model_cls, al
     assert tru_result == exp_result
 
 
+@pytest.mark.asyncio
+async def test_structured_output_shows_the_schema_to_the_model(ollama_client, model, alist):
+    class Person(pydantic.BaseModel):
+        name: str = pydantic.Field(description="NAME-MARKER")
+
+    mock_response = unittest.mock.Mock()
+    mock_response.message.content = '{"name": "John"}'
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=mock_response)
+
+    await alist(model.structured_output(Person, [{"role": "user", "content": [{"text": "hi"}]}], system_prompt="SYS"))
+
+    request = ollama_client.chat.call_args.kwargs
+    exp_system = f"SYS\n\nRespond with JSON that matches this JSON schema:\n{json.dumps(Person.model_json_schema())}"
+    assert (request["messages"][0], request["format"]) == (
+        {"role": "system", "content": exp_system},
+        Person.model_json_schema(),
+    )
+
+
 def test_config_validation_warns_on_unknown_keys(ollama_client, captured_warnings):
     """Test that unknown config keys emit a warning."""
     OllamaModel("http://localhost:11434", model_id="test-model", invalid_param="test")
