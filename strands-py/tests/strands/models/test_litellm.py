@@ -1115,3 +1115,129 @@ async def test_stream_generates_tool_call_id_when_null(litellm_acompletion, mode
     start = next(e for e in events if "contentBlockStart" in e and "toolUse" in e["contentBlockStart"]["start"])
     tool_id = start["contentBlockStart"]["start"]["toolUse"]["toolUseId"]
     assert tool_id and tool_id.startswith("call_")
+
+
+# --- Signed thinking replay to Claude (issue #5202) ---
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_signed_thinking_blocks(litellm_acompletion, model, agenerator, alist):
+    """LiteLLM puts Claude's signature in delta.thinking_blocks, not delta.reasoning_content.
+
+    Streaming deltas carry the reasoning text in both fields, so the text must not be emitted twice.
+    """
+    thinking_block = {"type": "thinking", "thinking": "let me reason", "signature": "SIG=="}
+    mock_delta = unittest.mock.Mock(
+        content=None,
+        tool_calls=None,
+        reasoning_content="let me reason",
+        thinking_blocks=[thinking_block],
+    )
+    mock_stop_delta = unittest.mock.Mock(content=None, tool_calls=None, reasoning_content=None, thinking_blocks=[])
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason=None, delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=mock_stop_delta)])
+    mock_event_3 = unittest.mock.Mock(usage=None)
+
+    litellm_acompletion.side_effect = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_event_1, mock_event_2, mock_event_3])
+    )
+
+    events = await alist(model.stream([{"role": "user", "content": [{"text": "think"}]}]))
+
+    reasoning_text_events = [
+        event
+        for event in events
+        if event.get("contentBlockDelta", {}).get("delta", {}).get("reasoningContent", {}).get("text")
+    ]
+    assert reasoning_text_events == [
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "let me reason"}}}}
+    ]
+    assert {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "SIG=="}}}} in events
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_redacted_thinking_blocks(litellm_acompletion, model, agenerator, alist):
+    """A redacted thinking block surfaces as redactedContent on the reasoning block."""
+    thinking_block = {"type": "redacted_thinking", "data": "cmVkYWN0ZWQ="}
+    mock_delta = unittest.mock.Mock(
+        content=None, tool_calls=None, reasoning_content=None, thinking_blocks=[thinking_block]
+    )
+    mock_stop_delta = unittest.mock.Mock(content=None, tool_calls=None, reasoning_content=None, thinking_blocks=[])
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason=None, delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=mock_stop_delta)])
+    mock_event_3 = unittest.mock.Mock(usage=None)
+
+    litellm_acompletion.side_effect = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_event_1, mock_event_2, mock_event_3])
+    )
+
+    events = await alist(model.stream([{"role": "user", "content": [{"text": "think"}]}]))
+
+    assert {"contentBlockDelta": {"delta": {"reasoningContent": {"redactedContent": b"redacted"}}}} in events
+
+
+def test_format_request_messages_replays_signed_thinking_for_claude():
+    """A signed reasoning block from history is replayed to Claude as an Anthropic thinking block."""
+    model = LiteLLMModel(model_id="bedrock/us.anthropic.claude-opus-5-5")
+    messages = [
+        {"role": "user", "content": [{"text": "hi"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "think", "signature": "sig123"}}},
+                {"text": "answer"},
+            ],
+        },
+    ]
+
+    tru_messages = model.format_request(messages)["messages"]
+    exp_messages = [
+        {"role": "user", "content": [{"text": "hi", "type": "text"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"signature": "sig123", "thinking": "think", "type": "thinking"},
+                {"text": "answer", "type": "text"},
+            ],
+        },
+    ]
+
+    assert tru_messages == exp_messages
+
+
+def test_format_request_messages_drops_unsigned_thinking_for_claude():
+    """Claude rejects reasoning text without a signature, so unsigned blocks stay dropped."""
+    model = LiteLLMModel(model_id="bedrock/us.anthropic.claude-opus-5-5")
+    messages = [
+        {"role": "user", "content": [{"text": "hi"}]},
+        {"role": "assistant", "content": [{"reasoningContent": {"reasoningText": {"text": "think"}}}]},
+    ]
+
+    tru_messages = model.format_request(messages)["messages"]
+    exp_messages = [{"role": "user", "content": [{"text": "hi", "type": "text"}]}]
+
+    assert tru_messages == exp_messages
+
+
+def test_format_request_messages_drops_reasoning_for_non_claude():
+    """Non-Claude OpenAI-compatible backends reject thinking blocks, so reasoning stays dropped."""
+    model = LiteLLMModel(model_id="moonshot/kimi-k2")
+    messages = [
+        {"role": "user", "content": [{"text": "hi"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "think", "signature": "sig123"}}},
+                {"text": "answer"},
+            ],
+        },
+    ]
+
+    tru_messages = model.format_request(messages)["messages"]
+    exp_messages = [
+        {"role": "user", "content": [{"text": "hi", "type": "text"}]},
+        {"role": "assistant", "content": [{"text": "answer", "type": "text"}]},
+    ]
+
+    assert tru_messages == exp_messages
+
