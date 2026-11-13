@@ -37,7 +37,8 @@ const providers: readonly SystemOneProvider[] = [
   },
   {
     name: 'OpenAIDecisionModel',
-    skip: !process.env['OPENAI_API_KEY'],
+    // Its own flag: OPENAI_API_KEY is required for every integ run, so it cannot signal Decisions access.
+    skip: !process.env['OPENAI_DECISIONS_ENABLED'],
     providerName: 'openai',
     create: () => new OpenAIDecisionModel(),
   },
