@@ -172,6 +172,16 @@ class OpenAIModel(Model):
         return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @classmethod
+    def _preserves_reasoning_content(cls) -> bool:
+        """Whether reasoning blocks are handed to the formatter instead of being skipped.
+
+        The Chat Completions API has no place for a reasoning block, so this provider drops
+        them. A subclass that speaks a dialect carrying reasoning blocks overrides this to keep
+        them and formats them itself.
+        """
+        return False
+
+    @classmethod
     def format_request_message_content(cls, content: ContentBlock, **kwargs: Any) -> dict[str, Any]:
         """Format an OpenAI compatible content block.
 
@@ -422,7 +432,7 @@ class OpenAIModel(Model):
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
             for content in contents:
-                if "reasoningContent" in content:
+                if "reasoningContent" in content and not cls._preserves_reasoning_content():
                     skipped[
                         "reasoningContent is not supported in multi-turn conversations with the Chat Completions API"
                     ] += 1
