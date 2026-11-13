@@ -97,7 +97,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      # The step timeout below kills a hung run and its child processes, so record what is running just before it.
+      # The step timeout below kills a hung run and its child processes, so record what is running a minute before
+      # it: the 840 s here must stay under that step's 15 minutes.
       - name: Start hang watchdog
         if: runner.os == 'Windows'
         shell: pwsh
