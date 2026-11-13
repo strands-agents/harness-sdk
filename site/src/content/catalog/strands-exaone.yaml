@@ -1,0 +1,10 @@
+name: strands-exaone
+description: EXAONE Chat Completions model provider for Strands Agents with streaming, tool calling, and reasoning history.
+integrationType: model-provider
+languages:
+  python:
+    package: strands-exaone
+  typescript:
+    package: strands-exaone
+github: https://github.com/ykoh42/exaone-integrations
+addedDate: 2026-11-13
