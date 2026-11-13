@@ -1,36 +1,48 @@
 ---
-import arrow from '../assets/banner/arrow.svg?raw';
-import shape from '../assets/next-steps/shape.svg?raw';
-import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw';
-import { pathWithBase } from '../util/links';
+import arrow from '../assets/banner/arrow.svg?raw'
+import shape from '../assets/next-steps/shape.svg?raw'
+import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw'
+import { products } from '../config/navbar'
+import InstallCommand from './InstallCommand.astro'
 
-const ctas = [
-  { label: 'Quickstart', href: pathWithBase('/docs/user-guide/harness/quickstart/') },
-  { label: 'Migrate', href: pathWithBase('/docs/user-guide/migrate/choosing-an-agent-foundation/') },
-  { label: 'Deploy', href: pathWithBase('/docs/user-guide/sdk/deploy/operating-agents-in-production/') },
-];
+const harness = products.find((product) => product.slug === '/harness')
+const quickstart = harness?.pages?.find((page) => page.label === 'Quickstart')
+if (!harness || !quickstart) throw new Error('Missing Harness navigation targets')
 ---
 
-<section class="next-steps" aria-label="Next steps">
-  <div
-    class="next-steps__shape next-steps__shape--desktop"
-    aria-hidden="true"
-    set:html={shape}
-  />
-  <div
-    class="next-steps__shape next-steps__shape--mobile"
-    aria-hidden="true"
-    set:html={shapeMobile}
-  />
+<section class="next-steps" aria-labelledby="next-steps-title">
+  <div class="next-steps__shape next-steps__shape--desktop" aria-hidden="true" set:html={shape}></div>
+  <div class="next-steps__shape next-steps__shape--mobile" aria-hidden="true" set:html={shapeMobile}></div>
   <div class="next-steps__content">
-    <h2 class="next-steps__title">Push the boundaries of what agents can do.</h2>
+    <p class="next-steps__eyebrow">Start with Harness</p>
+    <h2 id="next-steps-title" class="next-steps__title">Build your first agent.</h2>
+    <p class="next-steps__lede">
+      Install Harness and run the quickstart. Override individual defaults with Harness SDK components to customize the
+      agent loop.
+    </p>
+    <div class="next-steps__install">
+      <span class="next-steps__install-label">Install Harness</span>
+      <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
+    </div>
     <div class="next-steps__ctas">
-      {ctas.map((cta) => (
-        <a href={cta.href} class="next-steps__cta">
-          {cta.label}
-          <span class="next-steps__cta-arrow" set:html={arrow} />
-        </a>
-      ))}
+      <a
+        href={quickstart.href}
+        class="next-steps__cta next-steps__cta--primary"
+        aria-label="Open the Harness quickstart"
+      >
+        Quickstart
+        <span class="next-steps__cta-arrow" set:html={arrow} />
+      </a>
+      <a
+        href={harness.repository}
+        class="next-steps__cta next-steps__cta--secondary"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="View Harness source on GitHub"
+      >
+        GitHub
+        <span class="next-steps__cta-arrow" set:html={arrow} />
+      </a>
     </div>
   </div>
 </section>
@@ -38,50 +50,25 @@ const ctas = [
 <style>
   .next-steps {
     position: relative;
-    background: var(--bg);
-    padding: 85px 55px;
+    min-height: 410px;
+    padding: clamp(50px, 5.5vw, 72px) var(--home-gutter) clamp(54px, 6vw, 76px);
     overflow: hidden;
-    /* Fixed section height so the shape's bottom edge aligns with the
-       footer's top edge — no black gap in between. */
-    height: 370px;
-    box-sizing: border-box;
+    background: var(--strands-black);
+    color: var(--strands-white);
   }
 
   .next-steps__shape {
     position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    pointer-events: none;
     z-index: 0;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    transform: translateX(-50%);
   }
 
-  /* The shape SVGs hardcode the brand green; retint per theme
-     (seafoam in light mode, per Figma 745:9941). Works because the SVG
-     is inlined, so attribute selectors reach its paths. */
   .next-steps__shape :global([fill='#00CC60']) {
     fill: var(--surface-green);
-  }
-
-  /* Shape stretches to viewport width. The SVG has
-     `preserveAspectRatio="none"` so its curves scale with the page rather
-     than staying at their native 1454px canvas.
-     Height is 1px taller than the section (371 vs 370) so the shape's
-     bottom sub-pixel edge overlaps into the footer, hiding the hairline
-     seam that would otherwise show between the two green fills. */
-  .next-steps__shape--desktop {
-    top: 0;
-    width: 100%;
-    height: 371px;
-  }
-
-  /* Mobile shape is a slim strip that only draws the bottom-corner curves.
-     Push it 1px below the section edge to overlap into the footer and
-     hide the sub-pixel seam that would otherwise show as a black band. */
-  .next-steps__shape--mobile {
-    display: none;
-    bottom: -1px;
-    width: 100%;
-    height: 113px;
   }
 
   .next-steps__shape :global(svg) {
@@ -90,55 +77,147 @@ const ctas = [
     height: 100%;
   }
 
+  .next-steps__shape--desktop {
+    inset-block: 0;
+  }
+
+  .next-steps__shape--mobile {
+    display: none;
+  }
+
   .next-steps__content {
     position: relative;
     z-index: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 32px;
-    max-width: 835px;
+    gap: 14px;
+    max-width: 760px;
     margin: 0 auto;
     text-align: center;
   }
 
-  .next-steps__title {
+  .next-steps__eyebrow {
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 500;
-    font-size: 48px;
-    letter-spacing: 4.8px;
-    line-height: 1.12;
-    color: var(--fg);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    line-height: 1.3;
+    text-transform: uppercase;
+    color: var(--strands-green);
+  }
+
+  .next-steps__title {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(38px, 4.2vw, 58px);
+    font-weight: 600;
+    letter-spacing: var(--home-heading-tracking);
+    line-height: 1.02;
+  }
+
+  .next-steps__lede {
+    max-width: 650px;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: var(--home-body-size);
+    line-height: 1.5;
+    color: rgb(255 255 255 / 72%);
+  }
+
+  .next-steps__install {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+
+  .next-steps__install-label {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    line-height: 1.3;
+    text-transform: uppercase;
+    color: rgb(255 255 255 / 56%);
+  }
+
+  .next-steps__install :global(.install) {
+    background: rgb(255 255 255 / 8%);
+    border-color: rgb(255 255 255 / 18%);
+  }
+
+  .next-steps__install :global(.install__cmd) {
+    color: var(--strands-white);
+  }
+
+  .next-steps__install :global(.install__prompt) {
+    color: var(--strands-green);
+  }
+
+  .next-steps__install :global(.install__copy) {
+    background: rgb(255 255 255 / 9%);
+    border-color: rgb(255 255 255 / 16%);
+    color: var(--strands-white);
+  }
+
+  .next-steps__install :global(.install__copy:hover) {
+    background: rgb(255 255 255 / 16%);
   }
 
   .next-steps__ctas {
     display: flex;
-    gap: 106px;
-    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 2px;
   }
 
   .next-steps__cta {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 12px 18px;
+    justify-content: center;
+    gap: 9px;
+    min-height: 44px;
+    padding: 10px 18px;
+    border: 1px solid rgb(255 255 255 / 40%);
+    border-radius: 999px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 500;
-    font-size: 19.25px;
-    line-height: 1.3;
-    color: var(--fg);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--strands-white);
     text-decoration: none;
+    transition:
+      transform 0.18s ease,
+      background-color 0.18s ease;
   }
 
   .next-steps__cta:hover {
-    opacity: 0.8;
+    transform: translateY(-2px);
+  }
+
+  .next-steps__cta:focus-visible {
+    outline: 2px solid var(--strands-green);
+    outline-offset: 4px;
+  }
+
+  .next-steps__cta--primary {
+    border-color: var(--strands-green);
+    background: var(--strands-green);
+    color: var(--strands-black);
+  }
+
+  .next-steps__cta--secondary {
+    background: transparent;
   }
 
   .next-steps__cta-arrow {
     display: inline-flex;
-    width: 14.66px;
-    height: 12.7px;
+    width: 12px;
+    height: 10px;
   }
 
   .next-steps__cta-arrow :global(svg) {
@@ -146,14 +225,9 @@ const ctas = [
     height: 100%;
   }
 
-  /* ---------- Narrow widths (< 1024px) ----------
-     Below ~1024px the horizontal row of CTAs starts to feel cramped, so
-     stack them vertically. Section height grows with content, and we
-     swap to the mobile corner shape (short strip at the bottom) since
-     the desktop 370px shape no longer aligns with the taller section. */
   @media (max-width: 1023px) {
     .next-steps {
-      height: auto;
+      min-height: 0;
     }
 
     .next-steps__shape--desktop {
@@ -162,46 +236,44 @@ const ctas = [
 
     .next-steps__shape--mobile {
       display: block;
-    }
-
-    .next-steps__ctas {
-      flex-direction: column;
-      gap: 12px;
-      align-items: center;
+      inset: auto 0 -1px;
+      height: 112px;
     }
   }
 
-  /* ---------- Mobile (< 768px) ---------- */
   @media (max-width: 767px) {
     .next-steps {
-      /* On mobile the section shrinks to hug its content — the desktop
-         fixed `height: 370px` is only for aligning with the tall corner
-         shape and would leave a big empty black gap here. */
-      padding: 48px 19px;
-      height: auto;
-    }
-
-    .next-steps__shape--desktop {
-      display: none;
-    }
-
-    .next-steps__shape--mobile {
-      display: block;
+      padding-block: 42px 74px;
     }
 
     .next-steps__content {
-      gap: 24px;
+      align-items: stretch;
+      gap: 12px;
+      text-align: left;
     }
 
-    .next-steps__title {
-      font-size: 28px;
-      letter-spacing: 2.8px;
+    .next-steps__install {
+      align-items: stretch;
     }
 
     .next-steps__ctas {
-      flex-direction: column;
-      gap: 12px;
-      align-items: center;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .next-steps__cta {
+      width: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .next-steps__cta {
+      transition: none;
+    }
+
+    .next-steps__cta:hover {
+      transform: none;
     }
   }
 </style>

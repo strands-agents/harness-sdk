@@ -72,7 +72,7 @@ export default defineConfig({
         { tag: 'meta', attrs: { property: 'og:image', content: `${site}/og-image.png` } },
         { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
         { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
-        { tag: 'meta', attrs: { property: 'og:image:alt', content: 'Strands Agents: build AI agents' } },
+        { tag: 'meta', attrs: { property: 'og:image:alt', content: 'Strands Agents — the open source toolkit for production agents' } },
         { tag: 'meta', attrs: { name: 'twitter:image', content: `${site}/og-image.png` } },
         // Keep preview hosts out of search, since their canonical URLs point at themselves.
         ...(site === 'https://strandsagents.com'
@@ -88,7 +88,7 @@ export default defineConfig({
         ],
       },
       title: 'Strands Agents',
-      description: 'An open source framework with a ready-to-use harness and focused tools for building production agents.',
+      description: 'The open source toolkit for building production agents.',
       sidebar: sidebar,
       tableOfContents: {
         minHeadingLevel: 2,

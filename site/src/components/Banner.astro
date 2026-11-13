@@ -1,244 +1,171 @@
 ---
-import arrow from '../assets/banner/arrow.svg?raw';
-import halftone from '../assets/banner/halftone.svg?url';
-import CodeExample from './CodeExample.astro';
-import InstallCommand from './InstallCommand.astro';
-import { homepageProductGroups } from '../config/navbar';
-import { highlightHomepageCode } from '../util/homepage-highlighter';
-import { pathWithBase } from '../util/links';
-
-const harnessProduct = homepageProductGroups.foundation.harness;
-
-const harnessExamples = await Promise.all([
-  {
-    language: 'Python',
-    syntax: 'python',
-    code: `from strands_harness import create_harness
-agent = create_harness()
-agent("Summarize this repository")`,
-  },
-  {
-    language: 'TypeScript',
-    syntax: 'typescript',
-    code: `import { createHarness } from '@strands-agents/harness'
-const agent = await createHarness()
-await agent.invoke('Summarize this repository')`,
-  },
-].map(async (example) => ({
-  ...example,
-  highlightedCode: await highlightHomepageCode(example.code, example.syntax),
-})));
+import arrow from '../assets/banner/arrow.svg?raw'
 ---
 
-<section class="banner" aria-labelledby="homepage-hero-title">
+<section class="banner" aria-labelledby="hero-title">
   <div class="banner__inner">
-    <div class="banner__halftone" aria-hidden="true">
-      <div class="banner__halftone-mask" style={`--halftone-mask: url("${halftone}")`} />
-    </div>
-    <div class="banner__gradient" aria-hidden="true" />
-
     <div class="banner__content">
-      <h1 id="homepage-hero-title" class="banner__headline">Build AI agents.</h1>
-      <p class="banner__summary">An open source framework for building production agents.</p>
+      <p class="banner__eyebrow">Open-source agent framework · Python + TypeScript</p>
 
-      <div
-        class="banner__start"
-        style={`--accent: var(--card-accent-${harnessProduct.accent});`}
-        data-example-container
-      >
-        <p class="banner__harness">{harnessProduct.slug}</p>
+      <h1 id="hero-title" class="banner__headline">
+        <span>Build agents.</span>
+        <span class="banner__headline-accent">Control of every layer.</span>
+      </h1>
 
-        <CodeExample
-          id="harness-code-example"
-          productName={harnessProduct.name}
-          panes={harnessExamples}
-          terminalLabel="TypeScript"
-          copyLabel="Copy Strands harness code example"
-          closedLabel="Code example"
-          variant="hero"
-          syncLanguage
+      <p class="banner__intro">
+        Strands is an open-source framework of composable tools for building, running, and improving AI agents in Python
+        and TypeScript.
+      </p>
+
+      <div class="banner__actions">
+        <a href="#framework" class="banner__cta banner__cta--primary">
+          Explore the framework
+          <span class="banner__arrow" set:html={arrow} />
+        </a>
+        <a
+          href="https://github.com/strands-agents"
+          class="banner__cta banner__cta--secondary"
+          target="_blank"
+          rel="noopener noreferrer"
         >
-          <div slot="lead" class="banner__install">
-            <InstallCommand
-              pip="pip install strands-harness"
-              npm="npm i @strands-agents/harness"
-              copyLabel="Copy Strands harness install command"
-            />
-          </div>
-          <a
-            slot="action"
-            href={pathWithBase('/docs/user-guide/harness/quickstart/')}
-            class="banner__action banner__action--primary"
-          >
-            Quickstart
-            <span class="banner__arrow" set:html={arrow} />
-          </a>
-        </CodeExample>
+          View on GitHub
+          <span class="banner__arrow" set:html={arrow} />
+        </a>
       </div>
     </div>
+
+    <div class="banner__dots" aria-hidden="true"></div>
   </div>
 </section>
 
 <style>
   .banner {
     width: 100%;
+    padding: 18px var(--home-gutter) 0;
     background: var(--bg);
+    color: var(--fg);
   }
 
   .banner__inner {
     position: relative;
-    max-width: 1442px;
-    margin: 0 auto;
-    overflow: hidden;
-  }
-
-  .banner__halftone {
-    position: absolute;
-    inset: 18px 34px 0;
+    isolation: isolate;
     display: flex;
-    align-items: flex-start;
-    justify-content: center;
+    align-items: center;
+    min-height: clamp(380px, 46vh, 470px);
+    max-width: var(--home-content-width);
+    margin: 0 auto;
+    padding: clamp(42px, 5vw, 64px) 0;
     overflow: hidden;
-    opacity: 0.42;
-    pointer-events: none;
-  }
-
-  .banner__halftone-mask {
-    display: block;
-    width: 1332px;
-    height: 750px;
-    flex: none;
-    background-color: var(--halftone-dot);
-    transform: rotate(180deg);
-    -webkit-mask-image: var(--halftone-mask);
-    mask-image: var(--halftone-mask);
-    -webkit-mask-repeat: no-repeat;
-    mask-repeat: no-repeat;
-    -webkit-mask-size: 100% 100%;
-    mask-size: 100% 100%;
-    mask-mode: alpha;
-  }
-
-  .banner__gradient {
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      ellipse 58% 54% at 50% 50%,
-      var(--bg) 0%,
-      var(--bg) 34%,
-      color-mix(in srgb, var(--bg) 94%, transparent) 48%,
-      color-mix(in srgb, var(--bg) 55%, transparent) 64%,
-      transparent 82%
-    );
-    pointer-events: none;
   }
 
   .banner__content {
     position: relative;
+    z-index: 1;
     display: flex;
-    width: calc(100% - 110px);
-    max-width: 840px;
-    margin: 0 auto;
-    padding: 88px 0 112px;
     flex-direction: column;
-    align-items: center;
-    text-align: center;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 1120px;
+  }
+
+  .banner__eyebrow {
+    margin: 0 0 18px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    line-height: 1.35;
+    text-transform: uppercase;
+    color: var(--home-label);
   }
 
   .banner__headline {
-    max-width: 760px;
+    display: flex;
+    flex-direction: column;
+    max-width: 1120px;
     margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: clamp(42px, 4.6vw, 64px);
-    font-weight: 600;
-    line-height: 1.06;
-    color: var(--banner-headline);
-    letter-spacing: -0.035em;
-    text-wrap: balance;
-  }
-
-  .banner__summary {
-    max-width: 820px;
-    margin: 18px 0 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: clamp(17px, 1.5vw, 20px);
-    line-height: 1.5;
+    font-size: clamp(54px, 5.8vw, 82px);
+    font-weight: 620;
+    letter-spacing: -0.064em;
+    line-height: 0.94;
     color: var(--fg);
     text-wrap: balance;
-    white-space: nowrap;
   }
 
-  .banner__harness {
-    margin: 0 0 10px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: clamp(22px, 2.1vw, 28px);
-    font-weight: 700;
-    line-height: 1.2;
-    color: var(--accent);
+  .banner__headline-accent {
+    color: var(--accent-green);
   }
 
-  .banner__start {
-    width: 100%;
-    max-width: 620px;
-    margin-top: 20px;
+  .banner__intro {
+    max-width: 720px;
+    margin: 20px 0 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(17px, 1.4vw, 20px);
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 74%, transparent);
   }
 
-  .banner__install {
-    width: fit-content;
-    max-width: 100%;
-    margin: 0 auto;
-    text-align: left;
+  .banner__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 22px;
   }
 
-  .banner__install :global(.install) {
-    width: fit-content;
-  }
-
-  .banner__install :global(.install__cmd) {
-    font-size: 14px;
-  }
-
-  .banner__action {
+  .banner__cta {
     display: inline-flex;
-    min-height: 44px;
-    padding: 10px 17px;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    color: var(--fg);
-    text-decoration: none;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1.3;
+    gap: 9px;
+    min-height: 44px;
+    padding: 10px 17px;
     border: 1px solid transparent;
     border-radius: 999px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-decoration: none;
     transition:
-      opacity 0.15s ease,
-      transform 0.15s ease;
+      transform 0.18s ease,
+      background-color 0.18s ease,
+      border-color 0.18s ease;
   }
 
-  .banner__action:hover {
-    opacity: 0.82;
-    transform: translateY(-1px);
+  .banner__cta:hover {
+    transform: translateY(-2px);
   }
 
-  .banner__action:focus-visible {
-    outline: 3px solid var(--accent-green);
-    outline-offset: 3px;
+  .banner__cta:focus-visible {
+    outline: 2px solid var(--accent-green);
+    outline-offset: 4px;
   }
 
-  .banner__action--primary {
-    flex: none;
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--bg);
+  .banner__cta--primary {
+    background: var(--strands-green);
+    color: var(--strands-black);
+  }
+
+  .banner__cta--primary:hover {
+    background: color-mix(in srgb, var(--strands-green) 84%, white);
+  }
+
+  .banner__cta--secondary {
+    background: transparent;
+    border-color: transparent;
+    color: var(--fg);
+  }
+
+  .banner__cta--secondary:hover {
+    border-color: transparent;
+    color: var(--accent-green);
   }
 
   .banner__arrow {
     display: inline-flex;
-    width: 11px;
-    height: 9px;
+    width: 12px;
+    height: 10px;
   }
 
   .banner__arrow :global(svg) {
@@ -246,78 +173,140 @@ await agent.invoke('Summarize this repository')`,
     height: 100%;
   }
 
-  @media (max-width: 767px) {
-    .banner__halftone {
-      inset: 12px 0 0;
-      opacity: 0.3;
+  .banner__dots {
+    position: absolute;
+    z-index: 0;
+    top: 50%;
+    right: clamp(-48px, -2vw, -12px);
+    width: min(31vw, 430px);
+    height: 76%;
+    background: radial-gradient(circle, var(--halftone-dot) 0 2.2px, transparent 2.7px) 0 0 / 18px 18px;
+    opacity: 0.5;
+    pointer-events: none;
+    transform: translateY(-50%);
+    -webkit-mask-image: radial-gradient(ellipse at 72% 50%, #000 0 18%, rgb(0 0 0 / 78%) 38%, transparent 76%);
+    mask-image: radial-gradient(ellipse at 72% 50%, #000 0 18%, rgb(0 0 0 / 78%) 38%, transparent 76%);
+  }
+
+  :global(:root[data-theme='dark']) .banner__dots {
+    opacity: 0.28;
+  }
+
+  @media (max-width: 980px) {
+    .banner__headline {
+      font-size: clamp(56px, 8vw, 76px);
     }
 
-    .banner__gradient {
-      background: radial-gradient(
-        ellipse 80% 54% at 50% 50%,
-        var(--bg) 0%,
-        var(--bg) 36%,
-        color-mix(in srgb, var(--bg) 94%, transparent) 52%,
-        color-mix(in srgb, var(--bg) 55%, transparent) 70%,
-        transparent 94%
-      );
+    .banner__dots {
+      right: -72px;
+      width: 34vw;
+      opacity: 0.34;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .banner {
+      padding: 14px var(--home-gutter) 0;
+    }
+
+    .banner__inner {
+      align-items: flex-start;
+      min-height: 0;
+      padding: 34px 0 32px;
     }
 
     .banner__content {
-      width: calc(100% - 38px);
-      padding: 58px 0 76px;
+      width: 100%;
+    }
+
+    .banner__eyebrow {
+      max-width: 230px;
+      margin-bottom: 16px;
+      font-size: 10px;
     }
 
     .banner__headline {
-      font-size: clamp(36px, 11vw, 48px);
-      letter-spacing: -0.045em;
+      font-size: clamp(42px, 12vw, 56px);
+      letter-spacing: -0.058em;
+      line-height: 0.94;
     }
 
-    .banner__summary {
-      margin-top: 14px;
+    .banner__intro {
+      max-width: 36rem;
+      margin-top: 18px;
       font-size: 16px;
+    }
+
+    .banner__actions {
+      display: flex;
+      margin-top: 20px;
+    }
+
+    .banner__cta {
+      width: auto;
+    }
+
+    .banner__dots {
+      top: 46px;
+      right: -48px;
+      width: 150px;
+      height: 105px;
+      background-size: 14px 14px;
+      opacity: 0.38;
+      transform: none;
+      -webkit-mask-image: radial-gradient(ellipse at 76% 24%, #000 0 18%, rgb(0 0 0 / 70%) 38%, transparent 78%);
+      mask-image: radial-gradient(ellipse at 76% 24%, #000 0 18%, rgb(0 0 0 / 70%) 38%, transparent 78%);
+    }
+
+    :global(:root[data-theme='dark']) .banner__dots {
+      opacity: 0.24;
+    }
+  }
+
+  @media (max-width: 360px) {
+    .banner__inner {
+      padding: 30px 0 28px;
+    }
+
+    .banner__eyebrow {
+      max-width: 190px;
+      margin-bottom: 14px;
+    }
+
+    .banner__headline {
+      font-size: 39px;
+    }
+
+    .banner__intro {
+      margin-top: 16px;
+      font-size: 15px;
       line-height: 1.45;
-      white-space: normal;
     }
 
-    .banner__start {
-      margin-top: 22px;
+    .banner__actions {
+      gap: 10px;
+      margin-top: 18px;
     }
 
-    .banner__install {
-      width: 100%;
-      min-width: 0;
-      margin-top: 0;
-    }
-
-    .banner__install :global(.install) {
-      width: 100%;
-      gap: 6px;
-      padding: 8px 7px 8px 11px;
-    }
-
-    .banner__install :global(.install__cmd) {
-      gap: 7px;
-      font-size: 12px;
-    }
-
-    .banner__install :global(.install__copy) {
-      padding: 6px 9px;
-      font-size: 12px;
-    }
-
-    .banner__action {
-      font-size: 13px;
+    .banner__cta {
+      padding-inline: 12px;
+      font-size: 11px;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .banner__action {
+    .banner__cta {
       transition: none;
     }
 
-    .banner__action:hover {
+    .banner__cta:hover {
       transform: none;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .banner__dots {
+      display: none;
     }
   }
 </style>

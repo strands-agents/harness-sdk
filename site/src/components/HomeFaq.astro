@@ -1,7 +1,34 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw'
-import { featuredFaqItems } from '../config/faq'
 import { pathWithBase } from '../util/links'
+
+const faqItems = [
+  {
+    question: 'What is Strands?',
+    answer:
+      'Strands is an open-source framework for building and running AI agents in Python and TypeScript. Start with Harness, then add SDK components and specialized projects as needed.',
+  },
+  {
+    question: 'Should I start with Harness or the Harness SDK?',
+    answer:
+      'Start with Harness for a complete agent with defaults for tools, context management, sessions, memory, and the system prompt. Use the Harness SDK when you want to choose and wire those components yourself.',
+  },
+  {
+    question: 'Can I customize Harness without starting over?',
+    answer:
+      'Yes. Replace individual Harness defaults with Harness SDK components as your needs grow, without rebuilding the parts that already work.',
+  },
+  {
+    question: 'How do Box, Shell, Evals, and Decider fit?',
+    answer:
+      'They are optional projects: Box isolates agent work, Shell mediates command and resource access, Evals measures agent behavior, and Decider handles routing, classification, and scoring.',
+  },
+  {
+    question: 'Where can I run a Strands agent?',
+    answer:
+      'Strands runs inside your application process. Deploy that application to serverless, containers, Kubernetes, or a managed agent runtime.',
+  },
+]
 
 const faqHref = pathWithBase('/faq/')
 ---
@@ -9,25 +36,24 @@ const faqHref = pathWithBase('/faq/')
 <section class="home-faq" aria-labelledby="home-faq-title">
   <div class="home-faq__inner">
     <header class="home-faq__header">
-      <h2 id="home-faq-title" class="home-faq__eyebrow">FAQ</h2>
-      <p class="home-faq__lede">
-        Start with five common questions about choosing, building, evaluating, and deploying an agent.
-      </p>
-      <a class="home-faq__cta cta-button" href={faqHref}>
+      <p class="home-faq__eyebrow">FAQ</p>
+      <h2 id="home-faq-title">Questions before you start.</h2>
+      <p class="home-faq__lede">The essentials about choosing, extending, and running Strands.</p>
+      <a class="home-faq__link" href={faqHref}>
         View all FAQs
-        <span class="home-faq__cta-arrow" set:html={arrow} />
+        <span aria-hidden="true" set:html={arrow} />
       </a>
     </header>
 
     <div class="home-faq__list">
       {
-        featuredFaqItems.map((faq, index) => (
+        faqItems.map((faq, index) => (
           <details class="home-faq__item" open={index === 0}>
             <summary>
               <span>{faq.question}</span>
               <span class="home-faq__toggle" aria-hidden="true" />
             </summary>
-            <p>{faq.featuredSummary}</p>
+            <p>{faq.answer}</p>
           </details>
         ))
       }
@@ -37,94 +63,100 @@ const faqHref = pathWithBase('/faq/')
 
 <style>
   .home-faq {
+    padding: var(--home-section-space-compact) var(--home-gutter);
     background: var(--bg);
-    padding: 44px 80px 56px;
+    color: var(--fg);
   }
 
   .home-faq__inner {
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(0, 3fr);
-    align-items: start;
-    gap: 48px;
-    max-width: 1282px;
+    grid-template-columns: minmax(240px, 0.72fr) minmax(0, 1.55fr);
+    max-width: var(--home-content-width);
     margin: 0 auto;
+    border-block: 1px solid var(--home-rule);
   }
 
   .home-faq__header {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    min-width: 0;
+    padding: clamp(34px, 4vw, 54px) clamp(28px, 4vw, 54px) clamp(34px, 4vw, 54px) 0;
   }
 
   .home-faq__eyebrow {
-    margin: 0;
+    margin: 0 0 18px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: clamp(42px, 4vw, 56px);
+    font-size: 11px;
     font-weight: 700;
-    letter-spacing: -2px;
-    line-height: 1;
-    color: var(--accent-green);
+    letter-spacing: 0.11em;
+    line-height: 1.3;
+    text-transform: uppercase;
+    color: var(--home-label);
+  }
+
+  .home-faq__header h2 {
+    max-width: 380px;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(34px, 3.7vw, 50px);
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    line-height: 1.02;
+    text-wrap: balance;
   }
 
   .home-faq__lede {
-    margin: 14px 0 0;
-    max-width: 19rem;
+    max-width: 31ch;
+    margin: 18px 0 0;
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 16px;
-    letter-spacing: 0.5px;
-    line-height: 1.45;
-    color: var(--fg);
+    font-size: 15px;
+    line-height: 1.5;
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
   }
 
-  .home-faq__cta {
+  .home-faq__link {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    margin-top: 24px;
-    padding: 12px 18px;
-    border: 1px solid var(--accent-green);
-    border-radius: 8px;
-    background: var(--accent-green);
+    gap: 9px;
+    min-height: 44px;
+    margin-top: 18px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 1.3;
-    color: var(--bg);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--fg);
     text-decoration: none;
-    transition:
-      background-color 0.15s ease,
-      color 0.15s ease;
   }
 
-  .home-faq__cta:hover {
-    background: transparent;
-    color: var(--accent-green);
-  }
-
-  .home-faq__cta:focus-visible {
-    outline: 2px solid var(--accent-green);
-    outline-offset: 3px;
-  }
-
-  .home-faq__cta-arrow {
+  .home-faq__link span {
     display: inline-flex;
-    width: 12px;
-    height: 11px;
+    width: 13px;
+    height: 13px;
   }
 
-  .home-faq__cta-arrow :global(svg) {
+  .home-faq__link :global(svg) {
     width: 100%;
     height: 100%;
+    transition: transform 160ms ease;
+  }
+
+  .home-faq__link:hover :global(svg),
+  .home-faq__link:focus-visible :global(svg) {
+    transform: translateX(3px);
+  }
+
+  .home-faq__link:focus-visible {
+    outline: 2px solid var(--accent-green);
+    outline-offset: 5px;
   }
 
   .home-faq__list {
     min-width: 0;
-    border-top: 1px solid var(--card-border);
+    border-left: 1px solid var(--home-rule);
   }
 
-  .home-faq__item {
-    border-bottom: 1px solid var(--card-border);
+  .home-faq__item:not(:last-child) {
+    border-bottom: 1px solid var(--home-rule);
   }
 
   .home-faq__item summary {
@@ -132,12 +164,12 @@ const faqHref = pathWithBase('/faq/')
     grid-template-columns: minmax(0, 1fr) 24px;
     gap: 24px;
     align-items: center;
-    min-height: 64px;
-    padding: 14px 0;
+    min-height: 62px;
+    padding: 14px clamp(20px, 2.5vw, 34px);
     cursor: pointer;
     list-style: none;
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 600;
     line-height: 1.35;
     color: var(--fg);
@@ -153,13 +185,14 @@ const faqHref = pathWithBase('/faq/')
 
   .home-faq__item summary:focus-visible {
     outline: 2px solid var(--accent-green);
-    outline-offset: 4px;
+    outline-offset: -2px;
   }
 
   .home-faq__toggle {
     position: relative;
     width: 18px;
     height: 18px;
+    color: currentColor;
   }
 
   .home-faq__toggle::before,
@@ -176,7 +209,7 @@ const faqHref = pathWithBase('/faq/')
 
   .home-faq__toggle::after {
     transform: translate(-50%, -50%) rotate(90deg);
-    transition: transform 0.15s ease;
+    transition: transform 160ms ease;
   }
 
   .home-faq__item[open] .home-faq__toggle::after {
@@ -184,81 +217,58 @@ const faqHref = pathWithBase('/faq/')
   }
 
   .home-faq__item p {
-    margin: -2px 48px 18px 0;
+    max-width: 65ch;
+    margin: 0;
+    padding: 0 clamp(56px, 5vw, 74px) 18px clamp(20px, 2.5vw, 34px);
     font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1.55;
-    color: var(--fg);
-  }
-
-  @media (max-width: 1023px) {
-    .home-faq {
-      padding: 40px 40px 48px;
-    }
-
-    .home-faq__inner {
-      grid-template-columns: minmax(170px, 1fr) minmax(0, 3fr);
-      gap: 32px;
-    }
-
-    .home-faq__eyebrow {
-      font-size: 40px;
-      letter-spacing: -1.5px;
-    }
-
-    .home-faq__lede {
-      font-size: 15px;
-    }
-
-    .home-faq__item summary {
-      min-height: 60px;
-      padding: 12px 0;
-      font-size: 17px;
-    }
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
   }
 
   @media (max-width: 767px) {
-    .home-faq {
-      padding: 34px 19px 48px;
-    }
-
     .home-faq__inner {
       grid-template-columns: 1fr;
-      gap: 24px;
     }
 
-    .home-faq__eyebrow {
-      font-size: 34px;
-      letter-spacing: -1px;
-      line-height: 1.05;
+    .home-faq__header {
+      padding: 32px 0 24px;
+    }
+
+    .home-faq__header h2 {
+      max-width: 340px;
+      font-size: clamp(34px, 10vw, 44px);
     }
 
     .home-faq__lede {
-      max-width: none;
-      margin-top: 12px;
-      font-size: 16px;
+      max-width: 36ch;
+      margin-top: 14px;
     }
 
-    .home-faq__cta {
-      margin-top: 20px;
-      font-size: 15px;
+    .home-faq__link {
+      margin-top: 12px;
+    }
+
+    .home-faq__list {
+      border-top: 1px solid var(--home-rule);
+      border-left: 0;
     }
 
     .home-faq__item summary {
-      min-height: 60px;
+      min-height: 58px;
       gap: 16px;
       padding: 13px 0;
       font-size: 16px;
     }
 
     .home-faq__item p {
-      margin: -1px 32px 16px 0;
+      padding: 0 32px 17px 0;
       font-size: 15px;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .home-faq__cta,
+    .home-faq__link :global(svg),
     .home-faq__toggle::after {
       transition: none;
     }

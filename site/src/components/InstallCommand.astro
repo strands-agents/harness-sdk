@@ -6,7 +6,8 @@
  * toggles broadcast (same channel as the banner/UseCases terminal). The copy
  * button writes the *visible* command, so users always copy what they see.
  *
- * The event-driven script keeps multiple instances in sync.
+ * Rendered in two places (homepage banner + site footer); the inline script is
+ * idempotent and event-driven, so multiple instances stay in sync.
  */
 import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
 
@@ -15,13 +16,8 @@ import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-p
 interface Props {
   pip?: string
   npm?: string
-  copyLabel?: string
 }
-const {
-  pip: PIP = 'pip install strands-agents',
-  npm: NPM = 'npm install @strands-agents/sdk',
-  copyLabel = 'Copy install command',
-} = Astro.props
+const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strands-agents/sdk' } = Astro.props
 ---
 
 <div class="install" data-install>
@@ -32,7 +28,7 @@ const {
       <span class="install__variant" data-install-variant="TypeScript">{NPM}</span>
     </span>
   </code>
-  <button type="button" class="install__copy" data-install-copy aria-label={copyLabel}>
+  <button type="button" class="install__copy" data-install-copy aria-label="Copy install command">
     <span class="install__copy-label" data-install-copy-label>copy</span>
   </button>
 </div>
@@ -89,7 +85,6 @@ const {
 
   .install__copy {
     flex: none;
-    margin-left: auto;
     padding: 6px 14px;
     border: 1px solid var(--toggle-inactive-border);
     border-radius: 999px;
@@ -109,6 +104,37 @@ const {
     background: var(--toggle-active-bg);
     border-color: transparent;
     color: var(--strands-black);
+  }
+
+  @media (max-width: 480px) {
+    .install {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      width: 100%;
+      padding: 12px;
+      border-radius: 18px;
+    }
+
+    .install__cmd {
+      width: 100%;
+      padding-bottom: 3px;
+      font-size: 12px;
+      scrollbar-width: thin;
+    }
+
+    .install__cmd::-webkit-scrollbar {
+      display: block;
+      height: 4px;
+    }
+
+    .install__cmd::-webkit-scrollbar-thumb {
+      background: var(--toggle-inactive-border);
+      border-radius: 999px;
+    }
+
+    .install__copy {
+      justify-self: end;
+    }
   }
 </style>
 

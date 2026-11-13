@@ -161,18 +161,8 @@ describe('structured data per page type', () => {
     }
   })
 
-  it('describes the products featured on the homepage', () => {
-    const homepageProductLabels = ['Harness', 'Harness SDK', 'Box', 'Decider', 'Evals']
-
-    expect(page('/')).toEqual([
-      ...baseSchemas(site),
-      ...homepageProductLabels.map((label) =>
-        productSchema(
-          products.find((product) => product.label === label)!,
-          site
-        )
-      ),
-    ])
+  it('describes every product with its source repository on the homepage', () => {
+    expect(page('/')).toEqual([...baseSchemas(site), ...products.map((product) => productSchema(product, site))])
   })
 
   it('ties guides to the product they document', async () => {

@@ -88,28 +88,3 @@ export const products: Product[] = rawProducts.map((p) => ({
   href: withBase(p.href),
   ...(p.pages ? { pages: p.pages.map((pg) => ({ ...pg, href: withBase(pg.href) })) } : {}),
 }))
-
-function requireProduct(label: string): Product {
-  const product = products.find((candidate) => candidate.label === label)
-  if (!product) throw new Error(`Missing configured product: ${label}`)
-  return product
-}
-
-/**
- * Products featured on the homepage, grouped by their role in the page.
- * Keep homepage product selection and ordering here so components, metadata,
- * and tests cannot drift.
- */
-export const homepageProductGroups = {
-  foundation: {
-    harness: requireProduct('Harness'),
-    sdk: requireProduct('Harness SDK'),
-  },
-  tools: [requireProduct('Box'), requireProduct('Decider'), requireProduct('Evals')],
-} as const
-
-export const homepageProducts: Product[] = [
-  homepageProductGroups.foundation.harness,
-  homepageProductGroups.foundation.sdk,
-  ...homepageProductGroups.tools,
-]
