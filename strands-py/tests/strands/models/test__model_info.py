@@ -137,6 +137,7 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
                 forced_tool_choice=False,
                 native_structured_output=True,
                 server_side_summary=True,
+                temporary_messages=True,
             ),
             limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
         )
@@ -149,7 +150,7 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
 
 
 def test_get_context_window_limit_returns_the_window_from_the_shared_data():
-    assert get_context_window_limit("mistral-large-latest") == 262_144
+    assert get_context_window_limit("mistral-large-latest") == 1_048_576
     assert get_context_window_limit("o3") == 200_000
 
 
@@ -260,6 +261,7 @@ def test_lookup_keeps_the_typed_fields_and_skips_the_rest():
             forced_tool_choice=False,
             native_structured_output=True,
             server_side_summary=True,
+            temporary_messages=True,
         ),
         limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
     )
