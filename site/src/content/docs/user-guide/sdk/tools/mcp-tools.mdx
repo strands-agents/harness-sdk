@@ -266,6 +266,16 @@ other_client = MCPClient(
 # Tools will be named: aws_docs_search_documentation, other_search, etc.
 agent = Agent(tools=[aws_docs_client, other_client])
 ```
+
+**Reconnecting Dropped Sessions**
+
+Long-running agents talking to remote servers over streamable HTTP routinely lose the session between tool calls (idle timeouts, server restarts). By default a dropped session makes every later tool call fail until the client is restarted. Set `auto_reconnect=True` to have a tool call that hits a dropped session open a fresh connection and retry once:
+
+```python
+remote_client = MCPClient(url="https://example.com/mcp", auto_reconnect=True)
+```
+
+If the server is still restarting and refuses the connection, the client retries it with exponential backoff (0.5s, 1s, 2s) before giving up on that call; the whole rebuild shares one `startup_timeout` budget, so an attempt that waits the server out is not followed by another. The retry re-sends the tool call, so a call that already reached the server may run twice. Leave this off for servers whose tools are not safe to repeat or that keep per-session state. In `load_servers` config, set `"auto_reconnect": true` on the server entry.
 </Tab>
 <Tab label="TypeScript">
 

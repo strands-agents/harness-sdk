@@ -70,11 +70,13 @@ export type {
   Role,
   StopReason,
   TextBlockData,
+  OffloadedBlockData,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
   CachePointBlockData,
   GuardContentBlockData,
+  SummaryBlockData,
   GuardContentText,
   GuardContentImage,
   GuardQualifier,
@@ -93,12 +95,15 @@ export type {
 // Message classes
 export {
   TextBlock,
+  OffloadedBlock,
   ToolUseBlock,
   ToolResultBlock,
   ReasoningBlock,
   CachePointBlock,
   GuardContentBlock,
   InjectedBlock,
+  SummaryBlock,
+  UnknownBlock,
   Message,
   JsonBlock,
   contentBlockFromData,
@@ -203,7 +208,14 @@ export {
 } from './models/streaming.js'
 
 // Model provider types
-export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type {
+  BaseModelConfig,
+  CountTokensOptions,
+  StreamOptions,
+  SummarizeOptions,
+  CacheConfig,
+} from './models/model.js'
+export type { SummarizeResult } from './models/summarize.js'
 export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 
 export { Model } from './models/model.js'
@@ -317,13 +329,9 @@ export {
 export type { ContextManagerStrategy } from './context-manager/context-manager.js'
 export type { ContextManagerConfig, ContextStrategy, ContextState, StashConfig } from './context-manager/types.js'
 export { Offload } from './context-manager/strategies/offload/index.js'
-export type {
-  OffloadTarget,
-  OffloadConditions,
-  OffloadStrategyBuilder,
-} from './context-manager/strategies/offload/index.js'
+export type { OffloadTarget, OffloadConditions, OffloadStrategy } from './context-manager/strategies/offload/index.js'
 export type { TruncateConfig } from './context-manager/methods/truncate.js'
-export type { SummarizeConfig } from './context-manager/methods/summarize.js'
+export type { SummarizeConfig } from './context-manager/strategies/offload/summarize.js'
 export type { StrategyPresetName } from './context-manager/presets.js'
 
 // Conversation Manager

@@ -18,6 +18,7 @@ export const PRODUCT_ISSUE_REPOSITORY: Record<string, string> = {
   Shell: 'shell',
   Box: 'box',
   Evals: 'evals',
+  Decider: 'strands-labs/strands-decider',
 }
 
 export function issueRepositoryForProduct(productLabel: string | undefined): string {
@@ -25,6 +26,7 @@ export function issueRepositoryForProduct(productLabel: string | undefined): str
 }
 
 export function documentationIssueHref(repository: string, pageUrl: string): string {
+  const repositoryPath = repository.includes('/') ? repository : `strands-agents/${repository}`
   const params =
     repository === DEFAULT_ISSUE_REPOSITORY
       ? new URLSearchParams({
@@ -35,7 +37,7 @@ export function documentationIssueHref(repository: string, pageUrl: string): str
           title: 'Documentation issue',
           body: `Page: ${pageUrl}\n\nDescribe what should be changed:\n`,
         })
-  return `https://github.com/strands-agents/${repository}/issues/new?${params}`
+  return `https://github.com/${repositoryPath}/issues/new?${params}`
 }
 
 export function changelogHrefForProduct(baseHref: string, sdk: Sdk | null | undefined): string {

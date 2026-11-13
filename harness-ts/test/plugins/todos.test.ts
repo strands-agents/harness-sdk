@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { BeforeModelCallEvent, InvokeModelStage } from '@strands-agents/sdk'
 import type { Agent, Plugin, ToolContext } from '@strands-agents/sdk'
 import type { InjectionContext } from '@strands-agents/sdk/vended-plugins/context-injector'
@@ -6,6 +6,7 @@ import type { InjectionContext } from '@strands-agents/sdk/vended-plugins/contex
 import type { LocalAgent } from '@strands-agents/sdk'
 
 import { createHarness } from '../../src/agent.js'
+import { resetWarnOnce } from '../../src/logging.js'
 import { Todos, type TodoItem } from '../../src/plugins/todos.js'
 
 function plugins(agent: Agent): Plugin[] {
@@ -72,8 +73,8 @@ describe('Todos', () => {
     expect(reminder).toBeUndefined()
   })
 
-  it('is enabled by default and contributes the todo_write tool', async () => {
-    const agent = await createHarness()
+  it('contributes the todo_write tool when selected', async () => {
+    const agent = await createHarness({ builtinPlugins: ['todos'] })
     const todos = plugins(agent).filter((p): p is Todos => p instanceof Todos)
     expect(todos).toHaveLength(1)
     expect(todos[0]!.getTools().map((t) => t.name)).toContain('todo_write')
@@ -84,8 +85,25 @@ describe('Todos', () => {
     expect(plugins(agent).some((p) => p instanceof Todos)).toBe(false)
   })
 
+  it('is not in the defaults', async () => {
+    const agent = await createHarness()
+    expect(plugins(agent).some((p) => p instanceof Todos)).toBe(false)
+  })
+
   it('throws on an unknown built-in plugin name', async () => {
     await expect(createHarness({ builtinPlugins: ['nope'] as never })).rejects.toThrow('Unknown built-in plugin')
+  })
+
+  it('warns once that it is moving to the SDK', () => {
+    resetWarnOnce()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    new Todos()
+    new Todos()
+
+    expect(warn.mock.calls).toHaveLength(1)
+    expect(warn.mock.calls[0]![0]).toContain('@strands-agents/sdk/vended-plugins/todos')
+    warn.mockRestore()
   })
 
   it('registers a context injector on initAgent', () => {

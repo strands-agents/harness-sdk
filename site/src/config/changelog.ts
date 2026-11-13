@@ -1,4 +1,4 @@
-export type Sdk = 'sdk' | 'harness' | 'cli' | 'evals' | 'box'
+export type Sdk = 'sdk' | 'harness' | 'cli' | 'evals' | 'box' | 'shell'
 export type Language = 'python' | 'typescript'
 
 export const LANGUAGE_META: Record<Language, { label: string; short: string }> = {
@@ -14,6 +14,7 @@ export const SDK_META: Record<Sdk, { label: string; languages: Language[] }> = {
   cli: { label: 'Harness CLI', languages: [] },
   evals: { label: 'Evals', languages: ['python'] },
   box: { label: 'Box', languages: [] },
+  shell: { label: 'Shell', languages: [] },
 }
 
 /**
@@ -26,9 +27,10 @@ export const SDK_META: Record<Sdk, { label: string; languages: Language[] }> = {
 export const PRODUCT_RELEASE_STREAM: Record<string, Sdk | null> = {
   Harness: 'harness',
   'Harness SDK': 'sdk',
-  Shell: null,
+  Shell: 'shell',
   Box: 'box',
   Evals: 'evals',
+  Decider: null,
 }
 
 /** Products released as separate per-language streams; only these carry `language`. */

@@ -8,6 +8,7 @@ import LogoFarm from '../components/LogoFarm.astro';
 import UseCases from '../components/UseCases.astro';
 import ProveCases from '../components/ProveCases.astro';
 import CommunityHub from '../components/CommunityHub.astro';
+import HomeFaq from '../components/HomeFaq.astro';
 import NextSteps from '../components/NextSteps.astro';
 import Footer from '../components/Footer.astro';
 import SiteScripts from '../components/SiteScripts.astro';
@@ -29,7 +30,7 @@ const markdownHref = `${base.replace(/\/$/, '')}/index.md`;
 const ogImageHref = new URL('og-image.png', Astro.site ?? 'https://strandsagents.com').href;
 const pageTitle = 'Strands Agents | The open source toolkit for production AI agents';
 const pageDescription =
-  'Strands is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness and SDK, sandboxed shell, evals, and research labs.';
+  'Strands is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness, policy-enforced sandboxing, and evals.';
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
 const structuredData = {
   '@context': 'https://schema.org',
@@ -95,6 +96,7 @@ const structuredData = {
       <UseCases />
       <ProveCases />
       <CommunityHub />
+      <HomeFaq />
       <NextSteps />
     </main>
     {/* NextSteps already provides the green curved transition on the homepage. */}

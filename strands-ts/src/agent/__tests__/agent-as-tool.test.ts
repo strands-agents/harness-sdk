@@ -135,6 +135,25 @@ describe('AgentAsTool', () => {
       )
     })
 
+    it.each(['contentFiltered', 'refusal'] as const)(
+      'returns an error with the partial output when the wrapped agent stops with %s',
+      async (stopReason) => {
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'partial' }, { stopReason })
+        const agent = new Agent({ model, name: 'test-agent', printer: false })
+        const tool = new AgentAsTool({ agent })
+        const context = createMockContext({ name: 'test-agent', toolUseId: 'tool-1', input: { input: 'Hello agent' } })
+
+        const { result } = await collectGenerator(tool.stream(context))
+
+        expect(result).toEqual(
+          createErrorResult(
+            `Agent 'test-agent' stopped before finishing (stopReason=${stopReason}).\n\nPartial output:\npartial`,
+            'tool-1'
+          )
+        )
+      }
+    )
+
     it('returns an error when the execution signal cancels the wrapped agent', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Agent response' })
       const agent = new Agent({ model, name: 'test-agent', printer: false })

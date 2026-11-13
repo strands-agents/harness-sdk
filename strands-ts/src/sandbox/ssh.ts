@@ -141,6 +141,12 @@ export class SshSandbox extends PosixShellSandbox {
       sshArgs.push('-o', opt)
     }
 
+    // ssh "first obtained value wins" for -o: this trails the user's sshOptions
+    // so a caller-supplied LogLevel takes precedence, while unopinionated
+    // callers get a quiet stderr (OpenSSH 10.1+ otherwise emits a post-quantum
+    // advisory warning on every connection).
+    sshArgs.push('-o', 'LogLevel=ERROR')
+
     // ssh requires the hostname and command after all flags. Furthermore, '--'
     // terminates flag parsing so the host is always treated as a positional argument.
     // Without this, a host like '-oProxyCommand=evil' would be parsed as a flag,
