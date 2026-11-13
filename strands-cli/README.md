@@ -300,6 +300,8 @@ Inside a `strands dev` chat:
 - `/test` selects saved experiments, runs the agent on their cases, and shows results and reports.
 - `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
 
+You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-tests`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. Reading cases or past results does not start a new run. Tests support one or several experiments; optimization returns proposed edits for explicit acceptance, and can be stopped or its pending proposals discarded on request.
+
 Generation, testing, and optimization call models and can incur charges. Review and approve the proposed run before it starts.
 Running jobs show progress below the chat input. Experiments, drafts, reports, and optimization records live under the workspace's `tmp/` folder.
 

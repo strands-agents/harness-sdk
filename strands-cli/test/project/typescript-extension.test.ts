@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { AgentExtensionHost } from '../../src/agent/extension.js'
+import { temporaryWorkflowSkills } from '../../src/dev/temporary-evals-fork/workflow-skills.js'
 import { temporaryCreateExperimentSkill } from '../../src/dev/temporary-evals-fork/create-experiment-skill.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
 import type { ChatEvent } from '../../src/agent/types.js'
@@ -55,7 +56,7 @@ agent.model = new LocalModel()
 const extensionHost = (calls: [string, JSONValue][]): AgentExtensionHost => ({
   extension: {
     instructions: '<strands_dev>\nWorkspace folder: /work/strands-dev\n</strands_dev>',
-    skills: [temporaryCreateExperimentSkill()],
+    skills: [temporaryCreateExperimentSkill(), ...temporaryWorkflowSkills()],
     tools: [
       {
         name: 'strands_dev_status',
@@ -132,6 +133,9 @@ describe('TypeScript agent extension', () => {
   it('shouldKeepTheDevSkillOutOfStandaloneExportsAndPlainAgentLoads', { timeout: 30_000 }, async () => {
     const dev = await open([])
     expect((await dev.skills.list()).map(({ name }) => name)).toContain('create-experiment')
+    expect((await dev.skills.list()).map(({ name }) => name)).toEqual(
+      expect.arrayContaining(temporaryWorkflowSkills().map(({ name }) => name))
+    )
     expect(text(await turn(dev, 'echo system'))).toContain('<strands_dev>')
     expect(JSON.stringify(dev.state.profile)).not.toContain('create-experiment')
     expect(JSON.stringify(dev.state.profile)).not.toContain('strands_dev')
@@ -148,11 +152,14 @@ describe('TypeScript agent extension', () => {
     const exported = await readFile(join(destination, 'agent.ts'), 'utf8')
     expect(exported).toBe(source)
     expect(exported).not.toContain('create-experiment')
+    for (const { name } of temporaryWorkflowSkills()) expect(exported).not.toContain(name)
     expect(exported).not.toContain('strands_dev')
 
     const plain = await open([], false)
     expect(text(await turn(plain, 'echo system'))).not.toContain('<strands_dev>')
     expect((await plain.skills.list()).map(({ name }) => name)).not.toContain('create-experiment')
+    for (const { name } of temporaryWorkflowSkills())
+      expect((await plain.skills.list()).map((skill) => skill.name)).not.toContain(name)
     expect(plain.info().tools?.some(({ name }) => name.startsWith('strands_dev_'))).toBe(false)
     expect(await readFile(join(root, 'agent.ts'), 'utf8')).toBe(source)
   })

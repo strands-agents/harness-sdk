@@ -1,4 +1,7 @@
 import type { JSONValue } from '@strands-agents/sdk'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { DevChatTool } from '../../../src/dev/chat-extension.js'
@@ -18,6 +21,11 @@ import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/e
 import type { TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import { generationSettings } from '../panels/fixtures.js'
 
+const CAPITAL: ExperimentSummary = {
+  name: 'capital',
+  path: '/w/strands-dev/tmp/experiments/capital.json',
+  caseCount: 1,
+}
 const REFUNDS: ExperimentSummary = {
   name: 'refunds',
   path: '/w/strands-dev/tmp/experiments/refunds.json',
@@ -131,6 +139,7 @@ const fakeSessions = () => {
     optimize: {
       ...optimize,
       reset: vi.fn(() => optimize.set({ step: 'pick' })),
+      stop: vi.fn(),
       plan: vi.fn(() => setTimeout(() => optimize.set({ step: 'setup', plan: plan() }), 0)),
       toggleKnob: vi.fn(),
       setIterations: vi.fn(),
@@ -192,16 +201,30 @@ describe('TEMPORARY dev chat part', () => {
   it('shouldOfferTheSkillAndLetOnlyTheStatusSkipThePromptWhenThePartIsBuilt', () => {
     const { part } = setup()
 
-    expect(part.skills.map(({ name }) => name)).toEqual(['create-experiment'])
+    expect(part.skills.map(({ name }) => name)).toEqual([
+      'create-experiment',
+      'manage-experiments',
+      'run-tests',
+      'optimize-harness',
+    ])
     expect(part.tools.map(({ name, readOnly }) => [name, readOnly === true])).toEqual([
       ['strands_dev_status', true],
       ['strands_dev_evaluators', false],
       ['strands_dev_create_experiment', false],
+      ['strands_dev_read_experiment', true],
+      ['strands_dev_test_results', true],
       ['strands_dev_test', false],
       ['strands_dev_optimize', false],
+      ['strands_dev_cancel_optimization', false],
+      ['strands_dev_reject_optimization', false],
       ['strands_dev_apply_optimization', false],
     ])
     expect(part.instructions).toContain('wait for the developer to agree')
+    for (const tool of part.tools) {
+      expect(tool.inputSchema).not.toHaveProperty('oneOf')
+      expect(tool.inputSchema).not.toHaveProperty('anyOf')
+      expect(tool.inputSchema).not.toHaveProperty('allOf')
+    }
   })
 
   it('shouldListTheExperimentsTheirLastTestAndTheSuggestedSettingsWhenItShowsTheStatus', async () => {
@@ -327,6 +350,130 @@ describe('TEMPORARY dev chat part', () => {
 
     await expect(tool('strands_dev_create_experiment').run(input)).rejects.toThrow(message)
     expect(sessions.experiments.createExperiment).not.toHaveBeenCalled()
+  })
+
+  it('shouldReadSavedCasesAndEvaluatorsWithoutRunningAnything', async () => {
+    const { call, experiments, sessions } = setup()
+    const folder = await mkdtemp(join(tmpdir(), 'dev-experiment-read-'))
+    try {
+      const path = join(folder, 'refunds.json')
+      await writeFile(
+        path,
+        JSON.stringify({
+          evaluators: [{ name: 'OutputEvaluator', rubric: 'Check evidence' }],
+          cases: [
+            { name: 'first', input: 'First request', expected_output: 'First answer' },
+            { name: 'second', input: 'Second request', expected_trajectory: ['lookup'] },
+          ],
+        })
+      )
+      experiments.set({ loaded: true, folder, saved: [{ ...REFUNDS, path }], generations: [] })
+      expect(await call('strands_dev_read_experiment', { experiment: 'refunds', limit: 1 })).toMatchObject({
+        total: 2,
+        nextOffset: 1,
+        evaluators: [{ name: 'OutputEvaluator', rubric: 'Check evidence' }],
+        cases: [{ name: 'first', expected_output: 'First answer' }],
+      })
+      expect(await call('strands_dev_read_experiment', { experiment: 'refunds', offset: 1 })).toMatchObject({
+        offset: 1,
+        cases: [{ name: 'second', expected_trajectory: ['lookup'] }],
+      })
+      expect(sessions.test.run).not.toHaveBeenCalled()
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
+
+  it('shouldReadSavedTestDetailsWithoutRerunning', async () => {
+    const { call, test, sessions } = setup()
+    expect(await call('strands_dev_test_results', { experiment: 'refunds' })).toMatchObject({ status: 'not_run' })
+    test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+    expect(await call('strands_dev_test_results', { experiment: 'refunds', offset: 1, limit: 1 })).toMatchObject({
+      status: 'done',
+      passed: 1,
+      total: 2,
+      cases: [
+        {
+          name: 'no-receipt',
+          passed: false,
+          actual: 'Refund approved',
+          verdicts: [{ reason: 'It skipped the receipt rule.' }],
+        },
+      ],
+    })
+    expect(sessions.test.run).not.toHaveBeenCalled()
+    expect(sessions.test.rerunFailed).not.toHaveBeenCalled()
+  })
+
+  it('shouldStartMultipleExperimentsAndRetainBothResults', async () => {
+    const { call, test, sessions, experiments } = setup()
+    experiments.set({ ...experiments.snapshot(), saved: [REFUNDS, CAPITAL] })
+    const done = call('strands_dev_test', { experiments: ['refunds', 'capital'] })
+    await vi.waitFor(() => expect(sessions.test.run).toHaveBeenCalledWith([REFUNDS, CAPITAL]))
+    test.set({
+      runs: [
+        { experiment: REFUNDS, run: { status: 'done', results: results() } },
+        { experiment: CAPITAL, run: { status: 'failed', message: 'Missing credentials' } },
+      ],
+    })
+    expect(await done).toMatchObject({
+      experiments: [{ passed: 1 }, { experiment: 'capital', status: 'failed', message: 'Missing credentials' }],
+    })
+  })
+
+  it('shouldValidateAllRequestedExperimentsBeforeStartingAny', async () => {
+    const { call, sessions } = setup()
+    await expect(call('strands_dev_test', { experiments: ['refunds', 'missing'] })).rejects.toThrow(
+      'no experiment named missing'
+    )
+    await expect(call('strands_dev_test', { experiment: 'refunds', experiments: ['capital'] })).rejects.toThrow(
+      'not both'
+    )
+    await expect(call('strands_dev_test', { experiments: [] })).rejects.toThrow('nonempty list')
+    expect(sessions.test.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldRejectAnAlreadyRunningTestInsteadOfWaitingForANonexistentRerun', async () => {
+    const { call, test, sessions } = setup()
+    test.set({
+      runs: [
+        {
+          experiment: REFUNDS,
+          run: { status: 'running', cases: 2, evaluators: [], done: 0, startedAt: 0, rerun: false },
+        },
+      ],
+    })
+    await expect(call('strands_dev_test', { experiment: 'refunds' })).rejects.toThrow('already running')
+    expect(await call('strands_dev_test_results', { experiment: 'refunds' })).toMatchObject({ status: 'running' })
+    expect(sessions.test.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldPreserveUnappliedOptimizationEditsUntilExplicitlyDiscarded', async () => {
+    const { call, optimize, sessions } = setup()
+    optimize.set({ step: 'review', review: review() })
+    await expect(call('strands_dev_optimize', { experiment: 'refunds' })).rejects.toThrow('pending optimization edits')
+    expect(sessions.optimize.reset).not.toHaveBeenCalled()
+    expect(await call('strands_dev_reject_optimization')).toMatchObject({ status: 'discarded' })
+    expect(sessions.optimize.reset).toHaveBeenCalledOnce()
+    expect(sessions.optimize.apply).not.toHaveBeenCalled()
+  })
+
+  it('shouldNotTreatANoChangeOptimizationAsPendingEdits', async () => {
+    const { call, optimize, sessions } = setup()
+    optimize.set({ step: 'review', review: { ...review(), edits: [] } })
+    const run = call('strands_dev_optimize', { experiment: 'refunds' })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalledOnce())
+    optimize.set({ step: 'review', review: { ...review(), edits: [] } })
+    expect(await run).toMatchObject({ edits: [] })
+  })
+
+  it('shouldStopOnlyAnActiveOptimizationAndNeverApplyOnStop', async () => {
+    const { call, optimize, sessions } = setup()
+    await expect(call('strands_dev_cancel_optimization')).rejects.toThrow('No optimization is running')
+    optimize.set({ step: 'running', progress: progress() })
+    expect(await call('strands_dev_cancel_optimization')).toEqual({ status: 'stopping' })
+    expect(sessions.optimize.stop).toHaveBeenCalledOnce()
+    expect(sessions.optimize.apply).not.toHaveBeenCalled()
   })
 
   it('shouldWaitForTheRunAndReportWhyEachCaseFailedWhenItTestsAnExperiment', async () => {

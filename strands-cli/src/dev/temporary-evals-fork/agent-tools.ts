@@ -14,6 +14,8 @@ import type {
   TestResults,
   TestRun,
 } from '../panels/model.js'
+import { temporaryWorkflowSkills } from './workflow-skills.js'
+import { readTemporaryExperimentFile } from './experiment-files.js'
 import { temporaryCreateExperimentSkill } from './create-experiment-skill.js'
 import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
@@ -46,8 +48,12 @@ The developer can open a panel with /experiment, /test, or /optimize, or ask you
 - strands_dev_status: the experiments, the drafts, the running jobs, and the last results. Use it first when you do not know what exists.
 - strands_dev_evaluators: the evaluators that can score this agent, with what each one checks and the settings it needs.
 - strands_dev_create_experiment: generate test cases and save them as an experiment. Use the create-experiment skill to help the developer shape a test goal naturally; keep technical defaults in the background.
-- strands_dev_test: run this agent on an experiment and report each case.
-- strands_dev_optimize: tune the instructions or the effort of this agent against an experiment, and report the proposed edits.
+- strands_dev_read_experiment: read saved cases and evaluator definitions without running anything. Use the manage-experiments skill for browsing and explaining them.
+- strands_dev_test: run this agent on one or more experiments and report each case. Use the run-tests skill for plain-language test requests.
+- strands_dev_test_results: inspect existing test results without rerunning an experiment.
+- strands_dev_optimize: tune the instructions or the effort of this agent against an experiment, and report the proposed edits. Use the optimize-harness skill for optimization requests.
+- strands_dev_cancel_optimization: stop the active optimization when the developer asks.
+- strands_dev_reject_optimization: discard pending optimization edits without applying them when the developer asks.
 - strands_dev_apply_optimization: write the edits that the developer accepts into the agent source.
 
 Each run takes minutes and calls models that cost money. Before you start one, say what will run and wait for the developer to agree. Apply optimization edits only when the developer says which edits to apply. A run continues when the turn is cancelled; its progress shows below the chat input, and /test or /optimize shows the result.`
@@ -163,6 +169,78 @@ const findExperiment = async (sessions: Sessions, name: string): Promise<Experim
       : `There is no experiment named ${name}, and no experiment is saved yet. Create one first.`
   )
 }
+
+const pageOf = <Value>(
+  items: readonly Value[],
+  input: Input
+): { offset: number; nextOffset?: number; items: readonly Value[] } => {
+  const offset = whole(input, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0
+  const limit = whole(input, 'limit', 1, 50) ?? 10
+  const next = offset + limit
+  return { offset, ...(next < items.length ? { nextOffset: next } : {}), items: items.slice(offset, next) }
+}
+
+const PAGE_PROPERTIES = {
+  offset: { type: 'integer' as const, minimum: 0, description: 'Zero-based first case. Default 0.' },
+  limit: { type: 'integer' as const, minimum: 1, maximum: 50, description: 'Cases to return. Default 10.' },
+}
+
+const readExperimentTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_read_experiment',
+  readOnly: true,
+  description:
+    'Read a saved experiment, its evaluator definitions, and a page of cases. Does not run the agent or generate cases.',
+  inputSchema: {
+    type: 'object',
+    properties: { experiment: { type: 'string' }, ...PAGE_PROPERTIES },
+    required: ['experiment'],
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const selected = await findExperiment(sessions, requiredText(input, 'experiment'))
+    const { experiment, raw } = await readTemporaryExperimentFile(selected.path)
+    const page = pageOf(raw.cases, input)
+    return reply({
+      name: experiment.name,
+      file: experiment.path,
+      total: raw.cases.length,
+      evaluators: raw.evaluators ?? [],
+      offset: page.offset,
+      nextOffset: page.nextOffset,
+      cases: page.items,
+    })
+  },
+})
+
+const testResultsTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_test_results',
+  readOnly: true,
+  description:
+    'Inspect existing progress or the last test result, including inputs, outputs, and evaluator verdicts. Does not rerun tests.',
+  inputSchema: {
+    type: 'object',
+    properties: { experiment: { type: 'string' }, ...PAGE_PROPERTIES },
+    required: ['experiment'],
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
+    const { test } = sessions()
+    await test.show()
+    const run = test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
+    if (!run) return reply({ experiment: experiment.name, status: 'not_run' })
+    if (run.status !== 'done') return reply({ experiment: experiment.name, ...runStatus(run) })
+    const page = pageOf(run.results.cases, input)
+    return reply({
+      ...runStatus(run),
+      experiment: experiment.name,
+      seconds: Math.round(run.results.seconds),
+      offset: page.offset,
+      nextOffset: page.nextOffset,
+      cases: page.items,
+    })
+  },
+})
 
 const caseReport = ({ name, passed, input, expected, actual, verdicts }: CaseResult): object =>
   passed
@@ -353,40 +431,67 @@ const createTool = (sessions: Sessions): DevChatTool => ({
   },
 })
 
+const requestedExperiments = async (sessions: Sessions, input: Input): Promise<ExperimentSummary[]> => {
+  const names = input.experiments
+  if (names !== undefined && input.experiment !== undefined)
+    throw new Error('Give experiment or experiments, not both.')
+  if (names === undefined) return [await findExperiment(sessions, requiredText(input, 'experiment'))]
+  if (!Array.isArray(names) || names.length === 0 || names.some((name) => typeof name !== 'string' || !name.trim()))
+    throw new Error('experiments must be a nonempty list of saved experiment names.')
+  const found = await Promise.all(names.map((name) => findExperiment(sessions, (name as string).trim())))
+  return [...new Map(found.map((experiment) => [experiment.path, experiment])).values()]
+}
+
 const testTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_test',
   description:
-    'Run this agent on every case of a saved experiment, score the answers, and report each case. ' +
-    'Set failedOnly to run again only the cases that failed in the last finished run. It takes minutes.',
+    'Run this agent on one or more saved experiments and report each case. ' +
+    'Set failedOnly to rerun only prior failures. Paid model calls require developer approval; use run-tests guidance.',
   inputSchema: {
     type: 'object',
     properties: {
-      experiment: { type: 'string', description: 'The name of a saved experiment.' },
+      experiment: { type: 'string', description: 'One saved experiment name; omit when using experiments.' },
+      experiments: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: 1,
+        description: 'Saved experiments to run together.',
+      },
       failedOnly: { type: 'boolean', description: 'Run only the cases that failed last time.' },
     },
-    required: ['experiment'],
     additionalProperties: false,
   },
   run: async (input): Promise<string> => {
-    const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
+    const experiments = await requestedExperiments(sessions, input)
     const { test } = sessions()
     await test.show()
-    const ofExperiment = (): TestRun | undefined =>
-      test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
-    const before = ofExperiment()
-    if (flag(input, 'failedOnly')) {
-      if (before?.status !== 'done' || before.results.cases.every((item) => item.passed))
+    const before = new Map(test.snapshot().runs.map((entry) => [entry.experiment.path, entry.run]))
+    const failedOnly = flag(input, 'failedOnly')
+    for (const experiment of experiments) {
+      const run = before.get(experiment.path)
+      if (run?.status === 'running')
+        throw new Error(`${experiment.name} is already running. Use strands_dev_test_results for progress.`)
+      if (failedOnly && (run?.status !== 'done' || run.results.cases.every((item) => item.passed)))
         throw new Error(`${experiment.name} has no failed cases from a finished run. Run the whole experiment.`)
-      test.rerunFailed(experiment.path)
-    } else {
-      test.run([experiment])
     }
-    const run = await until(test, () => {
-      const current = ofExperiment()
-      return current !== before && (current?.status === 'done' || current?.status === 'failed') ? current : undefined
-    })
-    if (run.status === 'failed') throw new Error(run.message)
-    return reply(testReport(run.results))
+    if (failedOnly) for (const experiment of experiments) test.rerunFailed(experiment.path)
+    else test.run(experiments)
+    const reports = await Promise.all(
+      experiments.map(async (experiment) => {
+        const run = await until(test, () => {
+          const current = test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
+          return current !== before.get(experiment.path) && (current?.status === 'done' || current?.status === 'failed')
+            ? current
+            : undefined
+        })
+        return run.status === 'failed'
+          ? { experiment: experiment.name, status: 'failed', message: run.message }
+          : testReport(run.results)
+      })
+    )
+    const single = reports[0]!
+    if (experiments.length === 1 && 'message' in single) throw new Error(String(single.message))
+    return reply(experiments.length === 1 ? single : { experiments: reports })
   },
 })
 
@@ -433,6 +538,14 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     if (iterations !== undefined && !TEMPORARY_ITERATION_CHOICES.includes(iterations))
       throw new Error(`iterations must be one of ${TEMPORARY_ITERATION_CHOICES.join(', ')}.`)
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
+    if (
+      current.step === 'review' &&
+      current.review.edits.some((edit) => !edit.unavailable) &&
+      !current.review.applied?.length
+    )
+      throw new Error(
+        'There are pending optimization edits. Review and apply them, or explicitly discard them with strands_dev_reject_optimization, before starting another run.'
+      )
     optimize.reset()
     optimize.plan(experiment)
     const planned = await until(optimize, (state) =>
@@ -451,6 +564,34 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     if (finished.step === 'failed') throw new Error(finished.message)
     if (finished.step !== 'review') throw new Error('The optimization stopped without a review.')
     return reply(reviewReport(finished.review))
+  },
+})
+
+const cancelOptimizationTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_cancel_optimization',
+  description: 'Stop the running optimization only when the developer asks. Does not apply source changes.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  run: async (): Promise<string> => {
+    const { optimize } = sessions()
+    if (optimize.snapshot().step !== 'running') throw new Error('No optimization is running.')
+    optimize.stop()
+    return reply({ status: 'stopping' })
+  },
+})
+
+const rejectOptimizationTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_reject_optimization',
+  description:
+    'Discard pending optimization proposals without writing source. Requires the developer to ask to discard them.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  run: async (): Promise<string> => {
+    const { optimize } = sessions()
+    const state = optimize.snapshot()
+    if (state.step !== 'review') throw new Error('There is no optimization proposal to discard.')
+    if (state.review.applied?.length)
+      throw new Error('These edits were already applied. Discarding cannot undo source changes.')
+    optimize.reset()
+    return reply({ status: 'discarded', run: state.review.run })
   },
 })
 
@@ -501,13 +642,17 @@ const once = (read: Evaluators): Evaluators => {
 
 export const temporaryDevChatPart = ({ sessions, evaluators }: TemporaryDevChatHost): DevChatPart => ({
   instructions: INSTRUCTIONS,
-  skills: [temporaryCreateExperimentSkill()],
+  skills: [temporaryCreateExperimentSkill(), ...temporaryWorkflowSkills()],
   tools: [
     statusTool(sessions),
     evaluatorsTool(once(evaluators)),
     createTool(sessions),
+    readExperimentTool(sessions),
+    testResultsTool(sessions),
     testTool(sessions),
     optimizeTool(sessions),
+    cancelOptimizationTool(sessions),
+    rejectOptimizationTool(sessions),
     applyTool(sessions),
   ],
 })
