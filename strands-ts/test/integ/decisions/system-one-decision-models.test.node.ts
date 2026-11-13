@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { DecisionsAPIDecisionModel, GeminiDecisionModel, TypeSafeDecisionModel } from '@strands-agents/sdk'
+import {
+  DecisionsAPIDecisionModel,
+  GeminiDecisionModel,
+  OpenAIDecisionModel,
+  TypeSafeDecisionModel,
+} from '@strands-agents/sdk'
 import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
 import type { DecisionModel } from '@strands-agents/sdk'
 
@@ -29,6 +34,12 @@ const providers: readonly SystemOneProvider[] = [
     skip: !process.env['GEMINI_API_KEY'],
     providerName: 'gemini',
     create: () => new GeminiDecisionModel(),
+  },
+  {
+    name: 'OpenAIDecisionModel',
+    skip: !process.env['OPENAI_API_KEY'],
+    providerName: 'openai',
+    create: () => new OpenAIDecisionModel(),
   },
   {
     name: 'SageMakerDecisionModel',
