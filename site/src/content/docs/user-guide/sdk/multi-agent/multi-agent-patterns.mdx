@@ -1,8 +1,8 @@
 ---
 title: Choose a multi-agent pattern
 description: >-
-  Decide whether you need more than one agent, then match agents-as-tools, workflow,
-  graph, or swarm to the research, analysis, and review your prompts do.
+  Choose how to coordinate agents: delegate through tools, write a workflow,
+  define a Graph, or use a Swarm. Let an agent build a Graph with the vended tool.
 tags: [multi-agent]
 sourceLinks:
   - path: strands-py/src/strands/multiagent/base.py
@@ -94,7 +94,7 @@ of three phases: **research** (gather), **analysis** (reason), and **review**
 | Pattern | How the path is decided | Research → analysis → review shape it fits |
 |---|---|---|
 | **[Agents as tools](./agents-as-tools.md)** | The orchestrator LLM picks a specialist per query. | One agent delegates a research or analysis sub-question to an expert, then folds the answer back in. |
-| **[Workflow](./workflow.md)** | Fixed in code. A task graph (DAG) runs as one reusable tool; independent tasks run in parallel. | A repeatable pipeline packaged behind a single tool call: research, analysis, and review are the same every time. |
+| **[Workflow in your code](./workflow.md)** | Your application calls agents in a defined order and passes results between them. | Research, analysis, and review always run in the same sequence. Your code handles failures and decides whether to continue. |
 | **[Graph](./graph.md)** | Developer-defined edges. Unconditional edges are always followed; a conditional edge is followed only when your predicate, which can inspect model output or app state, returns true. Fixed, parallel, and cyclic flows. | Research feeds analysis feeds review as a fixed chain, or a conditional edge loops the work back for another pass when the review's verdict is a rejection (Python and TypeScript resolve nodes with several incoming edges differently; see [Graph](./graph.md#sdk-differences)). |
 | **[Swarm](./swarm.md)** | Emergent. Agents hand off autonomously through shared context, with no fixed path. | A research, analysis, and review team that reorders itself; review can hand straight back to research. |
 
@@ -106,10 +106,10 @@ of three phases: **research** (gather), **analysis** (reason), and **review**
       other tool. Start here."
   />
   <LinkCard
-    title="Workflow"
+    title="Workflow in your code"
     href="../workflow/"
-    description="A fixed task graph (DAG) run as a single reusable tool. Removed
-      in strands-agents-tools 0.9.0."
+    description="Call agents in a defined order and pass each result to the next
+      step. Your application owns the coordination."
   />
   <LinkCard
     title="Graph"
@@ -133,25 +133,24 @@ of three phases: **research** (gather), **analysis** (reason), and **review**
 
 ### How they compare in depth
 
-Graph and Swarm are SDK orchestrators; Workflow is the `workflow` community tool.
-All three share the same foundations: they solve a problem too large for one
-agent, they use a single Strands `Agent` as the unit of work, and they pass
-information between components toward a final answer. They diverge on control.
+Graph and Swarm are SDK orchestrators. A workflow is a pattern you implement
+with ordinary application code: call an agent, use its result, and decide what
+runs next. Each approach gives a different part of your system control over
+the work.
 
-The `workflow` community tool was removed in `strands-agents-tools` 0.9.0. On
-current versions, use the [`graph` vended tool](../tools/vended-tools/graph.md)
-from `strands.vended_tools.graph` (Python SDK 1.63.0 and later), or build a
-[Graph](./graph.md) directly. See the
-[migration guide](../../migrate/strands-agents-tools.md#workflow).
+To let an agent design and execute a task graph through a tool call, give it
+the [vended `graph` tool](../tools/vended-tools/graph.md). The model supplies
+nodes and dependency edges on each call; the tool builds and runs the graph.
+Use the Graph SDK API when you want to define the nodes and edges yourself.
 
-| Dimension | Graph | Swarm | Workflow |
+| Dimension | Graph | Swarm | Workflow in your code |
 |---|---|---|---|
-| Core concept | Agents as nodes joined by developer-defined edges; optional conditions route on model output or app state. | A team that autonomously hands off tasks. | A pre-defined task graph (DAG) run as one non-conversational tool. |
-| Who defines the path | Developer defines nodes, edges, and edge conditions up front. | Developer provides a pool; agents decide. | Developer defines tasks and dependencies in code. |
-| Execution flow | Follows the edges: fixed chains, parallel branches, or conditional routes. | Sequential and autonomous. | Deterministic and parallel. |
-| Cycles | Yes. | Yes. | No. |
-| State sharing | Shared state object all nodes read and write. | Shared context and working memory. | Task outputs auto-passed to dependents. |
-| Error handling | A conditional edge can route on a result a node returns, such as a validator's verdict. Execution errors are not routed to another node. In Python, a node exception raises from the graph call and ends the run. In TypeScript, the failed node records `FAILED`, its downstream nodes do not run, and parallel branches continue. Timeouts end the run in both (see [Graph](./graph.md)). | Agents can hand off to an error specialist; handoff limits and timeouts stop runaway loops by ending the run. | A failed task's dependents never start, and the run may not finish, so don't rely on the tool to report failure. Use a Graph if you need defined failure behavior. |
+| Core concept | Agents as nodes joined by developer-defined edges; optional conditions route on model output or app state. | A team that autonomously hands off tasks. | Agent calls coordinated by your application. |
+| Who defines the path | Developer defines nodes, edges, and edge conditions up front. | Developer provides a pool; agents decide. | Your application defines which agent to call next. |
+| Execution flow | Follows the edges: fixed chains, parallel branches, or conditional routes. | Sequential and autonomous. | Follows your application logic; you schedule any parallel work. |
+| Cycles | Yes. | Yes. | Use loops in your application code. |
+| State sharing | Shared state object all nodes read and write. | Shared context and working memory. | Your code passes results between agents. |
+| Error handling | A conditional edge can route on a result a node returns, such as a validator's verdict. Execution errors are not routed to another node. In Python, a node exception raises from the graph call and ends the run. In TypeScript, the failed node records `FAILED`, its downstream nodes do not run, and parallel branches continue. Timeouts end the run in both (see [Graph](./graph.md)). | Agents can hand off to an error specialist; handoff limits and timeouts stop runaway loops by ending the run. | Your code catches errors and decides whether to retry, stop, or continue. There is no separate orchestrator status to inspect. |
 
 The sections below give one or two concrete triggers for each.
 
@@ -180,21 +179,34 @@ sources through collaborative handoffs.
 - **Software build**: a researcher hands to an architect, to a coder, to a
   reviewer. The path emerges from the work.
 
-#### Reach for a Workflow
+#### Write a workflow in your own code
 
-When you have a complex but repeatable process you want an agent to start as
-one reusable tool call. If you only need a fixed pipeline in your own code, a
-Graph with unconditional edges covers that too.
+When the steps are known and a sequence of agent calls is enough, keep the
+coordination in your application. Pass each result to the next agent and use
+your language's error handling to decide what happens if a step fails.
 
-The `workflow` tool was removed in `strands-agents-tools` 0.9.0, so on current
-versions build the same pipeline with the
-[`graph` vended tool](../tools/vended-tools/graph.md) or a [Graph](./graph.md)
-(see the [migration guide](../../migrate/strands-agents-tools.md#workflow)).
+- **Report generation**: extract facts from supplied notes, analyze them, and
+  pass the analysis to a writer.
+- **Review before continuing**: inspect an agent's result in your code and
+  decide whether to call the next agent or ask the user for input.
 
-- **Data pipeline**: a fixed set of extract, analyze, and report tasks, where
-  independent analysis steps run in parallel.
-- **Standard business process**: onboarding (create accounts, assign training,
-  send a welcome email) triggered by a single agent action.
+See [Build a sequential workflow](./workflow.md) for an example. When the flow
+needs dependencies across parallel branches or conditional edges, define a
+[Graph](./graph.md).
+
+#### Let an agent build a graph with the vended tool
+
+When the agent should break a request into sub-tasks, give it the
+[vended `graph` tool](../tools/vended-tools/graph.md). For example, it can
+create one node per document to analyze them in parallel, then connect those
+nodes to a writer that combines their results.
+
+The tool accepts an acyclic graph: nodes without dependencies can start in
+parallel, and downstream nodes receive their upstream outputs. Unlike a Graph
+you define in code, its nodes and edges come from the model's tool input.
+Configure the tool to limit the graph's size and control the models, tools,
+and instructions available to its nodes. Use the Graph SDK API for cycles or
+conditional edges.
 
 ## Grow into a supervised orchestrator
 
@@ -470,8 +482,9 @@ Start with [Agents as tools](./agents-as-tools.md), the smallest step above a
 single agent. Reach for an orchestrator once the order of work matters
 or agents must hand off among themselves: [Graph](./graph.md) for
 developer-defined edges (fixed, parallel, or conditional), [Swarm](./swarm.md) for
-autonomous handoffs, and [Workflow](./workflow.md) for a fixed task graph run
-as a reusable tool. To connect agents running as separate services, see
+autonomous handoffs, and a [workflow in your code](./workflow.md) for a sequence
+of agent calls. Give an agent the [vended `graph` tool](../tools/vended-tools/graph.md)
+when it should construct and run the task graph itself. To connect agents running as separate services, see
 [Agent-to-Agent (A2A)](./agent-to-agent.md). To add supervision (deadlines,
 cancellation, and approval gates), see
 [Interrupts in multi-agent systems](../interrupts-multi-agent.md).

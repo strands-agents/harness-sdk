@@ -24,6 +24,12 @@ A Graph gives you deterministic control over how a set of agents runs. You defin
 - **Cyclic graph support** with execution limits and state management
 - **Multi-modal input support** for handling text, images, and other content types
 
+To let an agent construct the nodes and dependency edges at runtime, give it
+the [vended `graph` tool](../tools/vended-tools/graph.md). That tool runs an
+acyclic graph supplied in the agent's tool call. Use the SDK API on this page
+when your application should define the graph, including conditional edges
+or cycles.
+
 ## How Graphs Work
 
 In a graph:
