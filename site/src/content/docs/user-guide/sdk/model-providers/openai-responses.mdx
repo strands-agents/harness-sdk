@@ -62,8 +62,8 @@ In TypeScript, both the Responses API and Chat Completions API are available thr
 </Tab>
 </Tabs>
 
-To connect to Amazon Bedrock's OpenAI-compatible Mantle endpoints, see
-[OpenAI-compatible endpoints (Mantle)](./amazon-bedrock#openai-compatible-endpoints-mantle)
+To run OpenAI models on Amazon Bedrock, see
+[OpenAI models through the OpenAI-compatible APIs](./amazon-bedrock#openai-models-through-the-openai-compatible-apis)
 on the Amazon Bedrock page.
 
 ## Configuration
@@ -74,6 +74,8 @@ on the Amazon Bedrock page.
 <Tab label="Python">
 
 The `client_args` configure the underlying OpenAI client. For a complete list of available arguments, refer to the [OpenAI Python SDK](https://github.com/openai/openai-python).
+
+To reuse a client you built yourself, such as an `openai.AsyncOpenAI` pointed at Amazon Bedrock, pass it as `client` instead of `client_args`. The model doesn't close it.
 </Tab>
 <Tab label="TypeScript">
 
@@ -291,6 +293,69 @@ response = agent("What is my name?")
 </Tabs>
 
 When using a stateful model, the agent automatically uses a null conversation manager and throws an error if a conversation manager is also supplied.
+
+## Prompt caching
+
+OpenAI caches prompt prefixes automatically server-side. Set a cache configuration to route reads on a stable `prompt_cache_key`: the configured `cache_key` (`cacheKey`), or `strands-<session id>` when the agent has a session manager.
+
+On models whose model info says they take cache points (GPT-5.6 and later, on the OpenAI API and Amazon Bedrock Mantle), the provider also places an explicit cache point (`prompt_cache_breakpoint`) at the end of each durable user message and sets `prompt_cache_options.mode` to `explicit`. Content added for a single call, such as context from a `ContextInjector`, goes after those points and after any tool outputs, so it never becomes part of a cache entry and the next request still reads the cached prefix.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.models import CacheConfig
+
+model = OpenAIResponsesModel(
+    model_id="gpt-6-sol",
+    cache_config=CacheConfig(messages_ttl="12h"),
+    client_args={"api_key": "<KEY>"},
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/openai-responses.ts:prompt_caching"
+```
+</Tab>
+</Tabs>
+
+The cache configuration maps onto the request as follows on models that take cache points:
+
+| Setting | Request field |
+|---------|---------------|
+| `messages_ttl` / `messagesTTL` set to `False` | No cache points; implicit caching only |
+| `messages_ttl` / `messagesTTL` set to `"30m"` or `"12h"` | `ttl` on each cache point |
+| `ttl` set to `"30m"` or `"12h"` | `prompt_cache_options.ttl` |
+| `ttl` set to `"in_memory"` or `"24h"` | `prompt_cache_retention` |
+
+On older models, only `ttl` values `"in_memory"` and `"24h"` apply, through `prompt_cache_retention`. Any other TTL is ignored with a warning. `tools_ttl` / `toolsTTL` and `system_prompt_ttl` / `systemPromptTTL` have no effect. Caching fields you set in `params`, such as `prompt_cache_options`, take precedence over the cache configuration.
+
+The provider decides from model info, not from the model ID. If you call a model that takes cache points through an alias the SDK does not recognize, such as a proxy or gateway name, opt in with a `model_info` (`modelInfo`) override:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo
+
+model = OpenAIResponsesModel(
+    model_id="my-proxy-alias",
+    cache_config=CacheConfig(),
+    model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/openai-responses.ts:prompt_caching_alias"
+```
+</Tab>
+</Tabs>
+
+Cache points do not change what a [stateful](#server-side-conversation-state) model stores server-side: injected content is still kept in the stored conversation.
 
 ## Advanced Features
 

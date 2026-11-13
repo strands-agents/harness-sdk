@@ -1,5 +1,6 @@
 ---
 import { Icon, Badge } from '@astrojs/starlight/components';
+import { languageCodeForLabel } from '../../util/source-links'
 
 interface Props {
   sublist: any[];
@@ -16,6 +17,11 @@ function hasCurrentChild(entries: any[]): boolean {
   );
 }
 
+
+// Top-level Python / TypeScript groups follow the header language toggle (see Sidebar.astro).
+function sidebarLang(label: string): string | undefined {
+  return languageCodeForLabel(label)
+}
 ---
 
 <ul class:list={{ "top-level": !nested }}>
@@ -36,7 +42,7 @@ function hasCurrentChild(entries: any[]): boolean {
           </a>
         ) : isTopLevel && entry.collapsed !== true ? (
           /* Top-level groups: non-collapsible section headers */
-          <div class="section-group">
+          <div class="section-group" data-sidebar-lang={sidebarLang(entry.label)}>
             <span class="section-label">
               {entry.label}
               {entry.badge && (

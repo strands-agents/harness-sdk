@@ -6,9 +6,9 @@ import pytest
 
 import strands
 from strands import Agent
-from strands._middleware import MiddlewareRegistry
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, HookRegistry
 from strands.interrupt import _InterruptState
+from strands.middleware._registry import MiddlewareRegistry
 from strands.tools.registry import ToolRegistry
 from strands.types.tools import ToolContext
 
@@ -122,6 +122,8 @@ def agent(tool_registry, hook_registry):
     mock_agent._interrupt_state = _InterruptState()
     mock_agent._cancel_signal = threading.Event()
     mock_agent._observe_cancellation = mock_agent._cancel_signal.is_set
+    mock_agent._deferred_cancel = False
+    mock_agent._cancel_message = None
     mock_agent._background_tasks = None
     mock_agent._middleware_registry = MiddlewareRegistry()
     mock_agent.trace_attributes = {}

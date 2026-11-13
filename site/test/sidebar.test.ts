@@ -199,6 +199,7 @@ describe('Sidebar Generation from navigation.yml', () => {
     expect(groups[3]?.items).toEqual([
       { label: 'Return structured output', slug: 'docs/user-guide/sdk/agents/structured-output' },
       { label: 'Stream responses', slug: 'docs/user-guide/sdk/streaming' },
+      { label: 'Stream to the browser', slug: 'docs/user-guide/sdk/streaming/streaming-to-the-browser-guide' },
     ])
 
     // Single-page guides sit alongside the groups as flat links.
@@ -207,9 +208,8 @@ describe('Sidebar Generation from navigation.yml', () => {
       .map((item) => ({ label: item.label, slug: item.slug }))
     expect(flat).toEqual([
       { label: 'Manage the context window', slug: 'docs/user-guide/sdk/context-management' },
-      { label: 'Pause for input and control', slug: 'docs/user-guide/sdk/agents/interventions/human-in-the-loop' },
+      { label: 'Approve before your agent acts', slug: 'docs/user-guide/sdk/agents/approve-before-acting' },
       { label: 'Coordinate multiple agents', slug: 'docs/user-guide/sdk/multi-agent/multi-agent-patterns' },
-      { label: 'Build a voice agent', slug: 'docs/user-guide/sdk/bidirectional-streaming/quickstart' },
     ])
   })
 })

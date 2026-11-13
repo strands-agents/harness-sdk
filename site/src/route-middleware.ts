@@ -11,6 +11,8 @@ import { pathWithBase } from './util/links'
 import { navLinks, type NavLink } from './config/navbar'
 import { isNew, NEW_BADGE } from './util/new-badge'
 import { buildIntegrationsSidebar } from './util/integrations-sidebar'
+import { buildLastModMap, getGitPrefix } from './util/git-dates'
+import { isSampleGuidePath } from './util/sample-guides'
 
 type SidebarEntry = StarlightRouteData['sidebar'][number]
 type SidebarGroup = Extract<SidebarEntry, { type: 'group' }>
@@ -52,15 +54,10 @@ export function filterSidebarByBasePath(entries: SidebarEntry[], basePath: strin
   const matchesAnyBase = (href: string) => basePaths.some((bp) => href.startsWith(bp))
   const isExternal = (href: string) => /^https?:\/\//.test(href)
 
-  // Whether this level has any base-path match (directly or in a subgroup).
-  // External links (a project repo, say) never match a docs base path; they ride
-  // along only when a sibling anchors this level, so they can't keep an unrelated
-  // group alive in every section.
-  const hasBaseMatch = (items: SidebarEntry[]): boolean =>
-    items.some((e) =>
-      e.type === 'link' ? matchesAnyBase(e.href) : e.type === 'group' ? hasBaseMatch(e.entries) : false,
-    )
-  const anchored = hasBaseMatch(entries)
+  // Whether this level has a direct base-path match. External links (a project
+  // repo, say) ride along with a sibling section landing page, but not with a
+  // match nested inside another product's subgroup.
+  const anchored = entries.some((entry) => entry.type === 'link' && matchesAnyBase(entry.href))
 
   const filtered = entries
     .map((entry) => {
@@ -153,8 +150,22 @@ async function buildTitlesByHref(): Promise<Map<string, string>> {
   return map
 }
 
+// Docs "Last updated" dates from one `git log` over the docs content, shared by
+// every page render. Starlight's `lastUpdated` option stays off: its build-time
+// git data nearly doubled peak build memory. Deploy checkouts use
+// fetch-depth: 0, so these dates are accurate in CI.
+let docsLastUpdated: { prefix: string; dates: Map<string, string> } | undefined
+
+function lastUpdatedFor(filePath: string): Date | undefined {
+  docsLastUpdated ??= { prefix: getGitPrefix(), dates: buildLastModMap('src/content/docs') }
+  const date = docsLastUpdated.dates.get(docsLastUpdated.prefix + filePath)
+  return date ? new Date(date) : undefined
+}
+
 export const onRequest = defineRouteMiddleware(async (context) => {
   const { starlightRoute } = context.locals
+  const filePath = starlightRoute.entry?.filePath
+  if (filePath) starlightRoute.lastUpdated = lastUpdatedFor(filePath)
   const { sidebar } = starlightRoute
   const currentPath = context.url.pathname
   const currentSlug = starlightRoute.id
@@ -183,6 +194,9 @@ export const onRequest = defineRouteMiddleware(async (context) => {
     starlightRoute.pagination = { prev: undefined, next: undefined }
     return
   }
+
+  // Generated sample guides supply their own language/category sidebar.
+  if (isSampleGuidePath(currentPath)) return
 
   // The /integrations/ catalog page supplies its own sidebar: a single group of
   // type filters. Keep that group intact (skipping the base-path filter that

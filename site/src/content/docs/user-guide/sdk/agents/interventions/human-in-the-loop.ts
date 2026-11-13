@@ -1,5 +1,11 @@
 // @ts-nocheck
-import { Agent, tool, InterruptResponseContent } from '@strands-agents/sdk'
+import {
+  Agent,
+  BedrockModel,
+  tool,
+  InterruptResponseContent,
+  TypeSafeDecisionModel,
+} from '@strands-agents/sdk'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
 
@@ -175,6 +181,42 @@ async function customEvaluateExample() {
 }
 
 // =====================
+// Auto Mode
+// =====================
+
+async function autoModeExample() {
+  // --8<-- [start:auto_mode]
+  // const readFile = tool({ ... })
+  // const deleteFiles = tool({ ... })
+
+  const agent = new Agent({
+    tools: [readFile, deleteFiles],
+    interventions: [new HumanInTheLoop('auto')],
+  })
+
+  await agent.invoke('Read config.json then delete /tmp/old-logs')
+  // read_file: rated safe -> runs on its own
+  // delete_files: rated risky -> pauses for approval
+  // --8<-- [end:auto_mode]
+}
+
+async function autoModeOptionsExample() {
+  // --8<-- [start:auto_mode_options]
+  const agent = new Agent({
+    tools: [readFile, deleteFiles],
+    interventions: [
+      new HumanInTheLoop('auto', {
+        ask: 'stdio', // prompt in the terminal
+        allowedTools: ['read_file'], // skips the decision entirely
+      }),
+    ],
+  })
+
+  await agent.invoke('Read config.json then delete /tmp/old-logs')
+  // --8<-- [end:auto_mode_options]
+}
+
+// =====================
 // Classifier (LLM Risk Classification)
 // =====================
 
@@ -199,6 +241,24 @@ async function classifierExample() {
   // --8<-- [end:classifier]
 }
 
+async function classifierDecisionModelExample() {
+  // --8<-- [start:classifier_decision_model]
+  const agent = new Agent({
+    tools: [readFile, deleteFiles],
+    interventions: [
+      new HumanInTheLoop({
+        allowedTools: ['read_file'],
+        // Reads the API key from TYPESAFE_API_KEY
+        classifier: { decisionModel: new TypeSafeDecisionModel() },
+      }),
+    ],
+  })
+
+  await agent.invoke('Read config.json then delete /tmp/old-logs')
+  // delete_files: decision model evaluates -> risky -> prompts human
+  // --8<-- [end:classifier_decision_model]
+}
+
 async function classifierCustomExample() {
   // --8<-- [start:classifier_custom]
   // Custom system prompt and model
@@ -208,6 +268,9 @@ async function classifierCustomExample() {
       new HumanInTheLoop({
         classifier: {
           systemPrompt: 'Only flag destructive operations.',
+          model: new BedrockModel({
+            modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+          }),
         },
       }),
     ],
@@ -238,6 +301,7 @@ void allowedToolsExample
 void trustModeExample
 void customEvaluateExample
 void classifierExample
+void classifierDecisionModelExample
 void classifierCustomExample
 
 declare function askUserViaSlack(prompt: string): Promise<string>

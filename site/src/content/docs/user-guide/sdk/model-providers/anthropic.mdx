@@ -48,9 +48,6 @@ model = AnthropicModel(
     # **model_config
     max_tokens=1028,
     model_id="claude-sonnet-5",
-    params={
-        "temperature": 0.7,
-    }
 )
 
 agent = Agent(model=model, tools=[notebook])
@@ -129,6 +126,72 @@ If you encounter import errors for `@anthropic-ai/sdk`, ensure the package is in
 </Tab>
 </Tabs>
 
+### Anthropic SDK 1.x and 2.x
+
+<Tabs>
+<Tab label="Python">
+
+`strands-agents[anthropic]` installs any `anthropic` release from 0.21 up to, but not including, 3.0. The 1.0 and 2.0 releases changed behavior that reaches `AnthropicModel`:
+
+- **Sampling parameters.** `temperature`, `top_p`, and `top_k` in `params` are sent in the request body, so they keep working on every SDK version. API version `2026-10-21`, the default on `anthropic` 2.x, rejects them, and the provider raises a `ValueError` before sending the request. Remove them, or pin the API version with `client_args={"default_headers": {"anthropic-version": "2023-06-01"}}`. On a client passed as `client=`, set the same `default_headers`. For Claude on Amazon Bedrock InvokeModel, see [Claude through the Anthropic Messages API](./amazon-bedrock#claude-through-the-anthropic-messages-api). The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
+- **Documents in assistant messages.** API version `2026-10-21` rejects a `document` block placed directly in an assistant message, so the provider drops those blocks and logs a warning. Put documents in user messages; a document nested inside a tool result is unaffected.
+- **`http_client`.** From 1.0 the SDK is built on `httpx2`, so a custom `http_client` passed through `client_args` must be an `httpx2.AsyncClient`, not an `httpx.AsyncClient`.
+- **Authentication.** From 2.0 the API key is sent as `Authorization: Bearer`, which matters behind a proxy that reads `X-Api-Key`. A client also holds one credential, so pass either `api_key` or `auth_token` in `client_args`, not both.
+</Tab>
+<Tab label="TypeScript">
+
+`@strands-agents/sdk` works with any `@anthropic-ai/sdk` release from 0.109.1 up to, but not including, 2.0. In TypeScript the new API version arrives with the SDK's 1.0 release (in Python it's 2.0): `@anthropic-ai/sdk` 1.x sends `2026-10-21` by default ([migration guide](https://platform.claude.com/docs/en/api/migration-2026-10-21)), which changes behavior that reaches `AnthropicModel`:
+
+- **Sampling parameters.** API version `2026-10-21` rejects `temperature`, `top_p`, and `top_k`, so when one is set (`temperature`, `topP`, or in `params`) the provider throws before sending the request. Remove them, or pin the API version with `clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } }` or `ANTHROPIC_CUSTOM_HEADERS='anthropic-version: 2023-06-01'`. The pin only helps on models that still honor sampling parameters (Claude 4.6 and earlier); Claude 4.7 and later accept only the defaults.
+- **Documents in assistant messages.** API version `2026-10-21` rejects a `document` block placed directly in an assistant message, so the provider drops those blocks and logs a warning. Put documents in user messages.
+- **Injected clients.** With a `client` you pass in, the provider doesn't know which API version it sends, so neither check above runs and the API's own error surfaces instead.
+- **Authentication.** From 1.0 the API key is sent as `Authorization: Bearer`, which matters behind a proxy that reads `X-Api-Key`. A client also holds one credential, so pass either `apiKey` or `authToken` in `clientConfig`, not both.
+</Tab>
+</Tabs>
+
+### Thinking block is bound to a different conversation
+
+When the Anthropic API rejects a request with this 400 error:
+
+> The block is bound to a different conversation.
+
+The provider retries the request once and logs this warning:
+
+```
+model_id=<...> | history edit invalidated replayed thinking blocks, retrying with drop_block
+```
+
+Claude models that preserve thinking bind each thinking block to the conversation that
+came before it. Summarizing or removing messages with
+[context management](../context-management/) or a conversation manager, restoring a
+session, or editing messages from a hook changes that earlier conversation, so the
+thinking blocks that remain in the history no longer match it. Accounts that enforce this binding, the
+default for accounts created on or after August 31, 2026, reject the next request.
+
+The retry sets `prefix_mismatch_behavior` to `drop_block` in the `thinking.block_binding`
+request field, with `"type": "adaptive"` when no thinking is configured, and adds the
+`thinking-binding-controls-2026-08-01` beta to the `anthropic-beta` header. Claude then
+skips the stale thinking blocks instead of rejecting the request. The stale blocks stay
+in the history, so the provider keeps sending `drop_block` for that model ID until the
+model instance is discarded. Requests before the first rejection are sent unchanged.
+
+- **Your `block_binding` wins.** If the thinking configuration already contains
+  `block_binding`, the provider sends it as written and does not retry. Set it yourself
+  to choose the behavior up front or to keep the error.
+- **Existing betas are kept.** The beta is added to the betas the model already sends,
+  from <Syntax py="extra_headers" ts="betas" /> or, when that is not set, from the
+  `anthropic-beta` default header of the client. A pre-configured client does not expose
+  its default headers, so set its betas with <Syntax py="extra_headers" ts="betas" />.
+- **Dropping has a cost.** Claude loses the reasoning in the dropped blocks, the prompt
+  cache restarts at the edited message, and responses can use more output tokens.
+- **Some models require adaptive thinking.** Claude Sonnet 5.5 and Claude Haiku 5.5
+  accept `drop_block` only with `"type": "adaptive"`. With any other thinking type, the
+  retry fails and its error is raised.
+
+A message-level summary from [context management](../context-management/) avoids this
+error when it runs server-side. See [Server-side summarization](#server-side-summarization)
+for when it does.
+
 ## Advanced Features
 
 ### Custom Client
@@ -138,7 +201,25 @@ You can pass a pre-configured Anthropic client directly to `AnthropicModel`. You
 <Tabs>
 <Tab label="Python">
 
-The Python SDK does not currently support passing a pre-configured client. Use `client_args` to configure the client at initialization.
+Use this for clients `client_args` can't build, such as Claude on Amazon Bedrock:
+
+```python
+import anthropic
+from strands import Agent
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    max_tokens=4096,
+    client=anthropic.AsyncAnthropicBedrock(aws_region="us-west-2"),
+)
+
+agent = Agent(model=model)
+response = agent("What is 2+2?")
+print(response)
+```
+
+For the `bedrock-mantle` client and the differences from the Anthropic API, see [Claude through the Anthropic Messages API](./amazon-bedrock#claude-through-the-anthropic-messages-api) on the Amazon Bedrock page.
 </Tab>
 <Tab label="TypeScript">
 
@@ -306,7 +387,9 @@ Cache activity is reported in the usage metrics, in the same fields Bedrock uses
 
 `cache_config` caches the system prompt and the conversation; set `system_prompt_ttl=False`
 to leave the system prompt uncached, or a TTL string (`system_prompt_ttl="1h"`) to give it its
-own duration. Add `tools_ttl` to the same `cache_config` to cache the tool definitions as well:
+own duration. `messages_ttl` works the same way for the conversation: `False` leaves it uncached,
+and a TTL string gives it its own duration. Add `tools_ttl` to the same `cache_config` to cache
+the tool definitions as well:
 a TTL string sets the duration, `True` uses the provider default. The model-level `cache_tools`
 parameter (and `CacheToolsConfig`) is deprecated in favor of `tools_ttl`; it still works, and
 unlike `tools_ttl` it caches the tool definitions on its own, without a `cache_config`. Passing
@@ -349,6 +432,66 @@ A prompt below the model's minimum cacheable length is not cached: if both cache
 stay at zero, that is the likely cause. See
 [cache limitations](https://docs.claude.com/en/docs/build-with-claude/prompt-caching#cache-limitations)
 for per-model thresholds.
+
+### Server-side summarization
+
+The provider supports <Syntax py="server_side_summary" ts="serverSideSummary" /> for
+Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5, Claude Fable 5.1, Claude Fable 5.2,
+and Claude Mythos 5.2. For these models, a message-level summary from
+[context management](../context-management/) goes through Anthropic's compaction API
+instead of a client-side summarization request. The summary replaces the start of the
+conversation with a single compaction block, so the thinking blocks after it stay valid
+and the error in
+[Thinking block is bound to a different conversation](#thinking-block-is-bound-to-a-different-conversation)
+does not occur.
+
+The provider adds the `compact-2026-09-04` beta to the compaction request and to every
+later request that carries the compaction block. Those requests send the conversation
+from the last compaction block onward.
+
+To keep thinking blocks, pair an eager per-block strategy for tool results with a message-level summary:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.experimental.context_manager import Offload
+from strands.models.anthropic import AnthropicModel
+
+model = AnthropicModel(
+    model_id="claude-opus-5-5",
+    max_tokens=16000,
+    params={"thinking": {"type": "adaptive"}},
+)
+
+agent = Agent(
+    model=model,
+    context_manager={
+        "strategies": [
+            Offload.summarize("tool_results").when(threshold=2000),
+            Offload.summarize("*").when(utilization=0.85, preserve_recent=4),
+        ],
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/anthropic_imports.ts:server_side_summary_imports"
+
+--8<-- "user-guide/sdk/model-providers/anthropic.ts:server_side_summary"
+```
+</Tab>
+</Tabs>
+
+The summarizing model, <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default,
+must also support server-side summary. Otherwise the summary runs client-side and drops
+thinking. A pinned message inside the summarized range also sends the summary
+client-side. See
+[Models that preserve thinking](../context-management/custom-strategies#models-that-preserve-thinking)
+for which strategies keep thinking.
 
 ### Token Counting
 

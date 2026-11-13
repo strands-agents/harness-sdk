@@ -1,8 +1,31 @@
 import type { SearchStrategy } from './search/types.js'
 import type { Storage, StorageSearchResult } from './storage.js'
 
-import { EPHEMERAL, namespace, normalizeKey, normalizePrefix } from './storage.js'
+import { EPHEMERAL, NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
+
+/**
+ * Configuration for {@link InMemoryStorage}.
+ */
+export interface InMemoryStorageConfig {
+  /**
+   * Search strategy. When set, `write()` indexes entries and `search()` delegates to the strategy
+   * instead of the default keyword scan.
+   */
+  searchStrategy?: SearchStrategy<InMemoryStorage>
+}
+
+/**
+ * Tells a search strategy passed positionally apart from an {@link InMemoryStorageConfig}.
+ *
+ * @param value - The constructor's argument
+ * @returns True if `value` is a search strategy
+ */
+function isSearchStrategy(
+  value: SearchStrategy<InMemoryStorage> | InMemoryStorageConfig | undefined
+): value is SearchStrategy<InMemoryStorage> {
+  return typeof (value as SearchStrategy<InMemoryStorage> | undefined)?.search === 'function'
+}
 
 /**
  * In-memory {@link Storage} backend backed by a `Map`.
@@ -27,15 +50,22 @@ import { KeywordSearchStrategy } from './search/keyword.js'
  */
 export class InMemoryStorage implements Storage {
   readonly [EPHEMERAL] = true as const
-  private readonly _store = new Map<string, Uint8Array>()
+  // Shared with every instance returned by namespace(); each instance only sees keys under its _prefix.
+  private _store = new Map<string, Uint8Array>()
+  private _prefix = ''
   private readonly _searchStrategy: SearchStrategy<InMemoryStorage> | undefined
 
+  /**
+   * @param config - Optional search strategy. See {@link InMemoryStorageConfig}.
+   */
+  constructor(config?: InMemoryStorageConfig)
   /**
    * @param searchStrategy - Optional search strategy. When set, `write()` indexes entries
    *   and `search()` delegates to the strategy instead of the default keyword scan.
    */
-  constructor(searchStrategy?: SearchStrategy<InMemoryStorage>) {
-    this._searchStrategy = searchStrategy
+  constructor(searchStrategy?: SearchStrategy<InMemoryStorage>)
+  constructor(strategyOrConfig?: SearchStrategy<InMemoryStorage> | InMemoryStorageConfig) {
+    this._searchStrategy = isSearchStrategy(strategyOrConfig) ? strategyOrConfig : strategyOrConfig?.searchStrategy
   }
 
   /**
@@ -48,7 +78,7 @@ export class InMemoryStorage implements Storage {
    */
   async write(key: string, data: Uint8Array): Promise<void> {
     const normalized = normalizeKey(key)
-    this._store.set(normalized, data.slice())
+    this._store.set(`${this._prefix}${normalized}`, data.slice())
     if (this._searchStrategy) {
       await this._searchStrategy.index?.(this, normalized, data)
     }
@@ -63,7 +93,7 @@ export class InMemoryStorage implements Storage {
    * @throws {@link StorageError} if the key is empty or contains `..` segments
    */
   async read(key: string): Promise<Uint8Array | null> {
-    const value = this._store.get(normalizeKey(key))
+    const value = this._store.get(`${this._prefix}${normalizeKey(key)}`)
     if (value === undefined) return null
     return value.slice()
   }
@@ -75,7 +105,7 @@ export class InMemoryStorage implements Storage {
    * @throws {@link StorageError} if the key is empty or contains `..` segments
    */
   async delete(key: string): Promise<void> {
-    this._store.delete(normalizeKey(key))
+    this._store.delete(`${this._prefix}${normalizeKey(key)}`)
   }
 
   /**
@@ -86,17 +116,37 @@ export class InMemoryStorage implements Storage {
    * @throws {@link StorageError} if the prefix contains `..` segments
    */
   async list(prefix: string): Promise<string[]> {
-    const normalized = normalizePrefix(prefix)
+    const fullPrefix = `${this._prefix}${normalizePrefix(prefix)}`
     const keys: string[] = []
     for (const key of this._store.keys()) {
-      if (key.startsWith(normalized)) keys.push(key)
+      if (key.startsWith(fullPrefix)) keys.push(key.slice(this._prefix.length))
     }
     return keys.sort()
   }
 
-  /** Returns a prefixed view of this storage without mutating the original. */
-  namespace(prefix: string): Storage {
-    return namespace(this, prefix)
+  /**
+   * Returns an `InMemoryStorage` scoped to `prefix`, sharing this instance's entries and search
+   * strategy. The original storage is not mutated.
+   *
+   * Unlike a generic prefixed view, the scoped instance's `search()` only sees entries under the
+   * prefix and scores keys without it, so a query never matches every entry just because it
+   * contains a word from the prefix.
+   *
+   * The shared search strategy receives the scoped instance and keys relative to the prefix.
+   * A strategy that keeps its own index must not key it by those relative keys alone; see
+   * {@link SearchStrategy.index}.
+   *
+   * @param prefix - Prefix to prepend to all keys
+   * @returns An `InMemoryStorage` scoped to the prefix
+   */
+  namespace(prefix: string): InMemoryStorage {
+    const normalized = normalizePrefix(prefix).replace(/\/$/, '')
+    // Copy this instance rather than constructing a new one, so a subclass's overrides and
+    // fields carry over to the scoped instance. The copy shares the store and search strategy.
+    const scoped: InMemoryStorage = Object.assign(Object.create(Object.getPrototypeOf(this)), this)
+    scoped._prefix = normalized ? `${this._prefix}${normalized}/` : this._prefix
+    Object.defineProperty(scoped, NAMESPACED, { value: true })
+    return scoped
   }
 
   /**
@@ -113,9 +163,16 @@ export class InMemoryStorage implements Storage {
   }
 
   /**
-   * Removes all stored entries. Useful for resetting state between tests.
+   * Removes all stored entries visible to this instance (those under its namespace, or every
+   * entry when not namespaced). Useful for resetting state between tests.
    */
   clear(): void {
-    this._store.clear()
+    if (!this._prefix) {
+      this._store.clear()
+      return
+    }
+    for (const key of [...this._store.keys()]) {
+      if (key.startsWith(this._prefix)) this._store.delete(key)
+    }
   }
 }

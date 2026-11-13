@@ -7,7 +7,6 @@ date: 2026-08-27
 releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.54.0
 packageUrl: https://pypi.org/project/strands-agents/1.54.0/
 entries:
-  - { type: other, breaking: false, scope: null, areas: [community], title: "refresh dependencies and isolate test results", pr: 3900, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3900", commit: "4ba5106", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/4ba5106", author: yonib05 }
   - { type: other, breaking: false, scope: null, areas: [community], title: "bump dorny/paths-filter from 3.0.2 to 4.0.3", pr: 3907, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3907", commit: "5ace6ad", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/5ace6ad", author: "dependabot[bot]" }
   - { type: fix, breaking: false, scope: null, areas: [model], title: "count Gemini tool-use tokens as input and thinking tokens as output", pr: 3892, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3892", commit: "aac15db", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/aac15db", author: opieter-aws }
   - { type: fix, breaking: false, scope: models, areas: [model], title: "warn and skip cachePoint message blocks instead of raising", pr: 3947, prUrl: "https://github.com/strands-agents/harness-sdk/pull/3947", commit: "36289b8", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/36289b8", author: opieter-aws }

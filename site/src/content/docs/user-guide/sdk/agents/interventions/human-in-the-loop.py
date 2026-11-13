@@ -1,4 +1,5 @@
 from strands import Agent, tool
+from strands.models import BedrockModel
 from strands.vended_interventions.hitl import (
     HumanInTheLoop,
     LLMClassifierConfig,
@@ -166,6 +167,41 @@ def custom_evaluate_example():
 
 
 # =====================
+# Auto Mode
+# =====================
+
+
+def auto_mode_example():
+    # --8<-- [start:auto_mode]
+    agent = Agent(
+        tools=[read_file, delete_files],
+        interventions=[HumanInTheLoop("auto")],
+    )
+
+    agent("Read config.json then delete /tmp/old-logs")
+    # read_file: rated safe -> runs on its own
+    # delete_files: rated risky -> pauses for approval
+    # --8<-- [end:auto_mode]
+
+
+def auto_mode_options_example():
+    # --8<-- [start:auto_mode_options]
+    agent = Agent(
+        tools=[read_file, delete_files],
+        interventions=[
+            HumanInTheLoop(
+                "auto",
+                ask="stdio",  # prompt in the terminal
+                allowed_tools=["read_file"],  # skips the decision entirely
+            ),
+        ],
+    )
+
+    agent("Read config.json then delete /tmp/old-logs")
+    # --8<-- [end:auto_mode_options]
+
+
+# =====================
 # Classifier (LLM Risk Classification)
 # =====================
 
@@ -188,6 +224,26 @@ def classifier_example():
     # --8<-- [end:classifier]
 
 
+def classifier_decision_model_example():
+    # --8<-- [start:classifier_decision_model]
+    from strands.decisions import TypeSafeDecisionModel
+
+    agent = Agent(
+        tools=[read_file, delete_files],
+        interventions=[
+            HumanInTheLoop(
+                allowed_tools=["read_file"],
+                # Reads the API key from TYPESAFE_API_KEY
+                classifier=TypeSafeDecisionModel(),
+            ),
+        ],
+    )
+
+    agent("Read config.json then delete /tmp/old-logs")
+    # delete_files: decision model evaluates -> risky -> prompts human
+    # --8<-- [end:classifier_decision_model]
+
+
 def classifier_custom_example():
     # --8<-- [start:classifier_custom]
     # Custom system prompt and model
@@ -197,6 +253,9 @@ def classifier_custom_example():
             HumanInTheLoop(
                 classifier=LLMClassifierConfig(
                     system_prompt="Only flag destructive operations.",
+                    model=BedrockModel(
+                        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    ),
                 ),
             ),
         ],

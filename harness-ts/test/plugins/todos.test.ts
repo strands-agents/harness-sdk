@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { BeforeModelCallEvent, InvokeModelStage } from '@strands-agents/sdk'
 import type { Agent, Plugin, ToolContext } from '@strands-agents/sdk'
 import type { InjectionContext } from '@strands-agents/sdk/vended-plugins/context-injector'
 
@@ -71,8 +72,8 @@ describe('Todos', () => {
     expect(reminder).toBeUndefined()
   })
 
-  it('is enabled by default and contributes the todo_write tool', async () => {
-    const agent = await createHarness()
+  it('contributes the todo_write tool when selected', async () => {
+    const agent = await createHarness({ builtinPlugins: ['todos'] })
     const todos = plugins(agent).filter((p): p is Todos => p instanceof Todos)
     expect(todos).toHaveLength(1)
     expect(todos[0]!.getTools().map((t) => t.name)).toContain('todo_write')
@@ -83,14 +84,25 @@ describe('Todos', () => {
     expect(plugins(agent).some((p) => p instanceof Todos)).toBe(false)
   })
 
+  it('is not in the defaults', async () => {
+    const agent = await createHarness()
+    expect(plugins(agent).some((p) => p instanceof Todos)).toBe(false)
+  })
+
   it('throws on an unknown built-in plugin name', async () => {
     await expect(createHarness({ builtinPlugins: ['nope'] as never })).rejects.toThrow('Unknown built-in plugin')
   })
 
   it('registers a context injector on initAgent', () => {
+    // CI runs these tests against both the published SDK and the one in this repo, which register the
+    // injector differently.
     const added: unknown[] = []
-    const stub = { addMiddleware: (_stage: unknown, handler: unknown) => added.push(handler) }
+    const stub = {
+      addMiddleware: (stage: unknown) => added.push(stage),
+      addHook: (eventType: unknown) => added.push(eventType),
+    }
     new Todos().initAgent(stub as unknown as LocalAgent)
     expect(added).toHaveLength(1)
+    expect([InvokeModelStage.Input, BeforeModelCallEvent]).toContain(added[0])
   })
 })

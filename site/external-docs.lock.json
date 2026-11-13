@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "products": [
+    {
+      "id": "strands-box",
+      "revision": "6097aed88c4c0e0a3f115efc40ad2b0e0c100c64"
+    },
+    {
+      "id": "strands-decider",
+      "revision": "d30112f8c216a42b842acddcb7ed3567ab50618e"
+    }
+  ]
+}

@@ -100,7 +100,7 @@ function tagSpecificity(allDocs: readonly CollectionEntry<'docs'>[]): Map<string
  */
 function rankedCandidates(
   current: CollectionEntry<'docs'>,
-  allDocs: readonly CollectionEntry<'docs'>[],
+  allDocs: readonly CollectionEntry<'docs'>[]
 ): ScoredCandidate[] {
   if (!isUserGuide(current)) return []
   const currentTags = current.data.tags ?? []
@@ -134,7 +134,7 @@ function toLink({ doc, overlap }: ScoredCandidate): RelatedLink {
 /** Headless surface: top 10 by specificity-weighted Jaccard. */
 export function relatedUserGuideFor(
   current: CollectionEntry<'docs'>,
-  allDocs: readonly CollectionEntry<'docs'>[],
+  allDocs: readonly CollectionEntry<'docs'>[]
 ): RelatedLink[] {
   return rankedCandidates(current, allDocs).slice(0, HEADLESS_MAX).map(toLink)
 }
@@ -150,7 +150,7 @@ export function relatedUserGuideFor(
 export function userGuidePagesWithTag(
   tag: string,
   current: CollectionEntry<'docs'>,
-  allDocs: readonly CollectionEntry<'docs'>[],
+  allDocs: readonly CollectionEntry<'docs'>[]
 ): { slug: string; title: string }[] {
   return rankedCandidates(current, allDocs)
     .filter(({ doc }) => (doc.data.tags ?? []).includes(tag))

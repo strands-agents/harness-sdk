@@ -1,6 +1,6 @@
 name: openinference-instrumentation-strands-agents
 description: Arize AI OpenInference span processor for Strands Agents — transforms native OTel spans to OpenInference format for Arize AX and Phoenix observability.
-integrationType: plugin
+integrationType: observability
 maintainedBy: partner
 languages:
   python:

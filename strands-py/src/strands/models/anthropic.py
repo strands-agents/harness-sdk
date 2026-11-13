@@ -7,8 +7,12 @@
 import base64
 import json
 import logging
-from collections.abc import AsyncGenerator
-from typing import Any, TypeVar, cast
+import re
+import threading
+import warnings
+from collections import Counter
+from collections.abc import AsyncGenerator, Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import urlparse
 
 import anthropic
@@ -16,6 +20,7 @@ from pydantic import BaseModel
 from typing_extensions import Required, Unpack, override
 
 from ..event_loop.streaming import process_stream
+from ..tools.structured_output._structured_output_context import json_object_from_message
 from ..tools.structured_output.structured_output_utils import convert_pydantic_to_tool_spec
 from ..types.citations import (
     DocumentCharLocationDict,
@@ -25,14 +30,105 @@ from ..types.citations import (
     WebLocation,
     WebLocationDict,
 )
-from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, SummaryBlock, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
-from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
+from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
-from ._validation import _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
-from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
+from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
+from ._native_output import (
+    StructuredOutputMechanism,
+    handle_rejected_mechanism,
+    structured_output_mechanisms,
+    unsupported_mechanisms,
+)
+from ._summarize import SummarizeResult
+from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
+from ._validation import (
+    _has_location_source,
+    _log_skipped_blocks,
+    _warn_on_deprecated_cache_tools,
+    validate_config_keys,
+)
+from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
+
+if TYPE_CHECKING:
+    # AsyncAnthropicBedrockMantle needs anthropic>=0.91, so these are imported for typing only.
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex
+
+    from ..agent.agent_metadata import AgentMetadata
+
+    _AsyncClient = anthropic.AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicVertex
+
+COMPACTION_BETA = "compact-2026-09-04"
+"""Beta that enables on-demand compaction, and compaction blocks in later requests."""
+
+TURN_SCOPED_SYSTEM_BETA = "mid-conversation-system-clear-at-2026-08-21"
+"""Beta that lets a mid-conversation system message carry ``clear_at``.
+
+See https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
+"""
+
+
+def _format_usage(usage: Mapping[str, Any]) -> Usage:
+    """Convert an Anthropic usage payload to a Strands :class:`Usage`."""
+    input_tokens = usage["input_tokens"]
+    output_tokens = usage["output_tokens"]
+    cache_read = usage.get("cache_read_input_tokens") or 0
+    cache_write = usage.get("cache_creation_input_tokens") or 0
+    # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
+    # billed total is the sum of all four counters.
+    formatted: Usage = {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
+    }
+    if cache_read:
+        formatted["cacheReadInputTokens"] = cache_read
+    if cache_write:
+        formatted["cacheWriteInputTokens"] = cache_write
+    return formatted
+
+
+_USAGE_COUNTERS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def _format_compaction_usage(usage: Mapping[str, Any]) -> Usage:
+    """Convert a compaction response's usage, which counts its tokens per iteration and zero at the top level."""
+    iterations = usage.get("iterations") or []
+    if not iterations:
+        return _format_usage(usage)
+    return _format_usage({key: sum(iteration.get(key) or 0 for iteration in iterations) for key in _USAGE_COUNTERS})
+
+
+def _sum_usage(first: Usage | None, second: Usage | None) -> Usage | None:
+    """Return the combined usage of two calls, or whichever one reported usage."""
+    if first is None or second is None:
+        return first or second
+    totals = cast(Mapping[str, int], first)
+    added = cast(Mapping[str, int], second)
+    return cast(Usage, {key: totals.get(key, 0) + added.get(key, 0) for key in totals.keys() | added.keys()})
+
+
+def _is_compaction(block: ContentBlock) -> bool:
+    """Whether ``block`` holds a compaction block Anthropic returned."""
+    return "summary" in block and block["summary"].get("provider") == "anthropic"
+
+
+def _from_last_compaction(messages: Messages) -> Messages:
+    """Return the messages from the last compaction block, which stands in for everything before it, or all of them.
+
+    The API rejects any content before a compaction block.
+    """
+    for index in reversed(range(len(messages))):
+        content = messages[index]["content"]
+        positions = [position for position, block in enumerate(content) if _is_compaction(block)]
+        if positions:
+            first = Message(role=messages[index]["role"], content=content[positions[-1] :])
+            return [first, *messages[index + 1 :]]
+    return messages
+
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +173,57 @@ _CACHEABLE_BLOCK_TYPES = frozenset({"document", "image", "text", "tool_result", 
 # ``ephemeral`` is the only cache type the Anthropic API supports
 _ANTHROPIC_CACHE_TYPE = "ephemeral"
 
+# The anthropic SDK added the output_config request parameter in 0.77.0, after transform_schema (0.75.0).
+_SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", anthropic.__version__)[:2]) >= (0, 77)
+
+# anthropic 1.0 removed the sampling parameters from the messages method signatures, so they travel in
+# ``extra_body`` (merged into the request body on every SDK version). API version 2026-10-21, the default
+# on anthropic 2.x, and later versions reject them outright; earlier versions such as 2023-06-01 accept them.
+# https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters
+_SAMPLING_PARAMS = frozenset({"temperature", "top_k", "top_p"})
+# InvokeModel on bedrock-runtime takes its own API version in the body, which still accepts the sampling parameters.
+# An anthropic_version set in params["extra_body"] wins.
+_BEDROCK_INVOKE_MODEL_API_VERSION = "bedrock-2023-05-31"
+_BEDROCK_THROTTLING_EVENTS = ("throttlingException", "serviceUnavailableException")
+_LEGACY_API_VERSION = "2023-06-01"
+_SAMPLING_PARAMS_REMOVED_VERSION = "2026-10-21"
+_API_VERSION_HEADER = "anthropic-version"
+
+
+def _is_current_api_version(api_version: str | None) -> bool:
+    """Whether the API version drops sampling parameters and assistant documents; None means unknown."""
+    return api_version is not None and api_version >= _SAMPLING_PARAMS_REMOVED_VERSION
+
+
+def _mechanism_tool_choice(
+    mechanism: StructuredOutputMechanism | None, tool_choice: ToolChoice | None
+) -> ToolChoice | None:
+    """The tool choice to send: the requested one, or auto when the mechanism does not force the tool."""
+    if mechanism in ("native", "auto"):
+        return cast(ToolChoice, {"auto": ToolChoiceAuto()})
+    return tool_choice
+
+
+def _with_native_output(
+    request: dict[str, Any],
+    mechanism: StructuredOutputMechanism | None,
+    structured_output_model: type[BaseModel] | None,
+) -> dict[str, Any]:
+    """Constrain the response to the output model's schema, keeping other output_config settings.
+
+    tool_choice none keeps the tools array unchanged while ruling out tool calls, so the response is the JSON object.
+    """
+    if mechanism != "native" or structured_output_model is None:
+        return request
+    schema = anthropic.transform_schema(structured_output_model)
+    output_config = {**request.get("output_config", {}), "format": {"type": "json_schema", "schema": schema}}
+    return {**request, "tool_choice": {"type": "none"}, "output_config": output_config}
+
 
 class AnthropicModel(Model):
     """Anthropic model provider implementation."""
+
+    _supports_structured_output = True
 
     EVENT_TYPES = {
         "message_start",
@@ -108,8 +252,11 @@ class AnthropicModel(Model):
             model_id: Calude model ID (e.g., "claude-3-7-sonnet-latest").
                 For a complete list of supported models, see
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
-            params: Additional model parameters (e.g., temperature).
+            params: Additional model parameters (e.g., metadata, stop_sequences).
                 For a complete list of supported parameters, see https://docs.anthropic.com/en/api/messages.
+                Sampling parameters (temperature, top_k, top_p) are rejected from API version 2026-10-21 on;
+                pin 2023-06-01 with client_args={"default_headers": {"anthropic-version": "2023-06-01"}}
+                (or the same default_headers on a client passed as client=).
             anthropic_tools: Anthropic-specific server-side tools that are not function tools
                 (e.g., web_search, web_fetch, code_execution). Appended alongside the agent's function tools.
                 Use the standard tools interface for function calling tools.
@@ -128,14 +275,29 @@ class AnthropicModel(Model):
         anthropic_tools: list[dict[str, Any]]
         use_native_token_count: bool
 
-    def __init__(self, *, client_args: dict[str, Any] | None = None, **model_config: Unpack[AnthropicConfig]):
+    def __init__(
+        self,
+        *,
+        client: "_AsyncClient | None" = None,
+        client_args: dict[str, Any] | None = None,
+        **model_config: Unpack[AnthropicConfig],
+    ):
         """Initialize provider instance.
 
         Args:
+            client: A pre-configured Anthropic-compatible async client, e.g. ``anthropic.AsyncAnthropicBedrock()``,
+                ``anthropic.AsyncAnthropicBedrockMantle()`` (anthropic>=0.91) or ``anthropic.AsyncAnthropicVertex()``.
+                The model does not close it.
             client_args: Arguments for the underlying Anthropic client (e.g., api_key).
                 For a complete list of supported arguments, see https://docs.anthropic.com/en/api/client-sdks.
             **model_config: Configuration options for the Anthropic model.
+
+        Raises:
+            ValueError: If both ``client`` and ``client_args`` are provided.
         """
+        if client is not None and client_args:
+            raise ValueError("Only one of 'client' or 'client_args' should be provided, not both.")
+
         validate_config_keys(model_config, self.AnthropicConfig)
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config = AnthropicModel.AnthropicConfig(**model_config)
@@ -145,8 +307,8 @@ class AnthropicModel(Model):
 
         logger.debug("config=<%s> | initializing", self.config)
 
-        client_args = client_args or {}
-        self.client = anthropic.AsyncAnthropic(**client_args)
+        self.client: _AsyncClient = client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
+        self._drop_stale_thinking_model_id: str | None = None
 
     @override
     def update_config(self, **model_config: Unpack[AnthropicConfig]) -> None:  # type: ignore[override]
@@ -163,6 +325,23 @@ class AnthropicModel(Model):
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config.update(model_config)
 
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Everything the SDK knows about the configured model, with ``temporary_messages`` on for supported Claude.
+
+        ``temporary_messages`` follows the model id, not the client, so it is also on through the Bedrock and Vertex
+        clients. If those reject the turn-scoped system messages, set
+        ``model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))``.
+        See :attr:`strands.models.Model.model_info`.
+        """
+        temporary_messages = lookup_model_info(self.config.get("model_id")).capabilities.temporary_messages
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(temporary_messages=temporary_messages)),
+            self.get_config().get("model_info"),
+        )
+
     @override
     def get_config(self) -> AnthropicConfig:
         """Get the Anthropic model configuration.
@@ -172,19 +351,22 @@ class AnthropicModel(Model):
         """
         return resolve_config_metadata(self.config, self.config["model_id"])
 
-    def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any]:
+    def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
         """Format an Anthropic content block.
 
         Args:
             content: Message content.
 
         Returns:
-            Anthropic formatted content block.
+            Anthropic formatted content block, or None if Anthropic cannot accept the block.
 
         Raises:
             TypeError: If the content block type or document format cannot be converted to an
                 Anthropic-compatible format.
         """
+        if "summary" in content:
+            return self._format_summary(content["summary"])
+
         if "document" in content:
             document_format = content["document"]["format"]
             if document_format == "pdf":
@@ -229,11 +411,22 @@ class AnthropicModel(Model):
             }
 
         if "reasoningContent" in content:
-            return {
-                "signature": content["reasoningContent"]["reasoningText"]["signature"],
-                "thinking": content["reasoningContent"]["reasoningText"]["text"],
-                "type": "thinking",
-            }
+            reasoning_text = content["reasoningContent"].get("reasoningText", {})
+            if signature := reasoning_text.get("signature"):
+                return {
+                    "signature": signature,
+                    "thinking": reasoning_text.get("text", ""),
+                    "type": "thinking",
+                }
+
+            if redacted_content := content["reasoningContent"].get("redactedContent"):
+                return {
+                    "data": base64.b64encode(redacted_content).decode("utf-8"),
+                    "type": "redacted_thinking",
+                }
+
+            # Anthropic rejects reasoning text without a signature, which is how other model families emit it.
+            return None
 
         if "text" in content:
             return {"text": content["text"], "type": "text"}
@@ -251,15 +444,16 @@ class AnthropicModel(Model):
             }
 
         if "toolResult" in content:
+            formatted_results = [
+                self._format_request_message_content(
+                    {"text": json.dumps(tool_result_content["json"], ensure_ascii=False)}
+                    if "json" in tool_result_content
+                    else cast(ContentBlock, tool_result_content)
+                )
+                for tool_result_content in content["toolResult"]["content"]
+            ]
             return {
-                "content": [
-                    self._format_request_message_content(
-                        {"text": json.dumps(tool_result_content["json"], ensure_ascii=False)}
-                        if "json" in tool_result_content
-                        else cast(ContentBlock, tool_result_content)
-                    )
-                    for tool_result_content in content["toolResult"]["content"]
-                ],
+                "content": [block for block in formatted_results if block is not None],
                 "is_error": content["toolResult"]["status"] == "error",
                 "tool_use_id": content["toolResult"]["toolUseId"],
                 "type": "tool_result",
@@ -283,15 +477,20 @@ class AnthropicModel(Model):
         Returns:
             An Anthropic messages array.
         """
-        cache_config = self.config.get("cache_config")
-        configured_ttl = cache_config.ttl if cache_config else None
-        formatted_messages = []
+        configured_ttl = _messages_cache_ttl(self.config.get("cache_config"))
+        formatted_messages: list[tuple[dict[str, Any], Message]] = []
+        dropped_unsigned_reasoning = False
+        skipped: Counter[str] = Counter()
+        drop_assistant_documents = _is_current_api_version(self._api_version())
 
         for message_idx, message in enumerate(messages):
             formatted_contents: list[dict[str, Any]] = []
             marked = False
 
             for content in message["content"]:
+                if "injected" in content:
+                    continue
+
                 if "cachePoint" in content:
                     ttl = content["cachePoint"].get("ttl")
                     if not ttl and message_idx == cache_target_idx:
@@ -311,10 +510,20 @@ class AnthropicModel(Model):
 
                 # Check for location sources in image, document, or video content
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Anthropic | skipping content block")
+                    skipped["Location sources are not supported by Anthropic | skipping content block"] += 1
                     continue
 
-                formatted_contents.append(self._format_request_message_content(content))
+                if drop_assistant_documents and message["role"] == "assistant" and "document" in content:
+                    skipped[
+                        "Assistant document blocks are not supported by this API version | skipping content block"
+                    ] += 1
+                    continue
+
+                formatted_content = self._format_request_message_content(content)
+                if formatted_content is None:
+                    dropped_unsigned_reasoning = True
+                    continue
+                formatted_contents.append(formatted_content)
 
             # Automatic placement runs once the whole message is formatted, so the cache point lands on a
             # block that survived translation. It is skipped when a caller-placed point already marked one.
@@ -327,9 +536,13 @@ class AnthropicModel(Model):
                     logger.debug("msg_idx=<%d> | no cacheable content block, skipped cache point", message_idx)
 
             if formatted_contents:
-                formatted_messages.append({"content": formatted_contents, "role": message["role"]})
+                formatted_messages.append(({"content": formatted_contents, "role": message["role"]}, message))
 
-        return formatted_messages
+        if dropped_unsigned_reasoning:
+            logger.warning("Unsigned reasoning content is not supported by Anthropic | skipped content blocks")
+
+        _log_skipped_blocks(logger, skipped)
+        return _request_messages(formatted_messages, self.model_info.capabilities.temporary_messages is True)
 
     @classmethod
     def _attach_cache_control(
@@ -357,6 +570,27 @@ class AnthropicModel(Model):
 
         return False
 
+    def _auto_caching_unsupported(self) -> bool:
+        """Whether the default ``"auto"`` strategy must skip caching for this model.
+
+        ``"auto"`` defers to the model info: a model it says does not support prompt caching gets no
+        cache points. An explicit strategy caches regardless.
+        """
+        cache_config = self.config.get("cache_config")
+        if cache_config is None or cache_config.strategy != "auto":
+            return False
+
+        if self.model_info.capabilities.prompt_caching != "unsupported":
+            return False
+
+        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+        warnings.warn(
+            "cache_config is enabled but the model info says this model does not support prompt caching;"
+            " prompt caching is disabled",
+            stacklevel=1,
+        )
+        return True
+
     def _resolve_tools_cache(self) -> dict[str, Any] | None:
         """Return the Anthropic ``cache_control`` payload for tool definitions, if enabled.
 
@@ -365,9 +599,12 @@ class AnthropicModel(Model):
         """
         cache_config = self.config.get("cache_config")
         if cache_config is None or cache_config.tools_ttl is None:
-            return self._resolve_deprecated_cache_tools()
+            return None if self._auto_caching_unsupported() else self._resolve_deprecated_cache_tools()
 
         if cache_config.tools_ttl is False or cache_config.strategy not in ("auto", "anthropic"):
+            return None
+
+        if self._auto_caching_unsupported():
             return None
 
         tools_ttl = cache_config.tools_ttl
@@ -423,7 +660,15 @@ class AnthropicModel(Model):
             return messages, None
 
         if cache_config.strategy not in ("auto", "anthropic"):
-            logger.warning("strategy=<%s> | unknown cache strategy, prompt caching disabled", cache_config.strategy)
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per distinct strategy value).
+            warnings.warn(
+                f"cache_config.strategy={cache_config.strategy!r} is an unknown cache strategy;"
+                " prompt caching is disabled",
+                stacklevel=1,
+            )
+            return messages, None
+
+        if self._auto_caching_unsupported() or cache_config.messages_ttl is False:
             return messages, None
 
         target_idx = next(
@@ -489,7 +734,11 @@ class AnthropicModel(Model):
         Raises:
             TypeError: If a message contains a content block type that cannot be converted to an Anthropic-compatible
                 format.
+            ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
+                request uses API version 2026-10-21 or later.
         """
+        if self.model_info.capabilities.server_side_summary is True:
+            messages = _from_last_compaction(messages)
         messages, cache_target_idx = self._manage_cache_points(messages)
 
         tools: list[dict[str, Any]] = [
@@ -501,7 +750,7 @@ class AnthropicModel(Model):
             for tool_spec in tool_specs or []
         ]
 
-        params = self.config.get("params") or {}
+        params = self._format_request_params()
         server_tools = [*(self.config.get("anthropic_tools") or []), *(params.get("tools") or [])]
         # Forcing a tool means this turn must call a function tool, so server tools are left out.
         if tool_choice is None or "auto" in tool_choice:
@@ -530,7 +779,91 @@ class AnthropicModel(Model):
             "tools": tools,
         }
 
+        if self.model_info.capabilities.server_side_summary is True and any(
+            _is_compaction(block) for message in messages for block in message["content"]
+        ):
+            request = self._with_beta(request, COMPACTION_BETA)
+        if any("clear_at" in message for message in request["messages"]):
+            request = self._with_beta(request, TURN_SCOPED_SYSTEM_BETA)
+        if self._drop_stale_thinking_model_id == self.config["model_id"]:
+            request = self._request_with_drop_block(request) or request
+        if isinstance(self.client, anthropic.AsyncAnthropicBedrock):
+            request["extra_body"] = {
+                "anthropic_version": _BEDROCK_INVOKE_MODEL_API_VERSION,
+                **request.get("extra_body", {}),
+            }
+
         return request
+
+    def _format_summary(self, summary: SummaryBlock) -> dict[str, Any]:
+        """Format a summary as a compaction block when Anthropic wrote it and compaction is enabled, else as text."""
+        if summary.get("provider") != "anthropic" or self.model_info.capabilities.server_side_summary is not True:
+            return {"type": "text", "text": summary["text"]}
+        signature = summary.get("signature")
+        return {"type": "compaction", "content": summary["text"], **({"signature": signature} if signature else {})}
+
+    def _with_beta(self, request: dict[str, Any], beta: str) -> dict[str, Any]:
+        """Return the request with ``beta`` added to its ``anthropic-beta`` header."""
+        extra_headers = dict(request.get("extra_headers") or {})
+        # Request headers replace client headers of the same name, so betas set on the client are carried over.
+        configured = extra_headers.get("anthropic-beta") or self.client.default_headers.get("anthropic-beta")
+        betas = [value.strip() for value in configured.split(",")] if isinstance(configured, str) else []
+        if beta not in betas:
+            betas.append(beta)
+        extra_headers["anthropic-beta"] = ",".join(value for value in betas if value)
+        return {**request, "extra_headers": extra_headers}
+
+    def _format_request_params(self) -> dict[str, Any]:
+        """Return the config params with sampling parameters routed through ``extra_body``.
+
+        Returns:
+            The params to spread into the request.
+
+        Raises:
+            ValueError: If a sampling parameter is set both in params and in params["extra_body"], or if sampling
+                parameters are set while the request uses API version 2026-10-21 or later.
+        """
+        params = dict(self.config.get("params") or {})
+        sampling_params = {key: params.pop(key) for key in _SAMPLING_PARAMS & params.keys()}
+        extra_body = dict(params.get("extra_body") or {})
+
+        if conflicts := sampling_params.keys() & extra_body.keys():
+            raise ValueError(f"params=<{sorted(conflicts)}> | set both in params and in params['extra_body']")
+        if sampling_params:
+            params["extra_body"] = extra_body = {**sampling_params, **extra_body}
+
+        sent_sampling_params = _SAMPLING_PARAMS & extra_body.keys()
+        api_version = self._api_version()
+        if sent_sampling_params and _is_current_api_version(api_version):
+            raise ValueError(
+                f"params=<{sorted(sent_sampling_params)}>, anthropic_version=<{api_version}> | sampling parameters "
+                f"are not accepted by this API version; remove them, or pin the API version with "
+                f'client_args={{"default_headers": {{"anthropic-version": "{_LEGACY_API_VERSION}"}}}} '
+                "(or set the same default_headers on your client=) "
+                "(Claude 4.6 and earlier honor them; Claude 4.7 and later accept only the defaults)"
+            )
+        return params
+
+    def _api_version(self) -> str | None:
+        """The ``anthropic-version`` the request will send; None when the client is a stub without real headers."""
+        request_headers = (self.config.get("params") or {}).get("extra_headers") or {}
+        client_headers = getattr(self.client, "default_headers", None)
+        # The SDK lists its own lowercase default after any user header, so the first match is the user's.
+        for headers in (request_headers, client_headers):
+            if not isinstance(headers, Mapping):
+                continue
+            for name, value in headers.items():
+                if name.lower() == _API_VERSION_HEADER and isinstance(value, str):
+                    return value
+        return None
+
+    def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        """Return the request with stale thinking blocks dropped, or None if it cannot change."""
+        tool_forced = request.get("tool_choice", {}).get("type") in ("any", "tool")
+        thinking = thinking_with_drop_block(request.get("thinking"), tool_forced)
+        if thinking is None:
+            return None
+        return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}
 
     def _format_system_prompt(
         self, system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None
@@ -545,7 +878,11 @@ class AnthropicModel(Model):
             The API system value (string or text blocks), or None when no system prompt is given.
         """
         cache_config = self.config.get("cache_config")
-        if cache_config is None or cache_config.strategy not in ("auto", "anthropic"):
+        if (
+            cache_config is None
+            or cache_config.strategy not in ("auto", "anthropic")
+            or self._auto_caching_unsupported()
+        ):
             managed_ttl: str | None = None
             auto_inject = False
         else:
@@ -805,26 +1142,9 @@ class AnthropicModel(Model):
                 return {"messageStop": {"stopReason": message["stop_reason"]}}
 
             case "metadata":
-                usage = event["usage"]
-                input_tokens = usage["input_tokens"]
-                output_tokens = usage["output_tokens"]
-                cache_read = usage.get("cache_read_input_tokens") or 0
-                cache_write = usage.get("cache_creation_input_tokens") or 0
-                # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
-                # billed total is the sum of all four counters.
-                usage_chunk: Usage = {
-                    "inputTokens": input_tokens,
-                    "outputTokens": output_tokens,
-                    "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
-                }
-                if cache_read:
-                    usage_chunk["cacheReadInputTokens"] = cache_read
-                if cache_write:
-                    usage_chunk["cacheWriteInputTokens"] = cache_write
-
                 return {
                     "metadata": {
-                        "usage": usage_chunk,
+                        "usage": _format_usage(event["usage"]),
                         "metrics": {
                             "latencyMs": 0,  # TODO
                         },
@@ -856,6 +1176,9 @@ class AnthropicModel(Model):
         Returns:
             Total input token count.
         """
+        if self.model_info.capabilities.server_side_summary is True:
+            # Count what a request sends, which starts at the last compaction block.
+            messages = _from_last_compaction(messages)
         if self.config.get("use_native_token_count") is not True:
             return await super().count_tokens(messages, tool_specs, system_prompt, system_prompt_content)
 
@@ -864,7 +1187,7 @@ class AnthropicModel(Model):
                 messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content
             )
             # Keep only fields accepted by count_tokens; strip inference params (max_tokens, temperature, etc.)
-            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system"}
+            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system", "extra_headers"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
             response = await self.client.messages.count_tokens(**request)
@@ -893,6 +1216,7 @@ class AnthropicModel(Model):
         *,
         tool_choice: ToolChoice | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        structured_output_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the Anthropic model.
@@ -903,6 +1227,8 @@ class AnthropicModel(Model):
             system_prompt: Plain string system prompt. Ignored when system_prompt_content is provided.
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: Structured system prompt content blocks, which can carry a cache point.
+            structured_output_model: Output model the call must produce; the request is then sent with the strongest
+                structured output mechanism the model supports.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -915,22 +1241,29 @@ class AnthropicModel(Model):
             ContextWindowOverflowException: If the input exceeds the model's context window.
             ModelThrottledException: If the request is throttled by Anthropic.
             RuntimeError: If a paused server-side tool turn is still paused after the continuation limit.
+            ValueError: If params sets a sampling parameter both directly and in extra_body, or sets one while the
+                request uses API version 2026-10-21 or later.
         """
+        mechanism = self._structured_output_mechanism(structured_output_model, tool_choice)
+
         logger.debug("formatting request")
         request = self.format_request(
             messages,
             tool_specs,
             system_prompt,
             system_prompt_content=system_prompt_content,
-            tool_choice=tool_choice,
+            tool_choice=_mechanism_tool_choice(mechanism, tool_choice),
             dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
         )
+        request = _with_native_output(request, mechanism, structured_output_model)
         logger.debug("request=<%s>", request)
 
         logger.debug("invoking model")
         usage: dict[str, int] = {}
         block_index_offset = 0
         continuations = 0
+        retry_with_drop_block = False
+        retry_with_next_mechanism = False
         try:
             while True:
                 async with self.client.messages.stream(**request) as stream:
@@ -1015,9 +1348,203 @@ class AnthropicModel(Model):
             if any(overflow_message in str(error).lower() for overflow_message in AnthropicModel.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(str(error)) from error
 
-            raise error
+            retry_with_drop_block = (
+                continuations == 0
+                and is_thinking_binding_error(error)
+                and self._request_with_drop_block(request) is not None
+            )
+            # A mechanism is rejected on a turn's first request, before any chunk is yielded; continuations reuse an
+            # accepted one. So the request can be resent with the next mechanism, the same order BedrockModel tries
+            # in a loop.
+            retry_with_next_mechanism = not retry_with_drop_block and self._record_rejected_mechanism(
+                error, mechanism, structured_output_model
+            )
+            if not (retry_with_drop_block or retry_with_next_mechanism):
+                raise error
+
+        except (anthropic.APIStatusError, ValueError) as error:
+            # Bedrock InvokeModel reports an error that arrives mid-stream as an event on the 200 response, not as
+            # an HTTP status: anthropic raises it as APIStatusError, or as a bare ValueError before 1.0.
+            message = str(error)
+            body = getattr(error, "body", None)
+            error_type = ((body.get("error") or {}) if isinstance(body, dict) else {}).get("type")
+            throttled = (
+                error_type in _BEDROCK_THROTTLING_EVENTS
+                if isinstance(error, anthropic.APIStatusError)
+                else any(name in message for name in _BEDROCK_THROTTLING_EVENTS)
+            )
+            if throttled:
+                raise ModelThrottledException(message) from error
+            if any(overflow in message.lower() for overflow in AnthropicModel.OVERFLOW_MESSAGES):
+                raise ContextWindowOverflowException(message) from error
+            raise
+
+        previous_drop_stale_thinking_model_id = self._drop_stale_thinking_model_id
+        if retry_with_drop_block:
+            # Stale blocks stay in history, so drop_block stays on for every later request to this model.
+            logger.warning(
+                "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
+                self.config["model_id"],
+            )
+            self._drop_stale_thinking_model_id = self.config["model_id"]
+        if retry_with_drop_block or retry_with_next_mechanism:
+            yielded = False
+            try:
+                async for chunk in self.stream(
+                    messages,
+                    tool_specs,
+                    system_prompt,
+                    tool_choice=tool_choice,
+                    system_prompt_content=system_prompt_content,
+                    structured_output_model=structured_output_model,
+                    **kwargs,
+                ):
+                    yielded = True
+                    yield chunk
+            except Exception:
+                # A rejected retry must not leave drop_block on for later requests.
+                if not yielded:
+                    self._drop_stale_thinking_model_id = previous_drop_stale_thinking_model_id
+                raise
+            return
 
         logger.debug("finished streaming response from model")
+
+    @override
+    async def summarize(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        cancel_signal: threading.Event | None = None,
+        agent_metadata: "AgentMetadata | None" = None,
+        **kwargs: Any,
+    ) -> SummarizeResult:
+        """Summarize ``messages`` with Anthropic on-demand compaction.
+
+        Sends the request unchanged under beta ``compact-2026-09-04``, so the thinking kept after a summary of the
+        live conversation stays valid. The returned compaction block is stored as a ``summary`` block holding its
+        text and signature; later requests from a model with ``server_side_summary`` rebuild the compaction block
+        from it and start from it, and requests without it send the summary text. Uses the base
+        :meth:`Model.summarize` when ``model_info.capabilities.server_side_summary`` is not True, when the compaction
+        request fails with an API error (a rejection, an overload, a timeout or a connection error), or when the
+        response holds no compaction block.
+
+        Args:
+            messages: The request to summarize, left unmodified.
+            tool_specs: The request's tool specifications.
+            system_prompt: The request's plain string system prompt.
+            system_prompt_content: The request's structured system prompt.
+            instructions: Summarization instructions replacing the API's own prompt.
+            cancel_signal: Event that aborts the base implementation's call.
+            agent_metadata: Stable identity of the invoking agent, passed to the base implementation.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            The summary and the usage of every call made for it.
+        """
+        base_kwargs: dict[str, Any] = {
+            "tool_specs": tool_specs,
+            "system_prompt": system_prompt,
+            "system_prompt_content": system_prompt_content,
+            "instructions": instructions,
+            "cancel_signal": cancel_signal,
+            "agent_metadata": agent_metadata,
+            **kwargs,
+        }
+        if self.model_info.capabilities.server_side_summary is not True:
+            return await super().summarize(messages, **base_kwargs)
+
+        try:
+            result = await self._compact(messages, tool_specs, system_prompt, system_prompt_content, instructions)
+        except anthropic.APIError as error:
+            logger.warning(
+                "model_id=<%s>, error=<%s> | compaction request failed | summarizing client-side",
+                self.config["model_id"],
+                error,
+            )
+            result = SummarizeResult()
+        if result.content:
+            return result
+
+        fallback = await super().summarize(messages, **base_kwargs)
+        return SummarizeResult(content=fallback.content, usage=_sum_usage(result.usage, fallback.usage))
+
+    async def _compact(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt: str | None,
+        system_prompt_content: list[SystemContentBlock] | None,
+        instructions: str | None,
+    ) -> SummarizeResult:
+        """Send ``messages`` as a compaction request; the result is empty when the response holds no compaction."""
+        request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
+        # The API rejects these on a compaction request.
+        request.pop("stop_sequences", None)
+        request.pop("context_management", None)
+        compaction: dict[str, Any] = {"type": "summarize", **({"instructions": instructions} if instructions else {})}
+        request["extra_body"] = {**(request.get("extra_body") or {}), "compaction": compaction}
+        request = self._with_beta(request, COMPACTION_BETA)
+
+        # The Bedrock/Vertex beta resources alias the first-party stream method, which mypy rejects as a self type.
+        async with self.client.beta.messages.stream(**request) as stream:  # type: ignore[misc]
+            response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
+        usage = _format_compaction_usage(response["usage"]) if response.get("usage") else None
+
+        block = next((block for block in response.get("content") or [] if block.get("type") == "compaction"), None)
+        if response.get("stop_reason") != "compaction" or not block or not block.get("content"):
+            logger.debug(
+                "model_id=<%s>, stop_reason=<%s> | compaction returned no summary | summarizing client-side",
+                self.config["model_id"],
+                response.get("stop_reason"),
+            )
+            return SummarizeResult(usage=usage)
+        signature = block.get("signature")
+        summary = SummaryBlock(
+            provider="anthropic", signature=signature if isinstance(signature, str) else None, text=block["content"]
+        )
+        return SummarizeResult(content=[ContentBlock(summary=summary)], usage=usage)
+
+    def _record_rejected_mechanism(
+        self,
+        error: anthropic.BadRequestError,
+        mechanism: StructuredOutputMechanism | None,
+        structured_output_model: type[BaseModel] | None,
+    ) -> bool:
+        """Record a structured output rejection, so the request should be resent with the next mechanism.
+
+        Returns:
+            True if the rejection was recorded; False if the error is unrelated and should surface unchanged.
+        """
+        if mechanism is None or structured_output_model is None:
+            return False
+        return handle_rejected_mechanism(
+            "anthropic", self.config["model_id"], mechanism, structured_output_model, str(error)
+        )
+
+    def _structured_output_mechanism(
+        self, structured_output_model: type[BaseModel] | None, tool_choice: ToolChoice | None
+    ) -> StructuredOutputMechanism | None:
+        """Choose the strongest structured output mechanism not yet rejected for this model."""
+        if structured_output_model is None:
+            return None
+        mechanism = structured_output_mechanisms(
+            unsupported_mechanisms("anthropic", self.config["model_id"], structured_output_model),
+            cast(dict[str, Any] | None, tool_choice),
+            structured_output_model,
+            self.model_info,
+        )[0]
+        if mechanism == "native" and not _SDK_SUPPORTS_NATIVE_OUTPUT:
+            warnings.warn(
+                "Native structured output requires anthropic>=0.77.0; using auto tool choice instead",
+                stacklevel=2,
+            )
+            return "auto"
+        return mechanism
 
     @override
     async def structured_output(
@@ -1041,12 +1568,18 @@ class AnthropicModel(Model):
             tool_specs=[tool_spec],
             system_prompt=system_prompt,
             tool_choice=cast(ToolChoice, {"any": {}}),
+            structured_output_model=output_model,
             **kwargs,
         )
         async for event in process_stream(response):
             yield event
 
         stop_reason, messages, _, _ = event["stop"]
+
+        # Native structured output returns the result as JSON text instead of a tool call.
+        if stop_reason == "end_turn" and (data := json_object_from_message(messages)) is not None:
+            yield {"output": output_model(**data)}
+            return
 
         if stop_reason != "tool_use":
             raise ValueError(f'Model returned stop_reason: {stop_reason} instead of "tool_use".')
@@ -1065,3 +1598,46 @@ class AnthropicModel(Model):
             raise ValueError("No valid tool use or tool use input was found in the Anthropic response.")
 
         yield {"output": output_model(**output_response)}
+
+
+def _request_messages(kept: list[tuple[dict[str, Any], Message]], temporary_messages: bool) -> list[dict[str, Any]]:
+    """Return the formatted messages; with ``temporary_messages``, each user message's injected text follows it.
+
+    Args:
+        kept: The formatted messages left non-empty, each with the message it was formatted from.
+        temporary_messages: Whether to send injected text as turn-scoped system messages.
+
+    Returns:
+        The messages to send.
+    """
+    if not temporary_messages:
+        return [formatted for formatted, _ in kept]
+    request_messages: list[dict[str, Any]] = []
+    for index, (formatted, source) in enumerate(kept):
+        request_messages.append(formatted)
+        system_message = _turn_scoped_system_message(source)
+        next_is_user = index + 1 < len(kept) and kept[index + 1][0]["role"] == "user"
+        # The API rejects one followed directly by a user message. No assistant turn can have read it.
+        if system_message and formatted["role"] == "user" and not next_is_user:
+            request_messages.append(system_message)
+    return request_messages
+
+
+def _turn_scoped_system_message(message: Message) -> dict[str, Any] | None:
+    """The message's injected text as a system message the model reads only until a later user message exists.
+
+    Once cleared, it stays in the request but renders nothing, so the history before every later assistant turn is
+    sent unchanged. Never carries ``cache_control``: a cleared message is not part of any cache key.
+
+    Args:
+        message: A message of the conversation.
+
+    Returns:
+        The system message, or None when the message has no injected text.
+    """
+    content = [
+        {"type": "text", "text": block["injected"]["text"]} for block in message["content"] if "injected" in block
+    ]
+    if not content:
+        return None
+    return {"role": "system", "content": content, "clear_at": "next_user_message"}

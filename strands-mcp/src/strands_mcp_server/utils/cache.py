@@ -105,14 +105,14 @@ def load_links_only() -> None:
         _INDEX = indexer.IndexSearch()
 
     for src in doc_config.llm_texts_url:
-        for title, url in doc_fetcher.parse_llms_txt(src):
+        for title, url, description in doc_fetcher.parse_llms_txt(src):
             # Record curated display title and placeholder cache
             _URL_TITLES[url] = title
             _URL_CACHE.setdefault(url, None)
 
             # For curated titles from llms.txt, we already have the title
             display_title = text_processor.normalize(title)
-            index_title = text_processor.index_title_variants(display_title, url)
+            index_title = text_processor.index_title_variants(display_title, url, description)
 
             # Index now with clean display title + hidden index variants; empty content for now
             _INDEX.add(indexer.Doc(uri=url, display_title=display_title, content="", index_title=index_title))
@@ -137,8 +137,8 @@ def ensure_page(url: str) -> doc_fetcher.Page | None:
     """Ensure a page is cached, fetching it if necessary.
 
     When a page is fetched, also updates the search index with the hydrated content
-    so that body-only terms become searchable. This operation is idempotent -
-    re-fetching an already-cached page has no effect.
+    so that body-only terms become searchable (except ``doc_config.title_only_urls``).
+    This operation is idempotent - re-fetching an already-cached page has no effect.
 
     Failure Handling:
         Indexing happens before caching. If ``update_content`` fails, the page is
@@ -175,7 +175,7 @@ def ensure_page(url: str) -> doc_fetcher.Page | None:
 
             # Update the search index with the hydrated content BEFORE caching.
             # If this raises, the page is left un-cached so a retry is possible.
-            if _INDEX is not None:
+            if _INDEX is not None and url not in doc_config.title_only_urls:
                 _INDEX.update_content(url, raw.content)
 
             # Only cache after indexing succeeds

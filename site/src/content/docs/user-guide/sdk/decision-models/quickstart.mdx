@@ -1,0 +1,141 @@
+---
+title: Decision models quickstart
+description: "Ask a decision model a yes/no question and a multiple-choice question, read the typed answers, and handle an answer the model is not sure about."
+tags: [decision-models, quickstart]
+sidebar:
+  label: Quickstart
+sourceLinks:
+  - path: strands-py/src/strands/decisions/llm_decision_model.py
+  - path: strands-py/src/strands/decisions/types.py
+  - path: strands-ts/src/decisions/llm-decision-model.ts
+  - path: strands-ts/src/decisions/types.ts
+---
+
+In this quickstart, you triage a customer support message with a decision model. You ask
+whether the message is urgent and which team should handle it, then read the answers in
+your code.
+
+The examples use `LLMDecisionModel`, which runs the questions on a model provider. With
+no model configured, it uses Amazon Bedrock, so you need the SDK installed and AWS
+credentials with Amazon Bedrock access. The [Python](../quickstart/python.md) and
+[TypeScript](../quickstart/typescript.md) quickstarts cover both.
+
+## Ask a question
+
+Each question has an id you choose, the question in plain language, and its choices:
+`"boolean"` for a yes/no answer, or a list of labels. Pass the input and the questions
+to `ask`:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands import LLMDecisionModel
+
+message = "I was charged twice for order 1182. Please refund one charge today."
+
+
+async def main():
+    decisions = LLMDecisionModel()
+    result = await decisions.ask(
+        message,
+        {
+            "urgent": {
+                "question": "Does the customer need help today?",
+                "choices": "boolean",
+            },
+            "team": {
+                "question": "Which team should handle this message?",
+                "choices": ["billing", "shipping", "technical"],
+            },
+        },
+    )
+    print(result.answers)
+
+
+asyncio.run(main())
+
+# Typical output:
+# {'urgent': True, 'team': 'billing'}
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/quickstart_imports.ts:ask_imports"
+
+--8<-- "user-guide/sdk/decision-models/quickstart.ts:ask"
+```
+
+</Tab>
+</Tabs>
+
+The answers are keyed by your question ids. A yes/no question returns a boolean, and a
+multiple-choice question returns one of its labels.
+
+## Handle an uncertain answer
+
+Sometimes the input doesn't support any of the choices. Instead of guessing, the
+decision model can return `Uncertain`, often with a reason. This message says nothing
+about the customer's plan:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands import LLMDecisionModel, Uncertain
+
+message = "I was charged twice for order 1182. Please refund one charge today."
+
+
+async def main():
+    decisions = LLMDecisionModel()
+    result = await decisions.ask(
+        message,
+        {
+            "plan": {
+                "question": "Which plan is the customer on?",
+                "choices": ["free", "pro", "enterprise"],
+            },
+        },
+    )
+    plan = result.answers["plan"]
+    if isinstance(plan, Uncertain):
+        print(f"Unknown plan: {plan.reason}")
+    else:
+        print(f"Plan: {plan}")
+
+
+asyncio.run(main())
+
+# Typical output:
+# Unknown plan: The message does not mention which plan the customer is on.
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/quickstart_imports.ts:uncertain_imports"
+
+--8<-- "user-guide/sdk/decision-models/quickstart.ts:uncertain"
+```
+
+</Tab>
+</Tabs>
+
+Every question allows `Uncertain` unless you turn it off, which
+[Questions and answers](questions.mdx#uncertainty) covers.
+
+## Next steps
+
+- [Questions and answers](questions.mdx): the choices, uncertainty settings, inputs, and
+  result fields.
+- [Decisions in an agent](agents.mdx): ask from a tool and count the tokens toward the
+  agent's request.
+- [LLM decision model](models/llm.mdx): choose the model and system prompt.

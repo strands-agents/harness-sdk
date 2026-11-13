@@ -5,8 +5,9 @@ from dataclasses import dataclass
 
 from ..config import doc_config
 
-# Example: "[Quickstart](https://strandsagents.com/.../index.md)"
-_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)")
+# Example: "[Quickstart](https://strandsagents.com/.../index.md): Get an agent running."
+# A description stops before any further link on the line, so that link is still parsed.
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)(?::[ \t]*((?:(?!\[[^\]]+\]\(https?://)[^\n])*))?")
 _HTML_BLOCK = re.compile(r"(?is)<(script|style|noscript).*?>.*?</\1>")
 _TAG = re.compile(r"(?s)<[^>]+>")
 _TITLE_TAG = re.compile(r"(?is)<title[^>]*>(.*?)</title>")
@@ -29,7 +30,7 @@ class Page:
     content: str  # Cleaned text content
 
 
-def _get(url: str) -> str:
+def fetch_text(url: str) -> str:
     """Fetch content from a URL with proper headers and timeout.
 
     Args:
@@ -46,19 +47,20 @@ def _get(url: str) -> str:
         return r.read().decode("utf-8", errors="ignore")
 
 
-def parse_llms_txt(url: str) -> list[tuple[str, str]]:
+def parse_llms_txt(url: str) -> list[tuple[str, str, str]]:
     """Parse an llms.txt file and extract document links.
 
     Args:
         url: URL of the llms.txt file to parse
 
     Returns:
-        List of (title, url) tuples extracted from markdown links
+        List of (title, url, description) tuples extracted from markdown links; description is empty when absent
 
     """
-    txt = _get(url)
+    txt = fetch_text(url)
     return [
-        (match.group(1).strip() or match.group(2).strip(), match.group(2).strip()) for match in _MD_LINK.finditer(txt)
+        (match.group(1).strip() or match.group(2).strip(), match.group(2).strip(), (match.group(3) or "").strip())
+        for match in _MD_LINK.finditer(txt)
     ]
 
 
@@ -113,7 +115,7 @@ def fetch_and_clean(page_url: str) -> Page:
         Page object with URL, title, and cleaned content
 
     """
-    raw = _get(page_url)
+    raw = fetch_text(page_url)
     lower = raw.lower()
     if "<html" in lower or "<head" in lower or "<body" in lower:
         extracted_title = _extract_html_title(raw)

@@ -1,10 +1,23 @@
 # Changelog Sync — operations
 
-`changelog-sync.yml` keeps `site/src/content/changelog/**` current. It runs the
-generator in `site/scripts/changelog/` (single tag on release/dispatch, backfill
-on the daily cron) and opens a data-only PR via the `strands-agent` bot fork.
-Release workflows also dispatch it directly after creating a GitHub release
-(a `GITHUB_TOKEN`-created release does not emit a `release` event).
+`changelog-sync.yml` keeps `site/src/content/changelog/**` current. Every run
+generates the files still missing from main for harness-sdk, evals, box, and shell,
+and opens or updates one rolling data-only PR (branch `changelog/sync` on the
+`strands-agent` bot fork). The harness-sdk release workflows dispatch it directly after
+creating a GitHub release (a `GITHUB_TOKEN`-created release does not emit a
+`release` event), and a cron backstops every 2 hours.
+
+Evals, Box, and Shell release from separate repositories and cannot dispatch
+this workflow with their `GITHUB_TOKEN`. Their releases are picked up on the
+next sync run. To sync immediately, manually dispatch `Changelog: Sync`
+without a tag; otherwise, wait for the 2-hourly cron or a harness-sdk release.
+
+## Release process
+
+1. Run the release workflow.
+2. Merge the open `docs(changelog): sync release notes` PR.
+3. Run `Docs: Deploy to GitHub Pages`. It fails while any published release
+   has no changelog file on main, so step 2 cannot be skipped by accident.
 
 ## CHANGELOG_BOT_TOKEN (repo secret)
 
@@ -38,7 +51,9 @@ PRs; it has no write access to this repo.
   self-heals on the next run (given the `workflow` scope). Manual fix: the
   "Sync fork" button on the fork, or
   `gh api repos/strands-agent/harness-sdk/merge-upstream -f branch=main`.
-- **Missed release**: dispatch `Changelog: Sync` with the release tag, or wait
-  for the daily cron backstop (07:17 UTC).
-- **Duplicate sync PRs** (release event vs. cron): content is identical; close
-  the stale one.
+- **Missed release**: dispatch `Changelog: Sync`, or wait for the cron
+  backstop (every 2 hours at :17).
+- **Re-render a synced release**: dispatch `Changelog: Sync` with its tag.
+  Curated `highlights:` are preserved.
+- **Urgent docs fix with a sync PR still pending**: run the docs deploy with
+  `skip_changelog_check` checked.

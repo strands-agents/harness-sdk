@@ -181,6 +181,8 @@ A model provider is the single most-repeated pattern in the SDK. Follow the exis
 - **Config is a nested `TypedDict`** `class XConfig(BaseModelConfig, total=False)` declared inside the class, with mandatory keys marked `typing_extensions.Required` (e.g. `model_id: Required[str]`).
 - **`__init__(self, *, <client args>, **model_config: Unpack[XConfig])`** calls `validate_config_keys(model_config, self.XConfig)` *before* storing, then stores the typed config (`self.config = XModel.XConfig(**model_config)` — store the `TypedDict`, don't keep a plain `dict` and `cast` later).
 - **Implement the abstract contract** from `Model`: `update_config` (re-validate, then `self.config.update(...)`; decorate `@override` and suppress with `# type: ignore[override]` because it narrows `**kwargs`), `get_config` (return `resolve_config_metadata(self.config, self.config["model_id"])`), `stream`, and `structured_output`.
+- **Facts about a model belong in `shared/model-info.json`**, which `Model.model_info` reads for every provider by the config's `model_id` — so store the resolved default model id in `self.config`, or an unconfigured model gets no shared facts. A provider that knows better than the shared file overrides the `model_info` property as `ModelInfo.merge(super().model_info, ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto")), self.config.get("model_info"))`: provider facts over the shared data, the user's override over both. Never read `self.stateful` inside it (it reads `model_info`).
+- **SDK-internal model calls go through `ModelProxy`** (`models/_model_proxy.py`, mirroring TS `model-proxy.ts`): `ModelProxy(model).stream(...)` / `.structured_output(...)` / `.count_tokens(...)`, never `model.stream` directly. It turns stored history into what the provider accepts (summary and injected blocks) and records usage; `stream_messages` is kept only as a public wrapper over it.
 - **Conversion helpers are conventional**, not abstract: `format_request(...)` builds the vendor request and `format_chunk(event) -> StreamEvent` maps a vendor chunk to a `StreamEvent`.
 - **Map vendor errors** to typed SDK exceptions and chain the cause (see Error Handling above).
 
@@ -289,6 +291,7 @@ The un-lintable rules an agent most often misses — every one is **enforced by 
 - Let a raw vendor error escape a provider boundary — translate to a typed SDK exception
 - Keep a model-provider config as a plain `dict` + `cast` — store the `TypedDict`
 - Buffer a stream into a list before yielding
+- Use `invocation_state` for SDK-internal state — it is user-only (see the [root AGENTS.md](../AGENTS.md))
 
 ## Development Commands
 

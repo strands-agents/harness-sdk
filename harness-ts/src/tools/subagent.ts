@@ -32,6 +32,7 @@
 
 import {
   type Agent,
+  type AgentResult,
   type ContentBlock,
   InterruptResponseContent,
   type InvokeArgs,
@@ -204,6 +205,9 @@ export const CONTEXT_MODES: readonly ContextMode[] = ['none', 'all', 'no_tools']
 
 // Depth travels on each child's own state, not a build-time parameter.
 const DEPTH_STATE_KEY = 'subagentDepth'
+
+// Stop reasons that mean the child never produced an answer; the parent must see a failure, not its partial text.
+const FAILED_STOP_REASONS: ReadonlySet<string> = new Set(['cancelled', 'contentFiltered', 'refusal'])
 
 /** The option names a `Choice` axis (tools, mcp_servers) admits, or `null` when it exposes none. */
 function allowedNames(axis: ToolsMode): string[] | null {
@@ -477,7 +481,8 @@ function forkMessages(parent: LocalAgent | undefined, lastN: number | null): Mes
     const content = message
       .clone()
       .content.filter(
-        (block) => block.type !== 'reasoningBlock' && (block.type !== 'toolUseBlock' || answered.has(block.toolUseId))
+        (block) =>
+          !PARENT_ONLY_BLOCKS.has(block.type) && (block.type !== 'toolUseBlock' || answered.has(block.toolUseId))
       )
     if (content.length > 0) {
       forked.push(new Message({ role: message.role, content }))
@@ -492,6 +497,10 @@ function forkMessages(parent: LocalAgent | undefined, lastN: number | null): Mes
   }
   return forked
 }
+
+// Reasoning is the parent model's signed state, and injected text is context for the parent's own turn. A string
+// set, so this compiles against SDK versions that have no injected blocks.
+const PARENT_ONLY_BLOCKS: ReadonlySet<string> = new Set(['reasoningBlock', 'injectedBlock'])
 
 const FORK_PREAMBLE =
   "The conversation so far is the parent agent's. You are the subagent it delegated to at this point; " +
@@ -572,6 +581,17 @@ function withContext(task: string, block: string): string {
 
 function errorResult(toolUseId: string, message: string): ToolResultBlock {
   return new ToolResultBlock({ toolUseId, status: 'error', content: [new TextBlock(message)] })
+}
+
+/** Maps the child's stop reason onto the parent's tool result. */
+function finalToolResult(toolUseId: string, result: AgentResult): ToolResultBlock {
+  if (!FAILED_STOP_REASONS.has(result.stopReason)) {
+    return new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock(result.toString())] })
+  }
+  let message = `Subagent stopped before finishing (stopReason=${result.stopReason}).`
+  const partial = result.toString().replace(/\n+$/, '')
+  if (partial) message += `\n\nPartial output:\n${partial}`
+  return errorResult(toolUseId, message)
 }
 
 function errorString(error: unknown): string {
@@ -693,14 +713,8 @@ class SubagentTool extends Tool {
       }
     }
 
-    if (result.stopReason === 'cancelled') {
-      // Cancellation is data, not an exception: surface it as an error result, not a success.
-      this.pending.delete(toolUseId)
-      return errorResult(toolUseId, 'Subagent was cancelled.')
-    }
-
     this.pending.delete(toolUseId)
-    return new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock(result.toString())] })
+    return finalToolResult(toolUseId, result)
   }
 }
 

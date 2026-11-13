@@ -173,7 +173,7 @@ The model provider is the most-repeated pattern in the SDK; `models/anthropic.ts
 
 - **`export class XModel extends Model<XModelConfig>`** with `private _config` and `private _client`.
 - **Two interfaces**: `interface XModelConfig extends BaseModelConfig` (the model knobs) and a superset `interface XModelOptions extends XModelConfig` adding client/credential fields (`apiKey`, `client`, `clientConfig`). The constructor takes `XModelOptions`, destructures the client fields, and spreads the rest into `_config`.
-- **Implement the base contract** from `models/model.ts`: `updateConfig(modelConfig)` (spread-merge into `_config`), `getConfig()` (return `resolveConfigMetadata(this._config, this._config.modelId ?? <default>)`), and `async *stream(...)`. `structuredOutput` is **not** part of the TS provider contract — TS does structured output via a tool + agent config (`tools/structured-output-tool.ts`, `AgentConfig.structuredOutputSchema`), not a provider method.
+- **Implement the base contract** from `models/model.ts`: `updateConfig(modelConfig)` (spread-merge into `_config`), `getConfig()` (return `resolveConfigMetadata(this._config, this._config.modelId ?? <default>)`), and `async *stream(...)`. Facts about a model belong in `shared/model-info.json`, which `Model.modelInfo` reads for every provider by `this.modelId` — so either store the default model id in `_config` or override `get modelId()` to return it, or an unconfigured model gets no shared facts. A provider that knows better than the shared file overrides `get modelInfo()` as `mergeModelInfo(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this._config.modelInfo)`: provider facts over the shared data, the user's override over both. Never read `this.stateful` inside it (it reads `modelInfo`). `structuredOutput` is **not** part of the TS provider contract — TS does structured output via a tool + agent config (`tools/structured-output-tool.ts`, `AgentConfig.structuredOutputSchema`), not a provider method.
 - **Keep conversion private** (`_formatRequest`, `_formatMessages`, `_formatContentBlock`). Default to a **flat `models/<name>.ts`**; only reach for a `models/<name>/` subdirectory with standalone adapter modules + `types.ts`/`errors.ts` when the provider spans **multiple API surfaces** (the reason `openai/` exists — chat vs responses).
 
 ```typescript
@@ -214,6 +214,8 @@ export class XModel extends Model<XModelConfig> {
 
 When writing tests, you **MUST** follow [docs/TESTING.md](./docs/TESTING.md). It is the authoritative reference for test file location and naming (co-location, environment suffixes), the nested `describe` pattern, batching strategy, whole-object assertions, fixtures, coverage requirements, and multi-environment testing.
 
+New test files **MUST** be named `*.test.ts` so they run in both Node.js and the browser. Create a `*.test.node.ts` file only when the test cannot run in a browser: it needs the filesystem, `process.env`, or a code path that refuses to run in a browser. Don't pick the suffix by copying a neighboring file; check whether the test actually needs Node.
+
 ## Quick Rules
 
 The un-lintable rules an agent most often misses — every one is **enforced by review**, not tooling (formatting, `no-explicit-any`, explicit return types, and TSDoc syntax are already handled by ESLint/Prettier; run `npm run lint`). Cross-SDK rules (plugin naming, parity, public/internal marking, logging format, evergreen comments) are in the [root AGENTS.md](../AGENTS.md).
@@ -233,6 +235,7 @@ The un-lintable rules an agent most often misses — every one is **enforced by 
 - Put unit tests in a separate `tests/` directory (use `src/**/__tests__/`)
 - Annotate local variables with redundant explicit types (infer locals; annotate signatures)
 - Let a raw vendor error escape a provider boundary
+- Use `invocationState` for SDK-internal state — it is user-only (see the [root AGENTS.md](../AGENTS.md))
 
 ## Development Commands
 

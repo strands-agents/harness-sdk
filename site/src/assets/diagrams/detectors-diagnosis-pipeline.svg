@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 288" width="720" height="288">
+  <!-- Type: pipeline (left to right, result below). Story: failure detection finds what broke, root cause analysis explains why, and both lists land in one diagnosis result. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="188" y="8" width="516" height="120" rx="8"/>
+  <text class="dg-eyebrow" x="204" y="30">TWO-PHASE PIPELINE</text>
+
+  <!-- Edges (drawn before nodes) -->
+  <path class="dg-edge" d="M156,72 H210" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M380,72 H494" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M588,104 V190" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M296,104 V224 Q296,232 304,232 H490" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="408" y="52" width="64" height="12" rx="2"/>
+  <text class="dg-label" x="440" y="61" text-anchor="middle">FAILURES</text>
+  <text class="dg-label" x="596" y="163">ROOT CAUSES</text>
+  <rect class="dg-mask" x="364" y="212" width="64" height="12" rx="2"/>
+  <text class="dg-label" x="396" y="221" text-anchor="middle">FAILURES</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="40" width="140" height="64" rx="6"/>
+  <text class="dg-name" x="86" y="69" text-anchor="middle">Session traces</text>
+  <text class="dg-code" x="86" y="87" text-anchor="middle">Session</text>
+
+  <rect class="dg-node" x="212" y="40" width="168" height="64" rx="6"/>
+  <text class="dg-name" x="296" y="69" text-anchor="middle">Failure detection</text>
+  <text class="dg-code" x="296" y="87" text-anchor="middle">detect_failures</text>
+
+  <rect class="dg-node" x="496" y="40" width="184" height="64" rx="6"/>
+  <text class="dg-name" x="588" y="69" text-anchor="middle">Root cause analysis</text>
+  <text class="dg-code" x="588" y="87" text-anchor="middle">analyze_root_cause</text>
+
+  <rect class="dg-node is-focal" x="492" y="192" width="192" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="588" y="221" text-anchor="middle">Diagnosis</text>
+  <text class="dg-code" x="588" y="239" text-anchor="middle">DiagnosisResult</text>
+  <text class="dg-sub" x="588" y="255" text-anchor="middle">+ fix recommendations</text>
+</svg>

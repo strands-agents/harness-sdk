@@ -1,4 +1,5 @@
 import type { Agent } from '../../agent/agent.js'
+import type { InvocationContext } from '../../agent/invocation-context.js'
 import type { ToolUseData } from '../../hooks/events.js'
 import { InterruptError, InterruptState } from '../../interrupt.js'
 import { createMiddlewareInterrupt } from '../../middleware/interrupt.js'
@@ -23,6 +24,8 @@ interface LiveToolExecution {
   readonly toolUse: ToolUseData
   readonly invocationState: InvocationState
   readonly tool: Tool
+  /** The request that submitted the task; a task that starts after that request returned still counts toward it. */
+  readonly invocationContext: InvocationContext | undefined
 }
 
 /** Configures in-process background task execution. @internal */
@@ -75,7 +78,8 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     toolUse: Readonly<ToolUseData>,
     invocationState: InvocationState,
     passId: string,
-    tool: Tool
+    tool: Tool,
+    invocationContext?: InvocationContext
   ): Promise<BackgroundTask> {
     const submissionKey = JSON.stringify([passId, toolUse.toolUseId])
     const existingTaskId = this._taskIdBySubmission.get(submissionKey)
@@ -86,6 +90,7 @@ export class InProcessTaskManager implements BackgroundTaskManager {
       toolUse: globalThis.structuredClone(toolUse),
       invocationState,
       tool,
+      invocationContext,
     })
     const record = this._engine.submit({
       toolName: toolUse.name,
@@ -188,18 +193,20 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     const execution = this._executions.get(context.invocationStateId)
     if (!execution) throw new Error('Background task live execution state is unavailable')
     const interruptState = context.state ? InterruptState.fromJSON(context.state) : new InterruptState()
+    const toolContext: ToolContext = {
+      agent: this._agent,
+      invocationState: execution.invocationState,
+      cancelSignal: context.cancelSignal,
+      toolUse: execution.toolUse,
+      interrupt: <T = JSONValue>(params: InterruptParams): T =>
+        interruptTool<T>(interruptState, context.taskId, params),
+      ...(execution.invocationContext && { invocationContext: execution.invocationContext }),
+    }
     try {
       return toolTaskOutcome(
         await this._executeTool(
           execution.tool,
-          {
-            agent: this._agent,
-            invocationState: execution.invocationState,
-            cancelSignal: context.cancelSignal,
-            toolUse: execution.toolUse,
-            interrupt: <T = JSONValue>(params: InterruptParams): T =>
-              interruptTool<T>(interruptState, context.taskId, params),
-          },
+          toolContext,
           createMiddlewareInterrupt(interruptState, `middleware:${context.taskId}`)
         )
       )
@@ -232,6 +239,7 @@ export class InProcessTaskManager implements BackgroundTaskManager {
 function toolTaskOutcome(resultBlock: ToolResultBlock): InProcessTaskExecutionOutcome {
   const result = resultBlock.toJSON().toolResult
   if (resultBlock.status === 'success') return { status: 'completed', result }
+  if (resultBlock.error?.name === 'AbortError') return { status: 'cancelled' }
   return {
     status: 'failed',
     failure: {

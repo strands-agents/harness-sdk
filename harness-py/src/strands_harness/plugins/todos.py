@@ -2,13 +2,12 @@
 
 A single ``todo_write`` tool writes the current list to agent state; an internal
 ``ContextInjector`` re-surfaces that list to the model before each call so it keeps the plan
-in view without the list ever entering durable history.
+in view.
 
 Re-surfacing goes through ``ContextInjector`` rather than editing ``agent.messages`` from a hook.
-The list changes on every ``todo_write`` call, so a durable edit would either stack stale
-reminders in history or force a remove-then-reappend dance; injection is ephemeral by
-construction (it augments one model call and never persists), which is exactly what a
-constantly-changing task list wants. It also happens to be symmetric across both SDKs.
+The list changes on every ``todo_write`` call, and the injector shows the model only the latest
+copy, never a stack of stale reminders, which is exactly what a constantly-changing task list
+wants. It also happens to be symmetric across both SDKs.
 
 The injector fires on ``everyTurn``, not ``userTurn``: the agent updates the list mid-loop via
 ``todo_write``, so it should see the refreshed list on the next model call within the same
@@ -54,8 +53,8 @@ class Todos(Plugin):
     """Gives the agent a ``todo_write`` tool and keeps the current list in view.
 
     The tool persists the list to ``agent.state`` under ``state_key``; before each model call
-    the plugin re-surfaces the list as a ``<system-reminder>`` (ephemeral, never written to
-    durable history). Sharing one instance across agents is safe: state is per-agent.
+    the plugin re-surfaces the list as a ``<system-reminder>``, and the model sees only the latest
+    one. Sharing one instance across agents is safe: state is per-agent.
 
     Args:
         name: Plugin name, for logging and duplicate detection. Defaults to ``"strands:todos"``.
