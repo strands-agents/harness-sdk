@@ -6,7 +6,7 @@
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { Message, ReasoningBlock } from '../types/messages.js'
-import type { StreamOptions } from './model.js'
+import type { CountTokensOptions } from './model.js'
 
 // With the `u` flag a valid pair is a single code point, so only unpaired surrogates match.
 const LONE_SURROGATE = /[\uD800-\uDFFF]/gu
@@ -18,14 +18,14 @@ const REPLACEMENT_CHARACTER = '\uFFFD'
  * Content is walked generically, so new content block types are covered without being registered here.
  *
  * @param messages - The messages about to be sent
- * @param options - The stream options about to be sent
+ * @param options - The options about to be sent; their system prompt and tool specs are repaired
  * @returns The request to send, with well-formed messages and options returned as they are rather than copied
  * @internal
  */
-export function wellFormedRequest(
+export function wellFormedRequest<O extends CountTokensOptions>(
   messages: Message[],
-  options?: StreamOptions
-): [Message[], StreamOptions | undefined] {
+  options?: O
+): [Message[], O | undefined] {
   const sentMessages = mapChanged(messages, wellFormedMessage)
   const sentOptions = wellFormedOptions(options)
   if (sentMessages !== messages || sentOptions !== options) {
@@ -44,7 +44,7 @@ function wellFormedMessage(message: Message): Message {
   return content === message.content ? message : new Message({ ...message, content })
 }
 
-function wellFormedOptions(options: StreamOptions | undefined): StreamOptions | undefined {
+function wellFormedOptions<O extends CountTokensOptions>(options: O | undefined): O | undefined {
   if (options === undefined) return undefined
   const systemPrompt = wellFormed(options.systemPrompt)
   const toolSpecs = wellFormed(options.toolSpecs)

@@ -31,7 +31,6 @@ import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
 import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
-import { wellFormedRequest } from './well-formed-request.js'
 import { summarizeWithStream, type SummarizeResult } from './summarize.js'
 
 /**
@@ -556,9 +555,6 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * The method returns:
    * - StreamAggregatedResult containing the complete message, stop reason, and optional metadata
    *
-   * Lone UTF-16 surrogates in the request are replaced with U+FFFD before it reaches stream(), because some
-   * providers reject a whole request over one. Calling stream() directly skips this.
-   *
    * All exceptions thrown from this method are wrapped in ModelError to provide
    * a consistent error type for model-related errors. Specific error subtypes like
    * ContextWindowOverflowError, ModelThrottledError, and MaxTokensError are preserved.
@@ -597,7 +593,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       let redactionMessage: string | undefined = undefined
       let toolInputParseError: SyntaxError | undefined = undefined
 
-      for await (const event_data of this.stream(...wellFormedRequest(messages, options))) {
+      for await (const event_data of this.stream(messages, options)) {
         const event = this._convert_to_class_event(event_data)
         yield event // Pass through immediately
 

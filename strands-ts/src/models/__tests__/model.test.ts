@@ -50,39 +50,6 @@ class ErrorThrowingModelProvider extends Model<BaseModelConfig> {
 
 describe('Model', () => {
   describe('streamAggregated', () => {
-    // https://github.com/strands-agents/harness-sdk/issues/5937: a lone surrogate must never reach a provider
-    describe('when the conversation contains a lone surrogate', () => {
-      it('sends well-formed text to the provider and leaves the history untouched', async () => {
-        class RecordingProvider extends TestModelProvider {
-          received: { messages: Message[]; options: StreamOptions | undefined } | undefined
-
-          override async *stream(messages: Message[], options?: StreamOptions): AsyncGenerator<ModelStreamEvent> {
-            this.received = { messages, options }
-            yield* super.stream(messages, options)
-          }
-        }
-        const provider = new RecordingProvider(async function* () {
-          yield { type: 'modelMessageStartEvent', role: 'assistant' }
-          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
-        })
-        const messages = [new Message({ role: 'user', content: [new TextBlock('a\ud83d')] })]
-
-        await collectGenerator(provider.streamAggregated(messages, { systemPrompt: 's\ud83d' }))
-
-        expect(provider.received).toStrictEqual({
-          messages: [
-            new Message({
-              role: 'user',
-              content: [new TextBlock('a\ufffd')],
-              trackingId: messages[0]!.trackingId,
-            }),
-          ],
-          options: { systemPrompt: 's\ufffd' },
-        })
-        expect(messages[0]!.content).toEqual([new TextBlock('a\ud83d')])
-      })
-    })
-
     describe('when streaming a simple text message', () => {
       it('yields original events plus aggregated content block and returns final message', async () => {
         const provider = new TestModelProvider(async function* () {
