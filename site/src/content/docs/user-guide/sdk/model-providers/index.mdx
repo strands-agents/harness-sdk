@@ -220,9 +220,9 @@ about its model as <Syntax py="model.model_info" ts="model.modelInfo" />: the co
 window, the output limit, and capabilities such as prompt caching. The SDK looks up the
 model ID in the
 [shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json).
-An ID it can't map to a model, such as an application inference profile ARN or a proxy
-alias, reports nothing, and the SDK falls back to defaults such as a 200,000-token context
-window. Your <Syntax py="model_info" ts="modelInfo" /> wins over everything else:
+For an ID it can't map, such as an application inference profile ARN or a proxy alias,
+the lookup finds nothing. The SDK then falls back to defaults such as a 200,000-token
+context window. Your <Syntax py="model_info" ts="modelInfo" /> wins over everything else:
 
 <Tabs>
 <Tab label="Python">
