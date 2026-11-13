@@ -11,11 +11,10 @@ if (!harness) throw new Error('Missing Harness homepage project')
   <div class="banner__inner">
     <div class="banner__content">
       <h1 id="hero-title" class="banner__headline">
-        <span>Build agents.</span>
-        <span class="banner__headline-accent">Control every layer.</span>
+        <span>The open source</span>
+        <span>toolkit for</span>
+        <span>production agents.</span>
       </h1>
-
-      <p class="banner__intro">An open-source toolkit for building, running, and improving AI agents.</p>
 
       <div class="banner__conversion">
         <div class="banner__actions">
@@ -58,7 +57,6 @@ if (!harness) throw new Error('Missing Harness homepage project')
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: clamp(470px, 58vh, 600px);
     max-width: var(--home-content-width);
     margin: 0 auto;
     padding: clamp(42px, 5vw, 64px) 0;
@@ -81,36 +79,15 @@ if (!harness) throw new Error('Missing Harness homepage project')
     flex-direction: column;
     max-width: 1120px;
     margin: 0;
-    font-family: var(--home-display-font);
-    font-size: var(--home-hero-size);
-    font-weight: 500;
-    letter-spacing: var(--home-hero-tracking);
-    line-height: var(--home-hero-line-height);
-    color: var(--fg);
     text-wrap: balance;
-  }
-
-  .banner__headline-accent {
-    color: var(--accent-green);
-  }
-
-  .banner__intro {
-    max-width: 720px;
-    margin: 22px 0 0;
-    font-family: var(--home-body-font);
-    font-size: clamp(17px, 1.4vw, 20px);
-    line-height: 1.5;
-    color: color-mix(in srgb, var(--fg) 74%, transparent);
   }
 
   .banner__conversion {
     position: relative;
     z-index: 1;
     display: inline-grid;
-    grid-template-columns: minmax(0, 1fr);
     justify-items: stretch;
     gap: 14px;
-    width: fit-content;
     max-width: 100%;
     margin-top: 30px;
   }
@@ -118,7 +95,6 @@ if (!harness) throw new Error('Missing Harness homepage project')
   .banner__install {
     width: 100%;
     max-width: 100%;
-    min-width: 0;
   }
 
   .banner__install :global(.install) {
@@ -144,13 +120,8 @@ if (!harness) throw new Error('Missing Harness homepage project')
     gap: 9px;
     width: 100%;
     min-height: 50px;
-    padding: 12px 22px;
-    border: 1px solid color-mix(in srgb, var(--fg) 32%, transparent);
     border-radius: 999px;
     font-family: var(--home-control-font);
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1.2;
     text-decoration: none;
     white-space: nowrap;
     transition:
@@ -159,33 +130,9 @@ if (!harness) throw new Error('Missing Harness homepage project')
       border-color 0.18s ease;
   }
 
-  .banner__cta:hover {
-    transform: translateY(-2px);
-  }
-
   .banner__cta:focus-visible {
     outline: 2px solid var(--accent-green);
     outline-offset: 4px;
-  }
-
-  .banner__cta--primary {
-    border-color: var(--accent-green);
-    background: var(--accent-green);
-    color: var(--bg);
-  }
-
-  .banner__cta--primary:hover {
-    background: color-mix(in srgb, var(--accent-green) 84%, var(--fg));
-  }
-
-  .banner__cta--secondary {
-    background: transparent;
-    color: var(--fg);
-  }
-
-  .banner__cta--secondary:hover {
-    border-color: var(--accent-green);
-    color: var(--accent-green);
   }
 
   .banner__arrow {
@@ -206,12 +153,8 @@ if (!harness) throw new Error('Missing Harness homepage project')
     right: 0;
     left: 0;
     width: 100%;
-    height: 72%;
-    background: radial-gradient(circle, var(--halftone-dot) 0 2.4px, transparent 2.9px) 0 0 / 18px 18px;
-    opacity: 0.58;
     pointer-events: none;
     -webkit-mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 82%) 38%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 82%) 38%, transparent 100%);
   }
 
   :global(:root[data-theme='dark']) .banner__dots {
@@ -224,7 +167,6 @@ if (!harness) throw new Error('Missing Harness homepage project')
     }
 
     .banner__inner {
-      min-height: 0;
       padding: 46px 0 42px;
     }
 
@@ -233,15 +175,7 @@ if (!harness) throw new Error('Missing Harness homepage project')
     }
 
     .banner__headline {
-      font-size: var(--home-hero-size);
-      letter-spacing: var(--home-hero-tracking);
       line-height: var(--home-hero-line-height);
-    }
-
-    .banner__intro {
-      max-width: 36rem;
-      margin-top: 18px;
-      font-size: 16px;
     }
 
     .banner__conversion {
@@ -262,7 +196,6 @@ if (!harness) throw new Error('Missing Harness homepage project')
       width: 100%;
       height: 220px;
       background-size: 14px 14px;
-      opacity: 0.5;
       -webkit-mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 78%) 40%, transparent 100%);
       mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / 78%) 40%, transparent 100%);
     }
@@ -275,12 +208,6 @@ if (!harness) throw new Error('Missing Harness homepage project')
   @media (max-width: 360px) {
     .banner__inner {
       padding: 30px 0 28px;
-    }
-
-    .banner__intro {
-      margin-top: 16px;
-      font-size: 15px;
-      line-height: 1.45;
     }
 
     .banner__cta {
@@ -302,6 +229,125 @@ if (!harness) throw new Error('Missing Harness homepage project')
   @media (forced-colors: active) {
     .banner__dots {
       display: none;
+    }
+  }
+  .banner__inner {
+    min-height: 360px;
+    padding-block: 60px 42px;
+  }
+
+  .banner__headline {
+    font-family: var(--home-display-font);
+    font-size: clamp(30px, 3.25vw, 52px);
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    line-height: 1.2;
+    color: var(--banner-headline);
+  }
+
+  .banner__conversion {
+    grid-template-columns: minmax(0, 1fr);
+    width: min(100%, 430px);
+    min-width: 0;
+  }
+
+  .banner__install {
+    min-width: 0;
+  }
+
+  .banner__cta {
+    background: var(--toggle-bg);
+    border: 1px solid var(--toggle-inactive-border);
+    color: var(--fg);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+    padding: 10px 15px;
+  }
+
+  .banner__cta:hover {
+    opacity: 0.75;
+    transform: none;
+  }
+
+  .banner__dots {
+    inset: 20px 0 auto;
+    height: 280px;
+    border-radius: 40px;
+    opacity: 0.35;
+    background: none;
+    mask-image: linear-gradient(#000, transparent);
+  }
+
+  .banner__dots::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--halftone-dot);
+    mask: url('../assets/banner/halftone.svg') center / 1332px 750px no-repeat;
+    transform: rotate(180deg);
+  }
+
+  @media (min-width: 1024px) {
+    .banner__inner {
+      min-height: 324px;
+      padding: 48px clamp(0px, 2vw, 32px);
+    }
+
+    .banner__content {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 430px);
+      grid-template-areas: 'headline actions';
+      gap: 20px clamp(32px, 4vw, 64px);
+      align-items: center;
+      text-align: left;
+    }
+
+    .banner__headline {
+      grid-area: headline;
+      align-items: flex-start;
+    }
+
+    .banner__conversion {
+      grid-area: actions;
+      justify-self: end;
+      margin-top: 0;
+    }
+
+    .banner__actions {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 767px) {
+    .banner__inner {
+      min-height: 0;
+      padding-block: 36px 24px;
+    }
+
+    .banner__headline {
+      max-width: 100%;
+      font-size: clamp(21px, 4.8vw, 26px);
+      font-weight: 600;
+      letter-spacing: 0.1em;
+    }
+
+    .banner__cta {
+      font-size: 14px;
+      padding-inline: 10px;
+    }
+
+    .banner__install :global(.install__cmd) {
+      font-size: 11px;
+    }
+
+    .banner__install :global(.install__copy) {
+      padding-inline: 10px;
+    }
+
+    .banner__dots {
+      opacity: 0.25;
+      border-radius: 14px;
     }
   }
 </style>

@@ -25,8 +25,8 @@ export const homepageStartProjects: HomepageProject[] = [
   {
     product: harness,
     description:
-      'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
-    cta: 'Build with Harness',
+      'Tools, memory, sessions, and context management come configured. Customize the parts your application needs.',
+    cta: 'Explore Harness',
     href: harness.href,
     markdownHref: '/docs/user-guide/harness/index.md',
   },
@@ -40,24 +40,27 @@ export const homepageStartProjects: HomepageProject[] = [
   },
 ]
 
-export const homepageCapabilities: HomepageProject[] = [
+export const homepageCapabilities: (HomepageProject & { action: string })[] = [
   {
     product: box,
-    description: 'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
+    action: 'Sandbox agent work',
+    description: 'Run agent work in a sandbox with explicit permissions.',
     cta: 'Use Strands Box',
     href: box.href,
     markdownHref: '/docs/user-guide/box/quickstart/index.md',
   },
   {
     product: evals,
-    description: 'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
+    action: 'Validate agent behavior',
+    description: 'Test agent behavior and find failures before you ship.',
     cta: 'Run an evaluation',
     href: evals.href,
     markdownHref: '/docs/user-guide/evals-sdk/index.md',
   },
   {
     product: decider,
-    description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
+    action: 'Make fast decisions',
+    description: 'Use a small, fast System One model to route requests, classify inputs, and score outcomes.',
     cta: 'Try Decider',
     href: decider.href,
     markdownHref: '/docs/labs/strands-decider/overview/index.md',

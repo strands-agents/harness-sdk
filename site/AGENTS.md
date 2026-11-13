@@ -74,6 +74,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   ├── components/               # Custom Astro components
 │   │   ├── CourseNotice.astro    # Course recording and example update notices
 │   │   ├── FaqAnswer.astro       # Shared renderer for structured FAQ answers
+│   │   ├── ProjectCode.astro     # Homepage code examples with language selection and copying
 │   │   ├── HomeFaq.astro         # Five-question homepage FAQ preview
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides

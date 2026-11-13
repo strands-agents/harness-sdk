@@ -12,7 +12,7 @@ function configuredPathWithBase(value: string): string {
 
 describe('homepage machine-readable metadata', () => {
   const homepageHtml = readFileSync(new URL('../dist/index.html', import.meta.url), 'utf8')
-  const homepage = parse(homepageHtml)
+  const homepage = parse(homepageHtml, { blockTextElements: { script: true, style: true, noscript: true } })
 
   it('keeps meaningful content near the start of a compact HTML response', () => {
     expect(Buffer.byteLength(homepageHtml)).toBeLessThan(1_000_000)
@@ -58,12 +58,11 @@ describe('homepage machine-readable metadata', () => {
     const banner = homepage.querySelector('.banner')
 
     expect(banner?.querySelectorAll('h1 > span').map((line) => line.text.trim())).toEqual([
-      'Build agents.',
-      'Control every layer.',
+      'The open source',
+      'toolkit for',
+      'production agents.',
     ])
-    expect(banner?.querySelector('.banner__intro')?.text).toContain('open-source toolkit')
-    expect(banner?.querySelector('.banner__intro')?.text).not.toContain('Start with Harness')
-    expect(banner?.querySelector('.banner__intro')?.text).not.toContain('in Python and TypeScript')
+    expect(banner?.querySelector('.banner__intro')).toBeNull()
     expect(banner?.querySelector('.banner__eyebrow')).toBeNull()
     expect(banner?.querySelector('h1')?.getAttribute('aria-label')).toBeUndefined()
     expect(banner?.querySelectorAll('.banner__cta')).toHaveLength(2)
@@ -75,55 +74,38 @@ describe('homepage machine-readable metadata', () => {
       'https://github.com/strands-agents/harness-sdk'
     )
     expect(banner?.querySelector('.banner__cta--secondary')?.text.trim()).toBe('GitHub')
-    expect(banner?.querySelector('.banner__intro')?.text.trim()).toBe(
-      'An open-source toolkit for building, running, and improving AI agents.'
-    )
     expect(
       banner?.querySelectorAll('.banner__install [data-install-variant]').map((command) => command.text.trim())
     ).toEqual(['pip install strands-harness', 'npm install @strands-agents/harness'])
     expect(banner?.querySelector('.banner__actions + .banner__install')).not.toBeNull()
     expect(banner?.querySelector('.banner__dots')).not.toBeNull()
     expect(homepage.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe(
-      'Strands Agents: Build agents. Control every layer.'
+      'Strands Agents: The open source toolkit for production agents.'
     )
   })
 
-  it('distinguishes the complete agent, composable SDK, and independent projects', () => {
+  it('features Harness with visible code and expands supporting projects independently', () => {
     const framework = homepage.querySelector('.framework')
-    const layers = framework?.querySelectorAll('.framework__layer') ?? []
-    const capabilityItems = framework?.querySelectorAll('.framework__capability') ?? []
+    const harness = framework?.querySelector('.framework__harness-feature')
+    const capabilities = framework?.querySelectorAll('.framework__capability') ?? []
 
-    expect(framework?.getAttribute('id')).toBe('framework')
-    expect(framework?.querySelector('.framework__intro h2')?.text.trim()).toBe('Build an agent')
-    expect(framework?.querySelector('.framework__capabilities-label')?.text.trim()).toBe('More Strands projects')
-    expect(
-      layers.map((layer) => ({
-        title: layer.querySelector('.framework__product-title')?.text.trim(),
-        description: layer.querySelector('.framework__card-copy p')?.text.trim(),
-        installCommands: layer.querySelectorAll('[data-install-variant]').map((command) => command.text.trim()),
-        href: layer.querySelector('.framework__card-link')?.getAttribute('href'),
-        cta: layer.querySelector('.framework__card-link')?.text.trim(),
-      }))
-    ).toEqual([
-      {
-        title: '/harness',
-        description:
-          'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
-        installCommands: ['pip install strands-harness', 'npm install @strands-agents/harness'],
-        href: configuredPathWithBase('/docs/user-guide/harness/'),
-        cta: 'Build with Harness',
-      },
-      {
-        title: '/harness-sdk',
-        description:
-          'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
-        installCommands: ['pip install strands-agents', 'npm install @strands-agents/sdk'],
-        href: configuredPathWithBase('/docs/user-guide/sdk/'),
-        cta: 'Build with the SDK',
-      },
+    expect(framework?.querySelector('#framework-build-title')?.text.trim()).toBe('Build an agent')
+    expect(framework?.querySelectorAll('.framework__harness-feature')).toHaveLength(1)
+    expect(harness?.querySelector('h3')?.text.trim()).toBe('Start with a complete agent.')
+    expect(harness?.querySelector('.framework__card-link')?.getAttribute('href')).toBe(
+      configuredPathWithBase('/docs/user-guide/harness/')
+    )
+    expect(harness?.querySelector('details')).toBeNull()
+    expect(harness?.querySelector('[data-example-language="Python"] code')?.text).toContain('create_harness()')
+    expect(harness?.querySelector('[data-example-language="TypeScript"] code')?.text).toContain('await createHarness()')
+    expect(framework?.text).not.toContain('/harness-sdk')
+    expect(framework?.querySelectorAll('.framework__branch > h2').map((heading) => heading.text.trim())).toEqual([
+      'Sandbox agent work',
+      'Validate agent behavior',
+      'Make fast decisions',
     ])
     expect(
-      capabilityItems.map((item) => ({
+      capabilities.map((item) => ({
         title: item.querySelector('.framework__product-title')?.text.trim(),
         href: item.querySelector('a')?.getAttribute('href'),
       }))
@@ -132,30 +114,19 @@ describe('homepage machine-readable metadata', () => {
       { title: '/evals', href: configuredPathWithBase('/docs/user-guide/evals-sdk/') },
       { title: '/decider', href: configuredPathWithBase('/docs/labs/strands-decider/overview/') },
     ])
-    expect(framework?.text).not.toContain('Shell')
-    expect(framework?.querySelector('.framework__card-meta')).toBeNull()
-    expect(framework?.querySelector('.framework__capability-meta')).toBeNull()
-    expect(
-      capabilityItems
-        .find((item) => item.querySelector('.framework__product-title')?.text.trim() === '/decider')
-        ?.querySelector('.framework__product-title')
-        ?.text.trim()
-    ).toBe('/decider')
-    expect(framework?.text).not.toContain('Experimental')
-    expect(framework?.text).not.toContain('Production-ready defaults')
-    expect(framework?.text).not.toContain('Build from primitives')
-    expect(framework?.text).not.toContain('Isolate')
-    expect(framework?.text).not.toContain('Evaluate')
-    expect(framework?.text).not.toContain('Your first agent')
-    expect(framework?.text).not.toContain('Add only what your agent needs.')
-    expect(
-      framework
-        ?.querySelectorAll('.framework__product-title')
-        .every((title) => title.text.trim() === title.text.trim().toLowerCase())
-    ).toBe(true)
-    expect(framework?.querySelector('.framework__labs')).toBeNull()
+    for (const item of capabilities) {
+      expect(item.querySelector('details')?.hasAttribute('open')).toBe(false)
+      expect(item.querySelector('summary p')?.text.trim().length).toBeGreaterThan(20)
+      expect(item.querySelector('details a')).toBeNull()
+      expect(item.querySelector('details + a')).not.toBeNull()
+    }
+    expect(capabilities[0]?.querySelector('svg[role="img"] title')?.text).toContain('Example sandbox')
+    expect(capabilities[1]?.querySelectorAll('[data-example-language]')).toHaveLength(1)
+    expect(capabilities[1]?.querySelector('[data-example-language="Python"]')?.hasAttribute('hidden')).toBe(false)
+    expect(capabilities[1]?.querySelector('code')?.text).toContain('.run_evaluations(task)')
+    expect(capabilities[2]?.querySelector('summary')?.text).toContain('System One')
+    expect(capabilities[2]?.querySelector('svg[role="img"] title')?.text).toContain('selects Billing')
     expect(homepageHtml.indexOf('class="framework ')).toBeLessThan(homepageHtml.indexOf('class="logo-farm '))
-    expect(homepageHtml.indexOf('class="logo-farm ')).toBeLessThan(homepageHtml.indexOf('class="use-cases '))
   })
 
   it('keeps every scrollable install command keyboard accessible', () => {
