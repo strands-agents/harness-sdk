@@ -1,0 +1,51 @@
+---
+title: Make bounded decisions
+description: Turn input state into typed answers to closed questions, with an explicit way to abstain.
+languages: [typescript]
+sourceLinks:
+  - path: strands-ts/src/decisions/decision-model.ts
+  - path: strands-ts/src/decisions/llm-decision-model.ts
+  - path: strands-ts/src/decisions/types.ts
+---
+
+A decision model turns input state into answers to one or more questions whose
+allowed choices are known ahead of time. Use it when application code needs a
+bounded result, such as a route, category, or yes-or-no judgment, rather than a
+free-form reply.
+
+## Choose the right API
+
+Choose the call that matches the shape of the result and the work needed to produce it.
+
+| Use                                          | When                                                                                                                   |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `DecisionModel.ask`                          | You have a fixed set of answer choices and want answers keyed to question IDs. The model can abstain with `Uncertain`. |
+| `Agent.invoke` with `structuredOutputSchema` | You need a schema-shaped object from an agent that may use tools before it returns the result.                         |
+| `Agent.invoke`                               | The task needs the agent loop, tool use, or a flexible response that is not limited to predefined choices.             |
+
+`LLMDecisionModel` makes one model call through a forced structured-output tool.
+It does not run the agent loop or invoke application tools. Give it state as a
+string, a content-block list, or a message history, then pass a map of questions.
+The answers retain each question's choice types.
+
+By default, `LLMDecisionModel` uses `BedrockModel`. Pass a configured model when
+you need another provider or model configuration.
+
+## Allow an uncertain answer
+
+Omitting `uncertainty` allows the model to return `Uncertain` when the input does
+not support a choice. Set `uncertainty: false` when the model must choose one of
+the listed options. The answer type still includes `Uncertain` so callers can
+handle an abstention defensively.
+
+## Explore the API
+
+- [DecisionModel](decision-model/): the abstract `ask` contract
+- [LLMDecisionModel](llm-decision-model/): the model-backed implementation
+- [Question](question/): question text, choices, and uncertainty settings
+- [DecisionResult](decision-result/): answers, usage, and call metadata
+- [Uncertain](uncertain/): the abstention sentinel
+- [AnswerOf](answer-of/): infer an answer type from a question
+
+The [decision example README](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/examples/decisions/README.md)
+shows how to run the TypeScript example against Amazon Bedrock.

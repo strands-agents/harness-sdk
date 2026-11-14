@@ -1,0 +1,26 @@
+---
+title: DecisionModel
+description: The abstract contract for asking one or more closed questions over input state.
+languages: [typescript]
+sourceLinks:
+  - path: strands-ts/src/decisions/decision-model.ts
+  - path: strands-ts/src/decisions/types.ts
+---
+
+Extend `DecisionModel` when you need a decision strategy that returns typed
+answers to a fixed set of questions. Its `ask(state, questions, options?)` method
+returns a `Promise<DecisionResult<Q>>`, preserving each question's answer type.
+
+`state` can be a string, a list of content blocks, or a message history. The
+question map must contain at least one entry; each entry needs non-empty question
+text and either boolean choices or a non-empty list of unique string choices.
+
+`ask` validates the question map, opens a tracing span, and records the returned
+answers and latency. Pass an SDK-created `invocationContext` in `options` to add
+reported token usage to that request. The request's usage limits do not apply to
+the decision call. Invalid questions throw `Error`; an invalid invocation context
+throws `TypeError`.
+
+Use [LLMDecisionModel](llm-decision-model/) when a direct model call is enough.
+See [Question](question/) and [DecisionResult](decision-result/) for the input
+and return shapes.
