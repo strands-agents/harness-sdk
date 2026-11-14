@@ -1462,6 +1462,22 @@ async def test_structured_output_throttled_exception_by_status(gemini_client, mo
         await anext(model.structured_output(type(weather_output), messages))
 
 
+@pytest.mark.asyncio
+async def test_structured_output_context_overflow_exception(gemini_client, model, messages, weather_output):
+    gemini_client.aio.models.generate_content.side_effect = genai.errors.ClientError(
+        400,
+        {
+            "error": {
+                "message": "request exceeds the maximum number of tokens (100)",
+                "status": "INVALID_ARGUMENT",
+            },
+        },
+    )
+
+    with pytest.raises(ContextWindowOverflowException, match="exceeds the maximum number of tokens"):
+        await anext(model.structured_output(type(weather_output), messages))
+
+
 def test_gemini_tools_validation_rejects_function_declarations(model_id):
     tool_with_function_declarations = genai.types.Tool(
         function_declarations=[
