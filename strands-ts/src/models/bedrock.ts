@@ -974,7 +974,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
       // Check for context window overflow
       if (BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES.some((msg) => error.message.includes(msg))) {
-        throw new ContextWindowOverflowError(error.message)
+        throw new ContextWindowOverflowError(error.message, { cause: error })
       }
 
       // Re-throw other errors as-is

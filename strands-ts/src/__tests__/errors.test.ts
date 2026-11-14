@@ -70,6 +70,21 @@ describe('ContextWindowOverflowError', () => {
       expect(error).toBeInstanceOf(ModelError)
     })
   })
+
+  describe('when instantiated with a cause', () => {
+    it('preserves the original error as cause', () => {
+      const cause = new Error('original error')
+      const error = new ContextWindowOverflowError('wrapped error', { cause })
+
+      expect(error.cause).toBe(cause)
+    })
+
+    it('has undefined cause when not provided', () => {
+      const error = new ContextWindowOverflowError('test')
+
+      expect(error.cause).toBeUndefined()
+    })
+  })
 })
 
 describe('MaxTokensError', () => {
