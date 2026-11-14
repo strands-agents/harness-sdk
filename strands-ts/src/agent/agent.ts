@@ -2671,10 +2671,10 @@ export class Agent implements LocalAgent, InvokableAgent {
             ctx.invocationState,
             invocationContext
           )
-          let iterResult = await gen.next()
+          let iterResult = await self._tracer.withSpanContext(modelSpan, () => gen.next())
           while (!iterResult.done) {
             yield iterResult.value
-            iterResult = await gen.next()
+            iterResult = await self._tracer.withSpanContext(modelSpan, () => gen.next())
           }
 
           const usage = iterResult.value.metadata?.usage
