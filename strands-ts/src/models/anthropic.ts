@@ -108,6 +108,17 @@ function isBedrockRuntimeClient(client: unknown): boolean {
 }
 
 /**
+ * The `max_tokens` set through `params`, which counts as configured because it overrides `maxTokens` on the wire.
+ *
+ * @param config - The model config
+ * @returns `params.max_tokens`, or undefined when it is not set
+ */
+function paramsMaxTokens(config: AnthropicModelConfig): number | undefined {
+  const maxTokens = config.params?.max_tokens as number | null | undefined
+  return maxTokens ?? undefined
+}
+
+/**
  * Validates that `anthropicTools` does not contain function tool definitions.
  *
  * @param anthropicTools - The configured server-side tools
@@ -370,7 +381,11 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.anthropic.modelId))
     }
 
-    if (modelConfig.maxTokens === undefined && modelConfig.modelInfo?.limits?.maxOutputTokens === undefined) {
+    if (
+      modelConfig.maxTokens === undefined &&
+      paramsMaxTokens(modelConfig) === undefined &&
+      modelConfig.modelInfo?.limits?.maxOutputTokens === undefined
+    ) {
       warnOnce(logger, defaultMaxTokensWarningMessage(this._resolvedMaxTokens()))
     }
 
@@ -409,14 +424,17 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   getConfig(): AnthropicModelConfig {
     const modelId = this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId
     const config = resolveConfigMetadata(this._config, modelId)
-    return config.maxTokens === undefined ? { ...config, maxTokens: this._resolvedMaxTokens() } : config
+    return { ...config, maxTokens: this._resolvedMaxTokens() }
   }
 
   /**
-   * The `maxTokens` to send: the user's value, else the model's output ceiling (see
-   * `resolveMaxTokens`), else the fixed default. Resolved on each read so it follows `updateConfig({ modelId })`.
+   * The `maxTokens` to send: `params.max_tokens` (spread into the request last, so it is what goes on the wire), else
+   * the user's value, else the model's output ceiling (see `resolveMaxTokens`), else the fixed default. Resolved on
+   * each read so it follows `updateConfig({ modelId })`.
    */
   private _resolvedMaxTokens(): number {
+    const fromParams = paramsMaxTokens(this._config)
+    if (fromParams !== undefined) return fromParams
     const modelId = this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId
     return resolveMaxTokens(this._config, modelId) ?? MODEL_DEFAULTS.anthropic.maxTokens
   }
