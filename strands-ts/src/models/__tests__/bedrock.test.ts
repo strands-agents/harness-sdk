@@ -32,6 +32,15 @@ import { logger } from '../../logging/logger.js'
 import { z } from 'zod'
 import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
 import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
+import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
+import { Stash } from '../../context-manager/stash.js'
+import {
+  pinContextTool,
+  summarizeContextTool,
+  truncateContextTool,
+} from '../../context-manager/modes/agentic/agentic-context.js'
+import { ContextOffloader } from '../../vended-plugins/context-offloader/plugin.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
 /**
  * Helper function to mock BedrockRuntimeClient implementation with customizable config.
@@ -1140,6 +1149,48 @@ describe('BedrockModel', () => {
 
         collectIterator(new BedrockModel().stream(messages, { toolSpecs: [toolSpec(inputSchema)] }))
         expect(lastTools()[0]!.toolSpec!.inputSchema!.json).toEqual(inputSchema)
+      })
+
+      it('warns with the tool name and keyword when a schema keeps an open additionalProperties', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [
+              toolSpec({
+                type: 'object',
+                properties: { m: { type: 'object', additionalProperties: { type: 'string' } } },
+              }),
+            ],
+          })
+        )
+
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('tool=<calc>, keywords=<additionalProperties> | tool schema uses keywords')
+        )
+      })
+
+      // Guards https://github.com/strands-agents/harness-sdk/issues/6102: zod's .int() emits bounds on every field.
+      it("sends the SDK's own zod integer tools without bounds or a warning", () => {
+        const tools = [
+          createRetrievalTool(new Stash(new InMemoryStorage(), 'session', 'agent')),
+          summarizeContextTool,
+          truncateContextTool,
+          pinContextTool,
+          ...new ContextOffloader({}).getTools(),
+        ]
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          new BedrockModel({ strictTools: true }).stream(messages, { toolSpecs: tools.map((tool) => tool.toolSpec) })
+        )
+
+        const sent = JSON.stringify(lastTools().map((entry) => entry.toolSpec!.inputSchema!.json))
+        expect(lastTools()).toHaveLength(5)
+        expect(sent).not.toMatch(
+          /"(minimum|maximum|exclusiveMinimum|exclusiveMaximum|multipleOf|minLength|maxLength)":/
+        )
+        expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('strict mode rejects'))
       })
 
       it('patches nested object schemas', () => {

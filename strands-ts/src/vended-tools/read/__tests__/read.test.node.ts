@@ -19,6 +19,7 @@ import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { collectGenerator } from '../../../__fixtures__/model-test-helpers.js'
 import { NotASandboxLocalEnvironment } from '../../../sandbox/not-a-sandbox-local-environment.js'
 import type { Sandbox } from '../../../sandbox/base.js'
+import { ensureStrictJsonSchema } from '../../../models/strict-schema.js'
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0])
@@ -366,5 +367,22 @@ describe('makeRead description', () => {
 
   it('explicit description wins', () => {
     expect(makeRead({ media: false, description: 'Custom.' }).toolSpec.description).toBe('Custom.')
+  })
+})
+
+describe('read strict schema', () => {
+  it('moves the offset and limit bounds into their descriptions', () => {
+    const strict = ensureStrictJsonSchema(read.toolSpec.inputSchema!) as {
+      properties: Record<string, unknown>
+    }
+
+    expect(strict.properties['offset']).toStrictEqual({
+      type: 'integer',
+      description: '1-indexed line to start from. Defaults to the first line. Text files only.\n\n{minimum: 1}',
+    })
+    expect(strict.properties['limit']).toStrictEqual({
+      type: 'integer',
+      description: 'Maximum number of lines to return. Defaults to 2000. Text files only.\n\n{minimum: 1}',
+    })
   })
 })

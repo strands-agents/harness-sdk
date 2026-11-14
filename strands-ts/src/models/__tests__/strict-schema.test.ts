@@ -6,13 +6,6 @@ import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from '../strict
 import { deepCopy } from '../../types/json.js'
 import type { JSONSchema } from '../../types/json.js'
 import { logger } from '../../logging/logger.js'
-import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
-import {
-  pinContextTool,
-  summarizeContextTool,
-  truncateContextTool,
-} from '../../context-manager/modes/agentic/agentic-context.js'
-import type { Stash } from '../../context-manager/stash.js'
 
 const schema = (value: object): JSONSchema => value as unknown as JSONSchema
 const asRecord = (value: JSONSchema): Record<string, unknown> => value as unknown as Record<string, unknown>
@@ -467,6 +460,25 @@ describe('ensureStrictJsonSchema bounds', () => {
     })
   })
 
+  it('moves bounds inside tuple prefixItems', () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'array',
+        prefixItems: [{ type: 'integer', minimum: 3, maximum: Number.MAX_SAFE_INTEGER }, { type: 'object' }],
+        items: false,
+      })
+    )
+
+    expect(result).toStrictEqual({
+      type: 'array',
+      prefixItems: [
+        { type: 'integer', description: '{minimum: 3}' },
+        { type: 'object', additionalProperties: false },
+      ],
+      items: false,
+    })
+  })
+
   it('treats a property named like a bound as a property', () => {
     const result = ensureStrictJsonSchema(schema({ type: 'object', properties: { minimum: { type: 'number' } } }))
 
@@ -475,29 +487,6 @@ describe('ensureStrictJsonSchema bounds', () => {
       properties: { minimum: { type: 'number' } },
       additionalProperties: false,
     })
-  })
-
-  it('leaves no bounds for findUnsupportedStrictKeywords to report', () => {
-    const strict = ensureStrictJsonSchema(
-      schema({
-        type: 'object',
-        properties: {
-          headers: { type: 'object', additionalProperties: { type: 'string', maxLength: 10 } },
-          count: { type: 'integer', minimum: 0, maximum: 5 },
-        },
-      })
-    )
-
-    expect(findUnsupportedStrictKeywords(strict)).toEqual(['additionalProperties'])
-  })
-
-  // Guards https://github.com/strands-agents/harness-sdk/issues/6102: zod's .int() emits bounds on every field.
-  it('leaves no unsupported keywords in the context tools built on zod integers', () => {
-    const tools = [createRetrievalTool({} as Stash), summarizeContextTool, truncateContextTool, pinContextTool]
-
-    for (const tool of tools) {
-      expect(findUnsupportedStrictKeywords(ensureStrictJsonSchema(tool.toolSpec.inputSchema!))).toEqual([])
-    }
   })
 })
 
@@ -513,7 +502,7 @@ describe('findUnsupportedStrictKeywords', () => {
     expect(findUnsupportedStrictKeywords(strict)).toEqual([])
   })
 
-  it('reports open additionalProperties and bounds anywhere in the schema, sorted and deduplicated', () => {
+  it('reports open additionalProperties anywhere in the schema, deduplicated, and not bounds', () => {
     const keywords = findUnsupportedStrictKeywords(
       schema({
         type: 'object',
@@ -523,21 +512,15 @@ describe('findUnsupportedStrictKeywords', () => {
           timeout: { type: 'number', exclusiveMinimum: 0, exclusiveMaximum: 60 },
           tags: { type: 'array', items: { type: 'string', minLength: 1 } },
         },
-        $defs: { Step: { type: 'number', multipleOf: 2, minimum: 1 } },
+        $defs: {
+          Map: { type: 'object', additionalProperties: true },
+          Step: { type: 'number', multipleOf: 2, minimum: 1 },
+        },
         additionalProperties: false,
       })
     )
 
-    expect(keywords).toEqual([
-      'additionalProperties',
-      'exclusiveMaximum',
-      'exclusiveMinimum',
-      'maxLength',
-      'maximum',
-      'minLength',
-      'minimum',
-      'multipleOf',
-    ])
+    expect(keywords).toEqual(['additionalProperties'])
   })
 
   it('does not treat property names as keywords', () => {

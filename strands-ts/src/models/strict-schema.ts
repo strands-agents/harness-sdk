@@ -36,7 +36,7 @@ export function ensureStrictJsonSchema(schema: JSONSchema): JSONSchema {
 /** Keywords whose value is a map of subschemas. */
 const SCHEMA_MAP_KEYWORDS = ['$defs', 'definitions', 'properties']
 /** Keywords whose value is a list of subschemas. */
-const SCHEMA_LIST_KEYWORDS = ['anyOf', 'allOf', 'oneOf']
+const SCHEMA_LIST_KEYWORDS = ['anyOf', 'allOf', 'oneOf', 'prefixItems']
 /** Keywords whose value is a single subschema. */
 const SCHEMA_VALUE_KEYWORDS = ['items', 'additionalProperties']
 
@@ -121,11 +121,7 @@ function moveBoundsToDescription(schema: SchemaNode): void {
   }
 
   const meaningful = bounds.filter(([key, value]) => !isSafeIntegerDefault(key, value))
-  if (meaningful.length > 0) {
-    const moved = `{${meaningful.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(', ')}}`
-    const description = schema['description']
-    schema['description'] = description !== undefined ? `${description}\n\n${moved}` : moved
-  }
+  if (meaningful.length > 0) appendToDescription(schema, meaningful)
 
   for (const child of childSchemas(schema)) {
     moveBoundsToDescription(child)
@@ -140,8 +136,19 @@ function isSafeIntegerDefault(keyword: string, value: JSONValue): boolean {
 }
 
 /**
- * Return the keywords in `schema` that Bedrock's strict mode rejects, sorted: any
- * `additionalProperties` other than `false`, and numeric/length bounds.
+ * Append `{key: value, ...}` for each entry to the node's `description`, after a blank line.
+ *
+ * @internal
+ */
+export function appendToDescription(schema: SchemaNode, entries: [string, JSONValue][]): void {
+  const moved = `{${entries.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(', ')}}`
+  const description = schema['description']
+  schema['description'] = description !== undefined ? `${description}\n\n${moved}` : moved
+}
+
+/**
+ * Return the keywords in `schema` that Bedrock's strict mode rejects and the transform leaves in
+ * place, sorted: any `additionalProperties` other than `false`.
  *
  * @internal
  */
@@ -152,9 +159,6 @@ export function findUnsupportedStrictKeywords(schema: JSONSchema): string[] {
 }
 
 function collectUnsupportedKeywords(schema: SchemaNode, found: Set<string>): void {
-  for (const keyword of UNSUPPORTED_STRICT_KEYWORDS) {
-    if (Object.hasOwn(schema, keyword)) found.add(keyword)
-  }
   if (Object.hasOwn(schema, 'additionalProperties') && schema['additionalProperties'] !== false) {
     found.add('additionalProperties')
   }
