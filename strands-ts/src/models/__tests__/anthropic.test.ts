@@ -152,6 +152,14 @@ describe('AnthropicModel', () => {
       )
     })
 
+    it('does not warn when maxTokens is set through params', () => {
+      new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-unknown-9', params: { max_tokens: 1000 } })
+      expect(warnOnce).not.toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining('using default maxTokens')
+      )
+    })
+
     it('warns when modelId is not explicitly set', () => {
       new AnthropicModel({ apiKey: 'sk-ant-test' })
       expect(warnOnce).toHaveBeenCalledWith(
@@ -1044,6 +1052,35 @@ describe('AnthropicModel', () => {
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
         stream: true,
       })
+    })
+
+    it('uses params.max_tokens when the model info has no output limit', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        modelId: 'claude-unknown-9',
+        params: { max_tokens: 1000 },
+        client: mockClient,
+      })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })]))
+
+      expect(provider.getConfig().maxTokens).toBe(1000)
+      expect(captured.request.max_tokens).toBe(1000)
+    })
+
+    it.each([{}, { maxTokens: 500 }])('getConfig reports params.max_tokens, the value sent (%o)', async (config) => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        modelId: 'claude-sonnet-4-6',
+        params: { max_tokens: 1000 },
+        client: mockClient,
+        ...config,
+      })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })]))
+
+      expect(provider.getConfig().maxTokens).toBe(1000)
+      expect(captured.request.max_tokens).toBe(1000)
     })
 
     it('never sends the durable message id to the provider', async () => {
