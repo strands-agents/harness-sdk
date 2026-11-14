@@ -2,8 +2,10 @@ import asyncio
 import base64
 import threading
 import time
+from concurrent.futures import Future
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import timedelta
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from mcp import ListToolsResult
@@ -42,6 +44,17 @@ from .conftest import assert_session_call_tool_once_with, make_mcp_error
 def mcp_client(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         yield client
+
+
+@pytest.fixture
+def mock_background_invoke():
+    future = Future()
+
+    def invoke(coro, **kwargs):
+        coro.close()
+        return future
+
+    return MagicMock(side_effect=invoke), future
 
 
 def test_mcp_client_context_manager(mock_transport, mock_session):
@@ -730,65 +743,43 @@ async def test_call_tool_async_forwards_meta(mock_transport, mock_session):
     meta = {"com.example/request_id": "abc-123"}
 
     with MCPClient(mock_transport["transport_callable"]) as client:
-        with (
-            patch("asyncio.run_coroutine_threadsafe") as mock_run_coroutine_threadsafe,
-            patch("asyncio.wrap_future") as mock_wrap_future,
-        ):
-            mock_future = MagicMock()
-            mock_run_coroutine_threadsafe.return_value = mock_future
+        result = await client.call_tool_async(
+            tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, meta=meta
+        )
 
-            async def mock_awaitable():
-                return mock_result
-
-            mock_wrap_future.return_value = mock_awaitable()
-
-            result = await client.call_tool_async(
-                tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, meta=meta
-            )
-
-            mock_run_coroutine_threadsafe.assert_called_once()
-
-        assert result["status"] == "success"
+    assert result["status"] == "success"
+    assert_session_call_tool_once_with(mock_session, "test_tool", {"param": "value"}, meta=meta)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_error,expected_status", [(False, "success"), (True, "error")])
-async def test_call_tool_async_status(mock_transport, mock_session, is_error, expected_status):
-    """Test that call_tool_async correctly handles success and error results."""
+async def test_call_tool_async_status(mock_transport, mock_session, mock_background_invoke, is_error, expected_status):
+    """Test the async facade forwards cancellation and maps background future results."""
     mock_content = MCPTextContent(type="text", text="Test message")
     mock_result = MCPCallToolResult(isError=is_error, content=[mock_content])
-    mock_session.call_tool.return_value = mock_result
+    mock_invoke, future = mock_background_invoke
+    future.set_result(mock_result)
+    cancel_signal = threading.Event()
 
     with MCPClient(mock_transport["transport_callable"]) as client:
-        # Mock asyncio.run_coroutine_threadsafe and asyncio.wrap_future
         with (
-            patch("asyncio.run_coroutine_threadsafe") as mock_run_coroutine_threadsafe,
-            patch("asyncio.wrap_future") as mock_wrap_future,
+            patch.object(client, "_invoke_on_background_thread", mock_invoke),
+            patch("asyncio.wrap_future", wraps=asyncio.wrap_future) as mock_wrap_future,
         ):
-            # Create a mock future that returns the mock result
-            mock_future = MagicMock()
-            mock_run_coroutine_threadsafe.return_value = mock_future
-
-            # Create an async mock that resolves to the mock result
-            async def mock_awaitable():
-                return mock_result
-
-            mock_wrap_future.return_value = mock_awaitable()
-
-            result = await client.call_tool_async(
-                tool_use_id="test-123", name="test_tool", arguments={"param": "value"}
+            tru_result = await client.call_tool_async(
+                tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, cancel_signal=cancel_signal
             )
 
-            # Verify the asyncio functions were called correctly
-            mock_run_coroutine_threadsafe.assert_called_once()
-            mock_wrap_future.assert_called_once_with(mock_future)
+            mock_invoke.assert_called_once_with(ANY, cancel_signal=cancel_signal, cancellation_state={})
+            mock_wrap_future.assert_called_once_with(future)
 
-        assert result["status"] == expected_status
-        assert result["toolUseId"] == "test-123"
-        assert len(result["content"]) == 1
-        assert result["content"][0]["text"] == "Test message"
-        # isError mirrors the MCP server's explicit value; absent only for protocol/client exceptions
-        assert result.get("isError") is is_error
+    exp_result = {
+        "status": expected_status,
+        "toolUseId": "test-123",
+        "content": [{"text": "Test message"}],
+        "isError": is_error,
+    }
+    assert tru_result == exp_result
 
 
 @pytest.mark.asyncio
@@ -803,11 +794,13 @@ async def test_call_tool_async_session_not_active():
 @pytest.mark.asyncio
 async def test_call_tool_async_exception(mock_transport, mock_session):
     """Test that call_tool_async correctly handles exceptions."""
-    with MCPClient(mock_transport["transport_callable"]) as client:
-        # Mock asyncio.run_coroutine_threadsafe to raise an exception
-        with patch("asyncio.run_coroutine_threadsafe") as mock_run_coroutine_threadsafe:
-            mock_run_coroutine_threadsafe.side_effect = Exception("Test exception")
 
+    def reject_call(coro, **kwargs):
+        coro.close()
+        raise RuntimeError("Test exception")
+
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        with patch.object(client, "_invoke_on_background_thread", side_effect=reject_call):
             result = await client.call_tool_async(
                 tool_use_id="test-123", name="test_tool", arguments={"param": "value"}
             )
@@ -821,40 +814,19 @@ async def test_call_tool_async_exception(mock_transport, mock_session):
 @pytest.mark.asyncio
 async def test_call_tool_async_with_timeout(mock_transport, mock_session):
     """Test that call_tool_async correctly passes timeout parameter."""
-    from datetime import timedelta
-
     mock_content = MCPTextContent(type="text", text="Test message")
     mock_result = MCPCallToolResult(isError=False, content=[mock_content])
     mock_session.call_tool.return_value = mock_result
 
     with MCPClient(mock_transport["transport_callable"]) as client:
         timeout = timedelta(seconds=30)
-
-        with (
-            patch("asyncio.run_coroutine_threadsafe") as mock_run_coroutine_threadsafe,
-            patch("asyncio.wrap_future") as mock_wrap_future,
-        ):
-            mock_future = MagicMock()
-            mock_run_coroutine_threadsafe.return_value = mock_future
-
-            # Create an async mock that resolves to the mock result
-            async def mock_awaitable():
-                return mock_result
-
-            mock_wrap_future.return_value = mock_awaitable()
-
-            result = await client.call_tool_async(
-                tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, read_timeout_seconds=timeout
-            )
-
-            # Verify the timeout was passed to the session call_tool method
-            # We need to check that the coroutine passed to run_coroutine_threadsafe
-            # would call session.call_tool with the timeout
-            mock_run_coroutine_threadsafe.assert_called_once()
-            mock_wrap_future.assert_called_once_with(mock_future)
+        result = await client.call_tool_async(
+            tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, read_timeout_seconds=timeout
+        )
 
         assert result["status"] == "success"
         assert result["toolUseId"] == "test-123"
+        assert_session_call_tool_once_with(mock_session, "test_tool", {"param": "value"}, timeout)
 
 
 @pytest.mark.asyncio
@@ -876,25 +848,20 @@ async def test_call_tool_async_initialization_not_complete():
 
 
 @pytest.mark.asyncio
-async def test_call_tool_async_wrap_future_exception(mock_transport, mock_session):
+async def test_call_tool_async_wrap_future_exception(mock_transport, mock_session, mock_background_invoke):
     """Test that call_tool_async correctly handles exceptions from wrap_future."""
+    mock_invoke, future = mock_background_invoke
     with MCPClient(mock_transport["transport_callable"]) as client:
         with (
-            patch("asyncio.run_coroutine_threadsafe") as mock_run_coroutine_threadsafe,
-            patch("asyncio.wrap_future") as mock_wrap_future,
+            patch.object(client, "_invoke_on_background_thread", mock_invoke),
+            patch("asyncio.wrap_future", new_callable=AsyncMock) as mock_wrap_future,
         ):
-            mock_future = MagicMock()
-            mock_run_coroutine_threadsafe.return_value = mock_future
-
-            # Create an async mock that raises an exception
-            async def mock_awaitable():
-                raise Exception("Wrap future exception")
-
-            mock_wrap_future.return_value = mock_awaitable()
+            mock_wrap_future.side_effect = RuntimeError("Wrap future exception")
 
             result = await client.call_tool_async(
                 tool_use_id="test-123", name="test_tool", arguments={"param": "value"}
             )
+            mock_wrap_future.assert_awaited_once_with(future)
 
         assert result["status"] == "error"
         assert result["toolUseId"] == "test-123"
@@ -1992,7 +1959,7 @@ def test_call_tool_sync_elicitation_error_malformed_data(mock_transport, mock_se
 
 
 @pytest.mark.asyncio
-async def test_call_tool_async_elicitation_error(mock_transport, mock_session):
+async def test_call_tool_async_elicitation_error(mock_transport, mock_session, mock_background_invoke):
     """Test that call_tool_async correctly handles elicitation required errors."""
     from mcp.types import ElicitationRequiredErrorData, ElicitRequestURLParams
 
@@ -2005,20 +1972,11 @@ async def test_call_tool_async_elicitation_error(mock_transport, mock_session):
     )
 
     error = make_mcp_error(code=-32042, data=elicitation_data.model_dump())
+    mock_invoke, future = mock_background_invoke
+    future.set_exception(error)
 
     with MCPClient(mock_transport["transport_callable"]) as client:
-        with (
-            patch("asyncio.run_coroutine_threadsafe") as mock_run_coroutine_threadsafe,
-            patch("asyncio.wrap_future") as mock_wrap_future,
-        ):
-            mock_future = MagicMock()
-            mock_run_coroutine_threadsafe.return_value = mock_future
-
-            async def mock_awaitable():
-                raise error
-
-            mock_wrap_future.return_value = mock_awaitable()
-
+        with patch.object(client, "_invoke_on_background_thread", mock_invoke):
             result = await client.call_tool_async(
                 tool_use_id="test-123", name="test_tool", arguments={"param": "value"}
             )

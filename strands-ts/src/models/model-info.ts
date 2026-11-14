@@ -65,28 +65,32 @@ function defined<T extends object>(section: T): T | undefined {
   return entries.length === 0 ? undefined : (Object.freeze(Object.fromEntries(entries)) as T)
 }
 
-/**
- * Merges partial records, later defined fields winning. Undefined and missing fields inherit.
- *
- * @internal
- * @param parts - Partial records, in order of increasing precedence
- * @returns A new frozen record containing only the fields that are known
- */
-export function mergeModelInfo(...parts: (ModelInfo | undefined)[]): ModelInfo {
-  const capabilities: Record<string, unknown> = {}
-  const limits: Record<string, unknown> = {}
-  for (const part of parts) {
-    for (const [key, value] of Object.entries(part?.capabilities ?? {}))
-      if (value !== undefined) capabilities[key] = value
-    for (const [key, value] of Object.entries(part?.limits ?? {})) if (value !== undefined) limits[key] = value
-  }
-  const merged: { capabilities?: ModelCapabilities; limits?: ModelLimits } = {}
-  const mergedCapabilities = defined(capabilities as ModelCapabilities)
-  const mergedLimits = defined(limits as ModelLimits)
-  if (mergedCapabilities) merged.capabilities = mergedCapabilities
-  if (mergedLimits) merged.limits = mergedLimits
-  return Object.freeze(merged)
-}
+/** Operations on {@link ModelInfo} records, like Python's `ModelInfo.merge`. */
+export const ModelInfo = Object.freeze({
+  /**
+   * Merges partial records, later defined fields winning. Undefined and missing fields inherit.
+   * A provider overriding {@link Model.modelInfo} layers its facts and then the user's override:
+   * `ModelInfo.merge(super.modelInfo, { capabilities: { serverSideSummary: false } }, this.getConfig().modelInfo)`.
+   *
+   * @param parts - Partial records, in order of increasing precedence; `undefined` parts are skipped
+   * @returns A new frozen record with only the known fields; a section nothing is known about is omitted
+   */
+  merge(...parts: (ModelInfo | undefined)[]): ModelInfo {
+    const capabilities: Record<string, unknown> = {}
+    const limits: Record<string, unknown> = {}
+    for (const part of parts) {
+      for (const [key, value] of Object.entries(part?.capabilities ?? {}))
+        if (value !== undefined) capabilities[key] = value
+      for (const [key, value] of Object.entries(part?.limits ?? {})) if (value !== undefined) limits[key] = value
+    }
+    const merged: { capabilities?: ModelCapabilities; limits?: ModelLimits } = {}
+    const mergedCapabilities = defined(capabilities as ModelCapabilities)
+    const mergedLimits = defined(limits as ModelLimits)
+    if (mergedCapabilities) merged.capabilities = mergedCapabilities
+    if (mergedLimits) merged.limits = mergedLimits
+    return Object.freeze(merged)
+  },
+})
 
 /**
  * Turns `serverSideSummary` off for providers that serve a model the shared info lists it for but have no
@@ -172,7 +176,7 @@ export function lookupModel(modelId: string): ModelInfo | undefined {
  * @returns What the data knows about the model; empty when it knows nothing
  */
 export function lookupModelInfo(modelId: string): ModelInfo {
-  return mergeModelInfo(lookupModel(modelId))
+  return ModelInfo.merge(lookupModel(modelId))
 }
 
 /**

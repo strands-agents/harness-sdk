@@ -47,6 +47,8 @@ Override it manually for models not in the [shared model info](https://github.co
 If <Syntax py="context_window_limit" ts="contextWindowLimit" /> is not set and the model ID is not in the shared model info, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
 :::
 
+See [Model info](../model-providers/index.mdx#model-info) for how the SDK resolves this and other facts about the model.
+
 ## Token estimation
 
 The agent estimates input tokens using the following strategy:
