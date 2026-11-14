@@ -2,7 +2,8 @@
  * Strict JSON schema transformation for tool definitions.
  *
  * Strict tool use requires `additionalProperties: false` on every object type. This applies
- * that recursively. Modeled after OpenAI's `_ensure_strict_json_schema`.
+ * that recursively, and moves numeric and length bounds into the field description. Modeled after
+ * OpenAI's `_ensure_strict_json_schema`.
  */
 
 import type { JSONSchema, JSONValue } from '../types/json.js'
@@ -19,24 +20,27 @@ export function isRecord(value: JSONValue | undefined): value is SchemaNode {
 
 /**
  * Return a deep copy of `schema` with `additionalProperties: false` applied recursively to
- * object types. The original is not mutated.
+ * object types, and numeric and length bounds moved into each field's `description`, where the
+ * model can still follow them. Zod's default safe integer bounds on `.int()` are dropped. The
+ * original is not mutated and still enforces every bound when the tool validates its input.
  *
  * @internal
  */
 export function ensureStrictJsonSchema(schema: JSONSchema): JSONSchema {
   const schemaCopy = JSON.parse(JSON.stringify(schema)) as SchemaNode
   applyStrict(schemaCopy, schemaCopy)
+  moveBoundsToDescription(schemaCopy)
   return schemaCopy as JSONSchema
 }
 
 /** Keywords whose value is a map of subschemas. */
 const SCHEMA_MAP_KEYWORDS = ['$defs', 'definitions', 'properties']
 /** Keywords whose value is a list of subschemas. */
-const SCHEMA_LIST_KEYWORDS = ['anyOf', 'allOf', 'oneOf']
+const SCHEMA_LIST_KEYWORDS = ['anyOf', 'allOf', 'oneOf', 'prefixItems']
 /** Keywords whose value is a single subschema. */
 const SCHEMA_VALUE_KEYWORDS = ['items', 'additionalProperties']
 
-/** Keywords outside Bedrock's strict-mode subset that the transform does not rewrite. */
+/** Keywords outside Bedrock's strict-mode subset that the transform moves into the description. */
 const UNSUPPORTED_STRICT_KEYWORDS = [
   'minimum',
   'maximum',
@@ -110,9 +114,41 @@ function applyStrict(schema: SchemaNode, root: SchemaNode, inlining: ReadonlySet
   applyStrict(schema, root, new Set(inlining).add(ref))
 }
 
+function moveBoundsToDescription(schema: SchemaNode): void {
+  const bounds = Object.entries(schema).filter(([key]) => UNSUPPORTED_STRICT_KEYWORDS.includes(key))
+  for (const [key] of bounds) {
+    delete schema[key]
+  }
+
+  const meaningful = bounds.filter(([key, value]) => !isSafeIntegerDefault(key, value))
+  if (meaningful.length > 0) appendToDescription(schema, meaningful)
+
+  for (const child of childSchemas(schema)) {
+    moveBoundsToDescription(child)
+  }
+}
+
+function isSafeIntegerDefault(keyword: string, value: JSONValue): boolean {
+  return (
+    (keyword === 'minimum' && value === Number.MIN_SAFE_INTEGER) ||
+    (keyword === 'maximum' && value === Number.MAX_SAFE_INTEGER)
+  )
+}
+
 /**
- * Return the keywords in `schema` that Bedrock's strict mode rejects, sorted: any
- * `additionalProperties` other than `false`, and numeric/length bounds.
+ * Append `{key: value, ...}` for each entry to the node's `description`, after a blank line.
+ *
+ * @internal
+ */
+export function appendToDescription(schema: SchemaNode, entries: [string, JSONValue][]): void {
+  const moved = `{${entries.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(', ')}}`
+  const description = schema['description']
+  schema['description'] = description !== undefined ? `${description}\n\n${moved}` : moved
+}
+
+/**
+ * Return the keywords in `schema` that Bedrock's strict mode rejects and the transform leaves in
+ * place, sorted: any `additionalProperties` other than `false`.
  *
  * @internal
  */
@@ -123,9 +159,6 @@ export function findUnsupportedStrictKeywords(schema: JSONSchema): string[] {
 }
 
 function collectUnsupportedKeywords(schema: SchemaNode, found: Set<string>): void {
-  for (const keyword of UNSUPPORTED_STRICT_KEYWORDS) {
-    if (Object.hasOwn(schema, keyword)) found.add(keyword)
-  }
   if (Object.hasOwn(schema, 'additionalProperties') && schema['additionalProperties'] !== false) {
     found.add('additionalProperties')
   }

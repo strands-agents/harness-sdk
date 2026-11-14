@@ -373,6 +373,123 @@ describe('ensureStrictJsonSchema', () => {
   })
 })
 
+describe('ensureStrictJsonSchema bounds', () => {
+  it("drops zod's safe integer bounds from an integer-only field", () => {
+    const result = ensureStrictJsonSchema(
+      schema({ type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER })
+    )
+
+    expect(result).toStrictEqual({ type: 'integer' })
+  })
+
+  it('moves every other bound into the description in schema order, keeping a safe integer default out', () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: {
+          start: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          small: { type: 'integer', minimum: -2147483648, maximum: 2147483647 },
+          ratio: { type: 'number', exclusiveMinimum: 0, exclusiveMaximum: 1, multipleOf: 0.5 },
+          name: { type: 'string', minLength: 1, maxLength: 64 },
+        },
+      })
+    )
+
+    expect(result).toStrictEqual({
+      type: 'object',
+      properties: {
+        start: { type: 'integer', description: '{minimum: 1}' },
+        small: { type: 'integer', description: '{minimum: -2147483648, maximum: 2147483647}' },
+        ratio: { type: 'number', description: '{exclusiveMinimum: 0, exclusiveMaximum: 1, multipleOf: 0.5}' },
+        name: { type: 'string', description: '{minLength: 1, maxLength: 64}' },
+      },
+      additionalProperties: false,
+    })
+  })
+
+  it('appends to an existing description', () => {
+    const result = ensureStrictJsonSchema(
+      schema({ type: 'integer', description: 'First line to return (1-indexed).', minimum: 1 })
+    )
+
+    expect(result).toStrictEqual({ type: 'integer', description: 'First line to return (1-indexed).\n\n{minimum: 1}' })
+  })
+
+  it('moves bounds inside nested objects, array items, anyOf, and $defs', () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: {
+          lines: { type: 'object', properties: { end: { type: 'integer', minimum: 1 } } },
+          indices: { type: 'array', items: { type: 'integer', minimum: 0 } },
+          last: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+          step: { $ref: '#/$defs/Step' },
+        },
+        $defs: { Step: { type: 'number', multipleOf: 2 } },
+      })
+    )
+
+    expect(result).toStrictEqual({
+      type: 'object',
+      properties: {
+        lines: {
+          type: 'object',
+          properties: { end: { type: 'integer', description: '{minimum: 1}' } },
+          additionalProperties: false,
+        },
+        indices: { type: 'array', items: { type: 'integer', description: '{minimum: 0}' } },
+        last: { anyOf: [{ type: 'integer', description: '{minimum: 1}' }, { type: 'null' }] },
+        step: { $ref: '#/$defs/Step' },
+      },
+      $defs: { Step: { type: 'number', description: '{multipleOf: 2}' } },
+      additionalProperties: false,
+    })
+  })
+
+  it("keeps a $ref target's bounds when the ref node carries its own description", () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: { start: { $ref: '#/$defs/Line', description: 'Start line.' } },
+        $defs: { Line: { type: 'integer', minimum: 1 } },
+      })
+    )
+
+    expect(asRecord(result)['properties']).toStrictEqual({
+      start: { type: 'integer', description: 'Start line.\n\n{minimum: 1}' },
+    })
+  })
+
+  it('moves bounds inside tuple prefixItems', () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'array',
+        prefixItems: [{ type: 'integer', minimum: 3, maximum: Number.MAX_SAFE_INTEGER }, { type: 'object' }],
+        items: false,
+      })
+    )
+
+    expect(result).toStrictEqual({
+      type: 'array',
+      prefixItems: [
+        { type: 'integer', description: '{minimum: 3}' },
+        { type: 'object', additionalProperties: false },
+      ],
+      items: false,
+    })
+  })
+
+  it('treats a property named like a bound as a property', () => {
+    const result = ensureStrictJsonSchema(schema({ type: 'object', properties: { minimum: { type: 'number' } } }))
+
+    expect(result).toStrictEqual({
+      type: 'object',
+      properties: { minimum: { type: 'number' } },
+      additionalProperties: false,
+    })
+  })
+})
+
 describe('findUnsupportedStrictKeywords', () => {
   it('returns nothing for a closed schema without bounds', () => {
     const strict = ensureStrictJsonSchema(
@@ -385,7 +502,7 @@ describe('findUnsupportedStrictKeywords', () => {
     expect(findUnsupportedStrictKeywords(strict)).toEqual([])
   })
 
-  it('reports open additionalProperties and bounds anywhere in the schema, sorted and deduplicated', () => {
+  it('reports open additionalProperties anywhere in the schema, deduplicated, and not bounds', () => {
     const keywords = findUnsupportedStrictKeywords(
       schema({
         type: 'object',
@@ -395,21 +512,15 @@ describe('findUnsupportedStrictKeywords', () => {
           timeout: { type: 'number', exclusiveMinimum: 0, exclusiveMaximum: 60 },
           tags: { type: 'array', items: { type: 'string', minLength: 1 } },
         },
-        $defs: { Step: { type: 'number', multipleOf: 2, minimum: 1 } },
+        $defs: {
+          Map: { type: 'object', additionalProperties: true },
+          Step: { type: 'number', multipleOf: 2, minimum: 1 },
+        },
         additionalProperties: false,
       })
     )
 
-    expect(keywords).toEqual([
-      'additionalProperties',
-      'exclusiveMaximum',
-      'exclusiveMinimum',
-      'maxLength',
-      'maximum',
-      'minLength',
-      'minimum',
-      'multipleOf',
-    ])
+    expect(keywords).toEqual(['additionalProperties'])
   })
 
   it('does not treat property names as keywords', () => {
