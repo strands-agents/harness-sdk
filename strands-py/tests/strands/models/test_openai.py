@@ -381,6 +381,49 @@ def test_format_request_tool_message_document_mixed():
     assert content[2] == {"type": "text", "text": "Footer"}
 
 
+def test_format_request_moves_tool_document_into_user_message(model):
+    """A PDF a tool returns travels in a user message; the tool message stays text-only."""
+    messages = [
+        {"role": "user", "content": [{"text": "read the report"}]},
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"input": {}, "name": "read_pdf", "toolUseId": "c1"}}],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "c1",
+                        "status": "success",
+                        "content": [
+                            {"text": "Summary"},
+                            {"document": {"format": "pdf", "name": "report.pdf", "source": {"bytes": b"%PDF-1.4"}}},
+                        ],
+                    }
+                }
+            ],
+        },
+    ]
+
+    request = model.format_request(messages)
+
+    tool_messages = [m for m in request["messages"] if m["role"] == "tool"]
+    assert len(tool_messages) == 1
+    assert all(part.get("type") == "text" for part in tool_messages[0]["content"])
+
+    file_parts = [
+        part
+        for message in request["messages"]
+        if message["role"] == "user" and isinstance(message.get("content"), list)
+        for part in message["content"]
+        if isinstance(part, dict) and part.get("type") == "file"
+    ]
+    assert len(file_parts) == 1
+    assert file_parts[0]["file"]["filename"] == "report.pdf"
+    assert file_parts[0]["file"]["file_data"].startswith("data:application/pdf;base64,")
+
+
 def test_format_request_tool_message_empty_content():
     """Test tool message with empty content list returns empty string."""
     tool_result = {
@@ -395,7 +438,7 @@ def test_format_request_tool_message_empty_content():
     assert tru_result["tool_call_id"] == "c1"
 
 
-def test_split_tool_message_images_with_image():
+def test_split_tool_message_media_with_image():
     """Test that images are extracted from tool messages."""
     tool_message = {
         "role": "tool",
@@ -409,7 +452,7 @@ def test_split_tool_message_images_with_image():
         ],
     }
 
-    tool_clean, user_with_image = OpenAIModel._split_tool_message_images(tool_message)
+    tool_clean, user_with_image = OpenAIModel._split_tool_message_media(tool_message)
 
     # Tool message should now have the original text plus the appended informational text
     assert tool_clean["role"] == "tool"
@@ -426,17 +469,61 @@ def test_split_tool_message_images_with_image():
     assert user_with_image["content"][0]["type"] == "image_url"
 
 
-def test_split_tool_message_images_without_image():
+def test_split_tool_message_media_with_document():
+    """Test that documents are extracted from tool messages like images."""
+    file_part = {"type": "file", "file": {"file_data": "data:application/pdf;base64,UERG", "filename": "report.pdf"}}
+    tool_message = {
+        "role": "tool",
+        "tool_call_id": "c1",
+        "content": [{"type": "text", "text": "Result"}, dict(file_part)],
+    }
+
+    tool_clean, user_with_media = OpenAIModel._split_tool_message_media(tool_message)
+
+    # The tool message keeps its text and gains only an explanatory text part
+    assert tool_clean["role"] == "tool"
+    assert tool_clean["content"][0] == {"type": "text", "text": "Result"}
+    assert len(tool_clean["content"]) == 2
+    assert "Tool successfully returned a document" in tool_clean["content"][1]["text"]
+    assert all(item["type"] != "file" for item in tool_clean["content"])
+
+    # The document travels in a user message
+    assert user_with_media is not None
+    assert user_with_media["role"] == "user"
+    assert user_with_media["content"] == [file_part]
+
+
+def test_split_tool_message_media_keeps_a_non_pdf_document():
+    """A non-PDF document stays in the tool message: only PDF is valid in a user message.
+
+    LiteLLM turns a ``file`` part inside a tool message into a native tool-result document,
+    so moving a text or CSV document out of the tool message breaks that path without
+    making the OpenAI request any more valid.
+    """
+    txt_part = {"type": "file", "file": {"file_data": "data:text/plain;base64,aGk=", "filename": "notes.txt"}}
+    tool_message = {
+        "role": "tool",
+        "tool_call_id": "c1",
+        "content": [{"type": "text", "text": "Result"}, dict(txt_part)],
+    }
+
+    tool_clean, user_with_media = OpenAIModel._split_tool_message_media(tool_message)
+
+    assert tool_clean is tool_message
+    assert user_with_media is None
+
+
+def test_split_tool_message_media_without_image():
     """Test that tool messages without images are unchanged."""
     tool_message = {"role": "tool", "tool_call_id": "c1", "content": [{"type": "text", "text": "Result"}]}
 
-    tool_clean, user_with_image = OpenAIModel._split_tool_message_images(tool_message)
+    tool_clean, user_with_image = OpenAIModel._split_tool_message_media(tool_message)
 
     assert tool_clean == tool_message
     assert user_with_image is None
 
 
-def test_split_tool_message_images_only_image():
+def test_split_tool_message_media_only_image():
     """Test tool message with only image content."""
     tool_message = {
         "role": "tool",
@@ -444,7 +531,7 @@ def test_split_tool_message_images_only_image():
         "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}],
     }
 
-    tool_clean, user_with_image = OpenAIModel._split_tool_message_images(tool_message)
+    tool_clean, user_with_image = OpenAIModel._split_tool_message_media(tool_message)
 
     # Tool message should have default text
     assert tool_clean["role"] == "tool"
@@ -457,18 +544,18 @@ def test_split_tool_message_images_only_image():
     assert len(user_with_image["content"]) == 1
 
 
-def test_split_tool_message_images_non_tool_role():
+def test_split_tool_message_media_non_tool_role():
     """Test that messages with roles other than 'tool' are ignored."""
     user_msg = {"role": "user", "content": [{"type": "text", "text": "hello"}]}
-    clean, extra = OpenAIModel._split_tool_message_images(user_msg)
+    clean, extra = OpenAIModel._split_tool_message_media(user_msg)
     assert clean == user_msg
     assert extra is None
 
 
-def test_split_tool_message_images_invalid_content_type():
+def test_split_tool_message_media_invalid_content_type():
     """Test that messages with non-list content are ignored."""
     invalid_msg = {"role": "tool", "content": "not a list"}
-    clean, extra = OpenAIModel._split_tool_message_images(invalid_msg)
+    clean, extra = OpenAIModel._split_tool_message_media(invalid_msg)
     assert clean == invalid_msg
     assert extra is None
 

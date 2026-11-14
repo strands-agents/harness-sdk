@@ -274,7 +274,7 @@ class OpenAIModel(Model):
         content: str | list[dict[str, Any]]
         if has_non_text:
             # Keep array format when images/documents are present so that
-            # _split_tool_message_images can extract them into a user message.
+            # _split_tool_message_media can extract them into a user message.
             content = merged
         else:
             # All text — the loop already merged adjacent blocks with "\n",
@@ -287,18 +287,35 @@ class OpenAIModel(Model):
             "content": content,
         }
 
-    @classmethod
-    def _split_tool_message_images(cls, tool_message: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        """Split a tool message into text-only tool message and optional user message with images.
+    @staticmethod
+    def _belongs_in_user_message(item: dict[str, Any]) -> bool:
+        """Whether a tool-message part has to travel in a user message.
 
-        OpenAI API restricts images to user role messages only. This method extracts any image
-        content from a tool message and returns it separately as a user message.
+        Images always do: the Chat Completions tool role takes text only. A document does
+        only when that API can accept it there, which is a PDF; other document types stay
+        in the tool message, where LiteLLM turns them into a native tool-result document.
+        Moving those would not make an OpenAI request valid and would break that path.
+        """
+        if item.get("type") == "image_url":
+            return True
+        if item.get("type") != "file":
+            return False
+        file_data = item.get("file", {}).get("file_data", "")
+        return isinstance(file_data, str) and file_data.startswith("data:application/pdf")
+
+    @classmethod
+    def _split_tool_message_media(cls, tool_message: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Split a tool message into a text-only tool message and an optional user message with media.
+
+        The Chat Completions tool role accepts text only, so images and documents have to
+        travel in the user role. This method extracts both and returns them separately, in
+        the order they appeared.
 
         Args:
-            tool_message: A formatted tool message that may contain images.
+            tool_message: A formatted tool message that may contain images or documents.
 
         Returns:
-            A tuple of (tool_message_without_images, user_message_with_images_or_None).
+            A tuple of (tool_message_without_media, user_message_with_media_or_None).
         """
         if tool_message.get("role") != "tool":
             return tool_message, None
@@ -307,35 +324,48 @@ class OpenAIModel(Model):
         if not isinstance(content, list):
             return tool_message, None
 
-        # Separate image and non-image content
+        # Separate media and text content
         text_content = []
-        image_content = []
+        media_content = []
 
         for item in content:
-            if isinstance(item, dict) and item.get("type") == "image_url":
-                image_content.append(item)
+            if isinstance(item, dict) and cls._belongs_in_user_message(item):
+                media_content.append(item)
             else:
                 text_content.append(item)
 
-        # If no images found, return original message
-        if not image_content:
+        # If no media found, return original message
+        if not media_content:
             return tool_message, None
 
         # Let the user know that we are modifying the messages for OpenAI compatibility
         logger.warning(
-            "tool_call_id=<%s> | Moving image from tool message to a new user message for OpenAI compatibility",
+            "tool_call_id=<%s> | Moving %s from tool message to a new user message for OpenAI compatibility",
             tool_message["tool_call_id"],
+            " and ".join(sorted({"document" if item.get("type") == "file" else "image" for item in media_content})),
         )
 
-        # Append a message to the text content to inform the model about the upcoming image
-        text_content.append(
-            {
-                "type": "text",
-                "text": (
-                    "Tool successfully returned an image. The image is being provided in the following user message."
-                ),
-            }
-        )
+        # Append a message to the text content to inform the model about the upcoming media
+        if any(item.get("type") == "image_url" for item in media_content):
+            text_content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        "Tool successfully returned an image. The image is being provided in the following"
+                        " user message."
+                    ),
+                }
+            )
+        if any(item.get("type") == "file" for item in media_content):
+            text_content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        "Tool successfully returned a document. The document is being provided in the following"
+                        " user message."
+                    ),
+                }
+            )
 
         # Create the clean tool message with the updated text content
         tool_message_clean = {
@@ -344,10 +374,10 @@ class OpenAIModel(Model):
             "content": text_content,
         }
 
-        # Create user message with only images
-        user_message_with_images = {"role": "user", "content": image_content}
+        # Create user message with only the media
+        user_message_with_media = {"role": "user", "content": media_content}
 
-        return tool_message_clean, user_message_with_images
+        return tool_message_clean, user_message_with_media
 
     @classmethod
     def _format_request_tool_choice(cls, tool_choice: ToolChoice | None) -> dict[str, Any]:
@@ -452,7 +482,7 @@ class OpenAIModel(Model):
             # All tool messages must be grouped together before any user messages with images
             user_messages_with_images = []
             for tool_msg in formatted_tool_messages:
-                tool_msg_clean, user_msg_with_images = cls._split_tool_message_images(tool_msg)
+                tool_msg_clean, user_msg_with_images = cls._split_tool_message_media(tool_msg)
                 formatted_messages.append(tool_msg_clean)
                 if user_msg_with_images:
                     user_messages_with_images.append(user_msg_with_images)
