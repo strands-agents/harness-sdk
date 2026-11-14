@@ -2,6 +2,7 @@
 import plus from '../assets/toolkit/plus.svg?raw';
 import arrow from '../assets/banner/arrow.svg?raw';
 import { pathWithBase } from '../util/links';
+import InstallCommand from './InstallCommand.astro';
 
 // Token helpers for the expanded-card code samples — same model + colors as
 // the Use Cases terminal. `kw` = keyword/decorator, `str` = string literal;
@@ -10,33 +11,54 @@ const kw = (text: string) => ({ text, color: 'var(--code-keyword)' });
 const str = (text: string) => ({ text, color: 'var(--code-string)' });
 const t = (text: string) => ({ text });
 
-// Each card can define an `expanded` payload. When present, the `+` button
-// toggles between the compact and expanded view. `defaultOpen` renders the
-// card expanded on load.
-const cards = [
+interface ToolkitCard {
+  slug: string;
+  color: string;
+  description: string;
+  actionLabel: string;
+  actionAriaLabel: string;
+  tags?: string[];
+  defaultOpen?: boolean;
+  install?: {
+    pip: string;
+    npm: string;
+  };
+  expanded: {
+    description: string;
+    features?: {
+      title: string;
+      body: string;
+    }[];
+    viewMoreHref: string;
+    pythonOnly?: boolean;
+    codePy?: {
+      lineNo: number;
+      tokens: { text: string; color?: string }[];
+    }[];
+    codeTs?: {
+      lineNo: number;
+      tokens: { text: string; color?: string }[];
+    }[];
+  };
+}
+
+// The `+` button toggles between each card's compact and expanded view.
+// `defaultOpen` renders the card expanded on load.
+const cards: ToolkitCard[] = [
   {
-    name: 'Strands harness',
     slug: '/harness',
     color: 'var(--card-accent-orange)',
-    description: 'A fully assembled agent harness with benchmarked defaults.',
-    tags: ['Optimized', 'CLI or library', 'Fully customizable'],
+    description:
+      'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
+    actionLabel: 'Build an agent',
+    actionAriaLabel: 'Build an agent with Strands harness',
+    install: {
+      pip: 'pip install strands-harness',
+      npm: 'npm install @strands-agents/harness',
+    },
     expanded: {
       description:
-        'Strands harness gives you a fully assembled agent with benchmarked defaults for the system prompt, tools, memory, session management, and context management, ready to take your idea to production.',
-      features: [
-        {
-          title: 'Optimized defaults',
-          body: 'Every default is tuned and optimized. Spend your time on what makes your agent different, not on wiring up a harness piece by piece.',
-        },
-        {
-          title: 'CLI or library',
-          body: 'Build an agent with the strands CLI, or import it in Python or TypeScript.',
-        },
-        {
-          title: 'Customize anything',
-          body: 'Strands harness is built on the Strands Harness SDK, so nothing is a black box. Swap the model provider, override any default, add your own tools, or go all the way down to the primitives, with no rewrite.',
-        },
-      ],
+        'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
       viewMoreHref: pathWithBase('/docs/user-guide/harness/'),
       codePy: [
         { lineNo: 1, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
@@ -53,10 +75,41 @@ const cards = [
     },
   },
   {
-    name: 'Strands Box',
+    slug: '/harness-sdk',
+    color: 'var(--card-accent-teal)',
+    description:
+      'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
+    actionLabel: 'Build with primitives',
+    actionAriaLabel: 'Build with Strands Harness SDK primitives',
+    install: {
+      pip: 'pip install strands-agents',
+      npm: 'npm install @strands-agents/sdk',
+    },
+    expanded: {
+      description:
+        'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
+      viewMoreHref: pathWithBase('/docs/user-guide/sdk/'),
+      codePy: [
+        { lineNo: 1, tokens: [kw('from'), t(' strands '), kw('import'), t(' Agent')] },
+        { lineNo: 2, tokens: [t('')] },
+        { lineNo: 3, tokens: [t('agent = Agent()')] },
+        { lineNo: 4, tokens: [t('agent('), str('"Summarize what this repository does"'), t(')')] },
+      ],
+      codeTs: [
+        { lineNo: 1, tokens: [kw('import'), t(' { Agent } '), kw('from'), t(' '), str('"@strands-agents/sdk"')] },
+        { lineNo: 2, tokens: [t('')] },
+        { lineNo: 3, tokens: [kw('const'), t(' agent = '), kw('new'), t(' Agent()')] },
+        { lineNo: 4, tokens: [kw('await'), t(' agent.invoke('), str('"Summarize what this repository does"'), t(')')] },
+      ],
+    },
+  },
+  {
     slug: '/box',
     color: 'var(--card-accent-purple)',
-    description: 'An agent sandbox that pairs OS containment with Dogwood policy.',
+    description:
+      'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
+    actionLabel: 'Run in a sandbox',
+    actionAriaLabel: 'Run an agent in a Strands Box sandbox',
     tags: ['OS containment', 'Dogwood policy', 'Credential injection'],
     expanded: {
       description:
@@ -93,10 +146,12 @@ const cards = [
     },
   },
   {
-    name: 'Strands Evals',
     slug: '/evals',
     color: 'var(--card-accent-pink)',
-    description: 'Validate your agent before you ship.',
+    description:
+      'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
+    actionLabel: 'Run an evaluation',
+    actionAriaLabel: 'Run an evaluation with Strands Evals',
     tags: ['Score', 'Diagnose', 'Simulate'],
     expanded: {
       description:
@@ -135,6 +190,34 @@ const cards = [
       ],
     },
   },
+  {
+    slug: '/decider',
+    color: 'var(--card-accent-red)',
+    description:
+      'Route, classify, or score known outcomes with a small decision model that reports confidence.',
+    actionLabel: 'Make a decision',
+    actionAriaLabel: 'Make a decision with Strands Decider',
+    tags: ['Choice', 'Yes or no', 'Score'],
+    expanded: {
+      description:
+        'Strands Decider answers typed questions about known outputs instead of generating text, making repeated decisions fast and measurable.',
+      features: [
+        {
+          title: 'Choose',
+          body: 'Pick one option from a set and return the probability of every option.',
+        },
+        {
+          title: 'Check',
+          body: 'Ask a yes-or-no question and get the probability that it is true.',
+        },
+        {
+          title: 'Score',
+          body: 'Rate a state on an ordered scale with a calibrated measure of confidence.',
+        },
+      ],
+      viewMoreHref: pathWithBase('/docs/labs/strands-decider/overview/'),
+    },
+  },
 ];
 
 function cardFor(slug: string) {
@@ -143,10 +226,17 @@ function cardFor(slug: string) {
   return card;
 }
 
-const pillars = [
-  { title: 'Build', cards: [cardFor('/harness')] },
-  { title: 'Control', cards: [cardFor('/box')] },
-  { title: 'Validate', cards: [cardFor('/evals')] },
+const sections = [
+  {
+    title: 'Build an agent',
+    layout: 'build',
+    cards: [cardFor('/harness'), cardFor('/harness-sdk')],
+  },
+  {
+    title: 'Control and improve your agent',
+    layout: 'tools',
+    cards: [cardFor('/box'), cardFor('/evals'), cardFor('/decider')],
+  },
 ];
 
 ---
@@ -159,12 +249,17 @@ const pillars = [
         <h2 class="toolkit__cards-title">The Strands toolkit</h2>
         <span class="toolkit__cards-branch toolkit__cards-branch--right" aria-hidden="true"></span>
       </div>
-      <div class="toolkit__cards-grid">
-        {pillars.map((pillar) => (
+      <div class="toolkit__sections">
+        {sections.map((section) => (
           <section class="toolkit__section">
-            <h3 class="toolkit__section-title">{pillar.title}</h3>
-            <div class="toolkit__section-cards">
-              {pillar.cards.map((card) => (
+            <h3 class="toolkit__section-title">{section.title}</h3>
+            <div
+              class:list={[
+                'toolkit__section-cards',
+                `toolkit__section-cards--${section.layout}`,
+              ]}
+            >
+              {section.cards.map((card) => (
                 <article
                   class:list={[
                     'toolkit__card',
@@ -178,23 +273,33 @@ const pillars = [
                   <div class="toolkit__card-compact">
                     <h4 class="toolkit__card-slug">{card.slug}</h4>
                     <p class="toolkit__card-desc">{card.description}</p>
-                    <ul class="toolkit__card-tags" role="list">
-                      {card.tags.map((tag) => (
-                        <li class="toolkit__card-tag">{tag}</li>
-                      ))}
-                    </ul>
+                    {card.install && (
+                      <div class="toolkit__card-install">
+                        <InstallCommand pip={card.install.pip} npm={card.install.npm} compact />
+                      </div>
+                    )}
+                    {card.tags && (
+                      <ul class="toolkit__card-tags" role="list">
+                        {card.tags.map((tag) => (
+                          <li class="toolkit__card-tag">{tag}</li>
+                        ))}
+                      </ul>
+                    )}
                     <a
                       href={card.expanded.viewMoreHref}
                       class="toolkit__card-read"
-                      aria-label={`Read ${card.name} docs`}
+                      aria-label={card.actionAriaLabel}
                     >
-                      Read docs
+                      {card.actionLabel}
                       <span class="toolkit__card-read-arrow" set:html={arrow} />
                     </a>
                   </div>
 
                   {card.expanded && (
-                    <div class="toolkit__card-expanded">
+                    <div
+                      class="toolkit__card-expanded"
+                      id={`toolkit-card-${card.slug.slice(1)}-details`}
+                    >
                       <h4 class="toolkit__card-slug toolkit__card-slug--expanded">
                         {card.slug}
                       </h4>
@@ -203,19 +308,21 @@ const pillars = [
                           <p class="toolkit__card-expanded-desc">
                             {card.expanded.description}
                           </p>
-                          <ul class="toolkit__card-features" role="list">
-                            {card.expanded.features.map((f) => (
-                              <li class="toolkit__card-feature">
-                                <span
-                                  class="toolkit__card-feature-bullet"
-                                  aria-hidden="true"
-                                ></span>
-                                <p class="toolkit__card-feature-text">
-                                  <strong>{f.title}</strong> {f.body}
-                                </p>
-                              </li>
-                            ))}
-                          </ul>
+                          {card.expanded.features && (
+                            <ul class="toolkit__card-features" role="list">
+                              {card.expanded.features.map((f) => (
+                                <li class="toolkit__card-feature">
+                                  <span
+                                    class="toolkit__card-feature-bullet"
+                                    aria-hidden="true"
+                                  ></span>
+                                  <p class="toolkit__card-feature-text">
+                                    <strong>{f.title}</strong> {f.body}
+                                  </p>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                         </div>
                         {card.expanded.codePy && (
                           <div class="toolkit__card-terminal">
@@ -313,8 +420,9 @@ const pillars = [
                         <a
                           href={card.expanded.viewMoreHref}
                           class="toolkit__card-view-more"
+                          aria-label={card.actionAriaLabel}
                         >
-                          View more
+                          {card.actionLabel}
                           <span
                             class="toolkit__card-view-more-arrow"
                             set:html={arrow}
@@ -329,6 +437,7 @@ const pillars = [
                     class="toolkit__card-open"
                     aria-label={`Toggle ${card.slug} details`}
                     aria-expanded={card.defaultOpen ? 'true' : 'false'}
+                    aria-controls={`toolkit-card-${card.slug.slice(1)}-details`}
                     data-toggle
                   >
                     <span class="toolkit__card-open-icon" set:html={plus} />
@@ -365,8 +474,6 @@ const pillars = [
     align-items: center;
     gap: 32px;
     width: 100%;
-    /* Cards grid spans the full diagram width (1332px): three equal-width
-       cards per row, with 24px gaps. */
     max-width: 1332px;
   }
 
@@ -432,17 +539,13 @@ const pillars = [
     transform: translateY(-50%);
   }
 
-  .toolkit__cards-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 24px;
+  .toolkit__sections {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
     width: 100%;
-    /* Ease the column reflow when a card opens/closes so the expand isn't an
-       instant jump. */
-    transition: grid-template-columns 0.3s ease;
   }
 
-  /* Each grid cell is a pillar with one or more product cards. */
   .toolkit__section {
     display: flex;
     flex-direction: column;
@@ -463,30 +566,33 @@ const pillars = [
   }
 
   .toolkit__section-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    flex: 1;
+    display: grid;
+    gap: 24px;
+    width: 100%;
+    transition: grid-template-columns 0.3s ease;
   }
 
-  @media (min-width: 1024px) {
-    .toolkit__section-cards > .toolkit__card:not(.is-open) {
-      flex: 1;
-    }
+  .toolkit__section-cards--build {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  /* When a card is expanded, its pillar widens to 2fr while the other two
-     stay 1fr. The wide track follows the open card's pillar. */
-  .toolkit__cards-grid:has(.toolkit__card.is-open) .toolkit__section {
+  .toolkit__section-cards--tools {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .toolkit__section-cards:has(.toolkit__card.is-open) > .toolkit__card {
     align-self: start;
   }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 1) .toolkit__card.is-open) {
+
+  .toolkit__section-cards--tools:has(.toolkit__card:nth-child(1).is-open) {
     grid-template-columns: 2fr 1fr 1fr;
   }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 2) .toolkit__card.is-open) {
+
+  .toolkit__section-cards--tools:has(.toolkit__card:nth-child(2).is-open) {
     grid-template-columns: 1fr 2fr 1fr;
   }
-  .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 3) .toolkit__card.is-open) {
+
+  .toolkit__section-cards--tools:has(.toolkit__card:nth-child(3).is-open) {
     grid-template-columns: 1fr 1fr 2fr;
   }
 
@@ -525,12 +631,17 @@ const pillars = [
     margin-top: auto;
   }
 
+  .toolkit__card-install {
+    max-width: 100%;
+    margin-top: auto;
+  }
+
   .toolkit__card-slug {
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 700;
-    font-size: 24px;
-    line-height: 1.3;
+    font-size: 28px;
+    line-height: 1.2;
     color: var(--accent);
   }
 
@@ -666,7 +777,7 @@ const pillars = [
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .toolkit__cards-grid {
+    .toolkit__section-cards {
       transition: none;
     }
     .toolkit__card.is-open .toolkit__card-expanded {
@@ -898,17 +1009,10 @@ const pillars = [
   }
 
   @media (max-width: 1023px) {
-    /* Force a single column when stacked. These selectors must match the
-       specificity of the desktop expansion rules above
-       (`:has(.toolkit__section:nth-child(N) .toolkit__card.is-open)`) —
-       media queries add no specificity, so a lower-specificity selector
-       would lose and the grid would stay multi-column with the open card
-       squeezing the rest. */
-    .toolkit__cards-grid,
-    .toolkit__cards-grid:has(.toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 1) .toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 2) .toolkit__card.is-open),
-    .toolkit__cards-grid:has(.toolkit__section:nth-child(3n + 3) .toolkit__card.is-open) {
+    .toolkit__section-cards,
+    .toolkit__section-cards--tools:has(.toolkit__card:nth-child(1).is-open),
+    .toolkit__section-cards--tools:has(.toolkit__card:nth-child(2).is-open),
+    .toolkit__section-cards--tools:has(.toolkit__card:nth-child(3).is-open) {
       grid-template-columns: 1fr;
     }
 
@@ -924,11 +1028,6 @@ const pillars = [
 
     .toolkit__inner {
       gap: 40px;
-    }
-
-    /* Stack the toolkit cards vertically. */
-    .toolkit__cards-grid {
-      grid-template-columns: 1fr;
     }
 
     /* Mobile branches: simple horizontal dashed lines flanking the label,
@@ -955,6 +1054,10 @@ const pillars = [
       gap: 16px;
     }
 
+    .toolkit__sections {
+      gap: 24px;
+    }
+
     .toolkit__section-cards {
       gap: 12px;
     }
@@ -975,7 +1078,7 @@ const pillars = [
     }
 
     .toolkit__card-slug {
-      font-size: 15px;
+      font-size: 18px;
     }
 
     .toolkit__card-desc {
@@ -989,7 +1092,7 @@ const pillars = [
     }
 
     .toolkit__card-slug--expanded {
-      font-size: 15px;
+      font-size: 18px;
     }
 
     .toolkit__card-expanded {
@@ -1037,10 +1140,8 @@ const pillars = [
   import { attachCopyButton } from '../util/clipboard'
   import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
 
-  // Expandable toolkit cards: toggle `.is-open` on the card and swap the
-  // `+` icon for a `−` via CSS. Only cards flagged with `data-expandable`
-  // (i.e. those that have real expanded content) participate; the others
-  // ignore clicks so the button appears inert until content ships.
+  // Expandable toolkit cards toggle `.is-open` and swap the `+` icon for a
+  // `−` via CSS.
   function setCardOpen(card: HTMLElement, willOpen: boolean) {
     // Accordion: only one card open at a time, so the widened grid track
     // never has to accommodate two expanded cards.
@@ -1066,11 +1167,10 @@ const pillars = [
     });
 
     // The `+` alone is easy to miss, so the whole compact tile is a click
-    // target too. The compact view is hidden once open, so this only ever
-    // opens a card — it never competes with the links/copy button that live in
-    // the expanded view.
+    // target too. Links and buttons handle their own clicks, so reading docs
+    // or copying an install command does not expand the card.
     card.querySelector<HTMLElement>('.toolkit__card-compact')?.addEventListener('click', (event) => {
-      if (event.target instanceof Element && event.target.closest('a')) return;
+      if (event.target instanceof Element && event.target.closest('a, button')) return;
       setCardOpen(card, true);
     });
   });
