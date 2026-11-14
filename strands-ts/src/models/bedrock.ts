@@ -360,10 +360,12 @@ export interface BedrockModelConfig extends BaseModelConfig {
    *
    * When `true`, every tool is sent with `strict: true` and a copy of its `inputSchema` with
    * `additionalProperties: false` added to each object type, so a free-form `{ type: 'object' }`
-   * parameter becomes one the model can only fill with `{}`. Bedrock rejects schemas that use
-   * features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/
-   * `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400
-   * at request time, and compiles each new schema on first use, which can take minutes.
+   * parameter becomes one the model can only fill with `{}`. Numeric and length bounds
+   * (`minimum`/`maximum`, `exclusiveMinimum`/`exclusiveMaximum`, `multipleOf`, `minLength`/
+   * `maxLength`) are moved into the field's description in that copy, and the tool still enforces
+   * them when it validates its input. Bedrock rejects other features outside its strict subset
+   * (recursive or external `$ref`, `additionalProperties` other than `false`) with a 400 at
+   * request time, and compiles each new schema on first use, which can take minutes.
    * Incompatible with citations for Anthropic models.
    *
    * @see https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html

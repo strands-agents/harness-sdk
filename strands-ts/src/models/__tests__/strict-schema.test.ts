@@ -6,6 +6,13 @@ import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from '../strict
 import { deepCopy } from '../../types/json.js'
 import type { JSONSchema } from '../../types/json.js'
 import { logger } from '../../logging/logger.js'
+import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
+import {
+  pinContextTool,
+  summarizeContextTool,
+  truncateContextTool,
+} from '../../context-manager/modes/agentic/agentic-context.js'
+import type { Stash } from '../../context-manager/stash.js'
 
 const schema = (value: object): JSONSchema => value as unknown as JSONSchema
 const asRecord = (value: JSONSchema): Record<string, unknown> => value as unknown as Record<string, unknown>
@@ -370,6 +377,127 @@ describe('ensureStrictJsonSchema', () => {
     expect(Object.getPrototypeOf(x)).toBe(Object.prototype)
     expect(Object.hasOwn(x, 'additionalProperties')).toBe(true)
     expect(x['additionalProperties']).toBe(false)
+  })
+})
+
+describe('ensureStrictJsonSchema bounds', () => {
+  it("drops zod's safe integer bounds from an integer-only field", () => {
+    const result = ensureStrictJsonSchema(
+      schema({ type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER })
+    )
+
+    expect(result).toStrictEqual({ type: 'integer' })
+  })
+
+  it('moves every other bound into the description in schema order, keeping a safe integer default out', () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: {
+          start: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+          small: { type: 'integer', minimum: -2147483648, maximum: 2147483647 },
+          ratio: { type: 'number', exclusiveMinimum: 0, exclusiveMaximum: 1, multipleOf: 0.5 },
+          name: { type: 'string', minLength: 1, maxLength: 64 },
+        },
+      })
+    )
+
+    expect(result).toStrictEqual({
+      type: 'object',
+      properties: {
+        start: { type: 'integer', description: '{minimum: 1}' },
+        small: { type: 'integer', description: '{minimum: -2147483648, maximum: 2147483647}' },
+        ratio: { type: 'number', description: '{exclusiveMinimum: 0, exclusiveMaximum: 1, multipleOf: 0.5}' },
+        name: { type: 'string', description: '{minLength: 1, maxLength: 64}' },
+      },
+      additionalProperties: false,
+    })
+  })
+
+  it('appends to an existing description', () => {
+    const result = ensureStrictJsonSchema(
+      schema({ type: 'integer', description: 'First line to return (1-indexed).', minimum: 1 })
+    )
+
+    expect(result).toStrictEqual({ type: 'integer', description: 'First line to return (1-indexed).\n\n{minimum: 1}' })
+  })
+
+  it('moves bounds inside nested objects, array items, anyOf, and $defs', () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: {
+          lines: { type: 'object', properties: { end: { type: 'integer', minimum: 1 } } },
+          indices: { type: 'array', items: { type: 'integer', minimum: 0 } },
+          last: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+          step: { $ref: '#/$defs/Step' },
+        },
+        $defs: { Step: { type: 'number', multipleOf: 2 } },
+      })
+    )
+
+    expect(result).toStrictEqual({
+      type: 'object',
+      properties: {
+        lines: {
+          type: 'object',
+          properties: { end: { type: 'integer', description: '{minimum: 1}' } },
+          additionalProperties: false,
+        },
+        indices: { type: 'array', items: { type: 'integer', description: '{minimum: 0}' } },
+        last: { anyOf: [{ type: 'integer', description: '{minimum: 1}' }, { type: 'null' }] },
+        step: { $ref: '#/$defs/Step' },
+      },
+      $defs: { Step: { type: 'number', description: '{multipleOf: 2}' } },
+      additionalProperties: false,
+    })
+  })
+
+  it("keeps a $ref target's bounds when the ref node carries its own description", () => {
+    const result = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: { start: { $ref: '#/$defs/Line', description: 'Start line.' } },
+        $defs: { Line: { type: 'integer', minimum: 1 } },
+      })
+    )
+
+    expect(asRecord(result)['properties']).toStrictEqual({
+      start: { type: 'integer', description: 'Start line.\n\n{minimum: 1}' },
+    })
+  })
+
+  it('treats a property named like a bound as a property', () => {
+    const result = ensureStrictJsonSchema(schema({ type: 'object', properties: { minimum: { type: 'number' } } }))
+
+    expect(result).toStrictEqual({
+      type: 'object',
+      properties: { minimum: { type: 'number' } },
+      additionalProperties: false,
+    })
+  })
+
+  it('leaves no bounds for findUnsupportedStrictKeywords to report', () => {
+    const strict = ensureStrictJsonSchema(
+      schema({
+        type: 'object',
+        properties: {
+          headers: { type: 'object', additionalProperties: { type: 'string', maxLength: 10 } },
+          count: { type: 'integer', minimum: 0, maximum: 5 },
+        },
+      })
+    )
+
+    expect(findUnsupportedStrictKeywords(strict)).toEqual(['additionalProperties'])
+  })
+
+  // Guards https://github.com/strands-agents/harness-sdk/issues/6102: zod's .int() emits bounds on every field.
+  it('leaves no unsupported keywords in the context tools built on zod integers', () => {
+    const tools = [createRetrievalTool({} as Stash), summarizeContextTool, truncateContextTool, pinContextTool]
+
+    for (const tool of tools) {
+      expect(findUnsupportedStrictKeywords(ensureStrictJsonSchema(tool.toolSpec.inputSchema!))).toEqual([])
+    }
   })
 })
 
