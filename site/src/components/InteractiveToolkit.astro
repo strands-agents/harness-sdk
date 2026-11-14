@@ -12,10 +12,11 @@ const str = (text: string) => ({ text, color: 'var(--code-string)' });
 const t = (text: string) => ({ text });
 
 interface ToolkitCard {
-  name: string;
   slug: string;
   color: string;
   description: string;
+  actionLabel: string;
+  actionAriaLabel: string;
   tags?: string[];
   defaultOpen?: boolean;
   install?: {
@@ -45,18 +46,19 @@ interface ToolkitCard {
 // `defaultOpen` renders the card expanded on load.
 const cards: ToolkitCard[] = [
   {
-    name: 'Strands harness',
     slug: '/harness',
     color: 'var(--card-accent-orange)',
     description:
-      'Use Strands harness when you want a complete agent with benchmarked defaults you can customize.',
+      'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
+    actionLabel: 'Build an agent',
+    actionAriaLabel: 'Build an agent with Strands harness',
     install: {
       pip: 'pip install strands-harness',
       npm: 'npm install @strands-agents/harness',
     },
     expanded: {
       description:
-        'Use Strands harness when you want a complete agent with benchmarked defaults you can customize.',
+        'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
       viewMoreHref: pathWithBase('/docs/user-guide/harness/'),
       codePy: [
         { lineNo: 1, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
@@ -73,18 +75,19 @@ const cards: ToolkitCard[] = [
     },
   },
   {
-    name: 'Strands Harness SDK',
     slug: '/harness-sdk',
     color: 'var(--card-accent-teal)',
     description:
-      'Use the Strands Harness SDK when you want to assemble every part of the agent yourself.',
+      'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
+    actionLabel: 'Build with primitives',
+    actionAriaLabel: 'Build with Strands Harness SDK primitives',
     install: {
       pip: 'pip install strands-agents',
       npm: 'npm install @strands-agents/sdk',
     },
     expanded: {
       description:
-        'Use the Strands Harness SDK when you want to assemble every part of the agent yourself.',
+        'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
       viewMoreHref: pathWithBase('/docs/user-guide/sdk/'),
       codePy: [
         { lineNo: 1, tokens: [kw('from'), t(' strands '), kw('import'), t(' Agent')] },
@@ -101,11 +104,12 @@ const cards: ToolkitCard[] = [
     },
   },
   {
-    name: 'Strands Box',
     slug: '/box',
     color: 'var(--card-accent-purple)',
     description:
-      'Run agents in an OS-enforced sandbox with policy checks for commands, network access, and MCP requests.',
+      'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
+    actionLabel: 'Run in a sandbox',
+    actionAriaLabel: 'Run an agent in a Strands Box sandbox',
     tags: ['OS containment', 'Dogwood policy', 'Credential injection'],
     expanded: {
       description:
@@ -142,11 +146,12 @@ const cards: ToolkitCard[] = [
     },
   },
   {
-    name: 'Strands Evals',
     slug: '/evals',
     color: 'var(--card-accent-pink)',
     description:
-      'Measure quality, diagnose failures, and simulate the users and tools your agent will meet in production.',
+      'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
+    actionLabel: 'Run an evaluation',
+    actionAriaLabel: 'Run an evaluation with Strands Evals',
     tags: ['Score', 'Diagnose', 'Simulate'],
     expanded: {
       description:
@@ -186,11 +191,12 @@ const cards: ToolkitCard[] = [
     },
   },
   {
-    name: 'Strands Decider',
     slug: '/decider',
     color: 'var(--card-accent-red)',
     description:
-      'Use a small, fast model when you need a choice, a yes-or-no probability, or a score with calibrated confidence.',
+      'Route, classify, or score known outcomes with a small decision model that reports confidence.',
+    actionLabel: 'Make a decision',
+    actionAriaLabel: 'Make a decision with Strands Decider',
     tags: ['Choice', 'Yes or no', 'Score'],
     expanded: {
       description:
@@ -269,7 +275,7 @@ const sections = [
                     <p class="toolkit__card-desc">{card.description}</p>
                     {card.install && (
                       <div class="toolkit__card-install">
-                        <InstallCommand pip={card.install.pip} npm={card.install.npm} />
+                        <InstallCommand pip={card.install.pip} npm={card.install.npm} compact />
                       </div>
                     )}
                     {card.tags && (
@@ -282,9 +288,9 @@ const sections = [
                     <a
                       href={card.expanded.viewMoreHref}
                       class="toolkit__card-read"
-                      aria-label={`Read ${card.name} docs`}
+                      aria-label={card.actionAriaLabel}
                     >
-                      Read docs
+                      {card.actionLabel}
                       <span class="toolkit__card-read-arrow" set:html={arrow} />
                     </a>
                   </div>
@@ -414,8 +420,9 @@ const sections = [
                         <a
                           href={card.expanded.viewMoreHref}
                           class="toolkit__card-view-more"
+                          aria-label={card.actionAriaLabel}
                         >
-                          View more
+                          {card.actionLabel}
                           <span
                             class="toolkit__card-view-more-arrow"
                             set:html={arrow}
@@ -633,8 +640,8 @@ const sections = [
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 700;
-    font-size: 24px;
-    line-height: 1.3;
+    font-size: 28px;
+    line-height: 1.2;
     color: var(--accent);
   }
 
@@ -1071,7 +1078,7 @@ const sections = [
     }
 
     .toolkit__card-slug {
-      font-size: 15px;
+      font-size: 18px;
     }
 
     .toolkit__card-desc {
@@ -1085,7 +1092,7 @@ const sections = [
     }
 
     .toolkit__card-slug--expanded {
-      font-size: 15px;
+      font-size: 18px;
     }
 
     .toolkit__card-expanded {

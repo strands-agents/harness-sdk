@@ -80,14 +80,14 @@ describe('homepage machine-readable metadata', () => {
         },
         products: section.querySelectorAll('.toolkit__card').map((card) => {
           const heading = card.querySelector('.toolkit__card-slug')
-          const docsLink = card.querySelector('.toolkit__card-read')
+          const actionLink = card.querySelector('.toolkit__card-read')
           return {
             tagName: heading?.tagName,
             text: heading?.text.trim(),
-            docs: {
-              text: docsLink?.text.trim(),
-              href: docsLink?.getAttribute('href'),
-              ariaLabel: docsLink?.getAttribute('aria-label'),
+            action: {
+              text: actionLink?.text.trim(),
+              href: actionLink?.getAttribute('href'),
+              ariaLabel: actionLink?.getAttribute('aria-label'),
             },
           }
         }),
@@ -99,19 +99,19 @@ describe('homepage machine-readable metadata', () => {
           {
             tagName: 'H4',
             text: '/harness',
-            docs: {
-              text: 'Read docs',
+            action: {
+              text: 'Build an agent',
               href: configuredPathWithBase('/docs/user-guide/harness/'),
-              ariaLabel: 'Read Strands harness docs',
+              ariaLabel: 'Build an agent with Strands harness',
             },
           },
           {
             tagName: 'H4',
             text: '/harness-sdk',
-            docs: {
-              text: 'Read docs',
+            action: {
+              text: 'Build with primitives',
               href: configuredPathWithBase('/docs/user-guide/sdk/'),
-              ariaLabel: 'Read Strands Harness SDK docs',
+              ariaLabel: 'Build with Strands Harness SDK primitives',
             },
           },
         ],
@@ -122,28 +122,28 @@ describe('homepage machine-readable metadata', () => {
           {
             tagName: 'H4',
             text: '/box',
-            docs: {
-              text: 'Read docs',
+            action: {
+              text: 'Run in a sandbox',
               href: configuredPathWithBase('/docs/user-guide/box/'),
-              ariaLabel: 'Read Strands Box docs',
+              ariaLabel: 'Run an agent in a Strands Box sandbox',
             },
           },
           {
             tagName: 'H4',
             text: '/evals',
-            docs: {
-              text: 'Read docs',
+            action: {
+              text: 'Run an evaluation',
               href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
-              ariaLabel: 'Read Strands Evals docs',
+              ariaLabel: 'Run an evaluation with Strands Evals',
             },
           },
           {
             tagName: 'H4',
             text: '/decider',
-            docs: {
-              text: 'Read docs',
+            action: {
+              text: 'Make a decision',
               href: configuredPathWithBase('/docs/labs/strands-decider/overview/'),
-              ariaLabel: 'Read Strands Decider docs',
+              ariaLabel: 'Make a decision with Strands Decider',
             },
           },
         ],
@@ -160,11 +160,18 @@ describe('homepage machine-readable metadata', () => {
       )
     ).toEqual(['toolkit__section-cards--build', 'toolkit__section-cards--tools'])
     expect(toolkit?.querySelectorAll('.toolkit__card-desc').map((item) => item.text.trim())).toEqual([
-      'Use Strands harness when you want a complete agent with benchmarked defaults you can customize.',
-      'Use the Strands Harness SDK when you want to assemble every part of the agent yourself.',
-      'Run agents in an OS-enforced sandbox with policy checks for commands, network access, and MCP requests.',
-      'Measure quality, diagnose failures, and simulate the users and tools your agent will meet in production.',
-      'Use a small, fast model when you need a choice, a yes-or-no probability, or a score with calibrated confidence.',
+      'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
+      'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
+      'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
+      'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
+      'Route, classify, or score known outcomes with a small decision model that reports confidence.',
+    ])
+    expect(toolkit?.querySelectorAll('.toolkit__card-view-more').map((item) => item.text.trim())).toEqual([
+      'Build an agent',
+      'Build with primitives',
+      'Run in a sandbox',
+      'Run an evaluation',
+      'Make a decision',
     ])
     expect(sections[0]?.querySelectorAll('.toolkit__card-feature')).toHaveLength(0)
     expect(sections[0]?.querySelectorAll('.toolkit__card-tag')).toHaveLength(0)

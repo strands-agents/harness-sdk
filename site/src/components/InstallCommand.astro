@@ -16,11 +16,16 @@ import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-p
 interface Props {
   pip?: string
   npm?: string
+  compact?: boolean
 }
-const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strands-agents/sdk' } = Astro.props
+const {
+  pip: PIP = 'pip install strands-agents',
+  npm: NPM = 'npm install @strands-agents/sdk',
+  compact = false,
+} = Astro.props
 ---
 
-<div class="install" data-install>
+<div class:list={['install', compact && 'install--compact']} data-install>
   <code class="install__cmd">
     <span class="install__prompt" aria-hidden="true">$</span>
     <span class="install__text">
@@ -104,6 +109,23 @@ const { pip: PIP = 'pip install strands-agents', npm: NPM = 'npm install @strand
     background: var(--toggle-active-bg);
     border-color: transparent;
     color: var(--strands-black);
+  }
+
+  .install--compact {
+    gap: 6px;
+    padding: 6px 6px 6px 11px;
+  }
+
+  .install--compact .install__cmd {
+    gap: 6px;
+    font-size: 12px;
+    line-height: 1.2;
+  }
+
+  .install--compact .install__copy {
+    padding: 5px 10px;
+    font-size: 11px;
+    line-height: 1.2;
   }
 </style>
 
