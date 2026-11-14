@@ -345,7 +345,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
     }
 
     if (kind === 'contextOverflow') {
-      return new ContextWindowOverflowError(err.message)
+      return new ContextWindowOverflowError(err.message, { cause: err })
     }
 
     return error

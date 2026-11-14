@@ -184,10 +184,10 @@ function translateSageMakerError(error: unknown): Error {
   }
   // Throttling by the container or a proxy, matching translateHttpError.
   if (status === 429 || status === 503 || status === 529) return new ModelThrottledError(message, { cause: error })
-  if (status === 413) return new ContextWindowOverflowError(message)
+  if (status === 413) return new ContextWindowOverflowError(message, { cause: error })
   // Validation errors share strands-decider's 422, so only the message tells a context overflow apart.
   if (status === 422 && isContextOverflowMessage(OriginalMessage)) {
-    return new ContextWindowOverflowError(message)
+    return new ContextWindowOverflowError(message, { cause: error })
   }
   return new ModelError(message, { cause: error })
 }

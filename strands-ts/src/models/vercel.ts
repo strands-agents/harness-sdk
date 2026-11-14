@@ -619,12 +619,12 @@ function classifyError(error: unknown): Error {
 
     const searchText = (error.responseBody ?? message).toLowerCase()
     if (CONTEXT_WINDOW_OVERFLOW_PATTERNS.some((pattern) => searchText.includes(pattern))) {
-      return new ContextWindowOverflowError(message)
+      return new ContextWindowOverflowError(message, { cause: error })
     }
   }
 
   if (CONTEXT_WINDOW_OVERFLOW_PATTERNS.some((pattern) => message.toLowerCase().includes(pattern))) {
-    return new ContextWindowOverflowError(message)
+    return new ContextWindowOverflowError(message, { cause: error })
   }
 
   if (isNetworkError(error)) {
