@@ -150,9 +150,9 @@ class ClassifierStrategy:
             model: Model or ``DecisionModel`` used for classification. A ``Model`` must honor forced tool
                 selection, since a provider that ignores it fails classification and every selection falls back
                 to candidate zero.
-            routing_policy: Routing policy, sent verbatim and never truncated. The SDK adds mandatory isolation,
-                candidate-key, and structured-output rules that the policy cannot override. Defaults to the SDK
-                input-complexity policy.
+            routing_policy: Routing policy, sent verbatim (never truncated) after the SDK's fixed routing rules for
+                context isolation and candidate keys. An empty or whitespace-only policy sends the fixed rules alone.
+                Defaults to the SDK input-complexity policy.
             system_prompt: Deprecated alias for ``routing_policy``.
             timeout: Maximum seconds to wait for the decision. On timeout the decision call is cancelled.
             max_message_chars: Maximum characters copied from the latest request into the routing context.
