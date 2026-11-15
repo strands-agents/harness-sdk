@@ -58,6 +58,7 @@ export interface StartModelInvokeSpanOptions {
   modelId?: string
   /** System prompt provided to the model for this invocation. */
   systemPrompt?: SystemPrompt
+  toolSpecs?: readonly ToolSpec[]
 }
 
 /**

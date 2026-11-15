@@ -374,6 +374,41 @@ describe('Tracer', () => {
       expect(options.attributes['session.id']).toBe('sess-1')
       expect(options.attributes['gen_ai.request.model']).toBe('override')
     })
+
+    it('records tool definitions in the semconv shape when gen_ai_tool_definitions opt-in is set', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_tool_definitions')
+      const tracer = new Tracer()
+      const inputSchema = { type: 'object' as const, properties: { expression: { type: 'string' as const } } }
+      const outputSchema = { type: 'object' as const, properties: { value: { type: 'number' as const } } }
+
+      tracer.startModelInvokeSpan({
+        messages: [textMessage('user', 'Hello')],
+        toolSpecs: [
+          { name: 'calc', description: 'Calculator', inputSchema, outputSchema },
+          { name: 'clock', description: 'Current time' },
+        ],
+      })
+
+      const [, options] = getStartSpanCall()
+      expect(JSON.parse(options.attributes['gen_ai.tool.definitions'] as string)).toStrictEqual([
+        { type: 'function', name: 'calc', description: 'Calculator', parameters: inputSchema },
+        { type: 'function', name: 'clock', description: 'Current time' },
+      ])
+    })
+
+    it.each([
+      ['no tools are sent', 'gen_ai_tool_definitions', []],
+      ['tool specs are absent', 'gen_ai_tool_definitions', undefined],
+      ['the opt-in is not set', 'gen_ai_latest_experimental', [{ name: 'calc', description: 'Calculator' }]],
+    ])('omits tool definitions when %s', (_, optIn, toolSpecs) => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', optIn)
+      const tracer = new Tracer()
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')], ...(toolSpecs && { toolSpecs }) })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes).not.toHaveProperty('gen_ai.tool.definitions')
+    })
   })
 
   describe('endModelInvokeSpan', () => {
