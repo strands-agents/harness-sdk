@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toMimeType, toMediaFormat } from '../mime.js'
+import { toMimeType, toMediaFormat, toAudioMimeType, toAudioMediaFormat } from '../mime.js'
 
 describe('toMimeType', () => {
   it.each([
@@ -84,5 +84,50 @@ describe('toMediaFormat', () => {
     expect(toMediaFormat('image/bmp')).toBeUndefined()
     expect(toMediaFormat('application/octet-stream')).toBeUndefined()
     expect(toMediaFormat('')).toBeUndefined()
+  })
+})
+
+describe('audio MIME conversions', () => {
+  const audioFormats = [
+    ['mp3', 'audio/mpeg'],
+    ['opus', 'audio/opus'],
+    ['wav', 'audio/wav'],
+    ['aac', 'audio/aac'],
+    ['flac', 'audio/flac'],
+    ['mp4', 'audio/mp4'],
+    ['ogg', 'audio/ogg'],
+    ['mkv', 'audio/x-matroska'],
+    ['mka', 'audio/x-matroska'],
+    ['x-aac', 'audio/x-aac'],
+    ['m4a', 'audio/mp4'],
+    ['mpeg', 'audio/mpeg'],
+    ['mpga', 'audio/mpeg'],
+    ['pcm', 'audio/pcm'],
+    ['webm', 'audio/webm'],
+  ] as const
+
+  it.each(audioFormats)('converts %s to %s', (audioFormat, mimeType) => {
+    expect(toAudioMimeType(audioFormat)).toBe(mimeType)
+  })
+
+  it.each([
+    ['audio/mpeg', 'mp3'],
+    ['audio/opus', 'opus'],
+    ['audio/wav', 'wav'],
+    ['audio/aac', 'aac'],
+    ['audio/flac', 'flac'],
+    ['audio/mp4', 'mp4'],
+    ['audio/ogg', 'ogg'],
+    ['audio/x-matroska', 'mkv'],
+    ['audio/x-aac', 'x-aac'],
+    ['audio/pcm', 'pcm'],
+    ['audio/webm', 'webm'],
+  ])('converts %s to %s', (mimeType, audioFormat) => {
+    expect(toAudioMediaFormat(mimeType)).toBe(audioFormat)
+  })
+
+  it('is case-insensitive and returns undefined for unknown MIME types', () => {
+    expect(toAudioMediaFormat('Audio/WAV')).toBe('wav')
+    expect(toAudioMediaFormat('audio/unknown')).toBeUndefined()
   })
 })

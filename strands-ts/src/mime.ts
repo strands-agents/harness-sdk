@@ -110,3 +110,55 @@ export function toMimeType(format: string): string | undefined {
 export function toMediaFormat(mimeType: string): MediaFormat | undefined {
   return TO_MEDIA_FORMAT[mimeType.toLowerCase()]
 }
+
+const TO_AUDIO_MIME_TYPE: Record<AudioFormat, string> = {
+  mp3: 'audio/mpeg',
+  opus: 'audio/opus',
+  wav: 'audio/wav',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  mp4: 'audio/mp4',
+  ogg: 'audio/ogg',
+  mkv: 'audio/x-matroska',
+  mka: 'audio/x-matroska',
+  'x-aac': 'audio/x-aac',
+  m4a: 'audio/mp4',
+  mpeg: 'audio/mpeg',
+  mpga: 'audio/mpeg',
+  pcm: 'audio/pcm',
+  webm: 'audio/webm',
+}
+
+const TO_AUDIO_FORMAT: Record<string, AudioFormat> = {
+  'audio/mpeg': 'mp3',
+  'audio/opus': 'opus',
+  'audio/wav': 'wav',
+  'audio/aac': 'aac',
+  'audio/flac': 'flac',
+  'audio/mp4': 'mp4',
+  'audio/ogg': 'ogg',
+  'audio/x-matroska': 'mkv',
+  'audio/x-aac': 'x-aac',
+  'audio/pcm': 'pcm',
+  'audio/webm': 'webm',
+}
+
+/**
+ * Convert an audio format to its MIME type.
+ *
+ * @param format - Audio format (e.g., 'mp3', 'wav')
+ * @returns MIME type string
+ */
+export function toAudioMimeType(format: AudioFormat): string {
+  return TO_AUDIO_MIME_TYPE[format]
+}
+
+/**
+ * Convert an audio MIME type to its canonical audio format.
+ *
+ * @param mimeType - The MIME type string (e.g., 'audio/mpeg')
+ * @returns Audio format or undefined if not a known audio MIME type
+ */
+export function toAudioMediaFormat(mimeType: string): AudioFormat | undefined {
+  return TO_AUDIO_FORMAT[mimeType.toLowerCase()]
+}
