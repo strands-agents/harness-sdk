@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toMimeType, toMediaFormat } from '../mime.js'
+import { toMimeType, toMediaFormat, toAudioMimeType, toAudioFormat } from '../mime.js'
 
 describe('toMimeType', () => {
   it.each([
@@ -84,5 +84,47 @@ describe('toMediaFormat', () => {
     expect(toMediaFormat('image/bmp')).toBeUndefined()
     expect(toMediaFormat('application/octet-stream')).toBeUndefined()
     expect(toMediaFormat('')).toBeUndefined()
+  })
+})
+
+describe('toAudioMimeType', () => {
+  it.each([
+    ['mp3', 'audio/mpeg'],
+    ['wav', 'audio/wav'],
+    ['opus', 'audio/opus'],
+    ['aac', 'audio/aac'],
+    ['flac', 'audio/flac'],
+    ['ogg', 'audio/ogg'],
+    ['m4a', 'audio/mp4'],
+    ['webm', 'audio/webm'],
+    ['mpeg', 'audio/mpeg'],
+  ])('converts %s to %s', (audioFormat, mimeType) => {
+    expect(toAudioMimeType(audioFormat)).toBe(mimeType)
+  })
+
+  it('returns undefined for unknown formats', () => {
+    expect(toAudioMimeType('png')).toBeUndefined()
+    expect(toAudioMimeType('')).toBeUndefined()
+  })
+})
+
+describe('toAudioFormat', () => {
+  it.each([
+    ['audio/mpeg', 'mp3'],
+    ['audio/wav', 'wav'],
+    ['audio/x-wav', 'wav'],
+    ['audio/wave', 'wav'],
+    ['audio/opus', 'opus'],
+    ['audio/flac', 'flac'],
+    ['audio/ogg', 'ogg'],
+    ['audio/mp4', 'm4a'],
+    ['AUDIO/WAV', 'wav'],
+  ])('converts %s to %s', (mimeType, audioFormat) => {
+    expect(toAudioFormat(mimeType)).toBe(audioFormat)
+  })
+
+  it('returns undefined for unknown MIME types', () => {
+    expect(toAudioFormat('video/mp4')).toBeUndefined()
+    expect(toAudioFormat('audio/unknown')).toBeUndefined()
   })
 })
