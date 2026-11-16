@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { DevWorkspace } from '../workspace.js'
-import { resolveTemporaryExperiment } from './experiment-files.js'
+import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, temporaryOptimizationFolder } from './environment.js'
 import type { TemporaryCommandRunner } from './environment.js'
 import {
@@ -69,6 +69,7 @@ export const runTemporaryOptimization = async (
     throw new Error(`The optimization record ${record} already exists. Wait a second, then try again.`)
   const log = `${record}.log`
   await mkdir(temporaryOptimizationFolder(directory), { recursive: true })
+  const runnable = await temporaryRunnableExperiment(experiment, `${record}.experiment.json`)
   onProgress(`Optimizing ${workspace.entrypoint} against ${experiment}`)
   onProgress(`Record: ${record}`)
   onProgress('Measuring the baseline. The optimizer reports each candidate when it finishes.')
@@ -79,7 +80,7 @@ export const runTemporaryOptimization = async (
       '-m',
       'strands_evals.cli',
       'optimize',
-      experiment,
+      runnable,
       '--agent',
       workspace.entrypoint,
       '--record',

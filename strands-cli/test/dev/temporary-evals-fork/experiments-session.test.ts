@@ -404,6 +404,20 @@ describe('TEMPORARY experiment generation session', () => {
     })
   })
 
+  it('shouldSaveUniqueCaseNamesWhenTheGeneratorRepeatsANameOrLeavesOneOut', async () => {
+    const { workspace, experiments, generator } = await setup()
+
+    const created = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 3 })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    await generator.runs[0]!.finish(['refund', 'refund', ''])
+    await created
+
+    const saved = JSON.parse(await readFile(join(workspace.directory!, 'tmp/experiments/refunds.json'), 'utf8')) as {
+      cases: { name: string }[]
+    }
+    expect(saved.cases.map(({ name }) => name)).toEqual(['refund', 'refund-2', 'case_2'])
+  })
+
   it('shouldRejectTheChatRequestWithoutGeneratingWhenTheNameIsTaken', async () => {
     const { workspace, experiments, generator } = await setup()
     await writeFileAt(

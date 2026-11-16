@@ -22,7 +22,14 @@ const workspaceFixture = async (
   const root = await temporaryDirectory()
   const directory = join(root, 'strands-dev')
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await Promise.all(experiments.map((name) => writeFileAt(join(directory, 'tmp/experiments', name))))
+  await Promise.all(
+    experiments.map((name) =>
+      writeFileAt(
+        join(directory, 'tmp/experiments', name),
+        JSON.stringify({ cases: [{ name: 'greeting', input: 'Hello' }] })
+      )
+    )
+  )
   return {
     directory,
     root,
@@ -84,6 +91,32 @@ describe('TEMPORARY dev optimization', () => {
       summary: ['ships candidate 3', 'record: somewhere'],
     })
     expect(progress).toContain('candidate  0 baseline complete n=4 Contains 0.5')
+  })
+
+  it('shouldGiveTheOptimizerACopyWithUniqueCaseNamesWhenCasesRepeatOrLackANameAndKeepTheExperimentFile', async () => {
+    const workspace = await workspaceFixture()
+    const experiment = join(workspace.directory!, 'tmp/experiments/support.json')
+    const original = JSON.stringify({
+      cases: [
+        { name: 'greeting', input: 'Hello' },
+        { name: 'greeting', input: 'Hi' },
+        { name: null, input: 'Hey' },
+      ],
+    })
+    await writeFile(experiment, original)
+    const spawnOptimizer = succeeding()
+
+    await runTemporaryOptimization({ workspace, now: () => NOW }, { run: environmentRunner(workspace), spawnOptimizer })
+
+    const copy = join(workspace.directory!, 'tmp/optimization/20261111-150405-support.experiment.json')
+    expect(spawnOptimizer.mock.calls[0]![0].args[3]).toBe(copy)
+    const named = JSON.parse(await readFile(copy, 'utf8')) as { cases: { name: string; input: string }[] }
+    expect(named.cases.map(({ name, input }) => [name, input])).toEqual([
+      ['greeting', 'Hello'],
+      ['greeting-2', 'Hi'],
+      ['case_2', 'Hey'],
+    ])
+    expect(await readFile(experiment, 'utf8')).toBe(original)
   })
 
   it('shouldUseTheNamedExperimentWhenSeveralExist', async () => {

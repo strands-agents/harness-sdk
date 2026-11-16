@@ -116,12 +116,14 @@ const uniqueFileNames = (): ((name: string) => string) => {
   }
 }
 
-export const temporaryNamedExperiment = (raw: TemporaryExperimentDocument): TemporaryExperimentDocument => {
+export const temporaryUniqueCaseNames = (cases: readonly TemporaryRawCase[]): string[] => {
   const unique = uniqueFileNames()
-  return {
-    ...raw,
-    cases: raw.cases.map((rawCase, index) => ({ ...rawCase, name: unique(temporaryCaseName(rawCase, index)) })),
-  }
+  return cases.map((rawCase, index) => unique(temporaryCaseName(rawCase, index)))
+}
+
+export const temporaryNamedExperiment = (raw: TemporaryExperimentDocument): TemporaryExperimentDocument => {
+  const names = temporaryUniqueCaseNames(raw.cases)
+  return { ...raw, cases: raw.cases.map((rawCase, index) => ({ ...rawCase, name: names[index] })) }
 }
 
 export const temporaryCaseText = (value: unknown): string | undefined => {
