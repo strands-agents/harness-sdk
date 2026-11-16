@@ -234,6 +234,8 @@ describe('ExperimentPanel review', () => {
 
     await press('n')
     await press('third')
+    await press('\t')
+    await press('answer')
     await press(ENTER)
 
     await vi.waitFor(() => expect(text()).toContain('3/3'))
@@ -251,6 +253,67 @@ describe('ExperimentPanel review', () => {
     await press(ENTER)
 
     expect(session.add).toHaveBeenCalledWith({ input: 'hi', expected: 'hello' })
+  })
+
+  it.each([
+    ['TheInputIsEmpty', '', 'hello'],
+    ['TheInputIsOnlySpaces', '   ', 'hello'],
+    ['TheExpectedAnswerIsEmpty', 'hi', ''],
+    ['TheExpectedAnswerIsOnlySpaces', 'hi', '  '],
+  ])('shouldKeepTheNewCaseOpenAndAskForBothFieldsWhen%s', async (_case, question, answer) => {
+    const { session, press, text } = await reviewing()
+
+    await press('n')
+    for (const key of question) await press(key)
+    await press('\t')
+    for (const key of answer) await press(key)
+    await press(ENTER)
+
+    expect(session.add).not.toHaveBeenCalled()
+    expect(text()).toContain('Write both the input and the expected answer before you save the case.')
+    expect(text()).toContain('Enter save the case')
+  })
+
+  it('shouldKeepTheEditorOpenWhenTheUserClearsTheExpectedAnswer', async () => {
+    const { session, press, text } = await reviewing()
+
+    await press('e')
+    for (let step = 0; step < 'answer c0'.length; step++) await press('\u007f')
+    await press(ENTER)
+
+    expect(session.edit).not.toHaveBeenCalled()
+    expect(text()).toContain('Write both the input and the expected answer before you save the case.')
+  })
+
+  it('shouldMoveToTheBlankFieldWhenTheEditorRefusesTheCase', async () => {
+    const { session, press } = await reviewing()
+
+    await press('n')
+    await press('\t')
+    for (const key of 'hello') await press(key)
+    await press(ENTER)
+    for (const key of 'hi') await press(key)
+    await press(ENTER)
+
+    expect(session.add).toHaveBeenCalledWith({ input: 'hi', expected: 'hello' })
+  })
+
+  it('shouldOpenTheEditorOnTheBlankInputWhenTheUserEditsACaseWithoutOne', async () => {
+    const { session } = experimentsSession({
+      review: {
+        key: saved.path,
+        name: saved.name,
+        path: saved.path,
+        cases: [{ name: 'c0', input: '', expected: 'answer c0', kept: true, saved: true }],
+      },
+    })
+    const { press } = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
+
+    await press('e')
+    await press('q')
+    await press(ENTER)
+
+    expect(session.edit).toHaveBeenCalledWith(0, { input: 'q' })
   })
 
   it.each([

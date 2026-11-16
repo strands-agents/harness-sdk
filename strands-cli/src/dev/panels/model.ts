@@ -4,6 +4,11 @@ export interface EvalCase {
   readonly expected?: string
 }
 
+export type CaseField = 'input' | 'expected'
+
+export const missingCaseField = ({ input, expected }: Pick<EvalCase, 'input' | 'expected'>): CaseField | undefined =>
+  !input.trim() ? 'input' : !expected?.trim() ? 'expected' : undefined
+
 export interface ExperimentSummary {
   readonly name: string
   readonly path: string

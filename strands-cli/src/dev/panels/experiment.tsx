@@ -5,7 +5,9 @@ import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text } from '../../ui/theme.js'
 import {
   isGenerating,
+  missingCaseField,
   type CaseChange,
+  type CaseField,
   type DraftCase,
   type ExperimentSession,
   type ExperimentsState,
@@ -49,6 +51,7 @@ const COMMAND = 'experiment'
 const SECOND_MS = 1000
 const ROOMY_HEIGHT = 14
 const DETAIL_LABEL_WIDTH = 10
+const MISSING_FIELD = 'Write both the input and the expected answer before you save the case.'
 
 export const ExperimentPanel = (props: ExperimentPanelProps): ReactElement => {
   const { session, close } = props
@@ -249,13 +252,14 @@ const caseItem = (item: DraftCase, index: number): ListItem => ({
 
 interface CaseEditor {
   readonly index?: number
-  readonly field: 'input' | 'expected'
+  readonly field: CaseField
   readonly input: TextValue
   readonly expected: TextValue
   readonly opened: { readonly input: string; readonly expected: string }
+  readonly problem?: string
 }
 
-const editorFor = (field: CaseEditor['field'], input: string, expected: string, index?: number): CaseEditor => ({
+const editorFor = (field: CaseField, input: string, expected: string, index?: number): CaseEditor => ({
   ...(index === undefined ? {} : { index }),
   field,
   input: textValue(input),
@@ -281,11 +285,17 @@ const ReviewView = ({ session, width, height, review }: ExperimentPanelProps & {
   const editor = editing.value
   const index = cursor.index
   const current = review.cases[index]
+  const notice = editor?.problem ? { tone: 'error' as const, text: editor.problem } : review.notice
   const detailRows = height >= ROOMY_HEIGHT ? 2 : 1
-  const capacity = Math.max(1, height - 4 - Number(Boolean(review.notice)) - detailRows * 2)
+  const capacity = Math.max(1, height - 4 - Number(Boolean(notice)) - detailRows * 2)
   const typeInto = (change: (value: TextValue) => TextValue): void =>
     editing.set((open) => open && { ...open, [open.field]: change(open[open.field]) })
   const saveEdit = (open: CaseEditor): void => {
+    const missing = missingCaseField({ input: open.input.input, expected: open.expected.input })
+    if (missing) {
+      editing.set({ ...open, field: missing, problem: MISSING_FIELD })
+      return
+    }
     const change = changedFields(open)
     if (open.index === undefined) {
       session.add({ input: open.input.input, expected: open.expected.input })
@@ -312,7 +322,8 @@ const ReviewView = ({ session, width, height, review }: ExperimentPanelProps & {
     else if (typed === ' ' && item) session.toggle(at)
     else if (typed === 'd' && item) session.drop(at)
     else if (typed === 'a') session.keepAll()
-    else if (typed === 'e' && item) editing.set(editorFor('expected', item.input, item.expected ?? '', at))
+    else if (typed === 'e' && item)
+      editing.set(editorFor(missingCaseField(item) ?? 'expected', item.input, item.expected ?? '', at))
     else if (typed === 'n') editing.set(editorFor('input', '', ''))
     else if (key.return) void session.save()
   })
@@ -325,7 +336,7 @@ const ReviewView = ({ session, width, height, review }: ExperimentPanelProps & {
         parts={parts}
         right={review.cases.length > 0 ? <Text dimColor>{`${index + 1}/${review.cases.length}`}</Text> : undefined}
       />
-      {review.notice ? <Line tone={review.notice.tone}>{`  ${review.notice.text}`}</Line> : null}
+      {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : null}
       <ItemList
         items={review.cases.map(caseItem)}
         selected={index}
