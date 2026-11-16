@@ -277,10 +277,9 @@ describe('Agent tracer integration', () => {
         if (event.type === 'toolResultEvent') break
       }
 
-      // _streamCore's drain loop resumes the agent loop after the break, so the
-      // invocation runs to completion; every started cycle must also close.
-      expect(tracer.startAgentLoopSpan).toHaveBeenCalledTimes(2)
-      expect(tracer.endAgentLoopSpan).toHaveBeenCalledTimes(2)
+      // Closing the stream stops the loop, and every started cycle must close.
+      expect(tracer.startAgentLoopSpan).toHaveBeenCalledTimes(1)
+      expect(tracer.endAgentLoopSpan).toHaveBeenCalledTimes(1)
     })
 
     it('closes cycle telemetry once when an error is thrown after the cycle already closed', async () => {

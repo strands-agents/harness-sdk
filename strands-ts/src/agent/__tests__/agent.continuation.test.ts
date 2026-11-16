@@ -307,6 +307,6 @@ describe('Agent continuation input', () => {
     }
 
     expect(abandoned).toHaveBeenCalledOnce()
-    expect(agent.messages.map(textOf)).toEqual(['start'])
+    expect(agent.messages.map(textOf)).toEqual(['start', 'Cancelled by user'])
   })
 })

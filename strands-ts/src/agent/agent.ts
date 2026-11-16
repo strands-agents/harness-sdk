@@ -1513,19 +1513,23 @@ export class Agent implements LocalAgent, InvokableAgent {
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     const streamGenerator = this._stream(args, options, invocationContext, continuationEvent, inputMessages)
     let caughtError: Error | undefined
+    let streamSuspended = false
     let iterationResult: IteratorResult<AgentStreamEvent, AgentResult>
     try {
       iterationResult = await streamGenerator.next()
 
       while (!iterationResult.done) {
+        streamSuspended = true
         try {
           const processed = await this._invokeCallbacks(iterationResult.value)
           yield processed
+          streamSuspended = false
           iterationResult = await streamGenerator.next()
         } catch (error) {
           // Throw interrupt errors back into _stream so executeTools can store the
           // assistant message as pending execution state for resume.
           if (error instanceof InterruptError) {
+            streamSuspended = false
             iterationResult = await streamGenerator.throw(error)
           } else {
             throw error
@@ -1536,6 +1540,12 @@ export class Agent implements LocalAgent, InvokableAgent {
       caughtError = error as Error
       throw error
     } finally {
+      // Resuming a suspended _stream() to drain it starts another cycle unless the invocation is already
+      // cancelled, so cancel first and let the drain take the cancellation path. An InterruptEvent is a
+      // resumable pause rather than an abandoned run, so it is left uncancelled.
+      if (streamSuspended && !caughtError && iterationResult!.value?.type !== 'interruptEvent') {
+        this.cancel()
+      }
       // Drain _stream() so cleanup hooks and printer still fire.
       // Yield only on error (consumer may still be iterating); on a consumer
       // break, yielding would suspend the generator and leak the lock.
@@ -1943,7 +1953,8 @@ export class Agent implements LocalAgent, InvokableAgent {
           // _streamCore's drain loop calls .return(), which runs the finally in
           // executeTools and yields its AfterToolsEvent, and the drain's next()
           // then completes the closed generator, so this yield* evaluates to
-          // undefined instead of unwinding.
+          // undefined instead of unwinding. _streamCore has already cancelled the
+          // invocation, so the next cycle stops at _throwIfCancelled().
           if (!toolsResult) {
             continue
           }
