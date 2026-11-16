@@ -665,14 +665,18 @@ describe('HarnessPicker', () => {
     const output = ttyOutput(100, 36)
     const frame = captureFrame(output)
     const selected = vi.fn()
-    render(createElement(HarnessPicker, { harnesses: [], onSelect: selected, ...props }), {
+    const instance = render(createElement(HarnessPicker, { harnesses: [], onSelect: selected, ...props }), {
       stdin: input,
       stdout: output,
     })
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
     input.write('\r')
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Name: new-harness'))
-    return { input, text: () => frame().join('\n'), selected }
+    const press = async (key: string): Promise<void> => {
+      input.write(key)
+      await instance.waitUntilRenderFlush()
+    }
+    return { input, press, text: () => frame().join('\n'), selected }
   }
 
   it('shouldMoveToTheLanguageFieldAndChangeItWhenArrowsArePressed', async () => {
@@ -719,6 +723,36 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() =>
       expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harnessy', language: 'typescript' })
     )
+  })
+
+  it('shouldTypeAtTheCursorWhenTheArrowKeysMoveItInTheName', async () => {
+    const { press, text, selected } = await createForm()
+
+    for (const key of [...Array<string>(7).fill('\u001b[D'), 'my-']) await press(key)
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-my-harness'))
+    await press('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-my-harness', language: 'typescript' })
+    )
+  })
+
+  it('shouldIgnoreTextThatCannotBeInAFolderNameWhenTypingTheName', async () => {
+    const { press, text } = await createForm()
+
+    await press(' /x')
+    await press('y')
+
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-harnessy'))
+  })
+
+  it('shouldShowLeftAndRightInTheHintOnlyWhenTheLanguageFieldIsSelected', async () => {
+    const { input, text } = await createForm()
+    expect(text()).toContain('↑↓ field · Tab language · Enter')
+
+    input.write('\u001b[B')
+
+    await vi.waitFor(() => expect(text()).toContain('↑↓ field · ←→ or Tab language · Enter'))
   })
 
   it('shouldCopyTheFullOpenFailureWhenControlYIsPressed', async () => {

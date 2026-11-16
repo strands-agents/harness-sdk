@@ -64,6 +64,10 @@ interface PickerRow {
 }
 
 const FOLDER_LABEL = 'Workspace folder: '
+const DEFAULT_NAME = 'new-harness'
+const NAME_LIMIT = 64
+const NAME_CHARACTERS = /^[a-zA-Z0-9._-]*$/u
+const isNameDraft = (value: string): boolean => value.length <= NAME_LIMIT && NAME_CHARACTERS.test(value)
 const prefilledFolder = ({ path }: FolderSuggestion): string => dirname(path)
 const opensAtOnce = (
   suggested: FolderSuggestion | undefined
@@ -195,7 +199,8 @@ export const HarnessPicker = ({
   const [placing, setPlacing] = useState<HarnessChoice>()
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
   const [field, setField] = useState<FormField>('name')
-  const [name, setName] = useState('new-harness')
+  const [nameField, setNameField] = useState({ value: DEFAULT_NAME, cursor: DEFAULT_NAME.length })
+  const name = nameField.value
   const [folder, setFolder] = useState({ value: '', cursor: 0, suggested: { path: '', detected: false } })
   const [failure, setFailure] = useState<string>()
   const [replacing, setReplacing] = useState<Replacement>()
@@ -312,15 +317,22 @@ export const HarnessPicker = ({
     folder.value.trim() === prefilledFolder(folder.suggested) ? folder.suggested.path : folder.value.trim()
   const editForm = (input: string, key: Key): void => {
     if (key.tab) return setLanguage(otherLanguage)
-    if (key.return && name && name !== '.' && name !== '..') return choose({ kind: 'create', name, language })
+    if (key.return)
+      return name && name !== '.' && name !== '..' ? choose({ kind: 'create', name, language }) : undefined
     if (key.upArrow || key.downArrow) return setField(key.downArrow ? 'language' : 'name')
     if (field === 'language') {
       if (key.leftArrow || key.rightArrow) setLanguage(otherLanguage)
       return
     }
-    if (key.backspace || key.delete) return setName((current) => current.slice(0, -1))
-    if (!key.ctrl && !key.meta && /^[a-zA-Z0-9._-]+$/.test(input))
-      setName((current) => `${current}${input}`.slice(0, 64))
+    setNameField((current) => {
+      const { state } = reduceInputSequence(
+        { ...emptyEditor(), input: current.value, cursor: current.cursor },
+        input,
+        key,
+        'idle'
+      )
+      return isNameDraft(state.input) ? { value: state.input, cursor: state.cursor } : current
+    })
   }
   const harnessRows = harnesses.map(harnessRow)
   const viewedOf = ({ selected, viewed }: Browsing): string | undefined =>
@@ -366,6 +378,7 @@ export const HarnessPicker = ({
     { isActive: replacing === undefined }
   )
   const detailWidth = Math.max(1, columns - 12)
+  const nameLabel = `${field === 'name' ? '›' : ' '} Name: `
   const lineCount = (text: string): number => wrapLines(text, detailWidth).length
   const notice = warning ? sanitizeTerminalText(warning) : undefined
   const selected = rows[selection]!
@@ -390,7 +403,7 @@ export const HarnessPicker = ({
     name: {
       heading: 'Create a harness',
       context: 'New project',
-      hint: `↑↓ field · ←→ or Tab language · Enter ${next}`,
+      hint: `↑↓ field · ${field === 'language' ? '←→ or Tab' : 'Tab'} language · Enter ${next}`,
     },
     folder: {
       heading: 'Create a workspace',
@@ -497,10 +510,16 @@ export const HarnessPicker = ({
         </Box>
       ) : creating ? (
         <Box flexDirection="column" gap={1}>
-          <Text {...(field === 'name' ? { color: accent, bold: true } : {})}>
-            {field === 'name' ? '›' : ' '} Name: {name}
-            {field === 'name' ? '▏' : ''}
-          </Text>
+          <Box>
+            <Text {...(field === 'name' ? { color: accent, bold: true } : {})}>{nameLabel}</Text>
+            <EditableText
+              value={name}
+              cursor={nameField.cursor}
+              width={Math.max(1, detailWidth - nameLabel.length)}
+              active={field === 'name' && !busy}
+              placeholder=""
+            />
+          </Box>
           <Text {...(field === 'language' ? { color: accent, bold: true } : {})}>
             {field === 'language' ? '›' : ' '} Language: {language}
           </Text>
