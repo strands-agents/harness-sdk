@@ -239,6 +239,8 @@ In `strands-workspace/`, an `agent/` folder holds packaged tools, skills, and po
 The top-level `agent/` in a workspace exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
 When the workspace is inside the project, dev keeps the workspace out of candidate copies, `/export`, and the source watcher.
 
+Dev copies only the skills that the profile configures, as `/export` does. Skills that skill discovery finds, for example in `~/.codex/skills`, stay out of the new project.
+
 ```json
 {
   "version": 1,

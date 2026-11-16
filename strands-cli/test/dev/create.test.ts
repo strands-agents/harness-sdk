@@ -1,5 +1,5 @@
 import { chmod, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
 import { createDevProject, createDevWorkspace, bindExistingAgent, folderClaims } from '../../src/dev/create.js'
@@ -15,7 +15,10 @@ const snapshot = () =>
     { profile: { name: 'Test harness', instructions: 'Say hello.', session: false, memory: false, skills: false } }
   ).snapshot()
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllEnvs()
+})
 
 describe('createDevWorkspace', () => {
   it.each(['cli', 'typescript', 'python'] as const)(
@@ -261,7 +264,33 @@ describe('createDevProject', () => {
     const workspace = await createDevProject({ cwd, language: 'typescript', snapshot: discoverySnapshot(true) })
 
     expect(workspace.entrypoint).toBe(join(cwd, 'strands-workspace', 'agent.ts'))
-    vi.unstubAllEnvs()
+  })
+
+  const writeSkill = async (folder: string, rules: string): Promise<void> => {
+    await mkdir(folder, { recursive: true })
+    await writeFile(
+      join(folder, 'SKILL.md'),
+      `---\nname: ${basename(folder)}\ndescription: Review code.\n---\n${rules}\n`
+    )
+  }
+
+  it('shouldCopyOnlyTheProfileSkillsWhenSkillDiscoveryIsOn', async () => {
+    const home = await temporaryDirectory()
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+    const cwd = await temporaryDirectory()
+    await writeSkill(join(home, '.codex', 'skills', 'review'), 'Use the home rules.')
+    await writeSkill(join(cwd, '.agents', 'skills', 'review'), 'Use the project rules.')
+    await writeSkill(join(cwd, 'my-skills', 'lint'), 'Use the lint rules.')
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+
+    const workspace = await createDevProject({
+      cwd,
+      language: 'typescript',
+      snapshot: discoverySnapshot(['./my-skills']),
+    })
+
+    expect(await readdir(join(workspace.root, 'agent', 'skills'))).toEqual(['lint'])
   })
 
   it('shouldRefuseAConfiguredSkillFolderThatDoesNotExist', async () => {

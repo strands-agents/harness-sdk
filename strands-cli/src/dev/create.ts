@@ -79,7 +79,7 @@ const profileProject = async (
   const skills = resolveSkillPaths(
     typeof profile.skills === 'object' ? [...profile.skills] : profile.skills,
     baseDir,
-    snapshot.settings.skillDiscovery
+    false
   )
   return { profile, language, skills, baseDir }
 }
