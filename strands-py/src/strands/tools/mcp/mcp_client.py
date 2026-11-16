@@ -413,10 +413,11 @@ class MCPClient(ToolProvider):
             auto_reconnect: When True, a tool call that finds the session dropped (the transport
                 failed, timed out, or the server reports the session as terminated) tears the
                 connection down, opens a fresh one through the transport callable, and retries the
-                call once before surfacing an error result. This covers streamable HTTP; a stdio
-                server process that exits is not restarted. A refused connection is attempted up to
-                four times with exponential backoff (0.5s, 1s, 2s), within one ``startup_timeout``
-                budget for the whole rebuild. Concurrent calls share one reconnect.
+                call once before surfacing an error result. This covers streamable HTTP; a dropped
+                SSE connection or a stdio server process that exits is not reconnected. A refused
+                connection is attempted up to four times with exponential backoff (0.5s, 1s, 2s),
+                within one ``startup_timeout`` budget for the whole rebuild. Concurrent calls share
+                one reconnect.
                 A call that already reached the server may run twice, so leave this off for servers
                 whose tools are not safe to repeat or that keep per-session state. Defaults to False.
 
