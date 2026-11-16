@@ -348,12 +348,14 @@ export class ContextOffloader implements Plugin {
       callback: async (input, context) => {
         const storage = this._storageForToolContext(context)
 
-        // Only a failed lookup means the reference is unknown. A wider catch reports every later
-        // failure — an unsearchable type, an out-of-range line_range — under that one message.
+        // Only a missing key is terminal. A throttle or an AccessDenied from the backend has to reach the
+        // model as itself: told "do not retry" it abandons content the next call would have fetched.
+        // Every backend signals a missing key with this message (`storage.ts`, `retrieveContent` above).
         let result: { content: Uint8Array; contentType: string }
         try {
           result = await retrieveContent(storage, input.reference)
         } catch (error) {
+          if (!(error instanceof Error) || !error.message.startsWith('Reference not found')) throw error
           throw new Error(`reference not found: ${input.reference} — do not retry.`, { cause: error })
         }
 

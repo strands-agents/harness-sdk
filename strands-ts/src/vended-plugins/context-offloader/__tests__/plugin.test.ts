@@ -5,6 +5,8 @@ import { AfterToolCallEvent, BeforeModelCallEvent } from '../../../hooks/events.
 import { TextBlock, JsonBlock, ToolResultBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock, DocumentBlock } from '../../../types/media.js'
 import { createMockAgent, invokeTrackedHook } from '../../../__fixtures__/agent-helpers.js'
+import { collectGenerator } from '../../../__fixtures__/model-test-helpers.js'
+import { createMockContext } from '../../../__fixtures__/tool-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { AgentMetrics } from '../../../telemetry/meter.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
@@ -374,6 +376,19 @@ describe('ContextOffloader', () => {
         reference: 'nonexistent',
       })
       await expect(invoke).rejects.toThrow('reference not found')
+    })
+
+    it('reports a storage failure that is not a missing key as itself', async () => {
+      // A throttle is recoverable: told "do not retry" the model abandons content the next call would fetch.
+      const storage = new InMemoryStorage()
+      vi.spyOn(storage, 'retrieve').mockRejectedValue(new Error('ThrottlingException: Rate exceeded'))
+      const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
+      const toolUse = { name: 'retrieve_offloaded_content', toolUseId: 'tu-1', input: { reference: 'mem_1_k1' } }
+
+      const { result } = await collectGenerator(plugin.getTools()[0]!.stream(createMockContext(toolUse)))
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toBe('Error: ThrottlingException: Rate exceeded')
     })
   })
 
