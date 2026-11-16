@@ -3,6 +3,7 @@
 import logging
 
 from strands import Agent
+from strands.decisions import LLMDecisionModel
 from strands.models import BedrockModel, ClassifierStrategy, ModelRouter, RoutingCandidate
 from strands.types.exceptions import ModelThrottledException
 from tests_integ.conftest import retry_on_flaky
@@ -72,5 +73,42 @@ def test_model_router_selects_expected_model_from_three_candidates(caplog):
     expected_log = (
         "strategy=<ClassifierStrategy>, candidate=<advanced model>, "
         f"model=<BedrockModel/{_NOVA_PRO_MODEL_ID}> | candidate selected"
+    )
+    assert any(expected_log in record.getMessage() for record in caplog.records)
+
+
+@retry_on_flaky(
+    "Bedrock capacity may be transiently unavailable",
+    max_attempts=2,
+    retry_on=[ModelThrottledException],
+)
+def test_model_router_routes_a_routine_request_through_a_decision_model(caplog):
+    """A DecisionModel answers the same routing question and serves a routine request on the fast candidate."""
+    router = ModelRouter(
+        models=[
+            RoutingCandidate(
+                BedrockModel(model_id=_NOVA_PRO_MODEL_ID, max_tokens=512, streaming=False),
+                name="advanced model",
+                description="Best suited to complex systems design with several interacting constraints.",
+            ),
+            RoutingCandidate(
+                BedrockModel(model_id=_NOVA_LITE_MODEL_ID, max_tokens=512, streaming=False),
+                name="fast model",
+                description="Best suited to concise factual questions and routine requests.",
+            ),
+        ],
+        strategy=ClassifierStrategy(
+            LLMDecisionModel(BedrockModel(model_id=_HAIKU_MODEL_ID, max_tokens=64, streaming=False, temperature=0))
+        ),
+    )
+    agent = Agent(model=router, load_tools_from_directory=False, callback_handler=None)
+
+    with caplog.at_level(logging.INFO, logger="strands.models.routing.router"):
+        result = agent("What is the capital of France? Answer in one word.")
+
+    assert "paris" in str(result).lower()
+    expected_log = (
+        f"strategy=<ClassifierStrategy>, candidate=<fast model>, model=<BedrockModel/{_NOVA_LITE_MODEL_ID}> | "
+        "candidate selected"
     )
     assert any(expected_log in record.getMessage() for record in caplog.records)

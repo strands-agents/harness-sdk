@@ -65,7 +65,7 @@ await createHarness({
   mcpServers: undefined, // MCP servers: a mcpServers JSON path or the mapping itself
   builtinTools: undefined, // a list pins the set; a mapping edits the defaults (see below)
   backgroundTasks: undefined, // SDK Background Tasks policy; false to disable
-  builtinPlugins: ['todos', 'environment'], // built-in feature plugins by name; [] for none
+  builtinPlugins: ['environment'], // built-in feature plugins by name; [] for none
   caching: 'auto', // cache system prompt, tools & history where supported; null/false off
   contextManager: 'auto', // "auto" | "agentic" | a ContextManager instance | off (null/false)
   session: true, // true | { id?, dir? } | a SessionManager instance | off (null/false)
@@ -442,10 +442,12 @@ is best-effort (a missing directory is skipped); explicit sources pass straight 
 
 ## Built-in plugins
 
-The harness ships two built-in feature plugins, both on by default:
+The harness ships two built-in feature plugins. `environment` is on by default; `todos` is opt-in:
 
 - **`todos`** lets the agent keep a structured task list and re-surfaces it before each step so it
   stays on plan through longer tasks. The list lives in agent state, never in durable history.
+  Because it re-injects on every turn, it costs tokens and breaks the cached prefix on providers
+  without explicit cache points — enable it where the task tracking earns that.
 - **`environment`** injects a short context block before each turn: the platform, current date,
   working directory, the project's `AGENTS.md` contents, and links to other `AGENTS.md`/`README.md`
   files a couple of levels down (links, not contents, so the block stays small). Everything is read

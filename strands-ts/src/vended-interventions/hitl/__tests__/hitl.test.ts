@@ -1026,4 +1026,93 @@ describe('HumanInTheLoop', () => {
       expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
     })
   })
+
+  describe("'auto' mode", () => {
+    async function invokeAuto(
+      handler: HumanInTheLoop,
+      auxModel?: MockMessageModel
+    ): Promise<{ stopReason: string; toolExecuted: boolean }> {
+      let toolExecuted = false
+      const agent = new Agent({
+        model: new MockMessageModel()
+          .addTurn({ type: 'toolUseBlock', name: 'readFile', toolUseId: 'tool-1', input: { path: '/tmp/x' } })
+          .addTurn({ type: 'textBlock', text: 'Done' }),
+        ...(auxModel && { auxModel }),
+        tools: [
+          createMockTool('readFile', () => {
+            toolExecuted = true
+            return 'content'
+          }),
+        ],
+        interventions: [handler],
+        printer: false,
+      })
+      const result = await agent.invoke('Read the file')
+      return { stopReason: result.stopReason, toolExecuted }
+    }
+
+    it("'auto' uses the built-in LLM classifier on agent.auxModel", async () => {
+      const auxModel = new MockMessageModel().addTurn({
+        type: 'toolUseBlock',
+        name: 'strands_structured_output',
+        toolUseId: 'inner-1',
+        input: { requiresApproval: false, reason: 'read-only' },
+      })
+      const auxStreamSpy = vi.spyOn(auxModel, 'stream')
+
+      const result = await invokeAuto(new HumanInTheLoop('auto'), auxModel)
+
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
+      expect(auxStreamSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it("'auto' lets allowedTools skip the classifier", async () => {
+      const result = await invokeAuto(new HumanInTheLoop('auto', { allowedTools: ['readFile'] }))
+
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: true })
+    })
+
+    it("'auto' escalates through ask", async () => {
+      const auxModel = new MockMessageModel().addTurn({
+        type: 'toolUseBlock',
+        name: 'strands_structured_output',
+        toolUseId: 'inner-1',
+        input: { requiresApproval: true, reason: 'risky' },
+      })
+      const prompts: string[] = []
+
+      const result = await invokeAuto(
+        new HumanInTheLoop('auto', {
+          ask: async (prompt) => {
+            prompts.push(prompt)
+            return 'n'
+          },
+        }),
+        auxModel
+      )
+
+      expect(result).toEqual({ stopReason: 'endTurn', toolExecuted: false })
+      expect(prompts).toEqual([expect.stringContaining('readFile')])
+    })
+
+    it("'auto' rejects strategy options", () => {
+      // @ts-expect-error -- 'auto' owns the strategy; choosing a classifier requires a full config
+      expect(() => new HumanInTheLoop('auto', { classifier: true })).toThrow(
+        "'auto' only accepts ask and allowedTools, got classifier"
+      )
+      // @ts-expect-error -- trust is a strategy option too
+      expect(() => new HumanInTheLoop('auto', { enableTrust: true })).toThrow('got enableTrust')
+    })
+
+    it('rejects a second argument after a config', () => {
+      // @ts-expect-error -- a second argument is only accepted after 'auto'
+      expect(() => new HumanInTheLoop({ allowedTools: ['readFile'] }, { ask: 'stdio' })).toThrow(
+        'pass a single HumanInTheLoopConfig'
+      )
+    })
+
+    it('an unknown mode throws', () => {
+      expect(() => new HumanInTheLoop('yolo' as 'auto')).toThrow("mode must be 'auto'")
+    })
+  })
 })

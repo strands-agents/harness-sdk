@@ -39,6 +39,13 @@ class ModelCapabilities:
             :meth:`strands.models.Model.summarize`, which the summarize strategy then calls instead of its
             client-side summary. The shared model info sets it for the Claude models whose API supports it;
             providers without a server-side summary turn it off. Set it to False to summarize client-side.
+        temporary_messages: Whether the model and provider take temporary messages: injected text the model reads
+            only until the next user message, such as Anthropic's turn-scoped system messages. When True, the
+            provider receives each ``injected`` block as stored and formats it; otherwise it receives only the latest
+            user message's injected text, as text. The shared data lists the models that take them, but
+            :attr:`strands.models.Model.model_info` reports False unless the provider can send them
+            (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
+            skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
     """
 
     stateful: bool | None = None
@@ -46,6 +53,7 @@ class ModelCapabilities:
     forced_tool_choice: bool | None = None
     native_structured_output: bool | None = None
     server_side_summary: bool | None = None
+    temporary_messages: bool | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -123,6 +131,7 @@ _CAPABILITY_FIELDS = {
     "forcedToolChoice": "forced_tool_choice",
     "nativeStructuredOutput": "native_structured_output",
     "serverSideSummary": "server_side_summary",
+    "temporaryMessages": "temporary_messages",
 }
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.

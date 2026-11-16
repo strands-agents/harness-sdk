@@ -28,7 +28,8 @@ DEFAULT_BUILTIN_TOOLS: tuple[BuiltinToolName, ...] = BUILTIN_TOOL_NAMES
 BUILTIN_PLUGIN_NAMES: tuple[BuiltinPluginName, ...] = ("todos", "environment")
 """Every built-in plugin name."""
 
-DEFAULT_BUILTIN_PLUGINS: tuple[BuiltinPluginName, ...] = BUILTIN_PLUGIN_NAMES
+DEFAULT_BUILTIN_PLUGINS: tuple[BuiltinPluginName, ...] = ("environment",)
+"""Built-in plugins enabled when ``builtin_plugins`` is omitted (``todos`` is opt-in)."""
 
 DEFAULT_SUBAGENT_MAX_DEPTH = 2
 

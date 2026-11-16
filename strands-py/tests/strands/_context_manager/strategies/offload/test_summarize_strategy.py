@@ -530,6 +530,24 @@ class TestBatchSummaryReplaysTheAgentRequest:
         }
 
     @pytest.mark.asyncio
+    async def test_counts_the_summarized_messages_as_the_model_receives_them(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = False
+        mock_agent.model.model_info.capabilities.temporary_messages = None
+        messages = self._messages()
+        messages[2]["content"].append(ContentBlock(injected={"text": "<todos>v1</todos>", "source": "todos"}))
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        # Native counters reject a raw injected block, so it is counted in the form the model accepts.
+        counted = self._messages()[1:4]
+        counted[1] = Message(
+            role="user", content=[ContentBlock(text="old2"), ContentBlock(text="\n\n<todos>v1</todos>")]
+        )
+        mock_agent.model.count_tokens.assert_awaited_once_with(counted)
+
+    @pytest.mark.asyncio
     async def test_sends_only_the_replaced_messages_when_a_pin_is_kept(self, mock_agent):
         pinned = {"custom": {"pinned": True}}
         messages: Messages = [
@@ -749,6 +767,25 @@ class TestServerSideSummary:
             ),
             Message(role="user", content=[ContentBlock(text="recent")]),
         ]
+
+    @pytest.mark.asyncio
+    async def test_counts_the_summarized_messages_as_the_model_receives_them(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        mock_agent.model.model_info.capabilities.temporary_messages = None
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("written client-side"))
+        messages = self._messages()
+        messages[2]["content"].append(ContentBlock(injected={"text": "<todos>v1</todos>", "source": "todos"}))
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        # Native counters reject a raw injected block, so it is counted in the form the model accepts.
+        counted = self._messages()[1:4]
+        counted[1] = Message(
+            role="user", content=[ContentBlock(text="old2"), ContentBlock(text="\n\n<todos>v1</todos>")]
+        )
+        mock_agent.model.count_tokens.assert_awaited_once_with(counted)
 
     @pytest.mark.asyncio
     async def test_falls_back_to_client_side_when_a_pin_is_summarized(self, mock_agent, caplog):
