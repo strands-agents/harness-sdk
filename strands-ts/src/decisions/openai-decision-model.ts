@@ -2,7 +2,7 @@ import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
   httpTransport,
-  REFUSED_ANSWER_TYPE,
+  RefusedAnswer,
   resolveSystemOneProviderConfig,
   toWireQuestions,
   toWireState,
@@ -127,7 +127,7 @@ function toSystemOneResponse(payload: unknown, questions: Record<string, Questio
 }
 
 function toSystemOneAnswer(answer: Record<string, unknown>): unknown {
-  if (answer['type'] === 'refusal') return { type: REFUSED_ANSWER_TYPE, reason: 'openai declined to answer' }
+  if (answer['type'] === 'refusal') return new RefusedAnswer('openai declined to answer')
   if (answer['type'] === 'predicate') return { type: 'noul', noul: answer['probability'] }
   if (answer['type'] !== 'choice' || !Array.isArray(answer['probabilities'])) return answer
   return {

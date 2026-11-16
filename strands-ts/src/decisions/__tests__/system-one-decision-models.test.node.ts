@@ -348,6 +348,17 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       )
     })
 
+    it('rejects a server answer typed as refused instead of treating it as Uncertain', async () => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody({ q: { type: 'refused', reason: 'policy' } })),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /must have type 'noul'/
+      )
+    })
+
     it('rejects a Choice answer whose selection is not the most probable', async () => {
       const decision = create({
         apiKey: 'test-key',
