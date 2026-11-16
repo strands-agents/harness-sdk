@@ -456,7 +456,6 @@ describe('Agent Cancellation', () => {
     it.each([
       ['a deferred cancel before the final model call', 'beforeModelCall', { afterCurrentTools: true }],
       ['a deferred cancel during AfterInvocation', 'afterInvocation', { afterCurrentTools: true }],
-      ['an immediate cancel during AfterInvocation', 'afterInvocation', undefined],
     ] as const)('ignores a hook resume and a continuation after %s', async (_when, where, options) => {
       const model = new MockMessageModel()
         .addTurn({ type: 'textBlock', text: 'Plain answer' })
@@ -482,6 +481,34 @@ describe('Agent Cancellation', () => {
       expect(model.callCount).toBe(1)
       expect(onAbandoned).toHaveBeenCalledTimes(1)
       expect(agent.messages).toHaveLength(2)
+    })
+
+    it('drops a continuation but still honours a hook resume after an immediate cancel during AfterInvocation', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Plain answer' })
+        .addTurn({ type: 'textBlock', text: 'resumed' })
+      const agent = new Agent({ model, printer: false })
+      // Registered first, so on AfterInvocation (reverse order) the cancel lands after the resume is armed.
+      agent.addHook(AfterInvocationEvent, () => agent.cancel())
+      let armed = false
+      const onAbandoned = vi.fn()
+      agent.addHook(AfterInvocationEvent, (event) => {
+        if (armed) return
+        armed = true
+        event.resume = 'keep going'
+        continuations.addInput(event, { args: 'pending', onAbandoned })
+      })
+
+      const result = await agent.invoke('Go')
+
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('resumed'))
+      expect(onAbandoned).toHaveBeenCalledTimes(1)
+      expect(agent.messages.map((message) => (message.content[0] as TextBlock).text)).toEqual([
+        'Go',
+        'Plain answer',
+        'keep going',
+        'resumed',
+      ])
     })
 
     it('stops instead of forcing the structured-output tool when the model answered in plain text', async () => {

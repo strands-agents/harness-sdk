@@ -1098,8 +1098,8 @@ export class Agent implements LocalAgent, InvokableAgent {
    * option on `invoke` / `stream`.
    *
    * A cancel that arrives after the final model pass (e.g. during background-task
-   * settlement) starts no further pass: the call resolves with that pass's result
-   * and its own `stopReason`.
+   * settlement) resolves the call with that pass's result and its own `stopReason`,
+   * unless a hook set `AfterInvocationEvent.resume`, which still runs.
    *
    * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
    *
@@ -1404,13 +1404,16 @@ export class Agent implements LocalAgent, InvokableAgent {
           )) !== undefined
         continuationEvent = hasContinuation ? afterInvocationEvent : undefined
 
-        // A requested cancel is not swallowed by another pass: the continuation re-delivers in a
-        // later invocation, and a `resume` survives only an immediate cancel its hook could see.
+        // A requested cancel drops the continuation (it re-delivers in a later invocation). A hook's
+        // `resume` survives an immediate cancel (BackgroundTasks surfaces interrupts that way), not a deferred one.
         const cancelRequested = this._deferredCancel || this._abortSignal.aborted
-        const resumeDropped = this._deferredCancel || (cancelRequested && stopReason !== 'cancelled')
+        if (cancelRequested && hasContinuation) {
+          await continuations.abandon(afterInvocationEvent, new Error('Continuation abandoned after cancel'))
+          continuationEvent = undefined
+        }
         if (
           (hasContinuation && !cancelRequested) ||
-          (!resumeDropped && this._shouldResume(afterInvocationEvent, invocationContext))
+          (!this._deferredCancel && this._shouldResume(afterInvocationEvent, invocationContext))
         ) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue

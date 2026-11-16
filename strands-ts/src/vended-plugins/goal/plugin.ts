@@ -425,13 +425,19 @@ export class GoalLoop implements Plugin {
         finishRun(run, 'limit')
         return
       }
+      // A cancel that arrived while this answer was graded ends the run instead of a retry.
+      if (agent.cancelSignal.aborted) {
+        finishRun(run, 'stopped')
+        return
+      }
+
       event.resume = this._resumePromptTemplate(outcome.feedback?.trim())
       run.resumed = true
       if (invocationContext) run.retryArmedIn = invocationContext
     })
 
     // AgentResultEvent fires only on the request's final pass, so a retry still armed here was
-    // dropped by the agent (a cancel arrived). SDK_FIRST so user hooks already see the result.
+    // dropped by the agent (a deferred cancel). SDK_FIRST so user hooks already see the result.
     agent.addHook(
       AgentResultEvent,
       () => {
