@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Agent, Tool, ToolContext } from '@strands-agents/sdk'
 
 import { createHarness } from '../../src/agent.js'
+import { SHELL_PROBE } from '../../src/sandbox.js'
 
 let agent: Agent
 let shell: Tool
@@ -32,14 +33,22 @@ describe('shell', () => {
     expect(schema.properties).not.toHaveProperty('mode')
   })
 
-  it('runs a command through the agent sandbox', async () => {
+  // Each command is a fresh process (a PowerShell start on Windows): more than the default 5 s allows on a busy
+  // CI runner.
+  it('runs a command through the agent sandbox', { timeout: 30_000 }, async () => {
     const result = await invoke({ command: 'echo hello' })
     expect(result.output).toContain('hello')
   })
 
-  it('is stateless: state does not persist across calls', async () => {
-    await invoke({ command: 'export STRANDS_CLI_TEST=42' })
-    const result = await invoke({ command: 'echo "[$STRANDS_CLI_TEST]"' })
+  it('is stateless: state does not persist across calls', { timeout: 30_000 }, async () => {
+    // Probed directly so the probe is bounded by this test's timeout, not `shellOf`'s own.
+    const { stdout } = await agent.sandbox.execute(SHELL_PROBE)
+    const powershell = ['Desktop', 'Core'].includes(stdout.trim())
+    const set = await invoke({ command: powershell ? "$env:STRANDS_CLI_TEST = '42'" : 'export STRANDS_CLI_TEST=42' })
+    expect(set).toMatchObject({ exit_code: 0 })
+    const result = await invoke({
+      command: powershell ? 'echo "[$env:STRANDS_CLI_TEST]"' : 'echo "[$STRANDS_CLI_TEST]"',
+    })
     expect(result.output).toContain('[]')
   })
 })

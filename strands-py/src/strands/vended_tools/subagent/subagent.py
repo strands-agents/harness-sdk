@@ -27,6 +27,7 @@ from ...multiagent.spec import (
     Inherit,
     Open,
     Preset,
+    _build_agent,
     _default_builder,
     _resolve_specs,
     _to_schema_properties,
@@ -159,7 +160,10 @@ class _SubagentTool(AgentTool):
             content = [
                 b
                 for b in message["content"]
-                if "reasoningContent" not in b and ("toolUse" not in b or b["toolUse"]["toolUseId"] in answered)
+                if "reasoningContent" not in b
+                # Context for the parent's own turn.
+                and "injected" not in b
+                and ("toolUse" not in b or b["toolUse"]["toolUseId"] in answered)
             ]
             if content:
                 filtered.append({"role": message["role"], "content": copy.deepcopy(content)})
@@ -223,7 +227,7 @@ class _SubagentTool(AgentTool):
     def _error_result(self, tool_use_id: str, text: str) -> ToolResultEvent:
         return ToolResultEvent({"toolUseId": tool_use_id, "status": "error", "content": [{"text": text}]})
 
-    def _prepare_child(
+    async def _prepare_child(
         self, tool_use: ToolUse, raw: Mapping[str, Any], parent: Agent | None, tool_streamer: _AgentToolStreamer
     ) -> tuple[Agent, Any] | str | ToolInterruptEvent | ToolResultEvent:
         """Resolve or resume the child agent and its prompt.
@@ -232,7 +236,7 @@ class _SubagentTool(AgentTool):
         event to yield if the child's stored turn could not be resumed.
         """
         if tool_streamer.is_resuming():
-            return self._prepare_resume(tool_use, raw, parent, tool_streamer)
+            return await self._prepare_resume(tool_use, raw, parent, tool_streamer)
 
         stored_depth = None if parent is None else parent.state.get(_DEPTH_STATE_KEY)
         depth = self._max_depth if stored_depth is None else stored_depth
@@ -247,7 +251,7 @@ class _SubagentTool(AgentTool):
 
         spec = self._resolve(raw)
         build = self._builder or _default_builder(parent)  # type: ignore[arg-type]
-        child = build(spec)
+        child = await _build_agent(build, spec)
         child.state.set(_DEPTH_STATE_KEY, depth - 1)
         ctx_mode, last_messages = self._resolve_context(raw)
 
@@ -270,7 +274,7 @@ class _SubagentTool(AgentTool):
 
         return child, prompt
 
-    def _prepare_resume(
+    async def _prepare_resume(
         self, tool_use: ToolUse, raw: Mapping[str, Any], parent: Agent | None, tool_streamer: _AgentToolStreamer
     ) -> tuple[Agent, Any] | ToolInterruptEvent | ToolResultEvent:
         """Rebuild the interrupted child from the same tool input and restore its stored turn."""
@@ -278,7 +282,7 @@ class _SubagentTool(AgentTool):
         build = self._builder or _default_builder(parent)  # type: ignore[arg-type]
         child: Agent | None = None
         try:
-            child = build(spec)
+            child = await _build_agent(build, spec)
         except Exception as error:
             logger.warning(
                 "tool_name=<%s>, tool_use_id=<%s> | failed to rebuild interrupted subagent: %s",
@@ -308,7 +312,7 @@ class _SubagentTool(AgentTool):
         )
 
         try:
-            prepared = self._prepare_child(tool_use, raw, parent, tool_streamer)
+            prepared = await self._prepare_child(tool_use, raw, parent, tool_streamer)
             if not isinstance(prepared, tuple):
                 yield self._error_result(tool_use_id, prepared) if isinstance(prepared, str) else prepared
                 return

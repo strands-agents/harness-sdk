@@ -11,6 +11,7 @@ import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { Agent } from '../../agent/agent.js'
 import { Offload } from '../../context-manager/strategies/offload/index.js'
 import { Message, SummaryBlock, TextBlock } from '../../types/messages.js'
+import { formatSummarized, offloadPlaceholder, REMOVED_MESSAGES } from '../../context-manager/placeholder.js'
 
 const MODEL_ID = 'claude-sonnet-5-5'
 
@@ -77,15 +78,20 @@ describe('a custom provider with a listed id', () => {
     ]
     const tokens = await model.countTokens(messages.slice(1, 4))
     const agent = new Agent({ model, messages, printer: false })
-    const strategy = Offload.summarize('*').when({ utilization: 0.8, preserveRecent: 1 })
+    const strategy = Offload.summarize('*').when({ contextUtilization: '80%', preserveRecent: 1 })
 
     expect(await strategy.apply({ messages: agent.messages, agent, utilization: 0.9 })).toBe(true)
     await agent.invoke('next')
 
-    const marker = `[Summarized: 3 messages, ~${tokens.toLocaleString('en-US')} tokens]\n\na summary`
+    const marker = offloadPlaceholder(
+      'summarize',
+      formatSummarized(REMOVED_MESSAGES, tokens, 'a summary'),
+      undefined,
+      tokens
+    )
     expect(agent.messages.slice(0, 3).map(({ role, content }) => ({ role, content }))).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
-      { role: 'assistant', content: [new TextBlock(marker)] },
+      { role: 'assistant', content: [marker] },
       { role: 'user', content: [new TextBlock('recent')] },
     ])
     const sentBlocks = requests.flatMap((request) => request.flatMap((message) => message.content))

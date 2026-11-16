@@ -187,11 +187,11 @@ export interface HarnessAgentOptions extends Omit<
    */
   memory?: boolean | MemoryConfig | MemoryManager | null
   /**
-   * Names of the built-in feature plugins to enable. Defaults to `['todos', 'environment']`:
-   * `todos` adds a `todo_write` tool that tracks multi-step work and re-surfaces the list before
-   * each step; `environment` injects the platform, date, working directory, and the project's
-   * `AGENTS.md` (plus links to nearby `AGENTS.md`/`README.md` files) before each user turn. Pass
-   * `[]` to disable them.
+   * Names of the built-in feature plugins to enable. Defaults to `['environment']`, which injects
+   * the platform, date, working directory, and the project's `AGENTS.md` (plus links to nearby
+   * `AGENTS.md`/`README.md` files) before each user turn. `todos` is opt-in: it adds a `todo_write`
+   * tool that tracks multi-step work and re-surfaces the list before each step. Pass `[]` to
+   * disable them all.
    */
   builtinPlugins?: readonly BuiltinPluginName[]
   /**

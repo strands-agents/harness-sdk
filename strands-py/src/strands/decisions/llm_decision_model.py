@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
+from ..models._model_proxy import ModelProxy
 from ..models.bedrock import BedrockModel
 from ..models.model import Model
 from ..types.content import ContentBlock, Message, Messages
@@ -85,7 +86,9 @@ class LLMDecisionModel(DecisionModel):
         latency_ms: int | None = None
 
         try:
-            async for event in self._model.structured_output(answer_model, messages, system_prompt=system_prompt):
+            async for event in ModelProxy(self._model).structured_output(
+                answer_model, messages, system_prompt=system_prompt
+            ):
                 chunk = event.get("event")
                 if isinstance(chunk, Mapping) and isinstance(metadata := chunk.get("metadata"), Mapping):
                     if isinstance(reported := metadata.get("usage"), Mapping):

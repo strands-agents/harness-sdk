@@ -796,10 +796,10 @@ class GeminiModel(Model):
             if event and event.usage_metadata is not None:
                 yield self._format_chunk({"chunk_type": "metadata", "data": event.usage_metadata})
 
-        except genai.errors.ClientError as error:
+        except (genai.errors.ClientError, genai.errors.ServerError) as error:
             # When the response body is not JSON, google-genai sets status to the HTTP reason
             # phrase ("Too Many Requests"), so the HTTP code is the reliable throttling signal.
-            if error.code == 429:
+            if error.code in (429, 503):
                 raise ModelThrottledException(error.message or str(error)) from error
             match error.status:
                 case "RESOURCE_EXHAUSTED" | "UNAVAILABLE":

@@ -18,6 +18,7 @@ import {
   ToolResultBlock,
   ReasoningBlock,
   JsonBlock,
+  OffloadedBlock,
   UnknownBlock,
 } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
@@ -701,6 +702,27 @@ describe('VercelModel', () => {
         const userMsg = callArgs().prompt[0] as any
         expect(userMsg.role).toBe('user')
         expect(userMsg.content[0]).toEqual({ type: 'text', text: 'Hello' })
+      })
+
+      it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+        const { collect, callArgs } = setupCaptureTest()
+        const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+        await collect([
+          new Message({ role: 'user', content: [placeholder] }),
+          new Message({ role: 'assistant', content: [placeholder] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+          }),
+        ])
+
+        const [user, assistant, tool] = callArgs().prompt as any[]
+        expect(user.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(assistant.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(tool.content[0].output).toEqual({
+          type: 'content',
+          value: [{ type: 'text', text: '[Dropped] [ref: tu-1]' }],
+        })
       })
 
       it('formats image blocks with bytes and URL sources', async () => {
@@ -1426,6 +1448,101 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
       })
 
+      it('caches system and messages on Nova without a ttl, warning that the ttl is dropped', async () => {
+        const modelId = 'us.amazon.nova-pro-v1:0'
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: { ttl: '1h' } },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${modelId}> | ttl is not supported by this model, using the default cache duration`
+        )
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('keeps the Nova conversation cache point on the prompt that started a tool loop', async () => {
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('What is 6 x 7?')] }),
+          new Message({
+            role: 'assistant',
+            content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'tu1', input: {} })],
+          }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu1', status: 'success', content: [new TextBlock('42')] })],
+          }),
+        ]
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          'us.amazon.nova-pro-v1:0'
+        )
+        await collect(messages, { toolSpecs })
+
+        const prompt = callArgs().prompt
+        const tool = prompt.filter((message) => message.role === 'tool')
+        expect(tool).toHaveLength(1)
+        expect(tool[0]?.providerOptions?.bedrock).toBeUndefined()
+        expect(tool[0]?.content.map((part) => part.providerOptions?.bedrock)).toStrictEqual([undefined])
+        expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default' })
+      })
+
+      describe('Nova with media at the end of the last user message', () => {
+        const bytes = new Uint8Array([1])
+        const image = new ImageBlock({ format: 'png', source: { bytes } })
+        const pdf = new DocumentBlock({ format: 'pdf', name: 'order', source: { bytes } })
+        const txt = new DocumentBlock({ format: 'txt', name: 'notes', source: { bytes } })
+        const video = new VideoBlock({ format: 'mp4', source: { bytes } })
+        const cachePoints = (args: LanguageModelV3CallOptions): unknown[] => {
+          const lastUser = [...args.prompt].reverse().find((message) => message.role === 'user')
+          if (lastUser?.role !== 'user') return []
+          return lastUser.content.map((part) => part.providerOptions?.bedrock?.cachePoint)
+        }
+
+        it.each([
+          ['an image', [image]],
+          ['a PDF', [pdf]],
+          ['an image then a txt document', [image, txt]],
+          ['a video', [video]],
+        ])('marks the text part, not %s', async (_name, media) => {
+          const messages = [new Message({ role: 'user', content: [new TextBlock('Describe'), ...media] })]
+          const { collect, callArgs } = setupCaptureTest(
+            minimalParts,
+            { cacheConfig: {} },
+            'amazon-bedrock',
+            'us.amazon.nova-lite-v1:0'
+          )
+          await collect(messages)
+
+          expect(cachePoints(callArgs())).toStrictEqual([{ type: 'default' }, ...media.map(() => undefined)])
+        })
+
+        it('marks the trailing image on Claude', async () => {
+          const messages = [new Message({ role: 'user', content: [new TextBlock('Describe'), image] })]
+          const { collect, callArgs } = setupCaptureTest(
+            minimalParts,
+            { cacheConfig: {} },
+            'amazon-bedrock',
+            CACHING_MODEL_ID
+          )
+          await collect(messages)
+
+          expect(cachePoints(callArgs())).toStrictEqual([undefined, { type: 'default' }])
+        })
+      })
+
       it('never marks tool definitions, since bedrock caches them as part of the prefix', async () => {
         const config = { cacheConfig: { toolsTTL: '1h' as const } }
         const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
@@ -1696,6 +1813,30 @@ describe('VercelModel', () => {
 
         expect(model.modelInfo.capabilities?.promptCaching).toBe('auto')
         expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+        expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('under the default auto strategy, warns that gpt-oss has no automatic caching and skips it', async () => {
+        const modelId = 'openai.gpt-oss-120b-1:0'
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+        expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
+        )
       })
 
       it('lets a modelInfo override win over implicit caching for an OpenAI model', () => {

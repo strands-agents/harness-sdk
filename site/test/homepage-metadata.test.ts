@@ -52,6 +52,7 @@ describe('homepage machine-readable metadata', () => {
       'SoftwareApplication',
       'SoftwareApplication',
       'SoftwareApplication',
+      'SoftwareApplication',
     ])
     expect(structuredData['@graph'][0].sameAs).toContain('https://github.com/strands-agents')
     expect(JSON.stringify(structuredData)).not.toContain('SearchAction')

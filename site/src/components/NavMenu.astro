@@ -64,7 +64,7 @@ const { id, categories } = Astro.props;
     background: var(--bg);
     border: 1px solid var(--accent-green);
     border-top: none;
-    padding: 24px 32px 24px var(--nav-tab-pad, 20px);
+    padding: 24px 32px 32px var(--nav-tab-pad, 20px);
     z-index: 100;
     min-width: 220px;
     max-height: 0;
@@ -75,7 +75,8 @@ const { id, categories } = Astro.props;
   }
 
   .nav-menu.is-open {
-    max-height: 600px;
+    max-height: calc(100vh - var(--sl-nav-height, 84px));
+    overflow-y: auto;
     opacity: 1;
     pointer-events: auto;
   }
@@ -104,6 +105,7 @@ const { id, categories } = Astro.props;
   .nav-menu__cat[data-accent='pink'] { --cat-accent: var(--card-accent-pink); }
   .nav-menu__cat[data-accent='blue'] { --cat-accent: var(--card-accent-blue); }
   .nav-menu__cat[data-accent='purple'] { --cat-accent: var(--card-accent-purple); }
+  .nav-menu__cat[data-accent='red'] { --cat-accent: var(--card-accent-red); }
 
   .nav-menu__cat-title {
     display: inline-flex;

@@ -81,6 +81,7 @@ from ..middleware.types import (
     MiddlewareStage,
     MiddlewareWrapPhase,
 )
+from ..models._model_proxy import ModelProxy
 from ..models.bedrock import BedrockModel
 from ..models.model import Model, _ModelPlugin
 from ..models.routing import ModelRouter
@@ -1203,7 +1204,9 @@ class Agent(AgentBase, LocalAgent):
                         f"gen_ai.{message['role']}.message",
                         attributes={"role": message["role"], "content": serialize(message["content"])},
                     )
-                events = self.model.structured_output(output_model, temp_messages, system_prompt=self.system_prompt)
+                events = ModelProxy(self.model).structured_output(
+                    output_model, temp_messages, system_prompt=self.system_prompt
+                )
                 async for event in events:
                     if isinstance(event, TypedEvent):
                         event.prepare(invocation_state={})

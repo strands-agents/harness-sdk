@@ -280,11 +280,7 @@ describe('createHarness', () => {
 
   it('starts from nothing when the builtinTools mapping sets "*" to false', async () => {
     const agent = await createHarness({ builtinTools: { '*': false, read: true, web_fetch: {} } })
-    expect(
-      toolNames(agent)
-        .filter((name) => name !== 'todo_write')
-        .sort()
-    ).toEqual(['read', 'web_fetch'])
+    expect(toolNames(agent).sort()).toEqual(['read', 'web_fetch'])
   })
 
   it('rejects an unknown name in a builtinTools mapping', async () => {
@@ -785,6 +781,11 @@ describe('createHarness', () => {
 
   it('frees a built-in plugin tool name when the plugin is dropped', async () => {
     const agent = await createHarness({ builtinPlugins: [], tools: [todoWriteTool] })
+    expect(toolNames(agent)).toContain('todo_write')
+  })
+
+  it('leaves the plugin tool name free when the defaults are used', async () => {
+    const agent = await createHarness({ tools: [todoWriteTool] })
     expect(toolNames(agent)).toContain('todo_write')
   })
 

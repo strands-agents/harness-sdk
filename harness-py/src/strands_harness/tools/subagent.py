@@ -359,6 +359,10 @@ def _is_valid_trim_point(messages: list[Message], index: int) -> bool:
     return True
 
 
+# Reasoning is the parent model's signed state, and injected text is context for the parent's own turn.
+_PARENT_ONLY_BLOCKS = ("reasoningContent", "injected")
+
+
 def _fork_messages(parent: Agent | None, last_n: int | None) -> list[Message]:
     """The parent's messages for ``"all"`` mode — real content blocks (tool calls, results, images),
     not a text rendering. Tool calls still in flight — the delegating call itself and any parallel
@@ -378,7 +382,8 @@ def _fork_messages(parent: Agent | None, last_n: int | None) -> list[Message]:
         content = [
             b
             for b in message["content"]
-            if "reasoningContent" not in b and ("toolUse" not in b or b["toolUse"]["toolUseId"] in answered)
+            if not any(key in b for key in _PARENT_ONLY_BLOCKS)
+            and ("toolUse" not in b or b["toolUse"]["toolUseId"] in answered)
         ]
         if content:
             # Deep copy: the SDK's guardrail redaction rewrites toolResult dicts on the child's last message in place.

@@ -122,3 +122,67 @@ async function modelRoutingComposedStrategy() {
   )
   // --8<-- [end:mr_composed]
 }
+
+async function modelRoutingTenantPolicy() {
+  // --8<-- [start:mr_tenant]
+  const tenantVendors: Record<string, readonly string[]> = {
+    'customer-a': ['amazon', 'anthropic'],
+    'customer-b': ['amazon'],
+  }
+
+  class TenantPolicy implements RoutingStrategy {
+    private readonly _inner: RoutingStrategy
+
+    constructor(inner: RoutingStrategy) {
+      this._inner = inner
+    }
+
+    async select(context: RoutingContext): Promise<RoutingCandidate | undefined> {
+      const tenant = context.invocationState.tenant
+      const vendors =
+        typeof tenant === 'string' && Object.hasOwn(tenantVendors, tenant)
+          ? tenantVendors[tenant]!
+          : []
+      const allowed = context.candidates.filter((c) => {
+        const vendor = c.metadata?.vendor
+        return typeof vendor === 'string' && vendors.includes(vendor)
+      })
+      if (allowed.length === 0) {
+        throw new Error(`tenant ${String(tenant)} has no allowed model`)
+      }
+
+      const choice = await this._inner.select({ ...context, candidates: allowed })
+      // A declined opening choice serves the first candidate, which may be denied
+      if (choice === undefined && context.attempts.length === 0) {
+        return allowed[0]
+      }
+      return choice
+    }
+  }
+
+  const router = new ModelRouter(
+    [
+      new RoutingCandidate({
+        model: new BedrockModel({
+          modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        }),
+        name: 'claude',
+        metadata: { vendor: 'anthropic' },
+      }),
+      new RoutingCandidate({
+        model: new BedrockModel({
+          modelId: 'us.amazon.nova-pro-v1:0',
+        }),
+        name: 'nova',
+        metadata: { vendor: 'amazon' },
+      }),
+    ],
+    { strategy: new TenantPolicy(new FallbackStrategy()) }
+  )
+  const agent = new Agent({ model: router })
+
+  await agent.invoke('Summarize the tradeoffs of active-active deployment.', {
+    invocationState: { tenant: 'customer-b' },
+  })
+  // --8<-- [end:mr_tenant]
+}
