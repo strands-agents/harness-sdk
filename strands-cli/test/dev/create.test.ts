@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
 import { createDevProject, createDevWorkspace, bindExistingAgent, folderClaims } from '../../src/dev/create.js'
 import { readDevWorkspace } from '../../src/dev/workspace.js'
+import { devFailure } from '../../src/dev/errors.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
@@ -241,6 +242,44 @@ describe('createDevProject', () => {
     expect(source).toContain('bedrock/us.example.model')
     expect(source).not.toContain(file)
     expect(profile.profile.modelModule?.module).toBe(`./models/${file}`)
+  })
+
+  const discoverySnapshot = (skills: true | string[]) =>
+    CliConfigStore.memory(
+      {},
+      { skillDiscovery: true },
+      { profile: { name: 'Test harness', instructions: 'Say hello.', session: false, memory: false, skills } }
+    ).snapshot()
+
+  it('shouldCreateTheProjectWhenTheDiscoveredSkillFoldersDoNotExist', async () => {
+    const home = await temporaryDirectory()
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+    const cwd = await temporaryDirectory()
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+
+    const workspace = await createDevProject({ cwd, language: 'typescript', snapshot: discoverySnapshot(true) })
+
+    expect(workspace.entrypoint).toBe(join(cwd, 'strands-workspace', 'agent.ts'))
+    vi.unstubAllEnvs()
+  })
+
+  it('shouldRefuseAConfiguredSkillFolderThatDoesNotExist', async () => {
+    const cwd = await temporaryDirectory()
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+
+    const creation = createDevProject({
+      cwd,
+      language: 'typescript',
+      snapshot: discoverySnapshot(['./missing-skills']),
+    })
+
+    await expect(creation).rejects.toThrow(
+      `Configured skill source "${join(cwd, 'missing-skills')}" cannot be read (ENOENT).`
+    )
+    expect(devFailure(await creation.catch((error: unknown) => error), { operation: 'open' }).message).toMatch(
+      /^Workspace could not open\./u
+    )
   })
 
   it('shouldRefuseToWriteIntoStrandsWorkspaceWhenItAlreadyExists', async () => {
