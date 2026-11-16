@@ -82,11 +82,12 @@ interface CandidateProfile {
 /** Options for constructing a {@link ClassifierStrategy}. */
 export interface ClassifierStrategyOptions {
   /**
-   * Routing policy, sent verbatim and never truncated. The SDK adds mandatory isolation, candidate-key,
-   * and structured-output rules that the policy cannot override. Defaults to the SDK input-complexity policy.
+   * Routing policy, sent verbatim (never truncated) after the SDK's fixed routing rules for context
+   * isolation and candidate keys. An empty or whitespace-only policy sends the fixed rules alone.
+   * Defaults to the SDK input-complexity policy.
    */
   readonly routingPolicy?: string
-  /** @deprecated Use `routingPolicy`. */
+  /** @deprecated systemPrompt is deprecated and will be removed in v2.0.0. Use `routingPolicy` instead. */
   readonly systemPrompt?: string
   /**
    * Maximum milliseconds to wait for the decision. Defaults to 30000. On timeout the in-flight call is

@@ -61,7 +61,7 @@ async function modelRoutingClassifier() {
     ],
     {
       strategy: new ClassifierStrategy(classifierModel, {
-        systemPrompt: routingPolicy,
+        routingPolicy,
       }),
     }
   )
