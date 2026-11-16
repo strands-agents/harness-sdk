@@ -658,7 +658,7 @@ def test_list_tools_sync_tool_filters_override_constructor_default(mock_transpor
     ):
         # Mock the MCP server response
         mock_list_tools_result = MagicMock()
-        mock_list_tools_result.tools = [MagicMock(name="allowed_tool"), MagicMock(name="rejected_tool")]
+        mock_list_tools_result.tools = [tool1.mcp_tool, tool2.mcp_tool]
         mock_list_tools_result.nextCursor = None
 
         mock_future = MagicMock()
@@ -699,7 +699,7 @@ def test_list_tools_sync_tool_filters_override_with_empty_dict(mock_transport):
     ):
         # Mock the MCP server response
         mock_list_tools_result = MagicMock()
-        mock_list_tools_result.tools = [MagicMock(name="tool1"), MagicMock(name="tool2")]
+        mock_list_tools_result.tools = [tool1.mcp_tool, tool2.mcp_tool]
         mock_list_tools_result.nextCursor = None
 
         mock_future = MagicMock()
@@ -740,7 +740,7 @@ def test_list_tools_sync_tool_filters_uses_constructor_default_when_none(mock_tr
     ):
         # Mock the MCP server response
         mock_list_tools_result = MagicMock()
-        mock_list_tools_result.tools = [MagicMock(name="allowed_tool"), MagicMock(name="rejected_tool")]
+        mock_list_tools_result.tools = [tool1.mcp_tool, tool2.mcp_tool]
         mock_list_tools_result.nextCursor = None
 
         mock_future = MagicMock()

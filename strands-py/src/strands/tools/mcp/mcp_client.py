@@ -55,6 +55,7 @@ from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import EmbeddedResource as MCPEmbeddedResource
 from mcp.types import ImageContent as MCPImageContent
 from mcp.types import TextContent as MCPTextContent
+from mcp.types import Tool as MCPTool
 from pydantic import AnyUrl
 from typing_extensions import Protocol, TypedDict
 
@@ -823,6 +824,10 @@ class MCPClient(ToolProvider):
 
         Returns:
             List[AgentTool]: A list of available tools adapted to the AgentTool interface
+
+        Raises:
+            ValueError: If two listed tools map to the same agent-facing name once characters that model providers
+                reject are replaced with ``_``.
         """
         self._log_debug_with_thread("listing MCP tools synchronously")
         if not self._is_session_active():
@@ -840,21 +845,17 @@ class MCPClient(ToolProvider):
         self._log_debug_with_thread("received %d tools from MCP server", len(list_tools_response.tools))
 
         mcp_tools = []
+        server_names: dict[str, str] = {}
         for tool in list_tools_response.tools:
             if self._is_tasks_enabled():
                 # Cache taskSupport for task-augmented execution decisions
                 self._tool_task_support_cache[tool.name] = task_support(tool) or "forbidden"
 
-            # Apply prefix if specified
-            if effective_prefix:
-                prefixed_name = f"{effective_prefix}_{tool.name}"
-                mcp_tool = MCPAgentTool(tool, self, name_override=prefixed_name)
-                logger.debug("tool_rename=<%s->%s> | renamed tool", tool.name, prefixed_name)
-            else:
-                mcp_tool = MCPAgentTool(tool, self)
+            mcp_tool = self._adapt_tool(tool, effective_prefix)
 
             # Apply filters if specified
             if self._should_include_tool_with_filters(mcp_tool, effective_filters):
+                _record_agent_tool_name(server_names, mcp_tool.tool_name, tool.name)
                 mcp_tools.append(mcp_tool)
 
         self._log_debug_with_thread("successfully adapted %d MCP tools", len(mcp_tools))
@@ -2242,6 +2243,21 @@ class MCPClient(ToolProvider):
             _fail_pending_call(invoke_future)
         return invoke_future
 
+    def _adapt_tool(self, tool: MCPTool, prefix: str | None) -> MCPAgentTool:
+        """Wrap an MCP tool under an agent-facing name that model providers accept.
+
+        MCP allows characters such as ``.`` in tool names that model providers reject, so they are replaced with
+        ``_``. Calls still use the server-side name.
+        """
+        agent_name = _sanitize_name(tool.name)
+        if prefix:
+            agent_name = f"{prefix}_{agent_name}"
+        if agent_name == tool.name:
+            return MCPAgentTool(tool, self)
+
+        logger.debug("tool_rename=<%s->%s> | renamed tool", tool.name, agent_name)
+        return MCPAgentTool(tool, self, name_override=agent_name)
+
     def _should_include_tool_with_filters(self, tool: MCPAgentTool, filters: ToolFilters | None) -> bool:
         """Check if a tool should be included based on provided filters."""
         if not filters:
@@ -2964,7 +2980,7 @@ def _build_client_from_config(
         transport_callable,
         startup_timeout=server.get("startup_timeout", 30),
         tool_filters=_parse_config_tool_filters(name, server.get("tool_filters")),
-        prefix=server.get("prefix", _sanitize_prefix(name) if prefix_with_server_name else None),
+        prefix=server.get("prefix", _sanitize_name(name) if prefix_with_server_name else None),
         application_name=server.get("application_name", name),
         application_version=server.get("application_version"),
         continue_on_error=server.get("continue_on_error", continue_on_error),
@@ -2972,7 +2988,18 @@ def _build_client_from_config(
     )
 
 
-def _sanitize_prefix(name: str) -> str:
+def _record_agent_tool_name(server_names: dict[str, str], agent_name: str, server_name: str) -> None:
+    """Record a tool's agent-facing name, raising if another listed tool already maps to it."""
+    existing = server_names.get(agent_name)
+    if existing is not None:
+        raise ValueError(
+            f"MCP tools '{existing}' and '{server_name}' both map to the tool name '{agent_name}'. "
+            "Use tool_filters to exclude one of them."
+        )
+    server_names[agent_name] = server_name
+
+
+def _sanitize_name(name: str) -> str:
     """Replace characters that model providers reject in tool names (e.g. the dot in ``awslabs.foo``) with ``_``."""
     return re.sub(r"[^A-Za-z0-9_-]", "_", name)
 

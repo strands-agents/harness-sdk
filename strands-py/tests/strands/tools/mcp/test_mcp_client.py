@@ -104,6 +104,66 @@ def test_list_tools_sync(mock_transport, mock_session):
         assert tools.pagination_token is None
 
 
+def _mcp_tool(name):
+    return MCPTool(name=name, description="A test tool", inputSchema={"type": "object", "properties": {}})
+
+
+@pytest.mark.parametrize(
+    ("server_name", "prefix", "exp_tool_name"),
+    [
+        ("files.read", None, "files_read"),
+        ("notes/search", None, "notes_search"),
+        ("files.read", "fs", "fs_files_read"),
+        ("read_file-v2", None, "read_file-v2"),
+        ("read_file", "fs", "fs_read_file"),
+    ],
+)
+def test_list_tools_sync_replaces_characters_model_providers_reject(
+    mock_transport, mock_session, server_name, prefix, exp_tool_name
+):
+    mock_session.list_tools.return_value = ListToolsResult(tools=[_mcp_tool(server_name)])
+
+    with MCPClient(mock_transport["transport_callable"], prefix=prefix) as client:
+        tool = client.list_tools_sync()[0]
+
+    assert tool.tool_name == exp_tool_name
+    assert tool.tool_spec["name"] == exp_tool_name
+    assert tool.mcp_tool.name == server_name
+
+
+def test_list_tools_sync_renamed_tool_calls_the_server_side_name(mock_transport, mock_session):
+    mock_session.list_tools.return_value = ListToolsResult(tools=[_mcp_tool("files.read")])
+    mock_session.call_tool.return_value = MCPCallToolResult(content=[MCPTextContent(type="text", text="ok")])
+
+    async def run_tool(tool):
+        return [event async for event in tool.stream({"toolUseId": "1", "name": tool.tool_name, "input": {}}, {})]
+
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        tool = client.list_tools_sync()[0]
+        tru_events = asyncio.run(run_tool(tool))
+
+    assert tool.tool_name == "files_read"
+    assert tru_events[-1].tool_result["status"] == "success"
+    assert mock_session.call_tool.call_args.args[0] == "files.read"
+
+
+def test_list_tools_sync_raises_when_two_tools_map_to_the_same_name(mock_transport, mock_session):
+    mock_session.list_tools.return_value = ListToolsResult(tools=[_mcp_tool("files.read"), _mcp_tool("files_read")])
+
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        with pytest.raises(ValueError, match="'files.read' and 'files_read' both map to the tool name 'files_read'"):
+            client.list_tools_sync()
+
+
+def test_list_tools_sync_allows_a_colliding_name_that_is_filtered_out(mock_transport, mock_session):
+    mock_session.list_tools.return_value = ListToolsResult(tools=[_mcp_tool("files.read"), _mcp_tool("files_read")])
+
+    with MCPClient(mock_transport["transport_callable"], tool_filters={"rejected": ["files_read"]}) as client:
+        tru_names = [(tool.tool_name, tool.mcp_tool.name) for tool in client.list_tools_sync()]
+
+    assert tru_names == [("files_read", "files.read")]
+
+
 def test_list_tools_sync_session_not_active():
     """Test that list_tools_sync raises an error when session is not active."""
     client = MCPClient(MagicMock())
