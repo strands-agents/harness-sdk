@@ -27,6 +27,8 @@ describe('adapters', () => {
       { mimeType: 'video/mp4', BlockClass: VideoBlock, format: 'mp4' },
       { mimeType: 'audio/mpeg', BlockClass: AudioBlock, format: 'mp3' },
       { mimeType: 'audio/wav', BlockClass: AudioBlock, format: 'wav' },
+      { mimeType: 'audio/x-wav', BlockClass: AudioBlock, format: 'wav' },
+      { mimeType: 'audio/wave', BlockClass: AudioBlock, format: 'wav' },
       { mimeType: 'application/pdf', BlockClass: DocumentBlock, format: 'pdf' },
       { mimeType: 'application/vnd.ms-excel', BlockClass: DocumentBlock, format: 'xls' },
       { mimeType: 'application/octet-stream', BlockClass: DocumentBlock, format: 'octet-stream' },
@@ -39,7 +41,7 @@ describe('adapters', () => {
 
         expect(blocks).toHaveLength(1)
         expect(blocks[0]).toBeInstanceOf(BlockClass)
-        expect((blocks[0] as ImageBlock | VideoBlock | DocumentBlock).format).toBe(format)
+        expect((blocks[0] as AudioBlock | ImageBlock | VideoBlock | DocumentBlock).format).toBe(format)
       }
     )
 
@@ -54,6 +56,14 @@ describe('adapters', () => {
 
       expect(block).toBeInstanceOf(BlockClass)
       expect((block as AudioBlock | DocumentBlock).format).toBe(format)
+    })
+
+    it.each(['audio/x-wav', 'audio/wave'])('canonicalizes %s to audio/wav on round trip', (mimeType) => {
+      const blocks = partsToContentBlocks([{ kind: 'file', file: { bytes: encodeBase64('audio'), mimeType } }])
+
+      expect(contentBlocksToParts(blocks)).toStrictEqual([
+        { kind: 'file', file: { bytes: encodeBase64('audio'), mimeType: 'audio/wav' } },
+      ])
     })
 
     it.each([

@@ -114,6 +114,8 @@ describe('audio MIME conversions', () => {
     ['audio/mpeg', 'mp3'],
     ['audio/opus', 'opus'],
     ['audio/wav', 'wav'],
+    ['audio/x-wav', 'wav'],
+    ['audio/wave', 'wav'],
     ['audio/aac', 'aac'],
     ['audio/flac', 'flac'],
     ['audio/mp4', 'mp4'],
