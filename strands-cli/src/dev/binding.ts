@@ -5,6 +5,7 @@ import { isAbsolute, join, parse, resolve, sep, win32 } from 'node:path'
 
 import { canonicalParentPath, containsPath, expandHome } from '../paths.js'
 import { isRecord } from '../values.js'
+import { editFile } from './file-edits.js'
 
 export interface WorkspaceBinding {
   version: 1
@@ -12,6 +13,7 @@ export interface WorkspaceBinding {
   agent: { path: string; entrypoint: string; language: 'typescript' | 'python' }
   origin: { kind: 'cli' | 'discovered' | 'created'; source?: string; version?: string }
   harness?: { path: string; version: string }
+  cli?: Record<string, unknown>
 }
 
 export interface BoundWorkspace {
@@ -154,7 +156,30 @@ function validateBinding(value: unknown, path: string): WorkspaceBinding {
       version: text(value.harness.version, 'harness.version'),
     }
   }
+  if (value.cli !== undefined) {
+    if (!isRecord(value.cli)) return invalid('cli must be an object.')
+    result.cli = value.cli
+  }
   return result
+}
+
+export async function updateWorkspaceCli(directory: string, cli: Record<string, unknown>): Promise<void> {
+  const root = await canonicalParentPath(directory)
+  const path = join(root, '.config')
+  await editFile(root, path, (contents) => {
+    if (Buffer.byteLength(contents) > MAX_CONFIG_BYTES)
+      throw new Error(`File exceeds ${MAX_CONFIG_BYTES} bytes: ${path}`)
+    let document: unknown
+    try {
+      document = JSON.parse(contents)
+    } catch {
+      throw new Error(`Invalid JSON in workspace binding: ${path}`)
+    }
+    const { cli: _previous, ...binding } = validateBinding(document, path)
+    const next = `${JSON.stringify(Object.keys(cli).length ? { ...binding, cli } : binding, null, 2)}\n`
+    if (Buffer.byteLength(next) > MAX_CONFIG_BYTES) throw new Error(`Binding exceeds 65536 bytes: ${path}`)
+    return next
+  })
 }
 
 async function resolveBinding(directory: string, binding: WorkspaceBinding): Promise<BoundWorkspace> {

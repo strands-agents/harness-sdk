@@ -3531,3 +3531,69 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().panel?.rows[0]?.badge?.text).toBe('failed')
   })
 })
+
+describe('saving model choices into the dev agent', () => {
+  const modelBackend = (mode: 'live' | 'restart') => {
+    const target = backend()
+    target.info = () => ({ model: 'bedrock/current-model' })
+    target.modelChangeMode = () => mode
+    target.switchModel = vi.fn(async (model: string) => model)
+    target.restartModel = vi.fn(async (model: string) => model)
+    target.listEfforts = () => [
+      { id: 'low', label: 'Low' },
+      { id: 'high', label: 'High', active: true },
+    ]
+    target.setEffort = vi.fn(async (effort: string) => effort)
+    return target
+  }
+
+  it.each(['live', 'restart'] as const)('shouldSaveTheChosenModelIntoTheAgentWhenTheModelChangeIs%s', async (mode) => {
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(modelBackend(mode), { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ model: 'bedrock/next-model' })
+    expect(controller.getSnapshot().panel?.kind).not.toBe('error')
+  })
+
+  it('shouldSaveTheChosenEffortIntoTheAgent', async () => {
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(modelBackend('live'), { saveAgentOptions })
+
+    await controller.submit('/effort LOW')
+
+    expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ effort: 'low' })
+  })
+
+  it('shouldKeepTheModelForThisSessionAndSayWhyWhenTheAgentCannotSaveIt', async () => {
+    const target = modelBackend('live')
+    const saveAgentOptions = vi.fn(async () => {
+      throw new Error('agent.ts sets model in code. Set it to "bedrock/next-model" there yourself.')
+    })
+    const controller = new ChatController(target, { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(target.switchModel).toHaveBeenCalledWith('bedrock/next-model')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'error',
+      title: 'model kept for this session only',
+      rows: [{ description: 'agent.ts sets model in code. Set it to "bedrock/next-model" there yourself.' }],
+    })
+  })
+
+  it('shouldNotSaveTheModelWhenTheModelChangeFails', async () => {
+    const target = modelBackend('live')
+    target.switchModel = vi.fn(async () => {
+      throw new ModelControlError('Model unavailable.')
+    })
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(target, { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(saveAgentOptions).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel?.title).toBe('model switch failed')
+  })
+})

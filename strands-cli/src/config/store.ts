@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
@@ -111,11 +112,25 @@ export function userConfigPath(): string {
   return strandsUserPath('cli.toml')
 }
 
+export interface ConfigLayer {
+  readonly source: string
+  read(): Promise<unknown>
+  write(sections: Record<string, unknown>): Promise<void>
+}
+
+interface LayeredValues {
+  settings: ChatSettings
+  permissions: PermissionConfig
+  providers: readonly ProviderId[]
+  providerEnvironment: ProviderEnvironment
+}
+
 export class CliConfigStore {
   private _profileBaseDir: string | undefined
   private _environmentFiles: readonly string[] = []
   private _sessionProviderEnvironment: ProviderEnvironment = {}
   private _writeQueue = Promise.resolve()
+  private _layer: { target: ConfigLayer; base: LayeredValues } | undefined
 
   private constructor(
     private readonly _path: string,
@@ -225,9 +240,7 @@ export class CliConfigStore {
         agentProject: entrypoint,
         settings: { ...(isRecord(this._document.settings) ? this._document.settings : {}), ...nextSettings },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document)
       this._document = document
       this._onboardingVersion = SETUP_VERSION
       this._settings = nextSettings
@@ -311,8 +324,13 @@ export class CliConfigStore {
         permissions: { ...priorPermissions, mode: configuration.permissionMode, allow: [...allowedTools] },
         settings: { ...(isRecord(this._document.settings) ? this._document.settings : {}), ...settings },
       }
-      if (this._persistent && options.persist !== false) {
-        await writeConfigDocument(this._path, document)
+      if (options.persist !== false) {
+        await this._save(document, {
+          settings,
+          providers,
+          providerEnvironment,
+          permissions: { ...this._permissions, mode: configuration.permissionMode, allow: allowedTools },
+        })
       }
       this._document = document
       this._onboardingVersion = onboardingVersion
@@ -334,9 +352,7 @@ export class CliConfigStore {
         agentProject: undefined,
         profile: { ...priorProfile, ...globalThis.structuredClone(profile) },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document)
       this._document = document
       this._profile = profile
     })
@@ -392,9 +408,7 @@ export class CliConfigStore {
           ...(this._profile.modelModule ? { modelModule } : {}),
         },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document)
       this._document = document
       this._profile = profile
     })
@@ -412,12 +426,41 @@ export class CliConfigStore {
           ...next,
         },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document, { settings: next })
       this._document = document
       this._settings = next
     })
+  }
+
+  useLayer(target: ConfigLayer | undefined): Promise<void> {
+    return this._enqueueWrite(async () => {
+      const base = this._layer?.base ?? this._layeredValues()
+      const values = target ? layeredValues(base, await target.read(), target.source) : base
+      this._settings = values.settings
+      this._permissions = values.permissions
+      this._providers = values.providers
+      this._providerEnvironment = values.providerEnvironment
+      this._layer = target ? { target, base } : undefined
+    })
+  }
+
+  private _layeredValues(): LayeredValues {
+    return {
+      settings: this._settings,
+      permissions: this._permissions,
+      providers: this._providers,
+      providerEnvironment: this._providerEnvironment,
+    }
+  }
+
+  private async _save(document: ConfigDocument, changed?: Partial<LayeredValues>): Promise<void> {
+    if (this._layer) {
+      if (changed) {
+        await this._layer.target.write(layerSections({ ...this._layeredValues(), ...changed }, this._layer.base))
+      }
+      return
+    }
+    if (this._persistent) await writeConfigDocument(this._path, document)
   }
 
   private _enqueueWrite(write: () => Promise<void>): Promise<void> {
@@ -439,12 +482,54 @@ export class CliConfigStore {
           deny: [...next.deny],
         },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document, { permissions: next })
       this._document = document
       this._permissions = next
     })
+  }
+}
+
+function layeredValues(base: LayeredValues, saved: unknown, source: string): LayeredValues {
+  if (saved === undefined) return base
+  if (!isRecord(saved)) throw new Error(`Invalid CLI settings in ${source}: cli must be an object`)
+  if (saved.settings !== undefined && !isRecord(saved.settings)) {
+    throw new Error(`Invalid CLI settings in ${source}: cli.settings must be an object`)
+  }
+  const providers = saved.providers
+  if (providers !== undefined && !isRecord(providers)) {
+    throw new Error(`Invalid CLI settings in ${source}: cli.providers must be an object`)
+  }
+  return {
+    settings: saved.settings ? parseSettings({ ...base.settings, ...saved.settings }) : base.settings,
+    permissions: saved.permissions === undefined ? base.permissions : parsePermissions(saved.permissions, source),
+    providers: providers?.enabled === undefined ? base.providers : parseProviders(providers, source),
+    providerEnvironment:
+      providers?.environment === undefined ? base.providerEnvironment : parseProviderEnvironment(providers, source),
+  }
+}
+
+function layerSections(current: LayeredValues, base: LayeredValues): Record<string, unknown> {
+  const settings = Object.fromEntries(
+    Object.entries(current.settings).filter(
+      ([key, value]) => !isDeepStrictEqual(value, base.settings[key as keyof ChatSettings])
+    )
+  )
+  const enabled = !isDeepStrictEqual(current.providers, base.providers)
+  const environment = !isDeepStrictEqual(current.providerEnvironment, base.providerEnvironment)
+  const { mode, allow, deny } = current.permissions
+  return {
+    ...(Object.keys(settings).length ? { settings } : {}),
+    ...(isDeepStrictEqual(current.permissions, base.permissions)
+      ? {}
+      : { permissions: { mode, allow: [...allow], deny: [...deny] } }),
+    ...(enabled || environment
+      ? {
+          providers: {
+            ...(enabled ? { enabled: [...current.providers] } : {}),
+            ...(environment ? { environment: { ...current.providerEnvironment } } : {}),
+          },
+        }
+      : {}),
   }
 }
 

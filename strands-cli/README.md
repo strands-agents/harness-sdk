@@ -285,6 +285,21 @@ Dev does not replace the open workspace. To replace it, restart strands dev and 
 A new chat starts in the selected workspace. If the new chat cannot start, dev returns to the previous workspace and chat.
 Press Esc in the selector to keep the current chat. These actions do not change the default agent for plain `strands`.
 
+### Changes in a dev session
+
+Dev saves each change that you make in the CLI during a dev session. It never changes `~/.strands/cli.toml`.
+
+- `/model` and `/effort` write `model` and `effort` into the `createHarness` or `create_harness` call of the agent file. Dev uses the same code writer as `/export`.
+- `/settings`, `/permissions`, `/mcp`, and the AWS profile go into the `cli` section of `strands-dev/.config`. This section has the same shape as `cli.toml`, and dev loads it at each start.
+- Dev never saves provider credentials.
+
+If the agent file sets an option in code, for example from a variable, dev does not change the file.
+The change then applies to the current chat only, and an error tells you which option to change in the code.
+
+All programmatic edits to the agent files use one lock for each agent, in `.strands/state/`.
+Each edit reads the file again while it holds the lock, and it changes only its own option.
+Thus an option change and an optimization edit do not overwrite each other, also when they come from two processes.
+
 ### Temporary candidate infrastructure
 
 Candidate creation exports the current bound source into a baseline, then installs an independent agent project from that baseline.

@@ -5,7 +5,12 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { bindWorkspace, readWorkspaceBinding, type WorkspaceBinding } from '../../src/dev/binding.js'
+import {
+  bindWorkspace,
+  readWorkspaceBinding,
+  updateWorkspaceCli,
+  type WorkspaceBinding,
+} from '../../src/dev/binding.js'
 
 let sandbox: string
 let directory: string
@@ -381,5 +386,42 @@ describe('invalid workspace bindings', () => {
     await writeFile(join(directory, '.gitignore'), 'x'.repeat(1024 * 1024 + 1))
     await expect(bindWorkspace(directory, binding)).rejects.toThrow('1048576 bytes')
     expect(await readdir(directory)).toEqual(['.gitignore', 'agent'])
+  })
+})
+
+describe('workspace CLI settings', () => {
+  it('shouldSaveTheCliSectionWithoutChangingTheRestOfTheBinding', async () => {
+    await bindWorkspace(directory, binding)
+
+    await updateWorkspaceCli(directory, { settings: { frogTheme: 'merlin' } })
+
+    const saved = await readWorkspaceBinding(directory)
+    expect(saved?.binding).toEqual({ ...binding, cli: { settings: { frogTheme: 'merlin' } } })
+    expect((await stat(join(directory, '.config'))).mode & 0o777).toBe(0o600)
+  })
+
+  it('shouldRemoveTheCliSectionWhenNothingIsLeftToSave', async () => {
+    await bindWorkspace(directory, binding)
+    await updateWorkspaceCli(directory, { settings: { frogTheme: 'merlin' } })
+
+    await updateWorkspaceCli(directory, {})
+
+    expect(JSON.parse(await readFile(join(directory, '.config'), 'utf8'))).toEqual(binding)
+  })
+
+  it('shouldLeaveAValidBindingWhenTwoSessionsSaveAtTheSameTime', async () => {
+    await bindWorkspace(directory, binding)
+    const first = { settings: { frogTheme: 'merlin' } }
+    const second = { settings: { frogTheme: 'scarlet' } }
+
+    await Promise.all([updateWorkspaceCli(directory, first), updateWorkspaceCli(directory, second)])
+
+    expect([first, second]).toContainEqual((await readWorkspaceBinding(directory))?.binding.cli)
+  })
+
+  it('shouldRejectACliSectionThatIsNotAnObject', async () => {
+    await store({ ...binding, cli: 'theme=blue' })
+
+    await expect(readWorkspaceBinding(directory)).rejects.toThrow('cli must be an object.')
   })
 })

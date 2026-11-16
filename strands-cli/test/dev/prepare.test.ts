@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseArgs } from '../../src/cli/arguments.js'
 import { containsPath, strandsUserPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
-import { bindWorkspace } from '../../src/dev/binding.js'
+import { bindWorkspace, readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/binding.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
@@ -308,6 +308,25 @@ describe('workspace path option', () => {
     expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toEqual({
       path: expected(launch),
       detected: false,
+    })
+  })
+})
+
+describe('workspace CLI settings', () => {
+  it('shouldLoadAndSaveTheWorkspaceCliSettingsWhenDevOpensTheWorkspace', async () => {
+    const root = await fixture()
+    const folder = join(process.cwd(), 'strands-dev')
+    await bindExistingAgent(folder, join(root, 'agent.ts'))
+    await updateWorkspaceCli(folder, { settings: { frogTheme: 'merlin' } })
+    const saved = config()
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
+
+    await prepareDevRun(parseArgs(['dev', 'init', '--workspace', folder]), { deferPreparation: true })
+
+    expect(saved.snapshot().settings.frogTheme).toBe('merlin')
+    await saved.setSettings({ toolOutput: 'full' })
+    expect((await readWorkspaceBinding(folder))?.binding.cli).toEqual({
+      settings: { frogTheme: 'merlin', toolOutput: 'full' },
     })
   })
 })

@@ -1,7 +1,7 @@
 import { lstat, readFile, readdir, rmdir } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { type ParsedArgs } from '../cli/arguments.js'
-import { CliConfigStore, type CliConfigSnapshot } from '../config/store.js'
+import { CliConfigStore, type CliConfigSnapshot, type ConfigLayer } from '../config/store.js'
 import { containsPath, expandHome, strandsUserPath } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
@@ -16,6 +16,7 @@ import {
   type FolderClaims,
 } from './create.js'
 import { DevFailure, WorkspaceFolderInUse } from './errors.js'
+import { readWorkspaceBinding, updateWorkspaceCli } from './binding.js'
 import {
   findDevWorkspace,
   readDevWorkspace,
@@ -144,6 +145,12 @@ interface WorkspaceSelection {
 
 const offersBaseCli = (base: BaseHarnessSelection, leaving: LeavingWorkspace | undefined): boolean =>
   !leaving || (!base.holds(leaving.workspace) && !leaving.entrypoints.some(base.runs))
+
+const workspaceSettings = (directory: string): ConfigLayer => ({
+  source: join(directory, '.config'),
+  read: async () => (await readWorkspaceBinding(directory))?.binding.cli,
+  write: (sections) => updateWorkspaceCli(directory, sections),
+})
 
 const selectWorkspace = async (
   args: ParsedArgs,
@@ -497,8 +504,10 @@ export const prepareDevRun = async (
       mcpConfig: args.mcpConfig.map((path) => resolve(process.cwd(), expandHome(path))),
       setup: false,
     }
+    await config.useLayer(undefined)
     await config.setSettings({ mcpDiscovery: false, skillDiscovery: false, telemetry: false, updatePrompts: false })
     await config.useAgentProject(workspace.entrypoint)
+    if (workspace.directory) await config.useLayer(workspaceSettings(workspace.directory))
     const label = sanitizeTerminalText(workspace.config.name)
     const entrypoint = sanitizeTerminalText(workspace.entrypoint)
     if (!screen) {

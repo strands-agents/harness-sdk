@@ -44,6 +44,7 @@ import {
   SETTINGS_CATEGORIES,
   parseSettingUpdate,
 } from '../../config/settings.js'
+import type { ProfileEffort } from '../../config/store.js'
 import { agentLaunchCommand } from '../../project/import.js'
 import { exportDirectoryName, type AgentProjectOutput } from '../../project/export.js'
 import {
@@ -57,7 +58,7 @@ import type { McpServerInfo } from '../../agent/mcp.js'
 import { mcpFailure } from '../mcp-diagnostics.js'
 import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
-import { modelControlErrorMessage } from '../../model/selection.js'
+import { modelControlErrorMessage, profileEffort } from '../../model/selection.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import { canUseNativePicker, chooseDirectory } from '../../terminal/directory-picker.js'
@@ -177,6 +178,7 @@ export class ChatController implements ChatControllerApi {
   private _builtinToolSelection = new Set<string>()
   private readonly _exportAgentProject: ChatControllerOptions['exportAgentProject']
   private readonly _useExportedProject: ChatControllerOptions['useExportedProject']
+  private readonly _saveAgentOptions: ChatControllerOptions['saveAgentOptions']
   private readonly _configurationSource: ChatControllerOptions['configurationSource']
   private readonly _project: ChatControllerOptions['project']
   private readonly _copyText: (text: string) => Promise<boolean>
@@ -245,6 +247,7 @@ export class ChatController implements ChatControllerApi {
     this._builtinTools = options.builtinTools
     this._exportAgentProject = options.exportAgentProject
     this._useExportedProject = options.useExportedProject
+    this._saveAgentOptions = options.saveAgentOptions
     this._configurationSource = options.configurationSource
     this._project = options.project
     this._copyText = options.copyText ?? copyTerminalText
@@ -1313,12 +1316,25 @@ export class ChatController implements ChatControllerApi {
       this._updateOpenModelPanel(modelId)
       this._openEffortPanelIfAvailable()
       this._emit()
+      await this._saveToAgent('model', { model: modelId })
       return true
     } catch (error) {
       this._openError('model change failed', modelId, modelControlErrorMessage(error, 'model'))
       return false
     } finally {
       this._finishResourceChange()
+    }
+  }
+
+  private async _saveToAgent(
+    option: 'model' | 'effort',
+    change: { model?: string; effort?: ProfileEffort }
+  ): Promise<void> {
+    if (!this._saveAgentOptions) return
+    try {
+      await this._saveAgentOptions(change)
+    } catch (error) {
+      this._openError(`${option} kept for this session only`, change[option] ?? option, errorMessage(error))
     }
   }
 
@@ -1727,6 +1743,7 @@ export class ChatController implements ChatControllerApi {
       this._updateOpenModelPanel(modelId)
       this._openEffortPanelIfAvailable()
       this._emit()
+      await this._saveToAgent('model', { model: modelId })
       return true
     } catch (error) {
       this._openError('model switch failed', modelId, modelControlErrorMessage(error, 'model'))
@@ -1767,6 +1784,7 @@ export class ChatController implements ChatControllerApi {
         }
       }
       this._emit()
+      if (selected !== undefined) await this._saveToAgent('effort', { effort: profileEffort(effort) })
       return selected !== undefined
     } catch (error) {
       this._openError('effort change failed', effort, modelControlErrorMessage(error, 'effort'))
@@ -3077,6 +3095,7 @@ export class ChatController implements ChatControllerApi {
         notice.text = `Model changed to ${modelDisplayName(modelId)}`
       }
       this._openEffortPanelIfAvailable()
+      await this._saveToAgent('model', { model: modelId })
     } catch (error) {
       if (notice) {
         notice.status = 'error'

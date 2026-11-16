@@ -378,7 +378,7 @@ function mcpServersForSource(
   )
 }
 
-function sourceString(value: string, python: boolean): string {
+export function sourceString(value: string, python: boolean): string {
   const json = JSON.stringify(value)
   return python ? json : `'${json.slice(1, -1).replace(/\\"/gu, '"').replace(/'/gu, "\\'")}'`
 }

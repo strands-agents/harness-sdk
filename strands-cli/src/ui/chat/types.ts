@@ -27,6 +27,7 @@ import type { PeerMessage } from '../../agent/messaging.js'
 import type { ChatSkillsRuntime } from '../../agent/skills.js'
 import type { VoiceSessionSnapshot } from '../../agent/voice.js'
 import type { ChatSettings, SettingsCategory } from '../../config/settings.js'
+import type { ProfileEffort } from '../../config/store.js'
 import type { AgentProjectOutput } from '../../project/export.js'
 import type { ImportedAgentProject } from '../../project/import.js'
 import type { ChatSessionRuntime, ResumeSession } from '../../session/sessions.js'
@@ -327,6 +328,7 @@ export interface ChatControllerOptions {
   configurationSource?: () => ChatConfigurationSource
   /** Reload this session from an exported project directory, keeping the conversation. */
   useExportedProject?: (path: string) => void
+  saveAgentOptions?: (change: { model?: string; effort?: ProfileEffort }) => Promise<unknown>
   peerEndpointId?: string
 }
 
