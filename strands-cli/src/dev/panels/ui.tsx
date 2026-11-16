@@ -195,12 +195,14 @@ export const ItemList = ({
   capacity,
   labelWidth,
   onClick,
+  onHover,
 }: {
   items: readonly ListItem[]
   selected: number
   capacity: number
   labelWidth: number
   onClick?: (index: number) => void
+  onHover?: (index: number) => void
 }): ReactElement => {
   const { accent, selection } = useTheme()
   const toneColor = useToneColor()
@@ -218,7 +220,9 @@ export const ItemList = ({
             height={1}
             width="100%"
             {...(active ? { backgroundColor: selection } : {})}
-            {...(clicks && onClick ? { ref: clicks.target(() => onClick(index)) } : {})}
+            {...(clicks && onClick
+              ? { ref: clicks.target(() => onClick(index), onHover ? (): void => onHover(index) : undefined) }
+              : {})}
           >
             <Box flexShrink={0}>
               <Text color={accent}>{active ? '› ' : '  '}</Text>

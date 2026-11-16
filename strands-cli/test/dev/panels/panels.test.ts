@@ -481,6 +481,37 @@ describe('OptimizePanel', () => {
     expect(session.stop).toHaveBeenCalledTimes(1)
   })
 
+  it.each<[string, string, keyof OptimizeSession, unknown[]]>([
+    ['AKnob', 'effort', 'toggleKnob', ['effort']],
+    ['Start', '[ Start ]', 'start', []],
+  ])('shouldActOn%sUnderThePointerWhenTheUserPointsAtItAndPressesEnter', async (_target, label, action, args) => {
+    const { session } = optimizeSession(setup)
+    const clicks = new DevPanelClicks()
+    const props = freshProps()
+    const panel = {
+      id: 'panel-1',
+      kind: 'dev' as const,
+      command: 'optimize',
+      title: '/optimize',
+      rows: [],
+      view: (viewProps: DevChatPanelProps) => createElement(OptimizePanel, { ...viewProps, session }),
+      close: props.close,
+      openCommand: props.openCommand,
+    }
+    const shown = await show(createElement(DevPanelFrame, { panel, width: 120, height: 22, clicks }), 24)
+    await shown.press(label === 'effort' ? '\u001b[B\u001b[B\u001b[B' : '\u001b[B')
+    const lines = shown.text().split('\n')
+    const row = lines.findIndex((line) => line.includes(label))
+    const column = stringWidth(lines[row]!.slice(0, lines[row]!.indexOf(label))) + 1
+
+    clicks.hoverAt({ button: 35, action: 'move', column, row: row + 1 })?.()
+    await shown.instance.waitUntilRenderFlush()
+    await shown.press('\r')
+
+    expect(session[action]).toHaveBeenCalledWith(...args)
+    expect(session[action === 'start' ? 'toggleKnob' : 'start']).not.toHaveBeenCalled()
+  })
+
   it('shouldShowStartAndTheKeysWhenTheSetupIsShort', async () => {
     const { session } = optimizeSession(setup)
 

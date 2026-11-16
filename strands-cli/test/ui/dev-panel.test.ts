@@ -178,6 +178,41 @@ describe('dev panel clicks', () => {
   })
 })
 
+describe('dev panel hover', () => {
+  it('shouldRunTheHoverTargetAndNotTheClickWhenThePointerMovesOverADevPanelTarget', async () => {
+    const clicked = vi.fn()
+    const hovered = vi.fn()
+    const HoverPanel = (): ReactElement => {
+      const clicks = useDevPanelClicks()
+      return createElement(
+        Box,
+        { flexDirection: 'column' },
+        createElement(Text, null, 'panel heading'),
+        createElement(
+          Box,
+          clicks ? { ref: clicks.target(clicked, hovered) } : {},
+          createElement(Text, null, 'pointer row')
+        )
+      )
+    }
+    const command: DevChatCommand = {
+      spec: { name: 'probe', usage: '/probe', description: 'Probe' },
+      open: () => HoverPanel,
+    }
+    const { controller, instance, press, row, screen } = await mount(command)
+    await controller.submit('/probe')
+    await instance.waitUntilRenderFlush()
+    const line = row('pointer row')
+    const column =
+      stringWidth(screen().split('\n')[line]!.slice(0, screen().split('\n')[line]!.indexOf('pointer row'))) + 1
+
+    await press(`\u001b[<35;${column};${line + 1}M`)
+
+    expect(hovered).toHaveBeenCalled()
+    expect(clicked).not.toHaveBeenCalled()
+  })
+})
+
 describe('dev jobs row', () => {
   it('shouldShowRunningJobsBelowThePromptWhenADevCommandReportsThem', async () => {
     const { command, jobs } = experimentWithJobs()

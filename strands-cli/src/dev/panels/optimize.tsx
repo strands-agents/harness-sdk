@@ -188,6 +188,7 @@ const SetupView = ({
           width
         )}
         onClick={choose}
+        onHover={cursor.set}
       />
       {compact ? null : <Gap />}
       <Field
@@ -215,6 +216,7 @@ const SetupView = ({
         ready={ready}
         focused={typeof focused === 'string' ? focused : undefined}
         onChoose={(button) => choose(plan.knobs.length + SETUP_BUTTONS.indexOf(button))}
+        onHover={(button) => cursor.set(plan.knobs.length + SETUP_BUTTONS.indexOf(button))}
       />
       <Fill />
       <KeyHints hints={setupHints(focused, ready)} />
@@ -226,10 +228,12 @@ const SetupButtons = ({
   ready,
   focused,
   onChoose,
+  onHover,
 }: {
   ready: boolean
   focused: SetupButton | undefined
   onChoose: (button: SetupButton) => void
+  onHover: (button: SetupButton) => void
 }): ReactElement => {
   const { accent, selection } = useTheme()
   const clicks = useDevPanelClicks()
@@ -239,7 +243,14 @@ const SetupButtons = ({
       flexShrink={0}
       marginRight={2}
       {...(focused === name ? { backgroundColor: selection } : {})}
-      {...(clicks ? { ref: clicks.target(() => onChoose(name)) } : {})}
+      {...(clicks
+        ? {
+            ref: clicks.target(
+              () => onChoose(name),
+              () => onHover(name)
+            ),
+          }
+        : {})}
     >
       <Text color={accent}>{focused === name ? '› ' : '  '}</Text>
       {label}

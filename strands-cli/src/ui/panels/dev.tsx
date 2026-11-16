@@ -9,13 +9,18 @@ import { Box, useTheme } from '../theme.js'
 const FRAME_COLUMNS = 4
 const FRAME_ROWS = 2
 
-export class DevPanelClicks {
-  private readonly targets = new Map<DOMElement, () => void>()
+interface DevPanelTarget {
+  readonly click: () => void
+  readonly hover?: () => void
+}
 
-  target(onClick: () => void): (element: DOMElement | null) => (() => void) | undefined {
+export class DevPanelClicks {
+  private readonly targets = new Map<DOMElement, DevPanelTarget>()
+
+  target(onClick: () => void, onHover?: () => void): (element: DOMElement | null) => (() => void) | undefined {
     return (element) => {
       if (!element) return undefined
-      this.targets.set(element, onClick)
+      this.targets.set(element, { click: onClick, ...(onHover ? { hover: onHover } : {}) })
       return () => {
         this.targets.delete(element)
       }
@@ -23,8 +28,16 @@ export class DevPanelClicks {
   }
 
   at(mouse: MouseInput): (() => void) | undefined {
-    for (const [element, onClick] of this.targets) {
-      if (elementContainsMouse(element, mouse)) return onClick
+    return this.under(mouse)?.click
+  }
+
+  hoverAt(mouse: MouseInput): (() => void) | undefined {
+    return this.under(mouse)?.hover
+  }
+
+  private under(mouse: MouseInput): DevPanelTarget | undefined {
+    for (const [element, target] of this.targets) {
+      if (elementContainsMouse(element, mouse)) return target
     }
     return undefined
   }

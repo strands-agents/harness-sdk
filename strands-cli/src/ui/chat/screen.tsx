@@ -1083,6 +1083,7 @@ export function ChatApp({
           ? elementContainsMouse(frogElement.current, mouse)
           : false
       if (mouse.action === 'move' && !leftMouseDownRef.current) {
+        if (snapshot.panel?.kind === 'dev') devPanelClicks.hoverAt(mouse)?.()
         setHoveredPanelRow(panelRowIndex)
         setHoveredPanelControl(panelControlTarget)
         setHoveredPanelFilter(panelFilterId)
