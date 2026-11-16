@@ -512,9 +512,7 @@ const CaseView = ({
           </Box>
         ))}
       </Box>
-      <KeyHints
-        hints={scrolls ? ['↑↓ scroll', 'PgUp/PgDn page', 'Esc back to the report'] : ['Esc back to the report']}
-      />
+      <KeyHints hints={scrolls ? ['↑↓ scroll', 'Esc back to the report'] : ['Esc back to the report']} />
     </>
   )
 }
