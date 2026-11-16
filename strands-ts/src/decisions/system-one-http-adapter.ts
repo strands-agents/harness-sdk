@@ -149,7 +149,7 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
   const startedAt = globalThis.performance.now()
   const payload = await transport(body, cancelSignal)
 
-  const result = parseResult(payload, questions, config.defaultMinConfidence)
+  const result = parseResult(payload, questions, config.defaultMinConfidence, config.modelId)
   return {
     answers: result.answers,
     ...(result.usage !== undefined && { usage: result.usage }),
@@ -266,10 +266,25 @@ function errorDetail(body: unknown): string | undefined {
   return undefined
 }
 
+/**
+ * Returns the System One result from decisionapi.net's `{ code, message, data: { result } }`
+ * envelope, or the response itself when it is not enveloped.
+ */
+function unwrapEnvelope(response: Record<string, unknown>): Record<string, unknown> {
+  if (!('data' in response)) return response
+  if (response['code'] !== 0) {
+    const detail = typeof response['message'] === 'string' ? `: ${response['message']}` : ''
+    throw new ModelError(`decision provider returned error code ${String(response['code'])}${detail}`)
+  }
+  const data = requireRecord(response['data'], 'decision provider data')
+  return requireRecord(data['result'], 'decision provider result')
+}
+
 function parseResult<const Q extends Record<string, Question>>(
   payload: unknown,
   questions: Q,
-  defaultMinConfidence: number
+  defaultMinConfidence: number,
+  requestedModelId: string | undefined
 ): {
   modelId: string
   answers: { [K in keyof Q]: AnswerOf<Q[K]> }
@@ -277,8 +292,9 @@ function parseResult<const Q extends Record<string, Question>>(
   confidence: { [K in keyof Q]: number }
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
 } {
-  const response = requireRecord(payload, 'decision provider response')
-  const modelId = requireNonEmptyString(response['model'], 'decision provider model')
+  const response = unwrapEnvelope(requireRecord(payload, 'decision provider response'))
+  // decisionapi.net does not echo the model, so fall back to the one requested.
+  const modelId = requireNonEmptyString(response['model'] ?? requestedModelId, 'decision provider model')
   const rawAnswers = requireRecord(response['answers'], 'decision provider answers')
   const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
   const probabilities = {} as { [K in keyof Q]: Readonly<Record<string, number>> }

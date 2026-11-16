@@ -730,6 +730,38 @@ async def test_decisions_api_enforces_the_request_body_limit_before_sending():
     assert captured == []
 
 
+@pytest.mark.asyncio
+async def test_decisions_api_reads_the_enveloped_response_and_reports_the_requested_model():
+    payload = {
+        "code": 0,
+        "message": "ok",
+        "data": {
+            "result": {
+                "answers": {"q": {"type": "noul", "noul": 0.99}},
+                "usage": {"input_tokens": 281, "output_tokens": 23},
+                "elapsedMs": 1879,
+            },
+            "creditsUsed": 1,
+        },
+    }
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload))
+
+    result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert result.answers == {"q": True}
+    assert result.usage == {"inputTokens": 281, "outputTokens": 23, "totalTokens": 304}
+    assert result.metadata.model_id == "~typesafe/jev-latest"
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_rejects_an_enveloped_response_with_a_non_zero_code():
+    payload = {"code": 1, "message": "insufficient credits", "data": None}
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload))
+
+    with pytest.raises(StructuredOutputException, match="error code 1: insufficient credits"):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+
 def test_importing_strands_does_not_import_httpx():
     # httpx imports optional dependencies such as rich when installed, so the providers load lazily.
     env = os.environ.copy()

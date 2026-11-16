@@ -136,7 +136,7 @@ async def _ask_system_one(
     if not response.is_success:
         _raise_http_error(config.provider_name, response, payload)
 
-    parsed = _parse_result(payload, questions, config.default_min_confidence)
+    parsed = _parse_result(payload, questions, config.default_min_confidence, config.model_id)
     latency_ms = round((time.perf_counter() - started_at) * 1000)
     return DecisionResult(
         answers=parsed.answers,
@@ -256,9 +256,30 @@ def _error_detail(body: Any) -> str | None:
     return None
 
 
-def _parse_result(payload: Any, questions: dict[str, Question], default_min_confidence: float) -> _ParsedResult:
-    response = _require_record(payload, "decision provider response")
-    model_id = _require_non_empty_string(response.get("model"), "decision provider model")
+def _unwrap_envelope(response: dict[str, Any]) -> dict[str, Any]:
+    """Return the result from decisionapi.net's ``{code, message, data: {result}}`` envelope.
+
+    Responses that are not enveloped are returned unchanged.
+    """
+    if "data" not in response:
+        return response
+    if response.get("code") != 0:
+        message = response.get("message")
+        detail = f": {message}" if isinstance(message, str) else ""
+        raise StructuredOutputException(f"decision provider returned error code {response.get('code')}{detail}")
+    data = _require_record(response.get("data"), "decision provider data")
+    return _require_record(data.get("result"), "decision provider result")
+
+
+def _parse_result(
+    payload: Any, questions: dict[str, Question], default_min_confidence: float, requested_model_id: str
+) -> _ParsedResult:
+    response = _unwrap_envelope(_require_record(payload, "decision provider response"))
+    # decisionapi.net does not echo the model, so fall back to the one requested.
+    raw_model_id = response.get("model")
+    model_id = _require_non_empty_string(
+        requested_model_id if raw_model_id is None else raw_model_id, "decision provider model"
+    )
     raw_answers = _require_record(response.get("answers"), "decision provider answers")
 
     answers: dict[str, bool | str | Uncertain] = {}

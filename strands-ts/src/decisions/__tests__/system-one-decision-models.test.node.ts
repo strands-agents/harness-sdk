@@ -488,5 +488,40 @@ describe('DecisionsAPIDecisionModel', () => {
       await expect(decision.ask('state', questions)).rejects.toThrow(/at most 8 questions/)
       expect(fetch).not.toHaveBeenCalled()
     })
+
+    it('reads the enveloped decisionapi.net response and reports the requested model', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({
+          code: 0,
+          message: 'ok',
+          data: {
+            result: {
+              answers: { q: { type: 'noul', noul: 0.99 } },
+              usage: { input_tokens: 281, output_tokens: 23 },
+              elapsedMs: 1879,
+            },
+            creditsUsed: 1,
+          },
+        }),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result.answers).toEqual({ q: true })
+      expect(result.usage).toEqual({ inputTokens: 281, outputTokens: 23, totalTokens: 304 })
+      expect(result.metadata.modelId).toBe('~typesafe/jev-latest')
+    })
+
+    it('rejects an enveloped response with a non-zero code', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code: 1, message: 'insufficient credits', data: null }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /error code 1: insufficient credits/
+      )
+    })
   })
 })
