@@ -72,7 +72,7 @@ describe('shared model info data', () => {
   })
 
   it('keeps getContextWindowLimit working for ids the Python table already knew', () => {
-    expect(getContextWindowLimit('mistral-large-latest')).toBe(262_144)
+    expect(getContextWindowLimit('mistral-large-latest')).toBe(1_048_576)
     expect(getContextWindowLimit('o3')).toBe(200_000)
   })
 

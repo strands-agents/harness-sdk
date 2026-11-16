@@ -117,9 +117,10 @@ describe('EnvironmentContext', () => {
     expect(out).not.toContain('.git')
   })
 
-  it('reports the real working directory from the local sandbox shell', async () => {
+  it('reports the real working directory from the local sandbox shell', { timeout: 30_000 }, async () => {
     // PowerShell's `pwd` prints a Path/---- table; the probe must yield the directory itself in every
-    // shell the local sandbox may run (sh, Git Bash, PowerShell), whose path spellings differ.
+    // shell the local sandbox may run (sh, Git Bash, PowerShell), whose path spellings differ. Each probe is
+    // a fresh process, which on Windows can outlast the default 5 s on a busy CI runner.
     const cwd = process.cwd()
     const dir = mkdtempSync(join(tmpdir(), 'harness-env-cwd-'))
     process.chdir(dir)

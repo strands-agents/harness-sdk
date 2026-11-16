@@ -866,6 +866,11 @@
         "defaultEffort": "medium"
       }
     },
+    "gemini-4-hydrogen": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
     "gemini-4-argon": {
       "limits": {
         "contextWindow": 1048576

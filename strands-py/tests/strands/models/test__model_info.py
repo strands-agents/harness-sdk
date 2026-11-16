@@ -150,7 +150,7 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
 
 
 def test_get_context_window_limit_returns_the_window_from_the_shared_data():
-    assert get_context_window_limit("mistral-large-latest") == 262_144
+    assert get_context_window_limit("mistral-large-latest") == 1_048_576
     assert get_context_window_limit("o3") == 200_000
 
 

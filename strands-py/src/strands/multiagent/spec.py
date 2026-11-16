@@ -12,8 +12,9 @@ the parameters the model sees and govern what values it can supply:
 
 from __future__ import annotations
 
+import inspect
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,8 +23,8 @@ from ..models import Model, ModelRouter
 
 logger = logging.getLogger(__name__)
 
-# The builder turns a resolved spec into a child agent, built the way the parent was.
-AgentBuilder = Callable[["AgentSpec"], "Agent"]
+# The builder turns a resolved spec into a child agent, built the way the parent was; it may be async.
+AgentBuilder = Callable[["AgentSpec"], "Agent | Awaitable[Agent]"]
 
 _UNSET: Any = object()
 """Sentinel for :attr:`Option.value` so ``None`` can be a legitimate value."""
@@ -321,6 +322,12 @@ def _resolve_specs(
         specs.append(spec)
 
     return specs
+
+
+async def _build_agent(build: AgentBuilder, spec: AgentSpec) -> Agent:
+    """Call ``build`` and await its result when the builder is async."""
+    child = build(spec)
+    return await child if inspect.isawaitable(child) else child
 
 
 def _default_builder(parent: Agent) -> AgentBuilder:
