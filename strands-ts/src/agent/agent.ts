@@ -2416,15 +2416,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolChoice?: ToolChoice,
     structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
-    const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
-    if (this.systemPrompt !== undefined) {
-      streamOptions.systemPrompt = this.systemPrompt
-    }
-    if (toolChoice) {
-      streamOptions.toolChoice = toolChoice
-    }
-
     let attemptCount = 1
     while (true) {
       // An abort during retry backoff must stop before another model attempt begins.
