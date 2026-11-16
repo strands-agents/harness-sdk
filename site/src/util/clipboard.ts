@@ -2,9 +2,8 @@
  * Shared copy-to-clipboard button wiring with "copied!" feedback, reused by the
  * code terminals.
  *
- * (InstallCommand.astro keeps its own inline copy handler: its script is
- * `is:inline` so it can render the pip/npm command before paint, and inline
- * scripts can't import this module.)
+ * InstallCommand.astro keeps its language renderer inline so the pip/npm
+ * command paints before hydration, then uses this helper for copy behavior.
  */
 /**
  * Analytics descriptor for a copy button. On a successful copy the helper fires

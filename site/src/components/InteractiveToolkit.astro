@@ -2,6 +2,7 @@
 import arrow from '../assets/banner/arrow.svg?raw';
 import { pathWithBase } from '../util/links';
 import InstallCommand from './InstallCommand.astro';
+import ToolkitTerminal from './ToolkitTerminal.astro';
 
 // Token helpers for the expanded-card code samples — same model + colors as
 // the Use Cases terminal. `kw` = keyword/decorator, `str` = string literal;
@@ -18,7 +19,7 @@ interface CodeRow {
 interface ToolkitCard {
   slug: string;
   color: string;
-  description: string;
+  description?: string;
   headline?: string;
   roleLabel?: string;
   actionLabel: string;
@@ -53,7 +54,7 @@ const cards: ToolkitCard[] = [
       npm: 'npm install @strands-agents/harness',
     },
     expanded: {
-      viewMoreHref: pathWithBase('/docs/user-guide/harness/'),
+      viewMoreHref: pathWithBase('/docs/user-guide/harness/quickstart/'),
       codePy: [
         { lineNo: 1, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
         { lineNo: 2, tokens: [t('')] },
@@ -71,8 +72,6 @@ const cards: ToolkitCard[] = [
   {
     slug: '/harness-sdk',
     color: 'var(--card-accent-teal)',
-    description:
-      'Use the Strands Harness SDK directly when you need to wire the model, tools, memory, session management, and hooks yourself.',
     actionLabel: 'Build with primitives',
     actionAriaLabel: 'Build with Strands Harness SDK primitives',
     expanded: {
@@ -208,87 +207,13 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
               </div>
 
               <div class="toolkit__build-example">
-                {harnessCard.expanded.codePy && (
-                  <div class="toolkit__card-terminal toolkit__build-terminal">
-                    <header class="toolkit__card-terminal-header">
-                      <div class="toolkit__card-terminal-dots" aria-hidden="true">
-                        <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red" />
-                        <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow" />
-                        <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green" />
-                      </div>
-                      <button
-                        type="button"
-                        class="toolkit__card-terminal-copy"
-                        aria-label="Copy Strands harness example"
-                      >
-                        <svg
-                          class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
-                          viewBox="0 0 16 19"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <rect
-                            x="4.5"
-                            y="0.5"
-                            width="11"
-                            height="14"
-                            rx="1.5"
-                            stroke="currentColor"
-                          />
-                          <rect
-                            x="0.5"
-                            y="4.5"
-                            width="11"
-                            height="14"
-                            rx="1.5"
-                            fill="var(--terminal-bg)"
-                            stroke="currentColor"
-                          />
-                        </svg>
-                        <svg
-                          class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M13.5 4.5L6.5 11.5L3 8"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          />
-                        </svg>
-                        <span class="toolkit__card-terminal-copy-label">copy</span>
-                      </button>
-                    </header>
-                    {harnessCard.expanded.codeTs && (
-                      <pre
-                        class="toolkit__card-terminal-code"
-                        data-lang-code="typescript"
-                      ><code>{harnessCard.expanded.codeTs.map((row) => (
-                        <div class="toolkit__card-terminal-row">
-                          <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                          <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                            tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                          ))}</span>
-                        </div>
-                      ))}</code></pre>
-                    )}
-                    <pre
-                      class="toolkit__card-terminal-code"
-                      data-lang-code="python"
-                      hidden
-                    ><code>{harnessCard.expanded.codePy.map((row) => (
-                      <div class="toolkit__card-terminal-row">
-                        <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                        <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                          tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                        ))}</span>
-                      </div>
-                    ))}</code></pre>
-                  </div>
-                )}
+                <div class="toolkit__build-terminal">
+                  <ToolkitTerminal
+                    codePy={harnessCard.expanded.codePy}
+                    codeTs={harnessCard.expanded.codeTs}
+                    copyAriaLabel="Copy Strands harness example"
+                  />
+                </div>
                 <a
                   href={harnessCard.expanded.viewMoreHref}
                   class="toolkit__build-action"
@@ -326,8 +251,11 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
 
         <section
           class="toolkit__section toolkit__section--tools"
-          aria-label="Control and improve your agent"
+          aria-labelledby="toolkit-supporting-title"
         >
+          <h2 class="toolkit__visually-hidden" id="toolkit-supporting-title">
+            Control and improve your agent
+          </h2>
           <div class="toolkit__supporting-connectors" aria-hidden="true">
             {supportingCards.map(() => (
               <span class="toolkit__supporting-connector"></span>
@@ -360,101 +288,13 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
                     class="toolkit__card-expanded"
                     id={`toolkit-card-${card.slug.slice(1)}-details`}
                   >
-                    {(card.expanded.code || card.expanded.codePy) && (
-                      <div class="toolkit__card-terminal">
-                        <header class="toolkit__card-terminal-header">
-                          <div class="toolkit__card-terminal-dots" aria-hidden="true">
-                            <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red" />
-                            <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow" />
-                            <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green" />
-                          </div>
-                          <button
-                            type="button"
-                            class="toolkit__card-terminal-copy"
-                            aria-label={`Copy ${card.slug} code`}
-                          >
-                            <svg
-                              class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
-                              viewBox="0 0 16 19"
-                              fill="none"
-                              aria-hidden="true"
-                            >
-                              <rect
-                                x="4.5"
-                                y="0.5"
-                                width="11"
-                                height="14"
-                                rx="1.5"
-                                stroke="currentColor"
-                              />
-                              <rect
-                                x="0.5"
-                                y="4.5"
-                                width="11"
-                                height="14"
-                                rx="1.5"
-                                fill="var(--terminal-bg)"
-                                stroke="currentColor"
-                              />
-                            </svg>
-                            <svg
-                              class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              aria-hidden="true"
-                            >
-                              <path
-                                d="M13.5 4.5L6.5 11.5L3 8"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              />
-                            </svg>
-                            <span class="toolkit__card-terminal-copy-label">copy</span>
-                          </button>
-                        </header>
-                        {card.expanded.code && (
-                          <pre
-                            class="toolkit__card-terminal-code"
-                            data-lang-code={card.expanded.code.language}
-                          ><code>{card.expanded.code.rows.map((row) => (
-                            <div class="toolkit__card-terminal-row">
-                              <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                              <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                                tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                              ))}</span>
-                            </div>
-                          ))}</code></pre>
-                        )}
-                        {card.expanded.codeTs && (
-                          <pre
-                            class="toolkit__card-terminal-code"
-                            data-lang-code="typescript"
-                            hidden
-                          ><code>{card.expanded.codeTs.map((row) => (
-                            <div class="toolkit__card-terminal-row">
-                              <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                              <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                                tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                              ))}</span>
-                            </div>
-                          ))}</code></pre>
-                        )}
-                        {card.expanded.codePy && (
-                          <pre
-                            class="toolkit__card-terminal-code"
-                            data-lang-code="python"
-                          ><code>{card.expanded.codePy.map((row) => (
-                            <div class="toolkit__card-terminal-row">
-                              <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                              <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                                tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                              ))}</span>
-                            </div>
-                          ))}</code></pre>
-                        )}
-                      </div>
+                    {(card.expanded.code || card.expanded.codePy || card.expanded.codeTs) && (
+                      <ToolkitTerminal
+                        code={card.expanded.code}
+                        codePy={card.expanded.codePy}
+                        codeTs={card.expanded.codeTs}
+                        copyAriaLabel={`Copy ${card.slug} code`}
+                      />
                     )}
                   </div>
 
@@ -524,6 +364,18 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     flex-direction: column;
     gap: 14px;
     min-width: 0;
+  }
+
+  .toolkit__visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .toolkit__section--build {
@@ -709,16 +561,20 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     transition: grid-template-columns 0.3s ease;
   }
 
+  .toolkit__section--tools {
+    --toolkit-columns: repeat(3, minmax(0, 1fr));
+    --connector-left: calc(16.6667% - 6.6667px);
+    --connector-right: calc(16.6667% - 6.6667px);
+  }
+
   .toolkit__section-cards--tools {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: var(--toolkit-columns);
   }
 
   .toolkit__supporting-connectors {
-    --connector-left: calc(16.6667% - 6.6667px);
-    --connector-right: calc(16.6667% - 6.6667px);
     position: relative;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: var(--toolkit-columns);
     gap: 20px;
     height: 36px;
   }
@@ -781,45 +637,30 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 700;
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.3;
-    letter-spacing: 1.1px;
+    letter-spacing: 1.2px;
     text-transform: uppercase;
     text-align: center;
     color: var(--use-case-muted);
   }
 
-  .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open)
-    .toolkit__supporting-connectors {
+  .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open) {
+    --toolkit-columns: 2fr 1fr 1fr;
     --connector-left: calc(25% - 10px);
     --connector-right: calc(12.5% - 5px);
-    grid-template-columns: 2fr 1fr 1fr;
   }
 
-  .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open)
-    .toolkit__supporting-connectors {
+  .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open) {
+    --toolkit-columns: 1fr 2fr 1fr;
     --connector-left: calc(12.5% - 5px);
     --connector-right: calc(12.5% - 5px);
-    grid-template-columns: 1fr 2fr 1fr;
   }
 
-  .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open)
-    .toolkit__supporting-connectors {
+  .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
+    --toolkit-columns: 1fr 1fr 2fr;
     --connector-left: calc(12.5% - 5px);
     --connector-right: calc(25% - 10px);
-    grid-template-columns: 1fr 1fr 2fr;
-  }
-
-  .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open) {
-    grid-template-columns: 2fr 1fr 1fr;
-  }
-
-  .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open) {
-    grid-template-columns: 1fr 2fr 1fr;
-  }
-
-  .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
-    grid-template-columns: 1fr 1fr 2fr;
   }
 
   .toolkit__card {
@@ -970,112 +811,6 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     }
   }
 
-  .toolkit__card-terminal {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .toolkit__card-terminal {
-    background: var(--terminal-bg);
-    border: 0.5px solid var(--strands-charcoal-1);
-    border-radius: 8px;
-    overflow: hidden;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-  }
-
-  .toolkit__card-terminal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 0.5px solid var(--strands-charcoal-1);
-    background: var(--terminal-bg);
-  }
-
-  .toolkit__card-terminal-dots {
-    display: flex;
-    gap: 4px;
-  }
-
-  .toolkit__card-terminal-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-
-  .toolkit__card-terminal-dot--red { background: var(--strands-red); }
-  .toolkit__card-terminal-dot--yellow { background: var(--strands-yellow); }
-  .toolkit__card-terminal-dot--green { background: var(--strands-green); }
-
-  .toolkit__card-terminal-copy {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    color: var(--terminal-fg, var(--strands-grey-600));
-    font-family: inherit;
-    font-size: 12px;
-    line-height: 1;
-    cursor: pointer;
-  }
-
-  .toolkit__card-terminal-copy-icon {
-    width: 10px;
-    height: 12px;
-  }
-
-  .toolkit__card-terminal-copy-icon--check {
-    display: none;
-    height: 10px;
-  }
-
-  /* On successful copy: green button, check icon, "copied!" label. */
-  .toolkit__card-terminal-copy.is-copied {
-    color: var(--strands-green);
-  }
-
-  .toolkit__card-terminal-copy.is-copied .toolkit__card-terminal-copy-icon--copy {
-    display: none;
-  }
-
-  .toolkit__card-terminal-copy.is-copied .toolkit__card-terminal-copy-icon--check {
-    display: inline-block;
-  }
-
-  .toolkit__card-terminal-code {
-    margin: 0;
-    padding: 16px 20px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--terminal-fg, var(--fg));
-    background: transparent;
-  }
-
-  .toolkit__card-terminal-row {
-    display: flex;
-    gap: 12px;
-    min-height: 16px;
-  }
-
-  .toolkit__card-terminal-lineno {
-    display: inline-block;
-    width: 18px;
-    color: var(--strands-grey-600);
-    text-align: right;
-    user-select: none;
-    flex: none;
-  }
-
-  .toolkit__card-terminal-line {
-    /* Wrap long lines so the terminal never scrolls horizontally. Preserve
-       leading whitespace (indentation) via `pre-wrap`. */
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
   /* When open, hide the code icon and draw a horizontal `−` line. */
   .toolkit__card.is-open .toolkit__card-open-icon {
     display: none;
@@ -1127,18 +862,18 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
       grid-column: 1 / -1;
     }
 
-    .toolkit__section-cards--tools {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .toolkit__section--tools {
+      --toolkit-columns: repeat(2, minmax(0, 1fr));
     }
 
     .toolkit__supporting-product:nth-child(3) {
       grid-column: 1 / -1;
     }
 
-    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open),
-    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open),
-    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
-      grid-template-columns: 1fr;
+    .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open),
+    .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open),
+    .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
+      --toolkit-columns: 1fr;
     }
 
     .toolkit__section-cards--tools:has(.toolkit__card.is-open) .toolkit__supporting-product {
@@ -1212,11 +947,11 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
       white-space: normal;
     }
 
-    .toolkit__section-cards--tools,
-    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open),
-    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open),
-    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
-      grid-template-columns: 1fr;
+    .toolkit__section--tools,
+    .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open),
+    .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open),
+    .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
+      --toolkit-columns: 1fr;
     }
 
     .toolkit__supporting-product:nth-child(3),
@@ -1225,8 +960,8 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     }
 
     .toolkit__supporting-role {
-      font-size: 9px;
-      letter-spacing: 0.8px;
+      font-size: 11px;
+      letter-spacing: 1px;
     }
 
     .toolkit__card {
@@ -1254,22 +989,14 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
       font-size: 14px;
     }
 
-    /* Expanded cards keep their code sample compact on small screens. */
     .toolkit__card.is-open {
       gap: 16px;
       padding: 16px 16px 44px;
-    }
-
-    .toolkit__card-terminal-code {
-      padding: 12px 14px;
     }
   }
 </style>
 
 <script>
-  import { attachCopyButton } from '../util/clipboard'
-  import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
-
   function setToggleState(card: HTMLElement, isOpen: boolean) {
     const toggle = card.querySelector<HTMLButtonElement>('[data-toggle]');
     const slug = `/${card.dataset.toolkitProduct}`;
@@ -1283,7 +1010,7 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     // Accordion: only one card open at a time, so the widened grid track
     // never has to accommodate two expanded cards.
     if (willOpen) {
-      document.querySelectorAll<HTMLElement>('.toolkit__card.is-open').forEach((open) => {
+      card.closest<HTMLElement>('.toolkit')?.querySelectorAll<HTMLElement>('.toolkit__card.is-open').forEach((open) => {
         if (open === card) return;
         open.classList.remove('is-open');
         setToggleState(open, false);
@@ -1305,76 +1032,5 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
       if (event.target instanceof Element && event.target.closest('a, button')) return;
       setCardOpen(card, true);
     });
-  });
-
-  // Copy the expanded card's *visible* code panel.
-  document
-    .querySelectorAll<HTMLButtonElement>('.toolkit__card-terminal-copy')
-    .forEach((btn) => {
-      attachCopyButton(btn, {
-        label: btn.querySelector<HTMLElement>('.toolkit__card-terminal-copy-label'),
-        getText: () => {
-          const code = btn
-            .closest<HTMLElement>('.toolkit__card-terminal')
-            ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden]) code');
-          if (!code) return '';
-          return Array.from(code.querySelectorAll<HTMLElement>('.toolkit__card-terminal-line'))
-            .map((line) => line.textContent ?? '')
-            .join('\n');
-        },
-        track: {
-          surface: 'code:toolkit',
-          detail: () =>
-            btn
-              .closest<HTMLElement>('.toolkit__card-terminal')
-              ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden])')
-              ?.dataset.langCode,
-        },
-      });
-    });
-
-  // Language switching: keep Python/TypeScript examples in sync with the
-  // site-wide selector and leave language-neutral policy or shell examples
-  // visible in either mode.
-
-  function applyToolkitLang(lang: string) {
-    const isPython = lang === 'Python';
-    document
-      .querySelectorAll<HTMLElement>('.toolkit__card-terminal')
-      .forEach((term) => {
-        const ts = term.querySelector<HTMLElement>('[data-lang-code="typescript"]');
-        const py = term.querySelector<HTMLElement>('[data-lang-code="python"]');
-        const generic = term.querySelector<HTMLElement>(
-          '[data-lang-code="policy"], [data-lang-code="shell"]'
-        );
-        if (generic) {
-          generic.hidden = false;
-          if (ts) ts.hidden = true;
-          if (py) py.hidden = true;
-          return;
-        }
-        if (isPython) {
-          if (ts) ts.hidden = true;
-          if (py) py.hidden = false;
-        } else if (ts) {
-          ts.hidden = false;
-          if (py) py.hidden = true;
-        } else {
-          if (py) py.hidden = false;
-        }
-      });
-  }
-
-  function currentLang() {
-    try {
-      return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python' ? 'Python' : DEFAULT_LANGUAGE_LABEL;
-    } catch {
-      return 'TypeScript';
-    }
-  }
-
-  applyToolkitLang(currentLang());
-  window.addEventListener('lang-change', (e: Event) => {
-    applyToolkitLang((e as CustomEvent).detail);
   });
 </script>

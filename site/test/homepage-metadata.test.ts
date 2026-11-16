@@ -37,19 +37,43 @@ describe('homepage machine-readable metadata', () => {
     const banner = homepage.querySelector('.banner')
     const primaryCta = banner?.querySelector('.banner__link--primary')
     const githubCta = banner?.querySelector('.banner__link--github')
-
-    expect(primaryCta?.text.trim()).toBe('Build An Agent')
-    expect(primaryCta?.getAttribute('href')).toBe('#build-an-agent')
-    expect(githubCta?.getAttribute('href')).toBe('https://github.com/strands-agents')
-    expect(githubCta?.querySelector('.banner__github-icon svg')).not.toBeNull()
     const githubStars = githubCta?.querySelector('.banner__github-stars')?.text.trim()
-    expect(githubStars).toMatch(/^\d{1,3}(,\d{3})*\+$/)
-    expect(githubCta?.text.trim()).toBe(githubStars)
-    expect(githubCta?.getAttribute('aria-label')).toBe(`View Strands on GitHub, ${githubStars} stars`)
-    expect(homepage.querySelector('.strands-nav__github')).not.toBeNull()
-    expect(homepage.querySelector('.strands-nav__github-stars')).toBeNull()
-    expect(banner?.querySelector('[data-install]')).toBeNull()
-    expect(banner?.querySelector('[data-install-copy]')).toBeNull()
+
+    expect({
+      primary: {
+        text: primaryCta?.text.trim(),
+        href: primaryCta?.getAttribute('href'),
+      },
+      github: {
+        text: githubCta?.text.trim(),
+        href: githubCta?.getAttribute('href'),
+        ariaLabel: githubCta?.getAttribute('aria-label'),
+        hasIcon: Boolean(githubCta?.querySelector('.banner__github-icon svg')),
+        stars: githubStars,
+      },
+      navigation: {
+        hasGithubLink: Boolean(homepage.querySelector('.strands-nav__github')),
+        hasStarCount: Boolean(homepage.querySelector('.strands-nav__github-stars')),
+      },
+      hasInstallCommand: Boolean(banner?.querySelector('[data-install], [data-install-copy]')),
+    }).toEqual({
+      primary: {
+        text: 'Build an agent',
+        href: '#build-an-agent',
+      },
+      github: {
+        text: githubStars,
+        href: 'https://github.com/strands-agents',
+        ariaLabel: `View Strands on GitHub, ${githubStars} stars`,
+        hasIcon: true,
+        stars: expect.stringMatching(/^\d{1,3}(,\d{3})*\+$/),
+      },
+      navigation: {
+        hasGithubLink: true,
+        hasStarCount: false,
+      },
+      hasInstallCommand: false,
+    })
   })
 
   it('advertises the Markdown homepage', () => {
@@ -93,41 +117,82 @@ describe('homepage machine-readable metadata', () => {
     const harness = buildCard?.querySelector('[data-toolkit-product="harness"]')
     const sdk = buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')
 
-    expect(toolkit?.getAttribute('aria-label')).toBe('Strands toolkit')
-    expect(toolkit?.querySelector('.toolkit__cards-header')).toBeNull()
-    expect(toolkit?.querySelectorAll('.toolkit__cards-branch')).toHaveLength(0)
-    expect(toolkit?.querySelector('.toolkit__cards-title')).toBeNull()
-    expect(sections[0]?.getAttribute('id')).toBe('build-an-agent')
-    expect(sections[0]?.getAttribute('aria-labelledby')).toBe('toolkit-harness-title')
-    expect(sections[0]?.querySelector('.toolkit__section-title')).toBeNull()
-    expect(sections[1]?.getAttribute('aria-label')).toBe('Control and improve your agent')
-    expect(sections[1]?.querySelector('.toolkit__section-title')).toBeNull()
-    expect(buildCard).not.toBeNull()
-    expect(harness?.querySelector('h2')?.getAttribute('id')).toBe('toolkit-harness-title')
-    expect(harness?.querySelector('h2')?.text.trim()).toBe('/harness')
-    expect(harness?.querySelector('.toolkit__build-headline')?.text.trim()).toBe('Start with a complete agent.')
-    expect(harness?.querySelector('.toolkit__build-description')?.text.trim()).toBe(
-      'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.'
-    )
-    expect(harness?.querySelector('.toolkit__build-action')?.text.trim()).toBe('Build an agent')
-    expect(harness?.querySelector('.toolkit__build-action')?.getAttribute('href')).toBe(
-      configuredPathWithBase('/docs/user-guide/harness/')
-    )
-    expect(harness?.querySelector('.toolkit__build-action')?.getAttribute('aria-label')).toBe(
-      'Build an agent with Strands harness'
-    )
-
-    expect(sdk?.querySelector('h3')?.text.trim()).toBe('/harness-sdk')
-    expect(sdk?.querySelector('.toolkit__build-sdk-relation')?.text.trim()).toBe('Built on')
-    expect(sdk?.querySelector('.toolkit__build-sdk-title')).toBeNull()
-    expect(sdk?.querySelector('.toolkit__build-sdk-description')).toBeNull()
-    expect(sdk?.querySelector('.toolkit__build-sdk-action')?.text.trim()).toBe('Build with primitives')
-    expect(sdk?.querySelector('.toolkit__build-sdk-action')?.getAttribute('aria-label')).toBe(
-      'Build with Strands Harness SDK primitives'
-    )
-    expect(sdk?.querySelector('.toolkit__build-sdk-action')?.getAttribute('href')).toBe(
-      configuredPathWithBase('/docs/user-guide/sdk/')
-    )
+    expect({
+      label: toolkit?.getAttribute('aria-label'),
+      buildSection: {
+        id: sections[0]?.getAttribute('id'),
+        labelledBy: sections[0]?.getAttribute('aria-labelledby'),
+      },
+      supportingSection: {
+        labelledBy: sections[1]?.getAttribute('aria-labelledby'),
+        heading: {
+          tag: sections[1]?.querySelector('#toolkit-supporting-title')?.tagName,
+          text: sections[1]?.querySelector('#toolkit-supporting-title')?.text.trim(),
+        },
+      },
+      hasBuildCard: Boolean(buildCard),
+      harness: {
+        heading: {
+          id: harness?.querySelector('h2')?.getAttribute('id'),
+          text: harness?.querySelector('h2')?.text.trim(),
+        },
+        headline: harness?.querySelector('.toolkit__build-headline')?.text.trim(),
+        description: harness?.querySelector('.toolkit__build-description')?.text.trim(),
+        action: {
+          text: harness?.querySelector('.toolkit__build-action')?.text.trim(),
+          href: harness?.querySelector('.toolkit__build-action')?.getAttribute('href'),
+          ariaLabel: harness?.querySelector('.toolkit__build-action')?.getAttribute('aria-label'),
+        },
+      },
+      sdk: {
+        heading: sdk?.querySelector('h3')?.text.trim(),
+        relation: sdk?.querySelector('.toolkit__build-sdk-relation')?.text.trim(),
+        description: sdk?.querySelector('.toolkit__build-sdk-description')?.text.trim() ?? null,
+        action: {
+          text: sdk?.querySelector('.toolkit__build-sdk-action')?.text.trim(),
+          href: sdk?.querySelector('.toolkit__build-sdk-action')?.getAttribute('href'),
+          ariaLabel: sdk?.querySelector('.toolkit__build-sdk-action')?.getAttribute('aria-label'),
+        },
+      },
+    }).toEqual({
+      label: 'Strands toolkit',
+      buildSection: {
+        id: 'build-an-agent',
+        labelledBy: 'toolkit-harness-title',
+      },
+      supportingSection: {
+        labelledBy: 'toolkit-supporting-title',
+        heading: {
+          tag: 'H2',
+          text: 'Control and improve your agent',
+        },
+      },
+      hasBuildCard: true,
+      harness: {
+        heading: {
+          id: 'toolkit-harness-title',
+          text: '/harness',
+        },
+        headline: 'Start with a complete agent.',
+        description:
+          'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.',
+        action: {
+          text: 'Build an agent',
+          href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
+          ariaLabel: 'Build an agent with Strands harness',
+        },
+      },
+      sdk: {
+        heading: '/harness-sdk',
+        relation: 'Built on',
+        description: null,
+        action: {
+          text: 'Build with primitives',
+          href: configuredPathWithBase('/docs/user-guide/sdk/'),
+          ariaLabel: 'Build with Strands Harness SDK primitives',
+        },
+      },
+    })
   })
 
   it('gives Harness the visible example and only build install path', () => {
@@ -135,15 +200,23 @@ describe('homepage machine-readable metadata', () => {
     const harness = buildCard?.querySelector('[data-toolkit-product="harness"]')
     const sdk = buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')
 
-    expect(harness?.querySelectorAll('.toolkit__card-terminal')).toHaveLength(1)
-    expect(sdk?.querySelectorAll('.toolkit__card-terminal')).toHaveLength(0)
-    expect(buildCard?.querySelectorAll('[data-toggle]')).toHaveLength(0)
-    expect(harness?.querySelector('[data-lang-code="typescript"]')?.hasAttribute('hidden')).toBe(false)
-    expect(harness?.querySelector('[data-lang-code="python"]')?.hasAttribute('hidden')).toBe(true)
-    expect(harness?.querySelector('.toolkit__card-terminal-copy')?.getAttribute('aria-label')).toBe(
-      'Copy Strands harness example'
-    )
-    expect(sdk?.querySelector('[data-install]')).toBeNull()
+    expect({
+      harnessTerminalCount: harness?.querySelectorAll('.toolkit__card-terminal').length,
+      sdkTerminalCount: sdk?.querySelectorAll('.toolkit__card-terminal').length,
+      toggleCount: buildCard?.querySelectorAll('[data-toggle]').length,
+      visibleLanguage: harness?.querySelector('[data-lang-code]:not([hidden])')?.getAttribute('data-lang-code'),
+      languageLabel: harness?.querySelector('.toolkit__card-terminal-language')?.text.trim(),
+      copyLabel: harness?.querySelector('.toolkit__card-terminal-copy')?.getAttribute('aria-label'),
+      sdkHasInstall: Boolean(sdk?.querySelector('[data-install]')),
+    }).toEqual({
+      harnessTerminalCount: 1,
+      sdkTerminalCount: 0,
+      toggleCount: 0,
+      visibleLanguage: 'typescript',
+      languageLabel: 'TypeScript',
+      copyLabel: 'Copy Strands harness example',
+      sdkHasInstall: false,
+    })
     expect(
       buildCard?.querySelectorAll('[data-install]').map((install) => ({
         python: install.querySelector('[data-install-variant="Python"]')?.text.trim(),
@@ -206,6 +279,7 @@ describe('homepage machine-readable metadata', () => {
         const details = card?.querySelector('.toolkit__card-expanded')
         return {
           languages: details?.querySelectorAll('[data-lang-code]').map((panel) => panel.getAttribute('data-lang-code')),
+          languageLabel: details?.querySelector('.toolkit__card-terminal-language')?.text.trim(),
           copyLabel: details?.querySelector('.toolkit__card-terminal-copy')?.getAttribute('aria-label'),
           extraContent: details?.querySelector(
             '.toolkit__card-slug, .toolkit__card-expanded-text, .toolkit__card-view-more'
@@ -216,18 +290,21 @@ describe('homepage machine-readable metadata', () => {
     ).toEqual([
       {
         languages: ['policy'],
+        languageLabel: 'Policy',
         copyLabel: 'Copy /box code',
         extraContent: null,
         hasCodeIcon: true,
       },
       {
         languages: ['python'],
+        languageLabel: 'Python',
         copyLabel: 'Copy /evals code',
         extraContent: null,
         hasCodeIcon: true,
       },
       {
         languages: ['shell'],
+        languageLabel: 'Shell',
         copyLabel: 'Copy /decider code',
         extraContent: null,
         hasCodeIcon: true,
