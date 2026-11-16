@@ -130,16 +130,7 @@ class TestAsk:
         assert config.read_timeout == 5
         assert "strands-agents" in config.user_agent_extra
 
-    def test_defaults_the_client_read_timeout(self, mock_client):
-        mock_boto_client, _ = mock_client
-
-        SageMakerDecisionModel(_ENDPOINT_NAME)
-
-        config = mock_boto_client.call_args.kwargs["config"]
-        assert config.read_timeout == 120
-        assert config.user_agent_extra == "strands-agents"
-
-    def test_creates_the_client_from_a_provided_boto_session_with_the_sdk_defaults(self, mock_client):
+    def test_creates_the_client_from_a_provided_boto_session_with_the_sdk_user_agent(self, mock_client):
         mock_boto_client, _ = mock_client
         session = unittest.mock.Mock(region_name="eu-west-1")
 
@@ -150,7 +141,6 @@ class TestAsk:
         call = session.client.call_args
         assert call.args == ("sagemaker-runtime",)
         assert call.kwargs["region_name"] == "eu-west-1"
-        assert call.kwargs["config"].read_timeout == 120
         assert call.kwargs["config"].user_agent_extra == "strands-agents"
 
     def test_falls_back_to_the_aws_region_environment_variable(self, mock_client, monkeypatch):
