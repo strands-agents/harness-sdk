@@ -12,31 +12,31 @@ import { pathWithBase } from '../util/links';
     </div>
     <div class="banner__gradient" aria-hidden="true" />
     <div class="banner__content">
-    <div class="banner__text">
-      <h1 class="banner__headline">
-        The open source<br />
-        toolkit for building<br />
-        production agents.
-      </h1>
-    </div>
-    <div class="banner__actions">
-      <div class="banner__links">
-        <a href={pathWithBase('/docs/user-guide/harness/quickstart/')} class="banner__link">
-          Quickstart
-          <span class="banner__arrow" set:html={arrow} />
-        </a>
-        <a
-          href="https://github.com/strands-agents"
-          class="banner__link"
-          target="_blank"
-          rel="noopener"
-        >
-          GitHub
-          <span class="banner__arrow" set:html={arrow} />
-        </a>
+      <div class="banner__text">
+        <h1 class="banner__headline">
+          The open source<br />
+          toolkit for building<br />
+          production agents.
+        </h1>
       </div>
-      <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
-    </div>
+      <div class="banner__actions">
+        <div class="banner__links">
+          <a href={pathWithBase('/docs/user-guide/harness/quickstart/')} class="banner__link">
+            Quickstart
+            <span class="banner__arrow" set:html={arrow} />
+          </a>
+          <a
+            href="https://github.com/strands-agents"
+            class="banner__link"
+            target="_blank"
+            rel="noopener"
+          >
+            GitHub
+            <span class="banner__arrow" set:html={arrow} />
+          </a>
+        </div>
+        <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
+      </div>
     </div>
   </div>
 </section>
@@ -50,8 +50,6 @@ import { pathWithBase } from '../util/links';
   .banner__inner {
     position: relative;
     min-height: 324px;
-    max-width: 1442px;
-    margin: 0 auto;
     overflow: hidden;
     display: flex;
     align-items: center;
@@ -60,14 +58,11 @@ import { pathWithBase } from '../util/links';
   .banner__halftone {
     position: absolute;
     top: 44px;
-    left: 55px;
-    right: 55px;
+    left: 0;
+    right: 0;
     height: 280px;
-    /* Rounded to clearly follow the banner card's rounded aesthetic. Needs to
-       be well above the ~20px dot spacing or the corner reads as square (a
-       small radius only clips the single corner dot). */
-    border-radius: 40px;
     overflow: hidden;
+    opacity: 0.32;
     /* Decorative only — never intercept taps/clicks meant for content. */
     pointer-events: none;
     /* SVG is 750px tall; we show a 280px slice, centered, rotated 180deg. */
@@ -78,7 +73,8 @@ import { pathWithBase } from '../util/links';
 
   .banner__halftone-mask {
     display: block;
-    width: 1332px;
+    width: 100%;
+    min-width: 1332px;
     height: 750px;
     transform: rotate(180deg);
     flex: none;
@@ -102,15 +98,21 @@ import { pathWithBase } from '../util/links';
   .banner__content {
     position: relative;
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     align-items: center;
-    gap: 32px clamp(24px, 3vw, 48px);
+    justify-content: center;
+    gap: 24px;
+    width: 100%;
+    max-width: 1332px;
+    margin: 0 auto;
     padding: 69px clamp(24px, 5vw, 96px) 48px;
+    text-align: center;
   }
 
   .banner__text {
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: 16px;
   }
 
@@ -118,13 +120,12 @@ import { pathWithBase } from '../util/links';
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 500;
-    /* Sized so the headline and the fixed-width install pill fit side by
-       side from 1024px, even with a classic scrollbar. */
     font-size: clamp(30px, 3.25vw, 52px);
     letter-spacing: 0.1em;
     line-height: 1.2;
     color: var(--banner-headline);
-    white-space: pre;
+    text-align: center;
+    white-space: normal;
   }
 
   .banner__actions {
@@ -185,35 +186,14 @@ import { pathWithBase } from '../util/links';
   /* The install command is the shared <InstallCommand /> component; its pill
      styling lives in InstallCommand.astro. */
 
-  /* ---------- Tablet (768–1023px) ----------
-     Side-by-side no longer fits; use the mobile design's centered
-     stacked structure, at larger sizing. */
+  /* ---------- Tablet (768–1023px) ---------- */
   @media (max-width: 1023px) {
     .banner__content {
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 24px;
-      width: 100%;
       padding: 69px 33px 48px;
-      text-align: center;
-    }
-
-    .banner__text {
-      align-items: center;
     }
 
     .banner__headline {
       font-size: clamp(30px, 3.6vw, 52px);
-    }
-
-    .banner__halftone {
-      left: 33px;
-      right: 33px;
-    }
-
-    .banner__links {
-      justify-content: center;
     }
   }
 
@@ -224,21 +204,10 @@ import { pathWithBase } from '../util/links';
       padding: 36px 33px 24px;
     }
 
-    /* Halftone stays an inset rounded card on mobile (Figma 745:11980):
-       33px side margins, 14px radius, clipped by the section. On mobile the
-       headline is centered directly over the densest dots, so green text on
-       green dots was unreadable — fade the dots to a faint texture so the
-       headline reads clearly. (On desktop the text sits left of the field, so
-       full-strength dots are fine there.) */
+    /* Keep the full-width dots faint behind the centered headline. */
     .banner__halftone {
       top: 23px;
-      left: 33px;
-      right: 33px;
-      width: auto;
       height: 280px;
-      border-radius: 14px;
-      align-items: flex-start;
-      justify-content: flex-start;
       opacity: 0.25;
     }
 
