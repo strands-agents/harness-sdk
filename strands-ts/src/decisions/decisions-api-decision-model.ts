@@ -1,9 +1,11 @@
+import { ModelError } from '../errors.js'
 import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
   httpTransport,
   resolveSystemOneProviderConfig,
   type SystemOneProviderConfig,
+  type SystemOneTransport,
 } from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
@@ -60,12 +62,35 @@ export class DecisionsAPIDecisionModel extends DecisionModel {
     questions: Q,
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
-    return askSystemOne(
-      this._providerConfig,
-      httpTransport(this._providerConfig),
-      state,
-      questions,
-      options.cancelSignal
-    )
+    const transport = httpTransport(this._providerConfig)
+    const unwrappingTransport: SystemOneTransport = async (body, cancelSignal) =>
+      this._unwrapEnvelope(await transport(body, cancelSignal))
+    return askSystemOne(this._providerConfig, unwrappingTransport, state, questions, options.cancelSignal)
   }
+
+  /**
+   * Returns the System One result from decisionapi.net's `{ code, message, data: { result } }` envelope.
+   * The envelope does not carry the model, so the result reports the requested one unless it names its own.
+   * A payload that is not enveloped is returned unchanged.
+   */
+  private _unwrapEnvelope(payload: unknown): unknown {
+    if (!isRecord(payload) || (!('code' in payload) && !('data' in payload))) return payload
+
+    const code = payload['code']
+    if (code !== 0) {
+      const detail = typeof payload['message'] === 'string' ? `: ${payload['message']}` : ''
+      throw new ModelError(`decision provider returned error code ${String(code)}${detail}`)
+    }
+
+    const data = payload['data']
+    if (!isRecord(data)) throw new ModelError('decision provider data must be an object')
+    const result = data['result']
+    if (!isRecord(result)) throw new ModelError('decision provider result must be an object')
+
+    return { model: this._providerConfig.modelId, ...result }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

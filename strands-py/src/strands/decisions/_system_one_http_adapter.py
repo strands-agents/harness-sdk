@@ -10,6 +10,7 @@ import math
 import os
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, NoReturn, TypeGuard
 
@@ -107,6 +108,7 @@ async def _ask_system_one(
     config: _SystemOneProviderConfig,
     state: DecisionInput,
     questions: dict[str, Question],
+    unwrap_payload: Callable[[Any], Any] | None = None,
 ) -> DecisionResult:
     if config.max_questions is not None and len(questions) > config.max_questions:
         raise ValueError(f"{config.provider_name} accepts at most {config.max_questions} questions per request")
@@ -135,8 +137,10 @@ async def _ask_system_one(
     payload = _read_payload(response)
     if not response.is_success:
         _raise_http_error(config.provider_name, response, payload)
+    if unwrap_payload is not None:
+        payload = unwrap_payload(payload)
 
-    parsed = _parse_result(payload, questions, config.default_min_confidence, config.model_id)
+    parsed = _parse_result(payload, questions, config.default_min_confidence)
     latency_ms = round((time.perf_counter() - started_at) * 1000)
     return DecisionResult(
         answers=parsed.answers,
@@ -256,27 +260,8 @@ def _error_detail(body: Any) -> str | None:
     return None
 
 
-def _unwrap_envelope(response: dict[str, Any], requested_model_id: str) -> dict[str, Any]:
-    """Return the result from decisionapi.net's ``{code, message, data: {result}}`` envelope.
-
-    Responses that are not enveloped are returned unchanged. The envelope does not carry the
-    model, so the unwrapped result reports ``requested_model_id`` unless it names its own.
-    """
-    if "code" not in response and "data" not in response:
-        return response
-    code = response.get("code")
-    if isinstance(code, bool) or code != 0:
-        message = response.get("message")
-        detail = f": {message}" if isinstance(message, str) else ""
-        raise StructuredOutputException(f"decision provider returned error code {code}{detail}")
-    data = _require_record(response.get("data"), "decision provider data")
-    return {"model": requested_model_id, **_require_record(data.get("result"), "decision provider result")}
-
-
-def _parse_result(
-    payload: Any, questions: dict[str, Question], default_min_confidence: float, requested_model_id: str
-) -> _ParsedResult:
-    response = _unwrap_envelope(_require_record(payload, "decision provider response"), requested_model_id)
+def _parse_result(payload: Any, questions: dict[str, Question], default_min_confidence: float) -> _ParsedResult:
+    response = _require_record(payload, "decision provider response")
     model_id = _require_non_empty_string(response.get("model"), "decision provider model")
     raw_answers = _require_record(response.get("answers"), "decision provider answers")
 

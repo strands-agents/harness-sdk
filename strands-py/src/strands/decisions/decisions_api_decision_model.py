@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from ..types.exceptions import StructuredOutputException
 from ._system_one_http_adapter import _ask_system_one, _resolve_system_one_provider_config
 from .decision_model import DecisionModel
 from .types import DecisionInput, DecisionResult, Question
@@ -75,4 +76,28 @@ class DecisionsAPIDecisionModel(DecisionModel):
         )
 
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
-        return await _ask_system_one(self._provider_config, state, questions)
+        return await _ask_system_one(self._provider_config, state, questions, unwrap_payload=self._unwrap_envelope)
+
+    def _unwrap_envelope(self, payload: Any) -> Any:
+        """Return the System One result from decisionapi.net's ``{code, message, data: {result}}`` envelope.
+
+        The envelope does not carry the model, so the result reports the requested one unless it
+        names its own. A payload that is not enveloped is returned unchanged.
+        """
+        if not isinstance(payload, dict) or ("code" not in payload and "data" not in payload):
+            return payload
+
+        code = payload.get("code")
+        if isinstance(code, bool) or code != 0:
+            message = payload.get("message")
+            detail = f": {message}" if isinstance(message, str) else ""
+            raise StructuredOutputException(f"decision provider returned error code {code}{detail}")
+
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise StructuredOutputException("decision provider data must be an object")
+        result = data.get("result")
+        if not isinstance(result, dict):
+            raise StructuredOutputException("decision provider result must be an object")
+
+        return {"model": self._provider_config.model_id, **result}
