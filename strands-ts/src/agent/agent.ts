@@ -1098,7 +1098,8 @@ export class Agent implements LocalAgent, InvokableAgent {
    * option on `invoke` / `stream`.
    *
    * A cancel that arrives after the final model pass (e.g. during background-task
-   * settlement) returns that pass's result with its own `stopReason`.
+   * settlement) starts no further pass: the call resolves with that pass's result
+   * and its own `stopReason`.
    *
    * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
    *
@@ -1403,14 +1404,13 @@ export class Agent implements LocalAgent, InvokableAgent {
           )) !== undefined
         continuationEvent = hasContinuation ? afterInvocationEvent : undefined
 
-        // A cancel that arrived after the final model pass must not be swallowed by another
-        // pass: return the completed result; abandoned inputs re-deliver in a later invocation.
-        // A hook's `resume` is still honoured after an immediate cancel (BackgroundTasks surfaces
-        // `input_required` interrupts that way), but never after a deferred one.
+        // A requested cancel is not swallowed by another pass: the continuation re-delivers in a
+        // later invocation, and a `resume` survives only an immediate cancel its hook could see.
         const cancelRequested = this._deferredCancel || this._abortSignal.aborted
+        const resumeDropped = this._deferredCancel || (cancelRequested && stopReason !== 'cancelled')
         if (
           (hasContinuation && !cancelRequested) ||
-          (!this._deferredCancel && this._shouldResume(afterInvocationEvent, invocationContext))
+          (!resumeDropped && this._shouldResume(afterInvocationEvent, invocationContext))
         ) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue
@@ -1776,8 +1776,12 @@ export class Agent implements LocalAgent, InvokableAgent {
       }
 
       // Main agent loop - continues until model stops without requesting tools
+      let stepRan = false
       while (true) {
         this._throwIfCancelled()
+        // A deferred cancel ends the pass once a step has run, on the paths that skip the post-batch check.
+        if (this._deferredCancel && stepRan) throw new CancelledError()
+        stepRan = true
 
         const limitStopReason = reachedLimit(invocationContext)
         if (limitStopReason) {

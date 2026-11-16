@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../agent.js'
-import { AfterInvocationEvent, AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/index.js'
+import {
+  AfterInvocationEvent,
+  AfterModelCallEvent,
+  AfterToolCallEvent,
+  BeforeModelCallEvent,
+} from '../../hooks/index.js'
+import { continuations } from '../continuation.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
@@ -448,30 +454,70 @@ describe('Agent Cancellation', () => {
     })
 
     it.each([
-      [
-        'before the final model call',
-        (agent: Agent, cancel: () => void) => agent.addHook(BeforeModelCallEvent, cancel),
-      ],
-      ['during AfterInvocation', (agent: Agent, cancel: () => void) => agent.addHook(AfterInvocationEvent, cancel)],
-    ])('ignores a hook resume when the deferred cancel is requested %s', async (_when, addCancelHook) => {
+      ['a deferred cancel before the final model call', 'beforeModelCall', { afterCurrentTools: true }],
+      ['a deferred cancel during AfterInvocation', 'afterInvocation', { afterCurrentTools: true }],
+      ['an immediate cancel during AfterInvocation', 'afterInvocation', undefined],
+    ] as const)('ignores a hook resume and a continuation after %s', async (_when, where, options) => {
       const model = new MockMessageModel()
         .addTurn({ type: 'textBlock', text: 'Plain answer' })
         .addTurn({ type: 'textBlock', text: 'resumed' })
       const agent = new Agent({ model, printer: false })
-      let resumes = 0
+      // Registered first, so on AfterInvocation (reverse order) the cancel lands after the resume is armed.
+      const cancel = (): void => agent.cancel(options)
+      if (where === 'beforeModelCall') agent.addHook(BeforeModelCallEvent, cancel)
+      else agent.addHook(AfterInvocationEvent, cancel)
+      let armed = false
+      const onAbandoned = vi.fn()
       agent.addHook(AfterInvocationEvent, (event) => {
-        if (resumes++ === 0) event.resume = 'keep going'
+        if (armed) return
+        armed = true
+        event.resume = 'keep going'
+        continuations.addInput(event, { args: 'pending', onAbandoned })
       })
-      addCancelHook(agent, () => agent.cancel({ afterCurrentTools: true }))
 
       const result = await agent.invoke('Go')
 
       expect(result.stopReason).toBe('endTurn')
       expect(result.lastMessage.content[0]).toEqual(new TextBlock('Plain answer'))
       expect(model.callCount).toBe(1)
+      expect(onAbandoned).toHaveBeenCalledTimes(1)
+      expect(agent.messages).toHaveLength(2)
     })
 
-    it('still honours a hook resume after an immediate cancel', async () => {
+    it('stops instead of forcing the structured-output tool when the model answered in plain text', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'plain text' })
+        .addTurn({ type: 'toolUseBlock', name: 'strands_structured_output', toolUseId: 's1', input: { answer: 'a' } })
+      const agent = new Agent({ model, printer: false })
+      agent.addHook(BeforeModelCallEvent, () => agent.cancel({ message: 'stopped', afterCurrentTools: true }))
+
+      const result = await agent.invoke('Go', { structuredOutputSchema: z.object({ answer: z.string() }) })
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('stopped'))
+      expect(model.callCount).toBe(1)
+    })
+
+    it('makes no further model call when the consumer breaks the stream during the tool batch', async () => {
+      let agent: Agent
+      const tool = createMockTool('stop', () => {
+        agent.cancel({ afterCurrentTools: true })
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'never called' })
+      agent = new Agent({ model, tools: [tool], printer: false })
+
+      for await (const event of agent.stream('Go')) {
+        if (event instanceof AfterToolCallEvent) break
+      }
+
+      expect(model.callCount).toBe(1)
+      expect(agent.messages.at(-1)?.role).toBe('assistant')
+    })
+
+    it('still honours a hook resume after a pass that an immediate cancel ended', async () => {
       const model = new MockMessageModel()
         .addTurn({ type: 'textBlock', text: 'never streamed' })
         .addTurn({ type: 'textBlock', text: 'resumed' })

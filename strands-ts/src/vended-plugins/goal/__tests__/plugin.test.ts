@@ -10,6 +10,7 @@ import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import { JsonBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { SystemPrompt } from '../../../types/messages.js'
 import { logger } from '../../../logging/logger.js'
+import type { Plugin } from '../../../plugins/plugin.js'
 
 describe('GoalLoop', () => {
   describe('constructor', () => {
@@ -641,6 +642,30 @@ describe('GoalLoop', () => {
         })
       }
     )
+
+    it('ends the run without retrying when a cancel arrives after the retry was armed', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'answer' })
+        .addTurn({ type: 'textBlock', text: 'retry' })
+      const plugin = new GoalLoop({ maxAttempts: 3, preserveContext: false, goal: () => false })
+      // Initialised first, so its AfterInvocation hook runs after GoalLoop's (reverse order).
+      const canceller: Plugin = {
+        name: 'canceller',
+        initAgent: (agent) => void agent.addHook(AfterInvocationEvent, () => agent.cancel()),
+      }
+      const agent = new Agent({ model, plugins: [canceller, plugin], printer: false })
+
+      const result = await agent.invoke('go')
+
+      expect(text(result.lastMessage)).toBe('answer')
+      expect(model.callCount).toBe(1)
+      expect(history(agent)).toEqual(['user: go', 'assistant: answer'])
+      expect(plugin.lastResult(agent)).toEqual({
+        passed: false,
+        stopReason: 'stopped',
+        attempts: [{ attempt: 1, passed: false }],
+      })
+    })
 
     it('starts a fresh run when the consumer abandoned the stream after a retry was armed', async () => {
       const plugin = new GoalLoop({
