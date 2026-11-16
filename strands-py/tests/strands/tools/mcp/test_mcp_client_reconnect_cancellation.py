@@ -87,6 +87,26 @@ def test_call_tool_presignalled_cancellation_skips_reconnect(
     assert mock_transport["transport_callable"].call_count == 2
 
 
+def test_call_tool_cancellation_during_liveness_ping_keeps_session(client, call_tool, mock_transport, mock_session):
+    """A call cancelled while its session is being pinged is neither re-sent nor rebuilt (#6174)."""
+    cancel_signal = threading.Event()
+
+    async def cancel_then_hang(*args, **kwargs):
+        cancel_signal.set()
+        await asyncio.sleep(3600)
+
+    mock_session.call_tool.side_effect = make_mcp_error(-32000, "Connection closed")
+    mock_session.send_ping.side_effect = cancel_then_hang
+
+    tru_result = call_tool(client, cancel_signal=cancel_signal)
+
+    exp_result = _cancelled()
+    assert tru_result == exp_result
+    mock_session.send_ping.assert_awaited_once()
+    mock_session.call_tool.assert_called_once()
+    assert mock_transport["transport_callable"].call_count == 1
+
+
 @pytest.mark.parametrize("session_dropped", [False, True], ids=["retry", "initial-reconnect"])
 def test_call_tool_cancellation_during_failed_reconnect(
     client, call_tool, mock_transport, mock_session, monkeypatch, session_dropped

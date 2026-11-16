@@ -252,6 +252,8 @@ _TOOLS_CHANGED_DEBOUNCE_SECONDS = 0.3
 _RECONNECT_MAX_ATTEMPTS = 4
 _RECONNECT_INITIAL_DELAY_SECONDS = 0.5
 _RECONNECT_FAILURE_COOLDOWN_SECONDS = 5.0
+# A dead transport fails a ping at once, so this only bounds the wait on a live but busy server.
+_RECONNECT_PING_TIMEOUT_SECONDS = 2.0
 
 
 class MCPClient(ToolProvider):
@@ -1182,10 +1184,10 @@ class MCPClient(ToolProvider):
                 logger.exception("tool execution failed")
                 return self._handle_tool_execution_error(tool_use_id, e)
             logger.warning("tool_name=<%s>, error=<%s> | mcp session lost, retrying tool call once", name, e)
-            broken_session_id = session_id if self._is_session_terminated_error(e) else None
+            ping_first = self._is_connection_closed_error(e)
 
         try:
-            self._reconnect(broken_session_id, cancel_signal=cancel_signal)
+            self._reconnect(session_id, cancel_signal=cancel_signal, ping_first=ping_first)
             return self._handle_tool_result(tool_use_id, run_call())
         except Exception as e:
             logger.exception("tool execution failed after reconnect")
@@ -1276,10 +1278,10 @@ class MCPClient(ToolProvider):
                 logger.exception("tool execution failed")
                 return self._handle_tool_execution_error(tool_use_id, e)
             logger.warning("tool_name=<%s>, error=<%s> | mcp session lost, retrying tool call once", name, e)
-            broken_session_id = session_id if self._is_session_terminated_error(e) else None
+            ping_first = self._is_connection_closed_error(e)
 
         try:
-            await asyncio.to_thread(self._reconnect, broken_session_id, cancel_signal=cancel_signal)
+            await asyncio.to_thread(self._reconnect, session_id, cancel_signal=cancel_signal, ping_first=ping_first)
             return self._handle_tool_result(tool_use_id, await run_call())
         except Exception as e:
             logger.exception("tool execution failed after reconnect")
@@ -1541,15 +1543,19 @@ class MCPClient(ToolProvider):
             anyio.ClosedResourceError,
             anyio.BrokenResourceError,
         )
-        if isinstance(error, lost_errors):
-            return True
-        if (
+        return (
+            isinstance(error, lost_errors)
+            or self._is_connection_closed_error(error)
+            or self._is_session_terminated_error(error)
+        )
+
+    def _is_connection_closed_error(self, error: Exception) -> bool:
+        """Whether the error is mcp's CONNECTION_CLOSED, which a live server may also relay from its own upstream."""
+        return (
             isinstance(error, MCPError)
             and error.error.code == _CONNECTION_CLOSED_ERROR_CODE
             and "connection closed" in error.error.message.lower()
-        ):
-            return True
-        return self._is_session_terminated_error(error)
+        )
 
     def _is_session_terminated_error(self, error: Exception) -> bool:
         """Whether the server rejected the call because it no longer knows this session (transport still alive)."""
@@ -1558,12 +1564,19 @@ class MCPClient(ToolProvider):
         error_msg = error.error.message.lower()
         return any(pattern in error_msg for pattern in _SESSION_LOST_ERROR_PATTERNS)
 
-    def _reconnect(self, broken_session_id: uuid.UUID | None, cancel_signal: threading.Event | None = None) -> bool:
+    def _reconnect(
+        self,
+        broken_session_id: uuid.UUID | None,
+        cancel_signal: threading.Event | None = None,
+        ping_first: bool = False,
+    ) -> bool:
         """Rebuild the connection unless a usable session is already up.
 
-        ``broken_session_id`` names a session whose transport is alive but which the server has
-        terminated; it is replaced even though it looks active. With ``None``, any ready session
-        is accepted, so concurrent callers that saw the same drop share a single reconnect.
+        ``broken_session_id`` names the session a call just failed on. It is replaced even if it
+        still looks ready: a terminated session or an exited stdio server leaves the background
+        thread running. With ``ping_first``, it is kept unless a ping on it fails as session-lost.
+        With ``None``, any ready session is accepted. Either way, concurrent callers that saw the
+        same drop share a single reconnect.
 
         Returns:
             True if this call rebuilt the connection, False if a usable session was already up.
@@ -1576,7 +1589,9 @@ class MCPClient(ToolProvider):
             _raise_if_call_cancelled(cancel_signal)
         try:
             _raise_if_call_cancelled(cancel_signal)
-            if self._is_session_ready() and self._session_id != broken_session_id:
+            if self._is_session_ready() and (
+                self._session_id != broken_session_id or (ping_first and not self._is_session_dead(cancel_signal))
+            ):
                 return False
             if not self._can_reconnect():
                 raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
@@ -1601,6 +1616,19 @@ class MCPClient(ToolProvider):
             return True
         finally:
             self._reconnect_lock.release()
+
+    def _is_session_dead(self, cancel_signal: threading.Event | None) -> bool:
+        """Whether a ping on the ready session fails as session-lost; a live server answers or rejects it."""
+        session = cast(ClientSession, self._background_thread_session)
+
+        async def ping() -> None:
+            await asyncio.wait_for(session.send_ping(), _RECONNECT_PING_TIMEOUT_SECONDS)
+
+        try:
+            self._invoke_on_background_thread(ping(), cancel_signal=cancel_signal).result()
+        except Exception as e:
+            return self._is_session_lost_error(e)
+        return False
 
     def _start_with_backoff(self, cancel_signal: threading.Event | None = None) -> None:
         """Call ``start()`` up to ``_RECONNECT_MAX_ATTEMPTS`` times, doubling the delay between attempts.

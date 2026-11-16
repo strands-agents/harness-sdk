@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import anyio
 import pytest
 from mcp import ListToolsResult
 from mcp.types import CallToolResult as MCPCallToolResult
@@ -121,16 +122,58 @@ async def test_call_tool_async_retries_once_after_mid_call_drop(mock_transport, 
     client.stop(None, None, None)
 
 
-def test_session_terminated_error_triggers_reconnect(mock_transport, mock_session):
-    """A live transport whose server forgot the session (404 -> 'Session terminated') is rebuilt."""
-    mock_session.call_tool.side_effect = [make_mcp_error(-32600, "Session terminated"), _ok_result("retried")]
+@pytest.mark.parametrize("call_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "lost_error",
+    [
+        make_mcp_error(-32600, "Session terminated"),
+        make_mcp_error(-32000, "Connection closed"),
+        anyio.ClosedResourceError(),
+    ],
+    ids=["session-terminated", "connection-closed", "closed-resource"],
+)
+def test_session_lost_error_on_ready_session_triggers_reconnect(mock_transport, mock_session, lost_error, call_async):
+    """A session that still looks ready is rebuilt when a call on it fails as lost.
+
+    Covers a server that forgot the session (404 -> 'Session terminated') and a stdio server that
+    exited, which closes the streams without ending the background thread (#6174).
+    """
+    mock_session.call_tool.side_effect = [lost_error, _ok_result("retried")]
+    mock_session.send_ping.side_effect = lost_error
+
+    with MCPClient(mock_transport["transport_callable"], auto_reconnect=True) as client:
+        if call_async:
+            result = asyncio.run(client.call_tool_async(tool_use_id="tu-1", name="echo", arguments={"to_echo": "hi"}))
+        else:
+            result = _call(client)
+
+    assert result == _success(text="retried")
+    assert mock_session.call_tool.call_count == 2
+    assert mock_transport["transport_callable"].call_count == 2
+
+
+async def _hang(*args, **kwargs):
+    await asyncio.sleep(3600)
+
+
+@pytest.mark.parametrize(
+    "ping_outcome",
+    [None, make_mcp_error(-32601, "Method not found"), _hang],
+    ids=["answered", "rejected", "timed-out"],
+)
+def test_connection_closed_from_live_server_keeps_session(mock_transport, mock_session, monkeypatch, ping_outcome):
+    """A server relaying its upstream's 'Connection closed' still answers a ping, so the call is re-sent as is."""
+    monkeypatch.setattr(mcp_client, "_RECONNECT_PING_TIMEOUT_SECONDS", 0.05)
+    mock_session.call_tool.side_effect = [make_mcp_error(-32000, "Connection closed"), _ok_result("retried")]
+    mock_session.send_ping.side_effect = ping_outcome
 
     with MCPClient(mock_transport["transport_callable"], auto_reconnect=True) as client:
         result = _call(client)
 
     assert result == _success(text="retried")
     assert mock_session.call_tool.call_count == 2
-    assert mock_transport["transport_callable"].call_count == 2
+    mock_session.send_ping.assert_awaited_once()
+    assert mock_transport["transport_callable"].call_count == 1
 
 
 def test_retries_at_most_once(mock_transport, mock_session):
@@ -441,18 +484,24 @@ def test_stop_on_dead_thread_does_not_schedule_close(mock_transport, mock_sessio
     assert loop.is_closed()
 
 
-def test_concurrent_session_terminated_failures_share_one_reconnect(mock_transport, mock_session):
-    """Calls that all fail on the same live-but-terminated session replace it once, then retry on the new one."""
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [(-32600, "Session terminated"), (-32000, "Connection closed")],
+    ids=["session-terminated", "connection-closed"],
+)
+def test_concurrent_failures_on_ready_session_share_one_reconnect(mock_transport, mock_session, code, message):
+    """Calls that all fail on the same ready-but-lost session replace it once, then retry on the new one."""
     first_session_id = None
     barrier = threading.Barrier(4, timeout=5)
 
-    async def terminated_on_first_session(*args, **kwargs):
+    async def lost_on_first_session(*args, **kwargs):
         if client._session_id == first_session_id:
             await asyncio.to_thread(barrier.wait)
-            raise make_mcp_error(-32600, "Session terminated")
+            raise make_mcp_error(code, message)
         return _ok_result()
 
-    mock_session.call_tool.side_effect = terminated_on_first_session
+    mock_session.call_tool.side_effect = lost_on_first_session
+    mock_session.send_ping.side_effect = make_mcp_error(code, message)
     client = MCPClient(mock_transport["transport_callable"], auto_reconnect=True)
     client.start()
     first_session_id = client._session_id
