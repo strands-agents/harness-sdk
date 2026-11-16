@@ -188,19 +188,24 @@ export const catalogEntrySchema = z
   })
 export type CatalogEntryData = z.infer<typeof catalogEntrySchema>
 
-const blogSchema = z.object({
-  title: z.string(),
-  date: z.coerce.date(),
-  description: z.string(),
-  authors: z.array(z.string()),
-  tags: z.array(z.string()).default([]),
-  draft: z.boolean().default(false),
-  coverImage: z.string().optional(),
-  // For syndicated posts: set to the original URL so search engines credit the source
-  canonicalUrl: z.string().url().optional(),
-  // Injected by remark-reading-time plugin at build time
-  readingTime: z.string().optional(),
-})
+export const blogSchema = z
+  .object({
+    title: z.string(),
+    date: z.coerce.date().optional(),
+    description: z.string(),
+    authors: z.array(z.string()),
+    tags: z.array(z.string()).default([]),
+    draft: z.boolean().default(false),
+    coverImage: z.string().optional(),
+    // For syndicated posts: set to the original URL so search engines credit the source
+    canonicalUrl: z.string().url().optional(),
+    // Injected by remark-reading-time plugin at build time
+    readingTime: z.string().optional(),
+  })
+  .refine((post) => post.draft || post.date !== undefined, {
+    message: 'Published posts require a publication date',
+    path: ['date'],
+  })
 
 // Regex rejects protocol-relative URLs like //evil.com and /\evil.com that startsWith('/') would accept.
 const internalHref = z.string().regex(/^\/(?![/\\])/, 'course hrefs must be site-relative (start with a single /)')
