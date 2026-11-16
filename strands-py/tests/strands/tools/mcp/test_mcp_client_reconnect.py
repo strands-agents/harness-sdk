@@ -2,6 +2,7 @@
 
 import asyncio
 import gc
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -154,6 +155,26 @@ def test_tool_errors_are_not_retried(mock_transport, mock_session):
     assert result == _failure("tool blew up")
     mock_session.call_tool.assert_called_once()
     assert mock_transport["transport_callable"].call_count == 1
+
+
+def test_closed_connection_on_a_live_session_is_not_rebuilt(mock_transport, mock_session, caplog):
+    """A stdio server that exits leaves the session looking ready, so its process is not restarted.
+
+    See https://github.com/strands-agents/harness-sdk/issues/6174.
+    """
+    mock_session.call_tool.side_effect = make_mcp_error(-32000, "Connection closed")
+
+    with caplog.at_level(logging.WARNING, logger=mcp_client.__name__):
+        with MCPClient(mock_transport["transport_callable"], auto_reconnect=True) as client:
+            result = _call(client)
+
+    assert result == _failure("Connection closed")
+    assert mock_session.call_tool.call_count == 2
+    assert mock_transport["transport_callable"].call_count == 1
+    assert [record.getMessage() for record in caplog.records if record.name == mcp_client.__name__] == [
+        "tool_name=<echo>, error=<Connection closed> | mcp session lost, retrying tool call once",
+        "tool execution failed on retry",
+    ]
 
 
 @pytest.mark.asyncio

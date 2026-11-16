@@ -411,9 +411,10 @@ class MCPClient(ToolProvider):
                 which routes through `call_tool_async`. Trace context is merged on top. A per-call `meta`
                 argument to either method takes precedence over this client-level value.
             auto_reconnect: When True, a tool call that finds the session dropped (the transport
-                closed, timed out, or the server reports the session as terminated) tears the
+                failed, timed out, or the server reports the session as terminated) tears the
                 connection down, opens a fresh one through the transport callable, and retries the
-                call once before surfacing an error result. A refused connection is attempted up to
+                call once before surfacing an error result. This covers streamable HTTP; a stdio
+                server process that exits is not restarted. A refused connection is attempted up to
                 four times with exponential backoff (0.5s, 1s, 2s), within one ``startup_timeout``
                 budget for the whole rebuild. Concurrent calls share one reconnect.
                 A call that already reached the server may run twice, so leave this off for servers
@@ -1188,7 +1189,7 @@ class MCPClient(ToolProvider):
             self._reconnect(broken_session_id, cancel_signal=cancel_signal)
             return self._handle_tool_result(tool_use_id, run_call())
         except Exception as e:
-            logger.exception("tool execution failed after reconnect")
+            logger.exception("tool execution failed on retry")
             return self._handle_tool_execution_error(tool_use_id, e)
 
     async def call_tool_async(
@@ -1282,7 +1283,7 @@ class MCPClient(ToolProvider):
             await asyncio.to_thread(self._reconnect, broken_session_id, cancel_signal=cancel_signal)
             return self._handle_tool_result(tool_use_id, await run_call())
         except Exception as e:
-            logger.exception("tool execution failed after reconnect")
+            logger.exception("tool execution failed on retry")
             return self._handle_tool_execution_error(tool_use_id, e)
 
     def submit_tool_sync(
