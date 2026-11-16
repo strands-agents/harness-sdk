@@ -48,6 +48,9 @@ const CONTROLS = [
   ],
 ] as const
 
+const commandHelp = ({ description, details }: LocalCommandSpec): string =>
+  details ? `${description}\n\n${details}` : description
+
 export function helpRows(
   backend: ChatBackend,
   options: {
@@ -85,7 +88,7 @@ export function helpRows(
     })),
     ...(options.devCommands ?? []).map((command) => ({
       label: command.usage,
-      description: command.description,
+      description: commandHelp(command),
       section: 'Commands',
       filter: 'commands',
       value: `help:detail:command:${command.name}`,
@@ -96,7 +99,7 @@ export function helpRows(
       return {
         label: command.usage,
         description: [
-          command.description,
+          commandHelp(command),
           ...(available ? [] : ['Unavailable on this connection.']),
           ...(managed ? ['Use this command in the conversation interface.'] : []),
         ].join('\n'),

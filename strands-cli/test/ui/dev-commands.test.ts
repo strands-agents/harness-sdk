@@ -100,6 +100,30 @@ describe('dev chat commands', () => {
     expect(controller.getSnapshot().panel).toMatchObject({ kind: 'help-detail', body: 'Tune this agent' })
   })
 
+  it('shouldExplainTheDevCommandBelowItsSummaryWhenTheUserPicksItInHelp', async () => {
+    const explained: DevChatCommand = {
+      ...devCommand(),
+      spec: {
+        name: 'optimize',
+        usage: '/optimize',
+        description: 'Tune this agent',
+        details: 'Select an experiment.\n\nReview the edits.',
+      },
+    }
+    const controller = new ChatController(idleBackend(), { devCommands: [explained] })
+    await controller.submit('/help')
+    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.label === '/optimize')!
+
+    await controller.activatePanelRow(row)
+
+    expect(row.description.split('\n')[0]).toBe('Tune this agent')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'help-detail',
+      title: '/optimize',
+      body: 'Tune this agent\n\nSelect an experiment.\n\nReview the edits.',
+    })
+  })
+
   it('shouldTreatTheCommandAsUnknownWhenNoDevCommandsAreGiven', async () => {
     const controller = new ChatController(idleBackend())
 

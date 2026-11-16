@@ -2,6 +2,7 @@ export interface LocalCommandSpec {
   name: string
   usage: string
   description: string
+  details?: string
   replacement?: string
 }
 
