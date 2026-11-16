@@ -5,6 +5,21 @@
  * text content, with output capped to a character budget.
  */
 
+/** A window notice a tool appends after paged output, e.g. read's "[Showing lines 1-2000 of 4001. ...]". */
+const WINDOW_NOTICE = /^\[([^[\]]*[0-9]+-[0-9]+ of [0-9]+[^[\]]*)\]$/
+
+/** Returns a note when the content ends with a window notice, so a search never hides that it is a partial page. */
+function windowNote(lines: string[]): string | undefined {
+  let last = lines.length - 1
+  while (last > 0 && lines[last] === '') last--
+  const match = lines.length > 1 ? WINDOW_NOTICE.exec(lines[last]!) : null
+  if (!match) return undefined
+  return (
+    `[This reference holds only a window of the original output ("${match[1]}"). ` +
+    'The rest is not stored here; call the original tool again with an offset to get it.]'
+  )
+}
+
 /** Cuts output at the last newline before {@link maxChars} and appends a truncation message. */
 function truncate(output: string, maxChars: number, message: string): string {
   if (output.length <= maxChars) return output
@@ -113,7 +128,9 @@ export function isSearchableContent(contentType: string): boolean {
  * @param text - The full text content to search
  * @param input - Search parameters (pattern, line_range, context_lines)
  * @param maxChars - Maximum output size in characters; results are truncated beyond this
- * @returns Formatted search results with line numbers, or an error/empty message
+ * @returns Formatted search results with line numbers, or an error/empty message. When the content ends with a
+ *   window notice (e.g. `read`'s pagination footer), a note that the rest of the original output is not stored under
+ *   this reference is appended.
  */
 export function searchContent(
   text: string,
@@ -138,16 +155,22 @@ export function searchContent(
       return `Error: line_range.start (${input.line_range.start}) must be <= line_range.end (${input.line_range.end}).`
     }
     if (input.line_range.start > totalLines) {
-      return `Error: line_range.start (${input.line_range.start}) is beyond content length (${totalLines} lines).`
+      const message = `Error: line_range.start (${input.line_range.start}) is beyond content length (${totalLines} lines).`
+      const note = windowNote(lines)
+      return note ? `${message}\n\n${note}` : message
     }
     scopeStart = input.line_range.start - 1
     scopeEnd = Math.min(input.line_range.end - 1, totalLines - 1)
   }
 
+  let result: string
   if (input.pattern) {
     const scopeLabel = input.line_range ? ` in lines ${input.line_range.start}-${scopeEnd + 1}` : ''
-    return searchByPattern(lines, input.pattern, scopeStart, scopeEnd, input.context_lines, maxChars, scopeLabel)
+    result = searchByPattern(lines, input.pattern, scopeStart, scopeEnd, input.context_lines, maxChars, scopeLabel)
+  } else {
+    result = searchByLineRange(lines, scopeStart, scopeEnd, totalLines, maxChars)
   }
 
-  return searchByLineRange(lines, scopeStart, scopeEnd, totalLines, maxChars)
+  const note = windowNote(lines)
+  return note ? `${result}\n\n${note}` : result
 }

@@ -223,3 +223,59 @@ class TestSearchContentEdgeCases:
         from strands.vended_plugins.context_offloader.search import _format_lines
 
         assert _format_lines(["a", "b"], [], set()) == ""
+
+
+class TestSearchContentWindowNotice:
+    notice = "[Showing lines 1-20 of 4001. Use offset/limit to read more.]"
+    note = (
+        '[This reference holds only a window of the original output ("Showing lines 1-20 of 4001. Use offset/limit '
+        'to read more."). The rest is not stored here; call the original tool again with an offset to get it.]'
+    )
+    text = "\n".join(f"line {i + 1}" for i in range(20)) + "\n" + notice
+
+    def test_no_matches_adds_note(self):
+        result = _search_content(self.text, pattern="nonexistent", context_lines=5, max_chars=10_000)
+        assert result == f"No matches found for pattern 'nonexistent' (searched 21 lines).\n\n{self.note}"
+
+    def test_matches_add_note(self):
+        result = _search_content(self.text, pattern="line 10", context_lines=0, max_chars=10_000)
+        assert result.endswith(f"> 10| line 10\n\n{self.note}")
+
+    def test_line_range_adds_note(self):
+        result = _search_content(self.text, line_range=(5, 10), context_lines=5, max_chars=10_000)
+        assert result.endswith(f"line 10\n\n{self.note}")
+
+    def test_note_survives_truncation(self):
+        result = _search_content(self.text, pattern="line", context_lines=0, max_chars=50)
+        assert result.endswith(f"[output truncated, narrow your search]\n\n{self.note}")
+
+    def test_trailing_newline_after_notice(self):
+        result = _search_content(self.text + "\n", pattern="nonexistent", context_lines=5, max_chars=10_000)
+        assert result.endswith(f"\n\n{self.note}")
+
+    def test_character_window_notice(self):
+        text = (
+            "a\nb\n[content truncated: showing characters 0-50000 of 123456; pass offset=50000 to read the next window]"
+        )
+        result = _search_content(text, pattern="x", context_lines=5, max_chars=10_000)
+        assert (
+            'only a window of the original output ("content truncated: showing characters 0-50000 of 123456' in result
+        )
+
+    def test_out_of_range_line_range_adds_note(self):
+        with pytest.raises(ValueError, match=r"beyond content length \(21 lines\)\.\n\n\[This reference holds only"):
+            _search_content(self.text, line_range=(2001, 4001), context_lines=5, max_chars=10_000)
+
+    def test_plain_last_line_is_not_a_notice(self):
+        text = "\n".join(f"line {i + 1}" for i in range(20))
+        result = _search_content(text, pattern="nonexistent", context_lines=5, max_chars=10_000)
+        assert result == "No matches found for pattern 'nonexistent' (searched 20 lines)."
+
+    def test_bracketed_line_without_a_range_is_not_a_notice(self):
+        for last in ("[DONE]", "[1, 2, 3]", "[[1-2 of 3]]", "[output truncated, narrow your search]"):
+            result = _search_content(f"a\n{last}", pattern="x", context_lines=5, max_chars=10_000)
+            assert result == "No matches found for pattern 'x' (searched 2 lines).", last
+
+    def test_single_notice_line_gets_no_note(self):
+        result = _search_content(self.notice, line_range=(1, 1), context_lines=5, max_chars=10_000)
+        assert "original output" not in result
