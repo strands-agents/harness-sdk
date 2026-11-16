@@ -1097,6 +1097,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * For cancellation driven from outside the agent, prefer the `cancelSignal`
    * option on `invoke` / `stream`.
    *
+   * A cancel that arrives after the final model pass (e.g. during background-task
+   * settlement) returns that pass's result with its own `stopReason`.
+   *
    * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
    *
    * @example
@@ -1320,15 +1323,7 @@ export class Agent implements LocalAgent, InvokableAgent {
               : 'invocation denied by hook'
           const message = new Message({ role: 'assistant', content: [new TextBlock(cancelText)] })
           yield this._appendMessage(message, invocationState, invocationContext)
-          const afterEvent = new AfterInvocationEvent({ agent: this, invocationContext, invocationState })
-          await continuations.abandon(
-            continuationEvent,
-            new Error('Continuation was not incorporated into agent history')
-          )
-          continuationEvent = afterEvent
-          await this._invokeCallbacks(afterEvent)
-          yield afterEvent
-          return new AgentResult({
+          const deniedResult = new AgentResult({
             invocationContext,
             stopReason: 'endTurn',
             lastMessage: message,
@@ -1336,11 +1331,25 @@ export class Agent implements LocalAgent, InvokableAgent {
             metrics: this._meter.metrics,
             invocationState,
           })
+          const afterEvent = new AfterInvocationEvent({
+            agent: this,
+            invocationContext,
+            invocationState,
+            result: deniedResult,
+          })
+          await continuations.abandon(
+            continuationEvent,
+            new Error('Continuation was not incorporated into agent history')
+          )
+          continuationEvent = afterEvent
+          await this._invokeCallbacks(afterEvent)
+          yield afterEvent
+          return deniedResult
         }
 
         let result: AgentResult | undefined
         let caughtError: Error | undefined
-        const afterInvocationEvent = new AfterInvocationEvent({ agent: this, invocationContext, invocationState })
+        let afterInvocationEvent!: AfterInvocationEvent
         try {
           result = yield* this._streamWithMiddleware(
             currentArgs,
@@ -1360,6 +1369,12 @@ export class Agent implements LocalAgent, InvokableAgent {
             continuationEvent,
             new Error('Continuation was not incorporated into agent history')
           )
+          afterInvocationEvent = new AfterInvocationEvent({
+            agent: this,
+            invocationContext,
+            invocationState,
+            ...(result !== undefined && { result }),
+          })
           continuationEvent = afterInvocationEvent
           await this._invokeCallbacks(afterInvocationEvent)
         }
@@ -1388,7 +1403,15 @@ export class Agent implements LocalAgent, InvokableAgent {
           )) !== undefined
         continuationEvent = hasContinuation ? afterInvocationEvent : undefined
 
-        if (hasContinuation || this._shouldResume(afterInvocationEvent, invocationContext)) {
+        // A cancel that arrived after the final model pass must not be swallowed by another
+        // pass: return the completed result; abandoned inputs re-deliver in a later invocation.
+        // A hook's `resume` is still honoured after an immediate cancel (BackgroundTasks surfaces
+        // `input_required` interrupts that way), but never after a deferred one.
+        const cancelRequested = this._deferredCancel || this._abortSignal.aborted
+        if (
+          (hasContinuation && !cancelRequested) ||
+          (!this._deferredCancel && this._shouldResume(afterInvocationEvent, invocationContext))
+        ) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue
         }

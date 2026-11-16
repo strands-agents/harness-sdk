@@ -3,7 +3,7 @@ import { Agent } from '../agent.js'
 import { AfterInvocationEvent, AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/index.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
-import { TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { tool } from '../../tools/tool-factory.js'
 import { z } from 'zod'
 
@@ -424,6 +424,73 @@ describe('Agent Cancellation', () => {
       expect(result.stopReason).toBe('endTurn')
       expect(result.lastMessage.content[0]).toEqual(new TextBlock('First'))
     })
+
+    it('ignores a hook resume once the deferred cancel has ended the pass', async () => {
+      let agent: Agent
+      const tool = createMockTool('stop', () => {
+        agent.cancel({ message: 'done', afterCurrentTools: true })
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'resumed' })
+      agent = new Agent({ model, tools: [tool], printer: false })
+      let resumes = 0
+      agent.addHook(AfterInvocationEvent, (event) => {
+        if (resumes++ === 0) event.resume = 'keep going'
+      })
+
+      const result = await agent.invoke('Go')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('done'))
+      expect(model.callCount).toBe(1)
+    })
+
+    it.each([
+      [
+        'before the final model call',
+        (agent: Agent, cancel: () => void) => agent.addHook(BeforeModelCallEvent, cancel),
+      ],
+      ['during AfterInvocation', (agent: Agent, cancel: () => void) => agent.addHook(AfterInvocationEvent, cancel)],
+    ])('ignores a hook resume when the deferred cancel is requested %s', async (_when, addCancelHook) => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Plain answer' })
+        .addTurn({ type: 'textBlock', text: 'resumed' })
+      const agent = new Agent({ model, printer: false })
+      let resumes = 0
+      agent.addHook(AfterInvocationEvent, (event) => {
+        if (resumes++ === 0) event.resume = 'keep going'
+      })
+      addCancelHook(agent, () => agent.cancel({ afterCurrentTools: true }))
+
+      const result = await agent.invoke('Go')
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('Plain answer'))
+      expect(model.callCount).toBe(1)
+    })
+
+    it('still honours a hook resume after an immediate cancel', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'never streamed' })
+        .addTurn({ type: 'textBlock', text: 'resumed' })
+      const agent = new Agent({ model, printer: false })
+      let modelCalls = 0
+      agent.addHook(BeforeModelCallEvent, () => {
+        if (++modelCalls === 1) agent.cancel()
+      })
+      const stopReasons: (string | undefined)[] = []
+      agent.addHook(AfterInvocationEvent, (event) => {
+        stopReasons.push(event.result?.stopReason)
+        if (event.result?.stopReason === 'cancelled') event.resume = 'keep going'
+      })
+
+      const result = await agent.invoke('Go')
+
+      expect(stopReasons).toEqual(['cancelled', 'endTurn'])
+      expect(result.stopReason).toBe('endTurn')
+    })
   })
 
   describe('cancel with a message', () => {
@@ -735,5 +802,88 @@ describe('Agent Cancellation', () => {
       expect(signalAborted).toBe(true)
       expect(result.stopReason).toBe('cancelled')
     })
+  })
+})
+
+describe('cancel during background-task settlement', () => {
+  it('returns the completed result instead of resurrecting the invocation for delivery', async () => {
+    const gate = (name: string) => {
+      let signalStarted!: () => void
+      const started = new Promise<void>((resolve) => (signalStarted = resolve))
+      let release!: () => void
+      const released = new Promise<void>((resolve) => (release = resolve))
+      const gateTool = tool({
+        name,
+        description: `Gated tool ${name}`,
+        inputSchema: z.object({}),
+        callback: async (_input, context) => {
+          signalStarted()
+          await new Promise<void>((resolve) => {
+            void released.then(resolve)
+            context?.cancelSignal.addEventListener('abort', () => resolve(), { once: true })
+          })
+          return `${name} done`
+        },
+      })
+      return { tool: gateTool, started, release }
+    }
+    const until = async (condition: () => boolean, label: string): Promise<void> => {
+      for (let i = 0; i < 2000 && !condition(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+      if (!condition()) throw new Error(`timed out waiting for: ${label}`)
+    }
+    const tasks = (agent: Agent) =>
+      agent.appState.get('strands.backgroundTasks') as unknown as { status: string }[] | undefined
+
+    const fast = gate('fast_work')
+    const slow = gate('slow_work')
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'fast_work', toolUseId: 'fast-use', input: {} },
+        { type: 'toolUseBlock', name: 'slow_work', toolUseId: 'slow-use', input: {} },
+      ])
+      .addTurn({ type: 'textBlock', text: 'first done' })
+      .addTurn({ type: 'textBlock', text: 'next done' })
+    const agent = new Agent({
+      model,
+      tools: [fast.tool, slow.tool],
+      backgroundTasks: { always: [fast.tool, slow.tool] },
+      printer: false,
+    })
+
+    // The invocation completes its final model pass, then blocks in the settlement
+    // wait with one settled task (prepared delivery) and one still running.
+    const first = agent.invoke('first')
+    await fast.started
+    await slow.started
+    await until(
+      () => agent.messages.some((m) => m.content.some((b) => b instanceof TextBlock && b.text === 'first done')),
+      'first final turn'
+    )
+    fast.release()
+    await until(() => (tasks(agent) ?? []).some((task) => task.status === 'completed'), 'fast task settled')
+    expect(model.callCount).toBe(2)
+
+    // cancel() must end the invocation: the prepared delivery continuation must not
+    // wipe the abort and run further model passes.
+    agent.cancel()
+    const result = await first
+    expect(result.stopReason).toBe('endTurn')
+    expect(result.lastMessage.content[0]).toEqual(new TextBlock('first done'))
+    expect(model.callCount).toBe(2)
+
+    // Nothing is lost: the abandoned delivery is re-delivered in the next invocation.
+    slow.release()
+    await until(() => (tasks(agent) ?? []).every((task) => task.status === 'completed'), 'slow task settled')
+    const next = await agent.invoke('next')
+    expect(next.lastMessage.content[0]).toEqual(new TextBlock('next done'))
+    expect(model.callCount).toBe(3)
+    const deliveredTools = agent.messages
+      .flatMap((m) => m.content)
+      .filter((b): b is ToolResultBlock => b instanceof ToolResultBlock && b.content[0] instanceof JsonBlock)
+      .map((b) => ((b.content[0] as JsonBlock).json as { toolName: string }).toolName)
+    expect(deliveredTools.sort()).toEqual(['fast_work', 'slow_work'])
+    expect(tasks(agent)).toBeUndefined()
   })
 })
