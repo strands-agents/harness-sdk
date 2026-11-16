@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
 _SAGEMAKER_PROVIDER_NAME = "sagemaker"
 _SAGEMAKER_DEFAULT_MIN_CONFIDENCE = 0.5
-# Seconds. The boto3 call runs in a worker thread that a cancelled ``ask`` cannot interrupt, so this
-# bounds how long an abandoned call keeps running.
+# Seconds, per attempt. The boto3 call runs in a worker thread that a cancelled ``ask`` cannot interrupt;
+# with botocore's default retries (3 attempts) an abandoned call can keep running for about 3x this.
 _DEFAULT_READ_TIMEOUT = 120
 
 
@@ -51,8 +51,9 @@ class SageMakerDecisionModel(DecisionModel):
     unchanged.
 
     The blocking boto3 call runs in a worker thread, so cancelling ``ask`` (for example on a caller
-    timeout) stops waiting for it but cannot stop the in-flight request; the client's read timeout
-    bounds how long it keeps running.
+    timeout) stops waiting for it but cannot stop the in-flight request. The client's read timeout
+    applies per attempt, so with botocore's default retries (3 attempts) the request can keep running
+    for about three times that long.
 
     Example:
         ```python
