@@ -1,12 +1,15 @@
-import { useState, useSyncExternalStore, type ReactElement } from 'react'
+import { useMemo, useState, useSyncExternalStore, type ReactElement } from 'react'
 import { useInput } from 'ink'
+import stringWidth from 'string-width'
 
+import { sanitizeTerminalText, wrapWords } from '../../terminal/text.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { useSpinner } from '../../ui/animation.js'
-import { Text, useTheme } from '../../ui/theme.js'
+import { Box, Text, useTheme } from '../../ui/theme.js'
 import {
   isGenerating,
   type CaseResult,
+  type EvaluatorVerdict,
   type ExperimentRun,
   type ExperimentsState,
   type ExperimentSummary,
@@ -48,6 +51,9 @@ const COMMAND = 'test'
 const FIXED_ROWS = 4
 const SCORE_COLUMN = 6
 const LIST_CHROME_ROWS = 3
+const CASE_CHROME_ROWS = 2
+const CASE_INDENT = '  '
+const CASE_LABEL_GAP = 2
 
 type TestRow =
   | { readonly kind: 'experiment'; readonly experiment: ExperimentSummary; readonly run?: TestRun }
@@ -323,19 +329,38 @@ const ResultsView = ({
 }): ReactElement => {
   const ordered = failuresFirst(results)
   const cursor = useCursor(ordered.length)
+  const reading = useSyncedState(false)
   const index = cursor.index
   const current = ordered[index]
   const failed = ordered.filter((result) => !result.passed).length
   const checks = results.cases.reduce((total, result) => total + result.verdicts.length, 0)
   const verdictRows = current?.verdicts.length ?? 0
   const capacity = Math.max(1, height - FIXED_ROWS - verdictRows - 1)
+  const read = (at: number): void => {
+    if (!ordered[at]) return
+    cursor.set(at)
+    reading.set(true)
+  }
   useInput((input, key) => {
+    if (reading.current() && current) return
+    const typed = shortcut(input, key)
     if (key.escape) onBack()
     else if (key.upArrow) cursor.move(-1)
     else if (key.downArrow) cursor.move(1)
-    else if (shortcut(input, key) === 'r' && failed > 0) onRerun()
-    else if (key.return) onRunAgain()
+    else if (key.return || key.rightArrow) read(cursor.current())
+    else if (typed === 'r' && failed > 0) onRerun()
+    else if (typed === 'a') onRunAgain()
   })
+  if (reading.value && current)
+    return (
+      <CaseView
+        width={width}
+        height={height}
+        experiment={results.experiment}
+        result={current}
+        onBack={() => reading.set(false)}
+      />
+    )
   const labelWidth = labelWidthFor(current?.verdicts.map(({ evaluator }) => evaluator) ?? [], width)
   return (
     <>
@@ -364,7 +389,7 @@ const ResultsView = ({
           ordered.map(({ name }) => name),
           width
         )}
-        onClick={cursor.set}
+        onClick={read}
       />
       <Rule width={width} />
       {current?.verdicts.map((verdict) => (
@@ -377,7 +402,119 @@ const ResultsView = ({
         />
       ))}
       <Fill />
-      <KeyHints hints={['↑↓', ...(failed > 0 ? ['r rerun failed'] : []), 'Enter run again', 'Esc back to the list']} />
+      <KeyHints
+        hints={[
+          '↑↓',
+          'Enter open case',
+          ...(failed > 0 ? ['r rerun failed'] : []),
+          'a rerun all',
+          'Esc back to the list',
+        ]}
+      />
+    </>
+  )
+}
+
+interface CaseRow {
+  readonly label: string
+  readonly lead: string
+  readonly text: string
+  readonly passed?: boolean
+}
+
+const verdictLead = ({ passed, score }: EvaluatorVerdict): string => `${passed ? '✓' : '✗'} ${score.toFixed(2)}  `
+
+const orNone = (text: string | undefined): string => (text?.trim() ? text : '(none)')
+
+const caseFields = (result: CaseResult): CaseRow[] => [
+  ...result.verdicts.map((verdict) => ({
+    label: verdict.evaluator,
+    lead: verdictLead(verdict),
+    text: verdict.reason,
+    passed: verdict.passed,
+  })),
+  { label: 'input', lead: '', text: result.input },
+  { label: 'expected', lead: '', text: orNone(result.expected) },
+  { label: 'output', lead: '', text: orNone(result.actual) },
+]
+
+const wrapCaseRows = (fields: readonly CaseRow[], width: number): CaseRow[] =>
+  fields.flatMap(({ label, lead, text, passed }) => {
+    const leadWidth = stringWidth(lead)
+    return wrapWords(sanitizeTerminalText(text), width - leadWidth).map((part, index) => ({
+      label: index === 0 ? label : '',
+      lead: index === 0 ? lead : ' '.repeat(leadWidth),
+      text: part,
+      ...(passed === undefined ? {} : { passed }),
+    }))
+  })
+
+const CaseView = ({
+  width,
+  height,
+  experiment,
+  result,
+  onBack,
+}: {
+  width: number
+  height: number
+  experiment: string
+  result: CaseResult
+  onBack: () => void
+}): ReactElement => {
+  const { success, error } = useTheme()
+  const fields = useMemo(() => caseFields(result), [result])
+  const labelWidth = labelWidthFor(
+    fields.map(({ label }) => label),
+    width
+  )
+  const labelColumn = CASE_INDENT.length + labelWidth
+  const rows = useMemo(() => wrapCaseRows(fields, width - labelColumn - CASE_LABEL_GAP), [fields, width, labelColumn])
+  const room = Math.max(1, height - CASE_CHROME_ROWS)
+  const lastOffset = Math.max(0, rows.length - room)
+  const page = Math.max(1, room - 1)
+  const scroll = useSyncedState(0)
+  const offset = Math.min(scroll.value, lastOffset)
+  const scrollBy = (step: number): void =>
+    scroll.set((value) => Math.max(0, Math.min(lastOffset, Math.min(value, lastOffset) + step)))
+  useInput((_input, key) => {
+    if (key.escape || key.return || key.leftArrow || key.backspace || key.delete) onBack()
+    else if (key.upArrow) scrollBy(-1)
+    else if (key.downArrow) scrollBy(1)
+    else if (key.pageUp) scrollBy(-page)
+    else if (key.pageDown) scrollBy(page)
+    else if (key.home) scroll.set(0)
+    else if (key.end) scroll.set(lastOffset)
+  })
+  const visible = rows.slice(offset, offset + room)
+  const scrolls = rows.length > room
+  return (
+    <>
+      <PanelTitle
+        name={COMMAND}
+        parts={[experiment, result.name, result.passed ? 'passed' : 'failed']}
+        right={
+          scrolls ? (
+            <Text dimColor>{`lines ${offset + 1}-${offset + visible.length} of ${rows.length}`}</Text>
+          ) : undefined
+        }
+      />
+      <Box flexDirection="column" height={room} flexShrink={0} overflow="hidden">
+        {visible.map((row, position) => (
+          <Box key={offset + position} height={1} flexShrink={0} overflow="hidden">
+            <Box width={labelColumn} marginRight={CASE_LABEL_GAP} flexShrink={0} overflow="hidden">
+              <Text dimColor wrap="truncate-end">{`${CASE_INDENT}${oneLine(row.label)}`}</Text>
+            </Box>
+            <Text wrap="truncate-end">
+              {row.lead ? <Text color={row.passed ? success : error}>{row.lead}</Text> : null}
+              {row.text}
+            </Text>
+          </Box>
+        ))}
+      </Box>
+      <KeyHints
+        hints={scrolls ? ['↑↓ scroll', 'PgUp/PgDn page', 'Esc back to the report'] : ['Esc back to the report']}
+      />
     </>
   )
 }

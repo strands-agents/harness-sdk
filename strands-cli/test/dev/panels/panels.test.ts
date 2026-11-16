@@ -290,7 +290,7 @@ describe('TestPanel', () => {
     expect(session.run).toHaveBeenCalledWith([cities])
   })
 
-  it('shouldShowACaseVerdictsWhenTheUserClicksTheCaseInTheReport', async () => {
+  it('shouldOpenTheCaseWhenTheUserClicksItInTheReport', async () => {
     const { session } = testSession(withRuns())
     const { click, text } = await showInFrame(session, new DevPanelClicks())
     await click('refunds')
@@ -298,10 +298,110 @@ describe('TestPanel', () => {
 
     await click('standard-refund')
 
-    await vi.waitFor(() => expect(text()).toContain('› ✓ standard-refund'))
+    await vi.waitFor(() => expect(text()).toContain('test · refunds · standard-refund · passed'))
     expect(text()).toMatch(/OutputEvaluator\s+✓ 1\.00\s+Refunded correctly/u)
   })
+
+  it('shouldRunEveryCaseAgainWhenTheUserPressesAInTheReport', async () => {
+    const { session } = testSession(withRuns())
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+    await press(DOWN_KEY)
+    await press('\r')
+    const report = text()
+
+    await press('a')
+
+    expect(report).toContain('↑↓ · Enter open case · r rerun failed · a rerun all · Esc back to the list')
+    expect(session.run).toHaveBeenCalledWith([refunds])
+  })
+
+  it.each([
+    ['Enter', '\r'],
+    ['→', RIGHT_KEY],
+  ])('shouldShowTheWholeReasonAndOutputWhenTheUserPresses%sOnACase', async (_key, key) => {
+    const { session, text } = await openFailedCase({ reason: LONG_REASON, actual: LONG_OUTPUT }, key)
+
+    const flat = text().replace(/\s+/gu, ' ')
+    expect(text()).toContain('test · refunds · refund-window · failed')
+    expect(flat).toContain(`OutputEvaluator ✗ 0.00 ${LONG_REASON}`)
+    expect(flat).toContain(`output ${LONG_OUTPUT}`)
+    expect(flat).toContain('input Refund order 1094')
+    expect(flat).toContain('expected Refuse the refund because the order is outside the 30-day window')
+    expect(session.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldStartEachWrappedRowOfAReasonUnderItsFirstWord', async () => {
+    const { text } = await openFailedCase({ reason: LONG_REASON, actual: 'Refunded.' })
+
+    const lines = text().split('\n')
+    const first = lines.findIndex((line) => line.includes('The agent issued'))
+    expect(first).toBeGreaterThanOrEqual(0)
+    expect(lines[first + 1]!.search(/\S/u)).toBe(lines[first]!.indexOf('The agent issued'))
+  })
+
+  it.each([
+    ['Down', DOWN_KEY, 'lines 2-17 of 33', 'step 14'],
+    ['PageDown', '\u001b[6~', 'lines 16-31 of 33', 'step 28'],
+    ['End', '\u001b[F', 'lines 18-33 of 33', 'step 30'],
+  ])('shouldScrollALongCaseWhenTheUserPresses%s', async (_key, key, position, revealed) => {
+    const { press, text } = await openFailedCase({ reason: 'issued refund without checking', actual: STEPS })
+    const before = text()
+
+    await press(key)
+
+    expect(before).toContain('lines 1-16 of 33')
+    expect(before).not.toContain(revealed)
+    expect(text()).toContain(position)
+    expect(text()).toContain(revealed)
+  })
+
+  it.each([
+    ['Esc', '\u001b'],
+    ['Left', '\u001b[D'],
+    ['Backspace', '\u007f'],
+    ['Enter', '\r'],
+  ])('shouldGoBackToTheReportWhenTheUserPresses%sInACase', async (_key, key) => {
+    const { press, text, props } = await openFailedCase({ reason: 'issued refund without checking', actual: '' })
+
+    await press(key)
+
+    await vi.waitFor(() => expect(text()).toContain('› ✗ refund-window'))
+    expect(text()).toContain('Enter open case')
+    expect(props.close).not.toHaveBeenCalled()
+  })
 })
+
+const LONG_REASON =
+  'The agent issued a refund before it confirmed eligibility. Policy requires a delivery-date check before any refund, and order 1094 shipped 41 days ago, which is outside the 30-day window.'
+
+const LONG_OUTPUT =
+  'I have refunded order 1094 in full. You will see $42.10 back on your original card within three to five business days, and I sent a confirmation email to the address on the order.'
+
+const STEPS = Array.from({ length: 30 }, (_, index) => `step ${index + 1}`).join('\n')
+
+const openFailedCase = async ({ reason, actual }: { reason: string; actual: string }, openKey = '\r') => {
+  const results: TestResults = {
+    ...finishedResults,
+    cases: [
+      finishedResults.cases[0]!,
+      {
+        name: 'refund-window',
+        input: 'Refund order 1094',
+        expected: 'Refuse the refund because the order is outside the 30-day window',
+        actual,
+        passed: false,
+        verdicts: [{ evaluator: 'OutputEvaluator', score: 0, passed: false, reason }],
+      },
+    ],
+  }
+  const { session } = testSession([{ experiment: refunds, run: { status: 'done', results } }])
+  const props = freshProps()
+  const shown = await show(createElement(TestPanel, { ...props, session }), 24)
+  await shown.press(DOWN_KEY)
+  await shown.press('\r')
+  await shown.press(openKey)
+  return { ...shown, session, props }
+}
 
 const optimizeSession = (initial: OptimizeState) => {
   const states = store(initial)
