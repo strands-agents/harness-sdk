@@ -41,7 +41,6 @@ export interface GenerationSettings {
   readonly evaluators: readonly EvaluatorChoice[]
   readonly model: string
   readonly parallel: number
-  readonly expectedOutput: boolean
   readonly expectedTrajectory: boolean
   readonly expectedInteractions: boolean
   readonly metadata: boolean

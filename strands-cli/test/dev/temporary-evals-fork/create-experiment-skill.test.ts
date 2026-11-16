@@ -43,7 +43,6 @@ describe('TEMPORARY create-experiment flow', () => {
     evaluators: [{ name: 'OutputEvaluator' }],
     model: '',
     parallel: 4,
-    expectedOutput: true,
     expectedTrajectory: false,
     expectedInteractions: false,
     metadata: false,

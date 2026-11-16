@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
-import type { EvalCase, Experiment, ExperimentSummary } from '../panels/model.js'
+import { missingCaseField, type EvalCase, type Experiment, type ExperimentSummary } from '../panels/model.js'
 import { isTemporaryExperimentName } from './experiment.js'
 
 export type TemporaryExperimentUse = 'optimize' | 'test'
@@ -249,6 +249,16 @@ export const writeTemporaryExperimentCases = async (
   raw: TemporaryExperimentDocument,
   cases: readonly TemporaryRawCase[]
 ): Promise<void> => writeDocument(path, { ...raw, cases })
+
+export const temporaryDropIncompleteCases = async (
+  path: string
+): Promise<{ readonly complete: number; readonly dropped: number }> => {
+  const { raw } = await readTemporaryExperimentFile(path)
+  const complete = raw.cases.filter((rawCase, index) => !missingCaseField(evalCase(rawCase, index)))
+  const dropped = raw.cases.length - complete.length
+  if (dropped > 0) await writeTemporaryExperimentCases(path, raw, complete)
+  return { complete: complete.length, dropped }
+}
 
 export const createTemporaryExperimentCases = async (
   path: string,

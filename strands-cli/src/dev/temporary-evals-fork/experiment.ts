@@ -7,7 +7,7 @@ import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 import type { GenerationError, GenerationSettings } from '../panels/model.js'
 import type { DevWorkspace, DevWorkspaceConfig } from '../workspace.js'
-import { temporaryCaseCount } from './experiment-files.js'
+import { temporaryDropIncompleteCases } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
 import { temporaryEvaluatorArguments } from './evaluators.js'
 import {
@@ -56,6 +56,7 @@ export interface TemporaryGenerationRequest {
 export interface TemporaryGenerationOutcome {
   readonly path: string
   readonly cases: number
+  readonly dropped: number
 }
 
 export interface TemporaryExperimentDependencies {
@@ -103,7 +104,6 @@ export const temporaryGenerateArguments = (
   ...(settings.model.trim() ? ['--model', generatorModelId(settings.model)] : []),
   '--max-parallel-num-cases',
   String(settings.parallel),
-  ...(settings.expectedOutput ? [] : ['--no-expected-output']),
   ...(settings.expectedTrajectory ? ['--expected-trajectory'] : []),
   ...(settings.expectedInteractions ? ['--expected-interactions'] : []),
   ...(settings.metadata ? ['--metadata'] : []),
@@ -193,12 +193,16 @@ export const generateTemporaryExperiment = async (
   if (exit.code !== 0)
     throw temporaryEvalsFailure('strands-evals generate', exit, environment, generatorNextStep(exit.code))
   if (!existsSync(files.draft)) throw new Error(`strands-evals generate finished without writing ${files.draft}.`)
-  const cases = await temporaryCaseCount(files.draft)
-  if (cases === 0) {
+  const { complete, dropped } = await temporaryDropIncompleteCases(files.draft)
+  if (complete === 0) {
     await rm(files.draft, { force: true })
-    throw new Error('strands-evals generate wrote no cases, because every case failed.')
+    throw new Error(
+      dropped > 0
+        ? 'strands-evals generate wrote no case with both an input and an expected answer.'
+        : 'strands-evals generate wrote no cases, because every case failed.'
+    )
   }
-  return { path: files.draft, cases }
+  return { path: files.draft, cases: complete, dropped }
 }
 
 interface Diagnosis {

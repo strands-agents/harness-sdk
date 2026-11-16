@@ -3,7 +3,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { GenerationSettings } from '../../../src/dev/panels/model.js'
+import type { CaseChange, GenerationSettings } from '../../../src/dev/panels/model.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import { temporaryGenerationJobs } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
@@ -62,6 +62,7 @@ interface ControlledRun {
   readonly signal?: AbortSignal
   progress(event: object): Promise<void>
   finish(cases: readonly string[], code?: number): Promise<void>
+  finishWith(document: object): Promise<void>
 }
 
 const controlledGenerator = () => {
@@ -81,6 +82,10 @@ const controlledGenerator = () => {
           finish: async (cases, code = 0) => {
             if (code === 0) await writeFileAt(flagValue(args, '--output'), JSON.stringify(experimentDocument(cases)))
             resolve({ code, stdout: '', stderrTail: code === 0 ? [] : ['strands-evals generate: error: boom'] })
+          },
+          finishWith: async (document) => {
+            await writeFileAt(flagValue(args, '--output'), JSON.stringify(document))
+            resolve({ code: 0, stdout: '', stderrTail: [] })
           },
         })
       })
@@ -321,6 +326,49 @@ describe('TEMPORARY experiment generation session', () => {
     expect(experiments.snapshot().review?.notice).toMatchObject({ tone: 'error' })
   })
 
+  it.each<[string, CaseChange]>([
+    ['Input', { input: '  ' }],
+    ['ExpectedAnswer', { expected: '' }],
+  ])('shouldRefuseToSaveWhenAKeptCaseHasABlank%s', async (_field, change) => {
+    const { workspace, experiments, generator, start } = await setup()
+    start({ name: 'refunds' })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    await generator.runs[0]!.finish(['c0', 'c1'])
+    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('ready'))
+    experiments.review(onlyGeneration(experiments).id)
+    experiments.keepAll()
+    experiments.edit(1, change)
+
+    expect(await experiments.save()).toBeUndefined()
+
+    expect(experiments.snapshot().review?.notice).toEqual({
+      tone: 'error',
+      text: 'c1 has a blank input or expected answer. Press e to fix it, or d to drop the case.',
+    })
+    expect(existsSync(join(workspace.directory!, 'tmp/experiments/refunds.json'))).toBe(false)
+  })
+
+  it('shouldLeaveOutAndCountAsFailedTheGeneratedCasesWithABlankInputOrExpectedAnswer', async () => {
+    const { experiments, generator, notices, start } = await setup()
+    start({ name: 'refunds', cases: 3 })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    const [complete, blankInput, blankAnswer] = experimentDocument(['c0', 'c1', 'c2']).cases
+
+    await generator.runs[0]!.finishWith({
+      ...experimentDocument([]),
+      cases: [complete, { ...blankInput, input: ' ' }, { ...blankAnswer, expected_output: '' }],
+    })
+    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('ready'))
+    experiments.review(onlyGeneration(experiments).id)
+
+    expect(onlyGeneration(experiments)).toMatchObject({ made: 1, failed: 2 })
+    expect(experiments.snapshot().review?.cases.map(({ name }) => name)).toEqual(['c0'])
+    expect(notices.at(-1)).toEqual({
+      status: 'success',
+      text: 'experiment · refunds · 1 case drafted, 2 failed · /experiment to review',
+    })
+  })
+
   it('shouldKeepTheReviewChoicesWhenTheReviewIsClosedAndOpenedAgain', async () => {
     const { experiments, generator, start } = await setup()
     start({ name: 'refunds' })
@@ -501,7 +549,7 @@ describe('TEMPORARY experiment generation session', () => {
     expect(context.submit).toHaveBeenCalledWith(
       '$create-experiment The experiment refunds stopped: Bedrock cannot use bedrock/openai.gpt-oss-120b-1:0. ' +
         'Its settings were: task "Answers refund questions", 3 cases, 0 topics, ' +
-        'evaluators OutputEvaluator and ToolCalled {"tool_name":"lookup_order"}, expected output on, ' +
+        'evaluators OutputEvaluator and ToolCalled {"tool_name":"lookup_order"}, ' +
         'expected trajectory on, expected interactions off, metadata off, Bedrock generator model bedrock/openai.gpt-oss-120b-1:0, 4 at once. ' +
         'Help me fix the settings, then generate it again.'
     )

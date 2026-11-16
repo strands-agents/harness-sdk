@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -35,7 +35,6 @@ const settings = (overrides: Partial<GenerationSettings> = {}): GenerationSettin
   evaluators: [{ name: 'OutputEvaluator' }],
   model: '',
   parallel: 4,
-  expectedOutput: true,
   expectedTrajectory: false,
   expectedInteractions: false,
   metadata: false,
@@ -67,16 +66,20 @@ const environmentRunner = (workspace: DevWorkspace) =>
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 
-const generating = (cases: number, events: readonly object[] = []) =>
+const completeCases = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    name: `c${index}`,
+    input: `question ${index}`,
+    expected_output: `answer ${index}`,
+  }))
+
+const generating = (cases: readonly object[], events: readonly object[] = []) =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
     await writeFileAt(
       flagValue(args, '--temporary-progress'),
       events.map((event) => `${JSON.stringify(event)}\n`).join('')
     )
-    await writeFileAt(
-      flagValue(args, '--output'),
-      JSON.stringify({ cases: Array.from({ length: cases }, (_, index) => ({ name: `c${index}` })) })
-    )
+    await writeFileAt(flagValue(args, '--output'), JSON.stringify({ cases }))
     return { code: 0, stdout: '', stderrTail: [] }
   })
 
@@ -121,7 +124,6 @@ describe('TEMPORARY experiment generation', () => {
         evaluators: [{ name: 'TrajectoryEvaluator' }],
         model: 'us.anthropic.claude-sonnet',
         parallel: 2,
-        expectedOutput: false,
         expectedTrajectory: true,
         expectedInteractions: true,
         metadata: true,
@@ -151,7 +153,6 @@ describe('TEMPORARY experiment generation', () => {
       'us.anthropic.claude-sonnet',
       '--max-parallel-num-cases',
       '2',
-      '--no-expected-output',
       '--expected-trajectory',
       '--expected-interactions',
       '--metadata',
@@ -231,10 +232,10 @@ describe('TEMPORARY experiment generation', () => {
 
     const outcome = await generateTemporaryExperiment(
       { workspace, settings: settings(), context: 'context', files, onEvent: (event) => events.push(event) },
-      { run: environmentRunner(workspace), spawnGenerator: generating(2, progress) }
+      { run: environmentRunner(workspace), spawnGenerator: generating(completeCases(2), progress) }
     )
 
-    expect(outcome).toEqual({ path: files.draft, cases: 2 })
+    expect(outcome).toEqual({ path: files.draft, cases: 2, dropped: 0 })
     expect(events).toEqual(progress)
   })
 
@@ -245,9 +246,46 @@ describe('TEMPORARY experiment generation', () => {
     await expect(
       generateTemporaryExperiment(
         { workspace, settings: settings(), context: 'context', files },
-        { run: environmentRunner(workspace), spawnGenerator: generating(0) }
+        { run: environmentRunner(workspace), spawnGenerator: generating([]) }
       )
     ).rejects.toThrow('wrote no cases, because every case failed')
+
+    expect(existsSync(files.draft)).toBe(false)
+  })
+
+  it('shouldLeaveOutTheCasesWithABlankInputOrExpectedAnswerWhenTheGeneratorWritesThem', async () => {
+    const workspace = await workspaceFixture()
+    const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
+    const complete = { name: 'c0', input: 'question 0', expected_output: 'answer 0' }
+    const written = [
+      complete,
+      { name: 'c1', input: '  ', expected_output: 'answer 1' },
+      { name: 'c2', input: 'question 2', expected_output: '' },
+      { name: 'c3', input: 'question 3', expected_output: null },
+    ]
+
+    const outcome = await generateTemporaryExperiment(
+      { workspace, settings: settings(), context: 'context', files },
+      { run: environmentRunner(workspace), spawnGenerator: generating(written) }
+    )
+
+    expect(outcome).toEqual({ path: files.draft, cases: 1, dropped: 3 })
+    expect(JSON.parse(await readFile(files.draft, 'utf8')).cases).toEqual([complete])
+  })
+
+  it('shouldDeleteTheDraftAndSayWhyWhenEveryGeneratedCaseHasABlankInputOrExpectedAnswer', async () => {
+    const workspace = await workspaceFixture()
+    const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
+
+    await expect(
+      generateTemporaryExperiment(
+        { workspace, settings: settings(), context: 'context', files },
+        {
+          run: environmentRunner(workspace),
+          spawnGenerator: generating([{ name: 'c0', input: '', expected_output: 'answer 0' }]),
+        }
+      )
+    ).rejects.toThrow('strands-evals generate wrote no case with both an input and an expected answer')
 
     expect(existsSync(files.draft)).toBe(false)
   })
@@ -284,7 +322,7 @@ describe('TEMPORARY experiment generation', () => {
     const workspace = await workspaceFixture()
     const abort = new AbortController()
     abort.abort()
-    const spawnGenerator = generating(1)
+    const spawnGenerator = generating(completeCases(1))
 
     await expect(
       generateTemporaryExperiment(

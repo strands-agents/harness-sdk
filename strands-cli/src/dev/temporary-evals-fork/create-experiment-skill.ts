@@ -45,7 +45,7 @@ Tool settings reference (use silently unless asked):
 - task: required, the specific behavior being tested; context: relevant scenarios or constraints.
 - cases: 1–50, default 10; topics: 0 disables grouping.
 - evaluators: use strands_dev_evaluators for names and required settings.
-- expectedOutput: default on; expectedTrajectory, expectedInteractions, metadata: default off.
+- Every case gets an input and an expected output. expectedTrajectory, expectedInteractions, metadata: default off.
 - model: explicitly selected Bedrock model or the evals Python SDK default, never inferred from the chat model; parallel: 1–10, default 4.
 - name: available letters, numbers, dots, dashes, and underscores.`
 
@@ -68,7 +68,6 @@ const settingsSummary = (settings: GenerationSettings): string =>
     `${settings.cases} cases`,
     `${settings.topics} topics`,
     `evaluators ${settings.evaluators.map(evaluatorSummary).join(' and ')}`,
-    `expected output ${onOff(settings.expectedOutput)}`,
     `expected trajectory ${onOff(settings.expectedTrajectory)}`,
     `expected interactions ${onOff(settings.expectedInteractions)}`,
     `metadata ${onOff(settings.metadata)}`,

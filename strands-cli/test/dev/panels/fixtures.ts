@@ -50,7 +50,6 @@ export const generationSettings = (overrides: Partial<GenerationSettings> = {}):
   evaluators: [{ name: 'OutputEvaluator' }],
   model: 'us.anthropic.claude-test',
   parallel: 4,
-  expectedOutput: true,
   expectedTrajectory: false,
   expectedInteractions: false,
   metadata: false,

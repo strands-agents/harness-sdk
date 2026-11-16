@@ -6,6 +6,7 @@ import { errorMessage } from '../../terminal/text.js'
 import type { DevChatJob } from '../../ui/chat/types.js'
 import {
   isGenerating,
+  missingCaseField,
   type CaseChange,
   type DraftCase,
   type ExperimentSession,
@@ -329,6 +330,12 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     const kept = opened.cases.filter(({ draft }) => draft.kept)
     if (kept.length === 0)
       return this.note({ tone: 'error', text: 'Keep at least one case with Space or a, then press Enter.' })
+    const incomplete = kept.find(({ draft }) => missingCaseField(draft))
+    if (incomplete)
+      return this.note({
+        tone: 'error',
+        text: `${incomplete.draft.name} has a blank input or expected answer. Press e to fix it, or d to drop the case.`,
+      })
     const path = opened.path ?? join(this.folder(), `${opened.name}.json`)
     const shown = shownPath(this.host().workspace, path)
     if (!opened.path && existsSync(path))
@@ -401,7 +408,6 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       // A model ID alone does not identify the chat provider or its credentials.
       model: '',
       parallel: DEFAULT_PARALLEL,
-      expectedOutput: true,
       expectedTrajectory: false,
       expectedInteractions: false,
       metadata: false,
@@ -533,7 +539,12 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       }
       const { raw } = await readTemporaryExperimentFile(outcome.path)
       job.draft = raw
-      this.update(job, { phase: 'ready', made: raw.cases.length, endedAt: Date.now() })
+      this.update(job, {
+        phase: 'ready',
+        made: raw.cases.length,
+        failed: job.generation.failed + outcome.dropped,
+        endedAt: Date.now(),
+      })
       return this.jobs.get(job.generation.id) === job
     } catch (error) {
       if (job.abort.signal.aborted || this.jobs.get(job.generation.id) !== job) {

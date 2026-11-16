@@ -7,6 +7,7 @@ import {
   listTemporaryExperiments,
   readTemporaryExperimentFile,
   temporaryBlankCase,
+  temporaryDropIncompleteCases,
   temporaryNamedExperiment,
   temporaryRunnableExperiment,
   writeTemporaryExperimentCases,
@@ -155,6 +156,39 @@ describe('TEMPORARY experiment files', () => {
 
     expect(await readJson(path)).toEqual(experimentDocument(rawCase('c0')))
     expect(await readdir(join(path, '..'))).toEqual(['refunds.json'])
+  })
+
+  it('shouldDropTheCasesWithABlankInputOrExpectedAnswerWhenADraftIsChecked', async () => {
+    const path = join(await temporaryDirectory(), 'draft.json')
+    await writeJson(
+      path,
+      experimentDocument(
+        rawCase('c0'),
+        rawCase('c1', ' '),
+        rawCase('c2', null),
+        rawCase('c3', 'question', '\n'),
+        rawCase('c4', 'question', null),
+        rawCase('c5', { order: 7 }, { refund: true })
+      )
+    )
+
+    const checked = await temporaryDropIncompleteCases(path)
+
+    expect(checked).toEqual({ complete: 2, dropped: 4 })
+    expect(await readJson(path)).toEqual(
+      experimentDocument(rawCase('c0'), rawCase('c5', { order: 7 }, { refund: true }))
+    )
+  })
+
+  it('shouldLeaveTheFileAsItIsWhenEveryCaseHasAnInputAndAnExpectedAnswer', async () => {
+    const path = join(await temporaryDirectory(), 'draft.json')
+    const text = JSON.stringify(experimentDocument(rawCase('c0'), rawCase('c1')))
+    await writeFile(path, text)
+
+    const checked = await temporaryDropIncompleteCases(path)
+
+    expect(checked).toEqual({ complete: 2, dropped: 0 })
+    expect(await readFile(path, 'utf8')).toBe(text)
   })
 
   it.each([
