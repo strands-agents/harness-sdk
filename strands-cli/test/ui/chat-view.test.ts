@@ -23,7 +23,9 @@ import {
   maxPermissionScroll,
   PERMISSION_LABEL_WIDTH,
   permissionLines,
+  summarizeToolInput,
   summarizeToolResult,
+  toolAction,
 } from '../../src/ui/presentation.js'
 import { wrapLines } from '../../src/terminal/text.js'
 import {
@@ -50,6 +52,15 @@ afterEach(() => {
 })
 
 describe('ChatView', () => {
+  it.each(['manage_background_task', 'strands_manage_background_task'])('labels %s calls', (name) => {
+    expect(['list', 'get', 'cancel'].map((mode) => toolAction(name, { mode }))).toEqual([
+      'List background tasks',
+      'Read background task',
+      'Cancel background task',
+    ])
+    expect(summarizeToolInput(name, { mode: 'get', taskId: 'task-1' })).toBe('task-1')
+  })
+
   it.each([40, 70, 100])('keeps the parent and interrupt shortcuts visible in a subagent chat at %sx24', (width) => {
     const output = sanitizeTerminalText(
       renderView({
@@ -1601,7 +1612,7 @@ describe('ChatView', () => {
                 id: 'turn-1:3',
                 type: 'tool',
                 toolUseId: 'list-1',
-                name: 'strands_manage_background_task',
+                name: 'manage_background_task',
                 input: { mode: 'list' },
                 status: 'success',
               },

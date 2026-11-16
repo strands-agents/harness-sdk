@@ -20,7 +20,7 @@ const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 function deliveries(agent: Agent): ToolUseBlock[] {
   const blocks = agent.messages.flatMap((message) => message.content)
   return blocks.filter(
-    (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === 'strands_manage_background_task'
+    (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === 'manage_background_task'
   )
 }
 
@@ -29,6 +29,28 @@ function persistedTasks(agent: Agent): BackgroundTask[] | undefined {
 }
 
 describe('BackgroundTasks', () => {
+  it.each(['manage_background_task', 'strands_manage_background_task'])(
+    'runs %s calls in the foreground',
+    async (name) => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name, toolUseId: 'manage-use', input: { mode: 'list' } })
+        .addTurn({ type: 'textBlock', text: 'Listed.' })
+      const agent = new Agent({ model, backgroundTasks: { always: ['*'] }, printer: false })
+
+      await agent.invoke('List tasks.')
+
+      expect(agent.messages.flatMap((message) => message.content)).toContainEqual({
+        type: 'toolResultBlock',
+        toolUseId: 'manage-use',
+        status: 'success',
+        content: [{ type: 'jsonBlock', json: { tasks: [] } }],
+      })
+      expect(agent.toolRegistry.get('strands_manage_background_task')?.description).toContain(
+        'Use manage_background_task instead.'
+      )
+    }
+  )
+
   it('dispatches selected calls through the normal tool pipeline and delivers their results', async () => {
     const work = tool({
       name: 'work',
@@ -78,7 +100,7 @@ describe('BackgroundTasks', () => {
     const [delivery] = deliveries(agent)
     expect(delivery).toEqual({
       type: 'toolUseBlock',
-      name: 'strands_manage_background_task',
+      name: 'manage_background_task',
       toolUseId: expect.any(String),
       input: { mode: 'get', taskId: delivery!.toolUseId },
     })
@@ -226,7 +248,7 @@ describe('BackgroundTasks', () => {
     expect(deliveries(agent)).toEqual([
       {
         type: 'toolUseBlock',
-        name: 'strands_manage_background_task',
+        name: 'manage_background_task',
         toolUseId: expect.any(String),
         input: { mode: 'get', taskId: expect.any(String) },
       },
@@ -359,7 +381,7 @@ describe('BackgroundTasks', () => {
         },
       ])
     const taskId = persistedTasks(agent)![0]!.taskId
-    const inspected = await agent.tool.strands_manage_background_task!.invoke(
+    const inspected = await agent.tool.manage_background_task!.invoke(
       { mode: 'get', taskId },
       { recordDirectToolCall: false }
     )
@@ -466,10 +488,7 @@ describe('BackgroundTasks', () => {
       error: { type: 'executionError', message: expect.any(String) },
     })
     await expect(
-      agent.tool.strands_manage_background_task!.invoke(
-        { mode: 'cancel', taskId: 'working' },
-        { recordDirectToolCall: false }
-      )
+      agent.tool.manage_background_task!.invoke({ mode: 'cancel', taskId: 'working' }, { recordDirectToolCall: false })
     ).resolves.toEqual({
       type: 'toolResultBlock',
       toolUseId: expect.any(String),
@@ -482,7 +501,7 @@ describe('BackgroundTasks', () => {
     expect(deliveries(agent)).toEqual([
       {
         type: 'toolUseBlock',
-        name: 'strands_manage_background_task',
+        name: 'manage_background_task',
         toolUseId: 'working',
         input: { mode: 'get', taskId: 'working' },
       },
@@ -557,7 +576,7 @@ describe('BackgroundTasks', () => {
 
     await blockedToolStarted
     expect(
-      toolSpecs?.find((spec) => spec.name === 'strands_manage_background_task')?.inputSchema?.properties
+      toolSpecs?.find((spec) => spec.name === 'manage_background_task')?.inputSchema?.properties
     ).not.toHaveProperty('_background_execution')
     const blockedTask = persistedTasks(agent)?.find((task) => task.toolName === 'blocked')
     expect(blockedTask).toBeDefined()

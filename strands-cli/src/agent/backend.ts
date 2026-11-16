@@ -410,7 +410,9 @@ export class StrandsChatBackend implements ChatBackend {
       const runUsage = RunUsage.start(this._runtime.agent)
       let latestModelUsage: Usage | undefined
       let next = await stream.next()
-      const projectionOptions = this._runtime.agent.tools.some((tool) => tool.name === 'strands_manage_background_task')
+      const projectionOptions = this._runtime.agent.tools.some(
+        (tool) => tool.name === 'manage_background_task' || tool.name === 'strands_manage_background_task'
+      )
         ? { alwaysBackgroundTools: ALWAYS_BACKGROUND_TOOL_NAMES }
         : {}
       while (!next.done) {

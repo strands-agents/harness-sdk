@@ -413,6 +413,7 @@ function summarizeValue(value: unknown): string {
 const TOOL_ACTIONS: Readonly<Record<string, string>> = {
   bash: 'Shell',
   edit: 'Edit',
+  manage_background_task: 'Background tasks',
   message_agent: 'Message',
   subagent: 'Subagent',
   read: 'Read',
@@ -431,7 +432,7 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
 
 export function toolAction(name: string, input?: JSONValue): string {
   const key = name.replaceAll('-', '_').toLowerCase()
-  if (key === 'strands_manage_background_task' && isRecord(input)) {
+  if ((key === 'manage_background_task' || key === 'strands_manage_background_task') && isRecord(input)) {
     const action = input.mode ?? input.action
     if (action === 'list') return 'List background tasks'
     if (action === 'get') return 'Read background task'
@@ -496,7 +497,7 @@ export function summarizeToolInput(name: string, input: JSONValue): string {
       typeof input.action === 'string' ? input.action : typeof input.mode === 'string' ? input.mode : undefined
     const taskId =
       typeof input.task_id === 'string' ? input.task_id : typeof input.taskId === 'string' ? input.taskId : undefined
-    if (normalizedName === 'strands_manage_background_task') {
+    if (normalizedName === 'manage_background_task' || normalizedName === 'strands_manage_background_task') {
       return truncateText(taskId ?? '', 160)
     }
     if (action || taskId) {

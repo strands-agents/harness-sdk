@@ -35,10 +35,12 @@ import { isTaskStatusTerminal, type BackgroundTask, type BackgroundTasksConfig }
 
 const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 const BACKGROUND_PROPERTY = '_background_execution'
-const MANAGE_TOOL_NAME = 'strands_manage_background_task'
+const MANAGE_TOOL_NAME = 'manage_background_task'
+const LEGACY_MANAGE_TOOL_NAME = 'strands_manage_background_task'
 const COMPOSITE_SCHEMA_KEYS = ['$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'] as const
 const FOREGROUND_TOOL_NAMES = new Set([
   MANAGE_TOOL_NAME,
+  LEGACY_MANAGE_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
   'summarize_context',
   'truncate_context',
@@ -52,7 +54,9 @@ export class BackgroundTasks implements Plugin {
   private readonly _config: BackgroundTasksConfig
   private readonly _executeTool
   private readonly _policy: ReturnType<typeof resolvePolicy>
-  private readonly _manageTool: Tool
+  private readonly _manageTool
+  /** @deprecated Use manage_background_task instead. Removal is reserved for a future major release. */
+  private readonly _legacyManageTool: Tool
   private readonly _tasks = new Map<string, BackgroundTask>()
   private _agent!: Agent
   private _manager!: BackgroundTaskManager
@@ -68,18 +72,19 @@ export class BackgroundTasks implements Plugin {
     this._config = config
     this._executeTool = executeTool
     this._policy = resolvePolicy(config)
+    const inputSchema = z.object({
+      mode: z.enum(['list', 'get', 'cancel']).describe('Whether to list, inspect, or cancel background tasks.'),
+      taskId: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('The background task ID returned when the task was dispatched. Required for get and cancel.'),
+    })
     this._manageTool = tool({
       name: MANAGE_TOOL_NAME,
       description:
         "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. Do not poll for results.",
-      inputSchema: z.object({
-        mode: z.enum(['list', 'get', 'cancel']).describe('Whether to list, inspect, or cancel background tasks.'),
-        taskId: z
-          .string()
-          .min(1)
-          .optional()
-          .describe('The background task ID returned when the task was dispatched. Required for get and cancel.'),
-      }),
+      inputSchema,
       callback: async ({ mode, taskId }) => {
         if (mode === 'list') {
           return {
@@ -94,10 +99,17 @@ export class BackgroundTasks implements Plugin {
         return { taskId: cancelled.taskId, status: cancelled.status }
       },
     })
+    this._legacyManageTool = tool({
+      name: LEGACY_MANAGE_TOOL_NAME,
+      description:
+        'strands_manage_background_task is deprecated and will be removed in a future major release. Use manage_background_task instead.',
+      inputSchema,
+      callback: (input, context) => this._manageTool.invoke(input, context),
+    })
   }
 
   getTools(): Tool[] {
-    return [this._manageTool]
+    return [this._manageTool, this._legacyManageTool]
   }
 
   initAgent(agent: LocalAgent): void {

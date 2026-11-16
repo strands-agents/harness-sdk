@@ -8,9 +8,12 @@ import copy
 import dataclasses
 import logging
 import threading
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
+
+from typing_extensions import deprecated
 
 from ..agent import _continuation
 from ..agent._agent_as_tool import _AgentAsTool
@@ -40,10 +43,16 @@ _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
 # Distinct from the session layer's bytes marker, which session restore decodes back into (non-JSON) bytes.
 _BYTES_KEY = "__strands_background_task_bytes__"
 _BACKGROUND_PROPERTY = "_background_execution"
-_MANAGE_TOOL_NAME = "strands_manage_background_task"
+_MANAGE_TOOL_NAME = "manage_background_task"
+_LEGACY_MANAGE_TOOL_NAME = "strands_manage_background_task"
+_MANAGE_TOOL_DEPRECATION = (
+    "strands_manage_background_task is deprecated and will be removed in a future major release. "
+    "Use manage_background_task instead."
+)
 _COMPOSITE_SCHEMA_KEYS = {"$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"}
 _FOREGROUND_TOOL_NAMES = {
     _MANAGE_TOOL_NAME,
+    _LEGACY_MANAGE_TOOL_NAME,
     "summarize_context",
     "truncate_context",
     "pin_context",
@@ -141,6 +150,9 @@ class _BackgroundTasks(Plugin):
             mode: Whether to list, inspect, or cancel background tasks.
             task_id: The background task ID returned when the task was dispatched. Required for get and cancel.
         """
+        return await self._manage_task(mode, task_id)
+
+    async def _manage_task(self, mode: Literal["list", "get", "cancel"], task_id: str | None) -> dict[str, Any]:
         if mode == "list":
             listing = [
                 {"task_id": task["task_id"], "tool_name": task["tool_name"], "status": task["status"]}
@@ -160,6 +172,23 @@ class _BackgroundTasks(Plugin):
             "status": "success",
             "content": [{"json": {"task_id": cancelled["task_id"], "status": cancelled["status"]}}],
         }
+
+    @tool(name=_LEGACY_MANAGE_TOOL_NAME, description=_MANAGE_TOOL_DEPRECATION)
+    @deprecated(
+        "strands_manage_background_task is deprecated and will be removed in a future major release. "
+        "Use manage_background_task instead."
+    )
+    async def _legacy_manage_background_task(
+        self, mode: Literal["list", "get", "cancel"], task_id: str | None = None
+    ) -> dict[str, Any]:
+        """Manage tracked background tasks through the deprecated tool name.
+
+        Args:
+            mode: Whether to list, inspect, or cancel background tasks.
+            task_id: The background task ID returned when the task was dispatched. Required for get and cancel.
+        """
+        warnings.warn(_MANAGE_TOOL_DEPRECATION, stacklevel=2)
+        return await self._manage_task(mode, task_id)
 
     def route_tool_call(
         self,
