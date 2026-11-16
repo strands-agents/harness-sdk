@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ChatController, type ChatPanelRow } from '../../src/ui/chat/controller.js'
 import { type ChatBackend } from '../../src/agent/types.js'
 import { commandAssistance } from '../../src/ui/chat/commands.js'
+import { detailLines } from '../../src/ui/presentation.js'
 import { ChatView } from '../../src/ui/chat/view.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
 import { render, captureFrame, mouseInputSequence, ttyInput, ttyOutput } from '../fixtures/terminal.js'
@@ -59,6 +60,21 @@ describe('help', () => {
     expect(controller.dismissPanel()).toBe(true)
     expect(controller.getSnapshot().panel?.kind).toBe('help')
     await controller.dispose()
+  })
+
+  it('shouldBreakAHelpPageAtSpacesWhenTheTextIsWiderThanThePanel', () => {
+    const lines = detailLines(
+      {
+        id: 'help',
+        kind: 'help-detail',
+        title: '/test',
+        rows: [],
+        body: 'Run this agent on the cases of an experiment.',
+      },
+      20
+    )
+
+    expect(lines.map(({ text }) => text)).toEqual(['Run this agent on', 'the cases of an', 'experiment.'])
   })
 
   it.each(['running', 'draining'] as const)(

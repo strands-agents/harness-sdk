@@ -9,7 +9,14 @@ import { modelDisplayName } from '../model/metadata.js'
 import { escapePermissionText } from './chat/panel-state.js'
 import { FILE_TOOLS } from '../agent/permission-rules.js'
 import { permissionModeDisplayLabel } from './permission-options.js'
-import { expandTabs, graphemes, normalizeDetailText, sanitizeTerminalText, wrapCells } from '../terminal/text.js'
+import {
+  expandTabs,
+  graphemes,
+  normalizeDetailText,
+  sanitizeTerminalText,
+  wrapCells,
+  wrapWords,
+} from '../terminal/text.js'
 import {
   COMPOSER_RESOURCE_PANEL_HEIGHT,
   COMPOSER_EXPANDED_PANEL_HEIGHT,
@@ -135,7 +142,7 @@ export function detailLines(
   })
   const body = panel.activity
     ? activityDetailLines(panel.activity, width, palette)
-    : wrapCells(normalizeDetailText(panel.body ?? ''), Math.max(1, width)).map((text) => ({ text }))
+    : wrapWords(panel.body ?? '', width).map((text) => ({ text }))
   return metadata.length > 0 ? [...metadata, { text: '' }, ...body] : body
 }
 
