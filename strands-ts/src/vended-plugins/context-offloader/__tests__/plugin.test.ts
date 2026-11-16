@@ -365,15 +365,15 @@ describe('ContextOffloader', () => {
       expect((result as DocumentBlock).format).toBe('pdf')
     })
 
-    it('returns error string for missing reference', async () => {
+    it('throws for missing reference', async () => {
       const storage = new InMemoryStorage()
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
       const tools = plugin.getTools()
       const retrievalTool = tools[0]!
-      const result = await (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke({
+      const invoke = (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke({
         reference: 'nonexistent',
       })
-      expect(result).toContain('Error: reference not found')
+      await expect(invoke).rejects.toThrow('reference not found')
     })
   })
 
@@ -460,12 +460,10 @@ describe('ContextOffloader', () => {
       const ref = await storage.store('k1', new Uint8Array([137, 80, 78, 71]), 'image/png')
 
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: ref,
-        pattern: 'test',
-      })) as string
 
-      expect(result).toContain('Error: cannot search binary content (image/png)')
+      await expect(getRetrievalTool(plugin).invoke({ reference: ref, pattern: 'test' })).rejects.toThrow(
+        'cannot search binary content (image/png)'
+      )
     })
 
     it('falls back to literal match on invalid regex', async () => {
@@ -485,15 +483,13 @@ describe('ContextOffloader', () => {
       expect(result).toContain('> 3| foo (bar again')
     })
 
-    it('returns error for missing reference', async () => {
+    it('throws for missing reference', async () => {
       const storage = new InMemoryStorage()
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: 'nonexistent',
-        pattern: 'test',
-      })) as string
 
-      expect(result).toContain('Error: reference not found')
+      await expect(getRetrievalTool(plugin).invoke({ reference: 'nonexistent', pattern: 'test' })).rejects.toThrow(
+        'reference not found'
+      )
     })
 
     it('searches JSON content', async () => {
@@ -570,12 +566,10 @@ describe('ContextOffloader', () => {
       const ref = await storage.store('k1', new TextEncoder().encode(content), 'text/plain')
 
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: ref,
-        line_range: { start: 100, end: 200 },
-      })) as string
 
-      expect(result).toContain('beyond content length (3 lines)')
+      await expect(
+        getRetrievalTool(plugin).invoke({ reference: ref, line_range: { start: 100, end: 200 } })
+      ).rejects.toThrow('beyond content length (3 lines)')
     })
 
     it('clamps line_range.end to actual content length', async () => {

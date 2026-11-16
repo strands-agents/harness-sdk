@@ -3,7 +3,10 @@ import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { Stash } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { ImageBlock } from '../../types/media.js'
-import { JsonBlock, TextBlock } from '../../types/messages.js'
+import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import type { JSONValue } from '../../types/json.js'
+import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
+import { createMockContext } from '../../__fixtures__/tool-helpers.js'
 
 function invoke(retrievalTool: ReturnType<typeof createRetrievalTool>, input: unknown): Promise<unknown> {
   return (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke(input)
@@ -65,9 +68,9 @@ describe('retrieval tool', () => {
     const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
     const retrievalTool = createRetrievalTool(stash)
 
-    const result = (await invoke(retrievalTool, { reference: '[ref: nonexistent]' })) as string
-    expect(result).toBe(
-      'Error: reference not found: [ref: nonexistent]. Pass only the <id> from the placeholder\'s "[ref: <id>]".'
+    await expect(invoke(retrievalTool, { reference: '[ref: nonexistent]' })).rejects.toThrow(
+      'reference not found: [ref: nonexistent]. Pass only the <id> from the placeholder\'s "[ref: <id>]". ' +
+        'If that is what you passed, the content is unavailable — do not retry.'
     )
   })
 
@@ -175,8 +178,8 @@ describe('retrieval tool', () => {
       )
       const retrievalTool = createRetrievalTool(stash)
 
-      expect(await invoke(retrievalTool, { reference: 'tool-1' })).toBe(
-        'Error: original content for reference tool-1 is no longer available'
+      await expect(invoke(retrievalTool, { reference: 'tool-1' })).rejects.toThrow(
+        'original content for reference tool-1 is no longer available — do not retry.'
       )
     })
 
@@ -269,7 +272,70 @@ describe('retrieval tool', () => {
     const ref = await stash.store('tool-img', 0, encodeJSON(imageData))
     const retrievalTool = createRetrievalTool(stash)
 
-    const result = (await invoke(retrievalTool, { reference: ref, pattern: 'test' })) as string
-    expect(result).toContain('cannot search non-text content')
+    await expect(invoke(retrievalTool, { reference: ref, pattern: 'test' })).rejects.toThrow(
+      'cannot search non-text content'
+    )
+  })
+
+  // Regression: https://github.com/strands-agents/harness-sdk/issues/4241 — these returned the error
+  // text as a success result, and a model reading "Error" under success retries and then invents the
+  // content. Driven through `stream`, which is what produces the status the model sees; `invoke`
+  // deliberately lets errors throw and so cannot observe it.
+  describe('failures carry error status', () => {
+    async function streamResult(
+      retrievalTool: ReturnType<typeof createRetrievalTool>,
+      input: JSONValue
+    ): Promise<ToolResultBlock> {
+      const toolUse = { name: RETRIEVAL_TOOL_NAME, toolUseId: 'tu-1', input }
+      const { result } = await collectGenerator(retrievalTool.stream(createMockContext(toolUse)))
+      return result
+    }
+
+    it('reports an unknown reference as an error', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+
+      const result = await streamResult(createRetrievalTool(stash), { reference: 'tu-old_0' })
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toContain('reference not found: tu-old_0')
+      expect((result.content[0] as TextBlock).text).toContain('do not retry')
+    })
+
+    it('reports a stored placeholder as an error', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store(
+        'tool-1',
+        0,
+        encodeJSON({ text: '[Dropped] [ref: tool-1]', offloaded: { method: 'drop', ref: 'tool-1' } })
+      )
+
+      const result = await streamResult(createRetrievalTool(stash), { reference: 'tool-1' })
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toContain('no longer available')
+    })
+
+    it('reports an unsearchable entry as an error', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const ref = await stash.store('tool-img', 0, encodeJSON({ image: { format: 'png', source: { bytes: 'iVBO' } } }))
+
+      const result = await streamResult(createRetrievalTool(stash), { reference: ref, pattern: 'test' })
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toContain('cannot search non-text content')
+    })
+
+    it('reports an out-of-range line_range as an error', async () => {
+      const { stash, refPromise } = makeStashWithTextBlock('only one line')
+      const ref = await refPromise
+
+      const result = await streamResult(createRetrievalTool(stash), {
+        reference: ref,
+        line_range: { start: 9, end: 2 },
+      })
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toContain('must be <= line_range.end')
+    })
   })
 })

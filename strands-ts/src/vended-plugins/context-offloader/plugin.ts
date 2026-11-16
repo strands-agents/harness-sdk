@@ -346,31 +346,37 @@ export class ContextOffloader implements Plugin {
         '  { reference: "ref_1", pattern: "TODO", line_range: { start: 1, end: 50 } } → search within range',
       inputSchema: retrievalInputSchema,
       callback: async (input, context) => {
+        const storage = this._storageForToolContext(context)
+
+        // Only a failed lookup means the reference is unknown. A wider catch reports every later
+        // failure — an unsearchable type, an out-of-range line_range — under that one message.
+        let result: { content: Uint8Array; contentType: string }
         try {
-          const storage = this._storageForToolContext(context)
-          const result = await retrieveContent(storage, input.reference)
-
-          if (!input.pattern && !input.line_range && input.context_lines === undefined) {
-            return decodeStoredContent(result.content, result.contentType, input.reference)
-          }
-
-          if (!isSearchableContent(result.contentType)) {
-            return `Error: cannot search binary content (${result.contentType}). Omit pattern/line_range/context_lines to retrieve the full content.`
-          }
-
-          const text = new TextDecoder().decode(result.content)
-          const contextLines = input.context_lines ?? 5
-          const lineRange =
-            input.line_range ?? (!input.pattern ? { start: 1, end: Math.max(1, contextLines) } : undefined)
-
-          return searchContent(
-            text,
-            { pattern: input.pattern, line_range: lineRange, context_lines: contextLines },
-            maxChars
-          )
-        } catch {
-          return `Error: reference not found: ${input.reference}`
+          result = await retrieveContent(storage, input.reference)
+        } catch (error) {
+          throw new Error(`reference not found: ${input.reference} — do not retry.`, { cause: error })
         }
+
+        if (!input.pattern && !input.line_range && input.context_lines === undefined) {
+          return decodeStoredContent(result.content, result.contentType, input.reference)
+        }
+
+        if (!isSearchableContent(result.contentType)) {
+          throw new Error(
+            `cannot search binary content (${result.contentType}). Omit pattern/line_range/context_lines to retrieve the full content.`
+          )
+        }
+
+        const text = new TextDecoder().decode(result.content)
+        const contextLines = input.context_lines ?? 5
+        const lineRange =
+          input.line_range ?? (!input.pattern ? { start: 1, end: Math.max(1, contextLines) } : undefined)
+
+        return searchContent(
+          text,
+          { pattern: input.pattern, line_range: lineRange, context_lines: contextLines },
+          maxChars
+        )
       },
     })
   }

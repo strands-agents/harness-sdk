@@ -84,11 +84,17 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
     callback: async (input) => {
       const reference = input.reference.trim()
       const entries = await resolveReference(stash, reference)
+      // Thrown, not returned: the tool factory gives a returned string success status, and a model that
+      // reads "Error" under success retries and then invents the content. The text is terminal for the
+      // same reason — neither state is recoverable by calling again.
       if (entries.length === 0) {
-        return `Error: reference not found: ${reference}. Pass only the <id> from the placeholder's "[ref: <id>]".`
+        throw new Error(
+          `reference not found: ${reference}. Pass only the <id> from the placeholder's "[ref: <id>]". ` +
+            'If that is what you passed, the content is unavailable — do not retry.'
+        )
       }
       if (entries.some(isOffloaded)) {
-        return `Error: original content for reference ${reference} is no longer available`
+        throw new Error(`original content for reference ${reference} is no longer available — do not retry.`)
       }
       if (!input.pattern && !input.line_range) return fullContent(entries, maxChars)
       return searchEntries(entries, input, maxChars)
@@ -151,7 +157,8 @@ function searchEntries(
   maxChars: number
 ): ReturnType<typeof searchContent> {
   const text = joinText(entries.map(entryText))
-  if (!text) return 'Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.'
+  // Actionable rather than terminal: the content is there, the search arguments are what cannot apply.
+  if (!text) throw new Error('cannot search non-text content. Omit pattern/line_range to retrieve full content.')
   return searchContent(
     text,
     { pattern: input.pattern, line_range: input.line_range, context_lines: input.context_lines ?? 5 },
