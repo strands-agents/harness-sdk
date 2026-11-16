@@ -516,6 +516,7 @@ describe("OpenAIModel (api: 'responses')", () => {
       { name: 'report.pdf', format: 'pdf', expected: 'report.pdf' },
       { name: 'REPORT.PDF', format: 'pdf', expected: 'REPORT.PDF' },
       { name: 'notes.v2', format: 'txt', expected: 'notes.v2.txt' },
+      { name: 'report.pdf', format: 'txt', expected: 'report.pdf' },
     ] as const)('sends filename $expected for a user document named $name', async ({ name, format, expected }) => {
       const messages = [
         new Message({

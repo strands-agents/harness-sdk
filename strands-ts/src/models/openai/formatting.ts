@@ -42,11 +42,13 @@ export function formatImageDataUrl(imageBlock: ImageBlock): string | undefined {
 }
 
 /**
- * Returns the document's name with an extension matching its format.
+ * Returns the document's name, appending its format as the extension when the name has no known one.
  * OpenAI-compatible endpoints such as Bedrock Mantle reject a `filename` that has no extension.
+ * A name that already carries a known extension is kept as-is, even if it differs from `format`,
+ * because the endpoint treats the file by that extension.
  */
 export function formatDocumentFilename(docBlock: DocumentBlock): string {
-  const extension = `.${docBlock.format}`
-  if (docBlock.name.toLowerCase().endsWith(extension)) return docBlock.name
-  return `${docBlock.name}${extension}`
+  const dot = docBlock.name.lastIndexOf('.')
+  if (dot !== -1 && toMimeType(docBlock.name.slice(dot + 1))) return docBlock.name
+  return `${docBlock.name}.${docBlock.format}`
 }

@@ -7,13 +7,17 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Agent } from '@strands-agents/sdk'
+import { Agent, DocumentBlock, Message, TextBlock } from '@strands-agents/sdk'
 import { OpenAIModel } from '$/sdk/models/openai/index.js'
 
 import { bedrock } from '../../__fixtures__/model-providers.js'
+import { loadFixture } from '../../__fixtures__/test-helpers.js'
+import letterPdfUrl from '../../__resources__/letter.pdf?url'
 
 const REGION = 'us-east-1'
 const MODEL_ID = 'openai.gpt-oss-120b'
+// Served from /openai/v1, which rejects a document filename without an extension.
+const DOCUMENT_MODEL_ID = 'openai.gpt-6-luna'
 
 describe.skipIf(bedrock.skip)('OpenAIModel (Bedrock Mantle) Integration Tests', () => {
   it('reaches Mantle via bedrockMantleConfig on the Chat Completions API', async () => {
@@ -89,5 +93,32 @@ describe.skipIf(bedrock.skip)('OpenAIModel (Bedrock Mantle) Integration Tests', 
     // so we only assert the round-trip completes cleanly.
     const second = await agent.invoke('What about 3+3?')
     expect(second.stopReason).toBe('endTurn')
+  })
+
+  it.each(['chat', 'responses'] as const)('sends a bare-named PDF document on the %s API', async (api) => {
+    const pdfBytes = await loadFixture(letterPdfUrl)
+    const model = new OpenAIModel({
+      api,
+      modelId: DOCUMENT_MODEL_ID,
+      bedrockMantleConfig: { region: REGION },
+    })
+    const agent = new Agent({
+      model,
+      messages: [
+        new Message({
+          role: 'user',
+          content: [
+            new DocumentBlock({ name: 'letter', format: 'pdf', source: { bytes: pdfBytes } }),
+            new TextBlock('Summarize this document briefly.'),
+          ],
+        }),
+      ],
+      printer: false,
+    })
+
+    const result = await agent.invoke([])
+
+    expect(result.stopReason).toBe('endTurn')
+    expect(String(result).length).toBeGreaterThan(10)
   })
 })
