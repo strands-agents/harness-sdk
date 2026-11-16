@@ -39,6 +39,7 @@ export interface TemporaryStudyRun {
   readonly run: string
   readonly record: string
   readonly startedAt: number
+  readonly labels?: Readonly<Record<string, string>>
 }
 
 export interface TemporaryStudyReader {
@@ -187,9 +188,11 @@ const firstNewLine = (key: string, value: string, baseline: string): string => {
 const describeChange = (key: string, value: unknown, baseline: unknown, isText: boolean): string =>
   isText && typeof value === 'string'
     ? firstNewLine(key, value, typeof baseline === 'string' ? baseline : '')
-    : `${key} → ${clip(shown(value))}`
+    : `${key} → ${typeof value === 'boolean' ? (value ? 'on' : 'off') : clip(shown(value))}`
 
 class StudyState {
+  constructor(private readonly labels: Readonly<Record<string, string>> = {}) {}
+
   private objectives: readonly Objective[] = []
   private textKeys: ReadonlySet<string> = new Set()
   private width = 0
@@ -383,8 +386,9 @@ class StudyState {
     const score = this.score(estimates)
     const ci = this.interval(estimates)
     const summary =
-      changed.map((key) => describeChange(key, params[key], baseline[key], this.textKeys.has(key))).join('; ') ||
-      'no change from the baseline'
+      changed
+        .map((key) => describeChange(this.labels[key] ?? key, params[key], baseline[key], this.textKeys.has(key)))
+        .join('; ') || 'no change from the baseline'
     return {
       number,
       ...(step === undefined ? {} : { step }),
@@ -400,7 +404,7 @@ class StudyState {
 }
 
 export const temporaryStudyReader = (run: TemporaryStudyRun): TemporaryStudyReader => {
-  const state = new StudyState()
+  const state = new StudyState(run.labels)
   return { push: (line) => state.push(line), progress: () => state.progress(run), outcome: () => state.outcome() }
 }
 

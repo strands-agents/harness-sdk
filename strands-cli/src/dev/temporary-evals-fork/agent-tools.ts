@@ -8,6 +8,7 @@ import type {
   ExperimentSummary,
   Generation,
   GenerationSettings,
+  Knob,
   KnobKey,
   OptimizeReview,
   OptimizeState,
@@ -19,6 +20,7 @@ import { readTemporaryExperimentFile } from './experiment-files.js'
 import { temporaryCreateExperimentSkill } from './create-experiment-skill.js'
 import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
+import { TEMPORARY_KNOB_NAMES } from './knobs.js'
 import { TEMPORARY_ITERATION_CHOICES } from './plan.js'
 import type { TemporaryDevSessions } from './sessions.js'
 
@@ -36,7 +38,7 @@ const MAX_TOPICS = 10
 const MAX_PARALLEL = 10
 const TEXT_LIMIT = 600
 const EDIT_LIMIT = 4000
-const TUNABLE: readonly KnobKey[] = ['instructions', 'effort']
+const KNOB_NAMES = TEMPORARY_KNOB_NAMES.join(', ')
 
 const INSTRUCTIONS = `strands_dev_create_experiment, strands_dev_test, and strands_dev_optimize spend the developer's money the moment you call them. Two turns, never one: in the turn that asks for the work, name the experiments and case counts and stop; call the tool only in a later turn, after the developer answered. "Run my tests", "check my agent against my examples", and "make my agent better" ask for that first turn. A scope that looks obvious is still not approval, and neither is one saved experiment or one evident choice. Finish the turn with your question as the last thing you write.
 
@@ -509,12 +511,29 @@ const testTool = (sessions: Sessions): DevChatTool => ({
   },
 })
 
+const textList = (input: Input, field: string): readonly string[] | undefined => {
+  const value = input[field]
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item))
+    throw new Error(`${field} must be a list of names.`)
+  return value as string[]
+}
+
 const tuneFrom = (input: Input): readonly KnobKey[] => {
-  const value = input.tune
-  if (value === undefined || value === null) return ['instructions']
-  if (!Array.isArray(value) || value.length === 0 || value.some((item) => !TUNABLE.includes(item as KnobKey)))
-    throw new Error('tune must list instructions, effort, or both.')
-  return value as KnobKey[]
+  const tune = textList(input, 'tune') ?? ['instructions']
+  const unknown = tune.filter((name) => !TEMPORARY_KNOB_NAMES.includes(name))
+  if (tune.length === 0 || unknown.length > 0)
+    throw new Error(
+      `${unknown.length > 0 ? `${unknown.join(', ')} is not a knob. ` : ''}tune must list knobs from: ${KNOB_NAMES}.`
+    )
+  return tune
+}
+
+const tunedKnobs = (knobs: readonly Knob[], tune: readonly KnobKey[]): void => {
+  const unknown = tune.filter((key) => !knobs.some((knob) => knob.key === key && !knob.unavailable))
+  if (unknown.length === 0) return
+  const available = knobs.filter((knob) => !knob.unavailable).map((knob) => knob.key)
+  throw new Error(`This agent cannot tune ${unknown.join(', ')}. It can tune ${available.join(', ')}.`)
 }
 
 const optimizeTool = (sessions: Sessions): DevChatTool => ({
@@ -523,7 +542,8 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     'Start the paid optimization run. This call starts the paid run itself and asks nothing first, so call it ' +
     'only after the developer answered yes, in an earlier turn, to the experiment and tuning scope you named. ' +
     'Being asked to improve the agent is not that answer, and a scope that looks obvious is not that answer. ' +
-    "Tunes this agent's instructions, effort, or both against a saved experiment with the strands-evals optimizer, " +
+    'Tunes the createHarness options of this agent (instructions, model, effort, caching, tools, and more) ' +
+    'against a saved experiment with the strands-evals optimizer, ' +
     'and reports the score before and after with the proposed edits. It changes no file. It can take a long time.',
   inputSchema: {
     type: 'object',
@@ -531,8 +551,13 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
       experiment: { type: 'string', description: 'The name of a saved experiment.' },
       tune: {
         type: 'array',
-        items: { type: 'string', enum: [...TUNABLE] },
-        description: 'What to tune. Default: instructions.',
+        items: { type: 'string' },
+        description: `The knobs to tune, by option name: ${KNOB_NAMES}. Default: instructions.`,
+      },
+      models: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'With model in tune: the provider-qualified model ids to try besides the current model.',
       },
       iterations: {
         type: 'integer',
@@ -551,6 +576,9 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
         `The optimization ${current.progress.run} is still running. Wait for it, or stop it in /optimize.`
       )
     const tune = tuneFrom(input)
+    const models = textList(input, 'models') ?? []
+    if (tune.includes('model') && models.length === 0)
+      throw new Error('Tuning model needs models: the provider-qualified ids to try besides the current model.')
     const iterations = whole(input, 'iterations', 1, Number.MAX_SAFE_INTEGER)
     if (iterations !== undefined && !TEMPORARY_ITERATION_CHOICES.includes(iterations))
       throw new Error(`iterations must be one of ${TEMPORARY_ITERATION_CHOICES.join(', ')}.`)
@@ -570,8 +598,11 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     )
     if (planned.step === 'failed') throw new Error(planned.message)
     if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
+    tunedKnobs(planned.plan.knobs, tune)
+    if (tune.includes('model')) for (const model of models) optimize.pickModel(model, true)
     for (const knob of planned.plan.knobs)
-      if (!knob.unavailable && knob.enabled !== tune.includes(knob.key)) optimize.toggleKnob(knob.key)
+      if (!knob.unavailable && knob.kind !== 'models' && knob.enabled !== tune.includes(knob.key))
+        optimize.toggleKnob(knob.key)
     if (iterations !== undefined) optimize.setIterations(iterations)
     optimize.start()
     if (optimize.snapshot().step !== 'running') throw new Error('The optimization did not start.')

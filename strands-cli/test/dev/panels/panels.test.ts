@@ -302,6 +302,8 @@ const optimizeSession = (initial: OptimizeState) => {
       snapshot: states.snapshot,
       plan: vi.fn(),
       toggleKnob: vi.fn(),
+      loadModels: vi.fn(),
+      pickModel: vi.fn(),
       setIterations: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
@@ -317,12 +319,21 @@ const setup: OptimizeState = {
   plan: {
     experiment: { name: 'refunds', path: '/w/refunds.json', caseCount: 20 },
     knobs: [
-      { key: 'instructions', label: 'instructions', detail: 'the system prompt', enabled: true },
-      { key: 'effort', label: 'effort', detail: 'low · medium · high', enabled: false },
+      {
+        key: 'instructions',
+        label: 'instructions',
+        detail: 'the system prompt',
+        group: 'prompt',
+        kind: 'text',
+        enabled: true,
+      },
+      { key: 'effort', label: 'effort', detail: 'low · medium · high', group: 'model', kind: 'choice', enabled: false },
       {
         key: 'tools',
         label: 'tool descriptions',
         detail: '',
+        group: 'tools',
+        kind: 'switches',
         enabled: false,
         unavailable: 'strands-evals optimize cannot tune tools yet',
       },
@@ -512,6 +523,47 @@ describe('OptimizePanel', () => {
     expect(session[action === 'start' ? 'toggleKnob' : 'start']).not.toHaveBeenCalled()
   })
 
+  it('shouldOpenTheModelChooserAndPickAModelWhenTheUserPressesEnterOnTheModelKnob', async () => {
+    const { session } = optimizeSession({
+      ...setup,
+      plan: {
+        ...setup.plan,
+        knobs: [
+          ...setup.plan.knobs,
+          {
+            key: 'model',
+            label: 'model',
+            detail: 'choose models to try',
+            group: 'model',
+            kind: 'models',
+            enabled: false,
+          },
+        ],
+        models: {
+          current: 'bedrock/model-alpha',
+          picked: [],
+          options: [
+            { id: 'bedrock/model-alpha', name: 'Model Alpha' },
+            { id: 'bedrock/model-beta', name: 'Model Beta' },
+          ],
+        },
+      },
+    })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    for (const key of ['\u001b[B', '\u001b[B', '\u001b[B', '\r']) await press(key)
+
+    expect(session.loadModels).toHaveBeenCalledTimes(1)
+    expect(session.toggleKnob).not.toHaveBeenCalled()
+    expect(text()).toContain('models to try')
+    expect(text()).toContain('bedrock/model-alpha (current)')
+    await press('\u001b[B')
+    await press('\r')
+    expect(session.pickModel).toHaveBeenCalledWith('bedrock/model-beta', true)
+    await press('\u001b')
+    await vi.waitFor(() => expect(text()).toContain('☑ instructions'))
+  })
+
   it('shouldShowStartAndTheKeysWhenTheSetupIsShort', async () => {
     const { session } = optimizeSession(setup)
 
@@ -550,6 +602,7 @@ describe('OptimizePanel', () => {
         edits: [
           {
             knob: 'instructions',
+            kind: 'text',
             label: 'instructions',
             target: 'agent.py',
             before: 'You handle refunds for the store and answer questions about orders politely.',
@@ -577,6 +630,7 @@ describe('OptimizePanel', () => {
         edits: [
           {
             knob: 'instructions',
+            kind: 'text',
             label: 'instructions',
             target: 'instructions.md',
             before: 'Be quick.',
@@ -607,6 +661,7 @@ describe('OptimizePanel', () => {
         edits: [
           {
             knob: 'instructions',
+            kind: 'text',
             label: 'instructions',
             target: 'instructions.md',
             before: 'Be quick.',
@@ -648,6 +703,7 @@ describe('OptimizePanel', () => {
         edits: [
           {
             knob: 'instructions',
+            kind: 'text',
             label: 'instructions',
             target: 'instructions.md',
             before: 'You handle refunds.\nBe quick.',

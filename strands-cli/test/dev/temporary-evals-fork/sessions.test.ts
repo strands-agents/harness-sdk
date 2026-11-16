@@ -285,11 +285,49 @@ describe('TEMPORARY dev sessions', () => {
     expect(before.plan.split).toEqual({ train: 10, validation: 5, test: 5 })
     expect(before.plan.knobs.map(({ key, enabled }) => [key, enabled])).toEqual([
       ['instructions', true],
+      ['model', false],
       ['effort', false],
-      ['tools', false],
+      ['caching', false],
+      ['builtinTools', false],
+      ['backgroundTasks', false],
+      ['contextManager', false],
+      ['skills', false],
+      ['builtinPlugins', false],
     ])
     expect(after.plan.iterations).toBe(2)
     expect(after.plan.rollouts).toBeLessThan(before.plan.rollouts)
+  })
+
+  it('shouldListTheProviderModelsAndTurnTheModelKnobOnWhenTheDeveloperPicksAnotherModel', async () => {
+    const discoverModels = vi.fn(async () => ({
+      options: [
+        { id: 'bedrock/global.anthropic.claude-opus-5', name: 'Claude Opus 5' },
+        { id: 'bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0', name: 'Claude Haiku 4.5' },
+      ],
+    }))
+    const { workspace, sessions } = await sessionsFor({ discoverModels })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.toggleKnob('model')
+    sessions.optimize.loadModels()
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ plan: { models: { options: expect.any(Array) } } })
+    )
+    sessions.optimize.pickModel('bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0', true)
+
+    const state = sessions.optimize.snapshot()
+    if (state.step !== 'setup') throw new Error('expected the setup')
+    expect(discoverModels).toHaveBeenCalledWith('bedrock')
+    expect(state.plan.models).toMatchObject({
+      current: 'bedrock/global.anthropic.claude-opus-5',
+      picked: ['bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0'],
+    })
+    expect(state.plan.knobs.find(({ key }) => key === 'model')).toMatchObject({
+      enabled: true,
+      detail: '1 other model to try',
+    })
   })
 
   it('shouldReviewAndApplyTheWinningInstructionsWhenTheRunFinishes', async () => {
@@ -313,7 +351,12 @@ describe('TEMPORARY dev sessions', () => {
     ])
     expect(state.review.best).toBeGreaterThan(state.review.baseline)
     expect(await readFile(join(workspace.root, 'instructions.md'), 'utf8')).toBe(`${WINNER}\n`)
-    expect(optimizing.mock.calls.at(-1)![0].args).toEqual(expect.arrayContaining(['--tune', 'instructions']))
+    const space = JSON.parse(await readFile(flagValue(optimizing.mock.calls.at(-1)![0].args, '--space'), 'utf8')) as {
+      variables: unknown[]
+    }
+    expect(space.variables).toEqual([
+      expect.objectContaining({ key: 'instructions', kind: 'text', option: 'instructions' }),
+    ])
   })
 
   it('shouldKeepTheBestSoFarWhenTheUserStopsTheRun', async () => {
@@ -621,6 +664,7 @@ describe('TEMPORARY dev sessions on open', () => {
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.toggleKnob('effort')
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
     await writeFileAt(

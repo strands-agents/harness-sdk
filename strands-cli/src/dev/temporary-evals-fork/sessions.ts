@@ -1,12 +1,13 @@
-import { mkdir } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { basename, join, relative } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import type { DevChatJob } from '../../ui/chat/types.js'
+import { resolveModelTarget } from '../../model/selection.js'
+import { editAgentOptions } from '../agent-options.js'
 import {
   type ExperimentRun,
   type ExperimentSummary,
-  type Knob,
   type KnobKey,
   type OptimizePlan,
   type OptimizeProgress,
@@ -20,6 +21,7 @@ import {
   type TestState,
 } from '../panels/model.js'
 import { locateTemporaryEdit } from './apply.js'
+import { temporaryOptimizationFolder } from './environment.js'
 import { temporaryReportsFolder, temporaryRunName, temporaryWorkspaceDirectory } from './evals-process.js'
 import {
   readTemporaryExperimentFile,
@@ -29,6 +31,16 @@ import {
 import { TemporaryExperiments } from './experiments-session.js'
 import { announce, plural, type TemporaryHost, type TemporarySessionHost } from './host.js'
 import { Store, tailTemporaryLines, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
+import {
+  discoverTemporaryModels,
+  readTemporaryKnobs,
+  temporaryKnobChanges,
+  temporaryKnobLabels,
+  temporarySpaceVariables,
+  type TemporaryKnob,
+  type TemporaryKnobChange,
+  type TemporarySpaceVariable,
+} from './knobs.js'
 import { runTemporaryOptimization } from './optimize.js'
 import {
   TEMPORARY_ITERATION_CHOICES,
@@ -55,24 +67,6 @@ const DEFAULT_ITERATIONS = 4
 const WIDTH = 4
 const REPETITIONS = 1
 const MILLISECONDS = 1000
-const TUNABLE_KNOBS: readonly KnobKey[] = ['instructions', 'effort']
-
-const KNOBS: readonly Knob[] = [
-  { key: 'instructions', label: 'instructions', detail: "your agent's instructions (system prompt)", enabled: true },
-  {
-    key: 'effort',
-    label: 'effort',
-    detail: 'auto · off · minimal · low · medium · high · xhigh · max',
-    enabled: false,
-  },
-  {
-    key: 'tools',
-    label: 'tool descriptions',
-    detail: '',
-    enabled: false,
-    unavailable: 'strands-evals optimize cannot tune tool descriptions from an agent file yet',
-  },
-]
 
 const MEASURED_ON: Record<TemporaryMeasurement, string> = {
   search: 'training cases',
@@ -240,6 +234,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
 
 export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeSession {
   private evaluators = 1
+  private catalog: readonly TemporaryKnob[] = []
   private abort: AbortController | undefined
   private stopping = false
   private readonly writers = new Map<number, (after: string) => Promise<void>>()
@@ -262,10 +257,38 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   toggleKnob(key: KnobKey): void {
     this.updatePlan((plan) => ({
       ...plan,
-      knobs: plan.knobs.map((knob) =>
-        knob.key === key && !knob.unavailable ? { ...knob, enabled: !knob.enabled } : knob
-      ),
+      knobs: plan.knobs.map((knob) => {
+        if (knob.key !== key || knob.unavailable) return knob
+        if (knob.kind === 'models' && !knob.enabled && (plan.models?.picked.length ?? 0) === 0) return knob
+        return { ...knob, enabled: !knob.enabled }
+      }),
     }))
+  }
+
+  loadModels(): void {
+    void this.loadModelOptions()
+  }
+
+  pickModel(id: string, picked: boolean): void {
+    this.updatePlan((plan) => {
+      if (!plan.models || id === plan.models.current) return plan
+      const others = picked
+        ? [...new Set([...plan.models.picked, id])]
+        : plan.models.picked.filter((model) => model !== id)
+      return {
+        ...plan,
+        models: { ...plan.models, picked: others },
+        knobs: plan.knobs.map((knob) =>
+          knob.kind === 'models'
+            ? {
+                ...knob,
+                enabled: others.length > 0,
+                detail: others.length > 0 ? `${plural(others.length, 'other model')} to try` : 'choose models to try',
+              }
+            : knob
+        ),
+      }
+    })
   }
 
   setIterations(iterations: number): void {
@@ -277,8 +300,12 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   start(): void {
     const state = this.snapshot()
     if (state.step !== 'setup') return
-    const tune = state.plan.knobs.filter((knob) => knob.enabled && !knob.unavailable).map((knob) => knob.key)
-    if (tune.length > 0) void this.run(state.plan, tune)
+    const knobs = this.catalog.map((knob) => ({
+      ...knob,
+      enabled: state.plan.knobs.find(({ key }) => key === knob.key)?.enabled ?? false,
+    }))
+    const variables = temporarySpaceVariables(knobs, state.plan.models?.picked ?? [])
+    if (variables.length > 0) void this.run(state.plan, knobs, variables)
   }
 
   stop(): void {
@@ -327,9 +354,35 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     return { ...plan, rollouts, judgeCalls }
   }
 
+  private async loadModelOptions(): Promise<void> {
+    const state = this.snapshot()
+    const models = state.step === 'setup' ? state.plan.models : undefined
+    if (!models || models.options || models.loading) return
+    this.updatePlan((plan) => (plan.models ? { ...plan, models: { ...plan.models, loading: true } } : plan))
+    const discover = this.host().dependencies?.discoverModels ?? discoverTemporaryModels
+    const found = await discover(resolveModelTarget(models.current).provider).catch((error: unknown) => ({
+      error: errorMessage(error),
+    }))
+    this.updatePlan((plan) => {
+      if (!plan.models) return plan
+      const { loading: _loading, ...rest } = plan.models
+      return {
+        ...plan,
+        models: {
+          ...rest,
+          ...('options' in found && found.options
+            ? { options: found.options }
+            : { error: found.error ?? 'No models were found.' }),
+        },
+      }
+    })
+  }
+
   private async planFor(summary: ExperimentSummary): Promise<void> {
     try {
       const { experiment } = await readTemporaryExperimentFile(summary.path)
+      this.catalog = await readTemporaryKnobs(this.host().workspace)
+      const model = this.catalog.find((knob) => knob.kind === 'models' && !knob.unavailable)
       const caseCount = experiment.cases.length
       const split = temporaryCaseSplit(caseCount)
       const warning = temporaryOptimizeWarning(caseCount)
@@ -338,7 +391,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         step: 'setup',
         plan: this.estimate({
           experiment: { ...summary, caseCount },
-          knobs: KNOBS,
+          knobs: this.catalog,
+          ...(typeof model?.current === 'string' ? { models: { current: model.current, picked: [] } } : {}),
           split,
           repetitions: REPETITIONS,
           width: WIDTH,
@@ -354,9 +408,15 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     }
   }
 
-  private async run(plan: OptimizePlan, tune: readonly KnobKey[]): Promise<void> {
+  private async run(
+    plan: OptimizePlan,
+    knobs: readonly TemporaryKnob[],
+    variables: readonly TemporarySpaceVariable[]
+  ): Promise<void> {
     const abort = new AbortController()
     const startedAt = Date.now()
+    const now = new Date(startedAt)
+    const labels = temporaryKnobLabels(knobs)
     this.abort = abort
     this.stopping = false
     let record: string | undefined
@@ -379,16 +439,18 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     const show = (): void => this.set({ step: 'running', progress: progress() })
     this.set({ step: 'running', progress: progress() })
     try {
+      const space = await this.writeSpace(plan, now, variables)
       await runTemporaryOptimization(
         {
           workspace: this.host().workspace,
           experiment: plan.experiment.path,
-          forkArguments: ['--tune', tune.join(','), '--iterations', String(plan.iterations)],
+          forkArguments: ['--space', space, '--iterations', String(plan.iterations)],
+          now: () => now,
           background: true,
           signal: abort.signal,
           onStart: (path) => {
             record = path
-            reader = temporaryStudyReader({ run: basename(path), record: path, startedAt })
+            reader = temporaryStudyReader({ run: basename(path), record: path, startedAt, labels })
             tail = tailTemporaryLines(join(path, 'study.jsonl'), (line) => {
               reader?.push(line)
               show()
@@ -411,12 +473,29 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       this.abort = undefined
     }
     if (cancelled && !record) return this.reportCancelled(plan)
-    await this.finish(record!, plan, cancelled)
+    await this.finish(record!, plan, knobs, cancelled)
   }
 
-  private async finish(record: string, plan: OptimizePlan, cancelled: boolean): Promise<void> {
+  private async writeSpace(
+    plan: OptimizePlan,
+    now: Date,
+    variables: readonly TemporarySpaceVariable[]
+  ): Promise<string> {
+    const folder = temporaryOptimizationFolder(temporaryWorkspaceDirectory(this.host().workspace))
+    const path = join(folder, `${temporaryRunName(plan.experiment.path, now)}.space.json`)
+    await mkdir(folder, { recursive: true })
+    await writeFile(path, `${JSON.stringify({ variables }, null, 2)}\n`)
+    return path
+  }
+
+  private async finish(
+    record: string,
+    plan: OptimizePlan,
+    knobs: readonly TemporaryKnob[],
+    cancelled: boolean
+  ): Promise<void> {
     try {
-      const review = await this.review(await readTemporaryStudy(record), record)
+      const review = await this.review(await readTemporaryStudy(record), record, knobs)
       this.set({ step: 'review', review })
       announce(this.host(), 'success', `optimize · run ${review.run} finished · /optimize opens the review`)
     } catch (error) {
@@ -435,28 +514,44 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     announce(this.host(), 'success', `optimize · ${plan.experiment.name} cancelled · the agent source is unchanged`)
   }
 
-  private async review(outcome: TemporaryStudyOutcome, record: string): Promise<OptimizeReview> {
+  private async locate(
+    change: TemporaryKnobChange
+  ): Promise<{ target: string; write: (after: string) => Promise<void> } | { unavailable: string }> {
     const { workspace } = this.host()
-    this.writers.clear()
-    const edits: ProposedEdit[] = []
-    for (const knob of TUNABLE_KNOBS) {
-      const before = outcome.baseline.params[knob]
-      const after = outcome.best?.params[knob]
-      if (before === undefined || after === undefined || String(before) === String(after)) continue
-      const located = await locateTemporaryEdit({
+    if (change.knob.key === 'instructions')
+      return locateTemporaryEdit({
         root: workspace.root,
         entrypoint: workspace.entrypoint,
-        knob,
-        before: String(before),
-        after: String(after),
+        knob: 'instructions',
+        before: change.before,
+        after: change.after,
       })
+    const edit = change.edit ?? { option: change.knob.option, value: change.after, expected: change.before }
+    return {
+      target: relative(workspace.root, workspace.entrypoint) || workspace.entrypoint,
+      write: async (): Promise<void> => {
+        await editAgentOptions(workspace, [edit])
+      },
+    }
+  }
+
+  private async review(
+    outcome: TemporaryStudyOutcome,
+    record: string,
+    knobs: readonly TemporaryKnob[]
+  ): Promise<OptimizeReview> {
+    this.writers.clear()
+    const edits: ProposedEdit[] = []
+    for (const change of temporaryKnobChanges(knobs, outcome.baseline.params, outcome.best?.params ?? {})) {
+      const located = await this.locate(change)
       const writable = 'write' in located
       if (writable) this.writers.set(edits.length, located.write)
       edits.push({
-        knob,
-        label: knob,
-        before: String(before),
-        after: String(after),
+        knob: change.knob.key,
+        kind: change.kind,
+        label: change.knob.label,
+        before: change.before,
+        after: change.after,
         accepted: writable,
         ...(writable ? { target: located.target } : { unavailable: located.unavailable }),
       })

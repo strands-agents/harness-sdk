@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentOptionConflict,
   AgentOptionsNotEditable,
+  editAgentOptions,
   readAgentModel,
+  readAgentOptions,
   saveAgentOptions,
 } from '../../src/dev/agent-options.js'
 import { pythonExecutable } from '../fixtures/python-runtime.js'
@@ -241,3 +243,127 @@ describe('reading the agent model from TypeScript source', () => {
     expect(await readAgentModel(workspace)).toMatch(/^bedrock\//u)
   })
 })
+
+const KNOB_TYPESCRIPT = `import { createHarness } from '@strands-agents/harness'
+import { lookupOrder } from './tools.js'
+
+export const agent = await createHarness({
+  model: 'bedrock/global.anthropic.claude-sonnet-5',
+  caching: true,
+  builtinTools: [
+    'shell',
+    'read',
+    'web_search',
+  ],
+  tools: [lookupOrder],
+  mcpServers: { github: { command: 'gh-mcp' }, docs: { url: 'https://docs.example' } },
+  plugins: makePlugins(),
+})
+`
+
+describe('reading and editing every createHarness option in TypeScript source', () => {
+  it('shouldDescribeEachOptionByItsLiteralShapeWhenTheAgentFileIsRead', async () => {
+    const workspace = await agent('typescript', KNOB_TYPESCRIPT)
+
+    const options = await readAgentOptions(workspace)
+
+    expect(Object.fromEntries(options!)).toEqual({
+      model: { kind: 'string', value: 'bedrock/global.anthropic.claude-sonnet-5' },
+      caching: { kind: 'boolean', value: true },
+      builtinTools: {
+        kind: 'list',
+        items: [
+          { text: "'shell'", literal: 'shell' },
+          { text: "'read'", literal: 'read' },
+          { text: "'web_search'", literal: 'web_search' },
+        ],
+      },
+      tools: { kind: 'list', items: [{ text: 'lookupOrder' }] },
+      mcpServers: { kind: 'map', keys: ['github', 'docs'] },
+      plugins: { kind: 'code' },
+    })
+  })
+
+  it('shouldSetScalarsRemoveItemsAndKeysAndInsertMissingOptionsWhenTheEditsApply', async () => {
+    const workspace = await agent('typescript', KNOB_TYPESCRIPT)
+
+    expect(
+      await editAgentOptions(workspace, [
+        { option: 'caching', value: false, expected: true },
+        { option: 'contextManager', value: 'agentic', expected: 'auto' },
+        { option: 'builtinTools', removeItems: [1], expectedItems: ["'shell'", "'read'", "'web_search'"] },
+        { option: 'mcpServers', removeKeys: ['docs'] },
+      ])
+    ).toBe(true)
+
+    const edited = await readFile(workspace.entrypoint, 'utf8')
+    expect(edited).toContain('caching: false,')
+    expect(edited).toContain("builtinTools: [\n    'shell',\n    'web_search',\n  ],")
+    expect(edited).toContain("mcpServers: { github: { command: 'gh-mcp' } },")
+    expect(edited).toContain("contextManager: 'agentic'")
+    expect(edited).toContain('plugins: makePlugins(),')
+  })
+
+  it.each([
+    ['a scalar that changed since the run', { option: 'caching', value: false, expected: false }, AgentOptionConflict],
+    [
+      'a list that changed since the run',
+      { option: 'builtinTools', removeItems: [0], expectedItems: ["'shell'"] },
+      AgentOptionConflict,
+    ],
+    ['an option that code sets', { option: 'plugins', value: false }, AgentOptionsNotEditable],
+    [
+      'a list edit on an option that is not a list',
+      { option: 'caching', removeItems: [0], expectedItems: [] },
+      AgentOptionsNotEditable,
+    ],
+  ] as const)('shouldRefuseAndKeepTheFileWhenTheEditTargets %s', async (_, edit, error) => {
+    const workspace = await agent('typescript', KNOB_TYPESCRIPT)
+
+    await expect(editAgentOptions(workspace, [edit])).rejects.toBeInstanceOf(error)
+
+    expect(await readFile(workspace.entrypoint, 'utf8')).toBe(KNOB_TYPESCRIPT)
+  })
+})
+
+describe.skipIf(!existsSync(pythonExecutable))(
+  'reading and editing every create_harness option in Python source',
+  () => {
+    beforeEach(() => {
+      vi.stubEnv('PYTHON', pythonExecutable)
+    })
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('shouldReadAndEditPythonListsDictsAndBooleansWhenTheAgentFileIsPython', async () => {
+      const workspace = await agent(
+        'python',
+        'agent = create_harness(model="bedrock/x", builtin_tools=["shell", "read"], mcp_servers={"github": {}, "docs": {}})\n'
+      )
+
+      expect(Object.fromEntries((await readAgentOptions(workspace))!)).toEqual({
+        model: { kind: 'string', value: 'bedrock/x' },
+        builtin_tools: {
+          kind: 'list',
+          items: [
+            { text: '"shell"', literal: 'shell' },
+            { text: '"read"', literal: 'read' },
+          ],
+        },
+        mcp_servers: { kind: 'map', keys: ['github', 'docs'] },
+      })
+
+      await editAgentOptions(workspace, [
+        { option: 'builtin_tools', removeItems: [0], expectedItems: ['"shell"', '"read"'] },
+        { option: 'mcp_servers', removeKeys: ['github'] },
+        { option: 'caching', value: false },
+      ])
+
+      expect(await readFile(workspace.entrypoint, 'utf8')).toBe(
+        'agent = create_harness(model="bedrock/x", builtin_tools=["read"], mcp_servers={"docs": {}}, caching=False)\n'
+      )
+    })
+  }
+)

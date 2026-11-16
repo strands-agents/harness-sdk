@@ -68,9 +68,17 @@ const results = (): TestResults => ({
 })
 
 const KNOBS: readonly Knob[] = [
-  { key: 'instructions', label: 'instructions', detail: '', enabled: true },
-  { key: 'effort', label: 'effort', detail: '', enabled: false },
-  { key: 'tools', label: 'tool descriptions', detail: '', enabled: false, unavailable: 'not yet' },
+  { key: 'instructions', label: 'instructions', detail: '', group: 'prompt', kind: 'text', enabled: true },
+  { key: 'effort', label: 'effort', detail: '', group: 'model', kind: 'choice', enabled: false },
+  {
+    key: 'tools',
+    label: 'tool descriptions',
+    detail: '',
+    group: 'tools',
+    kind: 'switches',
+    enabled: false,
+    unavailable: 'not yet',
+  },
 ]
 
 const plan = (): OptimizePlan => ({
@@ -92,8 +100,24 @@ const review = (): OptimizeReview => ({
   best: 0.9,
   measuredOn: 'validation cases',
   edits: [
-    { knob: 'instructions', label: 'instructions', target: 'agent.py', before: 'Old.', after: 'New.', accepted: true },
-    { knob: 'effort', label: 'effort', before: 'low', after: 'high', accepted: false, unavailable: 'set in code' },
+    {
+      knob: 'instructions',
+      kind: 'text',
+      label: 'instructions',
+      target: 'agent.py',
+      before: 'Old.',
+      after: 'New.',
+      accepted: true,
+    },
+    {
+      knob: 'effort',
+      kind: 'value',
+      label: 'effort',
+      before: 'low',
+      after: 'high',
+      accepted: false,
+      unavailable: 'set in code',
+    },
   ],
 })
 
@@ -580,7 +604,7 @@ describe('TEMPORARY dev chat part', () => {
   })
 
   it.each<[string, Record<string, JSONValue>, string]>([
-    ['an unknown setting', { experiment: 'refunds', tune: ['tools'] }, 'tune must list instructions, effort, or both.'],
+    ['an unknown setting', { experiment: 'refunds', tune: ['temperature'] }, 'temperature is not a knob.'],
     [
       'an iteration count it does not offer',
       { experiment: 'refunds', iterations: 3 },

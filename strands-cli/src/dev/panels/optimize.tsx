@@ -12,6 +12,7 @@ import type {
   CandidateResult,
   ExperimentSummary,
   Knob,
+  ModelChoices,
   OptimizePlan,
   OptimizeProgress,
   OptimizeReview,
@@ -134,7 +135,83 @@ const SETUP_BUTTONS: readonly SetupButton[] = ['start', 'cancel']
 const setupHints = (focused: SetupButton | Knob | undefined, ready: boolean): string[] => {
   if (focused === 'start') return ['↑↓', ready ? 'Enter start' : 'check a knob to start', '←→ budget', 'Esc cancel']
   if (focused === 'cancel') return ['↑↓', 'Enter cancel', 'Esc cancel']
-  return ['↑↓', focused?.unavailable ? 'not available yet' : 'Enter toggle', '←→ budget', '↓ Start', 'Esc cancel']
+  const action = focused?.unavailable
+    ? 'not available'
+    : focused?.kind === 'models'
+      ? 'Enter choose models'
+      : 'Enter toggle'
+  return ['↑↓', action, '←→ budget', '↓ Start', 'Esc cancel']
+}
+
+const SETUP_CHROME_ROWS = 10
+const MODEL_CHOOSER_CHROME_ROWS = 5
+const MODEL_FILTER = /^[\w.:/-]$/u
+
+const ModelChooser = ({
+  session,
+  models,
+  width,
+  height,
+  onDone,
+}: {
+  session: OptimizeSession
+  models: ModelChoices
+  width: number
+  height: number
+  onDone: () => void
+}): ReactElement => {
+  const [filter, setFilter] = useState('')
+  const options = [
+    { id: models.current, name: `${models.current} (current)` },
+    ...(models.options ?? []).filter(({ id }) => id !== models.current),
+  ].filter(({ id, name }) => `${id} ${name}`.toLowerCase().includes(filter.toLowerCase()))
+  const cursor = useCursor(options.length)
+  const toggle = (index: number): void => {
+    const option = options[index]
+    if (option && option.id !== models.current) session.pickModel(option.id, !models.picked.includes(option.id))
+  }
+  useInput((input, key) => {
+    if (key.escape) onDone()
+    else if (key.upArrow) cursor.move(-1)
+    else if (key.downArrow) cursor.move(1)
+    else if (key.return || input === ' ') toggle(cursor.current())
+    else if (key.backspace || key.delete) setFilter((text) => text.slice(0, -1))
+    else if (!key.ctrl && !key.meta && MODEL_FILTER.test(input)) setFilter((text) => text + input)
+  })
+  const items: ListItem[] = options.map(({ id, name }) => ({
+    key: id,
+    label: name,
+    detail: id === models.current ? 'always tried' : id,
+    mark:
+      id === models.current || models.picked.includes(id)
+        ? { text: '☑', tone: 'success' }
+        : { text: '☐', tone: 'muted' },
+    tone: 'muted',
+  }))
+  return (
+    <>
+      <PanelTitle name={COMMAND} parts={['models to try', plural(models.picked.length, 'other model')]} />
+      <Line tone="muted">{`  filter: ${filter || 'type to filter'}`}</Line>
+      {models.loading ? <Line tone="muted">{'  Listing the models of this provider…'}</Line> : null}
+      {models.error ? <Line tone="error">{`  ${models.error}`}</Line> : null}
+      <ItemList
+        items={items}
+        selected={cursor.index}
+        capacity={Math.max(1, height - MODEL_CHOOSER_CHROME_ROWS)}
+        labelWidth={labelWidthFor(
+          items.map(({ label }) => label),
+          width
+        )}
+        onClick={(index) => {
+          cursor.set(index)
+          toggle(index)
+        }}
+        onHover={cursor.set}
+      />
+      <Fill />
+      <KeyHints hints={['↑↓', 'Enter pick', 'type to filter', 'Esc done']} />
+    </>
+  )
 }
 
 const SetupView = ({
@@ -145,6 +222,7 @@ const SetupView = ({
   plan,
 }: OptimizePanelProps & { plan: OptimizePlan }): ReactElement => {
   const cursor = useCursor(plan.knobs.length + SETUP_BUTTONS.length)
+  const [choosingModels, setChoosingModels] = useState(false)
   const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable)
   const compact = height < FULL_SETUP_ROWS
   const focusAt = (row: number): SetupButton | Knob | undefined =>
@@ -158,22 +236,38 @@ const SetupView = ({
     if (target === 'start') {
       if (ready) session.start()
     } else if (target === 'cancel') cancel()
-    else if (target && !target.unavailable) session.toggleKnob(target.key)
+    else if (target?.kind === 'models' && !target.unavailable) {
+      session.loadModels()
+      setChoosingModels(true)
+    } else if (target && !target.unavailable) session.toggleKnob(target.key)
   }
   const choose = (row: number): void => {
     cursor.set(row)
     activate(focusAt(row))
   }
-  useInput((input, key) => {
-    if (key.escape) cancel()
-    else if (key.upArrow) cursor.move(-1)
-    else if (key.downArrow) cursor.move(1)
-    else if (key.leftArrow || key.rightArrow) {
-      const position = plan.iterationChoices.indexOf(plan.iterations)
-      const next = plan.iterationChoices[position + (key.rightArrow ? 1 : -1)]
-      if (next !== undefined) session.setIterations(next)
-    } else if (key.return || shortcut(input, key) === ' ') activate(focusAt(cursor.current()))
-  })
+  useInput(
+    (input, key) => {
+      if (key.escape) cancel()
+      else if (key.upArrow) cursor.move(-1)
+      else if (key.downArrow) cursor.move(1)
+      else if (key.leftArrow || key.rightArrow) {
+        const position = plan.iterationChoices.indexOf(plan.iterations)
+        const next = plan.iterationChoices[position + (key.rightArrow ? 1 : -1)]
+        if (next !== undefined) session.setIterations(next)
+      } else if (key.return || shortcut(input, key) === ' ') activate(focusAt(cursor.current()))
+    },
+    { isActive: !choosingModels }
+  )
+  if (choosingModels && plan.models)
+    return (
+      <ModelChooser
+        session={session}
+        models={plan.models}
+        width={width}
+        height={height}
+        onDone={() => setChoosingModels(false)}
+      />
+    )
   const { split } = plan
   return (
     <>
@@ -182,7 +276,7 @@ const SetupView = ({
       <ItemList
         items={plan.knobs.map(knobItem)}
         selected={cursor.index < plan.knobs.length ? cursor.index : -1}
-        capacity={plan.knobs.length}
+        capacity={Math.max(3, Math.min(plan.knobs.length, height - SETUP_CHROME_ROWS))}
         labelWidth={labelWidthFor(
           plan.knobs.map(({ label }) => label),
           width
@@ -378,7 +472,7 @@ const diffCounts = (lines: readonly ChatDiffLine[]): string => {
 
 const editItem = (edit: ProposedEdit, lines: readonly ChatDiffLine[]): ListItem => {
   const where = edit.target ?? 'source not found'
-  const change = edit.knob === 'instructions' ? diffCounts(lines) : `${oneLine(edit.before)} → ${oneLine(edit.after)}`
+  const change = edit.kind === 'text' ? diffCounts(lines) : `${oneLine(edit.before)} → ${oneLine(edit.after)}`
   if (edit.unavailable)
     return {
       key: edit.knob,

@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { DevWorkspace } from '../workspace.js'
+import type { TemporaryModelDiscovery } from './knobs.js'
 import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, temporaryOptimizationFolder } from './environment.js'
 import type { TemporaryCommandRunner } from './environment.js'
@@ -40,6 +41,7 @@ export interface TemporaryOptimizationOutcome {
 export interface TemporaryOptimizationDependencies {
   run?: TemporaryCommandRunner
   spawnOptimizer?: TemporaryEvalsSpawner
+  discoverModels?: (provider: string) => Promise<TemporaryModelDiscovery>
 }
 
 const WRAPPER_OWNED_FLAGS = ['--agent', '--record', '--json', '--rich', '--typescript-runner']

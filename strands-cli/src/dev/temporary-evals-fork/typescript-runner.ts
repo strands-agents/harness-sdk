@@ -1,7 +1,8 @@
-import type { HarnessAgentOptions } from '@strands-agents/harness'
+import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentOptions } from '@strands-agents/harness'
 import type { Agent } from '@strands-agents/sdk'
 
 import { errorMessage } from '../../terminal/text.js'
+import { isRecord } from '../../values.js'
 
 export interface TemporaryRunnerProject {
   options: HarnessAgentOptions
@@ -35,9 +36,41 @@ export const describeTemporaryProject = (options: HarnessAgentOptions): Temporar
   }
 }
 
+const WITHOUT = '$without'
+
+const itemName = (entry: unknown): string | undefined =>
+  typeof entry === 'string' ? entry : isRecord(entry) && typeof entry.name === 'string' ? entry.name : undefined
+
+const removes = (item: unknown, entry: unknown, position: number | string): boolean =>
+  isRecord(item) &&
+  ((typeof position === 'number' && item.index === position) ||
+    (typeof position === 'string' && item.key === position) ||
+    (typeof item.name === 'string' && itemName(entry) === item.name))
+
+const withoutItems = (option: string, current: unknown, items: unknown): unknown => {
+  const removed = Array.isArray(items) ? items : []
+  const base = current ?? (DEFAULT_HARNESS_AGENT_CONFIG as unknown as Record<string, unknown>)[option]
+  if (Array.isArray(base)) return base.filter((entry, index) => !removed.some((item) => removes(item, entry, index)))
+  if (isRecord(base))
+    return Object.fromEntries(
+      Object.entries(base).filter(([key, entry]) => !removed.some((item) => removes(item, entry, key)))
+    )
+  throw new Error(
+    `createHarness option ${option} is not a list or a set of named entries, so no item can be turned off`
+  )
+}
+
 const trialOptions = (project: TemporaryRunnerProject, values: Record<string, unknown>): HarnessAgentOptions => {
-  const tuned = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value ?? undefined]))
-  return { ...project.options, ...tuned, ...TRIAL_OPTIONS } as HarnessAgentOptions
+  const { [WITHOUT]: without, ...scalars } = values
+  const authored = project.options as Record<string, unknown>
+  const reduced = Object.fromEntries(
+    Object.entries(isRecord(without) ? without : {}).map(([option, items]) => [
+      option,
+      withoutItems(option, authored[option], items),
+    ])
+  )
+  const tuned = Object.fromEntries(Object.entries(scalars).map(([key, value]) => [key, value ?? undefined]))
+  return { ...project.options, ...reduced, ...tuned, ...TRIAL_OPTIONS } as HarnessAgentOptions
 }
 
 const textOf = (input: unknown): string => (typeof input === 'string' ? input : JSON.stringify(input))

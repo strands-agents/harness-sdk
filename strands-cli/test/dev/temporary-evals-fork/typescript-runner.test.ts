@@ -1,4 +1,4 @@
-import type { HarnessAgentOptions } from '@strands-agents/harness'
+import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentOptions } from '@strands-agents/harness'
 import type { Agent } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -78,6 +78,44 @@ describe('TEMPORARY TypeScript runner', () => {
       cycles: 2,
     })
     expect(agent.shutdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('shouldTurnOffTheNamedListItemsAndMapEntriesForTheTrialWhenTheValuesRemoveThem', async () => {
+    const agent = fakeAgent(async () => RESULT)
+    const lookup = { name: 'lookup_order' }
+    const refund = { name: 'refund' }
+    const createAgent = vi.fn(async (_options: HarnessAgentOptions) => agent as unknown as Agent)
+    const options = {
+      ...OPTIONS,
+      tools: [lookup, refund],
+      mcpServers: { github: { command: 'gh' }, docs: { url: 'https://docs' } },
+    } as unknown as HarnessAgentOptions
+    const handle = createTemporaryTypescriptRunner({ options, createAgent })
+
+    await handle({
+      id: 1,
+      type: 'run',
+      values: {
+        caching: false,
+        $without: {
+          tools: [{ index: 0 }],
+          mcpServers: [{ key: 'docs' }],
+          builtinTools: [{ name: 'web_search' }, { name: 'shell' }],
+        },
+      },
+      input: 'question',
+    })
+
+    const built = createAgent.mock.calls[0]![0] as unknown as Record<string, unknown>
+    expect(built.tools).toEqual([refund])
+    expect(built.mcpServers).toEqual({ github: { command: 'gh' } })
+    expect(built.builtinTools).toEqual(
+      (DEFAULT_HARNESS_AGENT_CONFIG.builtinTools as readonly string[]).filter(
+        (name) => name !== 'web_search' && name !== 'shell'
+      )
+    )
+    expect(built.caching).toBe(false)
+    expect(built).not.toHaveProperty('$without')
   })
 
   it('shouldReturnTheErrorAndTheTranscriptWhenTheAgentFails', async () => {

@@ -168,14 +168,33 @@ export interface TestSession {
   rerunFailed(path: string): void
 }
 
-export type KnobKey = 'instructions' | 'effort' | 'tools'
+export type KnobKey = string
+
+export type KnobGroup = 'prompt' | 'model' | 'tools' | 'context' | 'skills' | 'plugins'
+
+export type KnobKind = 'text' | 'choice' | 'switches' | 'models'
 
 export interface Knob {
   readonly key: KnobKey
   readonly label: string
   readonly detail: string
+  readonly group: KnobGroup
+  readonly kind: KnobKind
   readonly enabled: boolean
   readonly unavailable?: string
+}
+
+export interface ModelOption {
+  readonly id: string
+  readonly name: string
+}
+
+export interface ModelChoices {
+  readonly current: string
+  readonly picked: readonly string[]
+  readonly options?: readonly ModelOption[]
+  readonly loading?: boolean
+  readonly error?: string
 }
 
 export interface CaseSplit {
@@ -195,6 +214,7 @@ export interface OptimizePlan {
   readonly rollouts: number
   readonly judgeCalls: number
   readonly warning?: string
+  readonly models?: ModelChoices
 }
 
 export interface CandidateResult {
@@ -224,6 +244,7 @@ export interface OptimizeProgress {
 
 export interface ProposedEdit {
   readonly knob: KnobKey
+  readonly kind: 'text' | 'value'
   readonly label: string
   readonly target?: string
   readonly before: string
@@ -257,6 +278,8 @@ export interface OptimizeSession {
   snapshot(): OptimizeState
   plan(experiment: ExperimentSummary): void
   toggleKnob(key: KnobKey): void
+  loadModels(): void
+  pickModel(id: string, picked: boolean): void
   setIterations(iterations: number): void
   start(): void
   stop(): void
