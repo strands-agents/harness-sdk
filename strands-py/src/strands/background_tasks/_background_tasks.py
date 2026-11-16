@@ -13,8 +13,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
-from typing_extensions import deprecated
-
 from ..agent import _continuation
 from ..agent._agent_as_tool import _AgentAsTool
 from ..agent.agent import _CANCEL_POLL_INTERVAL
@@ -174,11 +172,6 @@ class _BackgroundTasks(Plugin):
         }
 
     @tool(name=_LEGACY_MANAGE_TOOL_NAME, description=_MANAGE_TOOL_DEPRECATION)
-    @deprecated(
-        "strands_manage_background_task is deprecated and will be removed in a future major release. "
-        "Use manage_background_task instead.",
-        category=None,  # Preserve coroutine detection on Python 3.10/3.11; warn in the body.
-    )
     async def _legacy_manage_background_task(
         self, mode: Literal["list", "get", "cancel"], task_id: str | None = None
     ) -> dict[str, Any]:
