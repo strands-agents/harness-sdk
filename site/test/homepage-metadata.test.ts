@@ -67,121 +67,66 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('places the agent foundations above the supporting toolkit products', () => {
+  it('makes Harness the primary build path and nests the SDK inside it', () => {
     const toolkit = homepage.querySelector('.toolkit')
     const sections = toolkit?.querySelectorAll('.toolkit__section') ?? []
+    const buildCard = sections[0]?.querySelector('.toolkit__build-card')
+    const harness = buildCard?.querySelector('[data-toolkit-product="harness"]')
+    const sdk = buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')
 
     expect(toolkit?.querySelector('.toolkit__cards-title')?.tagName).toBe('H2')
     expect(
       sections.map((section) => ({
-        title: {
-          tagName: section.querySelector('.toolkit__section-title')?.tagName,
-          text: section.querySelector('.toolkit__section-title')?.text.trim(),
-        },
-        products: section.querySelectorAll('.toolkit__card').map((card) => {
-          const heading = card.querySelector('.toolkit__card-slug')
-          const actionLink = card.querySelector('.toolkit__card-read')
-          return {
-            tagName: heading?.tagName,
-            text: heading?.text.trim(),
-            action: {
-              text: actionLink?.text.trim(),
-              href: actionLink?.getAttribute('href'),
-              ariaLabel: actionLink?.getAttribute('aria-label'),
-            },
-          }
-        }),
+        tagName: section.querySelector('.toolkit__section-title')?.tagName,
+        text: section.querySelector('.toolkit__section-title')?.text.trim(),
       }))
     ).toEqual([
-      {
-        title: { tagName: 'H3', text: 'Build an agent' },
-        products: [
-          {
-            tagName: 'H4',
-            text: '/harness',
-            action: {
-              text: 'Build an agent',
-              href: configuredPathWithBase('/docs/user-guide/harness/'),
-              ariaLabel: 'Build an agent with Strands harness',
-            },
-          },
-          {
-            tagName: 'H4',
-            text: '/harness-sdk',
-            action: {
-              text: 'Build with primitives',
-              href: configuredPathWithBase('/docs/user-guide/sdk/'),
-              ariaLabel: 'Build with Strands Harness SDK primitives',
-            },
-          },
-        ],
-      },
-      {
-        title: { tagName: 'H3', text: 'Control and improve your agent' },
-        products: [
-          {
-            tagName: 'H4',
-            text: '/box',
-            action: {
-              text: 'Run in a sandbox',
-              href: configuredPathWithBase('/docs/user-guide/box/'),
-              ariaLabel: 'Run an agent in a Strands Box sandbox',
-            },
-          },
-          {
-            tagName: 'H4',
-            text: '/evals',
-            action: {
-              text: 'Run an evaluation',
-              href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
-              ariaLabel: 'Run an evaluation with Strands Evals',
-            },
-          },
-          {
-            tagName: 'H4',
-            text: '/decider',
-            action: {
-              text: 'Make a decision',
-              href: configuredPathWithBase('/docs/labs/strands-decider/overview/'),
-              ariaLabel: 'Make a decision with Strands Decider',
-            },
-          },
-        ],
-      },
+      { tagName: 'H3', text: 'Build an agent' },
+      { tagName: 'H3', text: 'Control and improve your agent' },
     ])
+    expect(buildCard).not.toBeNull()
+    expect(harness?.querySelector('h4')?.text.trim()).toBe('/harness')
+    expect(harness?.querySelector('.toolkit__build-headline')?.text.trim()).toBe('Start with a complete agent.')
+    expect(harness?.querySelector('.toolkit__build-description')?.text.trim()).toBe(
+      'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.'
+    )
+    expect(harness?.querySelector('.toolkit__build-action')?.text.trim()).toBe('Start with Harness')
+    expect(harness?.querySelector('.toolkit__build-action')?.getAttribute('href')).toBe(
+      configuredPathWithBase('/docs/user-guide/harness/')
+    )
+    expect(harness?.querySelector('.toolkit__build-action')?.getAttribute('aria-label')).toBe(
+      'Start building with Strands harness'
+    )
 
+    expect(sdk?.querySelector('h4')?.text.trim()).toBe('/harness-sdk')
+    expect(sdk?.querySelector('.toolkit__build-sdk-title')?.text.trim()).toBe('Build with primitives')
+    expect(sdk?.querySelector('.toolkit__build-sdk-relation')?.text.trim()).toBe(
+      'Harness is built on the Strands Harness SDK.'
+    )
+    expect(sdk?.querySelector('.toolkit__build-sdk-description')?.text.trim()).toBe(
+      'Use the Strands Harness SDK directly when you need to wire the model, tools, memory, session management, and hooks yourself.'
+    )
+    expect(sdk?.querySelector('.toolkit__build-sdk-action')?.text.trim()).toBe('Explore the SDK')
+    expect(sdk?.querySelector('.toolkit__build-sdk-action')?.getAttribute('href')).toBe(
+      configuredPathWithBase('/docs/user-guide/sdk/')
+    )
+  })
+
+  it('gives Harness the visible example while keeping both build install paths available', () => {
+    const buildCard = homepage.querySelector('.toolkit__build-card')
+    const harness = buildCard?.querySelector('[data-toolkit-product="harness"]')
+    const sdk = buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')
+
+    expect(harness?.querySelectorAll('.toolkit__card-terminal')).toHaveLength(1)
+    expect(sdk?.querySelectorAll('.toolkit__card-terminal')).toHaveLength(0)
+    expect(buildCard?.querySelectorAll('[data-toggle]')).toHaveLength(0)
+    expect(harness?.querySelector('[data-lang-code="typescript"]')?.hasAttribute('hidden')).toBe(false)
+    expect(harness?.querySelector('[data-lang-code="python"]')?.hasAttribute('hidden')).toBe(true)
+    expect(harness?.querySelector('.toolkit__card-terminal-copy')?.getAttribute('aria-label')).toBe(
+      'Copy Strands harness example'
+    )
     expect(
-      sections.map((section) =>
-        section
-          .querySelector('.toolkit__section-cards')
-          ?.getAttribute('class')
-          ?.split(/\s+/)
-          .find((className) => className.startsWith('toolkit__section-cards--'))
-      )
-    ).toEqual(['toolkit__section-cards--build', 'toolkit__section-cards--tools'])
-    expect(toolkit?.querySelectorAll('.toolkit__card-desc').map((item) => item.text.trim())).toEqual([
-      'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
-      'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
-      'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
-      'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
-      'Route, classify, or score known outcomes with a small decision model that reports confidence.',
-    ])
-    expect(toolkit?.querySelectorAll('.toolkit__card-view-more').map((item) => item.text.trim())).toEqual([
-      'Build an agent',
-      'Build with primitives',
-      'Run in a sandbox',
-      'Run an evaluation',
-      'Make a decision',
-    ])
-    expect(sections[0]?.querySelectorAll('.toolkit__card-feature')).toHaveLength(0)
-    expect(sections[0]?.querySelectorAll('.toolkit__card-tag')).toHaveLength(0)
-    expect(sections[0]?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
-    expect(sections[0]?.querySelectorAll('.toolkit__card-terminal')).toHaveLength(2)
-    expect(
-      sections[0]?.querySelectorAll('.toolkit__card-terminal-copy').map((button) => button.getAttribute('aria-label'))
-    ).toEqual(['Copy code', 'Copy code'])
-    expect(
-      sections[0]?.querySelectorAll('[data-install]').map((install) => ({
+      buildCard?.querySelectorAll('[data-install]').map((install) => ({
         python: install.querySelector('[data-install-variant="Python"]')?.text.trim(),
         typescript: install.querySelector('[data-install-variant="TypeScript"]')?.text.trim(),
         copyLabel: install.querySelector('[data-install-copy]')?.getAttribute('aria-label'),
@@ -190,21 +135,84 @@ describe('homepage machine-readable metadata', () => {
       {
         python: 'pip install strands-harness',
         typescript: 'npm install @strands-agents/harness',
-        copyLabel: 'Copy install command',
+        copyLabel: 'Copy Strands harness install command',
       },
       {
         python: 'pip install strands-agents',
         typescript: 'npm install @strands-agents/sdk',
-        copyLabel: 'Copy install command',
+        copyLabel: 'Copy Strands Harness SDK install command',
       },
     ])
+  })
+
+  it('keeps the supporting products expandable and correctly labelled', () => {
+    const toolsSection = homepage.querySelectorAll('.toolkit__section')[1]
+    const products = toolsSection?.querySelectorAll('.toolkit__supporting-product') ?? []
+    const cards = products.map((product) => product.querySelector('.toolkit__card'))
+
     expect(
-      sections[0]?.querySelectorAll('[data-toggle]').map((toggle) => toggle.getAttribute('aria-expanded'))
-    ).toEqual(['false', 'false'])
-    expect(sections[1]?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
-    expect(sections[1]?.querySelectorAll('[data-install]')).toHaveLength(0)
-    expect(toolkit?.querySelectorAll('[data-toggle]').map((toggle) => toggle.getAttribute('aria-controls'))).toEqual(
-      toolkit?.querySelectorAll('.toolkit__card-expanded').map((details) => details.getAttribute('id'))
+      products.map((product) => ({
+        role: product.querySelector('.toolkit__supporting-role')?.text.trim(),
+        slug: product.querySelector('.toolkit__card-slug')?.text.trim(),
+        description: product.querySelector('.toolkit__card-desc')?.text.trim(),
+        action: product.querySelector('.toolkit__card-read')?.text.trim(),
+      }))
+    ).toEqual([
+      {
+        role: 'Sandbox agent work',
+        slug: '/box',
+        description: 'Run agent work in an OS-enforced sandbox with explicit filesystem, network, and policy controls.',
+        action: 'Run in a sandbox',
+      },
+      {
+        role: 'Validate agent behavior',
+        slug: '/evals',
+        description: 'Run evaluations, detect failures, and measure agent behavior before deployment.',
+        action: 'Run an evaluation',
+      },
+      {
+        role: 'Make fast decisions',
+        slug: '/decider',
+        description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
+        action: 'Make a decision',
+      },
+    ])
+    expect(cards).toHaveLength(3)
+    expect(toolsSection?.querySelectorAll('[data-install]')).toHaveLength(0)
+    expect(toolsSection?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
+    expect(
+      cards.map((card) => {
+        const toggle = card?.querySelector('[data-toggle]')
+        const details = card?.querySelector('.toolkit__card-expanded')
+        return {
+          expanded: toggle?.getAttribute('aria-expanded'),
+          controls: toggle?.getAttribute('aria-controls'),
+          detailsId: details?.getAttribute('id'),
+          toggleLabel: toggle?.getAttribute('aria-label'),
+        }
+      })
+    ).toEqual([
+      {
+        expanded: 'false',
+        controls: 'toolkit-card-box-details',
+        detailsId: 'toolkit-card-box-details',
+        toggleLabel: 'Toggle /box details',
+      },
+      {
+        expanded: 'false',
+        controls: 'toolkit-card-evals-details',
+        detailsId: 'toolkit-card-evals-details',
+        toggleLabel: 'Toggle /evals details',
+      },
+      {
+        expanded: 'false',
+        controls: 'toolkit-card-decider-details',
+        detailsId: 'toolkit-card-decider-details',
+        toggleLabel: 'Toggle /decider details',
+      },
+    ])
+    expect(new Set(cards.map((card) => card?.querySelector('.toolkit__card-expanded')?.getAttribute('id'))).size).toBe(
+      3
     )
   })
 

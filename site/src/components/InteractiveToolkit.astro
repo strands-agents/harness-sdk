@@ -15,10 +15,10 @@ interface ToolkitCard {
   slug: string;
   color: string;
   description: string;
+  headline?: string;
+  roleLabel?: string;
   actionLabel: string;
   actionAriaLabel: string;
-  tags?: string[];
-  defaultOpen?: boolean;
   install?: {
     pip: string;
     npm: string;
@@ -42,23 +42,23 @@ interface ToolkitCard {
   };
 }
 
-// The `+` button toggles between each card's compact and expanded view.
-// `defaultOpen` renders the card expanded on load.
+// Supporting product cards use the `+` button to toggle their expanded view.
 const cards: ToolkitCard[] = [
   {
     slug: '/harness',
     color: 'var(--card-accent-orange)',
+    headline: 'Start with a complete agent.',
     description:
-      'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
-    actionLabel: 'Build an agent',
-    actionAriaLabel: 'Build an agent with Strands harness',
+      'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.',
+    actionLabel: 'Start with Harness',
+    actionAriaLabel: 'Start building with Strands harness',
     install: {
       pip: 'pip install strands-harness',
       npm: 'npm install @strands-agents/harness',
     },
     expanded: {
       description:
-        'Take a complete agent from pilot to production with tuned defaults. Replace individual components as your needs grow.',
+        'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.',
       viewMoreHref: pathWithBase('/docs/user-guide/harness/'),
       codePy: [
         { lineNo: 1, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
@@ -78,39 +78,27 @@ const cards: ToolkitCard[] = [
     slug: '/harness-sdk',
     color: 'var(--card-accent-teal)',
     description:
-      'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
-    actionLabel: 'Build with primitives',
-    actionAriaLabel: 'Build with Strands Harness SDK primitives',
+      'Use the Strands Harness SDK directly when you need to wire the model, tools, memory, session management, and hooks yourself.',
+    actionLabel: 'Explore the SDK',
+    actionAriaLabel: 'Explore the Strands Harness SDK',
     install: {
       pip: 'pip install strands-agents',
       npm: 'npm install @strands-agents/sdk',
     },
     expanded: {
       description:
-        'Choose and wire the model, tools, memory, session management, and hooks for direct control of the agent loop.',
+        'Use the Strands Harness SDK directly when you need to wire the model, tools, memory, session management, and hooks yourself.',
       viewMoreHref: pathWithBase('/docs/user-guide/sdk/'),
-      codePy: [
-        { lineNo: 1, tokens: [kw('from'), t(' strands '), kw('import'), t(' Agent')] },
-        { lineNo: 2, tokens: [t('')] },
-        { lineNo: 3, tokens: [t('agent = Agent()')] },
-        { lineNo: 4, tokens: [t('agent('), str('"Summarize what this repository does"'), t(')')] },
-      ],
-      codeTs: [
-        { lineNo: 1, tokens: [kw('import'), t(' { Agent } '), kw('from'), t(' '), str('"@strands-agents/sdk"')] },
-        { lineNo: 2, tokens: [t('')] },
-        { lineNo: 3, tokens: [kw('const'), t(' agent = '), kw('new'), t(' Agent()')] },
-        { lineNo: 4, tokens: [kw('await'), t(' agent.invoke('), str('"Summarize what this repository does"'), t(')')] },
-      ],
     },
   },
   {
     slug: '/box',
     color: 'var(--card-accent-purple)',
+    roleLabel: 'Sandbox agent work',
     description:
-      'Run agent work in OS-isolated sandboxes with explicit filesystem, network, and policy controls.',
+      'Run agent work in an OS-enforced sandbox with explicit filesystem, network, and policy controls.',
     actionLabel: 'Run in a sandbox',
     actionAriaLabel: 'Run an agent in a Strands Box sandbox',
-    tags: ['OS containment', 'Dogwood policy', 'Credential injection'],
     expanded: {
       description:
         'Strands Box is an open source sandbox for AI agents. It runs an agent such as the Strands CLI, Claude Code, or Codex CLI on your Mac, inside a sandbox the operating system enforces and under a Dogwood policy that decides its shell commands, file operations, network requests, and MCP calls. Box is in preview, so pin your version.',
@@ -148,11 +136,11 @@ const cards: ToolkitCard[] = [
   {
     slug: '/evals',
     color: 'var(--card-accent-pink)',
+    roleLabel: 'Validate agent behavior',
     description:
-      'Run evaluation experiments, detect failures, and measure agent resilience before deployment.',
+      'Run evaluations, detect failures, and measure agent behavior before deployment.',
     actionLabel: 'Run an evaluation',
     actionAriaLabel: 'Run an evaluation with Strands Evals',
-    tags: ['Score', 'Diagnose', 'Simulate'],
     expanded: {
       description:
         'Strands Evals lets you validate your agent before you ship. Score its output and its trajectory, find the root cause when a case fails, and simulate the users and tools it will meet in production.',
@@ -193,11 +181,11 @@ const cards: ToolkitCard[] = [
   {
     slug: '/decider',
     color: 'var(--card-accent-red)',
+    roleLabel: 'Make fast decisions',
     description:
       'Route, classify, or score known outcomes with a small decision model that reports confidence.',
     actionLabel: 'Make a decision',
     actionAriaLabel: 'Make a decision with Strands Decider',
-    tags: ['Choice', 'Yes or no', 'Score'],
     expanded: {
       description:
         'Strands Decider answers typed questions about known outputs instead of generating text, making repeated decisions fast and measurable.',
@@ -226,18 +214,9 @@ function cardFor(slug: string) {
   return card;
 }
 
-const sections = [
-  {
-    title: 'Build an agent',
-    layout: 'build',
-    cards: [cardFor('/harness'), cardFor('/harness-sdk')],
-  },
-  {
-    title: 'Control and improve your agent',
-    layout: 'tools',
-    cards: [cardFor('/box'), cardFor('/evals'), cardFor('/decider')],
-  },
-];
+const harnessCard = cardFor('/harness');
+const sdkCard = cardFor('/harness-sdk');
+const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')];
 
 ---
 
@@ -250,41 +229,176 @@ const sections = [
         <span class="toolkit__cards-branch toolkit__cards-branch--right" aria-hidden="true"></span>
       </div>
       <div class="toolkit__sections">
-        {sections.map((section) => (
-          <section class="toolkit__section">
-            <h3 class="toolkit__section-title">{section.title}</h3>
-            <div
-              class:list={[
-                'toolkit__section-cards',
-                `toolkit__section-cards--${section.layout}`,
-              ]}
+        <section class="toolkit__section toolkit__section--build">
+          <h3 class="toolkit__section-title">Build an agent</h3>
+          <div class="toolkit__build-card">
+            <article
+              class="toolkit__build-primary"
+              style={`--accent: ${harnessCard.color};`}
+              data-toolkit-product="harness"
             >
-              {section.cards.map((card) => (
-                <article
-                  class:list={[
-                    'toolkit__card',
-                    card.expanded && 'toolkit__card--expandable',
-                    card.defaultOpen && 'is-open',
-                  ]}
-                  style={`--accent: ${card.color};`}
-                  data-expandable={card.expanded ? '' : undefined}
+              <div class="toolkit__build-copy">
+                <h4 class="toolkit__build-slug">{harnessCard.slug}</h4>
+                <p class="toolkit__build-headline">{harnessCard.headline}</p>
+                <p class="toolkit__build-description">{harnessCard.description}</p>
+                {harnessCard.install && (
+                  <div class="toolkit__build-install">
+                    <InstallCommand
+                      pip={harnessCard.install.pip}
+                      npm={harnessCard.install.npm}
+                      compact
+                      copyAriaLabel="Copy Strands harness install command"
+                    />
+                  </div>
+                )}
+                <a
+                  href={harnessCard.expanded.viewMoreHref}
+                  class="toolkit__build-action"
+                  aria-label={harnessCard.actionAriaLabel}
                 >
-                  {/* Compact view: always rendered, hidden when card is open. */}
+                  {harnessCard.actionLabel}
+                  <span class="toolkit__build-action-arrow" set:html={arrow} />
+                </a>
+              </div>
+
+              {harnessCard.expanded.codePy && (
+                <div class="toolkit__card-terminal toolkit__build-terminal">
+                  <header class="toolkit__card-terminal-header">
+                    <div class="toolkit__card-terminal-dots" aria-hidden="true">
+                      <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red" />
+                      <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow" />
+                      <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green" />
+                    </div>
+                    <button
+                      type="button"
+                      class="toolkit__card-terminal-copy"
+                      aria-label="Copy Strands harness example"
+                    >
+                      <svg
+                        class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
+                        viewBox="0 0 16 19"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <rect
+                          x="4.5"
+                          y="0.5"
+                          width="11"
+                          height="14"
+                          rx="1.5"
+                          stroke="currentColor"
+                        />
+                        <rect
+                          x="0.5"
+                          y="4.5"
+                          width="11"
+                          height="14"
+                          rx="1.5"
+                          fill="var(--terminal-bg)"
+                          stroke="currentColor"
+                        />
+                      </svg>
+                      <svg
+                        class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M13.5 4.5L6.5 11.5L3 8"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                      <span class="toolkit__card-terminal-copy-label">copy</span>
+                    </button>
+                  </header>
+                  {harnessCard.expanded.codeTs && (
+                    <pre
+                      class="toolkit__card-terminal-code"
+                      data-lang-code="typescript"
+                    ><code>{harnessCard.expanded.codeTs.map((row) => (
+                      <div class="toolkit__card-terminal-row">
+                        <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
+                        <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
+                          tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
+                        ))}</span>
+                      </div>
+                    ))}</code></pre>
+                  )}
+                  <pre
+                    class="toolkit__card-terminal-code"
+                    data-lang-code="python"
+                    hidden
+                  ><code>{harnessCard.expanded.codePy.map((row) => (
+                    <div class="toolkit__card-terminal-row">
+                      <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
+                      <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
+                        tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
+                      ))}</span>
+                    </div>
+                  ))}</code></pre>
+                </div>
+              )}
+            </article>
+
+            <aside
+              class="toolkit__build-sdk"
+              style={`--accent: ${sdkCard.color};`}
+              data-toolkit-product="harness-sdk"
+              aria-labelledby="toolkit-sdk-title"
+            >
+              <div class="toolkit__build-sdk-copy">
+                <p class="toolkit__build-sdk-relation">
+                  Harness is built on the Strands Harness SDK.
+                </p>
+                <div class="toolkit__build-sdk-heading">
+                  <h4 class="toolkit__build-sdk-slug" id="toolkit-sdk-title">
+                    {sdkCard.slug}
+                  </h4>
+                  <p class="toolkit__build-sdk-title">Build with primitives</p>
+                </div>
+                <p class="toolkit__build-sdk-description">{sdkCard.description}</p>
+              </div>
+              {sdkCard.install && (
+                <div class="toolkit__build-sdk-install">
+                  <InstallCommand
+                    pip={sdkCard.install.pip}
+                    npm={sdkCard.install.npm}
+                    compact
+                    copyAriaLabel="Copy Strands Harness SDK install command"
+                  />
+                </div>
+              )}
+              <a
+                href={sdkCard.expanded.viewMoreHref}
+                class="toolkit__build-sdk-action"
+                aria-label={sdkCard.actionAriaLabel}
+              >
+                {sdkCard.actionLabel}
+                <span class="toolkit__build-action-arrow" set:html={arrow} />
+              </a>
+            </aside>
+          </div>
+        </section>
+
+        <section class="toolkit__section toolkit__section--tools">
+          <h3 class="toolkit__section-title">Control and improve your agent</h3>
+          <div class="toolkit__section-cards toolkit__section-cards--tools">
+            {supportingCards.map((card) => (
+              <div class="toolkit__supporting-product">
+                <p class="toolkit__supporting-role">{card.roleLabel}</p>
+                <article
+                  class="toolkit__card toolkit__card--expandable"
+                  style={`--accent: ${card.color};`}
+                  data-expandable
+                  data-toolkit-product={card.slug.slice(1)}
+                >
                   <div class="toolkit__card-compact">
                     <h4 class="toolkit__card-slug">{card.slug}</h4>
                     <p class="toolkit__card-desc">{card.description}</p>
-                    {card.install && (
-                      <div class="toolkit__card-install">
-                        <InstallCommand pip={card.install.pip} npm={card.install.npm} compact />
-                      </div>
-                    )}
-                    {card.tags && (
-                      <ul class="toolkit__card-tags" role="list">
-                        {card.tags.map((tag) => (
-                          <li class="toolkit__card-tag">{tag}</li>
-                        ))}
-                      </ul>
-                    )}
                     <a
                       href={card.expanded.viewMoreHref}
                       class="toolkit__card-read"
@@ -295,110 +409,96 @@ const sections = [
                     </a>
                   </div>
 
-                  {card.expanded && (
-                    <div
-                      class="toolkit__card-expanded"
-                      id={`toolkit-card-${card.slug.slice(1)}-details`}
-                    >
-                      <h4 class="toolkit__card-slug toolkit__card-slug--expanded">
-                        {card.slug}
-                      </h4>
-                      <div class="toolkit__card-expanded-body">
-                        <div class="toolkit__card-expanded-text">
-                          <p class="toolkit__card-expanded-desc">
-                            {card.expanded.description}
-                          </p>
-                          {card.expanded.features && (
-                            <ul class="toolkit__card-features" role="list">
-                              {card.expanded.features.map((f) => (
-                                <li class="toolkit__card-feature">
-                                  <span
-                                    class="toolkit__card-feature-bullet"
-                                    aria-hidden="true"
-                                  ></span>
-                                  <p class="toolkit__card-feature-text">
-                                    <strong>{f.title}</strong> {f.body}
-                                  </p>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                        {card.expanded.codePy && (
-                          <div class="toolkit__card-terminal">
-                            <header class="toolkit__card-terminal-header">
-                              <div class="toolkit__card-terminal-dots" aria-hidden="true">
-                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red" />
-                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow" />
-                                <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green" />
-                              </div>
-                              <button
-                                type="button"
-                                class="toolkit__card-terminal-copy"
-                                aria-label="Copy code"
+                  <div
+                    class="toolkit__card-expanded"
+                    id={`toolkit-card-${card.slug.slice(1)}-details`}
+                  >
+                    <h4 class="toolkit__card-slug toolkit__card-slug--expanded">
+                      {card.slug}
+                    </h4>
+                    <div class="toolkit__card-expanded-body">
+                      <div class="toolkit__card-expanded-text">
+                        <p class="toolkit__card-expanded-desc">
+                          {card.expanded.description}
+                        </p>
+                        {card.expanded.features && (
+                          <ul class="toolkit__card-features" role="list">
+                            {card.expanded.features.map((f) => (
+                              <li class="toolkit__card-feature">
+                                <span
+                                  class="toolkit__card-feature-bullet"
+                                  aria-hidden="true"
+                                ></span>
+                                <p class="toolkit__card-feature-text">
+                                  <strong>{f.title}</strong> {f.body}
+                                </p>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                      {card.expanded.codePy && (
+                        <div class="toolkit__card-terminal">
+                          <header class="toolkit__card-terminal-header">
+                            <div class="toolkit__card-terminal-dots" aria-hidden="true">
+                              <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red" />
+                              <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow" />
+                              <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green" />
+                            </div>
+                            <button
+                              type="button"
+                              class="toolkit__card-terminal-copy"
+                              aria-label="Copy code"
+                            >
+                              <svg
+                                class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
+                                viewBox="0 0 16 19"
+                                fill="none"
+                                aria-hidden="true"
                               >
-                                <svg
-                                  class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
-                                  viewBox="0 0 16 19"
-                                  fill="none"
-                                  aria-hidden="true"
-                                >
-                                  <rect
-                                    x="4.5"
-                                    y="0.5"
-                                    width="11"
-                                    height="14"
-                                    rx="1.5"
-                                    stroke="currentColor"
-                                  />
-                                  <rect
-                                    x="0.5"
-                                    y="4.5"
-                                    width="11"
-                                    height="14"
-                                    rx="1.5"
-                                    fill="var(--terminal-bg)"
-                                    stroke="currentColor"
-                                  />
-                                </svg>
-                                <svg
-                                  class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
-                                  viewBox="0 0 16 16"
-                                  fill="none"
-                                  aria-hidden="true"
-                                >
-                                  <path
-                                    d="M13.5 4.5L6.5 11.5L3 8"
-                                    stroke="currentColor"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                  />
-                                </svg>
-                                <span class="toolkit__card-terminal-copy-label">copy</span>
-                              </button>
-                            </header>
-                            {/* TypeScript panel (only for cards that have a TS
+                                <rect
+                                  x="4.5"
+                                  y="0.5"
+                                  width="11"
+                                  height="14"
+                                  rx="1.5"
+                                  stroke="currentColor"
+                                />
+                                <rect
+                                  x="0.5"
+                                  y="4.5"
+                                  width="11"
+                                  height="14"
+                                  rx="1.5"
+                                  fill="var(--terminal-bg)"
+                                  stroke="currentColor"
+                                />
+                              </svg>
+                              <svg
+                                class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  d="M13.5 4.5L6.5 11.5L3 8"
+                                  stroke="currentColor"
+                                  stroke-width="2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                />
+                              </svg>
+                              <span class="toolkit__card-terminal-copy-label">copy</span>
+                            </button>
+                          </header>
+                          {/* TypeScript panel (only for cards that have a TS
                                 variant). Hidden unless the current language is TS. */}
-                            {card.expanded.codeTs && (
-                              <pre
-                                class="toolkit__card-terminal-code"
-                                data-lang-code="typescript"
-                                hidden
-                              ><code>{card.expanded.codeTs.map((row) => (
-                                <div class="toolkit__card-terminal-row">
-                                  <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
-                                  <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
-                                    tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
-                                  ))}</span>
-                                </div>
-                              ))}</code></pre>
-                            )}
-                            {/* Python panel. Always present; the default view. */}
+                          {card.expanded.codeTs && (
                             <pre
                               class="toolkit__card-terminal-code"
-                              data-lang-code="python"
-                            ><code>{card.expanded.codePy.map((row) => (
+                              data-lang-code="typescript"
+                              hidden
+                            ><code>{card.expanded.codeTs.map((row) => (
                               <div class="toolkit__card-terminal-row">
                                 <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
                                 <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
@@ -406,47 +506,57 @@ const sections = [
                                 ))}</span>
                               </div>
                             ))}</code></pre>
-                            {/* Python-only note (e.g. /evals): shown only when the
+                          )}
+                          {/* Python panel. Always present; the default view. */}
+                          <pre
+                            class="toolkit__card-terminal-code"
+                            data-lang-code="python"
+                          ><code>{card.expanded.codePy.map((row) => (
+                            <div class="toolkit__card-terminal-row">
+                              <span class="toolkit__card-terminal-lineno">{row.lineNo}</span>
+                              <span class="toolkit__card-terminal-line">{row.tokens.map((tok) => (
+                                tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
+                              ))}</span>
+                            </div>
+                          ))}</code></pre>
+                          {/* Python-only note (e.g. /evals): shown only when the
                                 current language is TS, since there's no TS variant. */}
-                            {card.expanded.pythonOnly && (
-                              <p class="toolkit__card-terminal-note" data-python-only-note hidden>
-                                The Evals SDK is Python-only.
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {card.expanded.viewMoreHref && (
-                        <a
-                          href={card.expanded.viewMoreHref}
-                          class="toolkit__card-view-more"
-                          aria-label={card.actionAriaLabel}
-                        >
-                          {card.actionLabel}
-                          <span
-                            class="toolkit__card-view-more-arrow"
-                            set:html={arrow}
-                          />
-                        </a>
+                          {card.expanded.pythonOnly && (
+                            <p class="toolkit__card-terminal-note" data-python-only-note hidden>
+                              The Evals SDK is Python-only.
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
+                    <a
+                      href={card.expanded.viewMoreHref}
+                      class="toolkit__card-view-more"
+                      aria-label={card.actionAriaLabel}
+                    >
+                      {card.actionLabel}
+                      <span
+                        class="toolkit__card-view-more-arrow"
+                        set:html={arrow}
+                      />
+                    </a>
+                  </div>
 
                   <button
                     type="button"
                     class="toolkit__card-open"
                     aria-label={`Toggle ${card.slug} details`}
-                    aria-expanded={card.defaultOpen ? 'true' : 'false'}
+                    aria-expanded="false"
                     aria-controls={`toolkit-card-${card.slug.slice(1)}-details`}
                     data-toggle
                   >
                     <span class="toolkit__card-open-icon" set:html={plus} />
                   </button>
                 </article>
-              ))}
-            </div>
-          </section>
-        ))}
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   </div>
@@ -456,15 +566,15 @@ const sections = [
   .toolkit {
     background: var(--bg);
     color: var(--fg);
-    padding: 64px 55px;
+    padding: 72px 48px;
   }
 
   .toolkit__inner {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 80px;
-    max-width: 1332px;
+    gap: 72px;
+    max-width: 1200px;
     margin: 0 auto;
   }
 
@@ -472,9 +582,9 @@ const sections = [
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 32px;
+    gap: 36px;
     width: 100%;
-    max-width: 1332px;
+    max-width: 1200px;
   }
 
   .toolkit__cards-header {
@@ -490,7 +600,7 @@ const sections = [
      line so it appears inline/centered on it. */
   .toolkit__cards-branch {
     flex: 1;
-    max-width: 340px;
+    max-width: 300px;
     height: 40px;
     border-top: 1.5px dashed var(--fg);
     position: relative;
@@ -542,57 +652,239 @@ const sections = [
   .toolkit__sections {
     display: flex;
     flex-direction: column;
-    gap: 32px;
+    gap: 48px;
     width: 100%;
   }
 
   .toolkit__section {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
     min-width: 0;
+  }
+
+  .toolkit__section--tools::before {
+    content: '';
+    align-self: center;
+    width: 0;
+    height: 20px;
+    margin-top: -34px;
+    margin-bottom: 2px;
+    border-left: 1.5px dashed var(--fg);
+    opacity: 0.7;
   }
 
   .toolkit__section-title {
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 700;
-    font-size: 16px;
-    letter-spacing: 1.6px;
+    font-size: 15px;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
     line-height: 1.3;
     text-align: center;
     color: var(--fg);
   }
 
-  .toolkit__section-cards {
-    display: grid;
-    gap: 24px;
+  .toolkit__build-card {
     width: 100%;
-    transition: grid-template-columns 0.3s ease;
+    background: var(--card-bg);
+    border: 1.5px solid var(--card-border);
+    border-radius: 16px;
+    overflow: hidden;
   }
 
-  .toolkit__section-cards--build {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .toolkit__build-primary {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.82fr) minmax(420px, 1.18fr);
+    gap: 44px;
+    align-items: center;
+    padding: 34px;
+  }
+
+  .toolkit__build-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  .toolkit__build-slug,
+  .toolkit__build-sdk-slug {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .toolkit__build-slug {
+    font-size: 30px;
+    line-height: 1.15;
+  }
+
+  .toolkit__build-headline {
+    max-width: 12ch;
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    font-size: clamp(32px, 3.2vw, 44px);
+    line-height: 1.05;
+    letter-spacing: -1.2px;
+    color: var(--fg);
+  }
+
+  .toolkit__build-description {
+    max-width: 48ch;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    color: var(--fg);
+  }
+
+  .toolkit__build-install,
+  .toolkit__build-sdk-install {
+    max-width: 100%;
+  }
+
+  .toolkit__build-action,
+  .toolkit__build-sdk-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: max-content;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  .toolkit__build-action {
+    margin-top: 2px;
+    font-size: 13px;
+  }
+
+  .toolkit__build-action:hover,
+  .toolkit__build-sdk-action:hover {
+    opacity: 0.8;
+  }
+
+  .toolkit__build-action-arrow {
+    display: inline-flex;
+    width: 10px;
+    height: 9px;
+  }
+
+  .toolkit__build-action-arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .toolkit__build-terminal {
+    align-self: center;
+    width: 100%;
+  }
+
+  .toolkit__build-sdk {
+    display: grid;
+    grid-template-columns: minmax(300px, 1fr) auto auto;
+    gap: 24px;
+    align-items: center;
+    padding: 18px 24px;
+    border-top: 1px solid var(--card-border);
+  }
+
+  .toolkit__build-sdk-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .toolkit__build-sdk-relation {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 10px;
+    line-height: 1.3;
+    letter-spacing: 1.1px;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .toolkit__build-sdk-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .toolkit__build-sdk-slug {
+    font-size: 19px;
+    line-height: 1.2;
+  }
+
+  .toolkit__build-sdk-title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 13px;
+    line-height: 1.3;
+    color: var(--fg);
+  }
+
+  .toolkit__build-sdk-description {
+    max-width: 70ch;
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--fg);
+  }
+
+  .toolkit__build-sdk-action {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .toolkit__section-cards {
+    display: grid;
+    gap: 20px;
+    width: 100%;
+    transition: grid-template-columns 0.3s ease;
   }
 
   .toolkit__section-cards--tools {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .toolkit__section-cards:has(.toolkit__card.is-open) > .toolkit__card {
-    align-self: start;
+  .toolkit__supporting-product {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
   }
 
-  .toolkit__section-cards--tools:has(.toolkit__card:nth-child(1).is-open) {
+  .toolkit__supporting-role {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 13px;
+    line-height: 1.3;
+    text-align: center;
+    color: var(--fg);
+  }
+
+  .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open) {
     grid-template-columns: 2fr 1fr 1fr;
   }
 
-  .toolkit__section-cards--tools:has(.toolkit__card:nth-child(2).is-open) {
+  .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open) {
     grid-template-columns: 1fr 2fr 1fr;
   }
 
-  .toolkit__section-cards--tools:has(.toolkit__card:nth-child(3).is-open) {
+  .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
     grid-template-columns: 1fr 1fr 2fr;
   }
 
@@ -602,22 +894,18 @@ const sections = [
     flex-direction: column;
     box-sizing: border-box;
     width: 100%;
-    /* Reserve room below the tags for the absolutely-positioned `+` control so
-       a wrapped second tag row never collides with it. */
-    padding: 22px 24px 40px;
-    min-height: 200px;
+    padding: 20px 22px 42px;
+    min-height: 176px;
     background: var(--card-bg);
     border: 1.5px solid var(--card-border);
     border-radius: 16px;
     overflow: hidden;
   }
 
-  /* The compact view is a flex column that spreads its 3 rows across the
-     available height so the layout doesn't feel top-heavy (Figma spec). */
   .toolkit__card-compact {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     flex: 1;
   }
 
@@ -626,21 +914,11 @@ const sections = [
     cursor: pointer;
   }
 
-  /* Push the tags row toward the bottom of the card. */
-  .toolkit__card-compact > .toolkit__card-tags {
-    margin-top: auto;
-  }
-
-  .toolkit__card-install {
-    max-width: 100%;
-    margin-top: auto;
-  }
-
   .toolkit__card-slug {
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 700;
-    font-size: 28px;
+    font-size: 24px;
     line-height: 1.2;
     color: var(--accent);
   }
@@ -650,29 +928,8 @@ const sections = [
     font-family: 'Space Grotesk', system-ui, sans-serif;
     font-weight: 400;
     font-size: 14px;
-    line-height: 1.3;
+    line-height: 1.45;
     color: var(--fg);
-  }
-
-  .toolkit__card-tags {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .toolkit__card-tag {
-    padding: 4px 9px;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-weight: 400;
-    font-size: 10px;
-    line-height: 1.3;
-    color: var(--fg);
-    border: 0.827px solid var(--accent);
-    border-radius: 999px;
-    white-space: nowrap;
   }
 
   .toolkit__card-read {
@@ -1009,15 +1266,53 @@ const sections = [
   }
 
   @media (max-width: 1023px) {
-    .toolkit__section-cards,
-    .toolkit__section-cards--tools:has(.toolkit__card:nth-child(1).is-open),
-    .toolkit__section-cards--tools:has(.toolkit__card:nth-child(2).is-open),
-    .toolkit__section-cards--tools:has(.toolkit__card:nth-child(3).is-open) {
+    .toolkit__build-primary {
+      grid-template-columns: 1fr;
+      gap: 28px;
+      padding: 28px;
+    }
+
+    .toolkit__build-copy {
+      max-width: 680px;
+    }
+
+    .toolkit__build-headline {
+      max-width: 16ch;
+    }
+
+    .toolkit__build-terminal {
+      max-width: 760px;
+    }
+
+    .toolkit__build-sdk {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px 24px;
+    }
+
+    .toolkit__build-sdk-action {
+      grid-column: 1 / -1;
+    }
+
+    .toolkit__section-cards--tools {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .toolkit__supporting-product:nth-child(3) {
+      grid-column: 1 / -1;
+    }
+
+    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open),
+    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open),
+    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
       grid-template-columns: 1fr;
     }
 
+    .toolkit__section-cards--tools:has(.toolkit__card.is-open) .toolkit__supporting-product {
+      grid-column: auto;
+    }
+
     .toolkit__card {
-      min-height: 0;
+      min-height: 176px;
     }
   }
 
@@ -1051,34 +1346,107 @@ const sections = [
     }
 
     .toolkit__cards {
-      gap: 16px;
+      gap: 20px;
     }
 
     .toolkit__sections {
-      gap: 24px;
+      gap: 38px;
     }
 
-    .toolkit__section-cards {
+    .toolkit__section {
       gap: 12px;
     }
 
-    /* Cards per Figma 745:12133: compact rows with 12px padding, hugging
-       their content; smaller type throughout. */
+    .toolkit__section--tools::before {
+      height: 16px;
+      margin-top: -27px;
+      margin-bottom: 0;
+    }
+
+    .toolkit__section-title {
+      font-size: 13px;
+      letter-spacing: 1.3px;
+    }
+
+    .toolkit__build-primary {
+      gap: 24px;
+      padding: 20px;
+    }
+
+    .toolkit__build-copy {
+      gap: 12px;
+    }
+
+    .toolkit__build-slug {
+      font-size: 24px;
+    }
+
+    .toolkit__build-headline {
+      max-width: 13ch;
+      font-size: 30px;
+      letter-spacing: -0.8px;
+    }
+
+    .toolkit__build-description {
+      font-size: 14px;
+    }
+
+    .toolkit__build-sdk {
+      grid-template-columns: 1fr;
+      gap: 12px;
+      padding: 18px 20px;
+    }
+
+    .toolkit__build-sdk-action {
+      grid-column: auto;
+    }
+
+    .toolkit__build-sdk-heading {
+      gap: 8px;
+    }
+
+    .toolkit__build-sdk-description {
+      font-size: 12px;
+    }
+
+    .toolkit__section-cards--tools,
+    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open),
+    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(2) .toolkit__card.is-open),
+    .toolkit__section-cards--tools:has(.toolkit__supporting-product:nth-child(3) .toolkit__card.is-open) {
+      grid-template-columns: 1fr;
+    }
+
+    .toolkit__supporting-product:nth-child(3),
+    .toolkit__supporting-product:has(.toolkit__card.is-open) {
+      grid-column: auto;
+    }
+
+    .toolkit__supporting-product {
+      gap: 8px;
+    }
+
+    .toolkit__supporting-role {
+      padding-left: 4px;
+      font-size: 12px;
+      text-align: left;
+    }
+
     .toolkit__card {
-      padding: 12px 12px 40px;
+      min-height: 0;
+      padding: 16px 16px 40px;
     }
 
     .toolkit__card-read {
-      left: 12px;
+      left: 16px;
       font-size: 11px;
     }
 
     .toolkit__card-compact {
-      gap: 8px;
+      gap: 10px;
     }
 
     .toolkit__card-slug {
-      font-size: 18px;
+      font-size: 21px;
     }
 
     .toolkit__card-desc {
@@ -1120,10 +1488,6 @@ const sections = [
       width: 5px;
       height: 5px;
       margin-top: 6px;
-    }
-
-    .toolkit__card-tag {
-      font-size: 12px;
     }
 
     .toolkit__card-terminal-code {

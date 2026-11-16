@@ -17,11 +17,13 @@ interface Props {
   pip?: string
   npm?: string
   compact?: boolean
+  copyAriaLabel?: string
 }
 const {
   pip: PIP = 'pip install strands-agents',
   npm: NPM = 'npm install @strands-agents/sdk',
   compact = false,
+  copyAriaLabel = 'Copy install command',
 } = Astro.props
 ---
 
@@ -33,7 +35,7 @@ const {
       <span class="install__variant" data-install-variant="TypeScript">{NPM}</span>
     </span>
   </code>
-  <button type="button" class="install__copy" data-install-copy aria-label="Copy install command">
+  <button type="button" class="install__copy" data-install-copy aria-label={copyAriaLabel}>
     <span class="install__copy-label" data-install-copy-label>copy</span>
   </button>
 </div>
@@ -126,6 +128,23 @@ const {
     padding: 5px 10px;
     font-size: 11px;
     line-height: 1.2;
+  }
+
+  @media (max-width: 420px) {
+    .install--compact {
+      gap: 4px;
+      padding: 5px 5px 5px 8px;
+    }
+
+    .install--compact .install__cmd {
+      gap: 4px;
+      font-size: 11px;
+    }
+
+    .install--compact .install__copy {
+      padding-inline: 8px;
+      font-size: 10px;
+    }
   }
 </style>
 
