@@ -424,6 +424,73 @@ describe('Agent Cancellation', () => {
       expect(result.stopReason).toBe('endTurn')
       expect(result.lastMessage.content[0]).toEqual(new TextBlock('First'))
     })
+
+    it('ignores a hook resume once the deferred cancel has ended the pass', async () => {
+      let agent: Agent
+      const tool = createMockTool('stop', () => {
+        agent.cancel({ message: 'done', afterCurrentTools: true })
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'resumed' })
+      agent = new Agent({ model, tools: [tool], printer: false })
+      let resumes = 0
+      agent.addHook(AfterInvocationEvent, (event) => {
+        if (resumes++ === 0) event.resume = 'keep going'
+      })
+
+      const result = await agent.invoke('Go')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('done'))
+      expect(model.callCount).toBe(1)
+    })
+
+    it.each([
+      [
+        'before the final model call',
+        (agent: Agent, cancel: () => void) => agent.addHook(BeforeModelCallEvent, cancel),
+      ],
+      ['during AfterInvocation', (agent: Agent, cancel: () => void) => agent.addHook(AfterInvocationEvent, cancel)],
+    ])('ignores a hook resume when the deferred cancel is requested %s', async (_when, addCancelHook) => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Plain answer' })
+        .addTurn({ type: 'textBlock', text: 'resumed' })
+      const agent = new Agent({ model, printer: false })
+      let resumes = 0
+      agent.addHook(AfterInvocationEvent, (event) => {
+        if (resumes++ === 0) event.resume = 'keep going'
+      })
+      addCancelHook(agent, () => agent.cancel({ afterCurrentTools: true }))
+
+      const result = await agent.invoke('Go')
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('Plain answer'))
+      expect(model.callCount).toBe(1)
+    })
+
+    it('still honours a hook resume after an immediate cancel', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'never streamed' })
+        .addTurn({ type: 'textBlock', text: 'resumed' })
+      const agent = new Agent({ model, printer: false })
+      let modelCalls = 0
+      agent.addHook(BeforeModelCallEvent, () => {
+        if (++modelCalls === 1) agent.cancel()
+      })
+      const stopReasons: (string | undefined)[] = []
+      agent.addHook(AfterInvocationEvent, (event) => {
+        stopReasons.push(event.result?.stopReason)
+        if (event.result?.stopReason === 'cancelled') event.resume = 'keep going'
+      })
+
+      const result = await agent.invoke('Go')
+
+      expect(stopReasons).toEqual(['cancelled', 'endTurn'])
+      expect(result.stopReason).toBe('endTurn')
+    })
   })
 
   describe('cancel with a message', () => {

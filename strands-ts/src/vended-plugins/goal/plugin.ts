@@ -79,7 +79,7 @@ import { warnOnce } from '../../logging/warn-once.js'
 import type { Model } from '../../models/model.js'
 import type { Plugin } from '../../plugins/plugin.js'
 import type { InvokeOptions, LocalAgent } from '../../types/agent.js'
-import { LIMIT_STOP_REASONS, type ContentBlock, type Message, type StopReason } from '../../types/messages.js'
+import { LIMIT_STOP_REASONS, type ContentBlock, type Message } from '../../types/messages.js'
 import type { Snapshot } from '../../types/snapshot.js'
 import { JUDGE_OUTCOME_SCHEMA, JUDGE_SYSTEM_PROMPT, buildJudgePrompt } from './judge.js'
 
@@ -106,9 +106,8 @@ export type Validator = (
 
 /**
  * Why a goal run ended. `'limit'` means one of the request's `limits` was reached, so no
- * further attempt could run; `'stopped'` means the invocation was cancelled or superseded by
- * another caller, either mid-pass or while its answer was being graded, so no retry could run —
- * see {@link GoalResult.agentStopReason}.
+ * further attempt could run; `'stopped'` means the invocation was cancelled, either mid-pass
+ * or while its answer was being graded, so no retry could run.
  */
 export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout' | 'limit' | 'stopped'
 
@@ -124,8 +123,6 @@ export interface GoalAttempt {
 export interface GoalResult {
   passed: boolean
   stopReason: GoalStopReason
-  /** Why the run was stopped (`'cancelled'` or `'superseded'`) when `stopReason` is `'stopped'`. */
-  agentStopReason?: StopReason
   attempts: readonly GoalAttempt[]
 }
 
@@ -335,7 +332,8 @@ export class GoalLoop implements Plugin {
       const heldInterrupts = (agent as Agent)._interruptState.interrupts
       const abandoned =
         existing?.pausedInterruptIds !== undefined && !existing.pausedInterruptIds.every((id) => id in heldInterrupts)
-      // The agent drops a retry when another caller takes the turn, so that caller starts fresh.
+      // The agent drops a retry when the invocation is cancelled or another caller takes the
+      // turn, so the next request starts fresh.
       const retryDropped =
         existing?.retryArmedIn !== undefined &&
         existing.retryArmedIn !== unwrapInvocationContext(event.invocationContext)
@@ -397,15 +395,15 @@ export class GoalLoop implements Plugin {
         return
       }
 
-      // A pass that stopped on a limit, or was cancelled / superseded by another caller,
-      // produced no answer to grade, and resuming it would continue a run the caller gave up on.
+      // A pass that stopped on a limit or was cancelled produced no answer to grade, and
+      // resuming it would continue a run the caller gave up on.
       const agentStopReason = event.result?.stopReason
       if (agentStopReason !== undefined && LIMIT_STOP_REASONS.has(agentStopReason)) {
         finishRun(run, 'limit')
         return
       }
-      if (agentStopReason !== undefined && ENDED_WITHOUT_ANSWER.has(agentStopReason)) {
-        finishRun(run, 'stopped', agentStopReason)
+      if (agentStopReason === 'cancelled') {
+        finishRun(run, 'stopped')
         return
       }
       // A pause for human input is not an attempt: keep the run alive so the resume continues
@@ -460,11 +458,9 @@ export class GoalLoop implements Plugin {
         finishRun(run, 'limit')
         return
       }
-      // A caller that arrived while this answer was graded takes the turn instead of a retry:
-      // the agent drops the resume, so don't arm it (or rewind the conversation for it).
-      const takenOver = takenOverBy(agent)
-      if (takenOver) {
-        finishRun(run, 'stopped', takenOver)
+      // A cancel that arrived while this answer was graded ends the run instead of a retry.
+      if (agent.cancelSignal.aborted) {
+        finishRun(run, 'stopped')
         return
       }
 
@@ -474,12 +470,12 @@ export class GoalLoop implements Plugin {
     })
 
     // AgentResultEvent fires only on the request's final pass, so a retry still armed here was
-    // dropped by the agent for a newer caller. SDK_FIRST so user hooks already see the result.
+    // dropped by the agent (a deferred cancel or a newer caller). SDK_FIRST so user hooks already see the result.
     agent.addHook(
       AgentResultEvent,
       () => {
         const run = this._runs.get(agent)
-        if (run?.retryArmedIn !== undefined) finishRun(run, 'stopped', takenOverBy(agent))
+        if (run?.retryArmedIn !== undefined) finishRun(run, 'stopped')
       },
       { order: HookOrder.SDK_FIRST }
     )
@@ -530,25 +526,14 @@ export class GoalLoop implements Plugin {
   }
 }
 
-const ENDED_WITHOUT_ANSWER = new Set<StopReason>(['cancelled', 'superseded'])
-
-function finishRun(run: RunState, stopReason: GoalStopReason, agentStopReason?: StopReason): void {
+function finishRun(run: RunState, stopReason: GoalStopReason): void {
   run.result = {
     passed: stopReason === 'satisfied',
     stopReason,
-    ...(agentStopReason !== undefined && { agentStopReason }),
     attempts: run.attempts.slice(),
   }
   run.resumed = false
   delete run.retryArmedIn
-}
-
-/** Whether a caller took the turn from the running request: a cancel, or a waiting `'stopPrevious'` caller. */
-function takenOverBy(agent: LocalAgent): StopReason | undefined {
-  if (agent.cancelSignal.aborted) return 'cancelled'
-  return (agent as Agent).pendingInvocations.some((pending) => pending.mode === 'stopPrevious')
-    ? 'superseded'
-    : undefined
 }
 
 function defaultResumePrompt(feedback: string | undefined): string {

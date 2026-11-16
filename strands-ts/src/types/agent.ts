@@ -277,10 +277,10 @@ export interface CancelOptions {
 
   /**
    * Defer cancellation until the running tool batch finishes, letting sibling
-   * tools complete normally instead of receiving cancellation errors. A
-   * deferred cancel that never gets to apply — the model answers with plain
-   * text and no tools in the same turn — is a no-op, and the invocation
-   * returns its natural `stopReason`.
+   * tools complete normally instead of receiving cancellation errors. When
+   * the model answers with plain text and no tools in the same turn, the
+   * invocation returns its natural `stopReason`. Either way no further pass
+   * starts: an `AfterInvocationEvent.resume` set by a hook is ignored.
    */
   afterCurrentTools?: boolean
 }

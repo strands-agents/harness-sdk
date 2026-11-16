@@ -593,7 +593,7 @@ describe("concurrentInvocationMode 'stopPrevious' × backgroundTasks", () => {
     const second = agent.invoke('second')
 
     // The first invocation had already finished its last step, so it completes normally
-    // rather than reporting 'superseded', and the second takes the turn without waiting
+    // rather than reporting 'cancelled', and the second takes the turn without waiting
     // for settlement.
     const firstResult = await first
     expect(firstResult.stopReason).toBe('endTurn')

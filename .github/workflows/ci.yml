@@ -39,10 +39,13 @@ jobs:
           filters: |
             python:
               - 'strands-py/**/!(*.md)'
+              # Data both SDKs copy into their packages at build.
+              - 'shared/**/!(*.md)'
               - '.github/workflows/python-*'
               - '.github/workflows/ci.yml'
             typescript:
               - 'strands-ts/**/!(*.md)'
+              - 'shared/**/!(*.md)'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/typescript-*'
@@ -67,10 +70,12 @@ jobs:
             strands-py-src:
               - 'strands-py/src/**/!(*.md)'
               - 'strands-py/pyproject.toml'
+              - 'shared/**/!(*.md)'
             strands-ts-src:
               - 'strands-ts/src/**/!(*.md)'
               - 'strands-ts/package.json'
               - 'strands-ts/tsconfig.base.json'
+              - 'shared/**/!(*.md)'
             strands-cli:
               - 'strands-cli/**/!(*.md)'
               - '.github/workflows/harness-cli-*'

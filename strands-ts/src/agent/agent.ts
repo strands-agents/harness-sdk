@@ -359,11 +359,11 @@ export type AgentConfig = {
    *   `'stopPrevious'` predecessors (they reject with
    *   {@link PendingInvocationCancelledError}); the new call runs next.
    * - `'stopPrevious'`: latest wins, without aborting work in flight — the running
-   *   invocation finishes its current step (model call and tool batch), then stops with
-   *   `stopReason: 'superseded'` instead of calling the model again. Queued
-   *   `'cancelPrevious'` / `'stopPrevious'` predecessors are displaced; the new call runs
-   *   next, so it waits for the slowest in-flight tool. A stop that lands before the
-   *   running invocation's first model call ends it with nothing appended, like a cancel.
+   *   invocation is stopped with `cancel({ afterCurrentTools: true })`: it finishes its
+   *   current step (model call and tool batch), then ends `'cancelled'` instead of calling
+   *   the model again, or with its natural `stopReason` if the model answered without
+   *   tools. Queued `'cancelPrevious'` / `'stopPrevious'` predecessors are displaced; the
+   *   new call runs next, so it waits for the slowest in-flight tool.
    * - `'queue'`: wait FIFO; the call runs as its own invocation when the current one
    *   finishes. The queue is unbounded; a queued call leaves it when its `cancelSignal`
    *   aborts (rejecting with {@link PendingInvocationCancelledError}). Bound it host-side
@@ -371,10 +371,9 @@ export type AgentConfig = {
    *
    * An agent awaiting an interrupt response counts as busy: under any mode other than
    * `'throw'`, a non-resume call parks in the queue and runs once the resume completes
-   * (the resume yields to a parked `'stopPrevious'` / `'cancelPrevious'` caller once its
-   * interrupt is settled: after the pending tool batch for a tool interrupt, or after the
-   * model-call pass that consumes the response for a hook-raised one; a custom hook
-   * interrupt that nothing settles runs its pass to the end). Abandoning the interrupt by
+   * (the resume stops for a parked `'stopPrevious'` / `'cancelPrevious'` caller after its
+   * current step: the pending tool batch for a tool interrupt, or the model call and tool
+   * batch that consume the response for a hook-raised one). Abandoning the interrupt by
    * loading a snapshot taken before it releases the parked callers; a snapshot that excludes
    * `interrupts` leaves the interrupt in place. A resume cancelled before its
    * pending tool batch leaves the interrupt in place, so parked callers wait for a later
@@ -1045,10 +1044,10 @@ export class Agent implements LocalAgent, InvokableAgent {
       ...(options?.cancelSignal !== undefined && { cancelSignal: options.cancelSignal }),
     })
     // An already-aborted caller never enters the queue; don't cancel the running
-    // invocation on its behalf. A 'stopPrevious' entry's presence in the queue is itself
-    // the stop request, so a caller that withdraws takes its request with it.
-    if (mode === 'cancelPrevious' && options?.cancelSignal?.aborted !== true) {
-      this.cancel()
+    // invocation on its behalf.
+    if (options?.cancelSignal?.aborted !== true) {
+      if (mode === 'cancelPrevious') this.cancel()
+      if (mode === 'stopPrevious') this.cancel(STOP_PREVIOUS_CANCEL)
     }
     await turn
     this._queuedInputTrackingIds = messages.map((message) => message.trackingId)
@@ -1269,9 +1268,8 @@ export class Agent implements LocalAgent, InvokableAgent {
    * For cancellation driven from outside the agent, prefer the `cancelSignal`
    * option on `invoke` / `stream`.
    *
-   * The pending call resolves with `stopReason: 'endTurn'` instead when the final model
-   * pass had already completed and the invocation was only awaiting end-of-invocation
-   * work (e.g. background-task settlement).
+   * A cancel that arrives after the final model pass (e.g. during background-task
+   * settlement) returns that pass's result with its own `stopReason`.
    *
    * Only the *running* invocation is cancelled; a queued invocation is removed by
    * aborting the `cancelSignal` its caller passed.
@@ -1459,6 +1457,8 @@ export class Agent implements LocalAgent, InvokableAgent {
     options?: InvokeOptions
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     await this._acquireTurn(args, options)
+    // A latest-wins caller still parked behind the interrupt this call resumes: stop after its step.
+    if (this._invocationQueue.hasStopRequest()) this.cancel(STOP_PREVIOUS_CANCEL)
     let continuationEvent: AfterInvocationEvent | undefined
     try {
       await this.initialize()
@@ -1548,7 +1548,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
         let result: AgentResult | undefined
         let caughtError: Error | undefined
-        let afterInvocationEvent: AfterInvocationEvent
+        let afterInvocationEvent!: AfterInvocationEvent
         try {
           result = yield* this._streamWithMiddleware(
             currentArgs,
@@ -1604,18 +1604,16 @@ export class Agent implements LocalAgent, InvokableAgent {
           )) !== undefined
         continuationEvent = hasContinuation ? afterInvocationEvent : undefined
 
-        // Don't let a continuation or a hook's `resume` swallow a cancel or stop request that
-        // arrived during AfterInvocation: return the completed result instead; abandoned
-        // inputs re-deliver in a later invocation. A hook's `resume` is still honoured after a
-        // host cancel (BackgroundTasks surfaces `input_required` interrupts that way), but never
-        // while a latest-wins caller waits, and never after 'superseded'.
-        const takeoverRequested = this._invocationQueue.hasTakeoverRequest()
-        const endedAfterFinalPass = hasContinuation && (this._abortSignal.aborted || takeoverRequested)
-
+        // A cancel that arrived after the final model pass must not be swallowed by another
+        // pass: return the completed result; abandoned inputs re-deliver in a later invocation.
+        // A hook's `resume` is still honoured after an immediate cancel (BackgroundTasks surfaces
+        // `input_required` interrupts that way), but never after a deferred one or while a
+        // latest-wins caller waits.
+        const cancelRequested = this._deferredCancel || this._abortSignal.aborted
+        const resumeDropped = this._deferredCancel || this._invocationQueue.hasTakeoverRequest()
         if (
-          stopReason !== 'superseded' &&
-          ((hasContinuation && !endedAfterFinalPass) ||
-            (!takeoverRequested && this._shouldResume(afterInvocationEvent, invocationContext)))
+          (hasContinuation && !cancelRequested) ||
+          (!resumeDropped && this._shouldResume(afterInvocationEvent, invocationContext))
         ) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue
@@ -1994,28 +1992,6 @@ export class Agent implements LocalAgent, InvokableAgent {
       // Main agent loop - continues until model stops without requesting tools
       while (true) {
         this._throwIfCancelled()
-
-        // A resume's in-flight step is whatever consumes its interrupt responses — the pending
-        // tool batch, or the next model-call pass for a hook-raised interrupt — and it ends with
-        // `deactivate()`. Honour a stop request only once that step has run.
-        if (this._invocationQueue.hasStopRequest() && !this._interruptState.activated) {
-          const stopMessage = new Message({
-            role: 'assistant',
-            content: [new TextBlock('Superseded by a new request')],
-          })
-          if (this._hasOpenUserTurn()) {
-            yield this._appendMessage(stopMessage, invocationState, invocationContext)
-          }
-          result = new AgentResult({
-            invocationContext,
-            stopReason: 'superseded',
-            lastMessage: stopMessage,
-            traces: this._tracer.localTraces,
-            metrics: this._meter.metrics,
-            invocationState,
-          })
-          return result
-        }
 
         const limitStopReason = reachedLimit(invocationContext)
         if (limitStopReason) {
@@ -3321,6 +3297,8 @@ function isBlankTextBlock(block: ContentBlock): boolean {
 }
 
 const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'
+const STOP_PREVIOUS_CANCEL: CancelOptions = { message: 'Superseded by a new request', afterCurrentTools: true }
+
 const INTERRUPTED_STATE_MESSAGE =
   'Agent is in an interrupted state. Resume by invoking with interruptResponse content blocks.'
 const BLANK_TEXT_PLACEHOLDER = '[blank text]'

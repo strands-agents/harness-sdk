@@ -202,7 +202,7 @@ export class AfterInvocationEvent extends HookableEvent {
   /**
    * How the pass ended. `undefined` when it threw or the consumer abandoned the stream.
    * Check `result.stopReason` before setting {@link resume}: a pass that ended on
-   * `'cancelled'`, `'superseded'`, or `'interrupt'` produced no answer to react to.
+   * `'cancelled'` or `'interrupt'` produced no answer to react to.
    */
   readonly result?: AgentResult
 
@@ -212,10 +212,10 @@ export class AfterInvocationEvent extends HookableEvent {
    * with these args as new input, under the same invocation lock. A fresh
    * {@link BeforeInvocationEvent}/{@link AfterInvocationEvent} pair fires for the
    * resumed run. Ignored if the invocation ended with an error, one of the
-   * request's limits is reached (a resumed run would stop again at once), or
-   * another caller is waiting under `'stopPrevious'` (including after `'superseded'`).
-   * It is honoured after `'cancelled'`, so a hook that resumes without checking
-   * {@link result} defeats `'cancelPrevious'`; check `result.stopReason` first.
+   * request's limits is reached (a resumed run would stop again at once),
+   * `agent.cancel({ afterCurrentTools: true })` was requested, or another caller is
+   * waiting to take the turn (`'cancelPrevious'` / `'stopPrevious'`). It is honoured
+   * after an immediate `agent.cancel()`, so check `result.stopReason` first.
    *
    * If multiple callbacks set `resume`, the last callback to run wins.
    */

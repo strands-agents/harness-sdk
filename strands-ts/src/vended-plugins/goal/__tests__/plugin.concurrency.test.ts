@@ -52,7 +52,7 @@ function history(agent: Agent): string[] {
 }
 
 describe('GoalLoop with concurrent invocations', () => {
-  it("'stopPrevious': the superseded pass ends A's run without grading, and B starts a fresh run", async () => {
+  it("'stopPrevious': the stopped pass ends A's run without grading, and B starts a fresh run", async () => {
     const gate = createGate()
     const graded: string[] = []
     const goal = goalFor('GOOD-B', graded)
@@ -73,7 +73,7 @@ describe('GoalLoop with concurrent invocations', () => {
     const second = agent.invoke('b')
     gate.release()
 
-    expect((await first).stopReason).toBe('superseded')
+    expect((await first).stopReason).toBe('cancelled')
     const resultB = await second
     expect(resultB.stopReason).toBe('endTurn')
     expect(text(resultB.lastMessage)).toBe('GOOD-B')
@@ -118,31 +118,6 @@ describe('GoalLoop with concurrent invocations', () => {
     expect(graded).toEqual(['GOOD-B'])
     expect(model.callCount).toBe(2)
     expect(goal.lastResult(agent)).toMatchObject({ passed: true, stopReason: 'satisfied' })
-  })
-
-  it("records the agent's stop reason when a pass ends without an answer", async () => {
-    const gate = createGate()
-    const goal = goalFor('never', [])
-    const model = new MockMessageModel().addTurn({ type: 'toolUseBlock', name: 'gate', toolUseId: 't1', input: {} })
-    const agent = new Agent({ model, tools: [gate.tool], plugins: [goal], printer: false })
-    let seen: AfterInvocationEvent | undefined
-    agent.addHook(AfterInvocationEvent, (event) => {
-      seen = event
-    })
-
-    const running = agent.invoke('a')
-    await gate.started
-    agent.cancel()
-    const result = await running
-
-    expect(result.stopReason).toBe('cancelled')
-    expect(seen?.result).toBe(result)
-    expect(goal.lastResult(agent)).toEqual({
-      passed: false,
-      stopReason: 'stopped',
-      agentStopReason: 'cancelled',
-      attempts: [],
-    })
   })
 
   it('still grades a structured-output agent, whose passes end with toolUse', async () => {
@@ -440,47 +415,4 @@ describe('GoalLoop with concurrent invocations', () => {
       ])
     }
   )
-
-  it("a consumer that breaks out after A's retry was armed leaves the next call a fresh run", async () => {
-    const goal = new GoalLoop({
-      maxAttempts: 3,
-      preserveContext: false,
-      goal: (message) => ({ passed: text(message) === 'GOOD-B', feedback: 'try again' }),
-    })
-    const model = new MockMessageModel()
-      .addTurn({ type: 'textBlock', text: 'A-answer' })
-      .addTurn({ type: 'textBlock', text: 'GOOD-B' })
-    const agent = new Agent({ model, plugins: [goal], printer: false })
-
-    for await (const event of agent.stream('a')) {
-      if (event.type === 'afterInvocationEvent') break
-    }
-    await agent.invoke('b')
-
-    expect(goal.lastResult(agent)).toMatchObject({ stopReason: 'satisfied', attempts: [{ attempt: 1 }] })
-    expect(history(agent)).toEqual(['user: a', 'assistant: A-answer', 'user: b', 'assistant: GOOD-B'])
-  })
-
-  it('a cancel during grading ends the run without rewinding the conversation for a retry', async () => {
-    const model = new MockMessageModel()
-      .addTurn({ type: 'textBlock', text: 'answer' })
-      .addTurn({ type: 'textBlock', text: 'retry' })
-    let agent!: Agent
-    const goal = new GoalLoop({
-      maxAttempts: 3,
-      preserveContext: false,
-      goal: () => {
-        agent.cancel()
-        return { passed: false, feedback: 'try again' }
-      },
-    })
-    agent = new Agent({ model, plugins: [goal], printer: false })
-
-    const result = await agent.invoke('go')
-
-    expect(text(result.lastMessage)).toBe('answer')
-    expect(goal.lastResult(agent)).toMatchObject({ stopReason: 'stopped', agentStopReason: 'cancelled' })
-    expect(history(agent)).toEqual(['user: go', 'assistant: answer'])
-    expect(model.callCount).toBe(1)
-  })
 })

@@ -95,13 +95,12 @@ export class ChildAgentAdapter implements ChildAdapter<Agent, AgentResult> {
     if (result.stopReason === 'interrupt') {
       return result.interrupts?.length ? [...result.interrupts] : `${this.label} interrupted without any interrupts`
     }
-    if (result.stopReason === 'superseded') {
-      return `${this.label} superseded`
-    }
     if (result.stopReason === 'cancelled') {
-      // Called mid-stream on `agentResultEvent`, so the signal is still live:
-      // deferred cancel (stop tool) never flips it → success; immediate cancel is an abort.
-      return child.cancelSignal.aborted ? `${this.label} cancelled` : undefined
+      // Called mid-stream on `agentResultEvent`, so the signal and the queue are still live:
+      // deferred cancel (stop tool) never flips the signal → success; an immediate cancel, or
+      // a stop for a waiting latest-wins caller, is an abort.
+      const takenOver = child.pendingInvocations.some((pending) => pending.mode !== 'queue')
+      return child.cancelSignal.aborted || takenOver ? `${this.label} cancelled` : undefined
     }
     if (LIMIT_STOP_REASONS.has(result.stopReason)) {
       return limitStopMessage(this._name, result.stopReason)

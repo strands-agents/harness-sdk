@@ -332,7 +332,7 @@ The cache configuration maps onto the request as follows on models that take cac
 
 On older models, only `ttl` values `"in_memory"` and `"24h"` apply, through `prompt_cache_retention`. Any other TTL is ignored with a warning. `tools_ttl` / `toolsTTL` and `system_prompt_ttl` / `systemPromptTTL` have no effect. Caching fields you set in `params`, such as `prompt_cache_options`, take precedence over the cache configuration.
 
-The provider decides from model info, not from the model ID. If you call a model that takes cache points through an alias the SDK does not recognize, such as a proxy or gateway name, opt in with a `model_info` (`modelInfo`) override:
+The provider decides from model info, not from the model ID. If you call a model that takes cache points through an alias the SDK does not recognize, such as a proxy or gateway name, opt in with a [`model_info` (`modelInfo`)](index.mdx#model-info) override:
 
 <Tabs>
 <Tab label="Python">

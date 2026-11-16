@@ -40,7 +40,7 @@ import {
   type ResolvedCacheSection,
   type StreamOptions,
 } from './model.js'
-import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
 import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
@@ -176,7 +176,7 @@ export class VercelModel extends Model<VercelModelConfig> {
    */
   override get modelInfo(): ModelInfo {
     const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
-    return mergeModelInfo(
+    return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
       bedrock ? bedrockCacheModelInfo(this.modelId) : undefined,

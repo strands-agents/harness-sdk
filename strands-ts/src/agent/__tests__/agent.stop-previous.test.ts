@@ -71,7 +71,7 @@ function historyShape(agent: Agent): string[] {
 }
 
 describe("concurrentInvocationMode 'stopPrevious'", () => {
-  it('lets the in-flight tool finish, stops the running invocation as superseded, then runs the new call', async () => {
+  it('lets the in-flight tool finish, stops the running invocation as cancelled, then runs the new call', async () => {
     const gate = createGate()
     const model = new MockMessageModel()
       .addTurn({ type: 'toolUseBlock', name: 'gate', toolUseId: 't1', input: {} })
@@ -94,7 +94,7 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
 
     gate.release()
     const firstResult = await first
-    expect(firstResult.stopReason).toBe('superseded')
+    expect(firstResult.stopReason).toBe('cancelled')
     expect(resultText(firstResult)).toBe('Superseded by a new request')
 
     const secondResult = await second
@@ -116,6 +116,22 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     ])
   })
 
+  it('a stop requested before the first model call still lets that step run', async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'textBlock', text: 'A' })
+      .addTurn({ type: 'textBlock', text: 'B' })
+    const agent = new Agent({ model, printer: false, concurrentInvocationMode: 'stopPrevious' })
+
+    const first = agent.invoke('a')
+    const second = agent.invoke('b')
+
+    const firstResult = await first
+    expect(firstResult.stopReason).toBe('endTurn')
+    expect(resultText(firstResult)).toBe('A')
+    expect(resultText(await second)).toBe('B')
+    expect(historyShape(agent)).toEqual(['user: a', 'assistant: A', 'user: b', 'assistant: B'])
+  })
+
   it('works as a per-call ifBusy override on a throw-mode agent', async () => {
     const gate = createGate()
     const model = new MockMessageModel()
@@ -128,7 +144,7 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     const second = agent.invoke('b', { ifBusy: 'stopPrevious' })
     gate.release()
 
-    expect((await first).stopReason).toBe('superseded')
+    expect((await first).stopReason).toBe('cancelled')
     expect(resultText(await second)).toBe('B')
   })
 
@@ -174,7 +190,7 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     const fourth = agent.invoke('d')
     gate.release()
 
-    expect((await first).stopReason).toBe('superseded')
+    expect((await first).stopReason).toBe('cancelled')
     await expect(second).rejects.toThrow(PendingInvocationCancelledError)
     await expect(third).rejects.toThrow(PendingInvocationCancelledError)
     expect(resultText(await fourth)).toBe('D')
@@ -241,11 +257,11 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     expect(model.callCount).toBe(2)
   })
 
-  it('a stopping caller that withdraws after queueing takes its stop request with it', async () => {
+  it('a stopping caller that withdraws after queueing still stops the running invocation', async () => {
     const gate = createGate()
     const model = new MockMessageModel()
       .addTurn({ type: 'toolUseBlock', name: 'gate', toolUseId: 't1', input: {} })
-      .addTurn({ type: 'textBlock', text: 'A' })
+      .addTurn({ type: 'textBlock', text: 'never called' })
     const agent = new Agent({ model, tools: [gate.tool], printer: false, concurrentInvocationMode: 'stopPrevious' })
 
     const first = agent.invoke('a')
@@ -258,9 +274,8 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
 
     gate.release()
     const firstResult = await first
-    expect(firstResult.stopReason).toBe('endTurn')
-    expect(resultText(firstResult)).toBe('A')
-    expect(model.callCount).toBe(2)
+    expect(firstResult.stopReason).toBe('cancelled')
+    expect(model.callCount).toBe(1)
   })
 
   it.each(['stopPrevious', 'cancelPrevious'] as const)(
@@ -318,7 +333,7 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     await until(() => agent.pendingInvocations.length === 1, 'second queued')
     releaseModel()
 
-    expect((await first).stopReason).toBe('superseded')
+    expect((await first).stopReason).toBe('cancelled')
     expect(resultText(await second)).toBe('B')
     // The gated model call completed and its tool ran before the stop was observed.
     expect(historyShape(agent)).toEqual([
@@ -353,7 +368,7 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     gate.release()
 
     const firstResult = await consume
-    expect(firstResult.stopReason).toBe('superseded')
+    expect(firstResult.stopReason).toBe('cancelled')
     const supersededMessage = events.find(
       (event) =>
         event instanceof MessageAddedEvent &&
@@ -388,7 +403,7 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
       new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
     ])
 
-    expect(resumed.stopReason).toBe('superseded')
+    expect(resumed.stopReason).toBe('cancelled')
     expect(agent._interruptState.activated).toBe(false)
     expect(resultText((await second) as { lastMessage: { content: readonly unknown[] } })).toBe('B')
     expect(historyShape(agent)).toEqual([
@@ -424,7 +439,7 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
       new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
     ])
 
-    expect(resumed.stopReason).toBe('superseded')
+    expect(resumed.stopReason).toBe('cancelled')
     expect(resultText(await second)).toBe('B')
     expect(historyShape(agent)).toEqual([
       'user: a',
@@ -475,7 +490,7 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     // settles the interrupt by running the pending tool batch, then yields to the newer 'b'
     // instead of evicting it — without a model call of its own.
     const resumed = (await answer) as { stopReason: string; lastMessage: { content: readonly unknown[] } }
-    expect(resumed.stopReason).toBe('superseded')
+    expect(resumed.stopReason).toBe('cancelled')
     expect(resultText(await second)).toBe('B')
     expect(model.callCount).toBe(2)
     expect(historyShape(agent).slice(-2)).toEqual(['user: b', 'assistant: B'])

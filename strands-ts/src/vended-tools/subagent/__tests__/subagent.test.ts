@@ -61,6 +61,7 @@ class FakeChild {
   }[] = []
   /** Mirrors Agent.cancelSignal: aborted only by an immediate cancel. */
   cancelSignal: AbortSignal = new AbortController().signal
+  pendingInvocations: { mode: string }[] = []
   private readonly _results: (AgentResult | undefined)[]
 
   constructor(...results: (AgentResult | undefined)[]) {
@@ -581,7 +582,6 @@ describe('subagent tool', () => {
     })
 
     it.each([
-      ['a superseded child', fakeResult('Superseded by a new request', 'superseded'), 'Subagent superseded'],
       ['a missing child result', undefined, 'Subagent did not produce a result.'],
       ['a child stopped by a limit', fakeResult('partial', 'limitTurns'), limitStopMessage('subagent', 'limitTurns')],
       [
@@ -603,6 +603,18 @@ describe('subagent tool', () => {
     it('turns an immediately cancelled child into an error result', async () => {
       const child = new FakeChild(fakeResult('', 'cancelled'))
       child.cancelSignal = AbortSignal.abort()
+      const { builder } = capturingBuilder(child)
+
+      const { result } = await run(makeSubagent({ builder }), { task: 'x' })
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock('Subagent cancelled')] })
+      )
+    })
+
+    it('turns a child stopped for a waiting stopPrevious caller into an error result', async () => {
+      const child = new FakeChild(fakeResult('Superseded by a new request', 'cancelled'))
+      child.pendingInvocations = [{ mode: 'stopPrevious' }]
       const { builder } = capturingBuilder(child)
 
       const { result } = await run(makeSubagent({ builder }), { task: 'x' })

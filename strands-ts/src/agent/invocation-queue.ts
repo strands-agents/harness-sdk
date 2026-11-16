@@ -17,9 +17,9 @@ export const CONCURRENT_INVOCATION_MODES = ['throw', 'cancelPrevious', 'stopPrev
  * - `'throw'`: reject the new call with `ConcurrentInvocationError` (default).
  * - `'cancelPrevious'`: latest wins — cancel the running invocation, displace queued
  *   latest-wins predecessors, and run this call next.
- * - `'stopPrevious'`: latest wins, gracefully — the running invocation finishes its current
- *   step and stops with `stopReason: 'superseded'`; queued latest-wins predecessors are
- *   displaced and this call runs next.
+ * - `'stopPrevious'`: latest wins, gracefully — the running invocation is stopped with
+ *   `cancel({ afterCurrentTools: true })`, so it finishes its current step first; queued
+ *   latest-wins predecessors are displaced and this call runs next.
  * - `'queue'`: wait FIFO; the call runs as its own invocation when the current one
  *   finishes.
  *
@@ -184,11 +184,7 @@ export class InvocationQueue {
     return true
   }
 
-  /**
-   * Whether a queued `'stopPrevious'` caller is waiting for the running invocation to stop.
-   * Relies on latest-wins entries being front-inserted and removed at {@link handoff}, so a
-   * stop entry can never sit behind the invocation that currently holds the turn.
-   */
+  /** Whether a `'stopPrevious'` caller is waiting in the queue. */
   hasStopRequest(): boolean {
     return this._entries.some((queued) => queued.mode === 'stopPrevious')
   }

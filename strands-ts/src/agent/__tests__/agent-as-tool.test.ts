@@ -173,7 +173,7 @@ describe('AgentAsTool', () => {
       expect(result).toEqual(createErrorResult("Agent 'test-agent' cancelled", 'tool-1'))
     })
 
-    it('returns an error when another caller supersedes the wrapped agent mid-run', async () => {
+    it('returns an error when a stopPrevious caller takes the turn from the wrapped agent mid-run', async () => {
       const model = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'noop', toolUseId: 'n1', input: {} })
         .addTurn({ type: 'textBlock', text: 'Host answer' })
@@ -195,7 +195,7 @@ describe('AgentAsTool', () => {
         asTool.stream(createMockContext({ name: 'helper', toolUseId: 'tool-1', input: { input: 'Hello agent' } }))
       )
 
-      expect(result).toEqual(createErrorResult("Agent 'helper' superseded", 'tool-1'))
+      expect(result).toEqual(createErrorResult("Agent 'helper' cancelled", 'tool-1'))
       expect(((await takeover) as { stopReason: string }).stopReason).toBe('endTurn')
     })
 
