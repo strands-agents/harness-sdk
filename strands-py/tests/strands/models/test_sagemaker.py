@@ -780,7 +780,12 @@ class TestSageMakerAIModel:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("finish_reason", "expected"),
-        [("length", "max_tokens"), ("tool_calls", "tool_use"), ("stop", "tool_use")],
+        [
+            ("length", "max_tokens"),
+            ("content_filter", "content_filtered"),
+            ("tool_calls", "tool_use"),
+            ("stop", "tool_use"),
+        ],
     )
     async def test_stream_non_streaming_tool_call_stop_reason(
         self, sagemaker_client, model, messages, finish_reason, expected
