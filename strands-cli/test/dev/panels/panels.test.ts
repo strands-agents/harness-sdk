@@ -4,8 +4,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type {
   ExperimentsState,
+  OptimizeReview,
   OptimizeSession,
   OptimizeState,
+  PastRun,
+  PastRuns,
+  TestCheck,
   TestResults,
   TestSession,
   TestState,
@@ -417,6 +421,8 @@ const optimizeSession = (initial: OptimizeState) => {
       loadModels: vi.fn(),
       pickModel: vi.fn(),
       setIterations: vi.fn(),
+      setSplit: vi.fn(),
+      openPastRun: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
       accept: vi.fn(),
@@ -451,6 +457,11 @@ const setup: OptimizeState = {
       },
     ],
     split: { train: 10, validation: 5, test: 5 },
+    splitChoices: [
+      { train: 8, validation: 6, test: 6 },
+      { train: 10, validation: 5, test: 5 },
+      { train: 12, validation: 4, test: 4 },
+    ],
     repetitions: 1,
     width: 4,
     iterations: 4,
@@ -459,6 +470,91 @@ const setup: OptimizeState = {
     judgeCalls: 230,
   },
 }
+
+const runningState = (): OptimizeState => ({
+  step: 'running',
+  progress: {
+    run: '20261112-1530-refunds',
+    record: '/w/record',
+    metric: 'OutputEvaluator',
+    iterations: 4,
+    planned: 17,
+    trainCases: 10,
+    baseline: 0.71,
+    best: { number: 2, score: 0.82 },
+    startedAt: Date.now(),
+    stopping: false,
+    candidates: [
+      { number: 1, step: 1, changed: ['effort'], summary: 'effort → high', score: 0.71, delta: 0, kept: false },
+      {
+        number: 2,
+        step: 1,
+        changed: ['instructions'],
+        summary: 'Add an explicit eligibility step',
+        score: 0.82,
+        delta: 0.11,
+        kept: true,
+      },
+    ],
+  },
+})
+
+const numberedLines = (word: string): string =>
+  Array.from({ length: 30 }, (_, index) => `${word} instruction line ${index + 1}`).join('\n')
+
+const reviewWithEdits = (overrides: Partial<OptimizeReview> = {}): OptimizeState => ({
+  step: 'review',
+  review: {
+    run: '20261116-220510-refunds',
+    record: '/w/record',
+    baseline: 0.5,
+    best: 0.9,
+    measuredOn: 'test cases',
+    edits: [
+      {
+        knob: 'instructions',
+        kind: 'text',
+        label: 'instructions',
+        target: 'agent.py',
+        before: numberedLines('old'),
+        after: numberedLines('new'),
+        accepted: true,
+      },
+      {
+        knob: 'effort',
+        kind: 'value',
+        label: 'effort',
+        target: 'agent.py',
+        before: 'low',
+        after: 'high',
+        accepted: true,
+      },
+    ],
+    ...overrides,
+  },
+})
+
+const PAST_RUNS: readonly PastRun[] = [
+  {
+    record: '/w/strands-dev/tmp/optimization/20261116-220510-refunds',
+    experiment: 'refunds',
+    startedAt: Date.UTC(2026, 10, 16, 22, 5, 10),
+    summary: '0.00 → 1.00 on test cases · 3 edits',
+    opens: true,
+  },
+  {
+    record: '/w/strands-dev/tmp/optimization/20261116-210000-refunds',
+    experiment: 'refunds',
+    summary: 'no better candidate · 0.50 on test cases',
+    opens: true,
+  },
+]
+
+const CASES_ROW = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
+const BUDGET_ROW = [...CASES_ROW, DOWN_KEY]
+const START_BUTTON = [...BUDGET_ROW, DOWN_KEY]
+const CANCEL_BUTTON = [...START_BUTTON, DOWN_KEY]
+const LEFT_KEY = '\u001b[D'
 
 describe('OptimizePanel', () => {
   it('shouldShowTheKnobsSplitAndEstimateWhenTheSetupOpens', async () => {
@@ -500,9 +596,11 @@ describe('OptimizePanel', () => {
   it.each<[string, string[], keyof OptimizeSession, unknown[]]>([
     ['SpaceOnEffort', ['\u001b[B', ' '], 'toggleKnob', ['effort']],
     ['EnterOnInstructions', ['\r'], 'toggleKnob', ['instructions']],
-    ['Right', ['\u001b[C'], 'setIterations', [6]],
-    ['Left', ['\u001b[D'], 'setIterations', [2]],
-    ['EnterOnStart', ['\u001b[B', '\u001b[B', '\u001b[B', '\r'], 'start', []],
+    ['RightOnTheBudget', [...BUDGET_ROW, RIGHT_KEY], 'setIterations', [6]],
+    ['LeftOnTheBudget', [...BUDGET_ROW, LEFT_KEY], 'setIterations', [2]],
+    ['RightOnTheCases', [...CASES_ROW, RIGHT_KEY], 'setSplit', [{ train: 12, validation: 4, test: 4 }]],
+    ['LeftOnTheCases', [...CASES_ROW, LEFT_KEY], 'setSplit', [{ train: 8, validation: 6, test: 6 }]],
+    ['EnterOnStart', [...START_BUTTON, '\r'], 'start', []],
   ])('shouldCallTheSessionWhenTheUserPresses%sInTheSetup', async (_key, keys, action, args) => {
     const { session } = optimizeSession(setup)
     const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
@@ -545,7 +643,7 @@ describe('OptimizePanel', () => {
     })
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
 
-    for (const key of ['\u001b[B', '\u001b[B', '\u001b[B', '\r']) await press(key)
+    for (const key of [...START_BUTTON, '\r']) await press(key)
 
     expect(session.start).not.toHaveBeenCalled()
     expect(text()).toContain('check a knob to start')
@@ -556,7 +654,7 @@ describe('OptimizePanel', () => {
     const props = freshProps()
     const { press } = await show(createElement(OptimizePanel, { ...props, session }))
 
-    for (const key of ['\u001b[B', '\u001b[B', '\u001b[B', '\u001b[B', '\r']) await press(key)
+    for (const key of [...CANCEL_BUTTON, '\r']) await press(key)
 
     expect(session.reset).toHaveBeenCalledTimes(1)
     expect(props.close).toHaveBeenCalledTimes(1)
@@ -592,33 +690,7 @@ describe('OptimizePanel', () => {
   })
 
   it('shouldListTheCandidatesAndStopWhenTheUserPressesX', async () => {
-    const { session } = optimizeSession({
-      step: 'running',
-      progress: {
-        run: '20261112-1530-refunds',
-        record: '/w/record',
-        metric: 'OutputEvaluator',
-        iterations: 4,
-        planned: 17,
-        baseline: 0.71,
-        best: { number: 2, score: 0.82 },
-        startedAt: Date.now(),
-        stopping: false,
-        candidates: [
-          { number: 1, step: 1, changed: ['effort'], summary: 'effort → high', score: 0.71, delta: 0, kept: false },
-          {
-            number: 2,
-            step: 1,
-            changed: ['instructions'],
-            summary: 'Add an explicit eligibility step',
-            score: 0.82,
-            ci: [0.75, 0.89],
-            delta: 0.11,
-            kept: true,
-          },
-        ],
-      },
-    })
+    const { session } = optimizeSession(runningState())
     const { text, press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
 
     await press('x')
@@ -627,6 +699,166 @@ describe('OptimizePanel', () => {
     expect(text()).toContain('best 0.82 (+0.11)')
     expect(text()).toContain('Add an explicit eligibility step')
     expect(session.stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('shouldSayWhatTheScoreMeansWhenTheRunShowsTheSelectedCandidate', async () => {
+    const { session } = optimizeSession(runningState())
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    expect(text()).toContain('score   0.82 average on 10 training cases, from 0 to 1 · +0.11 vs your agent')
+    expect(text()).not.toContain('CI')
+  })
+
+  it.each([
+    ['Right', RIGHT_KEY],
+    ['Left', LEFT_KEY],
+  ])('shouldNotChangeTheBudgetOrTheSplitWhenTheUserPresses%sOnAKnob', async (_key, key) => {
+    const { session } = optimizeSession(setup)
+    const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    await press(key)
+
+    expect(session.setIterations).not.toHaveBeenCalled()
+    expect(session.setSplit).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['Cases', CASES_ROW, /› cases\s+─*█─*\s+10 train \/ 5 validation \/ 5 test/u, '←→ split'],
+    ['Budget', BUDGET_ROW, /› budget\s+─*█─*\s+4 steps × 4 candidates/u, '←→ budget'],
+  ])('shouldSelectThe%sSliderWhenTheUserMovesDownToIt', async (_row, keys, row, hint) => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    for (const key of keys) await press(key)
+
+    expect(text()).toMatch(row)
+    expect(text()).toContain(`↑↓ · ${hint} · Esc cancel`)
+    expect(text()).not.toMatch(/› [☑☐]/u)
+  })
+
+  it('shouldScrollTheDiffWithTheArrowKeysWhenAnEditIsLongerThanThePanel', async () => {
+    const { session } = optimizeSession(reviewWithEdits())
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 20)
+    const before = text()
+
+    await press(DOWN_KEY)
+
+    expect(before).toMatch(/lines 1-\d+ of \d+ · ↑↓ scroll/u)
+    expect(text()).toMatch(/lines 2-\d+ of \d+ · ↑↓ scroll/u)
+    expect(text()).toContain('←→ edit · ↑↓ scroll · a accept')
+    expect(text()).not.toContain('PgUp')
+  })
+
+  it.each([
+    ['Right', RIGHT_KEY, 1],
+    ['Left', LEFT_KEY, 0],
+  ])('shouldShowTheChosenEditWhenTheUserPresses%sInTheReview', async (_key, key, chosen) => {
+    const { session } = optimizeSession(reviewWithEdits())
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 20)
+
+    await press(RIGHT_KEY)
+    if (key === LEFT_KEY) await press(LEFT_KEY)
+
+    expect(text()).toMatch(chosen === 1 ? /› ☑ effort/u : /› ☑ instructions/u)
+    expect(text()).toContain(`${chosen + 1}/2`)
+  })
+
+  it.each<[string, TestCheck, string, string]>([
+    [
+      'AboveZero',
+      { difference: 0.4, cases: 5, confidence: 0.9, range: [0.1, 0.7] },
+      '+0.40 on 5 unseen test cases · 90% confidence range +0.10 to +0.70',
+      'The whole range is above 0, so the gain is likely real.',
+    ],
+    [
+      'AcrossZero',
+      { difference: 0.2, cases: 4, confidence: 0.9, range: [-0.1, 0.5] },
+      '+0.20 on 4 unseen test cases · 90% confidence range -0.10 to +0.50',
+      'The range includes 0, so the gain may be luck.',
+    ],
+    [
+      'FromOneCase',
+      { difference: 1, cases: 1, confidence: 0.9 },
+      '+1.00 on 1 unseen test case',
+      'One test case is too few for a confidence range.',
+    ],
+  ])('shouldExplainTheTestCheckWhenItsRangeIs%s', async (_case, testCheck, result, verdict) => {
+    const { session } = optimizeSession(reviewWithEdits({ testCheck }))
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 20)
+
+    expect(text()).toContain(`test check  ${result}`)
+    expect(text()).toContain(verdict)
+  })
+
+  it('shouldSayThatNoTestCaseCheckedTheWinnerWhenTheRunHadNone', async () => {
+    const { session } = optimizeSession(reviewWithEdits())
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 20)
+
+    expect(text()).toContain('No test cases were left to check the winner on unseen cases.')
+  })
+
+  it('shouldGoBackToThePastRunsAndKeepThePanelOpenWhenTheUserPressesEscOnAPastReport', async () => {
+    const { session } = optimizeSession(reviewWithEdits({ past: true }))
+    const props = freshProps()
+    const { press, text } = await show(createElement(OptimizePanel, { ...props, session }), 20)
+    const hints = text()
+
+    await press('\u001b')
+
+    await vi.waitFor(() => expect(session.reset).toHaveBeenCalledTimes(1))
+    expect(props.close).not.toHaveBeenCalled()
+    expect(hints).toContain('Esc back to past runs')
+  })
+
+  it('shouldListThePastRunsAndOpenOneWhenTheUserPressesEnterOnIt', async () => {
+    const { session } = optimizeSession({ step: 'pick', pastRuns: { loading: false, runs: PAST_RUNS } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    const list = text()
+    await press('\r')
+
+    expect(list).toContain('past runs (2)')
+    expect(list).toMatch(/› refunds\s+.*0\.00 → 1\.00 on test cases · 3 edits/u)
+    expect(list).toContain('no better candidate · 0.50 on test cases')
+    expect(list).toContain('Enter open the report')
+    expect(session.openPastRun).toHaveBeenCalledWith(PAST_RUNS[0]!.record)
+  })
+
+  it('shouldSkipAPastRunThatCannotBeOpenedWhenTheUserMovesDown', async () => {
+    const unreadable: PastRun = {
+      record: '/w/strands-dev/tmp/optimization/20261113-224053-refunds',
+      experiment: 'refunds',
+      summary: 'made by the older optimizer, so it cannot be opened',
+      opens: false,
+    }
+    const { session } = optimizeSession({
+      step: 'pick',
+      pastRuns: { loading: false, runs: [unreadable, ...PAST_RUNS] },
+    })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    await press('\r')
+
+    expect(text()).toContain('made by the older optimizer, so it cannot be opened')
+    expect(session.openPastRun).toHaveBeenCalledWith(PAST_RUNS[0]!.record)
+  })
+
+  it.each<[string, PastRuns, string]>([
+    ['Loading', { loading: true, runs: [] }, 'reading past runs…'],
+    ['Empty', { loading: false, runs: [] }, 'none yet · each finished run shows here'],
+    ['Unreadable', { loading: false, runs: [], error: 'Past runs cannot be read: EACCES' }, 'EACCES'],
+  ])('shouldSayWhyNoPastRunIsListedWhenThePastRunsAre%s', async (_case, pastRuns, note) => {
+    const { session } = optimizeSession({ step: 'pick', pastRuns })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toContain('past runs')
+    expect(text()).toContain(note)
   })
 
   it.each<[string, string, keyof OptimizeSession, unknown[]]>([

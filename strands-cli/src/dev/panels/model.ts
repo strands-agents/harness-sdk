@@ -208,10 +208,14 @@ export interface CaseSplit {
   readonly test: number
 }
 
+export const sameCaseSplit = (left: CaseSplit, right: CaseSplit): boolean =>
+  left.train === right.train && left.validation === right.validation && left.test === right.test
+
 export interface OptimizePlan {
   readonly experiment: ExperimentSummary
   readonly knobs: readonly Knob[]
   readonly split: CaseSplit
+  readonly splitChoices: readonly CaseSplit[]
   readonly repetitions: number
   readonly width: number
   readonly iterations: number
@@ -228,7 +232,6 @@ export interface CandidateResult {
   readonly changed: readonly string[]
   readonly summary: string
   readonly score?: number
-  readonly ci?: readonly [number, number]
   readonly delta?: number
   readonly kept: boolean
   readonly failed?: string
@@ -240,6 +243,7 @@ export interface OptimizeProgress {
   readonly metric: string
   readonly iterations: number
   readonly planned: number
+  readonly trainCases?: number
   readonly baseline?: number
   readonly best?: { readonly number: number; readonly score: number }
   readonly candidates: readonly CandidateResult[]
@@ -258,6 +262,13 @@ export interface ProposedEdit {
   readonly unavailable?: string
 }
 
+export interface TestCheck {
+  readonly difference: number
+  readonly cases: number
+  readonly confidence: number
+  readonly range?: readonly [number, number]
+}
+
 export interface OptimizeReview {
   readonly run: string
   readonly record: string
@@ -265,12 +276,28 @@ export interface OptimizeReview {
   readonly best: number
   readonly measuredOn: string
   readonly edits: readonly ProposedEdit[]
+  readonly testCheck?: TestCheck
+  readonly past?: boolean
   readonly applied?: readonly string[]
   readonly applyError?: string
 }
 
+export interface PastRun {
+  readonly record: string
+  readonly experiment: string
+  readonly startedAt?: number
+  readonly summary: string
+  readonly opens: boolean
+}
+
+export interface PastRuns {
+  readonly loading: boolean
+  readonly runs: readonly PastRun[]
+  readonly error?: string
+}
+
 export type OptimizeState =
-  | { readonly step: 'pick' }
+  | { readonly step: 'pick'; readonly pastRuns?: PastRuns }
   | { readonly step: 'setup'; readonly plan: OptimizePlan }
   | { readonly step: 'running'; readonly progress: OptimizeProgress }
   | { readonly step: 'review'; readonly review: OptimizeReview }
@@ -286,6 +313,8 @@ export interface OptimizeSession {
   loadModels(): void
   pickModel(id: string, picked: boolean): void
   setIterations(iterations: number): void
+  setSplit(split: CaseSplit): void
+  openPastRun(record: string): void
   start(): void
   stop(): void
   accept(index: number, accepted: boolean): void

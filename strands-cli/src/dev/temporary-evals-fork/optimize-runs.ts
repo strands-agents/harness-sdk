@@ -5,6 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { isRecord } from '../../values.js'
 import { isTemporaryProcessAlive } from './background-runs.js'
 import { stopTemporaryProcessGroup } from './evals-process.js'
+import type { TemporarySplitShares } from './plan.js'
 
 const RECORD_VERSION = 1
 const RUNS_FOLDER = 'running'
@@ -16,6 +17,7 @@ export interface TemporaryOptimizeRecord {
   readonly record: string
   readonly space: string
   readonly iterations: number
+  readonly split?: TemporarySplitShares
   readonly startedAt: number
   readonly pid?: number
 }
@@ -30,6 +32,10 @@ const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
   value.version === RECORD_VERSION &&
   ['experiment', 'record', 'space'].every((key) => typeof value[key] === 'string') &&
   Number.isInteger(value.iterations) &&
+  (value.split === undefined ||
+    (Array.isArray(value.split) &&
+      value.split.length === 3 &&
+      value.split.every((share) => typeof share === 'number'))) &&
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid))
 

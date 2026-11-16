@@ -7,17 +7,21 @@ import type { ChatDiffLine } from '../../agent/types.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
 import { useDevPanelClicks } from '../../ui/panels/dev.js'
-import { ExperimentPicker } from './picker.js'
-import type {
-  CandidateResult,
-  ExperimentSummary,
-  Knob,
-  ModelChoices,
-  OptimizePlan,
-  OptimizeProgress,
-  OptimizeReview,
-  OptimizeSession,
-  ProposedEdit,
+import { ExperimentPicker, type PickerSection } from './picker.js'
+import {
+  sameCaseSplit,
+  type CandidateResult,
+  type CaseSplit,
+  type ExperimentSummary,
+  type Knob,
+  type ModelChoices,
+  type OptimizePlan,
+  type OptimizeProgress,
+  type OptimizeReview,
+  type OptimizeSession,
+  type PastRuns,
+  type ProposedEdit,
+  type TestCheck,
 } from './model.js'
 import {
   Field,
@@ -49,6 +53,7 @@ export interface OptimizePanelProps extends DevChatPanelProps {
 
 const COMMAND = 'optimize'
 const SLIDER_WIDTH = 21
+const SLIDER_LABEL_WIDTH = 8
 const DIFF_CONTEXT_LINES = 2
 const FULL_SETUP_ROWS = 12
 const DIFF_INDENT = 2
@@ -61,7 +66,15 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
   const use = useCallback((experiment: ExperimentSummary) => session.plan(experiment), [session])
   switch (state.step) {
     case 'pick':
-      return <ExperimentPicker {...props} experiments={session.experiments} command={COMMAND} onUse={use} />
+      return (
+        <ExperimentPicker
+          {...props}
+          experiments={session.experiments}
+          command={COMMAND}
+          onUse={use}
+          {...pastRunsSection(state.pastRuns, (record) => session.openPastRun(record))}
+        />
+      )
     case 'setup':
       return <SetupView {...props} plan={state.plan} />
     case 'running':
@@ -96,6 +109,43 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
   }
 }
 
+const pad = (value: number): string => String(value).padStart(2, '0')
+
+const startedText = (startedAt: number | undefined): string => {
+  if (startedAt === undefined) return ''
+  const date = new Date(startedAt)
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())} · `
+}
+
+const pastRunsNote = ({ loading, runs, error }: PastRuns): Pick<PickerSection, 'note' | 'noteTone'> => {
+  if (error) return { note: error, noteTone: 'error' }
+  if (runs.length > 0) return {}
+  return { note: loading ? 'reading past runs…' : 'none yet · each finished run shows here' }
+}
+
+const pastRunsSection = (
+  pastRuns: PastRuns | undefined,
+  open: (record: string) => void
+): { section?: PickerSection } =>
+  pastRuns
+    ? {
+        section: {
+          title: pastRuns.runs.length > 0 ? `past runs (${pastRuns.runs.length})` : 'past runs',
+          items: pastRuns.runs.map((run) => ({
+            key: run.record,
+            label: run.experiment,
+            detail: `${startedText(run.startedAt)}${run.summary}`,
+            disabled: !run.opens,
+          })),
+          ...pastRunsNote(pastRuns),
+          onChoose: (index): void => {
+            const run = pastRuns.runs[index]
+            if (run?.opens) open(run.record)
+          },
+        },
+      }
+    : {}
+
 const knobItem = (knob: OptimizePlan['knobs'][number]): ListItem => {
   if (knob.unavailable)
     return {
@@ -114,11 +164,10 @@ const knobItem = (knob: OptimizePlan['knobs'][number]): ListItem => {
   }
 }
 
-const ChoiceSlider = ({ choices, value }: { choices: readonly number[]; value: number }): ReactElement => {
+const ChoiceSlider = ({ count, position }: { count: number; position: number }): ReactElement => {
   const { accent } = useTheme()
-  const position = Math.max(0, choices.indexOf(value))
-  const step = choices.length > 1 ? (SLIDER_WIDTH - 1) / (choices.length - 1) : 0
-  const at = Math.round(position * step)
+  const step = count > 1 ? (SLIDER_WIDTH - 1) / (count - 1) : 0
+  const at = Math.round(Math.max(0, Math.min(position, count - 1)) * step)
   return (
     <Text>
       <Text dimColor>{'─'.repeat(at)}</Text>
@@ -132,15 +181,109 @@ type SetupButton = 'start' | 'cancel'
 
 const SETUP_BUTTONS: readonly SetupButton[] = ['start', 'cancel']
 
-const setupHints = (focused: SetupButton | Knob | undefined, ready: boolean): string[] => {
-  if (focused === 'start') return ['↑↓', ready ? 'Enter start' : 'check a knob to start', '←→ budget', 'Esc cancel']
-  if (focused === 'cancel') return ['↑↓', 'Enter cancel', 'Esc cancel']
-  const action = focused?.unavailable
+interface SetupSlider {
+  readonly key: string
+  readonly label: string
+  readonly count: number
+  readonly position: number
+  readonly detail: string
+  readonly right?: string
+  readonly hint: string
+  readonly move: (step: 1 | -1) => void
+}
+
+type SetupRow =
+  | { readonly kind: 'knob'; readonly knob: Knob }
+  | { readonly kind: 'slider'; readonly slider: SetupSlider }
+  | { readonly kind: 'button'; readonly button: SetupButton }
+
+const splitText = ({ train, validation, test }: CaseSplit): string =>
+  `${train} train / ${validation} validation / ${test} test`
+
+const splitPosition = ({ split, splitChoices }: OptimizePlan): number =>
+  splitChoices.findIndex((choice) => sameCaseSplit(choice, split))
+
+const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () => OptimizePlan): SetupSlider[] => [
+  {
+    key: 'cases',
+    label: 'cases',
+    count: plan.splitChoices.length,
+    position: Math.max(0, splitPosition(plan)),
+    detail: `${splitText(plan.split)} · ${plural(plan.repetitions, 'run')} per candidate`,
+    hint: '←→ split',
+    move: (step): void => {
+      const current = latest()
+      const next = current.splitChoices[splitPosition(current) + step]
+      if (next) session.setSplit(next)
+    },
+  },
+  {
+    key: 'budget',
+    label: 'budget',
+    count: plan.iterationChoices.length,
+    position: Math.max(0, plan.iterationChoices.indexOf(plan.iterations)),
+    detail: `${plural(plan.iterations, 'step')} × ${plan.width} candidates`,
+    right: `~${plan.rollouts} rollouts · ~${plan.judgeCalls} judge calls`,
+    hint: '←→ budget',
+    move: (step): void => {
+      const current = latest()
+      const next = current.iterationChoices[current.iterationChoices.indexOf(current.iterations) + step]
+      if (next !== undefined) session.setIterations(next)
+    },
+  },
+]
+
+const setupHints = (focused: SetupRow | undefined, ready: boolean): string[] => {
+  if (focused?.kind === 'slider') return ['↑↓', focused.slider.hint, 'Esc cancel']
+  if (focused?.kind === 'button')
+    return focused.button === 'start'
+      ? ['↑↓', ready ? 'Enter start' : 'check a knob to start', 'Esc cancel']
+      : ['↑↓', 'Enter cancel', 'Esc cancel']
+  const action = focused?.knob.unavailable
     ? 'not available'
-    : focused?.kind === 'models'
+    : focused?.knob.kind === 'models'
       ? 'Enter choose models'
       : 'Enter toggle'
-  return ['↑↓', action, '←→ budget', '↓ Start', 'Esc cancel']
+  return ['↑↓', action, 'Esc cancel']
+}
+
+const SliderRow = ({
+  slider,
+  active,
+  onPoint,
+}: {
+  slider: SetupSlider
+  active: boolean
+  onPoint: () => void
+}): ReactElement => {
+  const { accent, selection } = useTheme()
+  const clicks = useDevPanelClicks()
+  return (
+    <Box
+      height={1}
+      flexShrink={0}
+      justifyContent="space-between"
+      overflow="hidden"
+      {...(active ? { backgroundColor: selection } : {})}
+      {...(clicks ? { ref: clicks.target(onPoint, onPoint) } : {})}
+    >
+      <Box flexShrink={1} overflow="hidden">
+        <Text wrap="truncate-end">
+          <Text color={accent}>{active ? '› ' : '  '}</Text>
+          <Text bold={active} dimColor={!active}>
+            {slider.label.padEnd(SLIDER_LABEL_WIDTH)}
+          </Text>
+          <ChoiceSlider count={slider.count} position={slider.position} />
+          <Text>{`  ${slider.detail}`}</Text>
+        </Text>
+      </Box>
+      {slider.right ? (
+        <Box flexShrink={0} marginLeft={2}>
+          <Text dimColor>{slider.right}</Text>
+        </Box>
+      ) : null}
+    </Box>
+  )
 }
 
 const SETUP_CHROME_ROWS = 10
@@ -221,40 +364,50 @@ const SetupView = ({
   height,
   plan,
 }: OptimizePanelProps & { plan: OptimizePlan }): ReactElement => {
-  const cursor = useCursor(plan.knobs.length + SETUP_BUTTONS.length)
+  const latest = (): OptimizePlan => {
+    const state = session.snapshot()
+    return state.step === 'setup' ? state.plan : plan
+  }
+  const sliders = setupSliders(plan, session, latest)
+  const rows: SetupRow[] = [
+    ...plan.knobs.map((knob) => ({ kind: 'knob' as const, knob })),
+    ...sliders.map((slider) => ({ kind: 'slider' as const, slider })),
+    ...SETUP_BUTTONS.map((button) => ({ kind: 'button' as const, button })),
+  ]
+  const firstSlider = plan.knobs.length
+  const firstButton = firstSlider + sliders.length
+  const cursor = useCursor(rows.length)
   const [choosingModels, setChoosingModels] = useState(false)
   const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable)
   const compact = height < FULL_SETUP_ROWS
-  const focusAt = (row: number): SetupButton | Knob | undefined =>
-    plan.knobs[row] ?? SETUP_BUTTONS[row - plan.knobs.length]
-  const focused = focusAt(cursor.index)
+  const focused = rows[cursor.index]
   const cancel = (): void => {
     session.reset()
     close()
   }
-  const activate = (target: SetupButton | Knob | undefined): void => {
-    if (target === 'start') {
-      if (ready) session.start()
-    } else if (target === 'cancel') cancel()
-    else if (target?.kind === 'models' && !target.unavailable) {
+  const activate = (row: SetupRow | undefined): void => {
+    if (row?.kind === 'button') {
+      if (row.button === 'cancel') cancel()
+      else if (ready) session.start()
+    } else if (row?.kind === 'knob' && !row.knob.unavailable) {
+      if (row.knob.kind !== 'models') return session.toggleKnob(row.knob.key)
       session.loadModels()
       setChoosingModels(true)
-    } else if (target && !target.unavailable) session.toggleKnob(target.key)
+    }
   }
-  const choose = (row: number): void => {
-    cursor.set(row)
-    activate(focusAt(row))
+  const choose = (index: number): void => {
+    cursor.set(index)
+    activate(rows[index])
   }
   useInput(
     (input, key) => {
+      const row = rows[cursor.current()]
       if (key.escape) cancel()
       else if (key.upArrow) cursor.move(-1)
       else if (key.downArrow) cursor.move(1)
       else if (key.leftArrow || key.rightArrow) {
-        const position = plan.iterationChoices.indexOf(plan.iterations)
-        const next = plan.iterationChoices[position + (key.rightArrow ? 1 : -1)]
-        if (next !== undefined) session.setIterations(next)
-      } else if (key.return || shortcut(input, key) === ' ') activate(focusAt(cursor.current()))
+        if (row?.kind === 'slider') row.slider.move(key.rightArrow ? 1 : -1)
+      } else if (key.return || shortcut(input, key) === ' ') activate(row)
     },
     { isActive: !choosingModels }
   )
@@ -268,14 +421,13 @@ const SetupView = ({
         onDone={() => setChoosingModels(false)}
       />
     )
-  const { split } = plan
   return (
     <>
       <PanelTitle name={COMMAND} parts={[plan.experiment.name, plural(plan.experiment.caseCount, 'case')]} />
       {compact ? null : <Line>{'  knobs'}</Line>}
       <ItemList
         items={plan.knobs.map(knobItem)}
-        selected={cursor.index < plan.knobs.length ? cursor.index : -1}
+        selected={cursor.index < firstSlider ? cursor.index : -1}
         capacity={Math.max(3, Math.min(plan.knobs.length, height - SETUP_CHROME_ROWS))}
         labelWidth={labelWidthFor(
           plan.knobs.map(({ label }) => label),
@@ -285,32 +437,25 @@ const SetupView = ({
         onHover={cursor.set}
       />
       {compact ? null : <Gap />}
-      <Field
-        label="  cases"
-        value={`${split.train} train / ${split.validation} validation / ${split.test} test · ${plural(plan.repetitions, 'run')} per candidate`}
-        labelWidth={10}
-      />
-      <SplitLine
-        left={
-          <Text>
-            <Text dimColor>{'  budget  '}</Text>
-            <ChoiceSlider choices={plan.iterationChoices} value={plan.iterations} />
-            <Text>{`  ${plural(plan.iterations, 'step')} × ${plan.width} candidates`}</Text>
-          </Text>
-        }
-        right={<Text dimColor>{`~${plan.rollouts} rollouts · ~${plan.judgeCalls} judge calls`}</Text>}
-      />
+      {sliders.map((slider, index) => (
+        <SliderRow
+          key={slider.key}
+          slider={slider}
+          active={cursor.index === firstSlider + index}
+          onPoint={() => cursor.set(firstSlider + index)}
+        />
+      ))}
       {compact ? null : (
         <Line tone="muted">
-          {'          The best candidate on the validation cases wins. Test cases check it at the end.'}
+          {'          Train cases guide the search. Validation picks the winner. Test checks it.'}
         </Line>
       )}
       {plan.warning ? <Line tone="warning">{`  ${plan.warning}`}</Line> : compact ? null : <Gap />}
       <SetupButtons
         ready={ready}
-        focused={typeof focused === 'string' ? focused : undefined}
-        onChoose={(button) => choose(plan.knobs.length + SETUP_BUTTONS.indexOf(button))}
-        onHover={(button) => cursor.set(plan.knobs.length + SETUP_BUTTONS.indexOf(button))}
+        focused={focused?.kind === 'button' ? focused.button : undefined}
+        onChoose={(button) => choose(firstButton + SETUP_BUTTONS.indexOf(button))}
+        onHover={(button) => cursor.set(firstButton + SETUP_BUTTONS.indexOf(button))}
       />
       <Fill />
       <KeyHints hints={setupHints(focused, ready)} />
@@ -369,14 +514,20 @@ const candidateItem = (candidate: CandidateResult): ListItem => {
       tone: 'error',
     }
   const delta = candidate.delta === undefined ? '' : `  ${signed(candidate.delta)}`
-  const ci = candidate.ci ? `  CI [${candidate.ci[0].toFixed(2)}, ${candidate.ci[1].toFixed(2)}]` : ''
   return {
     key: String(candidate.number),
     label: `${where} · ${candidate.number}`,
-    detail: `${candidate.kept ? 'kept    ' : 'not kept'}  ${candidate.summary}${delta}${ci}`,
+    detail: `${candidate.kept ? 'kept    ' : 'not kept'}  ${candidate.summary}${delta}`,
     mark: candidate.kept ? { text: '✓', tone: 'success' } : { text: '·', tone: 'muted' },
     ...(candidate.kept ? {} : { tone: 'muted' as const }),
   }
+}
+
+const scoreText = ({ score, delta }: CandidateResult, trainCases: number | undefined): string => {
+  if (score === undefined) return 'not measured'
+  const cases = trainCases === undefined ? 'the training cases' : plural(trainCases, 'training case')
+  const change = delta === undefined ? '' : ` · ${signed(delta)} vs your agent`
+  return `${score.toFixed(2)} average on ${cases}, from 0 to 1${change}`
 }
 
 const RunningView = ({
@@ -439,15 +590,7 @@ const RunningView = ({
       {current ? (
         <>
           <Field label="  change" value={current.summary} labelWidth={10} />
-          <Field
-            label="  score"
-            value={
-              current.score === undefined
-                ? 'not measured'
-                : `${current.score.toFixed(2)}${current.ci ? `  CI [${current.ci[0].toFixed(2)}, ${current.ci[1].toFixed(2)}]` : ''}`
-            }
-            labelWidth={10}
-          />
+          <Field label="  score" value={scoreText(current, progress.trainCases)} labelWidth={10} />
         </>
       ) : (
         <Gap rows={2} />
@@ -556,9 +699,47 @@ const DiffLines = ({
         </Box>
       ))}
       {more ? (
-        <Line tone="muted">{`  lines ${offset + 1}-${offset + visible.length} of ${rows.length} · PgUp/PgDn scroll`}</Line>
+        <Line tone="muted">{`  lines ${offset + 1}-${offset + visible.length} of ${rows.length} · ↑↓ scroll`}</Line>
       ) : null}
     </Box>
+  )
+}
+
+const CHECK_LABEL = '  test check'
+const CHECK_LABEL_WIDTH = 14
+
+const checkVerdict = ({ range, cases }: TestCheck): string => {
+  if (!range)
+    return cases === 1 ? 'One test case is too few for a confidence range.' : 'The optimizer gave no confidence range.'
+  if (range[0] > 0) return 'The whole range is above 0, so the gain is likely real.'
+  if (range[1] < 0) return 'The whole range is below 0, so the change likely makes the agent worse.'
+  return 'The range includes 0, so the gain may be luck. More test cases make the range narrower.'
+}
+
+const checkLines = (check: TestCheck): readonly [string, string] => {
+  const gain = `${signed(check.difference)} on ${plural(check.cases, 'unseen test case')}`
+  const range = check.range
+    ? ` · ${Math.round(check.confidence * 100)}% confidence range ${signed(check.range[0])} to ${signed(check.range[1])}`
+    : ''
+  return [`${gain}${range}`, checkVerdict(check)]
+}
+
+const TestCheckLines = ({ review }: { review: OptimizeReview }): ReactElement => {
+  if (!review.testCheck)
+    return (
+      <Field
+        label={CHECK_LABEL}
+        value="No test cases were left to check the winner on unseen cases."
+        labelWidth={CHECK_LABEL_WIDTH}
+        tone="muted"
+      />
+    )
+  const [result, verdict] = checkLines(review.testCheck)
+  return (
+    <>
+      <Field label={CHECK_LABEL} value={result} labelWidth={CHECK_LABEL_WIDTH} />
+      <Field label="" value={verdict} labelWidth={CHECK_LABEL_WIDTH} tone="muted" />
+    </>
   )
 }
 
@@ -580,13 +761,26 @@ const ReviewView = ({
   const writable = review.edits.some((edit) => !edit.unavailable)
   const applied = review.applied !== undefined
   const listRows = Math.min(review.edits.length, MAX_EDIT_ROWS)
-  const diffHeight = Math.max(1, height - REVIEW_CHROME_ROWS - listRows)
+  const checkRows = review.testCheck ? 2 : 1
+  const diffHeight = Math.max(1, height - REVIEW_CHROME_ROWS - checkRows - listRows)
   const rows = useMemo(() => wrapDiff(diffs[index] ?? [], width), [diffs, index, width])
   const page = Math.max(1, diffHeight - 1)
   const lastOffset = Math.max(0, rows.length - page)
+  const scrolls = rows.length > diffHeight
   const choose = (step: number): void => {
     cursor.move(step)
     scroll.set(0)
+  }
+  const pick = (at: number): void => {
+    cursor.set(at)
+    scroll.set(0)
+  }
+  const scrollBy = (step: number): void =>
+    scroll.set((offset: number) => Math.max(0, Math.min(lastOffset, Math.min(offset, lastOffset) + step)))
+  const leave = (): void => {
+    if (review.past) return session.reset()
+    if (applied || !writable) session.reset()
+    close()
   }
   const acceptedNow = (): number => {
     const state = session.snapshot()
@@ -594,15 +788,15 @@ const ReviewView = ({
   }
   useInput((input, key) => {
     const typed = shortcut(input, key)
-    if (key.escape) {
-      if (applied || !writable) session.reset()
-      close()
-    } else if (applied) return
+    if (key.escape) leave()
+    else if (applied) return
     else if (typed === 'n') session.reset()
-    else if (key.upArrow) choose(-1)
-    else if (key.downArrow) choose(1)
-    else if (key.pageDown) scroll.set((offset: number) => Math.min(lastOffset, offset + page))
-    else if (key.pageUp) scroll.set((offset: number) => Math.max(0, offset - page))
+    else if (key.leftArrow) choose(-1)
+    else if (key.rightArrow) choose(1)
+    else if (key.upArrow) scrollBy(-1)
+    else if (key.downArrow) scrollBy(1)
+    else if (key.pageUp) scrollBy(-page)
+    else if (key.pageDown) scrollBy(page)
     else if (typed === 'a' || typed === 'x') {
       const at = cursor.current()
       const edit = review.edits[at]
@@ -625,6 +819,7 @@ const ReviewView = ({
       right={review.edits.length > 0 ? <Text dimColor>{`${index + 1}/${review.edits.length}`}</Text> : undefined}
     />
   )
+  const leaveHint = review.past ? 'Esc back to past runs' : 'Esc close'
   if (review.edits.length === 0)
     return (
       <>
@@ -633,7 +828,7 @@ const ReviewView = ({
         <Line>{'  No candidate beat your current agent, so there is nothing to change.'}</Line>
         <Line tone="muted">{`  Record: ${review.record}`}</Line>
         <Fill />
-        <KeyHints hints={['Esc close']} />
+        <KeyHints hints={[leaveHint]} />
       </>
     )
   if (applied) {
@@ -650,7 +845,7 @@ const ReviewView = ({
           <Line>{'  Your agent reloads when its files change. Run /test to check the new version.'}</Line>
         ) : null}
         <Fill />
-        <KeyHints hints={['Esc close']} />
+        <KeyHints hints={[leaveHint]} />
       </>
     )
   }
@@ -658,6 +853,7 @@ const ReviewView = ({
   return (
     <>
       {title}
+      <TestCheckLines review={review} />
       <ItemList
         items={items}
         selected={index}
@@ -666,18 +862,20 @@ const ReviewView = ({
           review.edits.map(({ label }) => label),
           width
         )}
+        onClick={pick}
       />
       <Rule width={width} />
       <DiffLines rows={rows} height={diffHeight} offset={Math.min(scroll.value, lastOffset)} />
       <Fill />
       <KeyHints
         hints={[
-          '↑↓ edit',
+          ...(review.edits.length > 1 ? ['←→ edit'] : []),
+          ...(scrolls ? ['↑↓ scroll'] : []),
           'a accept',
           'x reject',
           accepted > 0 ? 'Enter apply accepted' : 'accept an edit to apply',
           'n new run',
-          'Esc later',
+          review.past ? 'Esc back to past runs' : 'Esc later',
         ]}
       />
     </>

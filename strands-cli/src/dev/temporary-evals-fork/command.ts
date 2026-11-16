@@ -59,11 +59,13 @@ const TEST_DETAILS = paragraphs(
 const OPTIMIZE_DETAILS = paragraphs(
   'Tune this agent against an experiment, and then review the changes that the optimizer proposes.',
   'Select an experiment, and then select the knobs to tune. Each option of the createHarness or create_harness call is a knob, for example the instructions, the model, the effort, the tools, and the skills. For the model, select the other models to try. A knob that strands dev cannot change shows the reason.',
-  'Set the budget, and select Start. Before you start, the panel shows about how many model calls the run makes.',
+  'Use ↑↓ to go to the cases or the budget slider, and ←→ to move the selected slider. The cases slider sets how many cases are for training, validation, and test. Then select Start. Before you start, the panel shows about how many model calls the run makes.',
   'The optimizer divides the cases into training, validation, and test cases. It tries candidate changes on the training cases. The best candidate on the validation cases wins, and the test cases measure it at the end.',
   'While it runs, the panel shows the baseline score, the best score, and each candidate. Stop the run to keep the best candidate so far.',
   'The run continues when you close the panel or strands dev. When strands dev opens again, it shows the review, or it continues the run from where it stopped. On Windows, the run stops when strands dev closes, and continues at the next start.',
-  'At the end, review each proposed edit. Accept or reject each edit, and then apply the accepted edits. The agent source does not change until you apply them. Then use /test on the new version.',
+  'At the end, review each proposed edit. ←→ selects an edit, and ↑↓ scrolls its change. Accept or reject each edit, and then apply the accepted edits. The agent source does not change until you apply them. Then use /test on the new version.',
+  'The test check shows the gain on test cases that the search did not use, and its 90% confidence range. If the range includes 0, the gain can be luck.',
+  'The /optimize list also shows the past runs. Select a past run to open its report again.',
   'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/tmp/optimization/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
   'TEMPORARY: a fork of strands-evals runs the upstream optimizer for now.'
 )

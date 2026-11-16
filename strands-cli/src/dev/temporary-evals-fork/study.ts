@@ -15,6 +15,7 @@ export interface TemporaryTestDifference {
   readonly difference: number
   readonly ci?: readonly [number, number]
   readonly cases: number
+  readonly confidence: number
 }
 
 export interface TemporaryStudyBaseline {
@@ -75,6 +76,7 @@ const SUMMARY_LIMIT = 80
 const LINE_BREAK = /\r?\n/u
 const OBJECTIVE = /^(?:Maximize|Minimize)\((.+)\)$/u
 const FAILED_STOPS = new Set(['setup', 'proposer_error'])
+const TEST_INTERVAL_CONFIDENCE = 0.9
 const SPLIT_MEASUREMENT: Record<Split, TemporaryMeasurement> = {
   train: 'search',
   validation: 'validation',
@@ -311,7 +313,7 @@ class RunState {
   private testDifference(): TemporaryTestDifference | undefined {
     const { difference, cases, ci } = this.test ?? {}
     if (difference === undefined || cases === undefined) return undefined
-    return { difference, cases, ...(ci ? { ci } : {}) }
+    return { difference, cases, confidence: TEST_INTERVAL_CONFIDENCE, ...(ci ? { ci } : {}) }
   }
 
   private candidateResult(candidate: Candidate, baselineScore: number | undefined): CandidateResult {

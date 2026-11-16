@@ -44,6 +44,15 @@ export const temporaryReportsFolder = (workspaceDirectory: string): string => jo
 export const temporaryRunName = (experiment: string, now: Date): string =>
   `${now.toISOString().replace(/[-:]/gu, '').replace('T', '-').slice(0, 15)}-${basename(experiment, '.json')}`
 
+const RUN_NAME = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(.+)$/u
+
+export const temporaryRunNameParts = (name: string): { startedAt: number; experiment: string } | undefined => {
+  const match = RUN_NAME.exec(name)
+  if (!match) return undefined
+  const [year = 0, month = 1, day = 1, hour = 0, minute = 0, second = 0] = match.slice(1, 7).map(Number)
+  return { startedAt: Date.UTC(year, month - 1, day, hour, minute, second), experiment: match[7]! }
+}
+
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
 export const temporaryTypescriptRunnerCommand = (): string => {

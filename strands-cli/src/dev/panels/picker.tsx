@@ -20,27 +20,57 @@ import {
   plural,
   useSyncedState,
   type ListItem,
+  type Tone,
 } from './ui.js'
+
+export interface PickerSectionItem extends ListItem {
+  readonly disabled?: boolean
+}
+
+export interface PickerSection {
+  readonly title: string
+  readonly items: readonly PickerSectionItem[]
+  readonly note?: string
+  readonly noteTone?: Tone
+  readonly onChoose: (index: number) => void
+}
 
 export interface ExperimentPickerProps extends DevChatPanelProps {
   readonly experiments: ExperimentSession
   readonly command: string
   readonly onUse: (experiment: ExperimentSummary) => void
+  readonly section?: PickerSection
 }
 
 type PickerRow =
   | { readonly kind: 'ready'; readonly experiment: ExperimentSummary }
   | { readonly kind: 'waiting'; readonly generation: Generation }
   | { readonly kind: 'new' }
+  | { readonly kind: 'heading'; readonly title: string }
+  | { readonly kind: 'note'; readonly text: string; readonly tone?: Tone }
+  | { readonly kind: 'extra'; readonly item: PickerSectionItem; readonly index: number }
 
 const CHROME_ROWS = 3
 
-export const pickerRows = ({ saved, generations }: ExperimentsState): PickerRow[] => [
+const sectionRows = (section: PickerSection | undefined): PickerRow[] =>
+  section
+    ? [
+        { kind: 'note', text: '' },
+        { kind: 'heading', title: section.title },
+        ...(section.note
+          ? [{ kind: 'note' as const, text: section.note, ...(section.noteTone ? { tone: section.noteTone } : {}) }]
+          : []),
+        ...section.items.map((item, index) => ({ kind: 'extra' as const, item, index })),
+      ]
+    : []
+
+export const pickerRows = ({ saved, generations }: ExperimentsState, section?: PickerSection): PickerRow[] => [
   ...saved.map((experiment) => ({ kind: 'ready' as const, experiment })),
   ...generations
     .filter((generation) => generation.phase !== 'failed')
     .map((generation) => ({ kind: 'waiting' as const, generation })),
   { kind: 'new' },
+  ...sectionRows(section),
 ]
 
 const waitingDetail = (generation: Generation): string =>
@@ -64,10 +94,19 @@ const rowItem = (row: PickerRow): ListItem => {
       }
     case 'new':
       return { key: 'new', label: '+ Manage experiments', detail: 'opens /experiment', tone: 'muted' }
+    case 'heading':
+      return { key: `heading:${row.title}`, label: row.title, tone: 'muted' }
+    case 'note':
+      return { key: `note:${row.text}`, label: '', detail: row.text, tone: row.tone ?? 'muted' }
+    case 'extra': {
+      const { disabled, ...item } = row.item
+      return { ...item, key: `extra:${item.key}`, ...(disabled ? { tone: 'muted' as const } : {}) }
+    }
   }
 }
 
-const selectable = (row: PickerRow | undefined): boolean => row !== undefined && row.kind !== 'waiting'
+const selectable = (row: PickerRow | undefined): boolean =>
+  row?.kind === 'ready' || row?.kind === 'new' || (row?.kind === 'extra' && !row.item.disabled)
 
 const nextSelectable = (rows: readonly PickerRow[], from: number, step: 1 | -1): number => {
   for (let index = from + step; index >= 0 && index < rows.length; index += step) {
@@ -80,13 +119,14 @@ export const ExperimentPicker = ({
   experiments,
   command,
   onUse,
+  section,
   openCommand,
   close,
   width,
   height,
 }: ExperimentPickerProps): ReactElement => {
   const state = useSyncExternalStore(experiments.subscribe, experiments.snapshot)
-  const rows = pickerRows(state)
+  const rows = pickerRows(state, section)
   const chosen = useSyncedState<string | undefined>(undefined)
   const indexOf = (key: string | undefined): number => {
     const found = rows.findIndex((row) => rowItem(row).key === key && selectable(row))
@@ -95,15 +135,22 @@ export const ExperimentPicker = ({
   const index = indexOf(chosen.value)
   const step = (direction: 1 | -1): void =>
     chosen.set((key) => rowItem(rows[nextSelectable(rows, indexOf(key), direction)]!).key)
+  const activate = (row: PickerRow | undefined): void => {
+    if (row?.kind === 'ready') onUse(row.experiment)
+    else if (row?.kind === 'new') openCommand('experiment')
+    else if (row?.kind === 'extra') section?.onChoose(row.index)
+  }
+  const click = (at: number): void => {
+    const row = rows[at]
+    if (!row || !selectable(row)) return
+    chosen.set(rowItem(row).key)
+    activate(row)
+  }
   useInput((_input, key) => {
     if (key.escape) close()
     else if (key.upArrow) step(-1)
     else if (key.downArrow) step(1)
-    else if (key.return) {
-      const row = rows[indexOf(chosen.current())]
-      if (row?.kind === 'ready') onUse(row.experiment)
-      else if (row?.kind === 'new') openCommand('experiment')
-    }
+    else if (key.return) activate(rows[indexOf(chosen.current())])
   })
   const generating = state.generations.filter(isGenerating).length
   const waiting = rows.some((row) => row.kind === 'waiting')
@@ -124,12 +171,13 @@ export const ExperimentPicker = ({
           rows.map((row) => rowItem(row).label),
           width
         )}
+        onClick={click}
       />
       <Fill />
       {waiting ? (
         <Line tone="muted">{'  Grey experiments are still generating, or wait for review in /experiment.'}</Line>
       ) : null}
-      <KeyHints hints={['↑↓', 'Enter choose', 'Esc close']} />
+      <KeyHints hints={['↑↓', rows[index]?.kind === 'extra' ? 'Enter open the report' : 'Enter choose', 'Esc close']} />
     </>
   )
 }

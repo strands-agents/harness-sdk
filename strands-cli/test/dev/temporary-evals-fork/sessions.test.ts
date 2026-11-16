@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ExperimentSummary } from '../../../src/dev/panels/model.js'
@@ -33,6 +33,7 @@ import {
   optimizerIterationEnd,
   optimizerPicked,
   optimizerStop,
+  optimizerTested,
   writeOptimizerRun,
 } from '../../fixtures/optimizer-run.js'
 
@@ -312,6 +313,47 @@ describe('TEMPORARY dev sessions', () => {
     expect(after.plan.rollouts).toBeLessThan(before.plan.rollouts)
   })
 
+  it('shouldMoveTheCasesAndUpdateTheEstimateAndWarningWhenTheDeveloperPicksAnotherSplit', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(
+      workspace,
+      Array.from({ length: 20 }, (_, index) => `c${index}`)
+    )
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const before = sessions.optimize.snapshot()
+
+    sessions.optimize.setSplit({ train: 16, validation: 2, test: 2 })
+    const after = sessions.optimize.snapshot()
+    sessions.optimize.setSplit({ train: 17, validation: 2, test: 1 })
+
+    if (before.step !== 'setup' || after.step !== 'setup') throw new Error('expected the setup')
+    expect(before.plan.splitChoices).toContainEqual(before.plan.split)
+    expect(after.plan.split).toEqual({ train: 16, validation: 2, test: 2 })
+    expect(after.plan.rollouts).toBeGreaterThan(before.plan.rollouts)
+    expect(before.plan.warning).toBeUndefined()
+    expect(after.plan.warning).toBeUndefined()
+    expect(sessions.optimize.snapshot()).toEqual(after)
+  })
+
+  it('shouldWarnWhenTheChosenSplitLeavesTooFewHeldOutCases', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(
+      workspace,
+      Array.from({ length: 8 }, (_, index) => `c${index}`)
+    )
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const state = sessions.optimize.snapshot()
+    if (state.step !== 'setup') throw new Error('expected the setup')
+
+    sessions.optimize.setSplit(state.plan.splitChoices.at(-1)!)
+
+    expect(sessions.optimize.snapshot()).toMatchObject({
+      plan: { warning: expect.stringContaining('so the scores can be luck') },
+    })
+  })
+
   it('shouldListTheProviderModelsAndTurnTheModelKnobOnWhenTheDeveloperPicksAnotherModel', async () => {
     const discoverModels = vi.fn(async () => ({
       options: [
@@ -459,6 +501,170 @@ describe('TEMPORARY dev sessions', () => {
     if (!finished)
       expect(continuing.mock.calls[0]![0].args).toEqual(expect.arrayContaining(['--resume', record, '--space', space]))
     expect(await readdir(join(folder, 'running'))).toEqual([])
+  })
+
+  it.each<[string, readonly number[] | undefined, readonly string[]]>([
+    ['TheSplitOfTheFirstRun', [0.7, 0.15, 0.15], ['--split', '0.7,0.15,0.15']],
+    ['NoSplitWhenTheRecordIsFromBeforeTheSplit', undefined, []],
+  ])('shouldResumeAStoppedRunWith%s', async (_case, split, flags) => {
+    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(flagValue(args, '--resume'), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const folder = join(workspace.directory!, 'tmp/optimization')
+    const record = join(folder, '20261111-150405-capital')
+    const space = join(folder, '20261111-150405-capital.space.json')
+    await writeFileAt(
+      space,
+      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
+    )
+    await writeOptimizerRun(record, studyLines(0.6))
+    await writeFileAt(
+      join(folder, 'running', '20261111-150405-capital.json'),
+      JSON.stringify({
+        version: 1,
+        experiment: experiment.path,
+        record,
+        space,
+        iterations: 4,
+        ...(split ? { split } : {}),
+        startedAt: 1,
+        pid: 999999,
+      })
+    )
+
+    await sessions.optimize.resume()
+
+    await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
+    const args = continuing.mock.calls[0]![0].args
+    const at = args.indexOf('--split')
+    expect(at >= 0 ? args.slice(at, at + 2) : []).toEqual(flags)
+  })
+
+  it('shouldRecordTheSplitWhenARunStartsSoThatItCanResumeWithIt', async () => {
+    let recorded: unknown
+    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+      process.onSpawn?.(4242)
+      await vi.waitFor(async () => {
+        const [name] = await readdir(join(flagValue(process.args, '--record'), '..', 'running'))
+        recorded = JSON.parse(await readFile(join(flagValue(process.args, '--record'), '..', 'running', name!), 'utf8'))
+        expect(recorded).toMatchObject({ pid: 4242 })
+      })
+      await writeOptimizerRun(flagValue(process.args, '--record'), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(
+      workspace,
+      Array.from({ length: 20 }, (_, index) => `c${index}`)
+    )
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.setSplit({ train: 14, validation: 3, test: 3 })
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    expect(recorded).toMatchObject({ split: [0.7, 0.15, 0.15] })
+  })
+
+  it('shouldGiveTheOptimizerTheChosenSplitWhenTheRunStarts', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(
+      workspace,
+      Array.from({ length: 20 }, (_, index) => `c${index}`)
+    )
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.setSplit({ train: 14, validation: 3, test: 3 })
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
+    expect(flagValue(optimizing.mock.calls[0]![0].args, '--split')).toBe('0.7,0.15,0.15')
+  })
+
+  it('shouldShowTheTestCheckWithItsConfidenceRangeWhenTheRunReportsOne', async () => {
+    const tested = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(flagValue(args, '--record'), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+        optimizerTested('win', 'base', 0.4, 5, [0.1, 0.7]),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: tested })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    expect(sessions.optimize.snapshot()).toMatchObject({
+      review: { testCheck: { difference: 0.4, cases: 5, confidence: 0.9, range: [0.1, 0.7] } },
+    })
+  })
+
+  it('shouldListEachPastRunWithItsOutcomeAndOpenItsReportAgain', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const optimization = join(workspace.directory!, 'tmp/optimization')
+    await writeOptimizerRun(join(optimization, '20261110-090000-capital'), [
+      optimizerConfig(),
+      ...optimizerCandidate({ id: 'base', number: 0, values: { instructions: BASELINE }, train: 0.5 }),
+      optimizerIterationEnd(['base']),
+      optimizerStop(),
+    ])
+    await mkdir(join(optimization, '20261110-080000-capital'), { recursive: true })
+    await writeFileAt(join(optimization, '20261109-080000-capital', 'study.jsonl'), '{}\n')
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    const finished = sessions.optimize.snapshot()
+    if (finished.step !== 'review') throw new Error('expected the review')
+
+    sessions.optimize.reset()
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ pastRuns: { loading: false, runs: expect.any(Array) } })
+    )
+    const listed = sessions.optimize.snapshot()
+    if (listed.step !== 'pick') throw new Error('expected the list')
+    sessions.optimize.openPastRun(finished.review.record)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot()).toMatchObject({ review: { past: true } }))
+
+    expect(
+      listed.pastRuns?.runs.map(({ record, experiment: name, summary, opens }) => [
+        basename(record),
+        name,
+        summary,
+        opens,
+      ])
+    ).toEqual([
+      [finished.review.run, 'capital', '0.50 → 0.90 on training cases · 1 edit', true],
+      ['20261110-090000-capital', 'capital', 'stopped early · no better candidate · 0.50 on training cases', true],
+      ['20261110-080000-capital', 'capital', 'no report, because the run stopped before it started', false],
+      ['20261109-080000-capital', 'capital', 'made by the older optimizer, so it cannot be opened', false],
+    ])
+    expect(listed.pastRuns?.runs[0]?.startedAt).toBeGreaterThan(Date.UTC(2026, 0, 1))
+    expect(sessions.optimize.snapshot()).toMatchObject({
+      step: 'review',
+      review: { run: finished.review.run, edits: [expect.objectContaining({ after: WINNER, accepted: true })] },
+    })
   })
 
   it('shouldKeepTheBestSoFarWhenTheUserStopsTheRun', async () => {

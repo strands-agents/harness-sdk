@@ -140,7 +140,7 @@ describe('TEMPORARY optimization run', () => {
       optimizerTested('win', 'base', 0.25, 4, [0.1, 0.4]),
     ]).outcome()
 
-    expect(outcome.test).toEqual({ difference: 0.25, cases: 4, ci: [0.1, 0.4] })
+    expect(outcome.test).toEqual({ difference: 0.25, cases: 4, confidence: 0.9, ci: [0.1, 0.4] })
   })
 
   it('shouldReportTheStopMessageWhenTheRunStopsAtSetup', () => {

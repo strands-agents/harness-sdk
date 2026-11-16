@@ -1,4 +1,4 @@
-import type { CaseSplit } from '../panels/model.js'
+import { sameCaseSplit, type CaseSplit } from '../panels/model.js'
 
 export type TemporarySplitShares = readonly [train: number, validation: number, test: number]
 
@@ -31,6 +31,8 @@ export const TEMPORARY_OPTIMIZE_DEFAULTS: TemporaryOptimizeSettings = {
 
 export const TEMPORARY_ITERATION_CHOICES: readonly number[] = [1, 2, 4, 6, 8]
 
+export const TEMPORARY_TRAIN_SHARES: readonly number[] = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+
 const VALIDATED_CANDIDATES = 4
 const TESTED_CANDIDATES = 2
 const MINIMUM_HELD_OUT_CASES = 2
@@ -48,6 +50,17 @@ export const temporaryCaseSplit = (
   const topped = new Set([0, 1, 2].sort((a, b) => remainder(b) - remainder(a)).slice(0, short))
   const [train = 0, validation = 0, test = 0] = floors.map((count, index) => (topped.has(index) ? count + 1 : count))
   return { train, validation, test }
+}
+
+export const temporarySplitChoices = (caseCount: number): CaseSplit[] =>
+  TEMPORARY_TRAIN_SHARES.map((train) => temporaryCaseSplit(caseCount, [train, (1 - train) / 2, (1 - train) / 2]))
+    .filter(({ train, validation }) => train > 0 && validation > 0)
+    .filter((split, index, choices) => choices.findIndex((choice) => sameCaseSplit(choice, split)) === index)
+
+export const temporarySplitShares = (split: CaseSplit): TemporarySplitShares => {
+  const total = split.train + split.validation + split.test
+  if (total === 0) return TEMPORARY_OPTIMIZE_DEFAULTS.split
+  return [split.train / total, split.validation / total, split.test / total]
 }
 
 export const temporaryRolloutEstimate = ({

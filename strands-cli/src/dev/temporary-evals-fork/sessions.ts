@@ -1,13 +1,15 @@
-import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { existsSync, type Dirent } from 'node:fs'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join, relative } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
-import { isRecord } from '../../values.js'
 import type { DevChatJob } from '../../ui/chat/types.js'
 import { resolveModelTarget } from '../../model/selection.js'
+import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
 import {
+  sameCaseSplit,
+  type CaseSplit,
   type ExperimentRun,
   type ExperimentSummary,
   type KnobKey,
@@ -16,7 +18,10 @@ import {
   type OptimizeReview,
   type OptimizeSession,
   type OptimizeState,
+  type PastRun,
+  type PastRuns,
   type ProposedEdit,
+  type TestCheck,
   type TestResults,
   type TestRun,
   type TestSession,
@@ -33,7 +38,12 @@ import {
   type TemporaryTestRecord,
 } from './background-runs.js'
 import { temporaryOptimizationFolder } from './environment.js'
-import { temporaryReportsFolder, temporaryRunName, temporaryWorkspaceDirectory } from './evals-process.js'
+import {
+  temporaryReportsFolder,
+  temporaryRunName,
+  temporaryRunNameParts,
+  temporaryWorkspaceDirectory,
+} from './evals-process.js'
 import {
   readTemporaryExperimentFile,
   temporaryCaseCount,
@@ -64,9 +74,12 @@ import {
 } from './optimize-runs.js'
 import {
   TEMPORARY_ITERATION_CHOICES,
+  TEMPORARY_OPTIMIZE_DEFAULTS,
   temporaryCaseSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
+  temporarySplitChoices,
+  temporarySplitShares,
 } from './plan.js'
 import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import {
@@ -76,6 +89,8 @@ import {
   temporaryStudyReader,
   type TemporaryMeasurement,
   type TemporaryStudyOutcome,
+  type TemporaryStudyParams,
+  type TemporaryTestDifference,
 } from './study.js'
 import { runTemporaryTest } from './test.js'
 
@@ -90,7 +105,7 @@ const WIDTH = 4
 const REPETITIONS = 1
 const MILLISECONDS = 1000
 
-type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width'>
+type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width' | 'split'>
 
 const MEASURED_ON: Record<TemporaryMeasurement, string> = {
   search: 'training cases',
@@ -116,6 +131,46 @@ export const temporaryOptimizeJobs = (state: OptimizeState): DevChatJob[] =>
     : []
 
 const STOPPED_BY_USER = 'You stopped the run.'
+const OLDER_OPTIMIZER_RECORD = 'study.jsonl'
+
+const tunedIn = (knobs: readonly TemporaryKnob[], params: TemporaryStudyParams): TemporaryKnob[] =>
+  knobs.map((knob) => ({ ...knob, enabled: Object.keys(temporaryKnobLabels([knob])).some((key) => key in params) }))
+
+const testCheck = (test: TemporaryTestDifference | undefined): TestCheck | undefined =>
+  test && {
+    difference: test.difference,
+    cases: test.cases,
+    confidence: test.confidence,
+    ...(test.ci ? { range: test.ci } : {}),
+  }
+
+const pastSummary = (outcome: TemporaryStudyOutcome, edits: number): string => {
+  if (outcome.error) return `stopped: ${outcome.error}`
+  const baseline = outcome.baseline.score
+  if (baseline === undefined) return 'stopped before the baseline was measured'
+  const early = outcome.ended === 'running' ? 'stopped early · ' : ''
+  const best = outcome.best?.score
+  const where = MEASURED_ON[outcome.measuredOn]
+  return edits === 0 || best === undefined
+    ? `${early}no better candidate · ${baseline.toFixed(2)} on ${where}`
+    : `${early}${baseline.toFixed(2)} → ${best.toFixed(2)} on ${where} · ${plural(edits, 'edit')}`
+}
+
+const optimizationRecords = async (folder: string): Promise<PastRun[]> => {
+  let entries: Dirent[]
+  try {
+    entries = await readdir(folder, { withFileTypes: true })
+  } catch (error) {
+    if (isRecord(error) && error.code === 'ENOENT') return []
+    throw error
+  }
+  return entries
+    .flatMap((entry) => {
+      const parts = entry.isDirectory() ? temporaryRunNameParts(entry.name) : undefined
+      return parts ? [{ record: join(folder, entry.name), ...parts, summary: '', opens: false }] : []
+    })
+    .sort((left, right) => right.record.localeCompare(left.record))
+}
 
 export class TemporaryTest extends Store<TestState> implements TestSession {
   private readonly runs = new Map<string, ExperimentRun>()
@@ -392,6 +447,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private abort: AbortController | undefined
   private stopping = false
   private readonly writers = new Map<number, (after: string) => Promise<void>>()
+  private pastRuns: PastRuns | undefined
+  private pastRunsLoad = 0
 
   constructor(
     private readonly host: TemporaryHost,
@@ -406,6 +463,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   show(): void {
     this.experiments.refresh()
+    void this.loadPastRuns()
+  }
+
+  openPastRun(record: string): void {
+    void this.openRecord(record)
   }
 
   toggleKnob(key: KnobKey): void {
@@ -451,6 +513,15 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     )
   }
 
+  setSplit(split: CaseSplit): void {
+    this.updatePlan((plan) => {
+      if (!plan.splitChoices.some((choice) => sameCaseSplit(choice, split))) return plan
+      const { warning: _warning, ...rest } = plan
+      const warning = temporaryOptimizeWarning(plan.experiment.caseCount, temporarySplitShares(split))
+      return this.estimate({ ...rest, split, ...(warning ? { warning } : {}) })
+    })
+  }
+
   start(): void {
     const state = this.snapshot()
     if (state.step !== 'setup') return
@@ -488,8 +559,58 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   reset(): void {
     if (this.snapshot().step === 'running') return
-    this.set({ step: 'pick' })
+    this.set({ step: 'pick', ...(this.pastRuns ? { pastRuns: this.pastRuns } : {}) })
     this.show()
+  }
+
+  private showPastRuns(pastRuns: PastRuns): void {
+    this.pastRuns = pastRuns
+    if (this.snapshot().step === 'pick') this.set({ step: 'pick', pastRuns })
+  }
+
+  private async loadPastRuns(): Promise<void> {
+    const load = ++this.pastRunsLoad
+    const latest = (pastRuns: PastRuns): void => {
+      if (load === this.pastRunsLoad) this.showPastRuns(pastRuns)
+    }
+    latest({ loading: true, runs: this.pastRuns?.runs ?? [] })
+    try {
+      const { workspace } = this.host()
+      const records = await optimizationRecords(temporaryOptimizationFolder(temporaryWorkspaceDirectory(workspace)))
+      const catalog = records.length > 0 ? await readTemporaryKnobs(workspace) : []
+      latest({ loading: false, runs: await Promise.all(records.map((run) => this.summarize(run, catalog))) })
+    } catch (error) {
+      latest({ loading: false, runs: [], error: `Past runs cannot be read: ${errorMessage(error)}` })
+    }
+  }
+
+  private async summarize(run: PastRun, catalog: readonly TemporaryKnob[]): Promise<PastRun> {
+    try {
+      const outcome = await readTemporaryStudy(run.record)
+      const knobs = tunedIn(catalog, outcome.baseline.params)
+      const edits = temporaryKnobChanges(knobs, outcome.baseline.params, outcome.best?.params ?? {}).length
+      return { ...run, summary: pastSummary(outcome, edits), opens: true }
+    } catch {
+      return {
+        ...run,
+        summary: existsSync(join(run.record, OLDER_OPTIMIZER_RECORD))
+          ? 'made by the older optimizer, so it cannot be opened'
+          : 'no report, because the run stopped before it started',
+      }
+    }
+  }
+
+  private async openRecord(record: string): Promise<void> {
+    if (this.snapshot().step === 'running') return
+    try {
+      const outcome = await readTemporaryStudy(record)
+      const knobs = tunedIn(await readTemporaryKnobs(this.host().workspace), outcome.baseline.params)
+      const review = await this.review(outcome, record, knobs)
+      if (this.snapshot().step === 'running') return
+      this.set({ step: 'review', review: { ...review, past: true } })
+    } catch (error) {
+      this.set({ step: 'failed', message: errorMessage(error), record })
+    }
   }
 
   private updatePlan(change: (plan: OptimizePlan) => OptimizePlan): void {
@@ -539,6 +660,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       const model = this.catalog.find((knob) => knob.kind === 'models' && !knob.unavailable)
       const caseCount = experiment.cases.length
       const split = temporaryCaseSplit(caseCount)
+      const splitChoices = temporarySplitChoices(caseCount)
       const warning = temporaryOptimizeWarning(caseCount)
       this.evaluators = Math.max(1, experiment.evaluators.length)
       this.set({
@@ -548,6 +670,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
           knobs: this.catalog,
           ...(typeof model?.current === 'string' ? { models: { current: model.current, picked: [] } } : {}),
           split,
+          splitChoices,
           repetitions: REPETITIONS,
           width: WIDTH,
           iterations: DEFAULT_ITERATIONS,
@@ -615,6 +738,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       experiment: { name: basename(saved.experiment, '.json'), path: saved.experiment, caseCount },
       iterations: saved.iterations,
       width: WIDTH,
+      split: temporaryCaseSplit(caseCount, saved.split ?? TEMPORARY_OPTIMIZE_DEFAULTS.split),
     }
   }
 
@@ -644,7 +768,12 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     const show = (): void =>
       this.set({
         step: 'running',
-        progress: { ...reader.progress(), planned: 1 + plan.iterations * plan.width, stopping: this.stopping },
+        progress: {
+          ...reader.progress(),
+          planned: 1 + plan.iterations * plan.width,
+          trainCases: plan.split.train,
+          stopping: this.stopping,
+        },
       })
     const tail = tailTemporaryRun(saved.record, (line) => {
       reader.push(line)
@@ -671,6 +800,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     const startedAt = continuing?.startedAt ?? Date.now()
     const now = new Date(startedAt)
     const labels = temporaryKnobLabels(knobs)
+    const shares = continuing ? continuing.split : temporarySplitShares(plan.split)
     this.abort = abort
     this.stopping = false
     let record: string | undefined
@@ -693,13 +823,19 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     let tail: TemporaryTail | undefined
     const progress = (): OptimizeProgress =>
       reader
-        ? { ...reader.progress(), planned: 1 + plan.iterations * plan.width, stopping: this.stopping }
+        ? {
+            ...reader.progress(),
+            planned: 1 + plan.iterations * plan.width,
+            trainCases: plan.split.train,
+            stopping: this.stopping,
+          }
         : {
             run: 'starting',
             record: '',
             metric: '',
             iterations: plan.iterations,
             planned: 1 + plan.iterations * plan.width,
+            trainCases: plan.split.train,
             candidates: [],
             startedAt,
             stopping: this.stopping,
@@ -712,7 +848,13 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         {
           workspace: this.host().workspace,
           experiment: plan.experiment.path,
-          forkArguments: ['--space', space, '--iterations', String(plan.iterations)],
+          forkArguments: [
+            '--space',
+            space,
+            '--iterations',
+            String(plan.iterations),
+            ...(shares ? ['--split', shares.join(',')] : []),
+          ],
           now: () => now,
           background: true,
           detached: true,
@@ -729,6 +871,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
               record: path,
               space,
               iterations: plan.iterations,
+              ...(shares ? { split: shares } : {}),
               startedAt,
             })
             reader = temporaryStudyReader({ run: basename(path), record: path, startedAt, labels })
@@ -839,6 +982,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       })
     }
     const baseline = outcome.baseline.score ?? 0
+    const check = testCheck(outcome.test)
     return {
       run: basename(record),
       record,
@@ -846,6 +990,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       best: outcome.best?.score ?? baseline,
       measuredOn: MEASURED_ON[outcome.measuredOn],
       edits,
+      ...(check ? { testCheck: check } : {}),
     }
   }
 

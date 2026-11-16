@@ -85,6 +85,7 @@ const plan = (): OptimizePlan => ({
   experiment: REFUNDS,
   knobs: KNOBS,
   split: { train: 1, validation: 1, test: 0 },
+  splitChoices: [{ train: 1, validation: 1, test: 0 }],
   repetitions: 1,
   width: 4,
   iterations: 4,

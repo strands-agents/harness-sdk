@@ -6,6 +6,8 @@ import {
   temporaryCaseSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
+  temporarySplitChoices,
+  temporarySplitShares,
   type TemporarySplitShares,
 } from '../../../src/dev/temporary-evals-fork/plan.js'
 
@@ -79,5 +81,51 @@ describe('TEMPORARY optimize plan', () => {
 
   it.each([7, 8, 40])('shouldNotWarnWhen%iCasesLeaveTwoOfEachPart', (cases) => {
     expect(temporaryOptimizeWarning(cases)).toBeUndefined()
+  })
+
+  it.each([
+    {
+      cases: 20,
+      choices: [
+        [6, 7, 7],
+        [8, 6, 6],
+        [10, 5, 5],
+        [12, 4, 4],
+        [14, 3, 3],
+        [16, 2, 2],
+      ],
+    },
+    {
+      cases: 4,
+      choices: [
+        [1, 2, 1],
+        [2, 1, 1],
+        [3, 1, 0],
+      ],
+    },
+    { cases: 1, choices: [] },
+  ])('shouldOfferEachDistinctSplitWithTrainAndValidationCasesWhenTheExperimentHas$casesCases', ({ cases, choices }) => {
+    expect(temporarySplitChoices(cases).map(({ train, validation, test }) => [train, validation, test])).toEqual(
+      choices
+    )
+  })
+
+  it.each([4, 7, 20, 33])('shouldOfferTheDefaultSplitWhenTheExperimentHas%iCases', (cases) => {
+    expect(temporarySplitChoices(cases)).toContainEqual(temporaryCaseSplit(cases))
+  })
+
+  it.each([4, 7, 20, 33])('shouldGiveTheForkSharesThatDealTheChosenCountsWhenTheExperimentHas%iCases', (cases) => {
+    const choices = temporarySplitChoices(cases)
+
+    const shares = choices.map(temporarySplitShares)
+
+    expect(shares.map((share) => temporaryCaseSplit(cases, share))).toEqual(choices)
+    expect(shares.map(([train, validation, test]) => Math.abs(train + validation + test - 1) < 1e-9)).toEqual(
+      choices.map(() => true)
+    )
+  })
+
+  it('shouldGiveTheDefaultSharesWhenTheSplitHasNoCases', () => {
+    expect(temporarySplitShares({ train: 0, validation: 0, test: 0 })).toEqual(DEFAULT_SPLIT)
   })
 })
