@@ -33,6 +33,16 @@ describe('homepage machine-readable metadata', () => {
     expect(homepage.querySelector('.banner__halftone svg')).toBeNull()
   })
 
+  it('leads with a primary build CTA instead of an install row', () => {
+    const banner = homepage.querySelector('.banner')
+    const primaryCta = banner?.querySelector('.banner__link--primary')
+
+    expect(primaryCta?.text.trim()).toBe('Build An Agent')
+    expect(primaryCta?.getAttribute('href')).toBe('#build-an-agent')
+    expect(banner?.querySelector('[data-install]')).toBeNull()
+    expect(banner?.querySelector('[data-install-copy]')).toBeNull()
+  })
+
   it('advertises the Markdown homepage', () => {
     const alternate = homepage.querySelector('link[rel="alternate"][type="text/markdown"]')
 
@@ -74,18 +84,18 @@ describe('homepage machine-readable metadata', () => {
     const harness = buildCard?.querySelector('[data-toolkit-product="harness"]')
     const sdk = buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')
 
-    expect(toolkit?.querySelector('.toolkit__cards-title')?.tagName).toBe('H2')
-    expect(
-      sections.map((section) => ({
-        tagName: section.querySelector('.toolkit__section-title')?.tagName,
-        text: section.querySelector('.toolkit__section-title')?.text.trim(),
-      }))
-    ).toEqual([
-      { tagName: 'H3', text: 'Build an agent' },
-      { tagName: 'H3', text: 'Control and improve your agent' },
-    ])
+    expect(toolkit?.getAttribute('aria-label')).toBe('Strands toolkit')
+    expect(toolkit?.querySelector('.toolkit__cards-header')).toBeNull()
+    expect(toolkit?.querySelectorAll('.toolkit__cards-branch')).toHaveLength(0)
+    expect(toolkit?.querySelector('.toolkit__cards-title')).toBeNull()
+    expect(sections[0]?.getAttribute('id')).toBe('build-an-agent')
+    expect(sections[0]?.getAttribute('aria-labelledby')).toBe('toolkit-harness-title')
+    expect(sections[0]?.querySelector('.toolkit__section-title')).toBeNull()
+    expect(sections[1]?.querySelector('.toolkit__section-title')?.tagName).toBe('H2')
+    expect(sections[1]?.querySelector('.toolkit__section-title')?.text.trim()).toBe('Control and improve your agent')
     expect(buildCard).not.toBeNull()
-    expect(harness?.querySelector('h4')?.text.trim()).toBe('/harness')
+    expect(harness?.querySelector('h2')?.getAttribute('id')).toBe('toolkit-harness-title')
+    expect(harness?.querySelector('h2')?.text.trim()).toBe('/harness')
     expect(harness?.querySelector('.toolkit__build-headline')?.text.trim()).toBe('Start with a complete agent.')
     expect(harness?.querySelector('.toolkit__build-description')?.text.trim()).toBe(
       'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.'
@@ -98,21 +108,22 @@ describe('homepage machine-readable metadata', () => {
       'Start building with Strands harness'
     )
 
-    expect(sdk?.querySelector('h4')?.text.trim()).toBe('/harness-sdk')
-    expect(sdk?.querySelector('.toolkit__build-sdk-title')?.text.trim()).toBe('Build with primitives')
+    expect(sdk?.querySelector('h3')?.text.trim()).toBe('/harness-sdk')
     expect(sdk?.querySelector('.toolkit__build-sdk-relation')?.text.trim()).toBe(
       'Harness is built on the Strands Harness SDK.'
     )
-    expect(sdk?.querySelector('.toolkit__build-sdk-description')?.text.trim()).toBe(
-      'Use the Strands Harness SDK directly when you need to wire the model, tools, memory, session management, and hooks yourself.'
+    expect(sdk?.querySelector('.toolkit__build-sdk-title')).toBeNull()
+    expect(sdk?.querySelector('.toolkit__build-sdk-description')).toBeNull()
+    expect(sdk?.querySelector('.toolkit__build-sdk-action')?.text.trim()).toBe('Build with primitives')
+    expect(sdk?.querySelector('.toolkit__build-sdk-action')?.getAttribute('aria-label')).toBe(
+      'Build with Strands Harness SDK primitives'
     )
-    expect(sdk?.querySelector('.toolkit__build-sdk-action')?.text.trim()).toBe('Explore the SDK')
     expect(sdk?.querySelector('.toolkit__build-sdk-action')?.getAttribute('href')).toBe(
       configuredPathWithBase('/docs/user-guide/sdk/')
     )
   })
 
-  it('gives Harness the visible example while keeping both build install paths available', () => {
+  it('gives Harness the visible example and only build install path', () => {
     const buildCard = homepage.querySelector('.toolkit__build-card')
     const harness = buildCard?.querySelector('[data-toolkit-product="harness"]')
     const sdk = buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')
@@ -125,6 +136,7 @@ describe('homepage machine-readable metadata', () => {
     expect(harness?.querySelector('.toolkit__card-terminal-copy')?.getAttribute('aria-label')).toBe(
       'Copy Strands harness example'
     )
+    expect(sdk?.querySelector('[data-install]')).toBeNull()
     expect(
       buildCard?.querySelectorAll('[data-install]').map((install) => ({
         python: install.querySelector('[data-install-variant="Python"]')?.text.trim(),
@@ -137,11 +149,6 @@ describe('homepage machine-readable metadata', () => {
         typescript: 'npm install @strands-agents/harness',
         copyLabel: 'Copy Strands harness install command',
       },
-      {
-        python: 'pip install strands-agents',
-        typescript: 'npm install @strands-agents/sdk',
-        copyLabel: 'Copy Strands Harness SDK install command',
-      },
     ])
   })
 
@@ -150,6 +157,13 @@ describe('homepage machine-readable metadata', () => {
     const products = toolsSection?.querySelectorAll('.toolkit__supporting-product') ?? []
     const cards = products.map((product) => product.querySelector('.toolkit__card'))
 
+    expect(
+      cards.map((card) => card?.querySelectorAll('.toolkit__card-slug').map((heading) => heading.tagName))
+    ).toEqual([
+      ['H3', 'H3'],
+      ['H3', 'H3'],
+      ['H3', 'H3'],
+    ])
     expect(
       products.map((product) => ({
         role: product.querySelector('.toolkit__supporting-role')?.text.trim(),

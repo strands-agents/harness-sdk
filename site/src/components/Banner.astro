@@ -1,8 +1,6 @@
 ---
 import halftone from '../assets/banner/halftone.svg?url';
 import arrow from '../assets/banner/arrow.svg?raw';
-import InstallCommand from './InstallCommand.astro';
-import { pathWithBase } from '../util/links';
 ---
 
 <section class="banner" aria-label="Introduction">
@@ -21,8 +19,11 @@ import { pathWithBase } from '../util/links';
       </div>
       <div class="banner__actions">
         <div class="banner__links">
-          <a href={pathWithBase('/docs/user-guide/harness/quickstart/')} class="banner__link">
-            Quickstart
+          <a
+            href="#build-an-agent"
+            class="banner__link banner__link--primary"
+          >
+            Build An Agent
             <span class="banner__arrow" set:html={arrow} />
           </a>
           <a
@@ -35,7 +36,6 @@ import { pathWithBase } from '../util/links';
             <span class="banner__arrow" set:html={arrow} />
           </a>
         </div>
-        <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
       </div>
     </div>
   </div>
@@ -57,15 +57,13 @@ import { pathWithBase } from '../util/links';
 
   .banner__halftone {
     position: absolute;
-    top: 44px;
-    left: 0;
-    right: 0;
-    height: 280px;
+    inset: 24px 0 0;
+    height: auto;
     overflow: hidden;
-    opacity: 0.32;
+    opacity: 0.4;
     /* Decorative only — never intercept taps/clicks meant for content. */
     pointer-events: none;
-    /* SVG is 750px tall; we show a 280px slice, centered, rotated 180deg. */
+    /* Show a centered slice of the rotated artwork behind the hero. */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -75,7 +73,8 @@ import { pathWithBase } from '../util/links';
     display: block;
     width: 100%;
     min-width: 1332px;
-    height: 750px;
+    height: auto;
+    aspect-ratio: 1332 / 750;
     transform: rotate(180deg);
     flex: none;
     background-color: var(--halftone-dot);
@@ -132,10 +131,7 @@ import { pathWithBase } from '../util/links';
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 16px;
-    /* Hug the widest child (the install command pill) so the Quickstart /
-       GitHub links stretch to its width and the column reads as one set. */
-    width: fit-content;
+    width: min(405px, 100%);
     max-width: 100%;
   }
 
@@ -168,6 +164,17 @@ import { pathWithBase } from '../util/links';
     border-radius: 999px;
   }
 
+  .banner__link--primary {
+    color: var(--strands-black);
+    background: var(--toggle-active-bg);
+    border-color: var(--toggle-active-bg);
+  }
+
+  .banner__link--primary .banner__arrow {
+    transform: rotate(90deg);
+    transform-origin: center;
+  }
+
   .banner__link:hover {
     opacity: 0.75;
   }
@@ -182,9 +189,6 @@ import { pathWithBase } from '../util/links';
     width: 100%;
     height: 100%;
   }
-
-  /* The install command is the shared <InstallCommand /> component; its pill
-     styling lives in InstallCommand.astro. */
 
   /* ---------- Tablet (768–1023px) ---------- */
   @media (max-width: 1023px) {
@@ -206,9 +210,10 @@ import { pathWithBase } from '../util/links';
 
     /* Keep the full-width dots faint behind the centered headline. */
     .banner__halftone {
-      top: 23px;
-      height: 280px;
-      opacity: 0.25;
+      top: 12px;
+      bottom: 0;
+      height: auto;
+      opacity: 0.3;
     }
 
     /* Must stay `position: relative` — static content would paint UNDER the
@@ -234,10 +239,9 @@ import { pathWithBase } from '../util/links';
     }
 
     .banner__actions {
-      width: fit-content;
+      width: min(405px, 100%);
       max-width: 100%;
       align-items: stretch;
-      gap: 12px;
     }
 
     .banner__links {
