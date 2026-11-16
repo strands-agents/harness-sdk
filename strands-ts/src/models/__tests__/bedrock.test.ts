@@ -3956,6 +3956,47 @@ describe('BedrockModel', () => {
         expect(secondCallPosition).toStrictEqual(firstCallPosition)
       })
 
+      it('keeps the conversation cache point on the starting prompt across a tool loop whose every turn carries a reminder', async () => {
+        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
+        const proxy = new ModelProxy(provider)
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('What is 6 x 7?'),
+              new InjectedBlock({ text: '<todos>0 done</todos>', source: 'todos' }),
+            ],
+          }),
+        ]
+        const positions: unknown[] = []
+
+        for (let call = 0; call < 3; call++) {
+          await collectGenerator(proxy.streamAggregated(messages, { toolSpecs }))
+          const sent = request()?.messages ?? []
+          positions.push(
+            sent.flatMap((message, msgIdx) =>
+              (message.content ?? []).flatMap((block, blockIdx) => ('cachePoint' in block ? [[msgIdx, blockIdx]] : []))
+            )
+          )
+          const toolUseId = `id-${call}`
+          messages.push(
+            new Message({
+              role: 'assistant',
+              content: [new ToolUseBlock({ name: 'calculator', toolUseId, input: {} })],
+            }),
+            new Message({
+              role: 'user',
+              content: [
+                new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock('42')] }),
+                new InjectedBlock({ text: `<todos>${call + 1} done</todos>`, source: 'todos' }),
+              ],
+            })
+          )
+        }
+
+        expect(positions).toStrictEqual([[[0, 2]], [[0, 2]], [[0, 2]]])
+      })
+
       it('keeps the conversation cache point on the prompt when an earlier tool-result turn carries its own reminder text', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
         const messages = [

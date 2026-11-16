@@ -47,7 +47,7 @@ export class ModelProxy {
     invocationContext?: InvocationContext
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
     const { messages: prepared, dynamicTrailingBlocks } = this._prepare(messages)
-    // The cache point stays ahead of injected text, which the next call no longer sends.
+    // The cache point stays ahead of content other middleware appended after the injected text for this call only.
     const keepsCachePoint = dynamicTrailingBlocks > (options?.dynamicTrailingBlocks ?? 0)
     const result = yield* this._model.streamAggregated(
       ...wellFormedRequest(prepared, keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options)
@@ -103,7 +103,7 @@ export class ModelProxy {
 interface RenderedMessages {
   /** The messages to send. */
   readonly messages: Message[]
-  /** Trailing blocks of the latest user message, from its first injected block on, that a later call may render differently. */
+  /** Trailing blocks of the latest user message after its last injected block, which only this call sends. */
   readonly dynamicTrailingBlocks: number
 }
 
