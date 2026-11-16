@@ -35,7 +35,8 @@ import { importAgentProject, type ImportedAgentProject } from '../../project/imp
 import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
 import type { AgentExtensionHost } from '../../agent/extension.js'
-import { saveAgentOptions, type AgentOptions } from '../../dev/agent-options.js'
+import { saveAgentChoices } from '../../dev/agent-choices.js'
+import type { AgentOptions } from '../../dev/agent-options.js'
 import { devChatExtension } from '../../dev/chat-extension.js'
 import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/agent-context.js'
 import { temporaryDevChatPart, temporaryDevCommands } from '../../dev/temporary-evals-fork/command.js'
@@ -164,7 +165,7 @@ export async function createTypescriptChat(
           ? {
               workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
               devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
-              saveAgentOptions: (change: AgentOptions): Promise<boolean> => saveAgentOptions(devWorkspace, change),
+              saveAgentOptions: (change: AgentOptions): Promise<boolean> => saveAgentChoices(devWorkspace, change),
             }
           : {}),
         awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
@@ -372,7 +373,7 @@ export async function createPythonChat(
         ? {
             workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
             devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
-            saveAgentOptions: (change: AgentOptions): Promise<boolean> => saveAgentOptions(devWorkspace, change),
+            saveAgentOptions: (change: AgentOptions): Promise<boolean> => saveAgentChoices(devWorkspace, change),
           }
         : {}),
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),

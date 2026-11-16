@@ -293,23 +293,48 @@ describe('createDevProject', () => {
     expect(await readdir(join(workspace.root, 'agent', 'skills'))).toEqual(['lint'])
   })
 
-  it('shouldRefuseAConfiguredSkillFolderThatDoesNotExist', async () => {
+  it('shouldSkipConfiguredSkillFoldersThatDoNotExistWhenCreatingTheProject', async () => {
     const cwd = await temporaryDirectory()
+    await writeFile(join(cwd, 'notes.txt'), 'not a folder')
+    await writeSkill(join(cwd, 'my-skills', 'lint'), 'Use the lint rules.')
     vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
 
-    const creation = createDevProject({
+    const workspace = await createDevProject({
       cwd,
       language: 'typescript',
-      snapshot: discoverySnapshot(['./missing-skills']),
+      snapshot: discoverySnapshot(['./missing-skills', './notes.txt/skills', './my-skills']),
     })
 
-    await expect(creation).rejects.toThrow(
-      `Configured skill source "${join(cwd, 'missing-skills')}" cannot be read (ENOENT).`
-    )
-    expect(devFailure(await creation.catch((error: unknown) => error), { operation: 'open' }).message).toMatch(
-      /^Workspace could not open\./u
-    )
+    expect(await readdir(join(workspace.root, 'agent', 'skills'))).toEqual(['lint'])
   })
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'shouldRefuseASkillFolderThatExistsButCannotBeRead',
+    async () => {
+      const cwd = await temporaryDirectory()
+      const locked = join(cwd, 'locked')
+      await writeSkill(join(locked, 'skills', 'lint'), 'Use the lint rules.')
+      vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+      await chmod(locked, 0o000)
+
+      try {
+        const creation = createDevProject({
+          cwd,
+          language: 'typescript',
+          snapshot: discoverySnapshot(['./locked/skills']),
+        })
+
+        await expect(creation).rejects.toThrow(
+          `Configured skill source "${join(locked, 'skills')}" cannot be read (EACCES).`
+        )
+        expect(devFailure(await creation.catch((error: unknown) => error), { operation: 'open' }).message).toMatch(
+          /^Workspace could not open\./u
+        )
+      } finally {
+        await chmod(locked, 0o755)
+      }
+    }
+  )
 
   it('shouldRefuseToWriteIntoStrandsWorkspaceWhenItAlreadyExists', async () => {
     const cwd = await temporaryDirectory()

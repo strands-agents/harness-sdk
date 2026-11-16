@@ -68,6 +68,22 @@ export const newProjectModelNotice = (
   )
 }
 
+const ABSENT_PATH_CODES = new Set(['ENOENT', 'ENOTDIR'])
+
+const presentSkillSources = async (paths: readonly string[]): Promise<string[]> => {
+  const absent = await Promise.all(
+    paths.map(async (path) =>
+      path.startsWith('https://')
+        ? false
+        : lstat(path).then(
+            () => false,
+            (error: unknown) => ABSENT_PATH_CODES.has((error as NodeJS.ErrnoException).code ?? '')
+          )
+    )
+  )
+  return paths.filter((_, index) => !absent[index])
+}
+
 const profileProject = async (
   snapshot: CliConfigSnapshot,
   cwd: string,
@@ -76,10 +92,8 @@ const profileProject = async (
   const baseDir = snapshot.profileBaseDir ?? cwd
   const source = foreignModelModule(snapshot, language) ? { ...snapshot.profile, modelModule: null } : snapshot.profile
   const profile = await withDevModuleFiles(source, baseDir, language)
-  const skills = resolveSkillPaths(
-    typeof profile.skills === 'object' ? [...profile.skills] : profile.skills,
-    baseDir,
-    false
+  const skills = await presentSkillSources(
+    resolveSkillPaths(typeof profile.skills === 'object' ? [...profile.skills] : profile.skills, baseDir, false)
   )
   return { profile, language, skills, baseDir }
 }

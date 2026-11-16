@@ -239,7 +239,7 @@ In `strands-workspace/`, an `agent/` folder holds packaged tools, skills, and po
 The top-level `agent/` in a workspace exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
 When the workspace is inside the project, dev keeps the workspace out of candidate copies, `/export`, and the source watcher.
 
-Dev copies only the skills that the profile configures, as `/export` does. Skills that skill discovery finds, for example in `~/.codex/skills`, stay out of the new project.
+Dev copies only the skills that the profile configures, as `/export` does. Skills that skill discovery finds, for example in `~/.codex/skills`, stay out of the new project. Unlike `/export`, dev skips a configured skill folder that does not exist.
 
 ```json
 {
@@ -292,6 +292,7 @@ Press Esc in the selector to keep the current chat. These actions do not change 
 Dev saves each change that you make in the CLI during a dev session. It never changes `~/.strands/cli.toml`.
 
 - `/model` and `/effort` write `model` and `effort` into the `createHarness` or `create_harness` call of the agent file. Dev uses the same code writer as `/export`.
+- The harness ignores `effort` when the agent passes a model object, for example `new BedrockModel({...})`. For a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object, `/effort` writes the reasoning fields into the object instead. These are the same fields that the harness sends for that model id at that effort, in `additionalRequestFields` or `params`. Fields for other purposes do not change.
 - `/settings`, `/permissions`, `/mcp`, and the AWS profile go into the `cli` section of `strands-dev/.config`. This section has the same shape as `cli.toml`, and dev loads it at each start.
 - Dev never saves provider credentials.
 
@@ -316,6 +317,7 @@ Inside a `strands dev` chat:
 - `/experiment` creates and reviews sets of test cases. **Create a new experiment** starts a conversation about what to test, rather than running generation immediately.
 - `/test` selects saved experiments, runs the agent on their cases, and shows results and reports.
 - `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
+  Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
 
 You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-tests`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. Reading cases or past results does not start a new run. Tests support one or several experiments; optimization returns proposed edits for explicit acceptance, and can be stopped or its pending proposals discarded on request.
 
@@ -325,7 +327,7 @@ Running jobs show progress below the chat input. Experiments, drafts, reports, a
 The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
 
 **Temporary dependency:** the evaluation workflow installs `strands-agents-evals[optimization]` from the pinned
-[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/6c5dd0bd4af93adfdbc02a6f7698e5981572ac2d)
+[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/dd073cca0b43265840635430499efb5a1661afc1)
 in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
 
 Global import remains deferred. A future manual import can select the persistent agent as the default for plain `strands`.

@@ -269,7 +269,7 @@ function pythonAgentOptionName(key: string): string {
   return name
 }
 
-function sourceLiteral(
+export function sourceLiteral(
   value: unknown,
   python: boolean,
   depth = 0,
