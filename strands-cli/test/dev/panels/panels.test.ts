@@ -472,6 +472,31 @@ describe('OptimizePanel', () => {
     expect(text()).toContain('~230 rollouts · ~230 judge calls')
   })
 
+  it.each<[number, string]>([
+    [0, '↓ 6 more'],
+    [5, '↑ 3 previous · ↓ 3 more'],
+    [10, '↑ 6 previous'],
+  ])('shouldCountOnlyTheKnobsAboveAndBelowWhenTheCursorIsOnKnob%iOfEleven', async (downs, overflow) => {
+    const knobs = Array.from({ length: 11 }, (_, index) => ({
+      key: `knob-${index}`,
+      label: `knob-${index}`,
+      detail: `detail ${index}`,
+      group: 'prompt',
+      kind: 'text' as const,
+      enabled: index === 0,
+    }))
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, knobs } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 16, session }), 18)
+
+    for (let step = 0; step < downs; step++) await press(DOWN_KEY)
+
+    const lines = text()
+      .split('\n')
+      .map((line) => line.trim())
+    expect(lines.find((line) => line.startsWith('›'))).toMatch(new RegExp(`^› [☑☐] knob-${downs} `))
+    expect(lines.filter((line) => /^(↑ \d+ previous|↓ \d+ more|…)/.test(line))).toEqual([overflow])
+  })
+
   it.each<[string, string[], keyof OptimizeSession, unknown[]]>([
     ['SpaceOnEffort', ['\u001b[B', ' '], 'toggleKnob', ['effort']],
     ['EnterOnInstructions', ['\r'], 'toggleKnob', ['instructions']],

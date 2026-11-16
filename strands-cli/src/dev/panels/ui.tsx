@@ -208,7 +208,9 @@ export const ItemList = ({
   const toneColor = useToneColor()
   const clicks = useDevPanelClicks()
   const { start, end } = listWindow(selected, items.length, Math.max(1, capacity))
-  const hidden = items.length - (end - start)
+  const overflow = [start > 0 ? `↑ ${start} previous` : '', end < items.length ? `↓ ${items.length - end} more` : '']
+    .filter(Boolean)
+    .join(' · ')
   return (
     <Box flexDirection="column" flexShrink={0}>
       {items.slice(start, end).map((item, offset) => {
@@ -243,7 +245,7 @@ export const ItemList = ({
           </Box>
         )
       })}
-      {hidden > 0 && capacity > 1 ? <Line tone="muted">{`  …${hidden} more`}</Line> : null}
+      {overflow && capacity > 1 ? <Line tone="muted">{`  ${overflow}`}</Line> : null}
     </Box>
   )
 }
