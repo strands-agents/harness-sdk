@@ -578,7 +578,7 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(text()).toContain('Workspace: /launch/strands-dev'))
     input.write('\u001b[B')
     await vi.waitFor(() => expect(text()).toContain('Workspace: /project/strands-dev'))
-    input.write('\u001b[B')
+    input.write('\u001b[C')
     await vi.waitFor(() => expect(text()).toContain('Workspace: /other/strands-dev'))
     input.write('\r')
 
@@ -593,7 +593,7 @@ describe('HarnessPicker', () => {
   it('shouldCreateInTheLaunchFolderWithoutAFolderStepWhenTheNewHarnessHasNoFolder', async () => {
     const { input, text, selected } = withPlacement()
     await vi.waitFor(() => expect(text()).toContain('Select a harness'))
-    for (const _ of [1, 2, 3]) input.write('\u001b[B')
+    for (const _ of [1, 2]) input.write('\u001b[B')
     await vi.waitFor(() => expect(text()).toContain('Source: /launch/strands-workspace'))
     input.write('\r')
     await vi.waitFor(() =>
@@ -606,6 +606,58 @@ describe('HarnessPicker', () => {
       expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
     )
     expect(text()).not.toContain('Create a workspace')
+  })
+
+  it.each([
+    ['↓ from the Base CLI', ['\u001b[B'], '› Project harness'],
+    ['↓ ↓ past the discovered section', ['\u001b[B', '\u001b[B'], '› Create a new harness'],
+    ['↑ from the Base CLI', ['\u001b[A'], '› Create a new harness'],
+    ['↓ → to the next discovered harness', ['\u001b[B', '\u001b[C'], '› Other harness'],
+    ['↓ → → back to the first harness', ['\u001b[B', '\u001b[C', '\u001b[C'], '› Project harness'],
+    ['↓ ← to the last harness', ['\u001b[B', '\u001b[D'], '› Other harness'],
+  ])('shouldMoveBetweenSectionsWithUpAndDownAndBetweenHarnessesWithLeftAndRightFor %s', async (_case, keys, row) => {
+    const { input, text } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('› Base CLI'))
+
+    for (const key of keys) input.write(key)
+
+    await vi.waitFor(() => expect(text()).toContain(row))
+  })
+
+  it.each([
+    ['Base CLI', []],
+    ['Create a new harness', ['\u001b[A']],
+  ])('shouldIgnoreLeftAndRightWhenTheSelectionIsThe %s', async (label, keys) => {
+    const { input, text } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('› Base CLI'))
+    for (const key of keys) input.write(key)
+    await vi.waitFor(() => expect(text()).toContain(`› ${label}`))
+
+    input.write('\u001b[C')
+    input.write('\u001b[D')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(text()).toContain(`› ${label}`)
+  })
+
+  it('shouldReturnToTheLastViewedHarnessWhenTheUserComesBackToTheDiscoveredSection', async () => {
+    const { input, text } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('› Base CLI'))
+    input.write('\u001b[B')
+    input.write('\u001b[C')
+    await vi.waitFor(() => expect(text()).toContain('› Other harness'))
+
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Create a new harness'))
+    input.write('\u001b[A')
+
+    await vi.waitFor(() => expect(text()).toContain('› Other harness'))
+  })
+
+  it('shouldShowTheLeftRightHintWhenTheSectionHoldsMoreThanOneHarness', async () => {
+    const { text } = withPlacement()
+
+    await vi.waitFor(() => expect(text()).toContain('Discovered Harnesses (2) · ←→ choose'))
   })
 
   const createForm = async (props: Partial<Parameters<typeof HarnessPicker>[0]> = {}) => {
@@ -723,13 +775,17 @@ describe('HarnessPicker', () => {
       expect(text).toContain('Base CLI')
       expect(text).toContain('Discovered Harnesses (12)')
       expect(text).toContain('Create a new harness')
-      expect(text).toContain('↑↓ scroll')
+      expect(text).toContain('←→ scroll')
+      expect(text).not.toContain('↑↓ scroll')
       expect(frame().length).toBeLessThanOrEqual(rows)
     }
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
     expectSections()
-    for (const project of projects) {
-      input.write('\u001b[B')
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain(`› ${projects[0]!.name} `))
+    expectSections()
+    for (const project of projects.slice(1)) {
+      input.write('\u001b[C')
       await vi.waitFor(() => expect(frame().join('\n')).toContain(`› ${project.name} `))
       expectSections()
     }
@@ -849,6 +905,10 @@ describe('HarnessPicker', () => {
       expect(frame().length).toBeLessThanOrEqual(12)
       input.write('\u001b[A')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+      expect(frame().join('\n')).toMatch(/1–\d+ of 12/)
+      input.write('\u001b[A')
+      input.write('\u001b[D')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('› Project 12 '))
       expect(frame().join('\n')).toMatch(/\d+–12 of 12/)
       expect(frame().length).toBeLessThanOrEqual(12)
     }
