@@ -8,6 +8,7 @@ import {
   type TemporaryEditTarget,
 } from '../../../src/dev/temporary-evals-fork/apply.js'
 import type { KnobKey } from '../../../src/dev/panels/model.js'
+import { editFile } from '../../../src/dev/file-edits.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const INSTRUCTIONS = 'You are a refund desk.\nBe kind.'
@@ -431,5 +432,31 @@ describe('TEMPORARY apply an optimized setting', () => {
     expect(location).toEqual({
       unavailable: 'Change the tools in agent.py yourself; strands dev applies only instructions and effort.',
     })
+  })
+})
+
+describe('TEMPORARY apply next to option saves', () => {
+  it('shouldKeepBothChangesWhenAnOptimizationAndAModelChangeSaveTheAgentAtTheSameTime', async () => {
+    const root = await project({ 'agent.py': PYTHON_AGENT(`"""${INSTRUCTIONS}"""`) })
+    const location = target(await locate(root, 'agent.py', INSTRUCTIONS))
+    const modelChange = editFile(root, join(root, 'agent.py'), (content) =>
+      content.replace('model="bedrock/model"', 'model="bedrock/next-model"')
+    )
+
+    await Promise.all([location.write(NEW_INSTRUCTIONS), modelChange])
+
+    const source = await read(root, 'agent.py')
+    expect(source).toContain('model="bedrock/next-model"')
+    expect(source).toContain(`"""${NEW_INSTRUCTIONS}"""`)
+  })
+
+  it('shouldRefuseTheOptimizationWhenTheOptionChangedAfterItWasMeasured', async () => {
+    const root = await project({ 'agent.py': PYTHON_AGENT(`"""${INSTRUCTIONS}"""`) })
+    const location = target(await locate(root, 'agent.py', INSTRUCTIONS))
+    await editFile(root, join(root, 'agent.py'), (content) => content.replace(INSTRUCTIONS, 'Answer briefly.'))
+
+    await expect(location.write(NEW_INSTRUCTIONS)).rejects.toThrow()
+
+    expect(await read(root, 'agent.py')).toContain('"""Answer briefly."""')
   })
 })

@@ -1,7 +1,8 @@
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { extname, join, relative, resolve } from 'node:path'
 
 import { isRecord } from '../../values.js'
+import { editFile } from '../file-edits.js'
 import type { KnobKey } from '../panels/model.js'
 
 export interface TemporaryEditRequest {
@@ -267,12 +268,14 @@ const effortMatcher =
     }
   }
 
-const rewriteFile = async (file: string, matcher: Matcher, after: string): Promise<void> => {
-  const match = matcher(await readFile(file, 'utf8'))
-  if ('unavailable' in match) throw new Error(match.unavailable)
-  const rewritten = match.rewrite(after)
-  if ('problem' in rewritten) throw new Error(rewritten.problem)
-  await writeFile(file, rewritten.content)
+const rewriteFile = async (root: string, file: string, matcher: Matcher, after: string): Promise<void> => {
+  await editFile(root, file, (content) => {
+    const match = matcher(content)
+    if ('unavailable' in match) throw new Error(match.unavailable)
+    const rewritten = match.rewrite(after)
+    if ('problem' in rewritten) throw new Error(rewritten.problem)
+    return rewritten.content
+  })
 }
 
 const located = async (
@@ -285,7 +288,7 @@ const located = async (
   if ('unavailable' in match) return match
   const rewritten = after === undefined ? undefined : match.rewrite(after)
   if (rewritten && 'problem' in rewritten) return { unavailable: rewritten.problem }
-  return { target: relative(root, file), write: (text) => rewriteFile(file, matcher, text) }
+  return { target: relative(root, file), write: (text) => rewriteFile(root, file, matcher, text) }
 }
 
 const unlessUnreadable = async <T>(read: () => Promise<T>, fallback: T): Promise<T> => {
