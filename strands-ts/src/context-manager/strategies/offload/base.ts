@@ -253,8 +253,8 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
 const EMERGENCY_REMOVAL_RATIO = 0.2
 
 /**
- * Last-resort strategy that recomputes utilization and drops the oldest 20% of messages
- * when the context window is still overflowing after all user-configured strategies have run.
+ * Last-resort strategy that drops the oldest 20% of messages when the context window is still
+ * overflowing after all user-configured strategies have run.
  * Appended internally by ContextManager — not part of the public builder API.
  * Pins are ignored so an all-pinned overflow is still recoverable.
  *
@@ -269,8 +269,11 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     const { messages, agent } = context
     if (messages.length <= 3) return false
     if (!context.overflow) {
-      const tokens = await agent.countRequestTokens(messages)
-      if (agent.model.estimateUtilization(tokens) < 1.0) return false
+      // The utilization the pipeline maintains, not a fresh count of its own. Unless native counting is
+      // configured, a fresh count is the base heuristic, which charges tool-spec JSON at characters / 2;
+      // a tool-heavy agent reads >= 1.0 that way while the projection every other gate is measured
+      // against is still far under, and this gate drops history out from under them.
+      if (context.utilization < 1.0) return false
       if (await this._overheadFillsWindow(agent)) return false
     }
 

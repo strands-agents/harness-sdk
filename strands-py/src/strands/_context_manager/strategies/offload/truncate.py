@@ -139,13 +139,15 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         self._stash = stash
 
     async def apply(self, context: ContextState) -> bool:
-        """Fire when overflow is set, or when recomputed utilization >= 1.0."""
+        """Fire when overflow is set, or when the pipeline's utilization is >= 1.0."""
         if len(context.messages) <= 3:
             return False
         if not context.overflow:
-            tokens = await context.agent._count_request_tokens(context.messages)
-            utilization = context.agent.model.estimate_utilization(tokens)
-            if utilization < 1.0:
+            # The utilization the pipeline maintains, not a fresh count of its own. Unless native counting is
+            # configured, a fresh count is the base heuristic, which charges tool-spec JSON at characters / 2;
+            # a tool-heavy agent reads >= 1.0 that way while the projection every other gate is measured
+            # against is still far under, and this gate drops history out from under them.
+            if context.utilization < 1.0:
                 return False
             if await self._overhead_fills_window(context.agent):
                 return False

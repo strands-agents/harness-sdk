@@ -605,34 +605,38 @@ describe('ContextManager', () => {
       expect(countOptions).toStrictEqual([{ toolSpecs: [] }])
     })
 
-    it('counts the system prompt and tool specs in the emergency truncate gate', async () => {
+    // The gate reads the projection the other gates share, so a costlier estimate cannot fire it alone.
+    it('takes no count of its own in the emergency truncate gate', async () => {
       const toolRegistry = new ToolRegistry()
       toolRegistry.add(makeStubTool('lookup'))
-      const countOptions: (CountTokensOptions | undefined)[] = []
+      let counts = 0
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('a')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('b')] }),
+        new Message({ role: 'user', content: [new TextBlock('c')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('d')] }),
+      ]
 
-      // Only the emergency truncate appended by the constructor runs, and only its own gate counts.
+      // Only the emergency truncate appended by the constructor can act.
       const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], stash: false })
       const agent = makeMockAgent({
-        messages: [
-          new Message({ role: 'user', content: [new TextBlock('a')] }),
-          new Message({ role: 'assistant', content: [new TextBlock('b')] }),
-          new Message({ role: 'user', content: [new TextBlock('c')] }),
-          new Message({ role: 'assistant', content: [new TextBlock('d')] }),
-        ],
+        messages,
         systemPrompt: 'be helpful',
         toolRegistry,
-        countTokens: async (_messages, options) => {
-          countOptions.push(options)
-          return 100
+        estimateUtilization: (tokens: number) => tokens / 10_000,
+        // What the base heuristic reads on a tool-heavy agent: the request well over the window while the
+        // projection is at 50%, and an overhead under it, so nothing but this gate's own count can stop it.
+        countTokens: async (counted) => {
+          counts += 1
+          return counted.length > 0 ? 20_000 : 1_000
         },
       })
       await cm.initAgent(agent)
 
-      await invokeTrackedHook(agent, makeBeforeEvent(agent, 100))
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 5_000))
 
-      expect(countOptions).toStrictEqual([
-        { systemPrompt: 'be helpful', toolSpecs: [toolRegistry.list()[0]!.toolSpec] },
-      ])
+      expect(agent.messages).toHaveLength(4)
+      expect(counts).toBe(0)
     })
   })
 })

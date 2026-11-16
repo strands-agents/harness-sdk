@@ -50,8 +50,8 @@ class ContextManager(Plugin):
     """Manages context reduction for an agent's conversation.
 
     On context overflow, runs the strategy pipeline (offload, summarize, emergency truncate).
-    The emergency truncation is always appended as the final strategy — it recomputes
-    utilization and only fires if the window is still overflowing after user strategies.
+    The emergency truncation is always appended as the final strategy — it fires only if the
+    window is still overflowing after the user strategies have run.
 
     Configured through the Agent's ``context_manager`` parameter — pass a preset
     string (``'auto'``, ``'agentic'``) or a :class:`ContextManagerConfig`; the Agent

@@ -305,20 +305,23 @@ class TestTokenCounting:
         assert captured == [{"tool_specs": [], "system_prompt": None, "system_prompt_content": None}]
 
     @pytest.mark.asyncio
-    async def test_counts_system_prompt_and_tool_specs_in_the_emergency_truncate_gate(self, mock_agent):
-        tool_spec = ToolSpec(name="lookup", description="stub lookup", inputSchema={"json": {"type": "object"}})
-        mock_agent.system_prompt = "be helpful"
-        mock_agent._system_prompt_content = [{"text": "be helpful"}]
-        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[tool_spec])
+    async def test_emergency_truncate_gate_takes_no_count_of_its_own(self, mock_agent):
+        """The gate reads the projection the other gates share, so a costlier estimate cannot fire it alone."""
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[])
+        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(side_effect=lambda tokens: tokens / 10_000)
+        # What the base heuristic reads on a tool-heavy agent: the request well over the window while the
+        # projection is at 50%, and an overhead under it, so nothing but this gate's own count can stop it.
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(
+            side_effect=lambda messages, **_kwargs: 20_000 if messages else 1_000
+        )
         mock_agent.messages = [
             Message(role="user", content=[ContentBlock(text="a")]),
             Message(role="assistant", content=[ContentBlock(text="b")]),
             Message(role="user", content=[ContentBlock(text="c")]),
             Message(role="assistant", content=[ContentBlock(text="d")]),
         ]
-        captured = self._capture_count_kwargs(mock_agent)
 
-        # Only the emergency truncate appended by the constructor runs, and only its own gate counts.
+        # Only the emergency truncate appended by the constructor can act.
         strategy = unittest.mock.AsyncMock()
         strategy.name = "noop"
         strategy.init = unittest.mock.MagicMock()
@@ -327,16 +330,11 @@ class TestTokenCounting:
         cm.init_agent(mock_agent)
 
         await mock_agent.hooks.invoke_callbacks_async(
-            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=100)
+            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=5_000)
         )
 
-        assert captured == [
-            {
-                "tool_specs": [tool_spec],
-                "system_prompt": "be helpful",
-                "system_prompt_content": [{"text": "be helpful"}],
-            }
-        ]
+        assert len(mock_agent.messages) == 4
+        mock_agent.model.count_tokens.assert_not_awaited()
 
 
 class TestFromStrategy:
