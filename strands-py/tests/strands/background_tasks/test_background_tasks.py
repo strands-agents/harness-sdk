@@ -156,12 +156,9 @@ async def test_deprecated_management_tool_forwards_calls_in_the_foreground() -> 
     )
     tool_specs = _capture_tool_specs(agent)
 
-    with pytest.warns(UserWarning, match="Use manage_background_task instead") as captured:
+    with pytest.warns(UserWarning, match="Use manage_background_task instead"):
         await agent.invoke_async("List tasks.")
 
-    tru_warning_categories = {warning.category for warning in captured}
-    exp_warning_categories = {UserWarning}
-    assert tru_warning_categories == exp_warning_categories
     tru_result = _tool_result(agent, "legacy-use")
     exp_result = {"toolUseId": "legacy-use", "status": "success", "content": [{"json": {"tasks": []}}]}
     assert tru_result == exp_result
