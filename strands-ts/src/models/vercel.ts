@@ -203,7 +203,14 @@ export class VercelModel extends Model<VercelModelConfig> {
       ...callSettings,
     }
 
-    applyVercelCacheConfig(callOptions, this._provider, cacheConfig, this.modelInfo, cacheCandidates)
+    applyVercelCacheConfig(
+      callOptions,
+      this._provider.provider,
+      this.modelId,
+      cacheConfig,
+      this.modelInfo,
+      cacheCandidates
+    )
 
     let result
     try {
@@ -269,13 +276,16 @@ export class VercelModel extends Model<VercelModelConfig> {
  * Applies a `CacheConfig` to a Vercel call by the underlying provider. See
  * {@link VercelModelConfig.cacheConfig} for the per-provider routing.
  *
+ * @param provider - The wrapped ai-sdk provider name, whose namespace picks the route
+ * @param modelId - The model the model info describes, which decides the per-model cache rules
  * @param modelInfo - What the SDK knows about the wrapped model; decides the default `'auto'` strategy
  * @param cacheCandidates - The parts the conversation breakpoint may sit on, in prompt order
  * @internal
  */
 function applyVercelCacheConfig(
   callOptions: LanguageModelV3CallOptions,
-  model: LanguageModelV3,
+  provider: string,
+  modelId: string,
   cacheConfig: CacheConfig | undefined,
   modelInfo: ModelInfo,
   cacheCandidates: CacheCandidate[]
@@ -283,22 +293,22 @@ function applyVercelCacheConfig(
   if (!cacheConfig) return
 
   // The segment before the first '.' is the provider namespace in the ai-sdk
-  switch (model.provider.split('.')[0]) {
+  switch (provider.split('.')[0]) {
     case 'anthropic':
-      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
+      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, modelId)) {
         applyAnthropicCache(callOptions, cacheConfig, cacheCandidates)
       }
       break
     case 'amazon-bedrock':
-      applyBedrockCache(callOptions, cacheConfig, cacheCandidates, model.modelId, modelInfo)
+      applyBedrockCache(callOptions, cacheConfig, cacheCandidates, modelId, modelInfo)
       break
     case 'openai':
-      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
+      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, modelId)) {
         applyOpenAICache(callOptions, cacheConfig)
       }
       break
     default:
-      warnOnce(logger, `provider=<${model.provider}> | cacheConfig is not supported for this vercel provider, ignoring`)
+      warnOnce(logger, `provider=<${provider}> | cacheConfig is not supported for this vercel provider, ignoring`)
   }
 }
 
@@ -377,9 +387,10 @@ function applyAnthropicCache(
 }
 
 /**
- * Injects Bedrock `cachePoint` breakpoints on system and the last user message.
+ * Injects Bedrock `cachePoint` breakpoints on system and the conversation, the latter on the last durable part of a
+ * user turn the model takes one after (see `bedrockAcceptsCachePointAfter`).
  *
- * @param modelId - The wrapped Bedrock model id, used in the skip warning
+ * @param modelId - The model the model info describes, which decides the per-model cache rules
  * @param modelInfo - What the SDK knows about the wrapped model; the default `'auto'` strategy follows its
  * `promptCaching`, falling back to the Claude name test for unlisted ids, matching `BedrockModel`
  * @internal
@@ -452,10 +463,7 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
   const promptCaching = modelInfo.capabilities?.promptCaching
   // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
   // keep the historical name test so caching does not turn off until the data catches up.
-  const supported =
-    promptCaching === undefined
-      ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
-      : promptCaching === 'cachePoints'
+  const supported = promptCaching === undefined ? namesClaude(modelId) : promptCaching === 'cachePoints'
   // A model the provider caches implicitly needs no cache points, so it gets no warning.
   if (!supported && promptCaching !== 'auto') {
     warnOnce(
@@ -467,17 +475,30 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
 }
 
 /**
+ * Reports whether a Bedrock model id names a Claude model.
+ *
+ * @internal
+ */
+function namesClaude(modelId: string): boolean {
+  const id = modelId.toLowerCase()
+  return id.includes('claude') || id.includes('anthropic')
+}
+
+/**
  * Picks which parts the wrapped Bedrock model takes a cache point directly after. Nova takes one only directly after
  * text, and reads an entry only when the point repeats the previous call's position, so its point never sits on a
- * tool-result turn, reminder text included: in a tool loop it stays on the prompt that started the loop, matching
- * `BedrockModel`. Claude takes one after anything but a non-PDF document, tool results included.
+ * tool-result turn, durable text and reminder text included: in a tool loop it stays on the prompt that started the
+ * loop. Claude takes one after anything but a non-PDF document, tool results included. An id that names
+ * neither, like an inference profile ARN without a `modelId` override, gets the Claude rule without tool results,
+ * since Nova rejects a cache point after one.
  *
- * @param modelId - The wrapped Bedrock model id
+ * @param modelId - The model the model info describes
  * @internal
  */
 function bedrockAcceptsCachePointAfter(modelId: string): (candidate: CacheCandidate) => boolean {
   if (bedrockLimitsCachePoints(modelId)) return ({ part, toolTurn }) => !toolTurn && part.type === 'text'
-  return ({ part }) => part.type === 'tool-result' || !blocksCachePoint(part)
+  const afterToolResult = namesClaude(modelId)
+  return ({ part }) => (part.type === 'tool-result' ? afterToolResult : !blocksCachePoint(part))
 }
 
 /**
@@ -872,7 +893,7 @@ function formatUserMessage(
   message: Message,
   prompt: LanguageModelV3Prompt,
   toolNameMap: Map<string, string>,
-  durableBlocks = message.content.length
+  durableBlocks: number
 ): CacheCandidate[] {
   const content: Array<LanguageModelV3TextPart | LanguageModelV3FilePart> = []
   const toolResults: LanguageModelV3ToolResultPart[] = []
