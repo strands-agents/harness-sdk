@@ -91,8 +91,11 @@ export const temporaryOptimizeJobs = (state: OptimizeState): DevChatJob[] =>
       ]
     : []
 
+const STOPPED_BY_USER = 'You stopped the run.'
+
 export class TemporaryTest extends Store<TestState> implements TestSession {
   private readonly runs = new Map<string, ExperimentRun>()
+  private readonly stops = new Map<string, AbortController>()
 
   constructor(
     private readonly host: TemporaryHost,
@@ -120,6 +123,10 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     if (failed.length === 0) return
     this.starting(entry.experiment, failed.length, true)
     void this.rerun(entry.experiment, failed)
+  }
+
+  stop(path: string): void {
+    this.stops.get(path)?.abort()
   }
 
   private isRunning(path: string): boolean {
@@ -185,6 +192,8 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
 
   private async execute(experiment: ExperimentSummary, cases: string, rerun: boolean): Promise<void> {
     const startedAt = Date.now()
+    const abort = new AbortController()
+    this.stops.set(experiment.path, abort)
     let stopCounting = (): void => undefined
     try {
       const { experiment: loaded } = await readTemporaryExperimentFile(cases)
@@ -202,6 +211,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
           workspace: this.host().workspace,
           experiment: cases,
           background: true,
+          signal: abort.signal,
           onStart: ({ cases: store }) => {
             stopCounting = watchTemporaryFileCount(store, (done) => {
               if (this.isRunning(experiment.path)) this.update(experiment, { ...running, done })
@@ -224,10 +234,12 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
       )
       await this.remember(experiment.name, results)
     } catch (error) {
+      if (abort.signal.aborted) return this.update(experiment, { status: 'failed', message: STOPPED_BY_USER })
       this.update(experiment, { status: 'failed', message: errorMessage(error) })
       announce(this.host(), 'error', `test · ${experiment.name} stopped · /test shows why`)
     } finally {
       stopCounting()
+      if (this.stops.get(experiment.path) === abort) this.stops.delete(experiment.path)
     }
   }
 }

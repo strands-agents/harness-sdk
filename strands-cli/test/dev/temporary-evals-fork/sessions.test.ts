@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ExperimentSummary } from '../../../src/dev/panels/model.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
-import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
+import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
 import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
 import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
@@ -250,6 +250,26 @@ describe('TEMPORARY dev sessions', () => {
       status: 'success',
       text: 'test · capital · 2 of 3 cases passed · /test shows the results',
     })
+  })
+
+  it('shouldStopARunningTestWithoutAnErrorNoticeWhenTheUserStopsIt', async () => {
+    const spawnTests = vi.fn(
+      ({ signal }: TemporaryEvalsProcess) =>
+        new Promise<TemporaryEvalsExit>((resolve) =>
+          signal?.addEventListener('abort', () => resolve({ code: 143, stdout: '', stderrTail: [] }), { once: true })
+        )
+    )
+    const { workspace, sessions, notices } = await sessionsFor({ spawnTests })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1'])
+    sessions.test.run([experiment])
+    await vi.waitFor(() => expect(spawnTests).toHaveBeenCalledTimes(1))
+
+    sessions.test.stop(experiment.path)
+
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('failed'))
+    const run = sessions.test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
+    expect(run).toEqual({ status: 'failed', message: 'You stopped the run.' })
+    expect(notices).toEqual([])
   })
 
   it('shouldRerunOnlyTheFailedCasesWhenAsked', async () => {
