@@ -525,7 +525,7 @@ describe('Agent Cancellation', () => {
       expect(model.callCount).toBe(1)
     })
 
-    it('makes no further model call when the consumer breaks the stream during the tool batch', async () => {
+    it('makes no further model call after a deferred cancel when the consumer breaks the stream mid-batch', async () => {
       let agent: Agent
       const tool = createMockTool('stop', () => {
         agent.cancel({ afterCurrentTools: true })

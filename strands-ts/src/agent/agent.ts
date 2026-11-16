@@ -1098,8 +1098,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * option on `invoke` / `stream`.
    *
    * A cancel that arrives after the final model pass (e.g. during background-task
-   * settlement) resolves the call with that pass's result and its own `stopReason`,
-   * unless a hook set `AfterInvocationEvent.resume`, which still runs.
+   * settlement) resolves the call with that pass's result and its own `stopReason`.
+   * After an immediate cancel, a hook's `AfterInvocationEvent.resume` still starts
+   * another pass.
    *
    * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
    *
