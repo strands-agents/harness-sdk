@@ -95,6 +95,8 @@ describe('TEMPORARY /test', () => {
       '--data-store',
       join(workspace.directory!, 'tmp/reports/20261111-150405-support.cases'),
       '--max-workers',
+      '4',
+      '--max-workers',
       '2',
     ])
     expect(onStart).toHaveBeenCalledWith({
@@ -103,6 +105,16 @@ describe('TEMPORARY /test', () => {
     })
     expect(log).toBe(join(workspace.directory!, 'tmp/reports/20261111-150405-support.log'))
     expect(progress).toContain(`Testing ${workspace.entrypoint} on the 2 cases of ${outcome.experiment}`)
+  })
+
+  it('shouldRunFourCasesAtOnceWhenNoWorkerCountIsGiven', async () => {
+    const workspace = await workspaceFixture()
+    const spawnTests = reporting([true, false], 0.5)
+
+    await runTemporaryTest({ workspace, now: () => NOW }, { run: environmentRunner(workspace), spawnTests })
+
+    const [{ args }] = spawnTests.mock.calls[0]!
+    expect(args.slice(args.indexOf('--max-workers'))).toEqual(['--max-workers', '4'])
   })
 
   it('shouldRunACopyWithUniqueCaseNamesWhenTheExperimentRepeatsAName', async () => {

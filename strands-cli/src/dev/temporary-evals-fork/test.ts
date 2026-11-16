@@ -45,6 +45,8 @@ export interface TemporaryTestDependencies {
   spawnTests?: TemporaryEvalsSpawner
 }
 
+const TEST_WORKERS = 4
+
 const TEST_OWNED_FLAGS = [
   '--agent',
   '--task',
@@ -137,6 +139,8 @@ export const runTemporaryTest = async (
       'none',
       '--data-store',
       caseStore,
+      '--max-workers',
+      String(TEST_WORKERS),
       ...forkArguments,
     ],
     cwd: workspace.root,
