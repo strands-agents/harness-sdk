@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join, relative } from 'node:path'
 
@@ -21,10 +22,20 @@ import {
   type TestState,
 } from '../panels/model.js'
 import { locateTemporaryEdit } from './apply.js'
+import {
+  clearUnreadableCaseResults,
+  dropTemporaryRunRecord,
+  isTemporaryRunAlive,
+  readTemporaryRunRecords,
+  saveTemporaryRunRecord,
+  waitForTemporaryRun,
+  type TemporaryTestRecord,
+} from './background-runs.js'
 import { temporaryOptimizationFolder } from './environment.js'
 import { temporaryReportsFolder, temporaryRunName, temporaryWorkspaceDirectory } from './evals-process.js'
 import {
   readTemporaryExperimentFile,
+  temporaryCaseCount,
   temporaryNamedExperiment,
   writeTemporaryExperimentFile,
 } from './experiment-files.js'
@@ -97,6 +108,7 @@ const STOPPED_BY_USER = 'You stopped the run.'
 export class TemporaryTest extends Store<TestState> implements TestSession {
   private readonly runs = new Map<string, ExperimentRun>()
   private readonly stops = new Map<string, AbortController>()
+  private resumed: Promise<void> | undefined
 
   constructor(
     private readonly host: TemporaryHost,
@@ -128,6 +140,105 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
 
   stop(path: string): void {
     this.stops.get(path)?.abort()
+  }
+
+  resume(): Promise<void> {
+    this.resumed ??= this.resumeRecords()
+    return this.resumed
+  }
+
+  private async resumeRecords(): Promise<void> {
+    let records: TemporaryTestRecord[]
+    try {
+      records = await readTemporaryRunRecords(this.reportsFolder())
+    } catch (error) {
+      announce(this.host(), 'error', `test · /test cannot read its unfinished runs: ${errorMessage(error)}`)
+      return
+    }
+    await Promise.all(records.map((record) => this.continueRun(record)))
+  }
+
+  private async recordedExperiment(record: TemporaryTestRecord): Promise<ExperimentSummary> {
+    const caseCount = await temporaryCaseCount(record.experiment).catch(() => temporaryCaseCount(record.cases))
+    return { name: basename(record.experiment, '.json'), path: record.experiment, caseCount }
+  }
+
+  private async continueRun(record: TemporaryTestRecord): Promise<void> {
+    let experiment: ExperimentSummary | undefined
+    try {
+      experiment = await this.recordedExperiment(record)
+      if (this.isRunning(experiment.path)) return
+      if (await isTemporaryRunAlive(record)) return await this.follow(experiment, record)
+      if (existsSync(record.report)) {
+        await this.finish(experiment, record.report, record.startedAt)
+        return await dropTemporaryRunRecord(record)
+      }
+      await clearUnreadableCaseResults(record.store)
+      this.starting(experiment, experiment.caseCount, record.rerun)
+      announce(
+        this.host(),
+        'success',
+        `test · ${experiment.name} · resumed the run that stopped when strands dev closed`
+      )
+      await this.execute(experiment, record.cases, record.rerun, record)
+    } catch (error) {
+      if (experiment) this.update(experiment, { status: 'failed', message: errorMessage(error) })
+      announce(
+        this.host(),
+        'error',
+        `test · ${basename(record.experiment, '.json')} could not resume · /test shows why`
+      )
+    }
+  }
+
+  private async follow(experiment: ExperimentSummary, record: TemporaryTestRecord): Promise<void> {
+    const abort = new AbortController()
+    this.stops.set(experiment.path, abort)
+    let stopCounting = (): void => undefined
+    try {
+      const { experiment: loaded } = await readTemporaryExperimentFile(record.cases)
+      const running = {
+        status: 'running' as const,
+        cases: loaded.cases.length,
+        evaluators: loaded.evaluators,
+        done: 0,
+        startedAt: record.startedAt,
+        rerun: record.rerun,
+      }
+      this.update(experiment, running)
+      stopCounting = watchTemporaryFileCount(record.store, (done) => {
+        if (this.isRunning(experiment.path)) this.update(experiment, { ...running, done })
+      })
+      await waitForTemporaryRun(record, abort.signal)
+      if (abort.signal.aborted) return this.update(experiment, { status: 'failed', message: STOPPED_BY_USER })
+      if (!existsSync(record.report))
+        throw new Error(
+          `strands-evals run ended without writing ${record.report}. The full output is in ${record.log}.`
+        )
+      await this.finish(experiment, record.report, record.startedAt)
+    } catch (error) {
+      this.update(experiment, { status: 'failed', message: errorMessage(error) })
+      announce(this.host(), 'error', `test · ${experiment.name} stopped · /test shows why`)
+    } finally {
+      stopCounting()
+      if (this.stops.get(experiment.path) === abort) this.stops.delete(experiment.path)
+      await dropTemporaryRunRecord(record)
+    }
+  }
+
+  private async finish(experiment: ExperimentSummary, report: string, startedAt: number): Promise<void> {
+    const results = await readTemporaryTestResults(report, {
+      experiment: experiment.name,
+      seconds: (Date.now() - startedAt) / MILLISECONDS,
+    })
+    this.update(experiment, { status: 'done', results })
+    const passed = results.cases.filter((item) => item.passed).length
+    announce(
+      this.host(),
+      'success',
+      `test · ${experiment.name} · ${passed} of ${plural(results.cases.length, 'case')} passed · /test shows the results`
+    )
+    await this.remember(experiment.name, results)
   }
 
   private isRunning(path: string): boolean {
@@ -191,11 +302,31 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     }
   }
 
-  private async execute(experiment: ExperimentSummary, cases: string, rerun: boolean): Promise<void> {
-    const startedAt = Date.now()
+  private async execute(
+    experiment: ExperimentSummary,
+    cases: string,
+    rerun: boolean,
+    resumed?: TemporaryTestRecord
+  ): Promise<void> {
+    const startedAt = resumed?.startedAt ?? Date.now()
     const abort = new AbortController()
     this.stops.set(experiment.path, abort)
     let stopCounting = (): void => undefined
+    let record: TemporaryTestRecord | undefined
+    let saving: Promise<void> = Promise.resolve()
+    const save = (next: TemporaryTestRecord): Promise<void> => {
+      record = next
+      saving = saving
+        .then(() => saveTemporaryRunRecord(next))
+        .catch((error: unknown) =>
+          announce(
+            this.host(),
+            'error',
+            `test · ${experiment.name} cannot save its run record, so it cannot resume after a restart: ${errorMessage(error)}`
+          )
+        )
+      return saving
+    }
     try {
       const { experiment: loaded } = await readTemporaryExperimentFile(cases)
       const running = {
@@ -212,28 +343,23 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
           workspace: this.host().workspace,
           experiment: cases,
           background: true,
+          detached: true,
           signal: abort.signal,
-          onStart: ({ cases: store }) => {
-            stopCounting = watchTemporaryFileCount(store, (done) => {
+          ...(resumed ? { resume: resumed } : {}),
+          onStart: async (files) => {
+            await save({ version: 1, experiment: experiment.path, rerun, startedAt, ...files })
+            stopCounting = watchTemporaryFileCount(files.store, (done) => {
               if (this.isRunning(experiment.path)) this.update(experiment, { ...running, done })
             })
+          },
+          onSpawn: (pid) => {
+            if (record) void save({ ...record, pid })
           },
         },
         this.host().dependencies
       )
       stopCounting()
-      const results = await readTemporaryTestResults(outcome.report, {
-        experiment: experiment.name,
-        seconds: (Date.now() - startedAt) / MILLISECONDS,
-      })
-      this.update(experiment, { status: 'done', results })
-      const passed = results.cases.filter((item) => item.passed).length
-      announce(
-        this.host(),
-        'success',
-        `test · ${experiment.name} · ${passed} of ${plural(results.cases.length, 'case')} passed · /test shows the results`
-      )
-      await this.remember(experiment.name, results)
+      await this.finish(experiment, outcome.report, startedAt)
     } catch (error) {
       if (abort.signal.aborted) return this.update(experiment, { status: 'failed', message: STOPPED_BY_USER })
       this.update(experiment, { status: 'failed', message: errorMessage(error) })
@@ -241,6 +367,8 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     } finally {
       stopCounting()
       if (this.stops.get(experiment.path) === abort) this.stops.delete(experiment.path)
+      await saving
+      if (record) await dropTemporaryRunRecord(record)
     }
   }
 }

@@ -1,5 +1,8 @@
-import { join } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+
+import { saveTemporaryRunRecord } from '../../../src/dev/temporary-evals-fork/background-runs.js'
 
 import { temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
@@ -44,6 +47,50 @@ describe('TEMPORARY dev commands', () => {
     const commands = temporaryDevCommands(workspace, project)
 
     expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], []])
+  })
+
+  it('shouldShowATestThatFinishedWhileStrandsDevWasClosedWhenTheChatAttaches', async () => {
+    const { workspace, project } = await fixture()
+    const experiment = join(workspace.directory!, 'tmp/experiments/capital.json')
+    const reports = join(workspace.directory!, 'tmp/reports')
+    const report = join(reports, '20261116-090000-capital.json')
+    await mkdir(dirname(experiment), { recursive: true })
+    await mkdir(reports, { recursive: true })
+    await writeFile(
+      experiment,
+      JSON.stringify({
+        cases: [{ name: 'c0', input: 'question' }],
+        evaluators: [{ evaluator_type: 'OutputEvaluator' }],
+      })
+    )
+    await writeFile(
+      report,
+      JSON.stringify({
+        overall_score: 1,
+        scores: [1],
+        test_passes: [true],
+        reasons: ['matches'],
+        cases: [{ name: 'c0', input: 'question', actual_output: 'Paris', evaluator: 'OutputEvaluator' }],
+        detailed_results: [[{ score: 1, test_pass: true, reason: 'matches', label: null }]],
+      })
+    )
+    await saveTemporaryRunRecord({
+      version: 1,
+      experiment,
+      cases: experiment,
+      rerun: false,
+      report,
+      log: join(reports, '20261116-090000-capital.log'),
+      store: join(reports, '20261116-090000-capital.cases'),
+      startedAt: Date.now(),
+    })
+    const announced = vi.fn(() => ({ update: vi.fn() }))
+
+    temporaryDevCommands(workspace, project)[1]!.attach?.({ ...context, report: announced })
+
+    await vi.waitFor(() =>
+      expect(announced).toHaveBeenCalledWith('success', 'test · capital · 1 of 1 case passed · /test shows the results')
+    )
   })
 
   it.each([0, 1, 2])('shouldOpenAPanelViewWhenCommand%iRuns', async (index) => {

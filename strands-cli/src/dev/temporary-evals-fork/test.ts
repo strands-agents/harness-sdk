@@ -18,6 +18,13 @@ import {
 } from './evals-process.js'
 import { resolveTemporaryExperiment, temporaryCaseCount, temporaryRunnableExperiment } from './experiment-files.js'
 
+export interface TemporaryTestFiles {
+  readonly cases: string
+  readonly report: string
+  readonly log: string
+  readonly store: string
+}
+
 export interface TemporaryTestRequest {
   workspace: DevWorkspace
   experiment?: string
@@ -27,8 +34,11 @@ export interface TemporaryTestRequest {
   onProgress?: (line: string) => void
   prepare?: () => Promise<void>
   now?: () => Date
-  onStart?: (files: { report: string; cases: string }) => void
+  onStart?: (files: TemporaryTestFiles) => void | Promise<void>
+  onSpawn?: (pid: number) => void
   background?: boolean
+  detached?: boolean
+  resume?: TemporaryTestFiles
 }
 
 export interface TemporaryTestOutcome {
@@ -88,6 +98,19 @@ const assertCases = (experiment: string, cases: number): void => {
     )
 }
 
+const newTestFiles = async (experiment: string, folder: string, now: Date): Promise<TemporaryTestFiles> => {
+  const name = temporaryRunName(experiment, now)
+  const report = join(folder, `${name}.json`)
+  if (existsSync(report)) throw new Error(`The report ${report} already exists. Wait a second, then try again.`)
+  await mkdir(folder, { recursive: true })
+  return {
+    cases: await temporaryRunnableExperiment(experiment, join(folder, `${name}.experiment.json`)),
+    report,
+    log: join(folder, `${name}.log`),
+    store: join(folder, `${name}.cases`),
+  }
+}
+
 const assertChecked = (experiment: string, report: string, checks: number): void => {
   if (checks === 0)
     throw new Error(
@@ -111,25 +134,20 @@ export const runTemporaryTest = async (
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
     { ...(dependencies.run ? { run: dependencies.run } : {}), ...(signal ? { signal } : {}), onProgress }
   )
-  const folder = temporaryReportsFolder(directory)
-  const name = temporaryRunName(experiment, request.now?.() ?? new Date())
-  const report = join(folder, `${name}.json`)
-  const log = join(folder, `${name}.log`)
-  const caseStore = join(folder, `${name}.cases`)
-  if (existsSync(report)) throw new Error(`The report ${report} already exists. Wait a second, then try again.`)
-  await mkdir(folder, { recursive: true })
-  const runnable = await temporaryRunnableExperiment(experiment, join(folder, `${name}.experiment.json`))
+  const files =
+    request.resume ?? (await newTestFiles(experiment, temporaryReportsFolder(directory), request.now?.() ?? new Date()))
+  const { report, log } = files
   onProgress(`Testing ${workspace.entrypoint} on the ${cases} cases of ${experiment}`)
   onProgress(`Report: ${report}`)
   onProgress('Running the cases. The summary appears when every case has finished.')
-  request.onStart?.({ report, cases: caseStore })
+  await request.onStart?.(files)
   const exit = await (dependencies.spawnTests ?? spawnTemporaryEvals)({
     command: python,
     args: [
       '-m',
       'strands_evals.cli',
       'run',
-      runnable,
+      files.cases,
       '--agent',
       workspace.entrypoint,
       ...temporaryLanguageArguments(workspace),
@@ -138,7 +156,7 @@ export const runTemporaryTest = async (
       '--fail-on',
       'none',
       '--data-store',
-      caseStore,
+      files.store,
       '--max-workers',
       String(TEST_WORKERS),
       ...forkArguments,
@@ -147,6 +165,8 @@ export const runTemporaryTest = async (
     env: temporaryEvalsEnvironment(python, environment),
     ...(signal ? { signal } : {}),
     ...(request.background ? { background: true } : {}),
+    ...(request.detached ? { detached: true } : {}),
+    ...(request.onSpawn ? { onSpawn: request.onSpawn } : {}),
     log,
     onLine: onProgress,
   })
