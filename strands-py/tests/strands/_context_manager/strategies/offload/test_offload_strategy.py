@@ -687,6 +687,17 @@ class TestInsertMarker:
         assert len(messages) == 3
         assert messages[1]["content"] == [ContentBlock(text="a1"), self._MARKER]
 
+    def test_gives_a_standalone_marker_message_its_own_tracking_id(self):
+        """A stash ref is keyed by tracking id, so two id-less messages would share one block index."""
+        messages = [_text("user", "task"), _text("user", "u1"), _text("user", "u2")]
+
+        insert_marker(messages, 1, self._MARKER)
+        insert_marker(messages, 3, self._MARKER)
+
+        ids = [messages[1]["tracking_id"], messages[3]["tracking_id"]]
+        assert all(ids)
+        assert len(set(ids)) == 2
+
     @pytest.mark.parametrize(("index", "expected"), [(0, ["task", "marker", "u1"]), (5, ["task", "u1", "marker"])])
     def test_clamps_an_index_into_the_history_after_message_0(self, index, expected):
         messages = [_text("user", "task"), _text("user", "u1")]

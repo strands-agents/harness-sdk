@@ -29,6 +29,7 @@ from tests.fixtures.context_manager_helpers import (
     make_agent,
     make_context,
     make_tool_result_message,
+    without_tracking_ids,
 )
 
 AGENT_PROMPT = [{"text": "You are a coding agent."}]
@@ -648,7 +649,7 @@ class TestRunSummaryReplaysTheAgentRequest:
             [_text("user", "task"), _text("assistant", "old1")],
         ]
         assert model.summarize.await_args_list[0].kwargs == _replay_kwargs(agent)
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             _text("user", "task"),
             Message(role="assistant", content=[_marker("Summary of content.")]),
             _pinned("pin"),
@@ -682,7 +683,7 @@ class TestRunSummaryReplaysTheAgentRequest:
             [_text("user", "task"), _text("assistant", "big1")],
         ]
         assert model.summarize.await_args_list[0].kwargs == _replay_kwargs(agent)
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             _text("user", "task"),
             Message(role="assistant", content=[_marker("Summary of content.")]),
             _text("user", "question"),
@@ -820,11 +821,13 @@ class TestServerSideSummary:
 
         sent = mock_agent.model.summarize.call_args.args[0]
         assert [block["text"] for message in sent for block in message["content"]] == ["task", "old1", "old2", "old3"]
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(role="assistant", content=[summary]),
             Message(role="user", content=[ContentBlock(text="recent")]),
         ]
+        # A stash ref is keyed by tracking id, so without one the summary's blocks take another message's refs.
+        assert messages[1]["tracking_id"] not in (None, "", messages[0].get("tracking_id"))
 
     @pytest.mark.asyncio
     async def test_keeps_the_message_the_next_model_call_responds_to(self, mock_agent):
@@ -840,7 +843,7 @@ class TestServerSideSummary:
 
         sent = mock_agent.model.summarize.call_args.args[0]
         assert [block["text"] for message in sent for block in message["content"]] == ["task", "old1", "old2", "old3"]
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(role="assistant", content=[summary]),
             Message(role="user", content=[ContentBlock(text="recent")]),
@@ -857,7 +860,7 @@ class TestServerSideSummary:
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
         mock_agent.model.count_tokens.assert_awaited_once_with(self._messages()[1:4])
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(
                 role="assistant",
@@ -884,7 +887,7 @@ class TestServerSideSummary:
         assert "pinned=<1> | server-side summary does not support pinned messages" in caplog.text
         # The pin splits the removable messages into two runs, and each run gets its own summary.
         assert model.summarize.await_count == 2
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             _text("user", "task"),
             Message(role="assistant", content=[_marker("compacted")]),
             _pinned("pin"),
@@ -911,7 +914,7 @@ class TestServerSideSummary:
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(role="assistant", content=[_marker("Summary of content.")]),
             Message(role="user", content=[ContentBlock(text="recent")]),
@@ -954,7 +957,7 @@ class TestServerSideSummary:
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(role="assistant", content=[_marker("written client-side")]),
             Message(role="user", content=[ContentBlock(text="recent")]),
@@ -987,7 +990,7 @@ class TestServerSideSummary:
             ],
             **_replay_kwargs(mock_agent),
         )
-        assert messages == [
+        assert without_tracking_ids(messages) == [
             Message(role="user", content=[ContentBlock(text="task")]),
             Message(role="assistant", content=[ContentBlock(summary={"provider": "anthropic", "text": "compacted"})]),
             Message(role="user", content=[ContentBlock(text="recent")]),

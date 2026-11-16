@@ -23,6 +23,18 @@ def make_tool_result_message(text: str, tool_use_id: str = "tool-123") -> Messag
     return Message(role="user", content=[ContentBlock(toolResult=tool_result)])
 
 
+def without_tracking_ids(messages: Messages) -> Messages:
+    """``messages`` with each tracking id dropped, so an assertion can name the content against a literal.
+
+    A message the SDK creates carries a generated id, which no expectation can spell. Pair this with an assertion
+    that names the ids directly where the id is the subject.
+    """
+    stripped = [message.copy() for message in messages]
+    for message in stripped:
+        message.pop("tracking_id", None)
+    return stripped
+
+
 def offloaded_by(block: ContentBlock | ToolResultContent) -> str | None:
     """The offload method that left ``block`` as a placeholder, or None when it is not one."""
     return block["offloaded"]["method"] if is_offloaded(block) else None

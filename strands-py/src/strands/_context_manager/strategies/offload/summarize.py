@@ -19,6 +19,7 @@ from ....types.content import ContentBlock, Message, Messages, split_system_prom
 from ...content_rendering import format_tool_result_label, tool_result_to_content_blocks
 from ...message_trimming import (
     RemovalPlaceholder,
+    new_message,
     placeholder_for,
     remove_messages,
     removed_tokens,
@@ -429,7 +430,7 @@ def _summary_message(summary: ContentBlock, reference: ContentBlock | None) -> M
     compaction block drops the content before it, which is the whole reason the reference is a block of its own: a
     provider's summary text is signed, so the reference cannot be written into it.
     """
-    return Message(role="assistant", content=[summary, reference] if reference else [summary])
+    return new_message("assistant", [summary, reference] if reference else [summary])
 
 
 def _provider_summary(result: SummarizeResult) -> ContentBlock | None:

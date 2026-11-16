@@ -10,7 +10,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
-from ..types.content import ContentBlock, Message, MessageMetadata, Messages
+from ..types.content import ContentBlock, Message, MessageMetadata, Messages, Role, _ensure_tracking_id
 from ..types.offload import OffloadMethod
 from .placeholder import carried_tokens, offload_placeholder
 
@@ -104,6 +104,17 @@ def with_pairs(messages: Messages, to_remove: list[Message]) -> list[Message]:
     return [message for message in messages if id(message) in removable]
 
 
+def new_message(role: Role, content: list[ContentBlock]) -> Message:
+    """A message joining the history, with the tracking id a stash ref is keyed by.
+
+    Without one the message shares the fallback key space with every other message that lacks one, so a block
+    offloaded from it takes the ref of whatever was stored at that block index first.
+    """
+    message = Message(role=role, content=content)
+    _ensure_tracking_id(message)
+    return message
+
+
 def insert_marker(messages: Messages, index: int, marker: ContentBlock) -> None:
     """Add a marker as assistant content at the gap left by removed messages.
 
@@ -118,7 +129,7 @@ def insert_marker(messages: Messages, index: int, marker: ContentBlock) -> None:
             carrier["content"] = [*carrier["content"], marker]
             messages[neighbor] = carrier
             return
-    messages.insert(index, Message(role="assistant", content=[marker]))
+    messages.insert(index, new_message("assistant", [marker]))
 
 
 def repair_alternation(messages: Messages) -> None:
