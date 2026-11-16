@@ -5,6 +5,7 @@ import logging
 import math
 import re
 import unittest.mock
+import warnings
 
 import pytest
 
@@ -470,6 +471,17 @@ class TestMediaThatCountsAsNoTokens:
         assert placeholders_in(messages) == [{"method": "drop"}]
 
     @pytest.mark.asyncio
+    async def test_leaves_the_media_to_a_strategy_that_acts_on_arrival(self):
+        tool_result = ToolResult(toolUseId="tu-1", status="success", content=[_IMAGE])
+        held = Message(role="user", content=[ContentBlock(toolResult=tool_result)])
+        messages = [_text("assistant", "task"), held, _text("assistant", "answer")]
+        strategy = Offload.drop("tool_results").when(block_threshold=1000)
+
+        assert await strategy.apply(_media_blind_context(messages)) is False
+
+        assert placeholders_in(messages) == []
+
+    @pytest.mark.asyncio
     async def test_offloads_the_media_without_a_size_it_cannot_report(self):
         message = _with_image()
         messages = [_text("user", "task"), message, _text("assistant", "answer")]
@@ -828,6 +840,8 @@ class TestParseCondition:
             ("preserve_recent", 0.5, "0.5"),
             ("preserve_recent", 1.5, "1.5"),
             ("preserve_recent", "100%", '"100%"'),
+            ("context_utilization", "70%\n", '"70%\n"'),
+            ("context_utilization", "٧٠%", '"٧٠%"'),
         ],
     )
     def test_rejects(self, name, raw, shown):
@@ -882,13 +896,11 @@ class TestConditionResolution:
         with pytest.raises(ValueError, match=r"context_utilization \(100001\) is larger than the model's context"):
             strategy.init(_context([], context_window_limit=100_000).agent)
 
-    def test_warns_when_the_model_reports_no_context_window(self, caplog):
+    def test_warns_when_the_model_reports_no_context_window(self):
         strategy = Offload.drop("*").when(context_utilization=500_000)
 
-        with caplog.at_level(logging.WARNING):
+        with pytest.warns(UserWarning, match="context_utilization is 500000 tokens but context_window_limit is not"):
             strategy.init(_context([], context_window_limit=None).agent)
-
-        assert "context_utilization=<500000> | context_window_limit is not set" in caplog.text
 
     @pytest.mark.parametrize(
         ("context_window_limit", "context_utilization"), [(100_000, 100_000), (100_000, "100%"), (None, "80%")]
@@ -1078,24 +1090,25 @@ class TestUnconditionedStrategyWarning:
     @pytest.mark.parametrize(
         "conditions", [{"block_threshold": 1}, {"context_utilization": "50%"}, {"preserve_recent": 1}]
     )
-    def test_does_not_warn_for_a_strategy_with_conditions(self, conditions, caplog):
+    def test_does_not_warn_for_a_strategy_with_conditions(self, conditions):
         strategy = Offload.drop("assistant_text").when(**conditions)
 
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
             strategy.init(make_agent())
 
-        assert caplog.text == ""
-
-    def test_warns_once_for_a_strategy_that_acts_on_arrival(self, caplog):
+    def test_warns_once_for_a_strategy_that_acts_on_arrival(self):
         strategy = Offload.drop("assistant_text")
 
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("default")
             strategy.init(make_agent())
             strategy.init(make_agent())
 
-        assert caplog.text.count("strategy has no conditions") == 1
-        assert 'strategy=<offload:drop>, target=<"assistant_text">' in caplog.text
-        assert "use .when() to set block_threshold, context_utilization, or preserve_recent" in caplog.text
+        assert [str(warning.message) for warning in caught] == [
+            'Offload.drop("assistant_text") has no conditions, so it acts on every matching block as it arrives,'
+            " before the model reads it; use .when() to set block_threshold, context_utilization, or preserve_recent"
+        ]
 
 
 class TestWholeMessageConditions:
@@ -1342,6 +1355,18 @@ class TestEagerHook:
         await self._fire(agent, message)
 
         assert _result_methods([message]) == ["drop"]
+
+    @pytest.mark.asyncio
+    async def test_leaves_media_the_model_cannot_size_alone(self):
+        tool_result = ToolResult(toolUseId="tu-1", status="success", content=[_IMAGE])
+        message = Message(role="user", content=[ContentBlock(toolResult=tool_result)])
+        agent = self._agent([message])
+        agent.model = heuristic_model(count_tokens=unittest.mock.AsyncMock(side_effect=_count_text_only))
+        Offload.drop("tool_results").when(block_threshold=1500).init(agent)
+
+        await self._fire(agent, message)
+
+        assert _result_methods([message]) == [None]
 
     @pytest.mark.asyncio
     async def test_leaves_a_pinned_message_alone(self):

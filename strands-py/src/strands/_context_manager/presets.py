@@ -62,14 +62,16 @@ def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStr
         Flattened list of concrete strategies.
 
     Raises:
-        ValueError: When an entry is None or an unknown preset name.
+        ValueError: When an entry is neither a strategy nor a known preset name.
     """
     strategies: list[ContextStrategy] = []
     for entry in entries:
         if isinstance(entry, str):
             strategies.extend(_resolve_preset(entry))
-        elif entry is None:
-            raise ValueError(f"Strategy entries must be a strategy or a preset name, got {entry}")
-        else:
+        # Asking for ``apply`` rather than ``isinstance(entry, ContextStrategy)``: a protocol check reads attributes
+        # statically, so it would reject a strategy that supplies them through ``__getattr__``.
+        elif callable(getattr(entry, "apply", None)):
             strategies.append(entry)
+        else:
+            raise ValueError(f"Strategy entries must be a strategy or a preset name, got {entry!r}")
     return strategies

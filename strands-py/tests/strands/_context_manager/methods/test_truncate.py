@@ -41,6 +41,10 @@ class TestResolvePreviewTokens:
     def test_head_share_defaults_to_head_tail(self):
         assert _head_share() == _head_share({"preview": "head_tail"})
 
+    @pytest.mark.parametrize("preview", ["middle", "", None])
+    def test_head_share_falls_back_to_the_default_for_an_unknown_mode(self, preview):
+        assert _head_share({"preview": preview}) == _head_share()
+
 
 class TestBuildPreview:
     """Tests for the build_preview function."""

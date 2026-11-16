@@ -8,7 +8,7 @@ from strands._context_manager.retrieval_tool import (
     RETRIEVAL_TOOL_NAME,
     _block_text,
     _create_retrieval_tool,
-    _track_retrieval_tool_use_ids,
+    _retrieval_calls_before,
 )
 from strands.types.content import ContentBlock, Message
 from strands.types.tools import ToolUse
@@ -332,32 +332,38 @@ class TestBlockText:
         assert _block_text(_IMAGE) is None
 
 
-class TestTrackRetrievalToolUseIds:
-    def test_tracks_retrieve_context_tool_use_ids(self):
-        skip_set: set[str] = set()
-        message = Message(
-            role="assistant",
-            content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-ret", name=RETRIEVAL_TOOL_NAME, input={}))],
-        )
+class TestRetrievalCallsBefore:
+    """Tests for the retrieval calls a message answers, whose results the stash leaves out."""
 
-        _track_retrieval_tool_use_ids(message, skip_set)
+    @staticmethod
+    def _call(tool_use_id: str, name: str) -> Message:
+        tool_use = ToolUse(toolUseId=tool_use_id, name=name, input={})
+        return Message(role="assistant", content=[ContentBlock(toolUse=tool_use)])
 
-        assert skip_set == {"tu-ret"}
+    def test_reads_the_retrieval_calls_of_the_message_before(self):
+        messages = [
+            self._call("tu-ret", RETRIEVAL_TOOL_NAME),
+            Message(role="user", content=[ContentBlock(text="result")]),
+        ]
 
-    def test_ignores_non_retrieval_tool_uses(self):
-        skip_set: set[str] = set()
-        message = Message(
-            role="assistant",
-            content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-other", name="bash", input={}))],
-        )
+        assert _retrieval_calls_before(messages, 1) == frozenset({"tu-ret"})
 
-        _track_retrieval_tool_use_ids(message, skip_set)
+    def test_ignores_calls_to_other_tools(self):
+        messages = [self._call("tu-other", "bash"), Message(role="user", content=[ContentBlock(text="result")])]
 
-        assert skip_set == set()
+        assert _retrieval_calls_before(messages, 1) == frozenset()
 
-    def test_ignores_user_messages(self):
-        skip_set: set[str] = set()
+    def test_reads_no_further_back_than_the_message_before(self):
+        messages = [
+            self._call("tu-ret", RETRIEVAL_TOOL_NAME),
+            Message(role="user", content=[ContentBlock(text="result")]),
+            Message(role="assistant", content=[ContentBlock(text="done")]),
+        ]
 
-        _track_retrieval_tool_use_ids(Message(role="user", content=[ContentBlock(text="hello")]), skip_set)
+        assert _retrieval_calls_before(messages, 2) == frozenset()
 
-        assert skip_set == set()
+    @pytest.mark.parametrize("index", [0, 3, -1])
+    def test_holds_nothing_outside_the_history(self, index):
+        messages = [self._call("tu-ret", RETRIEVAL_TOOL_NAME), Message(role="user", content=[])]
+
+        assert _retrieval_calls_before(messages, index) == frozenset()

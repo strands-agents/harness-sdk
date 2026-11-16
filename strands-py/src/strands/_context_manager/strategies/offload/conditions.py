@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 import math
 import re
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -16,8 +16,6 @@ from ....models._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ...types import ContextState
-
-logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -50,7 +48,8 @@ class OffloadConditions(TypedDict, total=False):
             whole number of 1,000 or more for conversation tokens, at most the model's context window.
         block_threshold: Size above which a message (target ``"*"``) or block is offloaded: a whole number of tokens
             above 0, or ``"5%"`` of the context window. Unset, there is no size check. Media the token count measures
-            as 0, alone or in a tool result, always passes.
+            as 0, alone or in a tool result, always passes, except in a strategy acting on arrival, which leaves it
+            alone until ``context_utilization`` or ``preserve_recent`` defers the strategy past the model reading it.
         preserve_recent: Newest matching messages never touched: a count, or ``"70%"`` of the matches, rounded up so a
             share above 0 keeps at least one.
     """
@@ -93,7 +92,8 @@ class _ConditionRule:
     expected: str
 
 
-_PERCENT_PATTERN = re.compile(r"^\d+(\.\d+)?%$")
+# ``[0-9]`` keeps the digits ASCII, so what matches is what ``float`` below parses.
+_PERCENT_PATTERN = re.compile(r"[0-9]+(\.[0-9]+)?%")
 
 MIN_UTILIZATION_TOKENS = 1000
 """Smaller whole numbers are almost always a percent written without "%", like ``context_utilization=80``."""
@@ -153,7 +153,7 @@ def parse_condition(name: str, raw: Any) -> ParsedCondition | None:
     if raw is None:
         return None
     rule = CONDITION_RULES[name]
-    if isinstance(raw, str) and _PERCENT_PATTERN.match(raw):
+    if isinstance(raw, str) and _PERCENT_PATTERN.fullmatch(raw):
         percent = float(raw[:-1])
         if rule.percent_in_range(percent):
             return ParsedCondition(percent, True)
@@ -249,10 +249,12 @@ class ResolvedConditions:
             return
         limit = agent.model.context_window_limit
         if not limit:
-            logger.warning(
-                "context_utilization=<%s> | context_window_limit is not set on the model, skipping the context window"
-                " check | set context_window_limit in your model config",
-                int(utilization.value),
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                f"context_utilization is {int(utilization.value)} tokens but context_window_limit is not set on the"
+                " model, so it cannot be checked against the context window; set context_window_limit in your model"
+                " config",
+                stacklevel=1,
             )
             return
         if utilization.value <= limit:

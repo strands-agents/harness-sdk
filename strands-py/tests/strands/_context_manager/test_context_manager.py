@@ -425,20 +425,24 @@ class TestContextManagerStashHook:
         assert result["text"] == "data"
 
     @pytest.mark.asyncio
-    async def test_stash_hook_tracks_retrieval_tool_use_ids(self, mock_agent):
+    async def test_stash_hook_leaves_out_a_result_of_the_retrieval_tool(self, mock_agent):
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
         cm = ContextManager(stash=True)
         cm.init_agent(mock_agent)
 
-        message = Message(
+        call = Message(
             role="assistant",
             content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-ret", name="retrieve_context", input={}))],
         )
-        event = MessageAddedEvent(agent=mock_agent, message=message)
-        await mock_agent.hooks.invoke_callbacks_async(event)
+        result = ToolResult(toolUseId="tu-ret", status="success", content=[{"text": "retrieved"}])
+        answer = Message(role="user", content=[ContentBlock(toolResult=result)])
+        mock_agent.messages = [call, answer]
 
-        assert "tu-ret" in cm._retrieval_tool_use_ids
+        for message in mock_agent.messages:
+            await mock_agent.hooks.invoke_callbacks_async(MessageAddedEvent(agent=mock_agent, message=message))
+
+        assert await cm._stash.keys_of("tu-ret") == []
 
 
 class TestStashBackfill:

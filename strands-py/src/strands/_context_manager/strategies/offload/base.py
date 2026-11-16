@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -78,7 +79,6 @@ class BaseOffloadStrategy(ABC):
         self._stash: Stash | None = None
         # Whether the eager hook processes each message as it arrives.
         self._runs_eagerly = target != "*" and not self._conditions.defers_arrival
-        self._warned_eager = False
         # Conditions that were set, even to nothing, are the caller's to fix now rather than at init.
         if conditions is not None:
             self._check_runnable()
@@ -168,16 +168,15 @@ class BaseOffloadStrategy(ABC):
         agent.hooks.add_callback(MessageAddedEvent, eager_hook)
 
     def _warn_eager(self) -> None:
-        """Warn, once, that a strategy without conditions acts on content the model has not read yet."""
-        if self._warned_eager or not self._conditions.is_empty:
+        """Warn that a strategy without conditions acts on content the model has not read yet."""
+        if not self._conditions.is_empty:
             return
-        self._warned_eager = True
-        logger.warning(
-            "strategy=<%s>, target=<%s> | strategy has no conditions, so it acts on every matching block as it"
-            " arrives, before the model reads it | use .when() to set block_threshold, context_utilization,"
-            " or preserve_recent",
-            self.name,
-            json.dumps(self._target),
+        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+        warnings.warn(
+            f"Offload.{self._method}({json.dumps(self._target)}) has no conditions, so it acts on every matching"
+            " block as it arrives, before the model reads it; use .when() to set block_threshold,"
+            " context_utilization, or preserve_recent",
+            stacklevel=1,
         )
 
     async def apply(self, context: ContextState) -> bool:
@@ -309,10 +308,17 @@ class BaseOffloadStrategy(ABC):
         a placeholder it holds adds what that already stood for.
         """
         measured = await agent.model.count_tokens([Message(role=message["role"], content=[block])])
-        # The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
-        if threshold is not None and measured <= threshold and not (measured == 0 and _holds_media(block)):
+        if threshold is not None and measured <= threshold and not self._exempt_from_threshold(block, measured):
             return None
         return measured + carried_tokens([block])
+
+    def _exempt_from_threshold(self, block: ContentBlock, measured: int) -> bool:
+        """Whether ``block`` is media a threshold cannot rule out, because the token count measures it as 0.
+
+        A strategy acting on arrival is the exception: there it would take media the model has not read, which is
+        what ``Offload.<method>("media")`` refuses outright, so it needs conditions to reach media at all.
+        """
+        return measured == 0 and not self._runs_eagerly and _holds_media(block)
 
     @abstractmethod
     async def _replace_block(

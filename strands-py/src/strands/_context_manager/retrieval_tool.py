@@ -19,7 +19,7 @@ from .methods.truncate import CHARS_PER_TOKEN
 from .placeholder import is_offloaded
 
 if TYPE_CHECKING:
-    from ..types.content import ContentBlock, Message, Messages
+    from ..types.content import ContentBlock, Messages
     from .stash import Stash
 
 logger = logging.getLogger(__name__)
@@ -90,10 +90,10 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
                 },
                 "line_range": {
                     "type": "object",
-                    "description": "Return only this span of lines (1-indexed, inclusive).",
+                    "description": "Return only this span of lines.",
                     "properties": {
-                        "start": {"type": "integer", "minimum": 1, "description": "First line to return."},
-                        "end": {"type": "integer", "minimum": 1, "description": "Last line to return."},
+                        "start": {"type": "integer", "minimum": 1, "description": "First line to return (1-indexed)."},
+                        "end": {"type": "integer", "minimum": 1, "description": "Last line to return (1-indexed)."},
                     },
                     "required": ["start", "end"],
                 },
@@ -117,7 +117,7 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
 async def _resolve_reference(stash: Stash, reference: str) -> list[_StashEntry]:
     """Resolve a reference to its stored entries.
 
-    An id (a tool result's ``toolUseId``, or ``removed-<tracking_id>``) resolves to every entry keyed under it, in
+    An id (a tool result's ``toolUseId``, or a ``removed-`` reference) resolves to every entry keyed under it, in
     index order; otherwise the reference is an exact key and resolves to that entry. Ids take precedence because a
     placeholder references a tool result by id, and an id may itself end like a key (``tool_1``).
     """
@@ -140,7 +140,7 @@ def _full_content(entries: list[_StashEntry], max_chars: int) -> list[ToolResult
     if len(items) == len(blocks):
         return _clip_text(items, max_chars)
 
-    serialized = json.dumps(entries[0] if len(entries) == 1 else entries)
+    serialized = json.dumps(entries[0] if len(entries) == 1 else entries, ensure_ascii=False)
     text = serialized if len(serialized) <= max_chars else f"{serialized[:max_chars]}\n\n[truncated]"
     return [ToolResultContent(text=text)]
 
@@ -238,7 +238,7 @@ def _block_text(block: ContentBlock | ToolResultContent) -> str | None:
     if "text" in data:
         return cast("str", data["text"])
     if "json" in data:
-        return json.dumps(data["json"], indent=2)
+        return json.dumps(data["json"], indent=2, ensure_ascii=False)
     if "toolResult" in data:
         return _join_text(_block_text(item) for item in data["toolResult"]["content"])
     if "citationsContent" in data:
@@ -261,10 +261,16 @@ def _error(tool_use_id: str, message: str) -> ToolResult:
     return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=f"Error: {message}")])
 
 
-def _track_retrieval_tool_use_ids(message: Message, skip_set: set[str]) -> None:
-    """Track tool-use IDs from retrieve_context calls for loop prevention."""
-    if message.get("role") != "assistant":
-        return
-    for block in message.get("content", []):
-        if "toolUse" in block and block["toolUse"].get("name") == RETRIEVAL_TOOL_NAME:
-            skip_set.add(block["toolUse"]["toolUseId"])
+def _retrieval_calls_before(messages: Messages, index: int) -> frozenset[str]:
+    """The retrieval tool calls the message at ``index`` answers.
+
+    Their results are copies of stashed content, so the stash leaves them out. A tool result follows the message
+    that called it, so only that message is read.
+    """
+    if not 0 < index <= len(messages):
+        return frozenset()
+    return frozenset(
+        block["toolUse"]["toolUseId"]
+        for block in messages[index - 1]["content"]
+        if "toolUse" in block and block["toolUse"].get("name") == RETRIEVAL_TOOL_NAME
+    )

@@ -1,5 +1,7 @@
 """Tests for strategy presets."""
 
+import re
+
 import pytest
 
 from strands._context_manager.context_manager import ContextManager
@@ -75,9 +77,10 @@ class TestResolveStrategies:
         with pytest.raises(ValueError, match='Unknown strategy preset: "proactive_summarisation"'):
             _resolve_strategies(["proactive_summarisation"])
 
-    def test_names_the_entry_that_is_neither_a_strategy_nor_a_preset_name(self):
-        with pytest.raises(ValueError, match="Strategy entries must be a strategy or a preset name, got None"):
-            _resolve_strategies([None])
+    @pytest.mark.parametrize(("entry", "shown"), [(None, "None"), (42, "42"), (object, re.escape("<class 'object'>"))])
+    def test_names_the_entry_that_is_neither_a_strategy_nor_a_preset_name(self, entry, shown):
+        with pytest.raises(ValueError, match=f"Strategy entries must be a strategy or a preset name, got {shown}"):
+            _resolve_strategies([entry])
 
     def test_accepts_an_offload_strategy_without_when(self):
         strategy = Offload.drop("tool_results")

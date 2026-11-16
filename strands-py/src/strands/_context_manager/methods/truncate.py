@@ -18,6 +18,8 @@ from ..placeholder import format_truncated, is_offloaded
 DEFAULT_PREVIEW_TOKENS = 1000
 CHARS_PER_TOKEN = 4
 
+DEFAULT_PREVIEW = "head_tail"
+
 PREVIEW_HEAD_SHARE = {"head": 1.0, "tail": 0.0, "head_tail": 0.6}
 """Share of the preview budget kept from the head; the rest is kept from the tail."""
 
@@ -58,8 +60,11 @@ def _resolve_preview_tokens(config: TruncateConfig | None = None) -> int:
 
 
 def _head_share(config: TruncateConfig | None = None) -> float:
-    """The share of the preview budget kept from the head, for the configured preview mode."""
-    return PREVIEW_HEAD_SHARE[(config or {}).get("preview", "head_tail")]
+    """The share of the preview budget kept from the head, for the configured preview mode.
+
+    A mode outside ``TruncateConfig`` falls back to the default, so a typo still shortens the content.
+    """
+    return PREVIEW_HEAD_SHARE.get((config or {}).get("preview", DEFAULT_PREVIEW), PREVIEW_HEAD_SHARE[DEFAULT_PREVIEW])
 
 
 def _build_preview(full_text: str, block_count: int, config: TruncateConfig | None = None) -> str:

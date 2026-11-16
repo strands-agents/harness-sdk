@@ -92,6 +92,23 @@ class TestStashKeys:
         assert _parse_stash_key(key) is None
 
 
+class TestStoreRemoved:
+    """Tests for the reference a run of removed messages is retrievable under."""
+
+    @staticmethod
+    def _run(text: str) -> list[Message]:
+        return [Message(role="assistant", content=[ContentBlock(text=text)])]
+
+    @pytest.mark.asyncio
+    async def test_gives_every_removal_its_own_reference(self, stash):
+        first = await stash.store_removed(self._run("first"))
+        second = await stash.store_removed(self._run("second"))
+
+        assert first != second
+        assert await stash.retrieve(f"{first}_0") == [{"role": "assistant", "content": [{"text": "first"}]}]
+        assert await stash.retrieve(f"{second}_0") == [{"role": "assistant", "content": [{"text": "second"}]}]
+
+
 class TestEnsureStashed:
     """Tests for the reference an offload placeholder carries for the block it replaces."""
 

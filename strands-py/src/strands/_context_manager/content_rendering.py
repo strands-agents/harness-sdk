@@ -32,7 +32,7 @@ def _to_input_blocks(block: ContentBlock | ToolResultContent) -> list[ContentBlo
     if "document" in data:
         return [ContentBlock(document=data["document"])]
     if "json" in data:
-        return [ContentBlock(text=json.dumps(data["json"], indent=2))]
+        return [ContentBlock(text=json.dumps(data["json"], indent=2, ensure_ascii=False))]
     if "citationsContent" in data:
         return [ContentBlock(text=content["text"]) for content in data["citationsContent"].get("content", [])]
     if "guardContent" in data:
@@ -68,7 +68,8 @@ def _message_to_content_blocks(message: Message, tool_names: dict[str, str]) -> 
             blocks.extend(tool_result_to_content_blocks(tool_result["content"]))
         elif "toolUse" in block:
             tool_use = block["toolUse"]
-            blocks.append(ContentBlock(text=f"[tool call: {tool_use['name']}] {json.dumps(tool_use['input'])}"))
+            arguments = json.dumps(tool_use["input"], ensure_ascii=False, separators=(",", ":"))
+            blocks.append(ContentBlock(text=f"[tool call: {tool_use['name']}] {arguments}"))
         else:
             blocks.extend(_to_input_blocks(block))
     return blocks

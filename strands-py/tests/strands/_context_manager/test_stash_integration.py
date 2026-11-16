@@ -42,6 +42,13 @@ def _marker_of(messages: Messages) -> ContentBlock:
     return next(block for message in messages for block in message["content"] if is_offloaded(block))
 
 
+def _reference_of(messages: Messages) -> str:
+    """The reference that placeholder carries, which is fresh for every removal."""
+    reference = _marker_of(messages)["offloaded"]["ref"]
+    assert reference.startswith("removed-")
+    return reference
+
+
 class TestContextManagerToolRegistration:
     def test_provides_retrieve_context_once_the_agent_is_initialized(self, storage):
         manager = ContextManager()
@@ -182,18 +189,19 @@ class TestDropWithStash:
         acted = await strategy.apply(make_context(messages, stash=stash, utilization=0.9))
 
         assert acted is True
-        marker = offload_placeholder("drop", "[Dropped: earlier messages, ~7 tokens]", "removed-m1", 7)
+        reference = _reference_of(messages)
+        marker = offload_placeholder("drop", "[Dropped: earlier messages, ~7 tokens]", reference, 7)
         assert [message["content"] for message in messages] == [
             [{"text": "start"}],
             [{"text": "final"}, marker],
         ]
-        assert (await _retrieve(stash, "removed-m1"))["content"] == [
+        assert (await _retrieve(stash, reference))["content"] == [
             {"text": "\n---\n[assistant]"},
             {"text": "first answer"},
             {"text": "\n---\n[user]"},
             {"text": "second question"},
         ]
-        searched = await _retrieve(stash, "removed-m1", pattern="second")
+        searched = await _retrieve(stash, reference, pattern="second")
         assert "second question" in searched["content"][0]["text"]
 
     @pytest.mark.asyncio
@@ -246,16 +254,17 @@ class TestServerSideSummaryWithStash:
         acted = await self._strategy().apply(context)
 
         assert acted is True
+        reference = _reference_of(messages)
         # The placeholder follows the summary: a provider sending it as a compaction block rejects content before one.
         assert [message["content"] for message in messages] == [
             [{"text": "start"}],
             [
                 _COMPACTION,
-                offload_placeholder("summarize", "[Summarized: earlier messages, ~11 tokens]", "removed-m0", 11),
+                offload_placeholder("summarize", "[Summarized: earlier messages, ~11 tokens]", reference, 11),
             ],
             [{"text": "latest"}],
         ]
-        assert (await _retrieve(stash, "removed-m0"))["content"] == flatten_messages_to_content(covered)
+        assert (await _retrieve(stash, reference))["content"] == flatten_messages_to_content(covered)
 
     @pytest.mark.asyncio
     async def test_stands_on_its_own_when_the_stash_write_fails(self, stash):
@@ -321,7 +330,7 @@ class TestOneReferencePerPlaceholder:
         kept = {id(block) for message in messages for block in message["content"]}
         removed = [message for message in original if not any(id(block) in kept for block in message["content"])]
         assert removed[0] is original[first]
-        reference = f"removed-m{first}"
+        reference = _reference_of(messages)
         tokens = await context.agent.model.count_tokens(removed)
         marker = _marker_of(messages)
         assert marker["offloaded"] == {"method": method, "ref": reference, "tokens": tokens}

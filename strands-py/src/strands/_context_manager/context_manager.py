@@ -17,7 +17,7 @@ from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
 from ..types.exceptions import ContextWindowOverflowException
 from .presets import _resolve_strategies
-from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
+from .retrieval_tool import _create_retrieval_tool, _retrieval_calls_before
 from .stash import Stash
 from .strategies.offload import EmergencyTruncateStrategy, Offload
 from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ..agent.conversation_manager import ConversationManager
     from ..agent.invocation_context import InvocationContext
     from ..storage.storage import Storage
+    from ..types.content import Message, Messages
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,17 @@ ContextManagerStrategy = Literal["auto", "agentic"]
 - ``"agentic"``: Model-driven context management via injected tools, with a higher
   truncation threshold and summarization only on overflow.
 """
+
+
+def _index_of(messages: Messages, message: Message) -> int:
+    """The position of ``message`` in the history, or its length when it is not there.
+
+    By identity, since two messages can hold equal content without being the same message.
+    """
+    for index, candidate in enumerate(messages):
+        if candidate is message:
+            return index
+    return len(messages)
 
 
 class ContextManager(Plugin):
@@ -99,7 +111,6 @@ class ContextManager(Plugin):
 
         self._stash: Stash | None = None
         self._stash_is_durable: bool = False
-        self._retrieval_tool_use_ids: set[str] = set()
         self._backfill_done: bool = False
 
         super().__init__()
@@ -205,11 +216,11 @@ class ContextManager(Plugin):
 
         if self._stash is not None:
             stash = self._stash
-            skip_set = self._retrieval_tool_use_ids
 
             async def _on_message_added(event: MessageAddedEvent) -> None:
-                _track_retrieval_tool_use_ids(event.message, skip_set)
-                await stash.store_message(event.message, frozenset(skip_set))
+                messages = event.agent.messages
+                index = _index_of(messages, event.message)
+                await stash.store_message(event.message, _retrieval_calls_before(messages, index))
 
             agent.hooks.add_callback(MessageAddedEvent, _on_message_added)
 
@@ -266,10 +277,11 @@ class ContextManager(Plugin):
         if self._backfill_done or self._stash is None:
             return
         self._backfill_done = True
-        skip = frozenset(self._retrieval_tool_use_ids)
-        for message in agent.messages:
+        for index, message in enumerate(agent.messages):
             try:
-                await self._stash.store_message(message, skip, keep_existing=True)
+                await self._stash.store_message(
+                    message, _retrieval_calls_before(agent.messages, index), keep_existing=True
+                )
             except Exception:
                 logger.warning("agent_id=<%s> | failed to backfill stash", agent.agent_id, exc_info=True)
 

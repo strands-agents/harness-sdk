@@ -135,10 +135,23 @@ class TestFlattenMessagesWithToolCalls:
             ContentBlock(text="\n---\n[user]"),
             ContentBlock(text="fix the build"),
             ContentBlock(text="\n---\n[assistant]"),
-            ContentBlock(text='[tool call: shell] {"command": "ls"}'),
+            ContentBlock(text='[tool call: shell] {"command":"ls"}'),
             ContentBlock(text="\n---\n[user]"),
             ContentBlock(text="[tool result: shell]"),
             ContentBlock(text="a.ts b.ts"),
+        ]
+
+    def test_renders_tool_call_input_as_the_characters_it_holds(self):
+        messages = [
+            Message(
+                role="assistant",
+                content=[ContentBlock(toolUse={"name": "search", "toolUseId": "call_1", "input": {"q": "café"}})],
+            )
+        ]
+
+        assert flatten_messages_to_content(messages) == [
+            ContentBlock(text="\n---\n[assistant]"),
+            ContentBlock(text='[tool call: search] {"q":"café"}'),
         ]
 
     def test_labels_error_results_and_results_without_a_matching_call(self):
@@ -173,7 +186,7 @@ class TestFlattenMessagesWithToolCalls:
             ContentBlock(text="[tool result]"),
             ContentBlock(text="ok"),
             ContentBlock(text="\n---\n[assistant]"),
-            ContentBlock(text='[tool call: shell] {"command": "ls"}'),
+            ContentBlock(text='[tool call: shell] {"command":"ls"}'),
             ContentBlock(text="\n---\n[user]"),
             ContentBlock(text="[tool result: shell (error)]"),
             ContentBlock(text="denied"),

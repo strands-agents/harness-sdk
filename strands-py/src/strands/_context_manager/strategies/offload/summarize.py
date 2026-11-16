@@ -8,6 +8,7 @@ before summarizing each removable run client-side.
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from typing_extensions import TypedDict
@@ -23,6 +24,7 @@ from ...message_trimming import (
     removed_tokens,
     repair_alternation,
     stash_removed,
+    with_pairs,
 )
 from ...placeholder import REMOVED_MESSAGES, format_offloaded, format_summarized, placeholder_result
 from ...types import ContextState, is_text_block, is_tool_result_block
@@ -95,7 +97,6 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """
         super().__init__("summarize", target, conditions)
         self._config: SummarizeConfig = config or {}
-        self._warned_server_side_skip = False
 
     def _with_conditions(self, conditions: OffloadConditions) -> SummarizeStrategy:
         return SummarizeStrategy(self._target, self._config, conditions)
@@ -159,6 +160,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         honour. The mismatch is in the configuration rather than the history, so it reads the same on every pass and
         is warned about once. A tool use in message 0, whose results the summary replaces, or a pin among the
         summarized messages hands the pass to the client-side summary too.
+
+        The end stops before any message that may not be removed, so the summary never takes the message the next
+        model call responds to, nor a tool use whose result is that message.
         """
         messages = context.messages
         if not _can_replay_server_side(model, context.agent.model):
@@ -166,7 +170,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if self._conditions.block_threshold is not None:
             self._warn_server_side_skip(context, model)
             return None
-        end = _end_of(messages, removable)
+        end = _end_of(messages, with_pairs(messages, removable))
         if end <= 1:
             return None
         if any("toolUse" in block for block in messages[0]["content"]):
@@ -184,15 +188,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return end
 
     def _warn_server_side_skip(self, context: ContextState, model: Model) -> None:
-        """Warn, once, that a ``block_threshold`` rules out the server-side summary."""
-        if self._warned_server_side_skip:
-            return
-        self._warned_server_side_skip = True
-        logger.warning(
-            "model=<%s>, block_threshold=<%s> | a server-side summary covers the conversation's start, so it cannot"
-            " honour a block_threshold | summarizing client-side instead",
-            type(model).__name__,
-            self._conditions.threshold_tokens(context.agent),
+        """Warn that a ``block_threshold`` rules out the server-side summary."""
+        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+        warnings.warn(
+            f"{type(model).__name__} summarizes server-side, which covers the conversation's start and so cannot"
+            f" honour block_threshold ({self._conditions.threshold_tokens(context.agent)}); summarizing client-side"
+            " instead",
+            stacklevel=1,
         )
 
     async def _summarize_server_side(

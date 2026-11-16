@@ -3,6 +3,7 @@
 import logging
 import threading
 import unittest.mock
+import warnings
 from typing import Any
 
 import pytest
@@ -826,6 +827,26 @@ class TestServerSideSummary:
         ]
 
     @pytest.mark.asyncio
+    async def test_keeps_the_message_the_next_model_call_responds_to(self, mock_agent):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        summary = ContentBlock(summary={"provider": "anthropic", "text": "compacted"})
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult(content=[summary]))
+        messages = self._messages()
+        mock_agent.messages = messages
+        # Without preserve_recent nothing is protected, so only the removal rules keep the last message.
+        strategy = Offload.summarize("*").when(context_utilization="80%")
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        sent = mock_agent.model.summarize.call_args.args[0]
+        assert [block["text"] for message in sent for block in message["content"]] == ["task", "old1", "old2", "old3"]
+        assert messages == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[summary]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+
+    @pytest.mark.asyncio
     async def test_places_a_summary_without_a_provider_as_a_client_side_marker(self, mock_agent):
         mock_agent.model.model_info.capabilities.server_side_summary = True
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("written client-side"))
@@ -1257,21 +1278,21 @@ class TestABlockThresholdOnTheMessageTarget:
     """Tests that a block threshold on ``"*"`` selects messages by size, client-side."""
 
     @pytest.mark.asyncio
-    async def test_warns_once_that_a_block_threshold_rules_out_the_server_side_summary(self, caplog):
+    async def test_warns_once_that_a_block_threshold_rules_out_the_server_side_summary(self):
         strategy = _size_filtered()
         first, second = _size_filtered_messages(), _size_filtered_messages()
         agent, model = _mock_agent(first, server_side_summary=True)
         model.summarize = unittest.mock.AsyncMock(return_value=_summary("compacted", "anthropic"))
 
-        with caplog.at_level(logging.WARNING):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("default")
             assert await strategy.apply(_agent_context(first, agent, 0.9)) is True
             assert await strategy.apply(_agent_context(second, agent, 0.9)) is True
 
-        skips = [
-            record.getMessage() for record in caplog.records if "cannot honour a block_threshold" in record.message
+        assert [str(warning.message) for warning in caught] == [
+            f"{type(model).__name__} summarizes server-side, which covers the conversation's start and so cannot"
+            " honour block_threshold (100); summarizing client-side instead"
         ]
-        assert len(skips) == 1
-        assert "block_threshold=<100> | a server-side summary covers the conversation" in skips[0]
 
     @pytest.mark.asyncio
     async def test_summarizes_client_side_when_a_block_threshold_selects_messages_by_size(self, caplog):

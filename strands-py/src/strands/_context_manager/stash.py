@@ -10,6 +10,7 @@ import base64
 import builtins
 import json
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from ..storage.storage import _NAMESPACED, _NamespacedStorage
@@ -122,13 +123,18 @@ class Stash:
     async def store_removed(self, removed: Messages) -> str:
         """Store messages removed from the context window as one entry.
 
+        The reference is fresh for every removal rather than derived from the messages, because two removals can
+        begin at the same message: a run that starts with a marker message, which carries no tracking id, and a
+        server-side summary, which always stands for the messages after message 0. Deriving it would have the second
+        removal overwrite the first, leaving the earlier content unretrievable.
+
         Args:
             removed: The removed messages, in conversation order.
 
         Returns:
             The reference the placeholder left in their place carries.
         """
-        reference = f"removed-{removed[0].get('tracking_id', 'unknown')}"
+        reference = f"removed-{uuid.uuid4()}"
         await self.store(reference, 0, _encode(removed))
         return reference
 
