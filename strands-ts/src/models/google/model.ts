@@ -28,7 +28,7 @@ export type { GoogleModelConfig, GoogleModelOptions }
 import { classifyGoogleError, type GoogleErrorType } from './errors.js'
 import { formatMessages, mapChunkToEvents } from './adapters.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from '../defaults.js'
-import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from '../model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
 
@@ -169,7 +169,7 @@ export class GoogleModel extends Model<GoogleModelConfig> {
 
   /** Turns `serverSideSummary` off, which a `modelInfo` override still wins over. */
   override get modelInfo(): ModelInfo {
-    return mergeModelInfo(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, this._config.modelInfo)
+    return ModelInfo.merge(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, this._config.modelInfo)
   }
 
   /**

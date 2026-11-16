@@ -5,6 +5,7 @@ from strands.middleware.stages import InvokeModelStage
 
 from strands_harness import create_harness
 from strands_harness.plugins import Todos
+from strands_harness.plugins.todos import _DEPRECATION_MESSAGE
 from strands_harness.plugins.todos import Todos as TodosClass
 
 
@@ -97,3 +98,17 @@ def test_registers_a_context_injector_on_init_agent():
     TodosClass().init_agent(agent)
 
     assert [call.args[0] for call in agent.add_middleware.call_args_list] == [InvokeModelStage.Input]
+
+
+def test_selecting_the_todos_builtin_warns_that_it_is_moving_to_the_sdk():
+    """The harness constructs the plugin, so the notice has to survive the default warning filter."""
+    with pytest.warns(UserWarning, match="strands.vended_plugins.todos") as warnings_raised:
+        create_harness(builtin_plugins=["todos"])
+
+    notices = [warning for warning in warnings_raised if _DEPRECATION_MESSAGE in str(warning.message)]
+    assert [warning.category for warning in notices] == [UserWarning]
+
+
+def test_the_deprecation_message_matches_the_pep_702_literal():
+    # The decorator takes a literal, so the constant is a second copy; keep them identical.
+    assert TodosClass.__deprecated__ == _DEPRECATION_MESSAGE
