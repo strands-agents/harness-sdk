@@ -478,6 +478,7 @@ sidebar:
               - label: "Human in the loop"
                 slug: docs/user-guide/sdk/agents/interventions/human-in-the-loop
               - docs/user-guide/sdk/agents/interventions/cedar-authorization
+              - docs/user-guide/sdk/agents/interventions/dogwood-authorization
               - docs/user-guide/sdk/agents/interventions/steering
           - label: Sandbox
             addedDate: 2026-06-17
