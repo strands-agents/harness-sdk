@@ -351,9 +351,10 @@ describe('OptimizePanel', () => {
 
   it.each<[string, string[], keyof OptimizeSession, unknown[]]>([
     ['SpaceOnEffort', ['\u001b[B', ' '], 'toggleKnob', ['effort']],
+    ['EnterOnInstructions', ['\r'], 'toggleKnob', ['instructions']],
     ['Right', ['\u001b[C'], 'setIterations', [6]],
     ['Left', ['\u001b[D'], 'setIterations', [2]],
-    ['Enter', ['\r'], 'start', []],
+    ['EnterOnStart', ['\u001b[B', '\u001b[B', '\u001b[B', '\r'], 'start', []],
   ])('shouldCallTheSessionWhenTheUserPresses%sInTheSetup', async (_key, keys, action, args) => {
     const { session } = optimizeSession(setup)
     const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
@@ -363,15 +364,83 @@ describe('OptimizePanel', () => {
     expect(session[action]).toHaveBeenCalledWith(...args)
   })
 
-  it('shouldIgnoreSpaceWhenTheKnobIsUnavailable', async () => {
+  it.each([
+    ['Space', ' '],
+    ['Enter', '\r'],
+  ])('shouldIgnore%sWhenTheKnobIsUnavailable', async (_key, key) => {
     const { session } = optimizeSession(setup)
     const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
 
     await press('\u001b[B')
     await press('\u001b[B')
-    await press(' ')
+    await press(key)
 
     expect(session.toggleKnob).not.toHaveBeenCalled()
+    expect(session.start).not.toHaveBeenCalled()
+  })
+
+  it('shouldToggleTheKnobAndNotStartWhenTheUserPressesEnterOnAKnob', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    await press('\r')
+
+    expect(session.toggleKnob).toHaveBeenCalledWith('instructions')
+    expect(session.start).not.toHaveBeenCalled()
+    expect(text()).toContain('Enter toggle')
+  })
+
+  it('shouldNotStartWhenNoKnobIsCheckedAndTheUserPressesEnterOnStart', async () => {
+    const { session } = optimizeSession({
+      ...setup,
+      plan: { ...setup.plan, knobs: setup.plan.knobs.map((knob) => ({ ...knob, enabled: false })) },
+    })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    for (const key of ['\u001b[B', '\u001b[B', '\u001b[B', '\r']) await press(key)
+
+    expect(session.start).not.toHaveBeenCalled()
+    expect(text()).toContain('check a knob to start')
+  })
+
+  it('shouldCancelTheSetupWhenTheUserPressesEnterOnCancel', async () => {
+    const { session } = optimizeSession(setup)
+    const props = freshProps()
+    const { press } = await show(createElement(OptimizePanel, { ...props, session }))
+
+    for (const key of ['\u001b[B', '\u001b[B', '\u001b[B', '\u001b[B', '\r']) await press(key)
+
+    expect(session.reset).toHaveBeenCalledTimes(1)
+    expect(props.close).toHaveBeenCalledTimes(1)
+    expect(session.start).not.toHaveBeenCalled()
+  })
+
+  it.each<[string, string, keyof OptimizeSession, unknown[]]>([
+    ['AKnob', 'effort', 'toggleKnob', ['effort']],
+    ['Start', '[ Start ]', 'start', []],
+  ])('shouldActWhenTheUserClicks%sInTheSetup', async (_target, label, action, args) => {
+    const { session } = optimizeSession(setup)
+    const clicks = new DevPanelClicks()
+    const props = freshProps()
+    const panel = {
+      id: 'panel-1',
+      kind: 'dev' as const,
+      command: 'optimize',
+      title: '/optimize',
+      rows: [],
+      view: (viewProps: DevChatPanelProps) => createElement(OptimizePanel, { ...viewProps, session }),
+      close: props.close,
+      openCommand: props.openCommand,
+    }
+    const shown = await show(createElement(DevPanelFrame, { panel, width: 120, height: 22, clicks }), 24)
+    const lines = shown.text().split('\n')
+    const row = lines.findIndex((line) => line.includes(label))
+    const column = stringWidth(lines[row]!.slice(0, lines[row]!.indexOf(label))) + 1
+
+    clicks.at({ button: 0, action: 'release', column, row: row + 1 })?.()
+    await shown.instance.waitUntilRenderFlush()
+
+    expect(session[action]).toHaveBeenCalledWith(...args)
   })
 
   it('shouldListTheCandidatesAndStopWhenTheUserPressesX', async () => {
@@ -418,7 +487,7 @@ describe('OptimizePanel', () => {
     const { text } = await show(createElement(OptimizePanel, { ...panelProps, height: 10, session }), 12)
 
     expect(text()).toContain('[ Start ]')
-    expect(text()).toContain('Enter start')
+    expect(text()).toContain('Enter toggle')
     expect(text()).not.toContain('The best candidate on the validation cases wins')
   })
 

@@ -6,10 +6,12 @@ import { createDiffPreview } from '../../agent/file-changes.js'
 import type { ChatDiffLine } from '../../agent/types.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
+import { useDevPanelClicks } from '../../ui/panels/dev.js'
 import { ExperimentPicker } from './picker.js'
 import type {
   CandidateResult,
   ExperimentSummary,
+  Knob,
   OptimizePlan,
   OptimizeProgress,
   OptimizeReview,
@@ -125,6 +127,16 @@ const ChoiceSlider = ({ choices, value }: { choices: readonly number[]; value: n
   )
 }
 
+type SetupButton = 'start' | 'cancel'
+
+const SETUP_BUTTONS: readonly SetupButton[] = ['start', 'cancel']
+
+const setupHints = (focused: SetupButton | Knob | undefined, ready: boolean): string[] => {
+  if (focused === 'start') return ['↑↓', ready ? 'Enter start' : 'check a knob to start', '←→ budget', 'Esc cancel']
+  if (focused === 'cancel') return ['↑↓', 'Enter cancel', 'Esc cancel']
+  return ['↑↓', focused?.unavailable ? 'not available yet' : 'Enter toggle', '←→ budget', '↓ Start', 'Esc cancel']
+}
+
 const SetupView = ({
   close,
   session,
@@ -132,24 +144,35 @@ const SetupView = ({
   height,
   plan,
 }: OptimizePanelProps & { plan: OptimizePlan }): ReactElement => {
-  const cursor = useCursor(plan.knobs.length)
-  const index = cursor.index
+  const cursor = useCursor(plan.knobs.length + SETUP_BUTTONS.length)
   const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable)
   const compact = height < FULL_SETUP_ROWS
+  const focusAt = (row: number): SetupButton | Knob | undefined =>
+    plan.knobs[row] ?? SETUP_BUTTONS[row - plan.knobs.length]
+  const focused = focusAt(cursor.index)
+  const cancel = (): void => {
+    session.reset()
+    close()
+  }
+  const activate = (target: SetupButton | Knob | undefined): void => {
+    if (target === 'start') {
+      if (ready) session.start()
+    } else if (target === 'cancel') cancel()
+    else if (target && !target.unavailable) session.toggleKnob(target.key)
+  }
+  const choose = (row: number): void => {
+    cursor.set(row)
+    activate(focusAt(row))
+  }
   useInput((input, key) => {
-    if (key.escape) {
-      session.reset()
-      close()
-    } else if (key.upArrow) cursor.move(-1)
+    if (key.escape) cancel()
+    else if (key.upArrow) cursor.move(-1)
     else if (key.downArrow) cursor.move(1)
-    else if (shortcut(input, key) === ' ') {
-      const knob = plan.knobs[cursor.current()]
-      if (knob && !knob.unavailable) session.toggleKnob(knob.key)
-    } else if (key.leftArrow || key.rightArrow) {
+    else if (key.leftArrow || key.rightArrow) {
       const position = plan.iterationChoices.indexOf(plan.iterations)
       const next = plan.iterationChoices[position + (key.rightArrow ? 1 : -1)]
       if (next !== undefined) session.setIterations(next)
-    } else if (key.return && ready) session.start()
+    } else if (key.return || shortcut(input, key) === ' ') activate(focusAt(cursor.current()))
   })
   const { split } = plan
   return (
@@ -158,12 +181,13 @@ const SetupView = ({
       {compact ? null : <Line>{'  knobs'}</Line>}
       <ItemList
         items={plan.knobs.map(knobItem)}
-        selected={index}
+        selected={cursor.index < plan.knobs.length ? cursor.index : -1}
         capacity={plan.knobs.length}
         labelWidth={labelWidthFor(
           plan.knobs.map(({ label }) => label),
           width
         )}
+        onClick={choose}
       />
       {compact ? null : <Gap />}
       <Field
@@ -187,19 +211,44 @@ const SetupView = ({
         </Line>
       )}
       {plan.warning ? <Line tone="warning">{`  ${plan.warning}`}</Line> : compact ? null : <Gap />}
-      <StartButton ready={ready} />
+      <SetupButtons
+        ready={ready}
+        focused={typeof focused === 'string' ? focused : undefined}
+        onChoose={(button) => choose(plan.knobs.length + SETUP_BUTTONS.indexOf(button))}
+      />
       <Fill />
-      <KeyHints hints={['Space toggle', '←→ budget', ready ? 'Enter start' : 'pick a knob', 'Esc cancel']} />
+      <KeyHints hints={setupHints(focused, ready)} />
     </>
   )
 }
 
-const StartButton = ({ ready }: { ready: boolean }): ReactElement => {
-  const { accent } = useTheme()
+const SetupButtons = ({
+  ready,
+  focused,
+  onChoose,
+}: {
+  ready: boolean
+  focused: SetupButton | undefined
+  onChoose: (button: SetupButton) => void
+}): ReactElement => {
+  const { accent, selection } = useTheme()
+  const clicks = useDevPanelClicks()
+  const button = (name: SetupButton, label: ReactElement): ReactElement => (
+    <Box
+      key={name}
+      flexShrink={0}
+      marginRight={2}
+      {...(focused === name ? { backgroundColor: selection } : {})}
+      {...(clicks ? { ref: clicks.target(() => onChoose(name)) } : {})}
+    >
+      <Text color={accent}>{focused === name ? '› ' : '  '}</Text>
+      {label}
+    </Box>
+  )
   return (
     <Box height={1} flexShrink={0}>
-      <Text {...(ready ? { color: accent, bold: true } : { dimColor: true })}>{'  [ Start ]'}</Text>
-      <Text>{'   Cancel'}</Text>
+      {button('start', <Text {...(ready ? { color: accent, bold: true } : { dimColor: true })}>{'[ Start ]'}</Text>)}
+      {button('cancel', <Text bold={focused === 'cancel'}>Cancel</Text>)}
     </Box>
   )
 }
