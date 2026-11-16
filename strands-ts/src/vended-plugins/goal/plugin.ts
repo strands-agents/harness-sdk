@@ -106,8 +106,8 @@ export type Validator = (
 
 /**
  * Why a goal run ended. `'limit'` means one of the request's `limits` was reached, so no
- * further attempt could run; `'stopped'` means the invocation was cancelled, either mid-pass
- * or while its answer was being graded, so no retry could run.
+ * further attempt could run; `'stopped'` means a cancel ended the run: the pass was cancelled,
+ * or the cancel was seen when grading finished.
  */
 export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout' | 'limit' | 'stopped'
 

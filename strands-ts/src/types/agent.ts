@@ -279,8 +279,10 @@ export interface CancelOptions {
    * Defer cancellation until the running tool batch finishes, letting sibling
    * tools complete normally instead of receiving cancellation errors. When
    * the model answers with plain text and no tools in the same turn, the
-   * invocation returns its natural `stopReason`. Either way no further model
-   * call follows: an `AfterInvocationEvent.resume` set by a hook is ignored.
+   * invocation returns its natural `stopReason` (`'cancelled'` if a
+   * structured-output schema still required a tool call). The step in progress,
+   * or the first one if none has started, still runs; no further model call
+   * follows, and an `AfterInvocationEvent.resume` set by a hook is ignored.
    */
   afterCurrentTools?: boolean
 }

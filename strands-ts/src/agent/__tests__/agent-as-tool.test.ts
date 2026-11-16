@@ -230,34 +230,39 @@ describe('AgentAsTool', () => {
       await expect(takeover).rejects.toThrow(PendingInvocationCancelledError)
     })
 
-    it('returns a success result when the wrapped agent stopped itself before a stopPrevious caller arrived', async () => {
-      let takeover: Promise<unknown> | undefined
-      const stop = createMockTool('stop', () => {
-        agent.cancel({ message: 'Answer is 42', afterCurrentTools: true })
-        takeover = agent.invoke('host takes over')
-        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('Answer is 42')] })
-      })
-      const model = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 't1', input: {} })
-        .addTurn({ type: 'textBlock', text: 'Host answer' })
-      const agent: Agent = new Agent({
-        model,
-        name: 'test-agent',
-        tools: [stop],
-        printer: false,
-        concurrentInvocationMode: 'stopPrevious',
-      })
-      const asTool = new AgentAsTool({ agent })
+    it.each(['before', 'after'] as const)(
+      'returns a success result when the wrapped agent stopped itself %s a stopPrevious caller arrived',
+      async (order) => {
+        let takeover: Promise<unknown> | undefined
+        const stopItself = (): void => agent.cancel({ message: 'Answer is 42', afterCurrentTools: true })
+        const stop = createMockTool('stop', () => {
+          if (order === 'before') stopItself()
+          takeover = agent.invoke('host takes over')
+          if (order === 'after') stopItself()
+          return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('Answer is 42')] })
+        })
+        const model = new MockMessageModel()
+          .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 't1', input: {} })
+          .addTurn({ type: 'textBlock', text: 'Host answer' })
+        const agent: Agent = new Agent({
+          model,
+          name: 'test-agent',
+          tools: [stop],
+          printer: false,
+          concurrentInvocationMode: 'stopPrevious',
+        })
+        const asTool = new AgentAsTool({ agent })
 
-      const { result } = await collectGenerator(
-        asTool.stream(createMockContext({ name: 'test-agent', toolUseId: 'tool-1', input: { input: 'Hello agent' } }))
-      )
+        const { result } = await collectGenerator(
+          asTool.stream(createMockContext({ name: 'test-agent', toolUseId: 'tool-1', input: { input: 'Hello agent' } }))
+        )
 
-      expect(result).toEqual(
-        new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('Answer is 42')] })
-      )
-      expect(((await takeover) as { stopReason: string }).stopReason).toBe('endTurn')
-    })
+        expect(result).toEqual(
+          new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('Answer is 42')] })
+        )
+        expect(((await takeover) as { stopReason: string }).stopReason).toBe('endTurn')
+      }
+    )
 
     it('returns a success result when the wrapped agent ends via a deferred cancel (stop tool)', async () => {
       const stop = createMockTool('stop', () => {

@@ -1274,8 +1274,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * option on `invoke` / `stream`.
    *
    * A cancel that arrives after the final model pass (e.g. during background-task
-   * settlement) resolves the call with that pass's result and its own `stopReason`,
-   * unless a hook set `AfterInvocationEvent.resume`, which still runs.
+   * settlement) resolves the call with that pass's result and its own `stopReason`.
+   * After an immediate cancel, a hook's `AfterInvocationEvent.resume` still starts
+   * another pass.
    *
    * Only the *running* invocation is cancelled; a queued invocation is removed by
    * aborting the `cancelSignal` its caller passed.
@@ -1301,6 +1302,8 @@ export class Agent implements LocalAgent, InvokableAgent {
     }
     if (options?.message !== undefined) {
       this._cancelMessage = options.message
+      // Whoever wrote the final message owns the stop: it is no longer one issued for a waiting caller.
+      this._stoppedForCaller = false
     }
     if (options?.afterCurrentTools) {
       this._deferredCancel = true
@@ -1345,8 +1348,8 @@ export class Agent implements LocalAgent, InvokableAgent {
   /** Stops the running invocation after its current step for a waiting caller; a stop already pending is left as is. */
   private _stopForCaller(): void {
     if (!this._isInvoking || this._deferredCancel) return
-    this._stoppedForCaller = true
     this.cancel({ message: 'Superseded by a new request', afterCurrentTools: true })
+    this._stoppedForCaller = true
   }
 
   /**
