@@ -605,8 +605,8 @@ describe('ContextManager', () => {
       expect(countOptions).toStrictEqual([{ toolSpecs: [] }])
     })
 
-    // The gate reads the projection the other gates share, so a costlier estimate cannot fire it alone.
-    it('takes no count of its own in the emergency truncate gate', async () => {
+    // The gate measures the messages it would drop, not the whole request the other gates are measured on.
+    it('leaves messages that fit the window in the emergency truncate gate', async () => {
       const toolRegistry = new ToolRegistry()
       toolRegistry.add(makeStubTool('lookup'))
       let counts = 0
@@ -624,19 +624,18 @@ describe('ContextManager', () => {
         systemPrompt: 'be helpful',
         toolRegistry,
         estimateUtilization: (tokens: number) => tokens / 10_000,
-        // What the base heuristic reads on a tool-heavy agent: the request well over the window while the
-        // projection is at 50%, and an overhead under it, so nothing but this gate's own count can stop it.
-        countTokens: async (counted) => {
+        // The request is over the window, the messages are a tenth of it: dropping them cannot be what helps.
+        countTokens: async () => {
           counts += 1
-          return counted.length > 0 ? 20_000 : 1_000
+          return 1_000
         },
       })
       await cm.initAgent(agent)
 
-      await invokeTrackedHook(agent, makeBeforeEvent(agent, 5_000))
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 20_000))
 
       expect(agent.messages).toHaveLength(4)
-      expect(counts).toBe(0)
+      expect(counts).toBe(1)
     })
   })
 })

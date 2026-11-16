@@ -867,7 +867,11 @@ describe('insertMarker', () => {
 
 describe('EmergencyTruncateStrategy', () => {
   // Proactive gate: unlike makeContext, the caller controls both counts and the utilization estimate.
-  function makeProactiveContext(messages: Message[], countTokens: (messages: Message[]) => number): ContextState {
+  function makeProactiveContext(
+    messages: Message[],
+    countTokens: (messages: Message[]) => number,
+    utilization = 1.1
+  ): ContextState {
     const agent = createMockAgent({
       messages,
       extra: {
@@ -878,7 +882,7 @@ describe('EmergencyTruncateStrategy', () => {
         },
       } as Partial<Agent>,
     })
-    return { messages, agent, utilization: 1.1 }
+    return { messages, agent, utilization }
   }
 
   function fiveMessages(): Message[] {
@@ -891,26 +895,26 @@ describe('EmergencyTruncateStrategy', () => {
     ]
   }
 
-  it('truncates when the messages are what overrun the window', async () => {
+  it('truncates when the messages alone fill the window', async () => {
+    // The messages are what this strategy removes, so they are what it measures.
     const messages = fiveMessages()
-    const context = makeProactiveContext(messages, (counted) => (counted.length > 0 ? 110_000 : 1_000))
+    const context = makeProactiveContext(messages, () => 110_000, 0.2)
     expect(await new EmergencyTruncateStrategy().apply(context)).toBe(true)
     expect(messages.length).toBeLessThan(5)
   })
 
-  it('skips when the system prompt and tool specs alone fill the window', async () => {
-    // Guards https://github.com/strands-agents/harness-sdk/issues/6065: dropping messages cannot bring a
-    // non-message overflow under the limit.
+  it('skips when the messages fit and the request does not', async () => {
+    // The pipeline's utilization carries the system prompt and tool specs, which dropping messages cannot shrink.
     const messages = fiveMessages()
-    const context = makeProactiveContext(messages, () => 110_000)
+    const context = makeProactiveContext(messages, () => 1_000)
     expect(await new EmergencyTruncateStrategy().apply(context)).toBe(false)
     expect(messages).toHaveLength(5)
   })
 
-  it('truncates on overflow even when the overhead fills the window', async () => {
+  it('truncates on overflow even when the messages fit', async () => {
     // An overflow signal is the provider's verdict on a request it refused, so it outranks the estimate.
     const messages = fiveMessages()
-    const context = { ...makeProactiveContext(messages, () => 110_000), overflow: true }
+    const context = { ...makeProactiveContext(messages, () => 1_000, 0.2), overflow: true }
     expect(await new EmergencyTruncateStrategy().apply(context)).toBe(true)
     expect(messages.length).toBeLessThan(5)
   })

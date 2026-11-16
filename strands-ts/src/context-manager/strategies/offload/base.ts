@@ -10,6 +10,7 @@
 import { logger } from '../../../logging/logger.js'
 import { warnOnce } from '../../../logging/warn-once.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
+import { ModelProxy } from '../../../models/model-proxy.js'
 import { InjectedBlock, Message, TextBlock, type OffloadMethod, ToolResultBlock } from '../../../types/messages.js'
 import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
@@ -19,7 +20,6 @@ import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { carriedTokens, formatElided, isOffloaded, offloadPlaceholder } from '../../placeholder.js'
 import { collectRemovableWithPair, placeholderFor, removeMessages, repairAlternation } from '../../message-trimming.js'
-import { countRequestTokens } from '../../../models/model-proxy.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
 import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
@@ -254,8 +254,8 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
 const EMERGENCY_REMOVAL_RATIO = 0.2
 
 /**
- * Last-resort strategy that drops the oldest 20% of messages when the context window is still
- * overflowing after all user-configured strategies have run.
+ * Last-resort strategy that recomputes utilization and drops the oldest 20% of messages
+ * when the context window is still overflowing after all user-configured strategies have run.
  * Appended internally by ContextManager — not part of the public builder API.
  * Pins are ignored so an all-pinned overflow is still recoverable.
  *
@@ -270,12 +270,11 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     const { messages, agent } = context
     if (messages.length <= 3) return false
     if (!context.overflow) {
-      // The utilization the pipeline maintains, not a fresh count of its own. Unless native counting is
-      // configured, a fresh count is the base heuristic, which charges tool-spec JSON at characters / 2;
-      // a tool-heavy agent reads >= 1.0 that way while the projection every other gate is measured
-      // against is still far under, and this gate drops history out from under them.
-      if (context.utilization < 1.0) return false
-      if (await this._overheadFillsWindow(agent)) return false
+      // Only what this strategy can remove, never the pipeline's whole-request utilization: that also carries the
+      // system prompt and tool specs, which dropping messages cannot shrink, and it is anchored on the last call's
+      // usage, which a strategy earlier in the pass has already invalidated.
+      const tokens = await new ModelProxy(agent.model).countTokens(messages)
+      if (agent.model.estimateUtilization(tokens) < 1.0) return false
     }
 
     const removable = messages.slice(1)
@@ -287,21 +286,6 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
       return false
     }
     repairAlternation(messages)
-    return true
-  }
-
-  /**
-   * Whether the system prompt and tool specs alone fill the window, so dropping messages cannot help.
-   *
-   * Consulted only on the proactive path. An overflow signal is the provider's own verdict on a request it
-   * refused, which outranks this estimate.
-   */
-  private async _overheadFillsWindow(agent: LocalAgent): Promise<boolean> {
-    const overhead = await countRequestTokens(agent, [])
-    if (agent.model.estimateUtilization(overhead) < 1.0) return false
-    logger.warn(
-      `agentId=<${agent.id}>, overheadTokens=<${overhead}> | system prompt and tool specs alone fill the context window, skipping emergency truncation`
-    )
     return true
   }
 }

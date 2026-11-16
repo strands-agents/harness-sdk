@@ -50,9 +50,9 @@ def _count_messages_over_window(agent):
     agent.model.estimate_utilization = unittest.mock.MagicMock(side_effect=lambda tokens: tokens / 100000)
 
 
-def _count_overhead_over_window(agent):
-    """Count against a 100k window that the system prompt and tool specs overrun on their own."""
-    agent.model.count_tokens = unittest.mock.AsyncMock(return_value=110000)
+def _count_messages_under_window(agent):
+    """Count against a 100k window the messages fit inside."""
+    agent.model.count_tokens = unittest.mock.AsyncMock(return_value=1000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(side_effect=lambda tokens: tokens / 100000)
 
 
@@ -653,7 +653,8 @@ class TestEmergencyTruncateStrategy:
     """Tests for the last-resort emergency truncation."""
 
     @pytest.mark.asyncio
-    async def test_fires_when_utilization_above_one(self, mock_agent):
+    async def test_fires_when_the_messages_alone_fill_the_window(self, mock_agent):
+        """The messages are what this strategy removes, so they are what it measures."""
         _count_messages_over_window(mock_agent)
         strategy = EmergencyTruncateStrategy()
         messages: Messages = [
@@ -664,17 +665,17 @@ class TestEmergencyTruncateStrategy:
             Message(role="user", content=[ContentBlock(text="u3")]),
         ]
         mock_agent.messages = messages
-        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1)
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.2)
         assert await strategy.apply(context) is True
         assert len(messages) < 5
 
     @pytest.mark.asyncio
-    async def test_skips_when_the_overhead_alone_fills_the_window(self, mock_agent):
-        """Dropping messages cannot bring a non-message overflow under the limit.
+    async def test_skips_when_the_messages_fit_and_the_request_does_not(self, mock_agent):
+        """The pipeline's utilization carries the system prompt and tool specs as well as the messages.
 
-        Guards https://github.com/strands-agents/harness-sdk/issues/6065.
+        Dropping messages cannot shrink those, so the gate measures only what it would drop.
         """
-        _count_overhead_over_window(mock_agent)
+        _count_messages_under_window(mock_agent)
         strategy = EmergencyTruncateStrategy()
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -689,12 +690,9 @@ class TestEmergencyTruncateStrategy:
         assert len(messages) == 5
 
     @pytest.mark.asyncio
-    async def test_truncates_on_overflow_even_when_the_overhead_fills_the_window(self, mock_agent):
-        """An overflow signal is the provider's verdict on a request it refused, so it outranks the estimate.
-
-        Guards https://github.com/strands-agents/harness-sdk/issues/6065.
-        """
-        _count_overhead_over_window(mock_agent)
+    async def test_truncates_on_overflow_even_when_the_messages_fit(self, mock_agent):
+        """An overflow signal is the provider's verdict on a request it refused, so it outranks the estimate."""
+        _count_messages_under_window(mock_agent)
         strategy = EmergencyTruncateStrategy()
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -704,7 +702,7 @@ class TestEmergencyTruncateStrategy:
             Message(role="user", content=[ContentBlock(text="u3")]),
         ]
         mock_agent.messages = messages
-        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.2, overflow=True)
         assert await strategy.apply(context) is True
         assert len(messages) < 5
 

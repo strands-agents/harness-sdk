@@ -6,7 +6,7 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
-from ....models._model_proxy import _count_request_tokens
+from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
 from ...stash import Stash, _format_stash_refs
@@ -140,36 +140,18 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         self._stash = stash
 
     async def apply(self, context: ContextState) -> bool:
-        """Fire when overflow is set, or when the pipeline's utilization is >= 1.0."""
+        """Fire when overflow is set, or when the messages alone fill the window."""
         if len(context.messages) <= 3:
             return False
         if not context.overflow:
-            # The utilization the pipeline maintains, not a fresh count of its own. Unless native counting is
-            # configured, a fresh count is the base heuristic, which charges tool-spec JSON at characters / 2;
-            # a tool-heavy agent reads >= 1.0 that way while the projection every other gate is measured
-            # against is still far under, and this gate drops history out from under them.
-            if context.utilization < 1.0:
-                return False
-            if await self._overhead_fills_window(context.agent):
+            # Only what this strategy can remove, never the pipeline's whole-request utilization: that also
+            # carries the system prompt and tool specs, which dropping messages cannot shrink, and it is
+            # anchored on the last call's usage, which a strategy earlier in the pass has already invalidated.
+            tokens = await ModelProxy(context.agent.model).count_tokens(context.messages)
+            utilization = context.agent.model.estimate_utilization(tokens)
+            if utilization < 1.0:
                 return False
         return await self._apply_per_message(context)
-
-    async def _overhead_fills_window(self, agent: Agent) -> bool:
-        """Whether the system prompt and tool specs alone fill the window, so dropping messages cannot help.
-
-        Consulted only on the proactive path. An overflow signal is the provider's own verdict on a request it
-        refused, which outranks this estimate.
-        """
-        overhead = await _count_request_tokens(agent, [])
-        if agent.model.estimate_utilization(overhead) < 1.0:
-            return False
-        logger.warning(
-            "agent_id=<%s>, overhead_tokens=<%s> | system prompt and tool specs alone fill the context window, "
-            "skipping emergency truncation",
-            agent.agent_id,
-            overhead,
-        )
-        return True
 
     async def _apply_per_message(self, context: ContextState) -> bool:
         """Drop the oldest 20% of non-head messages each pass.
