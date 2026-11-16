@@ -618,6 +618,7 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     width: max-content;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 600;
+    font-size: 16px;
     color: var(--fg);
     text-decoration: none;
   }
@@ -625,7 +626,6 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   .toolkit__build-action,
   .toolkit__card-read {
     align-self: flex-end;
-    font-size: 13px;
   }
 
   .toolkit__build-action:hover,
@@ -699,7 +699,6 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   }
 
   .toolkit__build-sdk-action {
-    font-size: 12px;
     white-space: nowrap;
   }
 
@@ -870,7 +869,8 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   .toolkit__card-read {
     position: absolute;
     bottom: 12px;
-    left: 24px;
+    left: auto;
+    right: 24px;
   }
 
   .toolkit__card-read:hover {
@@ -891,7 +891,8 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   .toolkit__card-open {
     position: absolute;
     bottom: 12.65px;
-    right: 12.65px;
+    left: 22px;
+    right: auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1194,7 +1195,11 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     .toolkit__build-sdk {
       grid-template-columns: max-content minmax(0, 1fr);
       gap: 8px;
-      padding: 22px 20px 18px;
+      padding: 22px 16px 18px;
+    }
+
+    .toolkit__build-sdk-slug {
+      font-size: clamp(17px, 5.3vw, 19px);
     }
 
     .toolkit__build-sdk-action {
@@ -1203,7 +1208,6 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
       min-width: 0;
       justify-self: end;
       justify-content: flex-end;
-      font-size: 11px;
       text-align: right;
       white-space: normal;
     }
@@ -1231,6 +1235,10 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     }
 
     .toolkit__card-read {
+      right: 16px;
+    }
+
+    .toolkit__card-open {
       left: 16px;
     }
 
