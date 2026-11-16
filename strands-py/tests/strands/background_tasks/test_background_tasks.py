@@ -156,11 +156,11 @@ async def test_deprecated_management_tool_forwards_calls_in_the_foreground() -> 
     )
     tool_specs = _capture_tool_specs(agent)
 
-    with pytest.warns((UserWarning, DeprecationWarning), match="Use manage_background_task instead") as captured:
+    with pytest.warns(UserWarning, match="Use manage_background_task instead") as captured:
         await agent.invoke_async("List tasks.")
 
     tru_warning_categories = {warning.category for warning in captured}
-    exp_warning_categories = {UserWarning, DeprecationWarning}
+    exp_warning_categories = {UserWarning}
     assert tru_warning_categories == exp_warning_categories
     tru_result = _tool_result(agent, "legacy-use")
     exp_result = {"toolUseId": "legacy-use", "status": "success", "content": [{"json": {"tasks": []}}]}
@@ -934,7 +934,7 @@ async def test_surfaces_and_resumes_interrupts_from_background_tools() -> None:
     assert "_background_execution" not in _schema_properties(management_spec)
 
     blocked_task = next(task for task in _persisted_tasks(agent) or [] if task["tool_name"] == "blocked")
-    with pytest.warns((UserWarning, DeprecationWarning), match="Use manage_background_task instead"):
+    with pytest.warns(UserWarning, match="Use manage_background_task instead"):
         tru_blocked = await _invoke_management_tool(
             agent, {"mode": "get", "task_id": blocked_task["task_id"]}, "strands_manage_background_task"
         )
@@ -973,7 +973,7 @@ async def test_surfaces_and_resumes_interrupts_from_background_tools() -> None:
     }
     assert tru_listing == exp_listing
 
-    with pytest.warns((UserWarning, DeprecationWarning), match="Use manage_background_task instead"):
+    with pytest.warns(UserWarning, match="Use manage_background_task instead"):
         tru_cancelled = await _invoke_management_tool(
             agent, {"mode": "cancel", "task_id": blocked_task["task_id"]}, "strands_manage_background_task"
         )
