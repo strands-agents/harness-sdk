@@ -3911,6 +3911,33 @@ describe('BedrockModel', () => {
         expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
+      // https://github.com/strands-agents/harness-sdk/issues/4879: once a non-latest tool-result turn can
+      // carry its own rendered reminder text (e.g. a todos injector firing every turn), the point must still
+      // skip past it rather than anchoring there, or it moves every call and Nova never reads from cache.
+      it('keeps the conversation cache point on the prompt when an earlier tool-result turn carries its own reminder text', () => {
+        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
+        const messages = [
+          ...toolTurn,
+          new Message({ role: 'user', content: [toolResult, new TextBlock('<todos>1/2 done</todos>')] }),
+          new Message({
+            role: 'assistant',
+            content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'id-2', input: {} })],
+          }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'id-2', status: 'success', content: [new TextBlock('84')] })],
+          }),
+        ]
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(request()?.messages?.[0]?.content).toStrictEqual([
+          { text: 'What is 6 x 7?' },
+          { cachePoint: { type: 'default' } },
+        ])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
+      })
+
       it('moves a caller-placed cache point with no text ahead of it to the prompt and warns', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: {} })
         const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })
