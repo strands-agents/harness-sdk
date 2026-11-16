@@ -162,6 +162,8 @@ function SetupWizardContent({
   introStartedAt,
   initialSettings,
   checkForUpdate = availableCliUpdate,
+  providerOnly = false,
+  initialModel,
 }: {
   appearance: AppearanceSettings
   setAppearance: Dispatch<SetStateAction<AppearanceSettings>>
@@ -176,11 +178,15 @@ function SetupWizardContent({
   initialSettings?: Partial<ChatSettings>
   /** Resolves a newer published CLI version to announce on the opening menu. */
   checkForUpdate?(): Promise<string | undefined>
+  providerOnly?: boolean
+  initialModel?: string
 }): ReactElement {
   const { stdout } = useStdout()
   const { columns, rows: terminalRows } = useTerminalSize()
-  const [flow, setFlow] = useState<SetupFlow>()
-  const [step, setStep] = useState(0)
+  const openingModel = (): string => initialModel ?? config.snapshot().profile.model
+  const openingProvider = (): ProviderId => (providerOnly ? providerFromModel(openingModel()) : undefined) ?? 'bedrock'
+  const [flow, setFlow] = useState<SetupFlow | undefined>(providerOnly ? 'quickstart' : undefined)
+  const [step, setStep] = useState(providerOnly ? 1 : 0)
   const [settingsReturn, setSettingsReturn] = useState<{
     flow: SetupFlow | undefined
     step: number
@@ -194,7 +200,7 @@ function SetupWizardContent({
   )
   const palette = useTheme()
   const panelTransition = useFadeTransition(appearance.animations)
-  const [selection, setSelection] = useState(0)
+  const [selection, setSelection] = useState(() => (providerOnly ? PROVIDER_IDS.indexOf(openingProvider()) : 0))
   const rowViewportStart = useRef(0)
   const [hoveredControl, setHoveredControl] = useState<SetupControl>()
   const [focusedAction, setFocusedAction] = useState<SetupAction>()
@@ -203,7 +209,7 @@ function SetupWizardContent({
     const settings = { ...snapshot.settings, ...initialSettings }
     return {
       providers: [...snapshot.providers.enabled],
-      profile: snapshot.profile,
+      profile: providerOnly ? { ...snapshot.profile, model: openingModel() } : snapshot.profile,
       permissionMode: snapshot.permissions.mode,
       allowedTools: [...snapshot.permissions.allow],
       customPermissions: snapshot.permissions.mode === 'default' && snapshot.permissions.allow.length > 0,
@@ -253,7 +259,7 @@ function SetupWizardContent({
   const modelOptionsElement = useRef<DOMElement | null>(null)
   const connectionFieldsElement = useRef<DOMElement | null>(null)
   const setupEffortSliderElement = useRef<DOMElement | null>(null)
-  const [quickstartProvider, setQuickstartProvider] = useState<ProviderId>('bedrock')
+  const [quickstartProvider, setQuickstartProvider] = useState<ProviderId>(openingProvider)
   const [selecting, setSelecting] = useState<{
     field: ProviderEnvironmentKey
     options: readonly SelectOption[]
@@ -1824,7 +1830,7 @@ function SetupWizardContent({
       return
     }
     if (step <= 1) {
-      if (step === 0) {
+      if (step === 0 || providerOnly) {
         onCancel?.(0)
         return
       }

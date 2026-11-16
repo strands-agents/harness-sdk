@@ -59,6 +59,7 @@ import { mcpFailure } from '../mcp-diagnostics.js'
 import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
 import { modelControlErrorMessage, profileEffort } from '../../model/selection.js'
+import { isModelCredentialFailure } from '../../model/credential-failure.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import { canUseNativePicker, chooseDirectory } from '../../terminal/directory-picker.js'
@@ -848,15 +849,29 @@ export class ChatController implements ChatControllerApi {
 
   private _offerDevFix(turn: ChatTurn): void {
     if (turn.status !== 'error' || !this._runtime.devWorkspace) return
+    if (this._offersModelSetup(turn.error ?? '')) {
+      this._openPanel({
+        kind: 'error',
+        title: 'Model provider needs setup',
+        rows: [{ label: '', description: turn.error ?? '', tone: 'danger' }],
+        modelSetup: true,
+      })
+      return
+    }
     this._openError('Agent turn failed', '', turn.error ?? '', this._runtime.cwd)
+  }
+
+  private _offersModelSetup(message: string): boolean {
+    return Boolean(this._runtime.devWorkspace && this._requestSetup) && isModelCredentialFailure(message)
   }
 
   private _failureRecoveryHint(error: unknown): string {
     const message = errorMessage(error)
-    const credentials = /credentials?|expiredtoken|security token|sso.*expired/i.test(message)
-    const guidance = credentials
-      ? 'Refresh your credentials, then resend your message.'
-      : 'Check your connection and provider, then resend your message.'
+    const guidance = this._offersModelSetup(message)
+      ? 'Press s to choose a model provider, then resend your message.'
+      : isModelCredentialFailure(message)
+        ? 'Refresh your credentials, then resend your message.'
+        : 'Check your connection and provider, then resend your message.'
     const session = this.resumeSession
     return session ? `${guidance}\nTo resume after restarting: ${sessionResumeCommand(session)}` : guidance
   }

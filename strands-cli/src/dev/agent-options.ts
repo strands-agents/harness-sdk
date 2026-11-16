@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
@@ -279,6 +280,25 @@ const setOptions = async (
   return edits
     .sort((left, right) => right.start - left.start)
     .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), source)
+}
+
+export const readAgentModel = async (
+  workspace: Pick<DevWorkspace, 'root' | 'entrypoint'> & { config: Pick<DevWorkspace['config'], 'language'> }
+): Promise<string | undefined> => {
+  const entry = relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
+  const source = await readFile(workspace.entrypoint, 'utf8')
+  try {
+    const call =
+      workspace.config.language === 'python'
+        ? await pythonCall(source, entry, pythonInterpreter(workspace.root))
+        : await typescriptCall(source, entry)
+    const model = call.values.get('model')
+    if (!model) return modelIdentity(DEFAULT_HARNESS_AGENT_CONFIG.model)
+    return model.literal === undefined ? undefined : modelIdentity(model.literal)
+  } catch (error) {
+    if (error instanceof AgentOptionsNotEditable) return undefined
+    throw error
+  }
 }
 
 export const saveAgentOptions = async (

@@ -1911,6 +1911,75 @@ describe('ChatController', () => {
     await controller.dispose()
   })
 
+  it.each([
+    ['missing AWS credentials', 'Could not load credentials from any providers'],
+    ['an invalid security token', 'The security token included in the request is invalid.'],
+  ])('shouldOfferModelSetupWhenADevChatTurnFailsWith %s', async (_, message) => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error(message)
+      },
+    })
+    const controller = new ChatController(backend, {
+      streamPresentation: {},
+      requestSetup: vi.fn(),
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+    })
+
+    await controller.submit('hello')
+
+    const panel = controller.getSnapshot().panel
+    expect(panel).toMatchObject({
+      kind: 'error',
+      title: 'Model provider needs setup',
+      modelSetup: true,
+      rows: [{ description: message }],
+    })
+    expect(panel).not.toHaveProperty('fixDirectory')
+    expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain(
+      'Press s to choose a model provider, then resend your message.'
+    )
+    await controller.dispose()
+  })
+
+  it('shouldKeepTheFixPanelForACredentialFailureWhenTheDevChatCannotOpenSetup', async () => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('Could not load credentials from any providers')
+      },
+    })
+    const controller = new ChatController(backend, {
+      streamPresentation: {},
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+    })
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().panel).toMatchObject({ title: 'Agent turn failed', fixDirectory: '/project' })
+    expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain(
+      'Refresh your credentials, then resend your message.'
+    )
+    await controller.dispose()
+  })
+
   it('shouldNotOpenAFixPanelWhenATurnFailsOutsideADevChat', async () => {
     const backend = idleBackend({
       async *stream() {

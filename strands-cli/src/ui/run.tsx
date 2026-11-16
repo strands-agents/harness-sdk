@@ -1,7 +1,7 @@
 import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { render, useInput, type Instance } from 'ink'
 
-import { ChatRoot, type ChatLaunch, type SetupBridge, type McpTrustRequest } from './app.js'
+import { ChatRoot, type ChatLaunch, type ProviderSetup, type SetupBridge, type McpTrustRequest } from './app.js'
 import type { ChatControllerApi } from './chat/controller.js'
 import type { ChatConversations, ChatConfigurationProject } from '../agent/types.js'
 import type { CliConfigStore } from '../config/store.js'
@@ -27,6 +27,7 @@ export interface StartupScreen {
   signal: AbortSignal
   show(content: ReactElement | undefined, status?: string): void
   openProject?(project: ChatConfigurationProject): Promise<void>
+  chooseModelProvider?(): Promise<boolean>
 }
 
 export interface WorkspaceChange {
@@ -47,6 +48,7 @@ interface RunInkChatOptions {
   alternateScreen?: boolean
   intro?: boolean
   setup?: boolean
+  providerSetup?: ProviderSetup
   config?: CliConfigStore
   renderApp?: typeof render
   checkForUpdate?: () => Promise<string | undefined>
@@ -145,6 +147,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let startupContent: ReactElement | undefined
   let startupStatus: string | undefined
   let startupStatusReveal: ReturnType<typeof setTimeout> | undefined
+  let modelProviderChosen: ((saved: boolean) => void) | undefined
   const setupBridge: SetupBridge = {
     request: (): void => {},
     confirmMcp: (workspace, paths): Promise<boolean> =>
@@ -253,6 +256,15 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     }
   }
   const completeSetup = (exitCode: 0 | 130, changed: boolean, launch?: ChatLaunch): void => {
+    if (modelProviderChosen) {
+      const chosen = modelProviderChosen
+      modelProviderChosen = undefined
+      const saved = exitCode === 0 && changed && launch !== undefined
+      if (saved) launchOptions = launch
+      chosen(saved)
+      if (exitCode === 130) closeForExit(130)
+      return
+    }
     if (launch && 'workspaceAction' in launch) {
       if (options.onWorkspaceAction && !replacementTask) replacementTask = changeWorkspace(launch.workspaceAction)
       return
@@ -383,6 +395,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       ...(shown ? { controller: shown } : {}),
       intro: options.intro !== false,
       setup: options.setup === true,
+      ...(options.providerSetup ? { providerSetup: options.providerSetup } : {}),
       ...(options.config ? { config: options.config } : {}),
       ...(trustRequest ? { trustRequest } : {}),
       ...(startupContent ? { startupContent } : {}),
@@ -505,6 +518,15 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         if (instance || content) return showStartup()
         if (status) startupStatusReveal ??= setTimeout(showStartup, STARTUP_STATUS_DELAY_MS)
       },
+      ...(options.providerSetup
+        ? {
+            chooseModelProvider: (): Promise<boolean> =>
+              new Promise<boolean>((resolve) => {
+                modelProviderChosen = resolve
+                setupBridge.request()
+              }),
+          }
+        : {}),
     }
     const prepareStartup = async (): Promise<boolean> => {
       if (!options.prepare) return true

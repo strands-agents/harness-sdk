@@ -17,6 +17,7 @@ import type { StartupScreen, WorkspaceChange } from '../ui/run.js'
 import type { WorkspaceAction } from '../agent/configuration.js'
 import { devFailure } from '../dev/errors.js'
 import type { PreparedDevRun } from '../dev/prepare.js'
+import type { DevChat } from '../dev/model-provider.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
@@ -309,6 +310,7 @@ async function runInteractive(
         : undefined
     let pinged = false
     let updateRequested = false
+    let devAgentModel: string | undefined
     const exitCode = await runInkChat(
       async (signal, requestSetup, conversations, launch, confirmMcp) => {
         signal.throwIfAborted()
@@ -329,38 +331,59 @@ async function runInteractive(
           : (launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject)))
         if (args.dev && !projectPath) throw new Error('The dev workspace has no harness entrypoint.')
         const project = projectPath ? importAgentProject(projectPath) : undefined
+        const devWorkspace = args.dev?.workspace
+        const openProjectChat = async <Chat extends DevChat>(create: () => Promise<Chat>): Promise<Chat> => {
+          if (!devWorkspace) return create()
+          const { openDevChat } = await import('../dev/model-provider.js')
+          return openDevChat(
+            {
+              workspace: devWorkspace,
+              config,
+              launch,
+              requestSetup,
+              onAgentModel: (model) => {
+                devAgentModel = model
+              },
+            },
+            create
+          )
+        }
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../ui/chat/runtime.js')
           return keepOpened(
-            await createPythonChat(
-              project.entrypoint,
-              config,
-              await pythonInvocationOptions(args, initialWorkspace, config.snapshot().settings, initialMcp),
-              signal,
-              requestSetup,
-              conversations,
-              launch?.conversationId
+            await openProjectChat(async () =>
+              createPythonChat(
+                project.entrypoint,
+                config,
+                await pythonInvocationOptions(args, initialWorkspace, config.snapshot().settings, initialMcp),
+                signal,
+                requestSetup,
+                conversations,
+                launch?.conversationId
+              )
             )
           )
         }
         if (project?.language === 'typescript') {
           const { createTypescriptChat } = await import('../ui/chat/runtime.js')
           return keepOpened(
-            await createTypescriptChat(
-              project.entrypoint,
-              config,
-              {
-                args: launch?.agentProject ? { ...args, agent: project.entrypoint } : args,
-                cwd: initialWorkspace,
-                initialWorkspace,
-                mcpPaths: initialMcp.paths,
-                mcpStrictPaths: initialMcp.strictPaths,
-                ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
-              },
-              signal,
-              requestSetup,
-              conversations,
-              launch?.conversationId
+            await openProjectChat(() =>
+              createTypescriptChat(
+                project.entrypoint,
+                config,
+                {
+                  args: launch?.agentProject ? { ...args, agent: project.entrypoint } : args,
+                  cwd: initialWorkspace,
+                  initialWorkspace,
+                  mcpPaths: initialMcp.paths,
+                  mcpStrictPaths: initialMcp.strictPaths,
+                  ...(initialMcp.expectedDigests ? { mcpDigests: initialMcp.expectedDigests } : {}),
+                },
+                signal,
+                requestSetup,
+                conversations,
+                launch?.conversationId
+              )
             )
           )
         }
@@ -410,6 +433,7 @@ async function runInteractive(
         ...(request ? { firstRequest: request } : {}),
         intro: config.snapshot().settings.animations,
         setup: !args.dev && (args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup())),
+        ...(args.dev ? { providerSetup: { model: (): string | undefined => devAgentModel } } : {}),
         ...(prepare ? { prepare } : {}),
         ...(args.dev?.init ? { exitAfterInitialization: true } : {}),
         ...(setupSession

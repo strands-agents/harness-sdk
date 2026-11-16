@@ -59,6 +59,7 @@ function errorPanelKeys(panel: Extract<ChatPanel, { kind: 'error' }>, width: num
     : narrow
       ? '↑↓ scroll · Ctrl+Y copy · Esc close'
       : '↑↓ / PgUp / PgDn scroll · Ctrl+Y copy error · Esc close'
+  if (panel.modelSetup) return `${narrow ? 's set up' : 's set up a model'} · ${keys}`
   if (!panel.fixDirectory) return keys
   return `${narrow ? 'f fix' : 'f fix with Strands'} · ${keys}`
 }

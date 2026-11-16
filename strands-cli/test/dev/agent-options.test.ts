@@ -3,7 +3,12 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { AgentOptionConflict, AgentOptionsNotEditable, saveAgentOptions } from '../../src/dev/agent-options.js'
+import {
+  AgentOptionConflict,
+  AgentOptionsNotEditable,
+  readAgentModel,
+  saveAgentOptions,
+} from '../../src/dev/agent-options.js'
 import { pythonExecutable } from '../fixtures/python-runtime.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
@@ -188,5 +193,35 @@ describe.skipIf(!existsSync(pythonExecutable))('saving agent options into Python
     )
 
     expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source)
+  })
+})
+
+describe('reading the agent model from TypeScript source', () => {
+  it.each([
+    ['a provider-qualified literal', GENERATED_TYPESCRIPT, 'bedrock/global.anthropic.claude-sonnet-5'],
+    [
+      'a literal for another provider',
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ model: 'anthropic/claude-sonnet-4-5' })\n`,
+      'anthropic/claude-sonnet-4-5',
+    ],
+    [
+      'a model set in code',
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ model: process.env.MODEL })\n`,
+      undefined,
+    ],
+    ['a file without createHarness', `export const agent = {}\n`, undefined],
+  ])('shouldReadTheModelWhenTheSourceHas %s', async (_, source, model) => {
+    const workspace = await agent('typescript', source)
+
+    expect(await readAgentModel(workspace)).toBe(model)
+  })
+
+  it('shouldReadTheDefaultModelWhenCreateHarnessSetsNoModel', async () => {
+    const workspace = await agent(
+      'typescript',
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ name: 'Demo' })\n`
+    )
+
+    expect(await readAgentModel(workspace)).toMatch(/^bedrock\//u)
   })
 })

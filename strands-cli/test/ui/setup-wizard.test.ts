@@ -2354,3 +2354,109 @@ describe('setup theme', () => {
     }
   })
 })
+
+describe('provider-only setup', () => {
+  const renderProviderOnly = (config: CliConfigStore, props: Partial<Parameters<typeof SetupWizard>[0]> = {}) => {
+    const input = ttyInput()
+    const output = ttyOutput(180, 36)
+    const onComplete = vi.fn()
+    const onCancel = vi.fn()
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) frame = sanitizeTerminalText(chunk.toString())
+    })
+    const instance = render(
+      createElement(SetupWizard, { config, deferred: true, onComplete, onCancel, providerOnly: true, ...props }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const press = async (key: string): Promise<void> => {
+      input.push(key)
+      await instance.waitUntilRenderFlush()
+    }
+    const click = async (text: string): Promise<void> => {
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes(text))
+      expect(row).toBeGreaterThanOrEqual(0)
+      const column = lines[row]!.indexOf(text)
+      await press(mouseInputSequence(0, column, row, 'M'))
+      await press(mouseInputSequence(3, column, row, 'm'))
+    }
+    return { instance, onComplete, onCancel, press, click, frame: (): string => frame }
+  }
+
+  it('shouldOpenOnTheModelPageForTheRunningModelWithoutHarnessChoicesWhenProviderOnly', async () => {
+    const config = CliConfigStore.memory({}, { animations: false })
+    const view = renderProviderOnly(config, { initialModel: 'anthropic/claude-sonnet-4-5' })
+    try {
+      await view.instance.waitUntilRenderFlush()
+
+      await vi.waitFor(() => expect(view.frame()).toContain('Pick a model for your agent'))
+      expect(view.frame()).toContain('Enter API Key')
+      expect(view.frame()).not.toContain('Customize')
+      expect(view.frame()).not.toContain('Load in your custom harness')
+    } finally {
+      view.instance.unmount()
+      await view.instance.waitUntilExit()
+    }
+  })
+
+  it('shouldReturnToTheChatWithoutChangesWhenEscIsPressedOnTheProviderOnlyPage', async () => {
+    const config = CliConfigStore.memory({}, { animations: false })
+    const view = renderProviderOnly(config)
+    try {
+      await view.instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(view.frame()).toContain('Pick a model for your agent'))
+
+      await view.press('\u001b')
+
+      await vi.waitFor(() => expect(view.onCancel).toHaveBeenCalledWith(0))
+      expect(view.onComplete).not.toHaveBeenCalled()
+      expect(view.frame()).not.toContain('Quickstart')
+    } finally {
+      view.instance.unmount()
+      await view.instance.waitUntilExit()
+    }
+  })
+
+  it('shouldChangeOnlyTheModelAndKeepThePermissionsWhenProviderOnlySetupSaves', async () => {
+    vi.mocked(discoverProviderModels).mockResolvedValue({
+      available: true,
+      models: [
+        { id: 'model-alpha', name: 'Model Alpha' },
+        { id: 'model-beta', name: 'Model Beta' },
+      ],
+    })
+    const config = CliConfigStore.memory(
+      { mode: 'bypassPermissions' },
+      { animations: false },
+      { profile: { model: 'bedrock/model-alpha' } }
+    )
+    const view = renderProviderOnly(config, { initialModel: 'bedrock/model-alpha' })
+    try {
+      await view.instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(view.frame()).toContain('Model Beta'))
+
+      await view.click('Model Beta')
+      await vi.waitFor(() => expect(view.frame()).toContain('✓ Model Beta'))
+      await view.click('Save and Launch')
+
+      await vi.waitFor(() => expect(view.onComplete).toHaveBeenCalledOnce())
+      expect(view.onComplete.mock.calls[0]![0]).toMatchObject({
+        configuration: { permissionMode: 'bypassPermissions', profile: { model: 'bedrock/model-beta' } },
+      })
+    } finally {
+      view.instance.unmount()
+      await view.instance.waitUntilExit()
+      vi.mocked(discoverProviderModels).mockResolvedValue({ available: true, models: [] })
+    }
+  })
+})

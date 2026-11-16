@@ -53,6 +53,10 @@ export function McpTrustPrompt({ request }: { request: McpTrustRequest }): React
 
 export type ChatLaunch = SetupChange
 
+export interface ProviderSetup {
+  model(): string | undefined
+}
+
 export interface SetupBridge {
   request: RequestSetup
   confirmMcp(workspace: string, paths: readonly string[]): Promise<boolean>
@@ -70,6 +74,7 @@ interface ChatRootProps {
   controller?: ChatControllerApi
   intro: boolean
   setup: boolean
+  providerSetup?: ProviderSetup
   config?: CliConfigStore
   trustRequest?: McpTrustRequest
   setupBridge: SetupBridge
@@ -87,6 +92,7 @@ export function ChatRoot({
   controller,
   intro,
   setup,
+  providerSetup,
   config,
   trustRequest,
   setupBridge,
@@ -191,6 +197,7 @@ export function ChatRoot({
       )
     }
     const snapshot = config.snapshot()
+    const providerSetupModel = providerSetup?.model()
     const hasSavedHarness = !config.needsSetup() || snapshot.agentProject !== undefined
     const escapeHint = controller
       ? 'Esc to return to chat'
@@ -206,6 +213,8 @@ export function ChatRoot({
           ? { introStartedAt: introStartedAt.current }
           : {})}
         checkForUpdate={resolveUpdate}
+        providerOnly={providerSetup !== undefined}
+        {...(providerSetupModel ? { initialModel: providerSetupModel } : {})}
         onComplete={(change) => finishSetup(0, true, change)}
         onCancel={(exitCode) => finishSetup(exitCode, false)}
       />

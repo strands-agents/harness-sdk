@@ -157,6 +157,7 @@ export type NewChatPanel =
   | (ChatPanelBase & {
       kind: 'error'
       fixDirectory?: string
+      modelSetup?: boolean
     })
   | (ChatPanelBase & {
       kind: 'agents'

@@ -1440,6 +1440,11 @@ export function ChatApp({
             fixErrorInNewTab(errorPanelText(snapshot.panel), snapshot.panel.fixDirectory)
             return
           }
+          if (snapshot.panel.kind === 'error' && snapshot.panel.modelSetup && character.toLowerCase() === 's') {
+            controller.dismissPanel()
+            void controller.submit('/setup')
+            return
+          }
           const errorLayout =
             snapshot.panel.kind === 'error'
               ? errorPanelLayout(snapshot.panel, Math.max(1, terminalWidth - 2), composerHeight)

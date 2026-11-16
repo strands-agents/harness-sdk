@@ -17,18 +17,22 @@ import {
 } from '../project/preparation.js'
 import type { ImportedAgentProject } from '../project/import.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
+import { isModelCredentialFailure } from '../model/credential-failure.js'
 import { fixInNewTab, type FixOutcome } from './fix-in-new-tab.js'
 
 const PANEL_FIXED_ROWS = 10
 const DETAILS_MIN_ROWS = 2
 const DETAILS_MAX_ROWS = 8
 
-export type SetupAction = 'validate' | 'back' | 'cancel' | 'retry'
+export type SetupAction = 'validate' | 'back' | 'cancel' | 'retry' | 'model'
+
+const MODEL_SETUP_ACTION = "The agent's model provider has no working credentials. Press s to set up a model."
 
 interface ProjectSetupPanelProps {
   plan?: ProjectPreparationPlan
   failure: PreparationFailure
   directory: string
+  modelSetup?: boolean
   onAction(action: SetupAction): void
 }
 
@@ -46,7 +50,13 @@ const failureReport = (plan: ProjectPreparationPlan | undefined, failure: Prepar
     .filter((line) => line.trim())
     .join('\n')
 
-export const ProjectSetupPanel = ({ plan, failure, directory, onAction }: ProjectSetupPanelProps): ReactElement => {
+export const ProjectSetupPanel = ({
+  plan,
+  failure,
+  directory,
+  modelSetup = false,
+  onAction,
+}: ProjectSetupPanelProps): ReactElement => {
   const { error } = useTheme()
   const detailRows = Math.max(DETAILS_MIN_ROWS, Math.min(DETAILS_MAX_ROWS, useStartupContentRows() - PANEL_FIXED_ROWS))
   const { stdout } = useStdout()
@@ -63,7 +73,8 @@ export const ProjectSetupPanel = ({ plan, failure, directory, onAction }: Projec
     if (key.ctrl && input === 'c') return onAction('cancel')
     if (key.escape || input.toLowerCase() === 'b') return onAction('back')
     if (input.toLowerCase() === 'd') return setDetails((visible) => !visible)
-    if (input.toLowerCase() === 'f') return fixInTab()
+    if (modelSetup && input.toLowerCase() === 's') return onAction('model')
+    if (!modelSetup && input.toLowerCase() === 'f') return fixInTab()
     if (input.toLowerCase() === 'v') return onAction('validate')
     if (key.return || input.toLowerCase() === 'r') return onAction('retry')
   })
@@ -85,7 +96,7 @@ export const ProjectSetupPanel = ({ plan, failure, directory, onAction }: Projec
           .find((line) => line.trim())
           ?.slice(0, 240)}
       </Text>
-      <Text>{failure.action}</Text>
+      <Text>{modelSetup ? MODEL_SETUP_ACTION : failure.action}</Text>
       {failure.command ? (
         <Text wrap="truncate-middle">Failed command: {redactPreparationOutput(failure.command)}</Text>
       ) : null}
@@ -97,7 +108,7 @@ export const ProjectSetupPanel = ({ plan, failure, directory, onAction }: Projec
       ) : null}
       {fix ? <Text {...(fix.status === 'error' ? { color: error } : {})}>{fix.text}</Text> : null}
       <Text dimColor>
-        {`Enter / r retry · v validate after manual setup · f fix with Strands · d ${details ? 'hide details' : 'details'} · ${copyHint} · b back`}
+        {`${modelSetup ? 's set up a model · Enter / r retry' : 'Enter / r retry · v validate after manual setup · f fix with Strands'} · d ${details ? 'hide details' : 'details'} · ${copyHint} · b back`}
       </Text>
     </Box>
   )
@@ -191,13 +202,22 @@ export const projectSetupSession = (): ProjectSetupSession => {
         }
       }
       for (;;) {
+        const chooseModelProvider = screen.chooseModelProvider
+        const modelSetup =
+          chooseModelProvider !== undefined &&
+          isModelCredentialFailure(`${failureRecord.summary}\n${failureRecord.details}`)
         const action = await ask(screen, {
           ...(plan ? { plan } : {}),
           failure: failureRecord,
           directory: plan?.project.root ?? process.cwd(),
+          modelSetup,
         })
         if (action === 'cancel') return 'exit'
         if (action === 'back') return 'back'
+        if (action === 'model') {
+          if (await chooseModelProvider?.()) return 'retry'
+          continue
+        }
         try {
           if (plan) plan = await planProjectPreparation(plan.project)
           if (action !== 'validate') await run(screen, true)

@@ -225,6 +225,33 @@ describe('dev error panel fix', () => {
     }
   )
 
+  it('shouldOpenModelSetupWhenSIsPressedOnACredentialFailure', async () => {
+    const requestSetup = vi.fn()
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('Could not load credentials from any providers')
+        },
+      }),
+      { settings: { animations: false }, runtime: { devWorkspace, cwd: '/project' }, requestSetup }
+    )
+    const { input, frame, instance } = renderChat(controller)
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
+      await controller.submit('hello')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('s set up a model · Ctrl+Y copy error · Esc close'))
+
+      input.write('s')
+
+      await vi.waitFor(() => expect(requestSetup).toHaveBeenCalledOnce())
+      expect(controller.getSnapshot().panel).toBeUndefined()
+    } finally {
+      instance.unmount()
+      await controller.dispose()
+    }
+  })
+
   it('shouldNotOfferAFixWhenTheErrorIsNotAProjectFailure', async () => {
     const open = vi.spyOn(fix, 'fixInNewTab')
     const controller = new ChatController(idleBackend(), {
