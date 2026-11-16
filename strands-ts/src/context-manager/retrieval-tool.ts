@@ -85,8 +85,8 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       const reference = input.reference.trim()
       const entries = await resolveReference(stash, reference)
       // Thrown, not returned: the tool factory gives a returned string success status, and a model that
-      // reads "Error" under success retries and then invents the content. The text is terminal for the
-      // same reason — neither state is recoverable by calling again.
+      // reads "Error" under success retries and then invents the content. A missing reference is terminal
+      // only once the id was passed as the placeholder lists it; content offloaded again never comes back.
       if (entries.length === 0) {
         throw new Error(
           `reference not found: ${reference}. Pass only the <id> from the placeholder's "[ref: <id>]". ` +

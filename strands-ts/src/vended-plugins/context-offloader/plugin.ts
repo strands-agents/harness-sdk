@@ -347,20 +347,27 @@ export class ContextOffloader implements Plugin {
       inputSchema: retrievalInputSchema,
       callback: async (input, context) => {
         const storage = this._storageForToolContext(context)
+        const reference = input.reference.trim()
 
         // Only a missing key is terminal. A throttle or an AccessDenied from the backend has to reach the
         // model as itself: told "do not retry" it abandons content the next call would have fetched.
         // Every backend signals a missing key with this message (`storage.ts`, `retrieveContent` above).
         let result: { content: Uint8Array; contentType: string }
         try {
-          result = await retrieveContent(storage, input.reference)
+          result = await retrieveContent(storage, reference)
         } catch (error) {
           if (!(error instanceof Error) || !error.message.startsWith('Reference not found')) throw error
-          throw new Error(`reference not found: ${input.reference} — do not retry.`, { cause: error })
+          // The placeholder lists each reference with a description, so hold open the likelier reading that the
+          // model copied the decoration with it. Terminal only once it has passed the reference as listed.
+          throw new Error(
+            `reference not found: ${reference}. Pass the reference exactly as the placeholder lists it. ` +
+              'If that is what you passed, the content is unavailable — do not retry.',
+            { cause: error }
+          )
         }
 
         if (!input.pattern && !input.line_range && input.context_lines === undefined) {
-          return decodeStoredContent(result.content, result.contentType, input.reference)
+          return decodeStoredContent(result.content, result.contentType, reference)
         }
 
         if (!isSearchableContent(result.contentType)) {

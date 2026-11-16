@@ -390,6 +390,20 @@ describe('ContextOffloader', () => {
       expect(result.status).toBe('error')
       expect((result.content[0] as TextBlock).text).toBe('Error: ThrottlingException: Rate exceeded')
     })
+
+    it('tells the model a missing reference is terminal only once it was passed as listed', async () => {
+      // The placeholder lists each reference with a description, so a model can copy the decoration with it.
+      const plugin = new ContextOffloader({ storage: new InMemoryStorage(), includeRetrievalTool: true })
+      const toolUse = { name: 'retrieve_offloaded_content', toolUseId: 'tu-1', input: { reference: ' mem_1_k1 ' } }
+
+      const { result } = await collectGenerator(plugin.getTools()[0]!.stream(createMockContext(toolUse)))
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toBe(
+        'Error: reference not found: mem_1_k1. Pass the reference exactly as the placeholder lists it. ' +
+          'If that is what you passed, the content is unavailable — do not retry.'
+      )
+    })
   })
 
   describe('search via retrieval tool', () => {
