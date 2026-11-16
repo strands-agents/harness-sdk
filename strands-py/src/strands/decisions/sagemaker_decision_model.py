@@ -36,24 +36,13 @@ _DEFAULT_READ_TIMEOUT = 120
 class SageMakerDecisionModel(DecisionModel):
     """Decision model backed by a System One model on a SageMaker AI real-time endpoint.
 
-    The endpoint, such as a strands-decider model, is invoked through the boto3
-    ``sagemaker-runtime`` client: requests are signed with AWS Signature Version 4 using the
-    standard credential chain, so callers need ``sagemaker:InvokeEndpoint`` on the endpoint and no
-    API key.
+    Requests are signed with the standard AWS credential chain; callers need
+    ``sagemaker:InvokeEndpoint`` on the endpoint.
 
-    ``ask`` raises ``ModelThrottledException`` on SageMaker throttling (``ThrottlingException``,
-    ``ModelNotReadyException``, ``ServiceUnavailable``) and on a container or proxy 429/503/529,
-    ``ContextWindowOverflowException`` when the request exceeds the context window or payload limit
-    (HTTP 413, or a container 422 whose message names the context window), ``ValueError`` for
-    request-level violations (too many choices, binary content, state that is not JSON-serializable
-    or contains NaN/infinity), and ``StructuredOutputException`` for a malformed provider response.
-    Any other SageMaker runtime error (e.g. ``botocore.exceptions.ClientError``) propagates
-    unchanged.
-
-    The blocking boto3 call runs in a worker thread, so cancelling ``ask`` (for example on a caller
-    timeout) stops waiting for it but cannot stop the in-flight request. The client's read timeout
-    applies per attempt, so with botocore's default retries (3 attempts) the request can keep running
-    for about three times that long.
+    ``ask`` raises ``ModelThrottledException`` when the endpoint is throttled,
+    ``ContextWindowOverflowException`` when the request is too large, ``ValueError`` for an invalid
+    request, and ``StructuredOutputException`` for a malformed response. Other SageMaker errors
+    propagate unchanged.
 
     Example:
         ```python
