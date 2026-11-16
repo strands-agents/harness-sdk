@@ -448,9 +448,7 @@ function stepBackToText(content: BedrockContentBlock[], idx: number): number {
  * Where a Nova conversation cache point goes: directly after the last text block of the last user message that has
  * one, ahead of the final message's per-call blocks. Nova takes a cache point only directly after text and reads an
  * entry only when a point repeats the previous call's position, so in a tool loop, whose user messages hold tool
- * results, the point stays on the prompt that started the loop. A tool-result message is never the anchor, latest or
- * not, even when it carries rendered reminder text (e.g. a todos injector firing every turn): that text is not the
- * prompt that started the loop, and anchoring on it would move the point every call.
+ * results, the point stays on the prompt that started the loop.
  *
  * @param messages - Formatted messages
  * @param lastUserIdx - Index of the last user message
@@ -466,7 +464,6 @@ function novaCachePointPosition(
     const message = messages[msgIdx]
     if (message?.role !== 'user') continue
     const content = message.content ?? []
-    if (content.some((block) => 'toolResult' in block)) continue
     const end = msgIdx === lastUserIdx ? Math.max(0, content.length - dynamicTrailingBlocks) : content.length
     const blockIdx = stepBackToText(content, end)
     if (blockIdx > 0) return { msgIdx, blockIdx }

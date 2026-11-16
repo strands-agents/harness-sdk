@@ -1248,10 +1248,9 @@ export interface InjectedBlockData {
  *
  * When the model takes temporary messages (`modelInfo.capabilities.temporaryMessages`), the provider sends it as
  * a system message the model reads only until the next user message, which the model ranks above the user. Every
- * other model receives it as plain text in place: only the latest user message's when the model places its own
- * conversation cache point ahead of it, and every user message's otherwise, so a provider that caches by prefix alone
- * sees the same history on every call. Keep content from outside the conversation, such as tool output or retrieved
- * documents, out of it.
+ * other model receives it as plain text in place: only the latest user message's, unless the provider caches the
+ * conversation by prefix alone, in which case it receives every user message's, the same text on every call. Keep
+ * content from outside the conversation, such as tool output or retrieved documents, out of it.
  *
  * The text is kept under `injected`, the same shape as the saved data, so an InjectedBlock is never read as a
  * {@link TextBlock}.

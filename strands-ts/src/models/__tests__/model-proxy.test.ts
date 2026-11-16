@@ -413,23 +413,25 @@ describe('ModelProxy', () => {
         expect(second!.slice(0, first!.length)).toEqual(first)
       })
 
-      it('keeps only per-call text after the latest injected block out of the cached prefix', async () => {
+      it('still leaves out an injected block outside a user message', async () => {
         const model = prefixCachedModel()
         const streamSpy = vi.spyOn(model, 'stream')
+        const prompt = userMessage('go')
         const messages = [
+          prompt,
           new Message({
-            role: 'user',
-            content: [
-              new TextBlock('Refactor.'),
-              new InjectedBlock({ text: 'reminder', source: 'test' }),
-              new TextBlock('\n\nper-call text'),
-            ],
+            role: 'assistant',
+            content: [new TextBlock('Hi'), new InjectedBlock({ text: 'reminder', source: 'test' })],
+            trackingId: 'msg-2',
           }),
         ]
 
-        await drain(new ModelProxy(model).streamAggregated(messages, { dynamicTrailingBlocks: 1 }))
+        await drain(new ModelProxy(model).streamAggregated(messages))
 
-        expect(streamSpy.mock.calls[0]![1]).toStrictEqual({ dynamicTrailingBlocks: 1 })
+        expect(streamSpy.mock.calls[0]![0]).toEqual([
+          prompt,
+          new Message({ role: 'assistant', content: [new TextBlock('Hi')], trackingId: 'msg-2' }),
+        ])
       })
 
       it('counts the injected blocks of every user message', async () => {

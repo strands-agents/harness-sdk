@@ -47,7 +47,7 @@ export class ModelProxy {
     invocationContext?: InvocationContext
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
     const { messages: prepared, dynamicTrailingBlocks } = this._prepare(messages)
-    // The cache point stays ahead of the latest message's content that the next call sends differently.
+    // The cache point stays ahead of the latest injected text.
     const keepsCachePoint = dynamicTrailingBlocks > (options?.dynamicTrailingBlocks ?? 0)
     const result = yield* this._model.streamAggregated(
       ...wellFormedRequest(prepared, keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options)
@@ -103,7 +103,7 @@ export class ModelProxy {
 interface RenderedMessages {
   /** The messages to send. */
   readonly messages: Message[]
-  /** Trailing blocks of the latest user message that the next call sends differently. */
+  /** Trailing blocks of the latest user message, from its first injected block on, that the cache point stays ahead of. */
   readonly dynamicTrailingBlocks: number
 }
 
@@ -121,32 +121,16 @@ interface RenderedMessages {
  */
 function renderInjectedBlocks(messages: Message[], keepsEarlier: boolean): RenderedMessages {
   const latestUser = latestUserIndex(messages)
+  let dynamicTrailingBlocks = 0
   const rendered = messages.map((message, index) => {
     if (!hasInjectedBlock(message)) return message
     const sendsText = message.role === 'user' && (keepsEarlier || index === latestUser)
+    if (index === latestUser) {
+      dynamicTrailingBlocks = message.content.length - message.content.findIndex(isInjectedBlock)
+    }
     return withContent(message, sendsText ? withInjectedText(message.content) : withoutInjectedBlocks(message.content))
   })
-  const latest = messages[latestUser]
-  const dynamicTrailingBlocks = latest ? perCallTrailingBlocks(latest.content, keepsEarlier) : 0
   return { messages: rendered, dynamicTrailingBlocks }
-}
-
-/**
- * Trailing blocks of the latest user message that the next call sends differently: from its first injected block on
- * when later calls leave that text out, or only what follows its last injected block when later calls keep it.
- */
-function perCallTrailingBlocks(content: ContentBlock[], keepsEarlier: boolean): number {
-  if (!content.some(isInjectedBlock)) return 0
-  const boundary = keepsEarlier ? lastIndexMatching(content, isInjectedBlock) + 1 : content.findIndex(isInjectedBlock)
-  return content.length - boundary
-}
-
-/** Index of the last block matching `predicate`, or -1 when none match. */
-function lastIndexMatching(content: ContentBlock[], predicate: (block: ContentBlock) => boolean): number {
-  for (let index = content.length - 1; index >= 0; index--) {
-    if (predicate(content[index]!)) return index
-  }
-  return -1
 }
 
 /**
@@ -205,7 +189,6 @@ function withInjectedText(content: ContentBlock[]): ContentBlock[] {
   })
 }
 
-/** Drops injected blocks outright; only reached for a non-user message, where they don't belong. */
 function withoutInjectedBlocks(content: ContentBlock[]): ContentBlock[] {
   return content.filter((block) => !isInjectedBlock(block))
 }

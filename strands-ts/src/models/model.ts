@@ -464,8 +464,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    *
    * Used for proactive context management (e.g., triggering compression at a threshold).
    * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON). It counts the
-   * injected blocks the model reads: every user message's when {@link cachesConversationByPrefix} is true, otherwise
-   * only the latest user message's.
+   * injected blocks the model reads: every user message's when the provider caches the conversation by prefix alone,
+   * otherwise only the latest user message's.
    *
    * Subclasses should override this method to use native token counting APIs
    * (e.g., Bedrock CountTokens, Anthropic countTokens, Gemini countTokens)

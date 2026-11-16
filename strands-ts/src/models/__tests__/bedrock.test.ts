@@ -3912,19 +3912,6 @@ describe('BedrockModel', () => {
         expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
-      it('never anchors the conversation cache point on the latest tool-result message, even after its own text', () => {
-        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
-        const messages = [...toolTurn, new Message({ role: 'user', content: [toolResult, new TextBlock('reminder')] })]
-
-        collectIterator(provider.stream(messages, { toolSpecs }))
-
-        expect(request()?.messages?.[0]?.content).toStrictEqual([
-          { text: 'What is 6 x 7?' },
-          { cachePoint: { type: 'default' } },
-        ])
-        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
-      })
-
       it.each([
         ['a model Converse caches implicitly', 'us.openai.gpt-6-luna', true],
         ['a model that caches nothing without cacheConfig', 'global.anthropic.claude-sonnet-4-6', false],
@@ -3957,114 +3944,6 @@ describe('BedrockModel', () => {
         expect(second.slice(0, first.length)).toEqual(keepsEarlier ? first : expect.anything())
         expect(JSON.stringify(second[0])).toContain(keepsEarlier ? '<todos>0 done</todos>' : 'What is 6 x 7?')
         expect(JSON.stringify(second).includes('<todos>0 done</todos>')).toBe(keepsEarlier)
-      })
-
-      // The prompt that started the loop may carry a reminder (e.g. an environment injector firing on the user's
-      // first turn). The point must sit after the same prompt text whether that message is still the latest one or
-      // a tool loop has moved past it, since Nova reads only when the point repeats the previous call's position.
-      it('places the conversation cache point after the same prompt text whether or not it is still the latest message', async () => {
-        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
-        const proxy = new ModelProxy(provider)
-        const startingPrompt = new Message({
-          role: 'user',
-          content: [
-            new TextBlock('What is 6 x 7?'),
-            new InjectedBlock({ text: '<environment>cwd: /repo</environment>', source: 'env' }),
-          ],
-        })
-
-        // Call 1: the starting prompt is still the latest message.
-        await collectGenerator(proxy.streamAggregated([startingPrompt], { toolSpecs }))
-        const firstCallPosition = request()?.messages?.[0]?.content
-
-        // Call 2: a tool round trip has made the starting prompt no longer the latest message.
-        await collectGenerator(
-          proxy.streamAggregated(
-            [
-              startingPrompt,
-              new Message({
-                role: 'assistant',
-                content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'id-1', input: {} })],
-              }),
-              new Message({ role: 'user', content: [toolResult] }),
-            ],
-            { toolSpecs }
-          )
-        )
-        const secondCallPosition = request()?.messages?.[0]?.content
-
-        // The reminder is per-call content on call 1 and left out on call 2; the cached prefix is the same.
-        expect(firstCallPosition).toStrictEqual([
-          { text: 'What is 6 x 7?' },
-          { cachePoint: { type: 'default' } },
-          { text: '\n\n<environment>cwd: /repo</environment>' },
-        ])
-        expect(secondCallPosition).toStrictEqual([{ text: 'What is 6 x 7?' }, { cachePoint: { type: 'default' } }])
-      })
-
-      it('keeps the conversation cache point on the starting prompt across a tool loop whose every turn carries a reminder', async () => {
-        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
-        const proxy = new ModelProxy(provider)
-        const messages = [
-          new Message({
-            role: 'user',
-            content: [
-              new TextBlock('What is 6 x 7?'),
-              new InjectedBlock({ text: '<todos>0 done</todos>', source: 'todos' }),
-            ],
-          }),
-        ]
-        const positions: unknown[] = []
-
-        for (let call = 0; call < 3; call++) {
-          await collectGenerator(proxy.streamAggregated(messages, { toolSpecs }))
-          const sent = request()?.messages ?? []
-          positions.push(
-            sent.flatMap((message, msgIdx) =>
-              (message.content ?? []).flatMap((block, blockIdx) => ('cachePoint' in block ? [[msgIdx, blockIdx]] : []))
-            )
-          )
-          const toolUseId = `id-${call}`
-          messages.push(
-            new Message({
-              role: 'assistant',
-              content: [new ToolUseBlock({ name: 'calculator', toolUseId, input: {} })],
-            }),
-            new Message({
-              role: 'user',
-              content: [
-                new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock('42')] }),
-                new InjectedBlock({ text: `<todos>${call + 1} done</todos>`, source: 'todos' }),
-              ],
-            })
-          )
-        }
-
-        expect(positions).toStrictEqual([[[0, 1]], [[0, 1]], [[0, 1]]])
-      })
-
-      it('keeps the conversation cache point on the prompt when an earlier tool-result turn carries its own reminder text', () => {
-        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
-        const messages = [
-          ...toolTurn,
-          new Message({ role: 'user', content: [toolResult, new TextBlock('<todos>1/2 done</todos>')] }),
-          new Message({
-            role: 'assistant',
-            content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'id-2', input: {} })],
-          }),
-          new Message({
-            role: 'user',
-            content: [new ToolResultBlock({ toolUseId: 'id-2', status: 'success', content: [new TextBlock('84')] })],
-          }),
-        ]
-
-        collectIterator(provider.stream(messages, { toolSpecs }))
-
-        expect(request()?.messages?.[0]?.content).toStrictEqual([
-          { text: 'What is 6 x 7?' },
-          { cachePoint: { type: 'default' } },
-        ])
-        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
       it('moves a caller-placed cache point with no text ahead of it to the prompt and warns', () => {
