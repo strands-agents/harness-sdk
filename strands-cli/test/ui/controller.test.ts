@@ -3445,6 +3445,71 @@ describe('ChatController', () => {
     expect(list).toHaveBeenCalledOnce()
   })
 
+  describe('skills without commands', () => {
+    const tune = { name: 'optimize-harness', description: 'Tune this agent', instructions: 'Tune.', active: false }
+    const review = { name: 'review', description: 'Review code', instructions: 'Inspect carefully.', active: false }
+    const setup = () => {
+      const prompts: string[] = []
+      const activate = vi.fn(async (name: string) => {
+        const skill = [tune, review].find((candidate) => candidate.name === name)
+        return skill ? { skill: { ...skill, active: true }, content: skill.instructions } : undefined
+      })
+      const controller = new ChatController(
+        backend(async function* (prompt) {
+          prompts.push(prompt)
+          yield { type: 'textDelta', text: 'done' }
+          return { stopReason: 'endTurn' }
+        }),
+        {
+          skills: { list: async () => [tune, review], activate },
+          skillNames: [tune.name, review.name],
+          skillsWithoutCommands: ['Optimize-Harness'],
+        }
+      )
+      return { controller, activate, prompts }
+    }
+    const listedCommands = (controller: ChatController, input: string): string[] =>
+      controller.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
+
+    it('shouldLeaveTheSkillOutOfTheSlashCommandsWhenTheHostGivesItNoCommand', async () => {
+      const { controller } = setup()
+
+      await controller.start()
+
+      await vi.waitFor(() => expect(listedCommands(controller, '/')).toContain('review'))
+      expect(listedCommands(controller, '/')).not.toContain('optimize-harness')
+      expect(controller.commandAssistance('/optimize-harness')).toEqual({ message: 'not found', completions: [] })
+      expect(controller.actionableCommandToken('/optimize-harness')).toBeUndefined()
+      expect(controller.actionableCommandToken('/review')).toBe('/review')
+    })
+
+    it('shouldReportAnUnknownCommandWithoutActivatingTheSkillWhenTheDeveloperTypesItsSlashName', async () => {
+      const { controller, activate, prompts } = setup()
+
+      await controller.submit('/optimize-harness improve refunds')
+
+      expect(activate).not.toHaveBeenCalled()
+      expect(prompts).toEqual([])
+      expect(controller.getSnapshot().panel).toMatchObject({
+        kind: 'error',
+        title: 'unknown command',
+        rows: [{ label: '/optimize-harness' }],
+      })
+    })
+
+    it('shouldActivateTheSkillAndKeepItOutOfTheSlashCommandsWhenTheDeveloperUsesTheDollarPrefix', async () => {
+      const { controller, activate, prompts } = setup()
+
+      expect(controller.actionableCommandToken('$optimize-harness')).toBe('$optimize-harness')
+      await controller.submit('$optimize-harness improve refunds')
+
+      expect(activate).toHaveBeenCalledWith('optimize-harness')
+      expect(prompts).toHaveLength(1)
+      expect(prompts[0]).toContain('</strands_skill_activation>\n\n$optimize-harness improve refunds')
+      expect(listedCommands(controller, '/opt')).toEqual([])
+    })
+  })
+
   it('represents an empty MCP configuration as zero servers with its checked path', async () => {
     const list = vi.fn(async () => [])
     const controller = new ChatController(backend(), {

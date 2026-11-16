@@ -165,6 +165,7 @@ export async function createTypescriptChat(
           ? {
               workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
               devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
+              skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
               saveAgentOptions: (change: AgentOptions): Promise<boolean> => saveAgentChoices(devWorkspace, change),
             }
           : {}),
@@ -373,6 +374,7 @@ export async function createPythonChat(
         ? {
             workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
             devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
+            skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
             saveAgentOptions: (change: AgentOptions): Promise<boolean> => saveAgentChoices(devWorkspace, change),
           }
         : {}),

@@ -162,6 +162,7 @@ export class ChatController implements ChatControllerApi {
   private readonly _skills: ChatSkillsRuntime | undefined
   private _skillRefresh: Promise<readonly SkillInfo[]> | undefined
   private readonly _skillNames = new Set<string>()
+  private readonly _skillsWithoutCommands: ReadonlySet<string>
   private readonly _mcp: ChatControllerOptions['mcp']
   private readonly _mcpDetails = new Map<string, McpServerInfo>()
   private _mcpStartup: ChatMcpStartup | undefined
@@ -236,6 +237,7 @@ export class ChatController implements ChatControllerApi {
     for (const name of options.skillNames ?? []) {
       this._skillNames.add(name.toLowerCase())
     }
+    this._skillsWithoutCommands = new Set(options.skillsWithoutCommands?.map((name) => name.toLowerCase()))
     this._mcp = options.mcp
     this._watchMcpStartup()
     this._settings = globalThis.structuredClone({ ...DEFAULT_CHAT_SETTINGS, ...options.settings })
@@ -450,7 +452,9 @@ export class ChatController implements ChatControllerApi {
     ) {
       return invocation.token
     }
-    return this._backend.protocol === 'strands' && this._skillNames.has(invocation.name.toLowerCase())
+    return this._backend.protocol === 'strands' &&
+      this._skillNames.has(invocation.name.toLowerCase()) &&
+      (invocation.prefix === '$' || this._isSkillCommand(invocation.name))
       ? invocation.token
       : undefined
   }
@@ -520,11 +524,17 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _skillCommands(): LocalCommandSpec[] {
-    return [...this._skillDetails.values()].map((skill) => ({
-      name: skill.name,
-      usage: `/${sanitizeTerminalText(skill.name)} [request]`,
-      description: skill.description,
-    }))
+    return [...this._skillDetails.values()]
+      .filter(({ name }) => this._isSkillCommand(name))
+      .map((skill) => ({
+        name: skill.name,
+        usage: `/${sanitizeTerminalText(skill.name)} [request]`,
+        description: skill.description,
+      }))
+  }
+
+  private _isSkillCommand(name: string): boolean {
+    return !this._skillsWithoutCommands.has(name.toLowerCase())
   }
 
   async submit(input: ChatInput): Promise<ChatTurn | undefined> {
@@ -1549,7 +1559,7 @@ export class ChatController implements ChatControllerApi {
           this._openDevPanel(devCommand)
           break
         }
-        const turn = await this._activateSkillAndRun(command, prompt)
+        const turn = this._isSkillCommand(command) ? await this._activateSkillAndRun(command, prompt) : null
         if (turn === null) {
           this._openError('unknown command', `/${command}`, 'Type / to browse commands or use /skills to list skills.')
         }

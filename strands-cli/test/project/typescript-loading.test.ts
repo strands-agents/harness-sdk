@@ -682,6 +682,39 @@ const timer = setInterval(() => {
     30000
   )
 
+  it('shouldOfferOnlyTheDevCommandsAndNotTheDevSkillsWhenADevChatListsSlashCommands', async () => {
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness(${JSON.stringify({ ...defaults, name: 'Dev' })})\n`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = {
+      args: parseArgs(['dev', '--workspace', directory, '--agent', project().entrypoint]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    }
+    const devSkills = ['create-experiment', 'manage-experiments', 'run-tests', 'optimize-harness']
+
+    const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+    const listed = (input: string): string[] => chat.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
+
+    try {
+      await chat.submit('/skills')
+      await vi.waitFor(() => expect(chat.getSnapshot().panel?.title).toMatch(/^Skills \(\d+\)$/))
+      expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
+      expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'test', 'optimize']))
+      expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
+      expect(listed('/opt')).toEqual(['optimize'])
+      expect(chat.actionableCommandToken('/optimize-harness')).toBeUndefined()
+    } finally {
+      await chat.dispose()
+    }
+  }, 30000)
+
   it('keeps the old process usable after a replacement evaluates and fails', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'original'\n")
     const authored = source()

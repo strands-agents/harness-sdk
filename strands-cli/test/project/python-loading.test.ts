@@ -215,6 +215,32 @@ ${(name === 'memory store'
     }
   })
 
+  it('shouldOfferOnlyTheDevCommandsAndNotTheDevSkillsWhenADevChatListsSlashCommands', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(entrypoint, factorySource)
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    const devSkills = ['create-experiment', 'manage-experiments', 'run-tests', 'optimize-harness']
+    const chat = await createPythonChat(
+      entrypoint,
+      CliConfigStore.memory(),
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+    const listed = (input: string): string[] => chat.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
+
+    await chat.submit('/skills')
+
+    await vi.waitFor(() => expect(chat.getSnapshot().panel?.title).toMatch(/^Skills \(\d+\)$/))
+    expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
+    expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'test', 'optimize']))
+    expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
+    expect(listed('/opt')).toEqual(['optimize'])
+    expect(chat.actionableCommandToken('/optimize-harness')).toBeUndefined()
+  })
+
   it.each([
     '{"dir": "custom-memory"}',
     'MemoryManager(stores=[FileMemoryStore(name="private", storage=LocalFileStorage("custom-memory").namespace(""), writable=False)], injection=False)',

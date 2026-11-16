@@ -308,6 +308,7 @@ export interface ChatControllerOptions {
   sessions?: ChatSessionRuntime
   skills?: ChatSkillsRuntime
   skillNames?: readonly string[]
+  skillsWithoutCommands?: readonly string[]
   mcp?: Omit<LoadedMcp, 'clients'>
   initialMessages?: readonly Message[]
   initialTurns?: readonly ChatTurn[]
