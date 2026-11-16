@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -156,9 +157,10 @@ def _build_client(
     existing_user_agent = getattr(config, "user_agent_extra", None)
     user_agent = f"{existing_user_agent} strands-agents" if existing_user_agent else "strands-agents"
     config = config.merge(BotocoreConfig(user_agent_extra=user_agent))
-    if boto_session is not None:
-        return boto_session.client("sagemaker-runtime", config=config)
-    return boto3.client("sagemaker-runtime", region_name=region_name, config=config)
+    session = boto_session or boto3.Session()
+    config_region = getattr(config, "region_name", None)
+    region = region_name or config_region or session.region_name or os.environ.get("AWS_REGION")
+    return session.client("sagemaker-runtime", region_name=region, config=config)
 
 
 def _translate_sagemaker_error(error: Exception) -> Exception | None:

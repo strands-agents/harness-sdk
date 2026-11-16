@@ -38,8 +38,10 @@ def _sagemaker_error(code: str, **fields: Any) -> ClientError:
 
 @pytest.fixture
 def mock_client():
-    """Mock sagemaker-runtime client returned by boto3.client."""
-    with unittest.mock.patch.object(boto3, "client") as mock_boto_client:
+    """Mock sagemaker-runtime client created from the default boto3 session, which has no region."""
+    with unittest.mock.patch.object(boto3, "Session") as mock_session_cls:
+        mock_session_cls.return_value.region_name = None
+        mock_boto_client = mock_session_cls.return_value.client
         client = unittest.mock.Mock()
         mock_boto_client.return_value = client
         yield mock_boto_client, client
@@ -139,7 +141,7 @@ class TestAsk:
 
     def test_creates_the_client_from_a_provided_boto_session_with_the_sdk_defaults(self, mock_client):
         mock_boto_client, _ = mock_client
-        session = unittest.mock.Mock()
+        session = unittest.mock.Mock(region_name="eu-west-1")
 
         SageMakerDecisionModel(_ENDPOINT_NAME, boto_session=session)
 
@@ -147,8 +149,17 @@ class TestAsk:
         session.client.assert_called_once()
         call = session.client.call_args
         assert call.args == ("sagemaker-runtime",)
+        assert call.kwargs["region_name"] == "eu-west-1"
         assert call.kwargs["config"].read_timeout == 120
         assert call.kwargs["config"].user_agent_extra == "strands-agents"
+
+    def test_falls_back_to_the_aws_region_environment_variable(self, mock_client, monkeypatch):
+        mock_boto_client, _ = mock_client
+        monkeypatch.setenv("AWS_REGION", "ap-south-1")
+
+        SageMakerDecisionModel(_ENDPOINT_NAME)
+
+        assert mock_boto_client.call_args.kwargs["region_name"] == "ap-south-1"
 
     @pytest.mark.asyncio
     async def test_appends_the_sdk_user_agent_to_an_existing_one(self, mock_client):
