@@ -82,11 +82,14 @@ const processExists = (pid: number): boolean => {
   }
 }
 
-export const isTemporaryRunAlive = async ({ pid, report }: TemporaryTestRecord): Promise<boolean> => {
+export const isTemporaryProcessAlive = async (pid: number | undefined, marker: string): Promise<boolean> => {
   if (pid === undefined || process.platform === 'win32' || !processExists(pid)) return false
   const listed = await runCommand('ps', ['-ww', '-o', 'args=', '-p', String(pid)]).catch(() => ({ stdout: '' }))
-  return listed.stdout.includes(report)
+  return listed.stdout.includes(marker)
 }
+
+export const isTemporaryRunAlive = ({ pid, report }: TemporaryTestRecord): Promise<boolean> =>
+  isTemporaryProcessAlive(pid, report)
 
 export const stopTemporaryRun = async (record: TemporaryTestRecord): Promise<void> => {
   if (record.pid !== undefined && (await isTemporaryRunAlive(record))) stopTemporaryProcessGroup(record.pid)

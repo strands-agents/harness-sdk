@@ -61,7 +61,8 @@ const OPTIMIZE_DETAILS = paragraphs(
   'Select an experiment, and then select the knobs to tune. Each option of the createHarness or create_harness call is a knob, for example the instructions, the model, the effort, the tools, and the skills. For the model, select the other models to try. A knob that strands dev cannot change shows the reason.',
   'Set the budget, and select Start. Before you start, the panel shows about how many model calls the run makes.',
   'The optimizer divides the cases into training, validation, and test cases. It tries candidate changes on the training cases. The best candidate on the validation cases wins, and the test cases measure it at the end.',
-  'While it runs, the panel shows the baseline score, the best score, and each candidate. Stop the run to keep the best candidate so far. The run continues when you close the panel, but it stops when strands dev closes.',
+  'While it runs, the panel shows the baseline score, the best score, and each candidate. Stop the run to keep the best candidate so far.',
+  'The run continues when you close the panel or strands dev. When strands dev opens again, it shows the review, or it continues the run from where it stopped. On Windows, the run stops when strands dev closes, and continues at the next start.',
   'At the end, review each proposed edit. Accept or reject each edit, and then apply the accepted edits. The agent source does not change until you apply them. Then use /test on the new version.',
   'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/tmp/optimization/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
   'TEMPORARY: a fork of strands-evals runs the upstream optimizer for now.'
@@ -129,6 +130,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
           ({ optimize }) =>
           (props) =>
             createElement(OptimizePanel, { ...props, session: optimize }),
+        resume: ({ optimize }) => optimize.resume(),
       },
       sessions
     ),

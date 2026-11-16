@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, join, relative } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
+import { isRecord } from '../../values.js'
 import type { DevChatJob } from '../../ui/chat/types.js'
 import { resolveModelTarget } from '../../model/selection.js'
 import { editAgentOptions } from '../agent-options.js'
@@ -54,6 +55,14 @@ import {
 } from './knobs.js'
 import { runTemporaryOptimization } from './optimize.js'
 import {
+  dropTemporaryOptimizeRecord,
+  isTemporaryOptimizeAlive,
+  readTemporaryOptimizeRecords,
+  saveTemporaryOptimizeRecord,
+  waitForTemporaryOptimize,
+  type TemporaryOptimizeRecord,
+} from './optimize-runs.js'
+import {
   TEMPORARY_ITERATION_CHOICES,
   temporaryCaseSplit,
   temporaryOptimizeWarning,
@@ -63,6 +72,7 @@ import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTempo
 import {
   readTemporaryStudy,
   tailTemporaryRun,
+  temporaryRunFolder,
   temporaryStudyReader,
   type TemporaryMeasurement,
   type TemporaryStudyOutcome,
@@ -79,6 +89,8 @@ const DEFAULT_ITERATIONS = 4
 const WIDTH = 4
 const REPETITIONS = 1
 const MILLISECONDS = 1000
+
+type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width'>
 
 const MEASURED_ON: Record<TemporaryMeasurement, string> = {
   search: 'training cases',
@@ -375,6 +387,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
 
 export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeSession {
   private evaluators = 1
+  private resumed: Promise<void> | undefined
   private catalog: readonly TemporaryKnob[] = []
   private abort: AbortController | undefined
   private stopping = false
@@ -549,19 +562,133 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     }
   }
 
+  resume(): Promise<void> {
+    this.resumed ??= this.resumeRecords()
+    return this.resumed
+  }
+
+  private optimizationFolder(): string {
+    return temporaryOptimizationFolder(temporaryWorkspaceDirectory(this.host().workspace))
+  }
+
+  private async resumeRecords(): Promise<void> {
+    let records: TemporaryOptimizeRecord[]
+    try {
+      records = await readTemporaryOptimizeRecords(this.optimizationFolder())
+    } catch (error) {
+      announce(this.host(), 'error', `optimize · /optimize cannot read its unfinished run: ${errorMessage(error)}`)
+      return
+    }
+    const latest = records.at(-1)
+    if (latest && !this.abort && this.snapshot().step !== 'running') await this.continueRun(latest)
+  }
+
+  private async continueRun(saved: TemporaryOptimizeRecord): Promise<void> {
+    try {
+      const plan = await this.recordedPlan(saved)
+      const knobs = await this.recordedKnobs(saved)
+      if (await isTemporaryOptimizeAlive(saved)) return await this.follow(plan, knobs, saved)
+      if (await this.hasResult(saved.record)) {
+        await this.finish(saved.record, plan, knobs, false)
+        return await dropTemporaryOptimizeRecord(saved)
+      }
+      announce(
+        this.host(),
+        'success',
+        `optimize · ${plan.experiment.name} · resumed the run that stopped when strands dev closed`
+      )
+      await this.run(plan, knobs, [], saved)
+    } catch (error) {
+      this.set({ step: 'failed', message: errorMessage(error), record: saved.record })
+      announce(
+        this.host(),
+        'error',
+        `optimize · ${basename(saved.experiment, '.json')} could not resume · /optimize shows why`
+      )
+      await dropTemporaryOptimizeRecord(saved)
+    }
+  }
+
+  private async recordedPlan(saved: TemporaryOptimizeRecord): Promise<RunPlan> {
+    const caseCount = await temporaryCaseCount(saved.experiment).catch(() => 0)
+    return {
+      experiment: { name: basename(saved.experiment, '.json'), path: saved.experiment, caseCount },
+      iterations: saved.iterations,
+      width: WIDTH,
+    }
+  }
+
+  private async recordedKnobs(saved: TemporaryOptimizeRecord): Promise<TemporaryKnob[]> {
+    const knobs = await readTemporaryKnobs(this.host().workspace)
+    const space: unknown = JSON.parse(await readFile(saved.space, 'utf8'))
+    const variables = isRecord(space) && Array.isArray(space.variables) ? space.variables : []
+    const options = new Set(variables.filter(isRecord).map(({ option }) => option))
+    return knobs.map((knob) => ({ ...knob, enabled: options.has(knob.option) }))
+  }
+
+  private async hasResult(record: string): Promise<boolean> {
+    const folder = await temporaryRunFolder(record)
+    return folder !== undefined && existsSync(join(folder, 'result.json'))
+  }
+
+  private async follow(plan: RunPlan, knobs: readonly TemporaryKnob[], saved: TemporaryOptimizeRecord): Promise<void> {
+    const abort = new AbortController()
+    this.abort = abort
+    this.stopping = false
+    const reader = temporaryStudyReader({
+      run: basename(saved.record),
+      record: saved.record,
+      startedAt: saved.startedAt,
+      labels: temporaryKnobLabels(knobs),
+    })
+    const show = (): void =>
+      this.set({
+        step: 'running',
+        progress: { ...reader.progress(), planned: 1 + plan.iterations * plan.width, stopping: this.stopping },
+      })
+    const tail = tailTemporaryRun(saved.record, (line) => {
+      reader.push(line)
+      show()
+    })
+    show()
+    try {
+      await waitForTemporaryOptimize(saved, abort.signal)
+    } finally {
+      await tail.stop()
+      this.abort = undefined
+    }
+    await this.finish(saved.record, plan, knobs, abort.signal.aborted)
+    await dropTemporaryOptimizeRecord(saved)
+  }
+
   private async run(
-    plan: OptimizePlan,
+    plan: RunPlan,
     knobs: readonly TemporaryKnob[],
-    variables: readonly TemporarySpaceVariable[]
+    variables: readonly TemporarySpaceVariable[],
+    continuing?: TemporaryOptimizeRecord
   ): Promise<void> {
     const abort = new AbortController()
-    const startedAt = Date.now()
+    const startedAt = continuing?.startedAt ?? Date.now()
     const now = new Date(startedAt)
     const labels = temporaryKnobLabels(knobs)
     this.abort = abort
     this.stopping = false
     let record: string | undefined
     let cancelled = false
+    let saving: Promise<void> = Promise.resolve()
+    let saved: TemporaryOptimizeRecord | undefined
+    const remember = (next: TemporaryOptimizeRecord): void => {
+      saved = next
+      saving = saving
+        .then(() => saveTemporaryOptimizeRecord(next))
+        .catch((error: unknown) =>
+          announce(
+            this.host(),
+            'error',
+            `optimize · ${plan.experiment.name} · this run cannot continue after a restart: ${errorMessage(error)}`
+          )
+        )
+    }
     let reader: ReturnType<typeof temporaryStudyReader> | undefined
     let tail: TemporaryTail | undefined
     const progress = (): OptimizeProgress =>
@@ -580,7 +707,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     const show = (): void => this.set({ step: 'running', progress: progress() })
     this.set({ step: 'running', progress: progress() })
     try {
-      const space = await this.writeSpace(plan, now, variables)
+      const space = continuing?.space ?? (await this.writeSpace(plan, now, variables))
       await runTemporaryOptimization(
         {
           workspace: this.host().workspace,
@@ -588,9 +715,22 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
           forkArguments: ['--space', space, '--iterations', String(plan.iterations)],
           now: () => now,
           background: true,
+          detached: true,
+          ...(continuing ? { continuing: continuing.record } : {}),
           signal: abort.signal,
+          onSpawn: (pid) => {
+            if (saved) remember({ ...saved, pid })
+          },
           onStart: (path) => {
             record = path
+            remember({
+              version: 1,
+              experiment: plan.experiment.path,
+              record: path,
+              space,
+              iterations: plan.iterations,
+              startedAt,
+            })
             reader = temporaryStudyReader({ run: basename(path), record: path, startedAt, labels })
             tail = tailTemporaryRun(path, (line) => {
               reader?.push(line)
@@ -613,15 +753,13 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     } finally {
       this.abort = undefined
     }
+    await saving
+    if (record) await dropTemporaryOptimizeRecord({ record })
     if (cancelled && !record) return this.reportCancelled(plan)
     await this.finish(record!, plan, knobs, cancelled)
   }
 
-  private async writeSpace(
-    plan: OptimizePlan,
-    now: Date,
-    variables: readonly TemporarySpaceVariable[]
-  ): Promise<string> {
+  private async writeSpace(plan: RunPlan, now: Date, variables: readonly TemporarySpaceVariable[]): Promise<string> {
     const folder = temporaryOptimizationFolder(temporaryWorkspaceDirectory(this.host().workspace))
     const path = join(folder, `${temporaryRunName(plan.experiment.path, now)}.space.json`)
     await mkdir(folder, { recursive: true })
@@ -631,12 +769,15 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   private async finish(
     record: string,
-    plan: OptimizePlan,
+    plan: RunPlan,
     knobs: readonly TemporaryKnob[],
     cancelled: boolean
   ): Promise<void> {
     try {
-      const review = await this.review(await readTemporaryStudy(record), record, knobs)
+      const outcome = await readTemporaryStudy(record)
+      if (outcome.ended === 'stopped' && outcome.error && !cancelled)
+        throw new Error(`${outcome.error} The full optimizer output is in ${record}.log.`)
+      const review = await this.review(outcome, record, knobs)
       this.set({ step: 'review', review })
       announce(this.host(), 'success', `optimize · run ${review.run} finished · /optimize opens the review`)
     } catch (error) {
@@ -646,7 +787,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     }
   }
 
-  private reportCancelled(plan: OptimizePlan, record?: string): void {
+  private reportCancelled(plan: RunPlan, record?: string): void {
     this.set({
       step: 'cancelled',
       experiment: plan.experiment.name,

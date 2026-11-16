@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryModelDiscovery } from './knobs.js'
+import { temporaryRunFolder } from './study.js'
 import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, temporaryOptimizationFolder } from './environment.js'
 import type { TemporaryCommandRunner } from './environment.js'
@@ -30,6 +31,9 @@ export interface TemporaryOptimizationRequest {
   now?: () => Date
   onStart?: (record: string) => void
   background?: boolean
+  detached?: boolean
+  onSpawn?: (pid: number) => void
+  continuing?: string
 }
 
 export interface TemporaryOptimizationOutcome {
@@ -44,7 +48,7 @@ export interface TemporaryOptimizationDependencies {
   discoverModels?: (provider: string) => Promise<TemporaryModelDiscovery>
 }
 
-const WRAPPER_OWNED_FLAGS = ['--agent', '--record', '--json', '--rich', '--typescript-runner']
+const WRAPPER_OWNED_FLAGS = ['--agent', '--record', '--resume', '--json', '--rich', '--typescript-runner']
 
 const recordFolder = (workspaceDirectory: string, experiment: string, now: Date): string =>
   join(temporaryOptimizationFolder(workspaceDirectory), temporaryRunName(experiment, now))
@@ -66,9 +70,10 @@ export const runTemporaryOptimization = async (
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
     { ...(dependencies.run ? { run: dependencies.run } : {}), ...(signal ? { signal } : {}), onProgress }
   )
-  const record = recordFolder(directory, experiment, request.now?.() ?? new Date())
-  if (existsSync(record))
+  const record = request.continuing ?? recordFolder(directory, experiment, request.now?.() ?? new Date())
+  if (!request.continuing && existsSync(record))
     throw new Error(`The optimization record ${record} already exists. Wait a second, then try again.`)
+  const resumed = request.continuing !== undefined && (await temporaryRunFolder(record)) !== undefined
   const log = `${record}.log`
   await mkdir(temporaryOptimizationFolder(directory), { recursive: true })
   const runnable = await temporaryRunnableExperiment(experiment, `${record}.experiment.json`)
@@ -85,7 +90,7 @@ export const runTemporaryOptimization = async (
       runnable,
       '--agent',
       workspace.entrypoint,
-      '--record',
+      resumed ? '--resume' : '--record',
       record,
       '--rich',
       ...temporaryLanguageArguments(workspace),
@@ -95,6 +100,8 @@ export const runTemporaryOptimization = async (
     env: temporaryEvalsEnvironment(python, environment),
     ...(signal ? { signal } : {}),
     ...(request.background ? { background: true } : {}),
+    ...(request.detached ? { detached: true } : {}),
+    ...(request.onSpawn ? { onSpawn: request.onSpawn } : {}),
     log,
     onLine: onProgress,
   })

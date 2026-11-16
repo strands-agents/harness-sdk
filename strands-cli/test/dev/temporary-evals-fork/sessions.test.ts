@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -371,6 +371,94 @@ describe('TEMPORARY dev sessions', () => {
     expect(space.variables).toEqual([
       expect.objectContaining({ key: 'instructions', kind: 'text', option: 'instructions' }),
     ])
+  })
+
+  it('shouldKeepARecordWhileTheRunIsActiveAndDropItWhenTheRunEnds', async () => {
+    let recorded: unknown
+    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+      process.onSpawn?.(4242)
+      await vi.waitFor(async () => {
+        const [name] = await readdir(join(flagValue(process.args, '--record'), '..', 'running'))
+        recorded = JSON.parse(await readFile(join(flagValue(process.args, '--record'), '..', 'running', name!), 'utf8'))
+        expect(recorded).toMatchObject({ pid: 4242 })
+      })
+      await writeOptimizerRun(flagValue(process.args, '--record'), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    expect(optimizing.mock.calls[0]![0]).toMatchObject({ detached: true })
+    expect(recorded).toMatchObject({
+      version: 1,
+      experiment: experiment.path,
+      iterations: 4,
+      space: expect.stringMatching(/\.space\.json$/u),
+    })
+    expect(await readdir(join(workspace.directory!, 'tmp/optimization/running'))).toEqual([])
+  })
+
+  it.each([
+    ['opens the review of a run that finished while strands dev was closed', true],
+    ['continues a run that stopped when strands dev closed', false],
+  ])('shouldResumeOnStartWhenItSees a record and %s', async (_, finished) => {
+    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(
+        flagValue(args, '--resume'),
+        [...studyLines(0.9), optimizerStop(), optimizerPicked('win')],
+        {
+          baseline_id: 'base',
+          validation: { champion_id: 'win' },
+        }
+      )
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const folder = join(workspace.directory!, 'tmp/optimization')
+    const record = join(folder, '20261111-150405-capital')
+    const space = join(folder, '20261111-150405-capital.space.json')
+    await writeFileAt(
+      space,
+      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions', about: '' }] })
+    )
+    await writeOptimizerRun(
+      record,
+      finished ? [...studyLines(0.9), optimizerStop(), optimizerPicked('win')] : studyLines(0.6),
+      finished ? { baseline_id: 'base', validation: { champion_id: 'win' } } : undefined
+    )
+    await writeFileAt(
+      join(folder, 'running', '20261111-150405-capital.json'),
+      JSON.stringify({
+        version: 1,
+        experiment: experiment.path,
+        record,
+        space,
+        iterations: 4,
+        startedAt: 1,
+        pid: 999999,
+      })
+    )
+
+    await sessions.optimize.resume()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    expect(sessions.optimize.snapshot()).toMatchObject({
+      review: { edits: [expect.objectContaining({ knob: 'instructions', after: WINNER })] },
+    })
+    expect(continuing).toHaveBeenCalledTimes(finished ? 0 : 1)
+    if (!finished)
+      expect(continuing.mock.calls[0]![0].args).toEqual(expect.arrayContaining(['--resume', record, '--space', space]))
+    expect(await readdir(join(folder, 'running'))).toEqual([])
   })
 
   it('shouldKeepTheBestSoFarWhenTheUserStopsTheRun', async () => {

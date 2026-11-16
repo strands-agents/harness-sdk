@@ -343,7 +343,7 @@ export const temporaryStudyReader = (run: TemporaryStudyRun): TemporaryStudyRead
   return { push: (line) => state.push(line), progress: () => state.progress(run), outcome: () => state.outcome() }
 }
 
-const runFolder = async (record: string): Promise<string | undefined> => {
+export const temporaryRunFolder = async (record: string): Promise<string | undefined> => {
   let entries: string[]
   try {
     entries = await readdir(record)
@@ -361,7 +361,7 @@ export const tailTemporaryRun = (record: string, onLine: (line: string) => void)
   let stopped = false
   const found = (async (): Promise<void> => {
     while (!stopped) {
-      const folder = await runFolder(record).catch(() => undefined)
+      const folder = await temporaryRunFolder(record).catch(() => undefined)
       if (folder) {
         tail = tailTemporaryLines(join(folder, EVENTS), onLine)
         return
@@ -394,7 +394,7 @@ const readJson = async (path: string): Promise<unknown> => {
 }
 
 export const readTemporaryStudy = async (record: string): Promise<TemporaryStudyOutcome> => {
-  const folder = await runFolder(record)
+  const folder = await temporaryRunFolder(record)
   if (!folder)
     throw new Error(
       `${record} has no optimization run with ${EVENTS}, so the optimizer stopped before it started. ` +

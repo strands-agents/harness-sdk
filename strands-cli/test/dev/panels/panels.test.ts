@@ -481,7 +481,7 @@ describe('OptimizePanel', () => {
       key: `knob-${index}`,
       label: `knob-${index}`,
       detail: `detail ${index}`,
-      group: 'prompt',
+      group: 'prompt' as const,
       kind: 'text' as const,
       enabled: index === 0,
     }))

@@ -190,6 +190,43 @@ describe('TEMPORARY dev optimization', () => {
     vi.unstubAllEnvs()
   })
 
+  it.each([
+    ['--resume when the record already holds a run', true, '--resume'],
+    ['--record when the optimizer died before it made a run', false, '--record'],
+  ])('shouldContinueARecordedRunWith %s', async (_, hasRun, flag) => {
+    const workspace = await workspaceFixture()
+    const record = join(workspace.directory!, 'tmp/optimization/20261111-150405-support')
+    await mkdir(hasRun ? join(record, '20261111-150406-abc123') : record, { recursive: true })
+    if (hasRun) await writeFile(join(record, '20261111-150406-abc123', 'events.jsonl'), '')
+    const spawnOptimizer = succeeding()
+
+    await runTemporaryOptimization(
+      { workspace, continuing: record, now: () => NOW },
+      { run: environmentRunner(workspace), spawnOptimizer }
+    )
+
+    const { args } = spawnOptimizer.mock.calls[0]![0]
+    expect(args.slice(args.indexOf(flag), args.indexOf(flag) + 2)).toEqual([flag, record])
+    expect(args).not.toContain(flag === '--resume' ? '--record' : '--resume')
+  })
+
+  it('shouldStartTheOptimizerDetachedAndReportItsProcessWhenAskedToOutliveStrandsDev', async () => {
+    const workspace = await workspaceFixture()
+    const onSpawn = vi.fn()
+    const spawnOptimizer = vi.fn(async (process: TemporaryEvalsProcess) => {
+      process.onSpawn?.(4242)
+      return { code: 0, stdout: '', stderrTail: [] }
+    })
+
+    await runTemporaryOptimization(
+      { workspace, detached: true, onSpawn, now: () => NOW },
+      { run: environmentRunner(workspace), spawnOptimizer }
+    )
+
+    expect(spawnOptimizer.mock.calls[0]![0]).toMatchObject({ detached: true })
+    expect(onSpawn).toHaveBeenCalledWith(4242)
+  })
+
   it('shouldReportTheOptimizerOutputWhenItFails', async () => {
     const workspace = await workspaceFixture()
     const spawnOptimizer = vi.fn(async () => ({
