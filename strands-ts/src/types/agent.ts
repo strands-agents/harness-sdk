@@ -467,20 +467,6 @@ export interface LocalAgent {
   loadSnapshot(snapshot: Snapshot): void
 
   /**
-   * Counts what a request carries: the messages, plus the system prompt and tool specs that occupy the same context
-   * window, so a count that leaves them out reads low. These are the same inputs behind
-   * `BeforeModelCallEvent.projectedInputTokens`.
-   *
-   * Counts that measure a single block or a subset rather than a whole request call `countTokens` directly —
-   * including the system prompt there would inflate every block against its threshold.
-   *
-   * @param messages - The messages the request would send
-   * @returns Total input token count for the request
-   * @internal
-   */
-  countRequestTokens(messages: Message[]): Promise<number>
-
-  /**
    * Register a middleware handler for a given stage or phase.
    * Middleware wraps stage execution and can intercept, transform, or short-circuit operations.
    *

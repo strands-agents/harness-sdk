@@ -19,6 +19,7 @@ import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { carriedTokens, formatElided, isOffloaded, offloadPlaceholder } from '../../placeholder.js'
 import { collectRemovableWithPair, placeholderFor, removeMessages, repairAlternation } from '../../message-trimming.js'
+import { countRequestTokens } from '../../../models/model-proxy.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
 import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
@@ -296,7 +297,7 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
    * refused, which outranks this estimate.
    */
   private async _overheadFillsWindow(agent: LocalAgent): Promise<boolean> {
-    const overhead = await agent.countRequestTokens([])
+    const overhead = await countRequestTokens(agent, [])
     if (agent.model.estimateUtilization(overhead) < 1.0) return false
     logger.warn(
       `agentId=<${agent.id}>, overheadTokens=<${overhead}> | system prompt and tool specs alone fill the context window, skipping emergency truncation`

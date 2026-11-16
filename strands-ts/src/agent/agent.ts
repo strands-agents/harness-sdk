@@ -32,7 +32,7 @@ import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
 import { Model } from '../models/model.js'
-import { ModelProxy } from '../models/model-proxy.js'
+import { countRequestTokens, ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import type { AgentMetadata } from './agent-metadata.js'
@@ -2958,29 +2958,10 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await this.countRequestTokens(this.messages)
+      estimate = await countRequestTokens(this, this.messages)
     }
 
     return estimate
-  }
-
-  /**
-   * Counts what a request carries: the messages, plus the system prompt and tool specs that occupy the same context
-   * window, so a count that leaves them out reads low. These are the same inputs behind
-   * `BeforeModelCallEvent.projectedInputTokens`.
-   *
-   * Counts that measure a single block or a subset rather than a whole request call `countTokens` directly —
-   * including the system prompt there would inflate every block against its threshold.
-   *
-   * @param messages - The messages the request would send
-   * @returns Total input token count for the request
-   * @internal
-   */
-  async countRequestTokens(messages: Message[]): Promise<number> {
-    return new ModelProxy(this.model).countTokens(messages, {
-      ...(this.systemPrompt !== undefined && { systemPrompt: this.systemPrompt }),
-      toolSpecs: this.toolRegistry.list().map((tool) => tool.toolSpec),
-    })
   }
 
   /**

@@ -1,6 +1,5 @@
 """Tests for the ContextManager plugin."""
 
-import functools
 import unittest.mock
 
 import pytest
@@ -8,7 +7,6 @@ import pytest
 from strands._context_manager.context_manager import ContextManager
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
-from strands.agent.agent import Agent
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
@@ -25,8 +23,6 @@ def mock_agent():
     agent.model = unittest.mock.AsyncMock()
     agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.5)
-    # Delegate to the real implementation so these tests measure Agent's behavior, not the mock's.
-    agent._count_request_tokens = functools.partial(Agent._count_request_tokens, agent)
     agent.hooks = HookRegistry()
     agent.messages = [
         Message(role="user", content=[ContentBlock(text="hello")]),
@@ -256,7 +252,7 @@ class TestTokenCounting:
     async def test_counts_system_prompt_and_tool_specs_alongside_messages(self, mock_agent):
         tool_spec = ToolSpec(name="lookup", description="stub lookup", inputSchema={"json": {"type": "object"}})
         mock_agent.system_prompt = "be helpful"
-        mock_agent._system_prompt_content = [{"text": "be helpful"}]
+        mock_agent.system_prompt_content = [{"text": "be helpful"}]
         mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[tool_spec])
         captured = self._capture_count_kwargs(mock_agent)
 
@@ -289,7 +285,7 @@ class TestTokenCounting:
     @pytest.mark.asyncio
     async def test_passes_no_system_prompt_when_the_agent_has_none(self, mock_agent):
         mock_agent.system_prompt = None
-        mock_agent._system_prompt_content = None
+        mock_agent.system_prompt_content = None
         mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[])
         captured = self._capture_count_kwargs(mock_agent)
 

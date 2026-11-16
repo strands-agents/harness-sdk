@@ -1,6 +1,5 @@
 import asyncio
 import concurrent
-import functools
 import threading
 import unittest.mock
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
@@ -2286,12 +2285,10 @@ class TestEstimateInputTokens:
         agent = unittest.mock.AsyncMock()
         agent.messages = [{"role": "user", "content": [{"text": "Hi"}]}]
         agent.system_prompt = "You are helpful"
-        agent._system_prompt_content = None
+        agent.system_prompt_content = None
         agent.tool_registry = unittest.mock.MagicMock()
         agent.tool_registry.get_all_tool_specs.return_value = [{"name": "tool1"}]
         agent.model.count_tokens = AsyncMock(return_value=42)
-        # Delegate to the real implementation so this test measures Agent's behavior, not the mock's.
-        agent._count_request_tokens = functools.partial(Agent._count_request_tokens, agent)
 
         result = await strands.event_loop.event_loop._estimate_input_tokens(agent)
 
@@ -2387,8 +2384,6 @@ class TestEstimateInputTokens:
         agent.tool_registry = unittest.mock.MagicMock()
         agent.tool_registry.get_all_tool_specs.return_value = []
         agent.model.count_tokens = AsyncMock(side_effect=Exception("API unavailable"))
-        # Delegate to the real implementation so this test measures Agent's behavior, not the mock's.
-        agent._count_request_tokens = functools.partial(Agent._count_request_tokens, agent)
 
         with pytest.raises(Exception, match="API unavailable"):
             await strands.event_loop.event_loop._estimate_input_tokens(agent)

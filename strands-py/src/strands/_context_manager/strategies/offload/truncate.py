@@ -6,6 +6,7 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
+from ....models._model_proxy import _count_request_tokens
 from ....types.content import ContentBlock, Message
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
 from ...stash import Stash, _format_stash_refs
@@ -159,7 +160,7 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         Consulted only on the proactive path. An overflow signal is the provider's own verdict on a request it
         refused, which outranks this estimate.
         """
-        overhead = await agent._count_request_tokens([])
+        overhead = await _count_request_tokens(agent, [])
         if agent.model.estimate_utilization(overhead) < 1.0:
             return False
         logger.warning(
