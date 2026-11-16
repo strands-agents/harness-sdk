@@ -1,9 +1,7 @@
-import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
-
 import { PROVIDER_ENVIRONMENT_KEYS, type DetectedProviderEnvironment, type ProviderId } from '../../config/store.js'
 import { discoverProviderModels } from '../../model/discovery.js'
 import { effortOptions } from '../../model/selection.js'
-import { readAgentOptions, type AgentOptionEdit, type AgentOptionValue } from '../agent-options.js'
+import { agentOptionDefault, readAgentOptions, type AgentOptionEdit, type AgentOptionValue } from '../agent-options.js'
 import type { Knob, KnobGroup, KnobKind, ModelOption } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 
@@ -103,8 +101,15 @@ const scalarOf = (value: AgentOptionValue | undefined): TemporaryKnobValue | und
   return undefined
 }
 
-const harnessDefault = (name: OptionName): unknown =>
-  (DEFAULT_HARNESS_AGENT_CONFIG as unknown as Record<string, unknown>)[name]
+const unset = (name: OptionName): TemporaryKnobValue | undefined => {
+  const value = agentOptionDefault(name)
+  return typeof value === 'string' || typeof value === 'boolean' ? value : undefined
+}
+
+const unsetList = (name: OptionName): readonly string[] => {
+  const value = agentOptionDefault(name)
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
 
 interface Reading {
   readonly options: ReadonlyMap<string, AgentOptionValue>
@@ -155,14 +160,9 @@ const textKnob = (name: 'instructions' | 'systemPrompt', reading: Reading): Temp
   }
 }
 
-const choiceKnob = (
-  name: OptionName,
-  reading: Reading,
-  choices: readonly TemporaryKnobValue[],
-  absent: TemporaryKnobValue
-): TemporaryKnob => {
+const choiceKnob = (name: OptionName, reading: Reading, choices: readonly TemporaryKnobValue[]): TemporaryKnob => {
   const value = valueOf(name, reading)
-  const current = value ? scalarOf(value) : absent
+  const current = value ? scalarOf(value) : unset(name)
   if (current === undefined || !choices.includes(current))
     return knobBase(
       name,
@@ -199,7 +199,7 @@ const switchesKnob = (name: OptionName, reading: Reading, defaults?: readonly st
 
 const skillsKnob = (reading: Reading): TemporaryKnob => {
   const value = valueOf('skills', reading)
-  return value?.kind === 'list' ? switchesKnob('skills', reading) : choiceKnob('skills', reading, [true, false], true)
+  return value?.kind === 'list' ? switchesKnob('skills', reading) : choiceKnob('skills', reading, [true, false])
 }
 
 const effortKnob = (reading: Reading, model: TemporaryKnobValue | undefined): TemporaryKnob => {
@@ -208,12 +208,12 @@ const effortKnob = (reading: Reading, model: TemporaryKnobValue | undefined): Te
   const choices = [...new Set(['auto', ...levels])]
   if (choices.length < 2)
     return knobBase('effort', reading, 'choice', 'choice', 'the model has no reasoning levels to choose from')
-  return choiceKnob('effort', reading, choices, 'auto')
+  return choiceKnob('effort', reading, choices)
 }
 
 const modelKnob = (reading: Reading): TemporaryKnob => {
   const value = valueOf('model', reading)
-  const current = value ? scalarOf(value) : (harnessDefault('model') as string)
+  const current = value ? scalarOf(value) : unset('model')
   if (typeof current !== 'string') return knobBase('model', reading, 'models', 'choice', SET_IN_CODE)
   return { ...knobBase('model', reading, 'models', 'choose models to try'), current }
 }
@@ -236,16 +236,16 @@ export const readTemporaryKnobs = async (workspace: DevWorkspace): Promise<Tempo
     textKnob('systemPrompt', reading),
     model,
     effortKnob(reading, model.current),
-    choiceKnob('caching', reading, ['auto', true, false], 'auto'),
-    switchesKnob('builtinTools', reading, harnessDefault('builtinTools') as readonly string[]),
+    choiceKnob('caching', reading, ['auto', true, false]),
+    switchesKnob('builtinTools', reading, unsetList('builtinTools')),
     switchesKnob('tools', reading),
     switchesKnob('mcpServers', reading),
-    choiceKnob('backgroundTasks', reading, [true, false], false),
-    choiceKnob('contextManager', reading, ['auto', 'agentic', false], 'auto'),
+    choiceKnob('backgroundTasks', reading, [true, false]),
+    choiceKnob('contextManager', reading, ['auto', 'agentic', false]),
     trialOnly('session', reading),
     trialOnly('memory', reading),
     skillsKnob(reading),
-    switchesKnob('builtinPlugins', reading, harnessDefault('builtinPlugins') as readonly string[]),
+    switchesKnob('builtinPlugins', reading, unsetList('builtinPlugins')),
     switchesKnob('plugins', reading),
     switchesKnob('interventions', reading),
   ].filter((knob): knob is TemporaryKnob => knob !== undefined && knob.unavailable !== NOT_SET)

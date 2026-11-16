@@ -1,8 +1,9 @@
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { isRecord } from '../../values.js'
 import type { CandidateResult, OptimizeProgress } from '../panels/model.js'
+import { tailTemporaryLines, type TemporaryTail } from './jobs.js'
 
 export type TemporaryStudyParams = Readonly<Record<string, unknown>>
 
@@ -50,115 +51,76 @@ export interface TemporaryStudyReader {
 
 type Event = Record<string, unknown>
 
-type Interval = readonly [number, number]
+type Split = 'train' | 'validation' | 'test'
 
-interface Estimate {
-  readonly mean: number | undefined
-  readonly ci: Interval | undefined
+interface Candidate {
+  readonly id: string
+  readonly number: number
+  readonly iteration: number
+  readonly values: TemporaryStudyParams
+  readonly changed: readonly string[]
 }
 
-type Estimates = ReadonlyMap<string, Estimate>
-
-interface Difference extends Estimate {
+interface TestReport {
+  readonly champion: string | undefined
+  readonly baseline: string | undefined
+  readonly difference: number | undefined
+  readonly ci: readonly [number, number] | undefined
   readonly cases: number | undefined
 }
 
-interface TestArm {
-  readonly means: Estimates
-  readonly difference: ReadonlyMap<string, Difference>
-}
-
-interface Objective {
-  readonly metric: string
-  readonly weight: number
-}
-
-interface CandidateRecord {
-  readonly number: number
-  readonly step: number | undefined
-  readonly params: TemporaryStudyParams
-  readonly failure: string | undefined
-  readonly bestAfter: readonly number[]
-  readonly estimates: Estimates
-}
-
-interface Measured {
-  readonly on: TemporaryMeasurement
-  readonly baseline: Estimates | undefined
-  readonly best: Estimates | undefined
-}
-
+const EVENTS = 'events.jsonl'
+const RESULT = 'result.json'
 const SUMMARY_LIMIT = 80
-const FAILED_STATUSES = new Set(['failed', 'invalid'])
-const NO_VALUE = 'no trial had a value for every goal metric'
 const LINE_BREAK = /\r?\n/u
+const OBJECTIVE = /^(?:Maximize|Minimize)\((.+)\)$/u
+const FAILED_STOPS = new Set(['setup', 'proposer_error'])
+const SPLIT_MEASUREMENT: Record<Split, TemporaryMeasurement> = {
+  train: 'search',
+  validation: 'validation',
+  test: 'test',
+}
 
 const finite = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined
 
 const text = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined)
 
-const numbers = (value: unknown): number[] =>
-  Array.isArray(value) ? value.filter((item): item is number => typeof item === 'number') : []
+const texts = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
-const interval = (value: unknown): Interval | undefined => {
-  if (!Array.isArray(value) || value.length !== 2) return undefined
-  const [low, high] = value.map(finite)
-  return low === undefined || high === undefined ? undefined : [low, high]
-}
+const mean = (values: readonly number[]): number | undefined =>
+  values.length === 0 ? undefined : values.reduce((sum, value) => sum + value, 0) / values.length
 
-const records = (value: unknown): [string, Event][] =>
-  isRecord(value) ? Object.entries(value).filter((entry): entry is [string, Event] => isRecord(entry[1])) : []
-
-const parseEstimates = (value: unknown): Estimates =>
-  new Map(records(value).map(([metric, { mean, ci }]) => [metric, { mean: finite(mean), ci: interval(ci) }]))
-
-const parseArm = ({ means, difference }: Event): TestArm => ({
-  means: new Map(
-    Object.entries(isRecord(means) ? means : {}).map(([metric, mean]) => [
-      metric,
-      { mean: finite(mean), ci: undefined },
-    ])
-  ),
-  difference: new Map(
-    records(difference).map(([metric, { mean, ci90, cases }]) => [
-      metric,
-      { mean: finite(mean), ci: interval(ci90), cases: finite(cases) },
-    ])
-  ),
-})
-
-const parseObjectives = (value: unknown): Objective[] =>
-  (Array.isArray(value) ? value : []).filter(isRecord).flatMap(({ metric, weight }) => {
-    const name = text(metric)
-    return name === undefined ? [] : [{ metric: name, weight: finite(weight) ?? 1 }]
-  })
-
-const parseTextKeys = (space: unknown): Set<string> =>
-  new Set(
-    (Array.isArray(space) ? space : [])
-      .filter(isRecord)
-      .flatMap(({ key, type }) => (type === 'text' && typeof key === 'string' ? [key] : []))
+const objectiveMean = (byRun: unknown): number | undefined =>
+  mean(
+    Object.values(isRecord(byRun) ? byRun : {}).flatMap((runs) => {
+      const perCase = mean((Array.isArray(runs) ? runs : []).map(finite).filter((value) => value !== undefined))
+      return perCase === undefined ? [] : [perCase]
+    })
   )
-
-const firstTrialError = (trials: unknown): string | undefined =>
-  (Array.isArray(trials) ? trials : [])
-    .filter(isRecord)
-    .map(({ error }) => text(error))
-    .find(Boolean)
-
-const failureOf = ({ status, reason, trials }: Event): string | undefined =>
-  typeof status === 'string' && FAILED_STATUSES.has(status)
-    ? (text(reason) ?? firstTrialError(trials) ?? NO_VALUE)
-    : undefined
 
 const parseEvent = (line: string): Event | undefined => {
   if (!line.trim()) return undefined
   try {
     const event: unknown = JSON.parse(line)
-    return isRecord(event) && typeof event.type === 'string' ? event : undefined
+    return isRecord(event) && typeof event.event === 'string' ? event : undefined
   } catch {
     return undefined
+  }
+}
+
+const parseTest = (report: unknown): TestReport | undefined => {
+  if (!isRecord(report)) return undefined
+  const objective = isRecord(report.objective) ? report.objective : {}
+  const low = finite(objective.ci_low)
+  const high = finite(objective.ci_high)
+  return {
+    champion: text(report.champion_id),
+    baseline: text(report.baseline_id),
+    difference: finite(objective.mean_diff),
+    ci: low === undefined || high === undefined ? undefined : [low, high],
+    cases: finite(objective.n_cases),
   }
 }
 
@@ -167,14 +129,7 @@ const clip = (value: string): string => {
   return characters.length > SUMMARY_LIMIT ? `${characters.slice(0, SUMMARY_LIMIT - 1).join('')}…` : value
 }
 
-const scored = (score: number | undefined): { score?: number } => (score === undefined ? {} : { score })
-
 const shown = (value: unknown): string => (typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value)))
-
-const changedKeys = (params: TemporaryStudyParams, baseline: TemporaryStudyParams): string[] =>
-  [...new Set([...Object.keys(params), ...Object.keys(baseline)])].filter(
-    (key) => JSON.stringify(params[key]) !== JSON.stringify(baseline[key])
-  )
 
 const firstNewLine = (key: string, value: string, baseline: string): string => {
   const known = new Set(baseline.split(LINE_BREAK).map((line) => line.trim()))
@@ -190,58 +145,61 @@ const describeChange = (key: string, value: unknown, baseline: unknown, isText: 
     ? firstNewLine(key, value, typeof baseline === 'string' ? baseline : '')
     : `${key} → ${typeof value === 'boolean' ? (value ? 'on' : 'off') : clip(shown(value))}`
 
-class StudyState {
+class RunState {
   constructor(private readonly labels: Readonly<Record<string, string>> = {}) {}
 
-  private objectives: readonly Objective[] = []
+  private metric = ''
   private textKeys: ReadonlySet<string> = new Set()
   private width = 0
   private iterations = 0
-  private best: number | undefined
-  private ended: TemporaryStudyEnd = 'running'
-  private error: string | undefined
-  private testBaseline: Estimates | undefined
-  private testSelected: TestArm | undefined
-  private readonly candidates = new Map<number, CandidateRecord>()
-  private readonly validated = new Map<number, Estimates>()
+  private baselineId: string | undefined
+  private bestAfter: readonly string[] = []
+  private champion: string | undefined
+  private stopReason: string | undefined
+  private stopMessage: string | undefined
+  private test: TestReport | undefined
+  private readonly candidates = new Map<string, Candidate>()
+  private readonly scores = new Map<string, Map<Split, number>>()
+  private readonly failures = new Map<string, string>()
+  private readonly completed = new Map<string, number>()
 
   private readonly handlers = new Map<string, (event: Event) => void>([
-    ['study', (event): void => this.readHeader(event)],
-    ['run', (event): void => this.readRun(event)],
-    ['candidate', (event): void => this.readCandidate(event)],
-    ['remeasured', (event): void => this.readRemeasured(event)],
-    ['validated', (event): void => this.readValidated(event)],
-    ['selected', (event): void => this.readSelection(event)],
-    ['finished', (event): void => this.readFinished(event)],
-    ['stopped', (event): void => this.readStopped(event)],
-    ['tested', (event): void => this.readTested(event)],
+    ['config', (event): void => this.readConfig(event)],
+    ['propose', (event): void => this.readPropose(event)],
+    ['trial', (event): void => this.readTrial(event)],
+    ['score', (event): void => this.readScore(event)],
+    ['iteration_end', (event): void => this.readIterationEnd(event)],
+    ['stop', (event): void => this.readStop(event)],
+    ['picked', ({ report }): void => this.readPicked(report)],
+    ['test', ({ report }): void => this.readTest(report)],
   ])
 
   push(line: string): void {
     const event = parseEvent(line)
-    if (event) this.handlers.get(String(event.type))?.(event)
+    if (event) this.handlers.get(String(event.event))?.(event)
   }
 
-  absorbResult({ runs, test }: Event): void {
-    const [run]: unknown[] = Array.isArray(runs) ? runs : []
-    if (isRecord(run) && Array.isArray(run.selected)) this.best = numbers(run.selected)[0]
-    const measured = isRecord(test) ? test : isRecord(run) && isRecord(run.test) ? run.test : undefined
-    if (measured) this.readTest(measured)
+  absorbResult({ baseline_id, validation, test }: Event): void {
+    this.baselineId ??= text(baseline_id)
+    if (isRecord(validation)) this.readPicked(validation)
+    if (!this.test) this.readTest(test)
   }
 
   progress({ run, record, startedAt }: TemporaryStudyRun): OptimizeProgress {
-    const baseline = this.score(this.candidates.get(0)?.estimates)
-    const best = this.best === undefined ? undefined : this.score(this.candidates.get(this.best)?.estimates)
+    const baseline = this.score(this.baselineId, 'train')
+    const leader = this.bestAfter[0]
+    const best = this.score(leader, 'train')
+    const leading = leader === undefined ? undefined : this.candidates.get(leader)
     return {
       run,
       record,
-      metric: this.metric(),
+      metric: this.metric,
       iterations: this.iterations,
       planned: 1 + this.iterations * this.width,
       ...(baseline === undefined ? {} : { baseline }),
-      ...(this.best === undefined || best === undefined ? {} : { best: { number: this.best, score: best } }),
+      ...(leading && best !== undefined ? { best: { number: leading.number, score: best } } : {}),
       candidates: [...this.candidates.values()]
-        .filter(({ number }) => number !== 0)
+        .filter(({ id }) => id !== this.baselineId && this.scores.get(id)?.has('train'))
         .map((candidate) => this.candidateResult(candidate, baseline)),
       startedAt,
       stopping: false,
@@ -249,183 +207,181 @@ class StudyState {
   }
 
   outcome(): TemporaryStudyOutcome {
-    const measured = this.measured()
-    const best = this.bestOutcome(measured.best)
+    const bestId = this.champion ?? this.bestAfter[0]
+    const split = this.measuredSplit(bestId)
+    const best = bestId === undefined ? undefined : this.candidates.get(bestId)
+    const bestScore = this.score(bestId, split)
+    const baselineScore = this.score(this.baselineId, split)
+    const failed = this.stopReason !== undefined && FAILED_STOPS.has(this.stopReason)
     const test = this.testDifference()
     return {
-      metric: this.metric(),
-      ended: this.ended,
-      ...(this.error === undefined ? {} : { error: this.error }),
-      measuredOn: measured.on,
-      baseline: { params: this.candidates.get(0)?.params ?? {}, ...scored(this.score(measured.baseline)) },
-      ...(best === undefined ? {} : { best }),
-      ...(test === undefined ? {} : { test }),
+      metric: this.metric,
+      ended: failed ? 'stopped' : this.champion !== undefined ? 'finished' : 'running',
+      ...(failed && this.stopMessage ? { error: this.stopMessage } : {}),
+      measuredOn: SPLIT_MEASUREMENT[split],
+      baseline: {
+        params: (this.baselineId === undefined ? undefined : this.candidates.get(this.baselineId)?.values) ?? {},
+        ...(baselineScore === undefined ? {} : { score: baselineScore }),
+      },
+      ...(best
+        ? {
+            best: {
+              number: best.number,
+              params: best.values,
+              ...(bestScore === undefined ? {} : { score: bestScore }),
+            },
+          }
+        : {}),
+      ...(test ? { test } : {}),
     }
   }
 
-  private readHeader({ objectives, space, width }: Event): void {
-    this.objectives = parseObjectives(objectives)
-    this.textKeys = parseTextKeys(space)
-    this.width = finite(width) ?? this.width
+  private readConfig({ config }: Event): void {
+    if (!isRecord(config)) return
+    const objective = text(config.objective)
+    this.metric = (objective ? OBJECTIVE.exec(objective)?.[1] : undefined) ?? objective ?? ''
+    this.textKeys = new Set(
+      (Array.isArray(config.space) ? config.space : [])
+        .filter(isRecord)
+        .flatMap(({ key, kind }) => (kind === 'text' && typeof key === 'string' ? [key] : []))
+    )
+    this.width = finite(config.proposals_per_iteration) ?? this.width
+    this.iterations = (isRecord(config.budget) ? finite(config.budget.max_iterations) : undefined) ?? this.iterations
   }
 
-  private readRun({ iterations }: Event): void {
-    this.iterations = finite(iterations) ?? this.iterations
-  }
-
-  private readSelection({ best }: Event): void {
-    this.best = numbers(best)[0]
-  }
-
-  private readFinished(event: Event): void {
-    this.readSelection(event)
-    this.ended = 'finished'
-  }
-
-  private readStopped({ error }: Event): void {
-    this.ended = 'stopped'
-    this.error = text(error)
-  }
-
-  private readCandidate(event: Event): void {
+  private readPropose(event: Event): void {
+    const id = text(event.candidate_id)
     const number = finite(event.number)
-    if (number === undefined) return
-    const bestAfter = numbers(event.best_after)
-    this.candidates.set(number, {
+    if (id === undefined || number === undefined) return
+    if (texts(event.origin).includes('baseline')) this.baselineId = id
+    this.candidates.set(id, {
+      id,
       number,
-      step: finite(event.step),
-      params: isRecord(event.params) ? event.params : {},
-      failure: failureOf(event),
-      bestAfter,
-      estimates: parseEstimates(event.estimates),
+      iteration: finite(event.iteration) ?? 0,
+      values: isRecord(event.values) ? event.values : {},
+      changed: texts(event.changed_keys),
     })
-    this.best = bestAfter[0]
   }
 
-  private readRemeasured({ number, estimates }: Event): void {
-    const key = finite(number)
-    const known = key === undefined ? undefined : this.candidates.get(key)
-    if (known) this.candidates.set(known.number, { ...known, estimates: parseEstimates(estimates) })
+  private readTrial({ record }: Event): void {
+    if (!isRecord(record)) return
+    const id = text(record.candidate_id)
+    if (id === undefined || record.status === 'completed' || this.failures.has(id)) return
+    const reason = text(record.error) ?? text(record.error_type) ?? text(record.status)
+    if (reason) this.failures.set(id, reason)
   }
 
-  private readValidated({ number, estimates }: Event): void {
-    const key = finite(number)
-    if (key !== undefined) this.validated.set(key, parseEstimates(estimates))
+  private readScore({ candidate_id, split, objective_by_run, statuses }: Event): void {
+    const id = text(candidate_id)
+    if (id === undefined || (split !== 'train' && split !== 'validation' && split !== 'test')) return
+    const value = objectiveMean(objective_by_run)
+    const byId = this.scores.get(id) ?? new Map<Split, number>()
+    if (value !== undefined) byId.set(split, value)
+    this.scores.set(id, byId)
+    if (split === 'train') this.completed.set(id, isRecord(statuses) ? (finite(statuses.completed) ?? 0) : 0)
   }
 
-  private readTested(event: Event): void {
-    if (event.role === 'baseline') this.testBaseline = parseArm(event).means
-    else if ((event.role === 'selected' || event.role === 'fallback') && !this.testSelected)
-      this.testSelected = parseArm(event)
+  private readIterationEnd({ best_after }: Event): void {
+    this.bestAfter = texts(best_after)
   }
 
-  private readTest({ baseline, selected }: Event): void {
-    const [first]: unknown[] = Array.isArray(selected) ? selected : []
-    if (isRecord(baseline)) this.testBaseline = parseArm(baseline).means
-    if (isRecord(first)) this.testSelected = parseArm(first)
+  private readStop({ reason, message }: Event): void {
+    this.stopReason = text(reason)
+    this.stopMessage = text(message)
   }
 
-  private metric(): string {
-    return this.objectives.map(({ metric }) => metric).join(' + ')
+  private readPicked(report: unknown): void {
+    if (isRecord(report)) this.champion = text(report.champion_id) ?? this.champion
   }
 
-  private combine(value: (metric: string) => number | undefined): number | undefined {
-    const [primary, ...others] = this.objectives
-    if (!primary) return undefined
-    if (others.length === 0) return value(primary.metric)
-    const weighted = this.objectives.map(({ metric, weight }) => ({ value: value(metric), weight }))
-    const total = weighted.reduce((sum, { weight }) => sum + weight, 0)
-    if (total <= 0 || weighted.some(({ value }) => value === undefined)) return undefined
-    return weighted.reduce((sum, { value, weight }) => sum + (value ?? 0) * weight, 0) / total
+  private readTest(report: unknown): void {
+    this.test = parseTest(report) ?? this.test
   }
 
-  private score(estimates: Estimates | undefined): number | undefined {
-    return this.combine((metric) => estimates?.get(metric)?.mean)
+  private score(id: string | undefined, split: Split): number | undefined {
+    return id === undefined ? undefined : this.scores.get(id)?.get(split)
   }
 
-  private interval(estimates: Estimates): Interval | undefined {
-    const [primary, ...others] = this.objectives
-    return primary && others.length === 0 ? estimates.get(primary.metric)?.ci : undefined
-  }
-
-  private measured(): Measured {
-    if (this.testBaseline && this.testSelected)
-      return { on: 'test', baseline: this.testBaseline, best: this.testSelected.means }
-    const validatedBest = this.best === undefined ? undefined : this.validated.get(this.best)
-    const validatedBaseline = this.validated.get(0)
-    if (validatedBaseline && validatedBest)
-      return { on: 'validation', baseline: validatedBaseline, best: validatedBest }
-    return {
-      on: 'search',
-      baseline: this.candidates.get(0)?.estimates,
-      best: this.best === undefined ? undefined : this.candidates.get(this.best)?.estimates,
-    }
-  }
-
-  private bestOutcome(estimates: Estimates | undefined): TemporaryStudyBest | undefined {
-    const params = this.best === undefined ? undefined : this.candidates.get(this.best)?.params
-    if (this.best === undefined || params === undefined) return undefined
-    return { number: this.best, params, ...scored(this.score(estimates)) }
+  private measuredSplit(bestId: string | undefined): Split {
+    const both = (split: Split): boolean =>
+      this.score(this.baselineId, split) !== undefined && this.score(bestId, split) !== undefined
+    return both('test') ? 'test' : both('validation') ? 'validation' : 'train'
   }
 
   private testDifference(): TemporaryTestDifference | undefined {
-    const differences = this.testSelected?.difference
-    const primary = this.objectives[0]
-    if (!differences || !primary) return undefined
-    const cases = differences.get(primary.metric)?.cases
-    const difference = this.combine((metric) => differences.get(metric)?.mean)
-    if (cases === undefined || difference === undefined) return undefined
-    const ci = this.interval(differences)
-    return { difference, cases, ...(ci === undefined ? {} : { ci }) }
+    const { difference, cases, ci } = this.test ?? {}
+    if (difference === undefined || cases === undefined) return undefined
+    return { difference, cases, ...(ci ? { ci } : {}) }
   }
 
-  private candidateResult(candidate: CandidateRecord, baselineScore: number | undefined): CandidateResult {
-    const { number, step, params, failure, bestAfter, estimates } = candidate
-    const baseline = this.candidates.get(0)?.params ?? {}
-    const changed = changedKeys(params, baseline)
-    const score = this.score(estimates)
-    const ci = this.interval(estimates)
+  private candidateResult(candidate: Candidate, baselineScore: number | undefined): CandidateResult {
+    const baseline = (this.baselineId === undefined ? undefined : this.candidates.get(this.baselineId)?.values) ?? {}
+    const score = this.score(candidate.id, 'train')
+    const failure =
+      this.completed.get(candidate.id) === 0 ? (this.failures.get(candidate.id) ?? 'every trial failed') : undefined
     const summary =
-      changed
-        .map((key) => describeChange(this.labels[key] ?? key, params[key], baseline[key], this.textKeys.has(key)))
+      candidate.changed
+        .map((key) =>
+          describeChange(this.labels[key] ?? key, candidate.values[key], baseline[key], this.textKeys.has(key))
+        )
         .join('; ') || 'no change from the baseline'
     return {
-      number,
-      ...(step === undefined ? {} : { step }),
-      changed,
+      number: candidate.number,
+      step: candidate.iteration,
+      changed: candidate.changed,
       summary: failure ?? summary,
       ...(score === undefined ? {} : { score }),
-      ...(ci === undefined ? {} : { ci }),
       ...(score === undefined || baselineScore === undefined ? {} : { delta: score - baselineScore }),
-      kept: bestAfter.includes(number),
+      kept: this.bestAfter.includes(candidate.id),
       ...(failure === undefined ? {} : { failed: failure }),
     }
   }
 }
 
 export const temporaryStudyReader = (run: TemporaryStudyRun): TemporaryStudyReader => {
-  const state = new StudyState(run.labels)
+  const state = new RunState(run.labels)
   return { push: (line) => state.push(line), progress: () => state.progress(run), outcome: () => state.outcome() }
 }
 
-const readStudyEvents = async (record: string): Promise<string> => {
+const runFolder = async (record: string): Promise<string | undefined> => {
+  let entries: string[]
   try {
-    return await readFile(join(record, 'study.jsonl'), 'utf8')
+    entries = await readdir(record)
   } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT')
-      throw new Error(
-        `${record} has no study.jsonl, so it is not an optimization record. Pick another record, or run the ` +
-          'optimization again.',
-        { cause: error }
-      )
+    if (isRecord(error) && error.code === 'ENOENT') return undefined
     throw error
+  }
+  if (entries.includes(EVENTS)) return record
+  const runs = entries.filter((entry) => /^\d{8}-\d{6}-[0-9a-f]+$/u.test(entry)).sort()
+  return runs.length > 0 ? join(record, runs.at(-1)!) : undefined
+}
+
+export const tailTemporaryRun = (record: string, onLine: (line: string) => void): TemporaryTail => {
+  let tail: TemporaryTail | undefined
+  let stopped = false
+  const found = (async (): Promise<void> => {
+    while (!stopped) {
+      const folder = await runFolder(record).catch(() => undefined)
+      if (folder) {
+        tail = tailTemporaryLines(join(folder, EVENTS), onLine)
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250).unref())
+    }
+  })()
+  return {
+    stop: async (): Promise<void> => {
+      stopped = true
+      await found
+      await tail?.stop()
+    },
   }
 }
 
-const readResult = async (record: string): Promise<unknown> => {
+const readJson = async (path: string): Promise<unknown> => {
   let content: string
   try {
-    content = await readFile(join(record, 'result.json'), 'utf8')
+    content = await readFile(path, 'utf8')
   } catch (error) {
     if (isRecord(error) && error.code === 'ENOENT') return undefined
     throw error
@@ -438,10 +394,16 @@ const readResult = async (record: string): Promise<unknown> => {
 }
 
 export const readTemporaryStudy = async (record: string): Promise<TemporaryStudyOutcome> => {
-  const state = new StudyState()
-  const events = await readStudyEvents(record)
+  const folder = await runFolder(record)
+  if (!folder)
+    throw new Error(
+      `${record} has no optimization run with ${EVENTS}, so the optimizer stopped before it started. ` +
+        'Run the optimization again.'
+    )
+  const state = new RunState()
+  const events = await readFile(join(folder, EVENTS), 'utf8')
   events.split('\n').forEach((line) => state.push(line))
-  const result = await readResult(record)
+  const result = await readJson(join(folder, RESULT))
   if (isRecord(result)) state.absorbResult(result)
   return state.outcome()
 }

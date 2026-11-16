@@ -20,6 +20,14 @@ import { watchAgentProject } from '../../../src/project/watch.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
 import { pythonExecutable } from '../../fixtures/python-runtime.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
+import {
+  optimizerCandidate,
+  optimizerConfig,
+  optimizerIterationEnd,
+  optimizerPicked,
+  optimizerStop,
+  writeOptimizerRun,
+} from '../../fixtures/optimizer-run.js'
 
 const BASELINE = 'Answer in one word.'
 const WINNER = 'Answer in one word.\nName the capital city.'
@@ -98,50 +106,28 @@ const testingProcess = () =>
     return exit
   })
 
-const studyLines = (best: number): string[] => [
-  JSON.stringify({
-    type: 'study',
-    cases: ['c0', 'c1'],
-    validation: ['c2'],
-    test: ['c3'],
-    width: 4,
-    repetitions: 1,
-    objectives: [{ kind: 'Maximize', metric: 'OutputEvaluator', weight: 1 }],
-  }),
-  JSON.stringify({ type: 'run', iterations: 1, patience: null }),
-  JSON.stringify({
-    type: 'candidate',
+const studyLines = (best: number, values: { baseline?: object; winner?: object } = {}): string[] => [
+  optimizerConfig(),
+  ...optimizerCandidate({
+    id: 'base',
     number: 0,
-    role: 'baseline',
-    params: { instructions: BASELINE },
-    status: 'complete',
-    estimates: { OutputEvaluator: { mean: 0.5, ci: [0.4, 0.6], n: 2 } },
-    best_after: [0],
+    values: { instructions: BASELINE, ...values.baseline },
+    train: 0.5,
   }),
-  JSON.stringify({
-    type: 'candidate',
+  ...optimizerCandidate({
+    id: 'win',
     number: 1,
-    role: 'step',
-    step: 1,
-    params: { instructions: WINNER },
-    status: 'complete',
-    estimates: { OutputEvaluator: { mean: best, ci: [best - 0.1, best + 0.1], n: 2 } },
-    best_after: [1],
+    iteration: 1,
+    values: { instructions: WINNER, ...values.winner },
+    changed: ['instructions'],
+    train: best,
   }),
+  optimizerIterationEnd(['win', 'base']),
 ]
 
 const optimizingProcess = () =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-    const record = flagValue(args, '--record')
-    await writeFileAt(
-      join(record, 'study.jsonl'),
-      [
-        ...studyLines(0.9),
-        JSON.stringify({ type: 'selected', best: [1] }),
-        JSON.stringify({ type: 'finished', best: [1], reason: 'candidates' }),
-        '',
-      ].join('\n')
-    )
+    await writeOptimizerRun(flagValue(args, '--record'), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
     return exit
   })
 
@@ -382,7 +368,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldKeepTheBestSoFarWhenTheUserStopsTheRun', async () => {
     const stopped = vi.fn(async ({ args, signal }: TemporaryEvalsProcess) => {
-      await writeFileAt(join(flagValue(args, '--record'), 'study.jsonl'), [...studyLines(0.8), ''].join('\n'))
+      await writeOptimizerRun(flagValue(args, '--record'), studyLines(0.8))
       await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))
       return { code: 143, stdout: '', stderrTail: ['terminated'] }
     })
@@ -431,7 +417,7 @@ describe('TEMPORARY dev sessions', () => {
       )
       await vi.waitFor(() => expect(reloaded).toContain('instructions.md'), { timeout: 5000 })
       expect(failures).toEqual([])
-      expect(reloaded.filter((path) => path.includes('study.jsonl') || path.includes('strands-dev'))).toEqual([])
+      expect(reloaded.filter((path) => path.includes('events.jsonl') || path.includes('strands-dev'))).toEqual([])
     } finally {
       stopWatching()
     }
@@ -453,7 +439,7 @@ describe('TEMPORARY dev sessions', () => {
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('cancelled'))
     expect(sessions.optimize.snapshot()).toMatchObject({ step: 'cancelled', experiment: experiment.name })
-    expect(JSON.stringify(sessions.optimize.snapshot())).not.toContain('study.jsonl')
+    expect(JSON.stringify(sessions.optimize.snapshot())).not.toContain('events.jsonl')
     expect(notices.map(({ status, text }) => `${status} ${text}`)).toContain(
       `success optimize · ${experiment.name} cancelled · the agent source is unchanged`
     )
@@ -669,18 +655,11 @@ describe('TEMPORARY dev sessions on open', () => {
     'shouldKeepTheReviewAndNameTheChangedFileWhenAnApplyStopsHalfway',
     async () => {
       const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-        const lines = studyLines(0.9).map((line) => {
-          const event = JSON.parse(line) as { type: string; number?: number; params?: Record<string, string> }
-          if (event.type !== 'candidate') return line
-          return JSON.stringify({
-            ...event,
-            params: { ...event.params, effort: event.number === 0 ? 'low' : 'high' },
-          })
-        })
-        await writeFileAt(
-          join(flagValue(args, '--record'), 'study.jsonl'),
-          [...lines, JSON.stringify({ type: 'finished', best: [1], reason: 'candidates' }), ''].join('\n')
-        )
+        await writeOptimizerRun(flagValue(args, '--record'), [
+          ...studyLines(0.9, { baseline: { effort: 'low' }, winner: { effort: 'high' } }),
+          optimizerStop(),
+          optimizerPicked('win'),
+        ])
         return exit
       })
       const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })

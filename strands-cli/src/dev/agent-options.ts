@@ -490,11 +490,21 @@ const renderScalar = (value: AgentOptionScalar, python: boolean): string => {
 
 const camelCase = (option: string): string => option.replace(/_([a-z])/gu, (_, letter: string) => letter.toUpperCase())
 
-const harnessDefault = (option: string): unknown =>
-  (DEFAULT_HARNESS_AGENT_CONFIG as unknown as Record<string, unknown>)[camelCase(option)]
+const UNSET_OPTIONS: Readonly<Record<string, unknown>> = {
+  model: DEFAULT_HARNESS_AGENT_CONFIG.model,
+  effort: 'auto',
+  caching: 'auto',
+  contextManager: 'auto',
+  backgroundTasks: false,
+  skills: true,
+  builtinTools: DEFAULT_HARNESS_AGENT_CONFIG.builtinTools,
+  builtinPlugins: DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins,
+}
+
+export const agentOptionDefault = (option: string): unknown => UNSET_OPTIONS[camelCase(option)]
 
 const currentScalar = (option: string, current: OptionValue | undefined): unknown => {
-  if (!current) return harnessDefault(option)
+  if (!current) return agentOptionDefault(option)
   if (current.value.kind === 'list') return current.value.items.map((item) => item.literal ?? item.text)
   return 'value' in current.value ? current.value.value : current.value.kind === 'null' ? null : undefined
 }

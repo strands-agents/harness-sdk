@@ -367,3 +367,19 @@ describe.skipIf(!existsSync(pythonExecutable))(
     })
   }
 )
+
+describe('unset createHarness options', () => {
+  it('shouldTreatAnUnsetOptionAsItsHarnessDefaultWhenAnEditExpectsThatDefault', async () => {
+    const workspace = await agent(
+      'typescript',
+      "import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ name: 'Demo' })\n"
+    )
+
+    await editAgentOptions(workspace, [
+      { option: 'caching', value: true, expected: 'auto' },
+      { option: 'contextManager', value: false, expected: 'auto' },
+    ])
+
+    expect(await readFile(workspace.entrypoint, 'utf8')).toContain('caching: true, contextManager: false')
+  })
+})

@@ -30,7 +30,7 @@ import {
 } from './experiment-files.js'
 import { TemporaryExperiments } from './experiments-session.js'
 import { announce, plural, type TemporaryHost, type TemporarySessionHost } from './host.js'
-import { Store, tailTemporaryLines, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
+import { Store, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
 import {
   discoverTemporaryModels,
   readTemporaryKnobs,
@@ -51,6 +51,7 @@ import {
 import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import {
   readTemporaryStudy,
+  tailTemporaryRun,
   temporaryStudyReader,
   type TemporaryMeasurement,
   type TemporaryStudyOutcome,
@@ -463,7 +464,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
           onStart: (path) => {
             record = path
             reader = temporaryStudyReader({ run: basename(path), record: path, startedAt, labels })
-            tail = tailTemporaryLines(join(path, 'study.jsonl'), (line) => {
+            tail = tailTemporaryRun(path, (line) => {
               reader?.push(line)
               show()
             })
