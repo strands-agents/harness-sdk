@@ -58,6 +58,27 @@ describe('adapters', () => {
       expect((block as AudioBlock | DocumentBlock).format).toBe(format)
     })
 
+    it('treats unsupported audio MIME types as documents', () => {
+      const [block] = partsToContentBlocks([
+        { kind: 'file', file: { bytes: encodeBase64('audio'), mimeType: 'audio/aiff' } },
+      ])
+
+      expect(block).toBeInstanceOf(DocumentBlock)
+      expect(block).not.toBeInstanceOf(AudioBlock)
+    })
+
+    it('round trips audio/x-m4a as AudioBlock with audio/mp4', () => {
+      const blocks = partsToContentBlocks([
+        { kind: 'file', file: { bytes: encodeBase64('audio'), mimeType: 'audio/x-m4a' } },
+      ])
+
+      expect(blocks[0]).toBeInstanceOf(AudioBlock)
+      expect((blocks[0] as AudioBlock).format).toBe('m4a')
+      expect(contentBlocksToParts(blocks)).toStrictEqual([
+        { kind: 'file', file: { bytes: encodeBase64('audio'), mimeType: 'audio/mp4' } },
+      ])
+    })
+
     it.each(['audio/x-wav', 'audio/wave'])('canonicalizes %s to audio/wav on round trip', (mimeType) => {
       const blocks = partsToContentBlocks([{ kind: 'file', file: { bytes: encodeBase64('audio'), mimeType } }])
 

@@ -131,7 +131,12 @@ function _getFileType(mimeType: string | undefined): 'audio' | 'image' | 'video'
   }
 
   const lower = _normalizeMimeType(mimeType)
-  if (lower.startsWith('audio/')) return 'audio'
+  if (lower.startsWith('audio/')) {
+    // AudioBlock only accepts known formats; unrecognized audio falls back to a document.
+    if (toAudioMediaFormat(lower)) return 'audio'
+    logger.warn(`mime_type=<${mimeType}> | unsupported audio MIME type, treating as document`)
+    return 'unknown'
+  }
   if (lower.startsWith('image/')) return 'image'
   if (lower.startsWith('video/')) return 'video'
   if (lower.startsWith('text/') || lower.startsWith('application/')) return 'document'
@@ -167,15 +172,25 @@ function _getFormat(mimeType: string | undefined, fileType: string): string {
   return 'txt'
 }
 
+/**
+ * Strips MIME parameters (e.g. `; charset=utf-8`) and lowercases the type.
+ *
+ * @param mimeType - The raw MIME type string
+ * @returns The bare, lowercased MIME type
+ */
 function _normalizeMimeType(mimeType: string): string {
   return mimeType.split(';', 1)[0]?.trim().toLowerCase() ?? ''
 }
 
 /**
  * Converts an AudioBlock with a byte source to an A2A FilePart.
+ *
+ * @param block - The audio block
+ * @returns A2A FilePart, or undefined if the source type is unsupported
  */
 function _audioBlockToFilePart(block: AudioBlock): Part | undefined {
   if (block.source.type !== 'audioSourceBytes') {
+    logger.warn(`source_type=<${block.source.type}> | unsupported audio source, skipping A2A conversion`)
     return undefined
   }
 

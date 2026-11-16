@@ -112,13 +112,18 @@ describe('audio MIME conversions', () => {
 
   it.each([
     ['audio/mpeg', 'mp3'],
+    ['audio/mp3', 'mp3'],
     ['audio/opus', 'opus'],
     ['audio/wav', 'wav'],
     ['audio/x-wav', 'wav'],
     ['audio/wave', 'wav'],
+    ['audio/vnd.wave', 'wav'],
     ['audio/aac', 'aac'],
     ['audio/flac', 'flac'],
+    ['audio/x-flac', 'flac'],
     ['audio/mp4', 'mp4'],
+    ['audio/m4a', 'm4a'],
+    ['audio/x-m4a', 'm4a'],
     ['audio/ogg', 'ogg'],
     ['audio/x-matroska', 'mkv'],
     ['audio/x-aac', 'x-aac'],
