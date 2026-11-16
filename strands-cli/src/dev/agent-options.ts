@@ -186,6 +186,10 @@ const pythonInterpreter = (root: string): string => {
 
 const locatePython = (source: string, interpreter: string): Promise<PythonLocation> =>
   new Promise((resolvePromise, reject) => {
+    const fail = (reason: string): void =>
+      reject(
+        new AgentOptionsNotEditable(`Python 3.8 or newer could not read the agent source (${interpreter}): ${reason}`)
+      )
     const child = spawn(interpreter, ['-I', '-c', PYTHON_LOCATOR], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: PYTHON_TIMEOUT_MS,
@@ -194,18 +198,14 @@ const locatePython = (source: string, interpreter: string): Promise<PythonLocati
     let errors = ''
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => (errors += chunk))
-    child.once('error', reject)
+    child.stdin.once('error', () => undefined)
+    child.once('error', (error) => fail(error.message))
     child.once('close', (code) => {
-      if (code !== 0)
-        return reject(
-          new AgentOptionsNotEditable(
-            `Python 3.8 or newer could not read the agent source (${interpreter}): ${errors.trim().split('\n').at(-1) ?? code}`
-          )
-        )
+      if (code !== 0) return fail(errors.trim().split('\n').at(-1) || `exit code ${code}`)
       try {
         resolvePromise(JSON.parse(output) as PythonLocation)
-      } catch (error) {
-        reject(error)
+      } catch {
+        fail('it returned no result')
       }
     })
     child.stdin.end(source)

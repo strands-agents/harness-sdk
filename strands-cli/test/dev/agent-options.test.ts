@@ -143,6 +143,22 @@ agent = create_harness(
 )
 `
 
+describe('reading Python source without an interpreter', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('shouldReportThatTheSourceCannotBeReadWhenNoPythonCanStart', async () => {
+    vi.stubEnv('PYTHON', join(await temporaryDirectory(), 'missing-python'))
+    const workspace = await agent('python', GENERATED_PYTHON)
+
+    await expect(saveAgentOptions(workspace, { effort: 'high' })).rejects.toThrow(AgentOptionsNotEditable)
+    expect(await readAgentModel(workspace)).toBeUndefined()
+
+    expect(await readFile(workspace.entrypoint, 'utf8')).toBe(GENERATED_PYTHON)
+  })
+})
+
 describe.skipIf(!existsSync(pythonExecutable))('saving agent options into Python source', () => {
   beforeEach(() => {
     vi.stubEnv('PYTHON', pythonExecutable)
