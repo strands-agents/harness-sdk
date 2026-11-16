@@ -359,18 +359,22 @@ class GeminiModel(Model):
         """
         if not tool_specs and not self.config.get("gemini_tools"):
             return None
-        tools = [
-            genai.types.Tool(
-                function_declarations=[
-                    genai.types.FunctionDeclaration(
-                        description=tool_spec["description"],
-                        name=tool_spec["name"],
-                        parameters_json_schema=tool_spec["inputSchema"]["json"],
-                    )
-                    for tool_spec in tool_specs or []
-                ],
-            ),
-        ]
+        tools: list[genai.types.Tool | Any] = []
+        # Only send the function declaration Tool when there are tool specs: Vertex AI rejects a Tool with no
+        # field set, which is what an empty function_declarations list serializes to.
+        if tool_specs:
+            tools.append(
+                genai.types.Tool(
+                    function_declarations=[
+                        genai.types.FunctionDeclaration(
+                            description=tool_spec["description"],
+                            name=tool_spec["name"],
+                            parameters_json_schema=tool_spec["inputSchema"]["json"],
+                        )
+                        for tool_spec in tool_specs
+                    ],
+                )
+            )
         if self.config.get("gemini_tools"):
             tools.extend(self.config["gemini_tools"])
         return tools
