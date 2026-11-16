@@ -36,9 +36,18 @@ describe('homepage machine-readable metadata', () => {
   it('leads with a primary build CTA instead of an install row', () => {
     const banner = homepage.querySelector('.banner')
     const primaryCta = banner?.querySelector('.banner__link--primary')
+    const githubCta = banner?.querySelector('.banner__link--github')
 
     expect(primaryCta?.text.trim()).toBe('Build An Agent')
     expect(primaryCta?.getAttribute('href')).toBe('#build-an-agent')
+    expect(githubCta?.getAttribute('href')).toBe('https://github.com/strands-agents')
+    expect(githubCta?.querySelector('.banner__github-icon svg')).not.toBeNull()
+    const githubStars = githubCta?.querySelector('.banner__github-stars')?.text.trim()
+    expect(githubStars).toMatch(/^\d{1,3}(,\d{3})*\+$/)
+    expect(githubCta?.text.trim()).toBe(githubStars)
+    expect(githubCta?.getAttribute('aria-label')).toBe(`View Strands on GitHub, ${githubStars} stars`)
+    expect(homepage.querySelector('.strands-nav__github')).not.toBeNull()
+    expect(homepage.querySelector('.strands-nav__github-stars')).toBeNull()
     expect(banner?.querySelector('[data-install]')).toBeNull()
     expect(banner?.querySelector('[data-install-copy]')).toBeNull()
   })
@@ -91,8 +100,8 @@ describe('homepage machine-readable metadata', () => {
     expect(sections[0]?.getAttribute('id')).toBe('build-an-agent')
     expect(sections[0]?.getAttribute('aria-labelledby')).toBe('toolkit-harness-title')
     expect(sections[0]?.querySelector('.toolkit__section-title')).toBeNull()
-    expect(sections[1]?.querySelector('.toolkit__section-title')?.tagName).toBe('H2')
-    expect(sections[1]?.querySelector('.toolkit__section-title')?.text.trim()).toBe('Control and improve your agent')
+    expect(sections[1]?.getAttribute('aria-label')).toBe('Control and improve your agent')
+    expect(sections[1]?.querySelector('.toolkit__section-title')).toBeNull()
     expect(buildCard).not.toBeNull()
     expect(harness?.querySelector('h2')?.getAttribute('id')).toBe('toolkit-harness-title')
     expect(harness?.querySelector('h2')?.text.trim()).toBe('/harness')
@@ -100,18 +109,16 @@ describe('homepage machine-readable metadata', () => {
     expect(harness?.querySelector('.toolkit__build-description')?.text.trim()).toBe(
       'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.'
     )
-    expect(harness?.querySelector('.toolkit__build-action')?.text.trim()).toBe('Start with Harness')
+    expect(harness?.querySelector('.toolkit__build-action')?.text.trim()).toBe('Build an agent')
     expect(harness?.querySelector('.toolkit__build-action')?.getAttribute('href')).toBe(
       configuredPathWithBase('/docs/user-guide/harness/')
     )
     expect(harness?.querySelector('.toolkit__build-action')?.getAttribute('aria-label')).toBe(
-      'Start building with Strands harness'
+      'Build an agent with Strands harness'
     )
 
     expect(sdk?.querySelector('h3')?.text.trim()).toBe('/harness-sdk')
-    expect(sdk?.querySelector('.toolkit__build-sdk-relation')?.text.trim()).toBe(
-      'Harness is built on the Strands Harness SDK.'
-    )
+    expect(sdk?.querySelector('.toolkit__build-sdk-relation')?.text.trim()).toBe('Built on')
     expect(sdk?.querySelector('.toolkit__build-sdk-title')).toBeNull()
     expect(sdk?.querySelector('.toolkit__build-sdk-description')).toBeNull()
     expect(sdk?.querySelector('.toolkit__build-sdk-action')?.text.trim()).toBe('Build with primitives')
@@ -156,17 +163,17 @@ describe('homepage machine-readable metadata', () => {
     const toolsSection = homepage.querySelectorAll('.toolkit__section')[1]
     const products = toolsSection?.querySelectorAll('.toolkit__supporting-product') ?? []
     const cards = products.map((product) => product.querySelector('.toolkit__card'))
+    const connectors = toolsSection?.querySelector('.toolkit__supporting-connectors')
+
+    expect(connectors?.getAttribute('aria-hidden')).toBe('true')
+    expect(connectors?.querySelectorAll('.toolkit__supporting-connector')).toHaveLength(3)
 
     expect(
       cards.map((card) => card?.querySelectorAll('.toolkit__card-slug').map((heading) => heading.tagName))
-    ).toEqual([
-      ['H3', 'H3'],
-      ['H3', 'H3'],
-      ['H3', 'H3'],
-    ])
+    ).toEqual([['H3'], ['H3'], ['H3']])
     expect(
       products.map((product) => ({
-        role: product.querySelector('.toolkit__supporting-role')?.text.trim(),
+        role: product.querySelector(':scope > .toolkit__supporting-role')?.text.trim(),
         slug: product.querySelector('.toolkit__card-slug')?.text.trim(),
         description: product.querySelector('.toolkit__card-desc')?.text.trim(),
         action: product.querySelector('.toolkit__card-read')?.text.trim(),
@@ -196,6 +203,38 @@ describe('homepage machine-readable metadata', () => {
     expect(toolsSection?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
     expect(
       cards.map((card) => {
+        const details = card?.querySelector('.toolkit__card-expanded')
+        return {
+          languages: details?.querySelectorAll('[data-lang-code]').map((panel) => panel.getAttribute('data-lang-code')),
+          copyLabel: details?.querySelector('.toolkit__card-terminal-copy')?.getAttribute('aria-label'),
+          extraContent: details?.querySelector(
+            '.toolkit__card-slug, .toolkit__card-expanded-text, .toolkit__card-view-more'
+          ),
+          hasCodeIcon: Boolean(card?.querySelector('.toolkit__card-open-icon svg')),
+        }
+      })
+    ).toEqual([
+      {
+        languages: ['policy'],
+        copyLabel: 'Copy /box code',
+        extraContent: null,
+        hasCodeIcon: true,
+      },
+      {
+        languages: ['python'],
+        copyLabel: 'Copy /evals code',
+        extraContent: null,
+        hasCodeIcon: true,
+      },
+      {
+        languages: ['shell'],
+        copyLabel: 'Copy /decider code',
+        extraContent: null,
+        hasCodeIcon: true,
+      },
+    ])
+    expect(
+      cards.map((card) => {
         const toggle = card?.querySelector('[data-toggle]')
         const details = card?.querySelector('.toolkit__card-expanded')
         return {
@@ -210,19 +249,19 @@ describe('homepage machine-readable metadata', () => {
         expanded: 'false',
         controls: 'toolkit-card-box-details',
         detailsId: 'toolkit-card-box-details',
-        toggleLabel: 'Toggle /box details',
+        toggleLabel: 'Show /box code example',
       },
       {
         expanded: 'false',
         controls: 'toolkit-card-evals-details',
         detailsId: 'toolkit-card-evals-details',
-        toggleLabel: 'Toggle /evals details',
+        toggleLabel: 'Show /evals code example',
       },
       {
         expanded: 'false',
         controls: 'toolkit-card-decider-details',
         detailsId: 'toolkit-card-decider-details',
-        toggleLabel: 'Toggle /decider details',
+        toggleLabel: 'Show /decider code example',
       },
     ])
     expect(new Set(cards.map((card) => card?.querySelector('.toolkit__card-expanded')?.getAttribute('id'))).size).toBe(

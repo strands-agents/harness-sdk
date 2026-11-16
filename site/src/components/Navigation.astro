@@ -8,14 +8,12 @@ import frogHop from '../assets/nav/frog-hop.svg?raw';
 import wordmark from '../assets/nav/wordmark.svg?raw';
 import NavMenu from './NavMenu.astro';
 import LanguageToggle from './LanguageToggle.astro';
-import { getStarCount } from '../util/github';
 import { products } from '../config/navbar';
 import { pathWithBase } from '../util/links';
 import { getProductNav, normalizedSidebarToProductNav } from '../util/product-nav';
 import { isSampleGuidePath } from '../util/sample-guides';
 import MobileNavTree from './MobileNavTree.astro';
 
-const stars = await getStarCount();
 const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
 const isExamplesPage = isSampleGuidePath(currentPath);
 
@@ -97,12 +95,11 @@ const learnCategories = [
         <a
           href="https://github.com/strands-agents"
           class="strands-nav__icon-link strands-nav__github"
-          aria-label={`GitHub — ${stars} stars`}
+          aria-label="GitHub"
           target="_blank"
           rel="noopener"
         >
           <span class="strands-nav__github-icon" set:html={github} />
-          <span class="strands-nav__github-stars">{stars}</span>
         </a>
         <a
           href="https://discord.gg/strands"
@@ -393,8 +390,7 @@ const learnCategories = [
       padding: 6px 8px;
     }
 
-    .strands-nav__search-label,
-    .strands-nav__github-stars {
+    .strands-nav__search-label {
       display: none;
     }
   }
@@ -616,14 +612,6 @@ const learnCategories = [
 
   .strands-nav__github-icon {
     display: inline-flex;
-  }
-
-  .strands-nav__github-stars {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 13px;
-    line-height: 1;
-    color: var(--nav-fg);
-    white-space: nowrap;
   }
 
   .strands-nav__collapsed {
