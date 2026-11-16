@@ -736,6 +736,18 @@ describe('OpenAIDecisionModel', () => {
     })
   })
 
+  it('reports the model id the API echoes over the configured one', async () => {
+    const fetch = fakeFetch({
+      model: 'gpt-6-luna-2026-11',
+      answers: [{ type: 'predicate', name: 'q', probability: 0.99 }],
+    })
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+    expect(result.metadata.modelId).toBe('gpt-6-luna-2026-11')
+  })
+
   it('throws when a refused question disabled uncertainty', async () => {
     const fetch = fakeFetch({ answers: [{ type: 'refusal', name: 'q' }] })
     const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
