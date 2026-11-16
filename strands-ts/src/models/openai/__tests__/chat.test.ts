@@ -2147,18 +2147,57 @@ describe('OpenAIModel', () => {
   })
 
   describe('error handling', () => {
-    it('throws ContextWindowOverflowError for structured error with code', async () => {
+    it.each([
+      [
+        'throws ContextWindowOverflowError for structured error with code',
+        Object.assign(new Error('Context length exceeded'), { code: 'context_length_exceeded' }),
+        ContextWindowOverflowError,
+      ],
+      [
+        'throws ContextWindowOverflowError for error with message pattern',
+        new Error('maximum context length exceeded'),
+        ContextWindowOverflowError,
+      ],
+      [
+        'throws ContextWindowOverflowError for APIError instance',
+        // Simulate APIError from openai package
+        Object.assign(new Error('Context length exceeded'), {
+          name: 'APIError',
+          status: 400,
+          code: 'context_length_exceeded',
+        }),
+        ContextWindowOverflowError,
+      ],
+      [
+        'throws ModelThrottledError for HTTP 429 status',
+        Object.assign(new Error('Too many requests'), { status: 429 }),
+        ModelThrottledError,
+      ],
+      [
+        'throws ModelThrottledError for rate_limit_exceeded error code',
+        Object.assign(new Error('Rate limit reached'), { code: 'rate_limit_exceeded' }),
+        ModelThrottledError,
+      ],
+      [
+        'throws ModelThrottledError for error message containing rate limit pattern',
+        new Error('You have exceeded your rate limit'),
+        ModelThrottledError,
+      ],
+      [
+        'throws ModelThrottledError for too many requests message',
+        new Error('Too many requests, please slow down'),
+        ModelThrottledError,
+      ],
+    ])('%s', async (_name, error, expected) => {
       const mockClient = {
         chat: {
           completions: {
             create: vi.fn(async () => {
-              const error: any = new Error('Context length exceeded')
-              error.code = 'context_length_exceeded'
               throw error
             }),
           },
         },
-      } as any
+      } as unknown as OpenAI
 
       const provider = new OpenAIModel({ api: 'chat', client: mockClient })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
@@ -2167,56 +2206,7 @@ describe('OpenAIModel', () => {
         for await (const _ of provider.stream(messages)) {
           // Should not reach here
         }
-      }).rejects.toThrow(ContextWindowOverflowError)
-    })
-
-    it('throws ContextWindowOverflowError for error with message pattern', async () => {
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw new Error('maximum context length exceeded')
-            }),
-          },
-        },
-      } as any
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ContextWindowOverflowError)
-    })
-
-    it('throws ContextWindowOverflowError for APIError instance', async () => {
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              // Simulate APIError from openai package
-              const error: any = new Error('Context length exceeded')
-              error.name = 'APIError'
-              error.status = 400
-              error.code = 'context_length_exceeded'
-              // Make it behave like an APIError instance
-              Object.setPrototypeOf(error, Error.prototype)
-              throw error
-            }),
-          },
-        },
-      } as any
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ContextWindowOverflowError)
+      }).rejects.toThrow(expected)
     })
 
     it('passes through other errors unchanged', async () => {
@@ -2256,96 +2246,6 @@ describe('OpenAIModel', () => {
           // Stream will be interrupted
         }
       }).rejects.toThrow('Network connection lost')
-    })
-
-    it('throws ModelThrottledError for HTTP 429 status', async () => {
-      const originalError: Error & { status?: number } = new Error('Too many requests')
-      originalError.status = 429
-
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw originalError
-            }),
-          },
-        },
-      } as unknown as OpenAI
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ModelThrottledError)
-    })
-
-    it('throws ModelThrottledError for rate_limit_exceeded error code', async () => {
-      const originalError: Error & { code?: string } = new Error('Rate limit reached')
-      originalError.code = 'rate_limit_exceeded'
-
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw originalError
-            }),
-          },
-        },
-      } as unknown as OpenAI
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ModelThrottledError)
-    })
-
-    it('throws ModelThrottledError for error message containing rate limit pattern', async () => {
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw new Error('You have exceeded your rate limit')
-            }),
-          },
-        },
-      } as unknown as OpenAI
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ModelThrottledError)
-    })
-
-    it('throws ModelThrottledError for too many requests message', async () => {
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw new Error('Too many requests, please slow down')
-            }),
-          },
-        },
-      } as unknown as OpenAI
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ModelThrottledError)
     })
 
     it('preserves original error as cause in ModelThrottledError', async () => {
