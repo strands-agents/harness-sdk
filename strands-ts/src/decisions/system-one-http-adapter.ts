@@ -268,16 +268,20 @@ function errorDetail(body: unknown): string | undefined {
 
 /**
  * Returns the System One result from decisionapi.net's `{ code, message, data: { result } }`
- * envelope, or the response itself when it is not enveloped.
+ * envelope, or the response itself when it is not enveloped. The envelope does not carry the
+ * model, so the unwrapped result reports `requestedModelId` unless it names its own.
  */
-function unwrapEnvelope(response: Record<string, unknown>): Record<string, unknown> {
-  if (!('data' in response)) return response
+function unwrapEnvelope(
+  response: Record<string, unknown>,
+  requestedModelId: string | undefined
+): Record<string, unknown> {
+  if (!('code' in response) && !('data' in response)) return response
   if (response['code'] !== 0) {
     const detail = typeof response['message'] === 'string' ? `: ${response['message']}` : ''
     throw new ModelError(`decision provider returned error code ${String(response['code'])}${detail}`)
   }
   const data = requireRecord(response['data'], 'decision provider data')
-  return requireRecord(data['result'], 'decision provider result')
+  return { model: requestedModelId, ...requireRecord(data['result'], 'decision provider result') }
 }
 
 function parseResult<const Q extends Record<string, Question>>(
@@ -292,9 +296,8 @@ function parseResult<const Q extends Record<string, Question>>(
   confidence: { [K in keyof Q]: number }
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
 } {
-  const response = unwrapEnvelope(requireRecord(payload, 'decision provider response'))
-  // decisionapi.net does not echo the model, so fall back to the one requested.
-  const modelId = requireNonEmptyString(response['model'] ?? requestedModelId, 'decision provider model')
+  const response = unwrapEnvelope(requireRecord(payload, 'decision provider response'), requestedModelId)
+  const modelId = requireNonEmptyString(response['model'], 'decision provider model')
   const rawAnswers = requireRecord(response['answers'], 'decision provider answers')
   const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
   const probabilities = {} as { [K in keyof Q]: Readonly<Record<string, number>> }

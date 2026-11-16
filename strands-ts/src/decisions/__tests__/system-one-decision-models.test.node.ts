@@ -346,6 +346,17 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       )
     })
 
+    it('rejects a flat response that omits the model', async () => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ answers: { q: { type: 'noul', noul: 1 } } }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /model must be a non-empty string/
+      )
+    })
+
     it('rejects a Choice answer whose selection is not the most probable', async () => {
       const decision = create({
         apiKey: 'test-key',
@@ -513,14 +524,14 @@ describe('DecisionsAPIDecisionModel', () => {
       expect(result.metadata.modelId).toBe('~typesafe/jev-latest')
     })
 
-    it('rejects an enveloped response with a non-zero code', async () => {
+    it('rejects an enveloped error body sent with HTTP 200', async () => {
       const decision = new DecisionsAPIDecisionModel({
         apiKey: 'test-key',
-        fetch: fakeFetch({ code: 1, message: 'insufficient credits', data: null }),
+        fetch: fakeFetch({ code: -1, message: 'Invalid API key.' }),
       })
 
       await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
-        /error code 1: insufficient credits/
+        /error code -1: Invalid API key\./
       )
     })
   })

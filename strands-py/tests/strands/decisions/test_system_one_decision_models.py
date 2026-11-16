@@ -540,6 +540,14 @@ class TestAsk:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
     @pytest.mark.asyncio
+    async def test_rejects_a_flat_response_that_omits_the_model(self, provider: _ProviderCase):
+        client = _fake_client({"answers": {"q": {"type": "noul", "noul": 1}}})
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+
+        with pytest.raises(StructuredOutputException, match="model must be a non-empty string"):
+            await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    @pytest.mark.asyncio
     async def test_rejects_a_choice_answer_that_is_not_the_most_probable(self, provider: _ProviderCase):
         client = _fake_client(
             _response_body(
@@ -754,11 +762,12 @@ async def test_decisions_api_reads_the_enveloped_response_and_reports_the_reques
 
 
 @pytest.mark.asyncio
-async def test_decisions_api_rejects_an_enveloped_response_with_a_non_zero_code():
-    payload = {"code": 1, "message": "insufficient credits", "data": None}
+@pytest.mark.parametrize("code", [-1, False], ids=["negative", "bool"])
+async def test_decisions_api_rejects_an_enveloped_error_body_sent_with_http_200(code: Any):
+    payload = {"code": code, "message": "Invalid API key."}
     decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload))
 
-    with pytest.raises(StructuredOutputException, match="error code 1: insufficient credits"):
+    with pytest.raises(StructuredOutputException, match=rf"error code {code}: Invalid API key\."):
         await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
 

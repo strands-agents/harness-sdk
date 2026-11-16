@@ -256,30 +256,28 @@ def _error_detail(body: Any) -> str | None:
     return None
 
 
-def _unwrap_envelope(response: dict[str, Any]) -> dict[str, Any]:
+def _unwrap_envelope(response: dict[str, Any], requested_model_id: str) -> dict[str, Any]:
     """Return the result from decisionapi.net's ``{code, message, data: {result}}`` envelope.
 
-    Responses that are not enveloped are returned unchanged.
+    Responses that are not enveloped are returned unchanged. The envelope does not carry the
+    model, so the unwrapped result reports ``requested_model_id`` unless it names its own.
     """
-    if "data" not in response:
+    if "code" not in response and "data" not in response:
         return response
-    if response.get("code") != 0:
+    code = response.get("code")
+    if isinstance(code, bool) or code != 0:
         message = response.get("message")
         detail = f": {message}" if isinstance(message, str) else ""
-        raise StructuredOutputException(f"decision provider returned error code {response.get('code')}{detail}")
+        raise StructuredOutputException(f"decision provider returned error code {code}{detail}")
     data = _require_record(response.get("data"), "decision provider data")
-    return _require_record(data.get("result"), "decision provider result")
+    return {"model": requested_model_id, **_require_record(data.get("result"), "decision provider result")}
 
 
 def _parse_result(
     payload: Any, questions: dict[str, Question], default_min_confidence: float, requested_model_id: str
 ) -> _ParsedResult:
-    response = _unwrap_envelope(_require_record(payload, "decision provider response"))
-    # decisionapi.net does not echo the model, so fall back to the one requested.
-    raw_model_id = response.get("model")
-    model_id = _require_non_empty_string(
-        requested_model_id if raw_model_id is None else raw_model_id, "decision provider model"
-    )
+    response = _unwrap_envelope(_require_record(payload, "decision provider response"), requested_model_id)
+    model_id = _require_non_empty_string(response.get("model"), "decision provider model")
     raw_answers = _require_record(response.get("answers"), "decision provider answers")
 
     answers: dict[str, bool | str | Uncertain] = {}
