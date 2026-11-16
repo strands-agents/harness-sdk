@@ -166,6 +166,7 @@ export interface TestSession {
   snapshot(): TestState
   run(experiments: readonly ExperimentSummary[]): void
   rerunFailed(path: string): void
+  stop(path: string): void
 }
 
 export type KnobKey = 'instructions' | 'effort' | 'tools'

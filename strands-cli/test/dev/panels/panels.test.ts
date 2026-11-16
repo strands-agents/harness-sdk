@@ -66,6 +66,7 @@ const testSession = (runs: TestState['runs'] = [], generations: Partial<Experime
       snapshot: states.snapshot,
       run: vi.fn(),
       rerunFailed: vi.fn(),
+      stop: vi.fn(),
     } satisfies TestSession,
   }
 }
@@ -124,6 +125,17 @@ describe('TestPanel', () => {
     expect(text()).toMatch(/☐ cities\s+6 cases · not run yet/u)
     expect(text()).toContain('generating · 8/20 cases')
     expect(text()).not.toContain('broken')
+  })
+
+  it('shouldStopTheRunWhenTheUserPressesSInTheProgressView', async () => {
+    const { session } = testSession(withRuns())
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    await press('\r')
+    expect(text()).toContain('s stop the run')
+    await press('s')
+
+    expect(session.stop).toHaveBeenCalledWith(capital.path)
   })
 
   it('shouldRunTheSelectedExperimentsWhenTheUserSelectsSomeAndPressesEnter', async () => {

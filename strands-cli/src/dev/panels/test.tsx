@@ -61,7 +61,16 @@ export const TestPanel = (props: TestPanelProps): ReactElement => {
   const [open, setOpen] = useState<string | undefined>()
   const shown = tests.runs.find(({ experiment }) => experiment.path === open)
   const back = (): void => setOpen(undefined)
-  if (shown?.run.status === 'running') return <RunningView {...props} shown={shown} run={shown.run} onBack={back} />
+  if (shown?.run.status === 'running')
+    return (
+      <RunningView
+        {...props}
+        shown={shown}
+        run={shown.run}
+        onBack={back}
+        onStop={() => session.stop(shown.experiment.path)}
+      />
+    )
   if (shown?.run.status === 'done')
     return (
       <ResultsView
@@ -245,15 +254,18 @@ const RunningView = ({
   shown,
   run,
   onBack,
+  onStop,
 }: TestPanelProps & {
   shown: ExperimentRun
   run: Extract<TestRun, { status: 'running' }>
   onBack: () => void
+  onStop: () => void
 }): ReactElement => {
   const elapsed = useElapsed(run.startedAt)
   const spinner = useSpinner(true, true)
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (key.escape) onBack()
+    else if (input === 's') onStop()
   })
   const judging = run.done >= run.cases
   return (
@@ -275,7 +287,7 @@ const RunningView = ({
           : `  ${spinner} Running your agent on each case. The evaluators score the answers at the end.`}
       </Line>
       <Fill />
-      <KeyHints hints={['Esc back to the list', 'the run goes on']} />
+      <KeyHints hints={['s stop the run', 'Esc back to the list', 'the run goes on']} />
     </>
   )
 }
