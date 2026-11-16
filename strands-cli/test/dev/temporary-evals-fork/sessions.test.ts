@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -18,6 +18,7 @@ import {
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { watchAgentProject } from '../../../src/project/watch.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
+import { pythonExecutable } from '../../fixtures/python-runtime.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const BASELINE = 'Answer in one word.'
@@ -601,43 +602,52 @@ describe('TEMPORARY dev sessions on open', () => {
     ])
   })
 
-  it('shouldKeepTheReviewAndNameTheChangedFileWhenAnApplyStopsHalfway', async () => {
-    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      const lines = studyLines(0.9).map((line) => {
-        const event = JSON.parse(line) as { type: string; number?: number; params?: Record<string, string> }
-        if (event.type !== 'candidate') return line
-        return JSON.stringify({
-          ...event,
-          params: { ...event.params, effort: event.number === 0 ? 'low' : 'high' },
+  it.skipIf(!existsSync(pythonExecutable))(
+    'shouldKeepTheReviewAndNameTheChangedFileWhenAnApplyStopsHalfway',
+    async () => {
+      const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+        const lines = studyLines(0.9).map((line) => {
+          const event = JSON.parse(line) as { type: string; number?: number; params?: Record<string, string> }
+          if (event.type !== 'candidate') return line
+          return JSON.stringify({
+            ...event,
+            params: { ...event.params, effort: event.number === 0 ? 'low' : 'high' },
+          })
         })
+        await writeFileAt(
+          join(flagValue(args, '--record'), 'study.jsonl'),
+          [...lines, JSON.stringify({ type: 'finished', best: [1], reason: 'candidates' }), ''].join('\n')
+        )
+        return exit
       })
+      const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })
+      const projectPython = temporaryVenvPython(join(workspace.root, '.venv'))
+      await rm(projectPython)
+      await symlink(pythonExecutable, projectPython)
+      const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+      sessions.optimize.plan(experiment)
+      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+      sessions.optimize.start()
+      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
       await writeFileAt(
-        join(flagValue(args, '--record'), 'study.jsonl'),
-        [...lines, JSON.stringify({ type: 'finished', best: [1], reason: 'candidates' }), ''].join('\n')
+        join(workspace.root, 'agent.py'),
+        'agent = create_harness(instructions=open("instructions.md").read())\n'
       )
-      return exit
-    })
-    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    await writeFileAt(
-      join(workspace.root, 'agent.py'),
-      'agent = create_harness(instructions=open("instructions.md").read())\n'
-    )
 
-    sessions.optimize.apply()
-    await vi.waitFor(() =>
-      expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
-    )
+      sessions.optimize.apply()
+      await vi.waitFor(() =>
+        expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+      )
 
-    expect(sessions.optimize.snapshot()).toMatchObject({
-      step: 'review',
-      review: { applyError: expect.stringContaining('agent.py') },
-    })
-    expect(await readFile(join(workspace.root, 'instructions.md'), 'utf8')).toBe(`${WINNER}\n`)
-    expect(notices.at(-1)).toMatchObject({ status: 'error', text: expect.stringContaining('applied instructions.md') })
-  })
+      expect(sessions.optimize.snapshot()).toMatchObject({
+        step: 'review',
+        review: { applyError: expect.stringContaining('agent.py') },
+      })
+      expect(await readFile(join(workspace.root, 'instructions.md'), 'utf8')).toBe(`${WINNER}\n`)
+      expect(notices.at(-1)).toMatchObject({
+        status: 'error',
+        text: expect.stringContaining('applied instructions.md'),
+      })
+    }
+  )
 })

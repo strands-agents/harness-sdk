@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   locateTemporaryEdit,
@@ -9,6 +10,7 @@ import {
 } from '../../../src/dev/temporary-evals-fork/apply.js'
 import type { KnobKey } from '../../../src/dev/panels/model.js'
 import { editFile } from '../../../src/dev/file-edits.js'
+import { pythonExecutable } from '../../fixtures/python-runtime.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const INSTRUCTIONS = 'You are a refund desk.\nBe kind.'
@@ -25,8 +27,8 @@ const project = async (files: Record<string, string>): Promise<string> => {
   return root
 }
 
-const locate = (root: string, entrypoint: string, before: string, knob: KnobKey = 'instructions') =>
-  locateTemporaryEdit({ root, entrypoint: join(root, entrypoint), knob, before })
+const locate = (root: string, entrypoint: string, before: string, knob: KnobKey = 'instructions', after?: string) =>
+  locateTemporaryEdit({ root, entrypoint: join(root, entrypoint), knob, before, ...(after ? { after } : {}) })
 
 const target = (location: TemporaryEditLocation): TemporaryEditTarget => {
   if ('unavailable' in location) throw new Error(`expected a target, got: ${location.unavailable}`)
@@ -356,72 +358,119 @@ describe('TEMPORARY apply an optimized setting', () => {
   })
 
   it.each([
-    { form: 'PythonDoubleQuotes', setting: (level: string) => `effort="${level}"` },
-    { form: 'PythonSingleQuotes', setting: (level: string) => `effort='${level}'` },
-    { form: 'TypeScriptSingleQuotes', setting: (level: string) => `effort: '${level}'` },
-    { form: 'SpacedDoubleQuotes', setting: (level: string) => `effort : "${level}"` },
-  ])('shouldReplaceOnlyTheEffortWhenTheEntrypointUses$form', async ({ setting }) => {
-    const source = (level: string) =>
-      `agent = create_harness(model="bedrock/model", reasoning_effort="auto", ${setting(level)})\n`
-    const root = await project({ 'agent.py': source('auto') })
-
-    const location = target(await locate(root, 'agent.py', 'auto', 'effort'))
-    await location.write('high')
-
-    expect(location.target).toBe('agent.py')
-    expect(await read(root, 'agent.py')).toBe(source('high'))
-  })
-
-  it.each([
-    { name: 'NoEffort', source: 'agent = create_harness(model="bedrock/model")\n' },
-    { name: 'TwoEfforts', source: 'A = dict(effort="auto")\nagent = create_harness(effort="auto")\n' },
-    { name: 'AnEffortVariable', source: 'agent = create_harness(effort=EFFORT)\n' },
     {
-      name: 'OnlyACommentedEffort',
-      source: '# effort="auto" is the default\nagent = create_harness(effort=os.environ.get("EFFORT", "auto"))\n',
-    },
-    {
-      name: 'AnEffortInsideAnotherString',
-      source: 'agent = create_harness(instructions="Use effort=\'auto\' for small talk.", effort=EFFORT)\n',
-    },
-  ])('shouldExplainWhyWhenTheEntrypointHas$name', async ({ source }) => {
-    const root = await project({ 'agent.py': source })
-
-    const location = await locate(root, 'agent.py', 'auto', 'effort')
-
-    expect(location).toEqual({
-      unavailable: 'Set the new effort in agent.py yourself; it does not set effort to "auto" in exactly one place.',
-    })
-  })
-
-  it.each([
-    {
-      name: 'Python',
-      file: 'agent.py',
-      source: (level: string) => `# effort="auto" was slow\nagent = create_harness(effort="${level}")\n`,
-    },
-    {
-      name: 'TypeScript',
+      form: 'TypeScriptSingleQuotes',
       file: 'agent.ts',
       source: (level: string) =>
-        `// effort: 'auto' was slow\nexport const agent = createHarness({ effort: '${level}' })\n`,
+        `export const agent = await createHarness({ model: 'bedrock/model', effort: '${level}' })\n`,
     },
-  ])('shouldReplaceTheCodeEffortWhenA$nameCommentAlsoMentionsIt', async ({ file, source }) => {
+    {
+      form: 'SpacedDoubleQuotes',
+      file: 'agent.ts',
+      source: (level: string) =>
+        `export const agent = await createHarness({ model: 'bedrock/model', effort : "${level}" })\n`,
+    },
+  ])('shouldReplaceOnlyTheEffortWhenTheEntrypointUses$form', async ({ file, source }) => {
     const root = await project({ [file]: source('auto') })
 
     const location = target(await locate(root, file, 'auto', 'effort'))
     await location.write('high')
 
-    expect(await read(root, file)).toBe(source('high'))
+    expect(location.target).toBe(file)
+    expect(await read(root, file)).toBe(source('high').replace('"high"', "'high'"))
+  })
+
+  it('shouldAddTheEffortWhenTheEntrypointLeavesItAtTheDefault', async () => {
+    const root = await project({ 'agent.ts': "export const agent = await createHarness({ model: 'bedrock/model' })\n" })
+
+    await target(await locate(root, 'agent.ts', 'auto', 'effort')).write('high')
+
+    expect(await read(root, 'agent.ts')).toBe(
+      "export const agent = await createHarness({ model: 'bedrock/model', effort: 'high' })\n"
+    )
+  })
+
+  it('shouldReplaceTheCodeEffortWhenATypeScriptCommentAlsoMentionsIt', async () => {
+    const source = (level: string) =>
+      `// effort: 'auto' was slow\nexport const agent = createHarness({ effort: '${level}' })\n`
+    const root = await project({ 'agent.ts': source('auto') })
+
+    await target(await locate(root, 'agent.ts', 'auto', 'effort')).write('high')
+
+    expect(await read(root, 'agent.ts')).toBe(source('high'))
+  })
+
+  it('shouldSaveTheReasoningFieldsOnTheModelObjectWhenTheAgentBuildsOne', async () => {
+    const root = await project({
+      'agent.ts':
+        "export const agent = await createHarness({\n  model: new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0' }),\n})\n",
+    })
+
+    await target(await locate(root, 'agent.ts', 'off', 'effort')).write('low')
+
+    expect(await read(root, 'agent.ts')).toContain('budget_tokens: 2048')
+    expect(await read(root, 'agent.ts')).not.toContain('effort:')
+  })
+
+  it('shouldExplainWhyWhenTheAgentBuildsItsModelInCodeThatCannotBeRead', async () => {
+    const root = await project({
+      'agent.ts': "export const agent = await createHarness({ model: extensions['model'] })\n",
+    })
+
+    expect(await locate(root, 'agent.ts', 'auto', 'effort', 'high')).toEqual({
+      unavailable: 'agent.ts builds its model in code that strands dev cannot read. Set effort on that model yourself.',
+    })
+  })
+
+  it('shouldNameTheProblemWhenTheEffortIsSetInCode', async () => {
+    const source = 'export const agent = await createHarness({ effort: EFFORT })\n'
+    const root = await project({ 'agent.ts': source })
+
+    await expect(target(await locate(root, 'agent.ts', 'auto', 'effort')).write('high')).rejects.toThrow(
+      'agent.ts sets effort in code. Set it to "high" there yourself.'
+    )
+    expect(await read(root, 'agent.ts')).toBe(source)
   })
 
   it('shouldWriteNothingWhenTheNewEffortIsNotAPlainLevel', async () => {
-    const source = 'agent = create_harness(effort="auto")\n'
-    const root = await project({ 'agent.py': source })
-    const location = target(await locate(root, 'agent.py', 'auto', 'effort'))
+    const source = "export const agent = await createHarness({ effort: 'auto' })\n"
+    const root = await project({ 'agent.ts': source })
+    const location = target(await locate(root, 'agent.ts', 'auto', 'effort'))
 
     await expect(location.write('high"); import os; ("')).rejects.toThrow('is not a plain effort level.')
-    expect(await read(root, 'agent.py')).toBe(source)
+    expect(await read(root, 'agent.ts')).toBe(source)
+  })
+
+  describe.skipIf(!existsSync(pythonExecutable))('in a Python agent', () => {
+    beforeEach(() => {
+      vi.stubEnv('PYTHON', pythonExecutable)
+    })
+
+    afterEach(() => vi.unstubAllEnvs())
+
+    it.each([
+      { form: 'PythonDoubleQuotes', setting: (level: string) => `effort="${level}"` },
+      { form: 'PythonSingleQuotes', setting: (level: string) => `effort='${level}'` },
+    ])('shouldReplaceOnlyTheEffortWhenTheEntrypointUses$form', async ({ setting }) => {
+      const source = (level: string) =>
+        `agent = create_harness(model="bedrock/model", reasoning_effort="auto", ${setting(level)})\n`
+      const root = await project({ 'agent.py': source('auto') })
+
+      await target(await locate(root, 'agent.py', 'auto', 'effort')).write('high')
+
+      expect(await read(root, 'agent.py')).toBe(
+        'agent = create_harness(model="bedrock/model", reasoning_effort="auto", effort="high")\n'
+      )
+    })
+
+    it('shouldReplaceTheCodeEffortWhenAPythonCommentAlsoMentionsIt', async () => {
+      const source = (level: string) => `# effort="auto" was slow\nagent = create_harness(effort="${level}")\n`
+      const root = await project({ 'agent.py': source('auto') })
+
+      await target(await locate(root, 'agent.py', 'auto', 'effort')).write('high')
+
+      expect(await read(root, 'agent.py')).toBe(source('high'))
+    })
   })
 
   it('shouldSendOtherKnobsToTheUserWhenTheyChange', async () => {

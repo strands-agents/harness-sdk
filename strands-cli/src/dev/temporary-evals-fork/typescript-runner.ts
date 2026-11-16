@@ -2,6 +2,13 @@ import type { HarnessAgentOptions } from '@strands-agents/harness'
 import type { Agent } from '@strands-agents/sdk'
 
 import { errorMessage } from '../../terminal/text.js'
+import {
+  applyTemporaryModelEffort,
+  temporaryEffortDescription,
+  temporaryEffortProblem,
+  temporaryModelEffort,
+  type TemporaryModelEffort,
+} from './model-effort.js'
 
 export interface TemporaryRunnerProject {
   options: HarnessAgentOptions
@@ -67,10 +74,24 @@ export const createTemporaryTypescriptRunner = (
   project: TemporaryRunnerProject
 ): ((request: TemporaryRunnerRequest) => Promise<TemporaryRunnerReply | undefined>) => {
   const running = new Map<number, AbortController>()
+  let modelEffort: Promise<TemporaryModelEffort> | undefined
+  const effortTarget = (): Promise<TemporaryModelEffort> =>
+    (modelEffort ??= temporaryModelEffort(project.options.model))
+  const splitEffort = async (
+    values: Record<string, unknown>
+  ): Promise<{ state: TemporaryModelEffort; effort: unknown; options: Record<string, unknown> }> => {
+    const state = await effortTarget()
+    if (state.kind !== 'model' || !('effort' in values)) return { state, effort: undefined, options: values }
+    const { effort, ...options } = values
+    return { state, effort, options }
+  }
 
   const probe = async ({ values = {} }: TemporaryRunnerRequest): Promise<TemporaryRunnerReply> => {
     try {
-      await release(await project.createAgent(trialOptions(project, values)))
+      const { state, effort, options } = await splitEffort(values)
+      const problem = temporaryEffortProblem(state, effort)
+      if (problem) return { ok: false, error: problem }
+      await release(await project.createAgent(trialOptions(project, options)))
       return { ok: true }
     } catch (error) {
       return { ok: false, error: errorMessage(error) }
@@ -82,7 +103,9 @@ export const createTemporaryTypescriptRunner = (
     running.set(id, controller)
     let agent: Agent | undefined
     try {
-      agent = await project.createAgent(trialOptions(project, values))
+      const { state, effort, options } = await splitEffort(values)
+      agent = await project.createAgent(trialOptions(project, options))
+      applyTemporaryModelEffort(state, agent, effort)
       const result = await agent.invoke(textOf(input), { cancelSignal: controller.signal })
       return { output: result.toString(), messages: transcript(agent), ...spent(agent) }
     } catch (error) {
@@ -101,7 +124,7 @@ export const createTemporaryTypescriptRunner = (
   return async (request) => {
     switch (request.type) {
       case 'describe':
-        return describeTemporaryProject(project.options)
+        return { ...describeTemporaryProject(project.options), ...temporaryEffortDescription(await effortTarget()) }
       case 'probe':
         return probe(request)
       case 'run':

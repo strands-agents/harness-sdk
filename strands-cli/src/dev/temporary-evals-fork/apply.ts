@@ -2,7 +2,9 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { extname, join, relative, resolve } from 'node:path'
 
 import { isRecord } from '../../values.js'
+import { agentChoicesProblem, saveAgentChoices, type AgentWorkspace } from '../agent-choices.js'
 import { editFile } from '../file-edits.js'
+import type { ProfileEffort } from '../../config/store.js'
 import type { KnobKey } from '../panels/model.js'
 
 export interface TemporaryEditRequest {
@@ -246,28 +248,6 @@ const textFileMatcher =
       ? { rewrite: (after): Rewritten => ({ content: `${after.trimEnd()}${content.slice(content.trimEnd().length)}` }) }
       : { unavailable: `${target} no longer holds the old instructions. Paste the new instructions there yourself.` }
 
-const effortMatcher =
-  (entry: string, before: string): Matcher =>
-  (content) => {
-    const escaped = before.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-    const setting = new RegExp(`(?<![\\w$])effort[ \\t]*[=:][ \\t]*(['"])${escaped}\\1`, 'gu')
-    const literals = sourceLiterals(entry, content)
-    const starts = [...content.matchAll(setting)]
-      .map((match) => match.index + match[0].length - 1 - before.length)
-      .filter((start) => literals.some((literal) => literal.start === start && literal.end === start + before.length))
-    const [start] = starts
-    if (starts.length !== 1 || start === undefined)
-      return {
-        unavailable: `Set the new effort in ${entry} yourself; it does not set effort to "${before}" in exactly one place.`,
-      }
-    return {
-      rewrite: (after): Rewritten =>
-        EFFORT_LEVEL.test(after)
-          ? { content: content.slice(0, start) + after + content.slice(start + before.length) }
-          : { problem: `Set the new effort in ${entry} yourself; "${after}" is not a plain effort level.` },
-    }
-  }
-
 const rewriteFile = async (root: string, file: string, matcher: Matcher, after: string): Promise<void> => {
   await editFile(root, file, (content) => {
     const match = matcher(content)
@@ -352,6 +332,27 @@ const locateInstructions = async (
   }
 }
 
+const languageOf = (file: string): 'python' | 'typescript' => (extname(file) === '.py' ? 'python' : 'typescript')
+
+const effortEdit = async (
+  workspace: AgentWorkspace,
+  before: string,
+  after: string | undefined
+): Promise<TemporaryEditLocation> => {
+  const problem =
+    after === undefined
+      ? undefined
+      : await agentChoicesProblem(workspace, { effort: after as ProfileEffort }, { effort: before as ProfileEffort })
+  if (problem) return { unavailable: problem }
+  return {
+    target: relative(workspace.root, workspace.entrypoint),
+    write: async (text): Promise<void> => {
+      if (!EFFORT_LEVEL.test(text)) throw new Error(`"${text}" is not a plain effort level.`)
+      await saveAgentChoices(workspace, { effort: text as ProfileEffort }, { effort: before as ProfileEffort })
+    },
+  }
+}
+
 export const locateTemporaryEdit = async ({
   root,
   entrypoint,
@@ -362,6 +363,7 @@ export const locateTemporaryEdit = async ({
   const file = resolve(root, entrypoint)
   const entry = relative(root, file)
   if (knob === 'instructions') return locateInstructions(root, file, before, after)
-  if (knob === 'effort') return located(root, file, effortMatcher(entry, before), after)
+  if (knob === 'effort')
+    return effortEdit({ root, entrypoint: file, config: { language: languageOf(file) } }, before, after)
   return { unavailable: `Change the ${knob} in ${entry} yourself; strands dev applies only instructions and effort.` }
 }
