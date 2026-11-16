@@ -41,6 +41,19 @@ describe('TEMPORARY dev commands', () => {
     expect(commands.every(({ spec }) => spec.description.startsWith('TEMPORARY: '))).toBe(true)
   })
 
+  it('shouldExplainWhereEachCommandSavesItsFilesWhenHelpShowsTheDetails', async () => {
+    const { workspace, project } = await fixture()
+
+    const details = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
+
+    expect(details.map((text) => text.match(/strands-dev\/tmp\/\w+\//)?.[0])).toEqual([
+      'strands-dev/tmp/experiments/',
+      'strands-dev/tmp/reports/',
+      'strands-dev/tmp/optimization/',
+    ])
+    expect(details.every((text) => text.includes('TEMPORARY: a fork of strands-evals'))).toBe(true)
+  })
+
   it('shouldReportNoRunningJobsWhenNothingRuns', async () => {
     const { workspace, project } = await fixture()
 

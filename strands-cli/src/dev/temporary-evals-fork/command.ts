@@ -26,6 +26,7 @@ interface PanelSession<State> extends TemporaryStore<State> {
 interface PanelCommand<State> {
   readonly name: string
   readonly description: string
+  readonly details: string
   readonly session: (sessions: TemporaryDevSessions) => PanelSession<State>
   readonly jobs: (state: State) => readonly DevChatJob[]
   readonly view: (sessions: TemporaryDevSessions) => DevChatPanelView
@@ -34,11 +35,43 @@ interface PanelCommand<State> {
 
 type Sessions = (context?: DevChatCommandContext) => TemporaryDevSessions
 
+const paragraphs = (...lines: readonly string[]): string => lines.join('\n\n')
+
+const EXPERIMENT_DETAILS = paragraphs(
+  'An experiment is a set of test cases for this agent. Each case has an input, and it can have an expected output. The evaluators of the experiment give each answer a score.',
+  'Select New experiment, and tell the agent in the chat what to test. Before it starts, the agent asks for your approval. Then it makes the cases with an AWS Bedrock model and saves them in strands-dev/tmp/experiments/<name>.json. Generation makes paid model calls and can take minutes. Your chat model does not change.',
+  'While the agent makes the cases, a line below the chat input shows the progress. Click the line to open this panel. Generation stops if strands dev closes.',
+  'Open a saved experiment to review its cases. You can drop, edit, or add cases, and then save the experiment. When a generation fails, open it to see why. Then try it again, or fix the problem in the chat.',
+  'Use /test to run the agent on an experiment, and /optimize to tune the agent against it. You can also ask the agent in plain words, for example "what experiments do I have?"',
+  'TEMPORARY: a fork of strands-evals makes the cases for now.'
+)
+
+const TEST_DETAILS = paragraphs(
+  'Run this agent on the cases of one or more experiments. The evaluators of each experiment give each answer a score.',
+  'Select one or more experiments, and start the test. While it runs, a line below the chat input shows the progress. You can stop the test from the panel.',
+  'The test continues when you close the panel or strands dev. When strands dev opens again, it shows the results, or it continues the test from where it stopped. On Windows, the test stops when strands dev closes, and continues at the next start.',
+  'When the test is done, open its report. The report shows each case as passed or failed. Open a case to read its input, the expected output, the output of the agent, and the score and reason from each evaluator. You can run the failed cases again, or all the cases.',
+  'A test does not change the agent source. It makes paid model calls and can take minutes. strands dev saves each report in strands-dev/tmp/reports/.',
+  'From a shell, strands dev test <experiment> runs the same test and prints the result.',
+  'TEMPORARY: a fork of strands-evals runs the tests for now.'
+)
+
+const OPTIMIZE_DETAILS = paragraphs(
+  'Tune this agent against an experiment, and then review the changes that the optimizer proposes.',
+  'Select an experiment, and then select the knobs to tune. Each option of the createHarness or create_harness call is a knob, for example the instructions, the model, the effort, the tools, and the skills. For the model, select the other models to try. A knob that strands dev cannot change shows the reason.',
+  'Set the budget, and select Start. Before you start, the panel shows about how many model calls the run makes.',
+  'The optimizer divides the cases into training, validation, and test cases. It tries candidate changes on the training cases. The best candidate on the validation cases wins, and the test cases measure it at the end.',
+  'While it runs, the panel shows the baseline score, the best score, and each candidate. Stop the run to keep the best candidate so far. The run continues when you close the panel, but it stops when strands dev closes.',
+  'At the end, review each proposed edit. Accept or reject each edit, and then apply the accepted edits. The agent source does not change until you apply them. Then use /test on the new version.',
+  'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/tmp/optimization/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
+  'TEMPORARY: a fork of strands-evals runs the upstream optimizer for now.'
+)
+
 const devCommand = <State>(
-  { name, description, session, jobs, view, resume }: PanelCommand<State>,
+  { name, description, details, session, jobs, view, resume }: PanelCommand<State>,
   sessions: Sessions
 ): DevChatCommand => ({
-  spec: { name, usage: `/${name}`, description },
+  spec: { name, usage: `/${name}`, description, details },
   open: (context): DevChatPanelView => {
     const opened = sessions(context)
     session(opened).show()
@@ -54,6 +87,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
       {
         name: 'experiment',
         description: 'TEMPORARY: generate test cases for this agent with strands-evals, and review them',
+        details: EXPERIMENT_DETAILS,
         session: ({ experiments }) => ({
           subscribe: experiments.subscribe,
           snapshot: experiments.snapshot,
@@ -72,6 +106,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
       {
         name: 'test',
         description: 'TEMPORARY: run this agent on an experiment and show what failed',
+        details: TEST_DETAILS,
         session: ({ test }) => test,
         jobs: temporaryTestJobs,
         resume: ({ test }) => test.resume(),
@@ -87,6 +122,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
       {
         name: 'optimize',
         description: 'TEMPORARY: tune this agent against an experiment and review the changes',
+        details: OPTIMIZE_DETAILS,
         session: ({ optimize }) => optimize,
         jobs: temporaryOptimizeJobs,
         view:
