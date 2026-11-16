@@ -51,7 +51,7 @@ def _parse_stash_key(key: str) -> tuple[str, int] | None:
         The id and index, or None when the text after the last ``_`` is not an index.
     """
     owner, separator, index = key.rpartition("_")
-    if not separator or not owner or not index.isdigit():
+    if not separator or not owner or not index.isdecimal():
         return None
     return owner, int(index)
 

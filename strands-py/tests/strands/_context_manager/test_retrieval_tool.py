@@ -59,6 +59,17 @@ class TestRetrievalTool:
         assert "match" in _text(result)
 
     @pytest.mark.asyncio
+    async def test_searches_with_no_surrounding_context(self, stash):
+        lines = "\n".join(f"line {index + 1}: {'ERROR' if index % 3 == 0 else 'ok'}" for index in range(20))
+        reference = await _store(stash, "tool-1", 0, {"text": lines})
+
+        result = await _invoke(stash, {"reference": reference, "pattern": "ERROR", "context_lines": 0})
+
+        assert result["status"] == "success"
+        assert "ERROR" in _text(result)
+        assert "ok" not in _text(result)
+
+    @pytest.mark.asyncio
     async def test_returns_line_range(self, stash):
         lines = "\n".join(f"line {index + 1}" for index in range(50))
         reference = await _store(stash, "tool-1", 0, {"text": lines})

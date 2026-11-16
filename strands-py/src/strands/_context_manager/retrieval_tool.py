@@ -159,12 +159,13 @@ def _search_entries(
     except (KeyError, TypeError, ValueError) as error:
         return _error(tool_use_id, f"invalid line_range: {error}")
 
+    context_lines: int | None = inputs.get("context_lines")
     try:
         found = _search_content(
             text,
             pattern=inputs.get("pattern"),
             line_range=span,
-            context_lines=inputs.get("context_lines") or _DEFAULT_CONTEXT_LINES,
+            context_lines=_DEFAULT_CONTEXT_LINES if context_lines is None else context_lines,
             max_chars=max_chars,
         )
     except ValueError as error:

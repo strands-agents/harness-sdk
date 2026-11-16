@@ -87,7 +87,7 @@ class TestStashKeys:
         key = await stash.store(block_id, block_index, b"{}")
         assert _parse_stash_key(key) == (block_id, block_index)
 
-    @pytest.mark.parametrize("key", ["tu-1", "tu-1_", "_0", "tu-1_x", "tu-1_1a"])
+    @pytest.mark.parametrize("key", ["tu-1", "tu-1_", "_0", "tu-1_x", "tu-1_1a", "tu-1_²"])
     def test_rejects_a_key_without_an_index(self, key):
         assert _parse_stash_key(key) is None
 
