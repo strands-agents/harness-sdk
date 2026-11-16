@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import boto3
 from botocore.config import Config as BotocoreConfig
@@ -120,10 +120,7 @@ class SageMakerDecisionModel(DecisionModel):
                 Body=body.encode("utf-8"),
             )
         except Exception as error:
-            mapped = _translate_sagemaker_error(error)
-            if mapped is not None:
-                raise mapped from error
-            raise
+            _raise_sagemaker_error(error)
 
         # Decoded like the HTTP providers' response text: a leading UTF-8 BOM is dropped and invalid
         # bytes become U+FFFD, so they never raise a raw UnicodeDecodeError.
@@ -149,8 +146,8 @@ def _build_client(
     return session.client("sagemaker-runtime", region_name=region, config=config)
 
 
-def _translate_sagemaker_error(error: Exception) -> Exception | None:
-    """Map a SageMaker runtime error to an SDK exception, or None to re-raise it unchanged.
+def _raise_sagemaker_error(error: Exception) -> NoReturn:
+    """Raise a SageMaker runtime error as an SDK exception chained to it, or re-raise it unchanged.
 
     A container's own HTTP error arrives as a SageMaker ``ModelError`` carrying the container's
     status in ``OriginalStatusCode``; any other failure carries the HTTP status of the SageMaker
@@ -172,16 +169,16 @@ def _translate_sagemaker_error(error: Exception) -> Exception | None:
     message = f"{_SAGEMAKER_PROVIDER_NAME} decision request failed: {error}"
     # Retryable SageMaker errors (InvokeEndpoint API reference and AWS common errors).
     if code in ("ThrottlingException", "ModelNotReadyException", "ServiceUnavailable"):
-        return ModelThrottledException(message)
+        raise ModelThrottledException(message) from error
     # Throttling by the container or a proxy.
     if status in (429, 503, 529):
-        return ModelThrottledException(message)
+        raise ModelThrottledException(message) from error
     if status == 413:
-        return ContextWindowOverflowException(message)
+        raise ContextWindowOverflowException(message) from error
     # Validation errors share strands-decider's 422, so only the message tells a context overflow apart.
     if status == 422 and _is_context_overflow_message(original_message):
-        return ContextWindowOverflowException(message)
-    return None
+        raise ContextWindowOverflowException(message) from error
+    raise error
 
 
 def _to_status(value: Any) -> int | None:
