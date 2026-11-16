@@ -32,7 +32,11 @@ def _response(payload: Any) -> dict[str, Any]:
 
 
 def _sagemaker_error(code: str, **fields: Any) -> ClientError:
-    error_response: dict[str, Any] = {"Error": {"Code": code, "Message": f"{code} message"}, **fields}
+    error_response: dict[str, Any] = {
+        "Error": {"Code": code, "Message": f"{code} message"},
+        "ResponseMetadata": {"HTTPStatusCode": 400},
+        **fields,
+    }
     return ClientError(error_response, "InvokeEndpoint")
 
 
@@ -177,22 +181,21 @@ class TestAsk:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "fields",
+        "code, fields",
         [
-            {"Error": {"Code": "ThrottlingException"}},
-            {"Error": {"Code": "ModelNotReadyException"}},
-            {"Error": {"Code": "ServiceUnavailable"}},
-            {"Error": {"Code": "ModelError"}, "OriginalStatusCode": 429},
-            {"Error": {"Code": "ModelError"}, "OriginalStatusCode": 503},
-            {"Error": {"Code": "ModelError"}, "OriginalStatusCode": "429"},
+            ("ThrottlingException", {}),
+            ("ModelNotReadyException", {}),
+            ("ServiceUnavailable", {}),
+            ("ModelError", {"OriginalStatusCode": 429}),
+            ("ModelError", {"OriginalStatusCode": 503}),
             # A proxy or load balancer throttle has no SageMaker error code, only the HTTP status.
-            {"Error": {"Code": "Unknown"}, "ResponseMetadata": {"HTTPStatusCode": 429}},
-            {"Error": {"Code": "InternalFailure"}, "ResponseMetadata": {"HTTPStatusCode": 503}},
+            ("Unknown", {"ResponseMetadata": {"HTTPStatusCode": 429}}),
+            ("InternalFailure", {"ResponseMetadata": {"HTTPStatusCode": 503}}),
         ],
     )
-    async def test_maps_to_model_throttled(self, mock_client, fields: dict[str, Any]):
+    async def test_maps_to_model_throttled(self, mock_client, code: str, fields: dict[str, Any]):
         _, client = mock_client
-        cause = ClientError(fields, "InvokeEndpoint")
+        cause = _sagemaker_error(code, **fields)
         client.invoke_endpoint.side_effect = cause
 
         error = await _ask_error(SageMakerDecisionModel(_ENDPOINT_NAME))
@@ -209,7 +212,6 @@ class TestAsk:
                 "OriginalStatusCode": 422,
                 "OriginalMessage": '{"detail":"prompt of 9000 tokens exceeds the context window of 8192 tokens"}',
             },
-            {"OriginalStatusCode": "413"},
             {"ResponseMetadata": {"HTTPStatusCode": 413}},
         ],
     )

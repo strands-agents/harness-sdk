@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import boto3
 from botocore.config import Config as BotocoreConfig
+from botocore.exceptions import ClientError
 
 from ..types.exceptions import (
     ContextWindowOverflowException,
@@ -119,7 +120,7 @@ class SageMakerDecisionModel(DecisionModel):
                 Accept="application/json",
                 Body=body.encode("utf-8"),
             )
-        except Exception as error:
+        except ClientError as error:
             _raise_sagemaker_error(error)
 
         # Decoded like the HTTP providers' response text: a leading UTF-8 BOM is dropped and invalid
@@ -146,25 +147,16 @@ def _build_client(
     return session.client("sagemaker-runtime", region_name=region, config=config)
 
 
-def _raise_sagemaker_error(error: Exception) -> NoReturn:
+def _raise_sagemaker_error(error: ClientError) -> NoReturn:
     """Raise a SageMaker runtime error as an SDK exception chained to it, or re-raise it unchanged.
 
     A container's own HTTP error arrives as a SageMaker ``ModelError`` carrying the container's
     status in ``OriginalStatusCode``; any other failure carries the HTTP status of the SageMaker
     response in ``ResponseMetadata.HTTPStatusCode``.
     """
-    response = getattr(error, "response", None)
-    code = original_status = original_message = http_status = None
-    if isinstance(response, dict):
-        error_field = response.get("Error")
-        if isinstance(error_field, dict):
-            code = error_field.get("Code")
-        original_status = response.get("OriginalStatusCode")
-        original_message = response.get("OriginalMessage")
-        metadata = response.get("ResponseMetadata")
-        if isinstance(metadata, dict):
-            http_status = metadata.get("HTTPStatusCode")
-    status = _to_status(original_status if original_status is not None else http_status)
+    response: Any = error.response
+    code = response["Error"].get("Code")
+    status = response.get("OriginalStatusCode", response["ResponseMetadata"].get("HTTPStatusCode"))
 
     message = f"{_SAGEMAKER_PROVIDER_NAME} decision request failed: {error}"
     # Retryable SageMaker errors (InvokeEndpoint API reference and AWS common errors).
@@ -176,22 +168,9 @@ def _raise_sagemaker_error(error: Exception) -> NoReturn:
     if status == 413:
         raise ContextWindowOverflowException(message) from error
     # Validation errors share strands-decider's 422, so only the message tells a context overflow apart.
-    if status == 422 and _is_context_overflow_message(original_message):
+    if status == 422 and _is_context_overflow_message(response.get("OriginalMessage")):
         raise ContextWindowOverflowException(message) from error
     raise error
-
-
-def _to_status(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
 
 
 def _is_context_overflow_message(original_message: Any) -> bool:
