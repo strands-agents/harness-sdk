@@ -267,7 +267,7 @@ describe('ModelProxy', () => {
       expect(sentTurn2.slice(0, sentTurn1.length)).toEqual(sentTurn1)
     })
 
-    it('keeps the cache point ahead of the latest injected text, also when an assistant message follows', async () => {
+    it('keeps the cache point ahead of per-call text that follows the latest injected text, also when an assistant message follows', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
       const streamSpy = vi.spyOn(model, 'stream')
       const messages = [
@@ -287,9 +287,11 @@ describe('ModelProxy', () => {
         proxy.streamAggregated([...messages, new Message({ role: 'assistant', content: [new TextBlock('Sure')] })])
       )
 
+      // The rendered injected text is stable from the first call on, so only the per-call text after
+      // it - not the injected text itself - needs to stay out of the cache boundary.
       expect(streamSpy.mock.calls.map((call) => call[1])).toStrictEqual([
-        { dynamicTrailingBlocks: 2 },
-        { dynamicTrailingBlocks: 2 },
+        { dynamicTrailingBlocks: 1 },
+        { dynamicTrailingBlocks: 1 },
       ])
     })
 

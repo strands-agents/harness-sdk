@@ -40,7 +40,7 @@ describe('ContextInjector', () => {
   })
 
   describe('with an agent', () => {
-    it('sends the injected text last and keeps the cache point ahead of it', async () => {
+    it('sends the injected text last, with no dynamic tail since nothing follows it this call', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const seen: { lastBlock: ContentBlock | undefined; dynamicTrailingBlocks: number }[] = []
       const original = model.stream.bind(model)
@@ -62,7 +62,7 @@ describe('ContextInjector', () => {
       expect(seen).toStrictEqual([
         {
           lastBlock: new TextBlock('\n\n<ctx>INJECTED</ctx>'),
-          dynamicTrailingBlocks: 1,
+          dynamicTrailingBlocks: 0,
         },
       ])
     })

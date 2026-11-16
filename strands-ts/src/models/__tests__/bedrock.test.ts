@@ -25,6 +25,7 @@ import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../../types/m
 import { CitationsBlock } from '../../types/citations.js'
 import type { StreamOptions } from '../model.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { ModelProxy } from '../model-proxy.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { NOOP_TOOL_SPEC } from '../../tools/noop-tool.js'
 import { warnOnce } from '../../logging/warn-once.js'
@@ -3911,9 +3912,50 @@ describe('BedrockModel', () => {
         expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
-      // https://github.com/strands-agents/harness-sdk/issues/4879: once a non-latest tool-result turn can
-      // carry its own rendered reminder text (e.g. a todos injector firing every turn), the point must still
-      // skip past it rather than anchoring there, or it moves every call and Nova never reads from cache.
+      // The prompt that started the loop may itself carry a rendered reminder (e.g. an environment
+      // injector firing on the user's first turn). The point must land in the same place whether that
+      // message is still the latest one or a tool loop has since moved past it, or the position shifts
+      // the first time the loop's second message arrives and that call misses the cache even though the
+      // point still ends up on the right message.
+      it('places the conversation cache point on the same spot of the starting prompt whether or not it is still the latest message', async () => {
+        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
+        const proxy = new ModelProxy(provider)
+        const startingPrompt = new Message({
+          role: 'user',
+          content: [
+            new TextBlock('What is 6 x 7?'),
+            new InjectedBlock({ text: '<environment>cwd: /repo</environment>', source: 'env' }),
+          ],
+        })
+
+        // Call 1: the starting prompt is still the latest message.
+        await collectGenerator(proxy.streamAggregated([startingPrompt], { toolSpecs }))
+        const firstCallPosition = request()?.messages?.[0]?.content
+
+        // Call 2: a tool round trip has made the starting prompt no longer the latest message.
+        await collectGenerator(
+          proxy.streamAggregated(
+            [
+              startingPrompt,
+              new Message({
+                role: 'assistant',
+                content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'id-1', input: {} })],
+              }),
+              new Message({ role: 'user', content: [toolResult] }),
+            ],
+            { toolSpecs }
+          )
+        )
+        const secondCallPosition = request()?.messages?.[0]?.content
+
+        expect(firstCallPosition).toStrictEqual([
+          { text: 'What is 6 x 7?' },
+          { text: '\n\n<environment>cwd: /repo</environment>' },
+          { cachePoint: { type: 'default' } },
+        ])
+        expect(secondCallPosition).toStrictEqual(firstCallPosition)
+      })
+
       it('keeps the conversation cache point on the prompt when an earlier tool-result turn carries its own reminder text', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
         const messages = [

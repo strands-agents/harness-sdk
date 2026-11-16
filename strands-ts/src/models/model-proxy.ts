@@ -124,11 +124,22 @@ function renderInjectedBlocks(messages: Message[]): RenderedMessages {
     if (!hasInjectedBlock(message)) return message
     const content = message.role === 'user' ? withInjectedText(message.content) : withoutInjectedBlocks(message.content)
     if (index === latestUser) {
-      dynamicTrailingBlocks = message.content.length - message.content.findIndex(isInjectedBlock)
+      // Rendered injected text is itself stable from this call on, so only content after the last
+      // one - per-call content another middleware appended this same call - still needs to stay
+      // out of the cache boundary.
+      dynamicTrailingBlocks = message.content.length - (lastIndexMatching(message.content, isInjectedBlock) + 1)
     }
     return withContent(message, content)
   })
   return { messages: rendered, dynamicTrailingBlocks }
+}
+
+/** Index of the last block matching `predicate`, or -1 when none match. */
+function lastIndexMatching(content: ContentBlock[], predicate: (block: ContentBlock) => boolean): number {
+  for (let index = content.length - 1; index >= 0; index--) {
+    if (predicate(content[index]!)) return index
+  }
+  return -1
 }
 
 /**
