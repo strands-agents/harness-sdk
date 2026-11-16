@@ -1,6 +1,10 @@
 import type { AttributeValue } from '@opentelemetry/api'
 import type { InvocationState, InvokableAgent } from '../types/agent.js'
-import { type InvocationContext, InvocationContextImpl, unwrapInvocationContext } from '../agent/invocation-context.js'
+import {
+  type InvocationContext,
+  type InvocationContextImpl,
+  resolveInvocationContext,
+} from '../agent/invocation-context.js'
 import type { MultiAgentContentInput, MultiAgentInput, MultiAgentInvokeOptions } from './multiagent.js'
 import {
   applyOrchestratorHookResponses,
@@ -122,8 +126,9 @@ export interface GraphOptions extends GraphConfig {
  *   scheduling the next set of nodes.
  * - Agent nodes are stateless by default (snapshot/restore on each execution). Python
  *   accumulates agent state across executions unless `reset_on_revisit` is enabled.
- * - Node failures produce a FAILED result, allowing parallel paths to continue.
- *   MultiAgent-level limits (maxSteps) throw exceptions. Python does the inverse:
+ * - Node failures produce a FAILED result, allowing parallel paths to continue; this
+ *   includes a node whose agent reaches a request limit ({@link MultiAgentInvokeOptions.limits}).
+ *   The graph's own `maxSteps` and `timeout` throw exceptions. Python does the inverse:
  *   node failures throw exceptions (fail-fast), while limit violations return a
  *   FAILED result.
  *
@@ -252,7 +257,7 @@ export class Graph implements MultiAgent {
     // child agent so mutations in one node are visible in the next.
     const invocationState: InvocationState = options?.invocationState ?? {}
 
-    const invocationContext = unwrapInvocationContext(options?.invocationContext) ?? new InvocationContextImpl()
+    const invocationContext = resolveInvocationContext(options)
 
     // Hook invocation lives in `_stream` so hook-raised `InterruptError`s land in the
     // same frame as the execution loop.
@@ -279,6 +284,8 @@ export class Graph implements MultiAgent {
     // resume on the same instance without a SessionManager.
     const state = this._pendingInterruptState ?? new MultiAgentState({ nodeIds: [...this.nodes.keys()] })
     delete this._pendingInterruptState
+    // Rebound on every run: a resumed run reuses the state but may belong to another request.
+    state._bindInvocationContext(invocationContext)
 
     const queue = new Queue<NodeExecutionOutput>()
     const streams = new Map<string, Promise<void>>()

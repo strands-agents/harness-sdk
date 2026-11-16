@@ -65,7 +65,7 @@ await createHarness({
   mcpServers: undefined, // MCP servers: a mcpServers JSON path or the mapping itself
   builtinTools: undefined, // a list pins the set; a mapping edits the defaults (see below)
   backgroundTasks: undefined, // SDK Background Tasks policy; false to disable
-  builtinPlugins: ['todos', 'environment'], // built-in feature plugins by name; [] for none
+  builtinPlugins: ['environment'], // built-in feature plugins by name; [] for none
   caching: 'auto', // cache system prompt, tools & history where supported; null/false off
   contextManager: 'auto', // "auto" | "agentic" | a ContextManager instance | off (null/false)
   session: true, // true | { id?, dir? } | a SessionManager instance | off (null/false)
@@ -322,7 +322,7 @@ await createHarness({ builtinTools: { web_fetch: { model: 'anthropic/claude-haik
 ```
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
-model provider has its own search (OpenAI, Google, Anthropic, and GPT-5/GPT-6 models on
+model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
 `bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
 native search (Amazon Bedrock Converse, other Mantle models, a `Model` instance) `web_search` is
 off by default. To enable web search for these providers, you can opt into Exa with
@@ -347,7 +347,8 @@ await createHarness({ builtinTools: { web_search: 'exa' } }) // Bedrock: search 
 `caching` is on by default. The stable parts of a conversation (system prompt, tool definitions,
 earlier turns) are cached where the provider supports it, so you're not billed to reprocess them
 on every turn. The harness configures Amazon Bedrock and Anthropic direct with automatic cache points covering
-messages and tools; OpenAI, Google, Bedrock Mantle, and LiteLLM cache server-side on their own, so
+messages and tools, and OpenAI and Bedrock Mantle with the SDK cache config (a per-session cache key,
+plus cache points on GPT-5.6+ models listed in the SDK model info); Google and LiteLLM cache server-side on their own, so
 there's nothing to configure or turn off. The only targets that can't cache are `ollama` and a
 pre-built `Model` instance (its provider is unknown): there the default is a no-op with a logged
 warning, but asking for caching explicitly (`caching: 'auto'` / `true`) throws for an unsupported
@@ -441,10 +442,12 @@ is best-effort (a missing directory is skipped); explicit sources pass straight 
 
 ## Built-in plugins
 
-The harness ships two built-in feature plugins, both on by default:
+The harness ships two built-in feature plugins. `environment` is on by default; `todos` is opt-in:
 
 - **`todos`** lets the agent keep a structured task list and re-surfaces it before each step so it
   stays on plan through longer tasks. The list lives in agent state, never in durable history.
+  Because it re-injects on every turn, it costs tokens and breaks the cached prefix on providers
+  without explicit cache points — enable it where the task tracking earns that.
 - **`environment`** injects a short context block before each turn: the platform, current date,
   working directory, the project's `AGENTS.md` contents, and links to other `AGENTS.md`/`README.md`
   files a couple of levels down (links, not contents, so the block stays small). Everything is read

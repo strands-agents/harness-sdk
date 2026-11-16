@@ -5,7 +5,7 @@ Each TS ``it(...)`` maps to a ``test_...`` case here.
 
 The extractor is driven through its public ``extract`` API: a fake ``Model``
 (``MockedModelProvider``) yields stream events that
-``strands.event_loop.streaming.stream_messages`` aggregates into a chosen
+``ModelProxy.stream`` aggregates into a chosen
 assistant message, so we exercise the real aggregate-and-parse path.
 
 These tests are written test-first: ``ModelExtractor`` lands in Task 6, so they
@@ -19,6 +19,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from strands.agent.invocation_context import (
+    _create_auxiliary_invocation_context,
+    _create_invocation_context,
+)
 from strands.memory.extraction.model_extractor import ModelExtractor
 from strands.memory.extraction.types import ExtractionResult, ExtractorContext
 from strands.types.content import Message
@@ -225,10 +229,28 @@ async def test_raises_and_ends_span_when_model_yields_no_stop_event():
     tracer = MagicMock()
     with (
         patch("strands.memory.extraction.model_extractor.get_tracer", return_value=tracer),
-        patch("strands.event_loop.streaming.stream_messages", _no_stop_stream),
+        patch("strands.models._model_proxy.ModelProxy.stream", _no_stop_stream),
     ):
         with pytest.raises(RuntimeError, match="model returned no response"):
             await extractor.extract([_user_turn("x")])
 
     tracer.end_span_with_error.assert_called_once()
     tracer.end_model_invoke_span.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_adds_the_extraction_usage_to_the_request_total_even_when_the_request_limit_is_used_up():
+    model = MockedModelProvider(
+        [_assistant_text('[{"content": "fact"}]')],
+        usages=[{"inputTokens": 4, "outputTokens": 5, "totalTokens": 9}],
+    )
+    extractor = ModelExtractor(model=model)
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    entries = await extractor.extract(
+        [_user_turn("x")], ExtractorContext(invocation_context=_create_auxiliary_invocation_context(request))
+    )
+
+    assert entries == [ExtractionResult(content="fact")]
+    assert request.usage == {"turns_taken": 1, "inputTokens": 4, "outputTokens": 5, "totalTokens": 9}

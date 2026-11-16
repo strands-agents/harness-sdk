@@ -4,8 +4,8 @@ This module defines the AgentResult class which encapsulates the complete respon
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any, Generic, cast
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 from pydantic import BaseModel
 from typing_extensions import TypeVar
@@ -16,6 +16,9 @@ from ..telemetry.metrics import EventLoopMetrics
 from ..types.content import Message
 from ..types.session import decode_bytes_values, encode_bytes_values
 from ..types.streaming import StopReason
+
+if TYPE_CHECKING:
+    from .invocation_context import InvocationContext
 
 StructuredOutputT = TypeVar("StructuredOutputT", bound=BaseModel, default=BaseModel, covariant=True)
 
@@ -36,6 +39,10 @@ class AgentResult(Generic[StructuredOutputT]):
         checkpoint: Checkpoint captured when the agent paused for durable execution.
             Populated only when stop_reason == "checkpoint". See
             strands.experimental.checkpoint for usage.
+        invocation_context: The request this call ran in; its ``usage`` covers the whole
+            request, while ``metrics`` covers this agent only. It is live: background work the
+            request started still adds to it. Pass it as ``invocation_context`` to a later call
+            to continue on the same limits and usage.
     """
 
     stop_reason: StopReason
@@ -45,6 +52,7 @@ class AgentResult(Generic[StructuredOutputT]):
     interrupts: Sequence[Interrupt] | None = None
     structured_output: StructuredOutputT | None = None
     checkpoint: Checkpoint | None = None
+    invocation_context: "InvocationContext | None" = field(default=None, repr=False, compare=False)
 
     @property
     def context_size(self) -> int | None:

@@ -125,6 +125,12 @@ openai = ProviderInfo(
         },
     ),
 )
+# Bedrock Mantle (OpenAI-compatible endpoint) authenticates with the ambient AWS credential chain, like bedrock.
+# Used by the model smoke table only; deliberately not part of all_providers.
+mantle = ProviderInfo(
+    id="mantle",
+    factory=lambda: OpenAIModel(model_id="openai.gpt-oss-120b", bedrock_mantle_config={"region": "us-east-1"}),
+)
 if _openai_responses_available:
     openai_responses = ProviderInfo(
         id="openai_responses",
@@ -136,8 +142,15 @@ if _openai_responses_available:
             },
         ),
     )
+    mantle_responses = ProviderInfo(
+        id="mantle_responses",
+        factory=lambda: OpenAIResponsesModel(
+            model_id="openai.gpt-oss-120b", bedrock_mantle_config={"region": "us-east-1"}
+        ),
+    )
 else:
     openai_responses = None
+    mantle_responses = None
 writer = ProviderInfo(
     id="writer",
     environment_variable="WRITER_API_KEY",

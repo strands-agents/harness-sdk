@@ -61,17 +61,29 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── AGENTS.md
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
+├── external-docs.config.json    # Upstream refs plus site-owned routes and navigation
+├── external-docs.lock.json      # Immutable upstream documentation revisions
 ├── SITE-ARCHITECTURE.md          # Detailed Astro/Starlight customizations
+├── .build/
+│   ├── api-docs/                 # Generated Python and TypeScript API reference
+│   ├── external-docs/
+│   │   ├── strands-box/          # Generated imported Box docs (not committed)
+│   │   └── strands-decider/      # Generated imported Decider docs (not committed)
+│   └── samples/pages/            # Generated sample guides (not committed)
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
 │   │   ├── CourseNotice.astro    # Course recording and example update notices
+│   │   ├── FaqAnswer.astro       # Shared renderer for structured FAQ answers
+│   │   ├── HomeFaq.astro         # Five-question homepage FAQ preview
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
+│   │   ├── samples/              # Native Starlight page wrapper for generated sample guides
 │   │   └── ...
 │   ├── config/                   # Site configuration
 │   ├── content/                  # Content collections
 │   │   ├── announcements/        # Homepage announcement banner entries (one YAML each, auto-expire after 14 days)
 │   │   ├── catalog/              # Community catalog entries (one YAML per integration, zod-validated)
+│   │   ├── changelog/            # Release notes by product, including shell/
 │   │   ├── courses/              # Course metadata (one YAML per course, zod-validated)
 │   │   ├── events/               # Community event entries (one YAML per event, zod-validated)
 │   │   └── docs/                 # Documentation content (Markdown/MDX)
@@ -85,12 +97,15 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── examples/
 │   │       ├── integrations/
 │   │       ├── labs/
+│   │       │   └── strands-decider # Symlink to .build/external-docs/strands-decider/content
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
-│   ├── data/                     # Bot-maintained data (catalog-stats.json — updated by the
-│   │                             #   catalog-stats workflow; do not hand-edit)
+│   │           └── box           # Symlink to .build/external-docs/strands-box/content
+│   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
 │   ├── layouts/                  # Custom layouts
-│   ├── pages/                    # Astro pages (incl. integrations.astro — the /integrations page)
+│   ├── pages/                    # Astro pages, including generated /examples routes
+│   │   ├── faq.astro             # Standalone FAQ page
+│   │   └── faq/index.md.ts       # Machine-readable FAQ endpoint
 │   ├── plugins/                  # Remark/Rehype plugins
 │   ├── styles/                   # Global styles
 │   └── util/                     # Utility functions
@@ -101,8 +116,10 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── NOTICE
 ├── README.md
 ├── overrides/                    # Legacy MkDocs overrides (being migrated)
-├── scripts/                      # Build and utility scripts (scripts/catalog/ — stats refresh
-│                                 #   run by the weekly catalog-stats workflow)
+├── scripts/                      # Build and utility scripts
+│   ├── catalog/                  # Catalog stats refresh
+│   ├── external-docs/            # External Markdown import and lock updates
+│   └── samples/                  # Import samples metadata and guides at build time
 ├── test/                         # Test files
 └── test-snippets/                # TypeScript snippet test files
 ```
@@ -121,8 +138,11 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 
 #### Setup and Installation
 
+From the repository root:
+
 ```bash
-npm install
+cd site
+npm ci
 ```
 
 #### Building and Previewing
@@ -143,18 +163,20 @@ npm run dev
 
 1. **Create feature branch**: `git checkout -b agent-tasks/{ISSUE_NUMBER}`
 2. **Implement changes** following the patterns below
-3. **Run quality checks** before committing (pre-commit hooks will run automatically)
+3. **Run quality checks** before committing
 4. **Commit with conventional commits**: `feat:`, `fix:`, `refactor:`, `docs:`, etc.
 5. **Push to remote**: `git push origin agent-tasks/{ISSUE_NUMBER}`
 
 ### 3. Quality Gates
 
-Pre-commit hooks automatically run:
-- Unit tests (via npm test)
-- Format checking (via npm run format:check)
-- Type checking (via npm run typecheck)
+From `site/`:
 
-All checks must pass before commit is allowed.
+```bash
+npm run format        # apply formatting fixes
+npm run check         # check formatting, build, check types, and run tests
+```
+
+CI enforces these checks.
 
 ## Coding Patterns and Best Practices
 
@@ -176,7 +198,7 @@ For the underlying Astro/Starlight implementation (the snippets plugin, custom c
 
 1. **Read task requirements** carefully from the GitHub issue
 2. **Use existing patterns** as reference
-3. **Run all checks** before committing (pre-commit hooks will enforce this)
+3. **Run quality checks** before committing
 
 
 ### Integration with Other Files

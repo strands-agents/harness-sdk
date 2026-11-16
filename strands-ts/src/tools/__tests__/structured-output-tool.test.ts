@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME } from '../structured-output-tool.js'
-import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import {
+  NO_STRUCTURED_OUTPUT_MESSAGE,
+  StructuredOutputTool,
+  STRUCTURED_OUTPUT_TOOL_NAME,
+} from '../structured-output-tool.js'
+import { JsonBlock, Message, ReasoningBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { StructuredOutputError } from '../../errors.js'
 import { createMockContext } from '../../__fixtures__/tool-helpers.js'
 import type { JSONValue } from '../../types/json.js'
 
@@ -100,6 +105,41 @@ describe('StructuredOutputTool', () => {
       expect(result.status).toBe('error')
       expect(result.error).toBeInstanceOf(Error)
       expect((result.content[0] as TextBlock).text).toContain('unexpected parse error')
+    })
+  })
+
+  describe('resultFromText', () => {
+    const tool = new StructuredOutputTool(z.object({ name: z.string(), age: z.number() }))
+    const assistant = (...content: (TextBlock | ReasoningBlock)[]): Message =>
+      new Message({ role: 'assistant', content })
+
+    it('returns the validated JSON object from the text blocks, ignoring reasoning', () => {
+      const message = assistant(
+        new ReasoningBlock({ text: 'thinking' }),
+        new TextBlock('{"name": "John", '),
+        new TextBlock('"age": 30, "extra": true}')
+      )
+
+      expect(tool.resultFromText(message)).toStrictEqual({ name: 'John', age: 30 })
+    })
+
+    it.each([
+      { name: 'plain text', text: 'John is 30' },
+      { name: 'a JSON array', text: '[{"name": "John", "age": 30}]' },
+      { name: 'a JSON scalar', text: '42' },
+      { name: 'JSON null', text: 'null' },
+      { name: 'empty text', text: '' },
+    ])('throws the no structured output error for $name', ({ text }) => {
+      expect(() => tool.resultFromText(assistant(new TextBlock(text)))).toThrow(
+        new StructuredOutputError(NO_STRUCTURED_OUTPUT_MESSAGE)
+      )
+    })
+
+    it('throws a validation error for an object that does not match the schema', () => {
+      const message = assistant(new TextBlock('{"name": "John", "age": "thirty"}'))
+
+      expect(() => tool.resultFromText(message)).toThrow(StructuredOutputError)
+      expect(() => tool.resultFromText(message)).toThrow(/^Structured output failed validation: .*age/s)
     })
   })
 })

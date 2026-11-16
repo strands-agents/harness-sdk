@@ -9,7 +9,7 @@ import writerai
 import strands
 from strands.models.model import CacheConfig
 from strands.models.writer import WriterModel
-from strands.types.exceptions import ContextWindowOverflowException
+from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 
 @pytest.fixture
@@ -469,6 +469,34 @@ async def test_stream_empty(writer_client, model, model_id):
     writer_client.chat.chat.assert_called_once_with(**expected_request)
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "stop_reason"),
+    [
+        ("stop", "end_turn"),
+        ("tool_calls", "tool_use"),
+        ("length", "max_tokens"),
+        ("content_filter", "content_filtered"),
+    ],
+)
+def test_format_chunk_message_stop(model, finish_reason, stop_reason):
+    chunk = model.format_chunk({"chunk_type": "message_stop", "data": finish_reason})
+
+    assert chunk == {"messageStop": {"stopReason": stop_reason}}
+
+
+@pytest.mark.asyncio
+async def test_stream_content_filter(writer_client, model, alist):
+    mock_delta = unittest.mock.Mock(content="partial", tool_calls=None)
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="content_filter", delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock(usage=unittest.mock.Mock(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+
+    writer_client.chat.chat.return_value = mock_streaming_response([mock_event_1, mock_event_2])
+
+    events = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}], None, None))
+
+    assert {"messageStop": {"stopReason": "content_filtered"}} in events
+
+
 @pytest.mark.asyncio
 async def test_stream_with_empty_choices(writer_client, model, model_id, captured_warnings):
     mock_delta = unittest.mock.Mock(content="content", tool_calls=None)
@@ -652,6 +680,18 @@ async def test_stream_non_overflow_bad_request_propagates(writer_client, model, 
 
 
 @pytest.mark.asyncio
+async def test_stream_rate_limit_as_throttle(writer_client, model, alist):
+    error = writerai.RateLimitError("Rate limit exceeded", response=unittest.mock.Mock(), body=None)
+    writer_client.chat.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ModelThrottledException, match="Rate limit exceeded") as exc_info:
+        await alist(model.stream(messages))
+
+    assert exc_info.value.__cause__ == error
+
+
+@pytest.mark.asyncio
 async def test_structured_output_context_overflow_error(writer_client, model, test_output_model_cls, alist):
     error = writerai.BadRequestError(
         "This model's maximum context length is 32768 tokens", response=unittest.mock.Mock(), body=None
@@ -723,3 +763,18 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(writer_client, m
         request = model.format_request(messages)
 
     assert "cache_config" not in request
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.writer")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    model.format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by Writer" in messages_logged[0]

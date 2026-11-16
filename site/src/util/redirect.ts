@@ -25,13 +25,26 @@ import { exactly, startsWith } from './regex'
  * fallback.
  */
 export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
+  // Box content is owned by the product repository. Preserve its former site
+  // routes until the upstream manifest publishes direct replacements.
+  'docs/user-guide/box': 'docs/user-guide/box/quickstart',
+  'docs/user-guide/box/getting-started': 'docs/user-guide/box/quickstart',
+  'docs/user-guide/box/guides/add-a-tool': 'docs/user-guide/box/guides/add-an-mcp-server',
+  'docs/user-guide/box/guides/grant-files': 'docs/user-guide/box/reference/configuration',
+  'docs/user-guide/box/reference/cli': 'docs/user-guide/box/reference/configuration',
+  'docs/user-guide/box/security/agent-and-tool-containment': 'docs/user-guide/box/security',
+
+  // Preserve the product root as the short route to Decider's landing page.
+  'docs/labs/strands-decider': 'docs/labs/strands-decider/overview',
+
   // gemini was renamed to google (concepts/ was later consolidated under harness/)
   'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/sdk/model-providers/google',
 
   // bidi model providers renamed to match upstream (#3956)
   'docs/user-guide/concepts/bidirectional-streaming/models/nova_sonic': 'docs/user-guide/sdk/bidi/models/bedrock',
   'docs/user-guide/concepts/bidirectional-streaming/models/gemini_live': 'docs/user-guide/sdk/bidi/models/google',
-  'docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime': 'docs/user-guide/sdk/bidi/models/openai/realtime',
+  'docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime':
+    'docs/user-guide/sdk/bidi/models/openai/realtime',
 
   // python-tools was renamed to custom-tools
   'docs/user-guide/concepts/tools/python-tools': 'docs/user-guide/sdk/tools/custom-tools',

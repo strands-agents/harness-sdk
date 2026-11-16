@@ -10,9 +10,7 @@ async function helloWorldExample() {
     systemPrompt: 'You are a helpful assistant.',
   })
 
-  const result = await agent.invoke(
-    'What makes TypeScript great for building agents?'
-  )
+  const result = await agent.invoke('What makes TypeScript great for building agents?')
   console.log(result)
   // --8<-- [end:hello_world]
 }
@@ -91,4 +89,3 @@ async function multiAgentExample() {
   const result = await graph.invoke('Write a blog post about AI agents')
   // --8<-- [end:multi_agent]
 }
-

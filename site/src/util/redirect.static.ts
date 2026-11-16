@@ -59,7 +59,9 @@ function scanContent(contentDir: string): { slugs: Set<string>; redirectFromEntr
 
   const files = fg.sync('docs/**/*.{md,mdx}', {
     cwd: contentDir,
-    followSymbolicLinks: false,
+    // Generated API and product docs are mounted into this collection through
+    // tracked symlinks and are valid redirect destinations.
+    followSymbolicLinks: true,
   })
 
   for (const relativePath of files) {

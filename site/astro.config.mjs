@@ -82,7 +82,10 @@ export default defineConfig({
       markdown: {
         // API docs are symlinked from .build/api-docs; processedDirs ensures Starlight's
         // rehype plugins (e.g. heading anchor links) run on the real resolved paths.
-        processedDirs: [path.resolve('.build/api-docs')],
+        processedDirs: [
+          path.resolve('.build/api-docs'),
+          path.resolve('.build/external-docs'),
+        ],
       },
       title: 'Strands Agents',
       description: 'The open source toolkit for building production agents.',
@@ -106,6 +109,7 @@ export default defineConfig({
         baseUrl: 'https://github.com/strands-agents/harness-sdk/edit/main/site/',
       },
       components: {
+        Footer: './src/components/overrides/Footer.astro',
         Head: './src/components/overrides/Head.astro',
         Header: './src/components/Header.astro',
         Hero: './src/components/overrides/Hero.astro',

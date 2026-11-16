@@ -127,10 +127,20 @@ export class IntegTestRole extends Construct {
           'arn:aws:bedrock:*:*:foundation-model/stability.sd3-5-large-v1:0',
           'arn:aws:bedrock:*:*:async-invoke/*',
           'arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0',
+          'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0',
           'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-sonnet-4-6',
           'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6',
+          // AnthropicModel with an injected AsyncAnthropicBedrock client (bedrock-runtime InvokeModel).
+          'arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-haiku-5-5',
+          'arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-5-5',
           'arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0',
           'arn:aws:bedrock:*::foundation-model/amazon.nova-2-5-sonic',
+          'arn:aws:bedrock:*:*:inference-profile/us.xai.grok-4.7',
+          'arn:aws:bedrock:*::foundation-model/xai.grok-4.7',
+          'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-3-675b-instruct',
+          'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-120b-1:0',
+          // Default embedder for S3VectorSearchStrategy integration tests.
+          'arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0',
         ],
       }),
     );
@@ -239,7 +249,8 @@ export class IntegTestRole extends Construct {
           's3:DeleteObject',
           's3:GetObject',
         ],
-        resources: bucketNames.map((name) => `arn:aws:s3:::${name}`),
+        // The S3VectorSearchStrategy integration tests' throwaway bucket.
+        resources: [...bucketNames, 'test-strands-s3v-*'].map((name) => `arn:aws:s3:::${name}`),
       }),
     );
 
@@ -253,6 +264,26 @@ export class IntegTestRole extends Construct {
           's3:DeleteObject',
         ],
         resources: persistentBucketNames.map((name) => `arn:aws:s3:::${name}`),
+      }),
+    );
+
+    // S3VectorSearchStrategy integration tests create and tear down their own vector bucket and
+    // index; their S3 bucket is covered by the bucket statement above.
+    this.role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          's3vectors:CreateVectorBucket',
+          's3vectors:DeleteVectorBucket',
+          's3vectors:CreateIndex',
+          's3vectors:DeleteIndex',
+          's3vectors:PutVectors',
+          's3vectors:QueryVectors',
+          's3vectors:DeleteVectors',
+        ],
+        resources: [
+          'arn:aws:s3vectors:*:*:bucket/test-strands-s3v-*',
+          'arn:aws:s3vectors:*:*:bucket/test-strands-s3v-*/index/*',
+        ],
       }),
     );
 

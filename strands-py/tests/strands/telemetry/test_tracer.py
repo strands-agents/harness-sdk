@@ -241,6 +241,26 @@ def test_start_model_invoke_span(mock_tracer):
         assert span is not None
 
 
+def test_start_model_invoke_span_maps_injected_blocks_to_text_parts_in_latest_conventions(mock_tracer, monkeypatch):
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+        messages = [
+            {"role": "user", "content": [{"text": "Hi"}, {"injected": {"text": "cwd: /repo", "source": "env"}}]},
+        ]
+
+        tracer.start_model_invoke_span(messages=messages)
+
+        detail_calls = [
+            call for call in mock_span.add_event.call_args_list if "gen_ai.input.messages" in call[1]["attributes"]
+        ]
+        parsed = json.loads(detail_calls[0][1]["attributes"]["gen_ai.input.messages"])
+        assert parsed[0]["parts"] == [{"type": "text", "content": "Hi"}, {"type": "text", "content": "cwd: /repo"}]
+
+
 def test_start_model_invoke_span_latest_conventions(mock_tracer, monkeypatch):
     """Test starting a model invoke span with the latest semantic conventions."""
     with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):

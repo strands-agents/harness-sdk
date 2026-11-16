@@ -1,8 +1,8 @@
 ---
 title: Model Routing
 description: >-
-  Route each Strands agent invocation across multiple models with ordered fallback,
-  request classification, custom strategies, and bounded switching.
+  Route each Strands agent invocation across models with ordered fallback, request
+  classification, custom strategies, tenant policies, and bounded switching.
 tags: [error-handling]
 sourceLinks:
   - path: strands-py/src/strands/models/routing/router.py
@@ -299,6 +299,107 @@ metadata, read-only invocation state, and prior attempts. Routing strategies mus
 not mutate invocation state. The method must return one of the candidate instances
 in its routing context. Returning a new, equivalent candidate is an error.
 
+## Restrict candidates per tenant
+
+When one agent serves several tenants (the customers of your application), each tenant
+may approve only some models. Enforce that rule in the routing strategy, not in a
+`BeforeModelCallEvent` hook. The router selects the candidate after that hook runs, so
+the hook cannot see which model will serve the call.
+
+The strategy below reads the tenant from invocation state, keeps only the candidates
+that tenant allows, and passes them to another strategy. The rule also applies after a
+failure, so the router never fails over to a candidate the tenant does not allow. When
+no allowed candidate is left, the original model error reaches the caller.
+
+<Tabs>
+<Tab label="Python">
+```python
+from dataclasses import replace
+from typing import Any
+
+from strands import Agent
+from strands.models import (
+    BedrockModel,
+    FallbackStrategy,
+    ModelRouter,
+    RoutingCandidate,
+    RoutingContext,
+    RoutingStrategy,
+)
+
+TENANT_VENDORS = {
+    "customer-a": {"amazon", "anthropic"},
+    "customer-b": {"amazon"},
+}
+
+
+class TenantPolicy:
+    def __init__(self, inner: RoutingStrategy) -> None:
+        self._inner = inner
+
+    async def select(
+        self,
+        context: RoutingContext,
+        **kwargs: Any,
+    ) -> RoutingCandidate | None:
+        tenant = context.invocation_state.get("tenant")
+        vendors = TENANT_VENDORS.get(str(tenant), set())
+        allowed = [
+            c for c in context.candidates
+            if (c.metadata or {}).get("vendor") in vendors
+        ]
+        if not allowed:
+            raise PermissionError(f"tenant {tenant!r} has no allowed model")
+
+        choice = await self._inner.select(
+            replace(context, candidates=allowed), **kwargs
+        )
+        # A declined opening choice serves the first candidate, which may be denied
+        if choice is None and not context.attempts:
+            return allowed[0]
+        return choice
+
+
+router = ModelRouter(
+    models=[
+        RoutingCandidate(
+            BedrockModel(
+                model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            ),
+            name="claude",
+            metadata={"vendor": "anthropic"},
+        ),
+        RoutingCandidate(
+            BedrockModel(model_id="us.amazon.nova-pro-v1:0"),
+            name="nova",
+            metadata={"vendor": "amazon"},
+        ),
+    ],
+    strategy=TenantPolicy(FallbackStrategy()),
+)
+agent = Agent(model=router)
+
+agent(
+    "Summarize the tradeoffs of active-active deployment.",
+    invocation_state={"tenant": "customer-b"},
+)
+```
+</Tab>
+<Tab label="TypeScript">
+```typescript
+--8<-- "user-guide/sdk/model-providers/model-routing_imports.ts:mr_tenant_imports"
+
+--8<-- "user-guide/sdk/model-providers/model-routing.ts:mr_tenant"
+```
+</Tab>
+</Tabs>
+
+`customer-b` opens on Nova Pro and never falls back to Claude. A tenant with no entry,
+or a request without one, raises before any model runs. To choose the opening candidate
+by request content, wrap a strategy such as the `ClassifyThenFallback` strategy in
+[Build a custom routing strategy](#build-a-custom-routing-strategy) instead of
+`FallbackStrategy`.
+
 ## Understand retries and switches
 
 To predict which model handles each call, separate same-model retries from candidate
@@ -314,6 +415,18 @@ switches:
 The next agent invocation starts with a new routing decision. Routing selects each
 candidate at most once per failure round, though the retry strategy can call the
 selected model more than once. This prevents routing cycles.
+
+:::caution[Each model keeps its own prompt cache]
+A prompt cache belongs to the model that wrote it. When routing moves a request to
+another candidate, that candidate cannot read the cached system prompt, tools, or
+conversation. It processes the full input again without the cache read discount.
+Because routing decides again on every invocation, a strategy that alternates models
+from turn to turn can cost more than serving every turn from one model. Compare the cache
+read and write token counts in the agent's usage metrics before you route a long
+conversation turn by turn. See
+[Bedrock prompt caching](./amazon-bedrock-prompt-caching.md) and
+[Anthropic prompt caching](./anthropic.md#prompt-caching).
+:::
 
 ## Work within current limits
 

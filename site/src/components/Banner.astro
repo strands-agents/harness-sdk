@@ -1,5 +1,5 @@
 ---
-import halftone from '../assets/banner/halftone.svg?raw';
+import halftone from '../assets/banner/halftone.svg?url';
 import arrow from '../assets/banner/arrow.svg?raw';
 import InstallCommand from './InstallCommand.astro';
 import { pathWithBase } from '../util/links';
@@ -7,7 +7,9 @@ import { pathWithBase } from '../util/links';
 
 <section class="banner" aria-label="Introduction">
   <div class="banner__inner">
-    <div class="banner__halftone" set:html={halftone} aria-hidden="true" />
+    <div class="banner__halftone" aria-hidden="true">
+      <div class="banner__halftone-mask" style={`--halftone-mask: url("${halftone}")`} />
+    </div>
     <div class="banner__gradient" aria-hidden="true" />
     <div class="banner__content">
     <div class="banner__text">
@@ -20,7 +22,7 @@ import { pathWithBase } from '../util/links';
     <div class="banner__actions">
       <div class="banner__links">
         <a href={pathWithBase('/docs/user-guide/harness/quickstart/')} class="banner__link">
-          Quick start
+          Quickstart
           <span class="banner__arrow" set:html={arrow} />
         </a>
         <a
@@ -74,19 +76,20 @@ import { pathWithBase } from '../util/links';
     justify-content: center;
   }
 
-  .banner__halftone :global(svg) {
+  .banner__halftone-mask {
     display: block;
     width: 1332px;
     height: 750px;
     transform: rotate(180deg);
     flex: none;
-  }
-
-  /* The halftone SVG hardcodes brand green; retint per theme. In light mode
-     the pale seafoam was nearly invisible on white, so use a more saturated
-     green dot token (see --halftone-dot in fonts.css). */
-  .banner__halftone :global([fill='#00CC60']) {
-    fill: var(--halftone-dot);
+    background-color: var(--halftone-dot);
+    -webkit-mask-image: var(--halftone-mask);
+    mask-image: var(--halftone-mask);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    mask-mode: alpha;
   }
 
   .banner__gradient {
@@ -115,7 +118,9 @@ import { pathWithBase } from '../util/links';
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 500;
-    font-size: clamp(30px, 3.6vw, 52px);
+    /* Sized so the headline and the fixed-width install pill fit side by
+       side from 1024px, even with a classic scrollbar. */
+    font-size: clamp(30px, 3.25vw, 52px);
     letter-spacing: 0.1em;
     line-height: 1.2;
     color: var(--banner-headline);
@@ -127,7 +132,7 @@ import { pathWithBase } from '../util/links';
     flex-direction: column;
     align-items: stretch;
     gap: 16px;
-    /* Hug the widest child (the install command pill) so the Quick start /
+    /* Hug the widest child (the install command pill) so the Quickstart /
        GitHub links stretch to its width and the column reads as one set. */
     width: fit-content;
     max-width: 100%;
@@ -196,6 +201,10 @@ import { pathWithBase } from '../util/links';
 
     .banner__text {
       align-items: center;
+    }
+
+    .banner__headline {
+      font-size: clamp(30px, 3.6vw, 52px);
     }
 
     .banner__halftone {

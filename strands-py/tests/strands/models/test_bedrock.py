@@ -16,10 +16,12 @@ import pytest
 from botocore import UNSIGNED
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError, EventStreamError
+from botocore.serialize import create_serializer
+from botocore.session import Session as BotocoreSession
 
 import strands
 from strands import _exception_notes
-from strands.models import BedrockModel, CacheConfig, CacheToolsConfig
+from strands.models import BedrockModel, CacheConfig, CacheToolsConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.bedrock import (
     DEFAULT_BEDROCK_MODEL_ID,
     DEFAULT_BEDROCK_REGION,
@@ -31,8 +33,10 @@ from strands.models.bedrock import (
 from strands.tools import convert_pydantic_to_tool_spec
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from strands.types.tools import ToolSpec
+from tests.fixtures.say_tool import say
 
 FORMATTED_DEFAULT_MODEL_ID = DEFAULT_BEDROCK_MODEL_ID
+
 
 # cache_tools is deprecated in favor of CacheConfig(tools_ttl=...); tests that deliberately exercise the
 # backward-compat path emit its config-time DeprecationWarning, and assert it explicitly where relevant.
@@ -389,6 +393,17 @@ def test__init__auto_populates_context_window_limit_default_model(bedrock_client
     assert model.get_config().get("context_window_limit") == 1_000_000
 
 
+def test__init__auto_populates_context_window_limit_from_the_model_info_override(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="anthropic.claude-sonnet-4-6", model_info=ModelInfo(limits=ModelLimits(context_window=500_000))
+    )
+
+    assert model.get_config().get("context_window_limit") == 500_000
+    assert model.model_info.limits.context_window == 500_000
+
+
 def test__init__explicit_context_window_limit_not_overridden(bedrock_client):
     _ = bedrock_client
 
@@ -542,6 +557,113 @@ def test_format_request_inference_config(model, messages, model_id, inference_co
     }
 
     assert tru_request == exp_request
+
+
+def test_format_request_defaults_max_tokens_to_the_model_info_output_limit(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_for_a_cross_region_model_id(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-6")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_for_the_default_model(bedrock_client, messages):
+    _ = bedrock_client
+
+    assert BedrockModel().format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
+
+
+def test_format_request_defaults_max_tokens_from_the_model_info_override(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="m1", model_info=ModelInfo(limits=ModelLimits(max_output_tokens=2_000)))
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 2_000}
+
+
+def test_format_request_leaves_max_tokens_unset_for_an_unknown_model(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="unknown.model-v1:0")
+
+    assert model.model_info.limits.max_output_tokens is None
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
+def test_format_request_explicit_max_tokens_wins_over_the_model_info_output_limit(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6", max_tokens=1)
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 1}
+
+
+def test_format_request_explicit_none_max_tokens_opts_out_of_the_default(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6", max_tokens=None)
+
+    assert model.format_request(messages)["inferenceConfig"] == {}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"model_id": "anthropic.claude-sonnet-4-5-20250929-v1:0"},
+        {"model_id": "anthropic.claude-sonnet-4-5-20250929-v1:0", "context_window_limit": 100_000},
+    ],
+    ids=["200k-window model", "user-set context_window_limit"],
+)
+def test_format_request_does_not_cap_the_default_max_tokens_by_the_context_window(bedrock_client, messages, config):
+    _ = bedrock_client
+    model = BedrockModel(**config)
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 64_000}
+
+
+@pytest.mark.parametrize(
+    ("config", "exp_config"),
+    [
+        (
+            {"model_id": "anthropic.claude-sonnet-4-6"},
+            {
+                "model_id": "anthropic.claude-sonnet-4-6",
+                "include_tool_result_status": "auto",
+                "context_window_limit": 1_000_000,
+                "max_tokens": 128_000,
+            },
+        ),
+        (
+            {"model_id": "anthropic.claude-sonnet-4-6", "max_tokens": None},
+            {
+                "model_id": "anthropic.claude-sonnet-4-6",
+                "include_tool_result_status": "auto",
+                "context_window_limit": 1_000_000,
+                "max_tokens": None,
+            },
+        ),
+        (
+            {"model_id": "unknown.model-v1:0"},
+            {"model_id": "unknown.model-v1:0", "include_tool_result_status": "auto"},
+        ),
+    ],
+    ids=["listed model", "explicit None", "unknown model"],
+)
+def test_get_config_surfaces_the_default_max_tokens(bedrock_client, config, exp_config):
+    _ = bedrock_client
+
+    assert BedrockModel(**config).get_config() == exp_config
+
+
+def test_format_request_re_resolves_the_default_max_tokens_when_model_id_changes(bedrock_client, messages):
+    _ = bedrock_client
+    model = BedrockModel(model_id="anthropic.claude-sonnet-4-6")
+
+    model.update_config(model_id="anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 64_000}
 
 
 def test_format_request_system_prompt(model, messages, model_id, system_prompt):
@@ -872,6 +994,71 @@ def test_format_request_cache(model, messages, model_id, tool_spec, cache_type):
     }
 
     assert tru_request == exp_request
+
+
+@pytest.mark.asyncio
+async def test_stream_same_index_reasoning_survives_agent_tool_loop(bedrock_client):
+    """Keep both signed blocks in the next serialized ConverseStream request (#5498)."""
+    tool = say
+    first_turn = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"text": "first"}}}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"signature": "SIG"}}}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"signature": "1"}}}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"text": "second"}}}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": {"signature": "SIG2"}}}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"contentBlockIndex": 1, "delta": {"text": "Looking up."}}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {
+            "contentBlockStart": {
+                "contentBlockIndex": 2,
+                "start": {"toolUse": {"toolUseId": "tool-1", "name": tool.tool_name}},
+            }
+        },
+        {"contentBlockDelta": {"contentBlockIndex": 2, "delta": {"toolUse": {"input": '{"input":"world"}'}}}},
+        {"contentBlockStop": {"contentBlockIndex": 2}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+    last_turn = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "Done."}}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    serialized_requests = []
+    turns = iter([first_turn, last_turn])
+    operation = BotocoreSession().get_service_model("bedrock-runtime").operation_model("ConverseStream")
+    serializer = create_serializer("rest-json")
+
+    def converse_stream(**request):
+        serialized = serializer.serialize_to_request(request, operation)
+        serialized_requests.append(json.loads(serialized["body"]))
+        return {"stream": iter(next(turns))}
+
+    bedrock_client.converse_stream.side_effect = converse_stream
+    agent = strands.Agent(model=BedrockModel(model_id="anthropic.claude-test"), tools=[tool], callback_handler=None)
+    result = await agent.invoke_async("Look it up.")
+
+    assert len(serialized_requests) == 2
+    exp_assistant = {
+        "role": "assistant",
+        "content": [
+            {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+            {"reasoningContent": {"reasoningText": {"text": "second", "signature": "SIG2"}}},
+            {"text": "Looking up."},
+            {"toolUse": {"toolUseId": "tool-1", "name": tool.tool_name, "input": {"input": "world"}}},
+        ],
+    }
+    tru_assistant = serialized_requests[1]["messages"][1]
+    assert tru_assistant == exp_assistant
+    assert agent.messages[1] == {**exp_assistant, "metadata": ANY, "tracking_id": ANY}
+    assert serialized_requests[1]["messages"][0] == serialized_requests[0]["messages"][0]
+    tru_tool_result = serialized_requests[1]["messages"][2]["content"][0]["toolResult"]["toolUseId"]
+    assert tru_tool_result == "tool-1"
+    tru_message = result.message
+    exp_message = {"role": "assistant", "content": [{"text": "Done."}], "metadata": ANY, "tracking_id": ANY}
+    assert tru_message == exp_message
 
 
 @pytest.mark.asyncio
@@ -1242,23 +1429,63 @@ async def test_stream_retries_with_drop_block_on_thinking_binding_error(
     assert converse_method.call_args.kwargs["additionalModelRequestFields"] == exp_fields[1]
 
 
+@pytest.mark.parametrize("streaming", [True, False])
+@pytest.mark.asyncio
+async def test_stream_retries_with_drop_block_without_thinking_config(
+    bedrock_client, alist, messages, tool_spec, streaming
+):
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    converse_method.side_effect = [
+        _thinking_binding_error("ConverseStream" if streaming else "Converse"),
+        _converse_response(streaming),
+        _converse_response(streaming),
+        _converse_response(streaming),
+    ]
+    model = BedrockModel(model_id="m1", streaming=streaming)
+
+    await alist(model.stream(messages))
+    await alist(model.stream(messages))
+    await alist(model.stream(messages, [tool_spec], tool_choice={"any": {}}))
+
+    tru_fields = [call.kwargs.get("additionalModelRequestFields") for call in converse_method.call_args_list]
+    exp_retry_fields = {"anthropic_beta": ["thinking-binding-controls-2026-08-01"], "thinking": DROP_BLOCK_THINKING}
+    assert tru_fields == [None, exp_retry_fields, exp_retry_fields, None]
+
+
+@pytest.mark.asyncio
+async def test_stream_drops_stale_thinking_set_in_additional_args(bedrock_client, alist, messages):
+    bedrock_client.converse_stream.side_effect = [
+        _thinking_binding_error("ConverseStream"),
+        {"stream": []},
+        {"stream": []},
+    ]
+    model = BedrockModel(model_id="m1", additional_args={"additionalModelRequestFields": {"thinking": THINKING}})
+
+    await alist(model.stream(messages))
+    await alist(model.stream(messages))
+
+    tru_fields = [call.kwargs["additionalModelRequestFields"] for call in bedrock_client.converse_stream.call_args_list]
+    exp_retry_fields = {"thinking": DROP_BLOCK_THINKING, "anthropic_beta": ["thinking-binding-controls-2026-08-01"]}
+    assert tru_fields == [{"thinking": THINKING}, exp_retry_fields, exp_retry_fields]
+
+
 @pytest.mark.parametrize(
-    "additional_request_fields",
+    ("additional_request_fields", "tool_choice"),
     [
-        {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
-        {"reasoning_config": {"type": "enabled"}},
-        None,
+        ({"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}}, None),
+        (None, {"any": {}}),
+        ({"thinking": THINKING}, {"tool": {"name": "name"}}),
     ],
 )
 @pytest.mark.asyncio
 async def test_stream_does_not_retry_thinking_binding_error_without_drop_block(
-    bedrock_client, alist, messages, additional_request_fields
+    bedrock_client, alist, messages, tool_spec, additional_request_fields, tool_choice
 ):
     bedrock_client.converse_stream.side_effect = _thinking_binding_error("ConverseStream")
     model = BedrockModel(model_id="m1", additional_request_fields=additional_request_fields)
 
     with pytest.raises(ClientError, match="bound to a different conversation"):
-        await alist(model.stream(messages))
+        await alist(model.stream(messages, [tool_spec], tool_choice=tool_choice))
 
     bedrock_client.converse_stream.assert_called_once()
     assert model._drop_stale_thinking_model_id is None
@@ -1307,19 +1534,41 @@ async def test_stream_maps_retry_error_to_sdk_exception(
     assert converse_method.call_count == 2
 
 
-def test_format_request_drops_stale_thinking_only_for_remembered_model(bedrock_client, messages):
-    _ = bedrock_client
+@pytest.mark.asyncio
+async def test_stream_does_not_keep_drop_block_after_rejected_retry(bedrock_client, alist, messages):
+    temperature_error = ClientError(
+        {"Error": {"Code": "ValidationException", "Message": "`temperature` may only be set to 1"}}, "ConverseStream"
+    )
+    bedrock_client.converse_stream.side_effect = [
+        _thinking_binding_error("ConverseStream"),
+        temperature_error,
+        {"stream": []},
+    ]
+    model = BedrockModel(model_id="m1", temperature=0.2)
+
+    with pytest.raises(ClientError, match="temperature"):
+        await alist(model.stream(messages))
+    await alist(model.stream(messages))
+
+    assert "additionalModelRequestFields" not in bedrock_client.converse_stream.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_stream_drops_stale_thinking_only_for_remembered_model(bedrock_client, alist, messages):
+    bedrock_client.converse_stream.return_value = {"stream": []}
     model = BedrockModel(model_id="m1", additional_request_fields={"thinking": THINKING})
     model._drop_stale_thinking_model_id = "m1"
 
-    assert model.format_request(messages)["additionalModelRequestFields"] == {
-        "thinking": DROP_BLOCK_THINKING,
-        "anthropic_beta": ["thinking-binding-controls-2026-08-01"],
-    }
-
+    await alist(model.stream(messages))
     model.update_config(model_id="m2")
+    await alist(model.stream(messages))
 
-    assert model.format_request(messages)["additionalModelRequestFields"] == {"thinking": THINKING}
+    tru_fields = [call.kwargs["additionalModelRequestFields"] for call in bedrock_client.converse_stream.call_args_list]
+    exp_fields = [
+        {"thinking": DROP_BLOCK_THINKING, "anthropic_beta": ["thinking-binding-controls-2026-08-01"]},
+        {"thinking": THINKING},
+    ]
+    assert tru_fields == exp_fields
 
 
 @pytest.mark.asyncio
@@ -2224,7 +2473,7 @@ async def test_stream_output_guardrails(bedrock_client, alist, messages):
 
 @pytest.mark.asyncio
 async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, messages):
-    """Test stream method with streaming=False."""
+    """Test that output redaction is emitted for a blocked guardrail with streaming=False."""
     bedrock_client.converse.return_value = {
         "output": {"message": {"role": "assistant", "content": [{"text": "test"}]}},
         "trace": {
@@ -2241,7 +2490,7 @@ async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, me
         "stopReason": "end_turn",
     }
 
-    model = BedrockModel(model_id="test-model", streaming=False)
+    model = BedrockModel(model_id="test-model", streaming=False, guardrail_redact_output=True)
     response = model.stream(messages)
 
     tru_events = await alist(response)
@@ -2268,6 +2517,7 @@ async def test_stream_output_guardrails_redacts_output(bedrock_client, alist, me
             }
         },
         {"redactContent": {"redactUserContentMessage": "[User input redacted.]"}},
+        {"redactContent": {"redactAssistantContentMessage": "[Assistant output redacted.]"}},
     ]
     assert tru_events == exp_events
 
@@ -2349,6 +2599,52 @@ def stream_structured_output(model, test_output_model_cls, alist):
         )
 
     return stream_structured_output
+
+
+@pytest.mark.parametrize("model_id", ["us.anthropic.claude-opus-5-5", "global.anthropic.claude-haiku-5-5"])
+@pytest.mark.asyncio
+async def test_stream_structured_output_starts_at_native_when_the_model_info_forbids_forcing(
+    native_output_client, test_output_model_cls, messages, alist, model_id
+):
+    """A model the shared model info says cannot be forced skips the forced request entirely."""
+    native_output_client.converse_stream.return_value = {"stream": []}
+    model = BedrockModel(model_id=model_id)
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+
+    await alist(
+        model.stream(
+            messages,
+            [tool_spec],
+            tool_choice={"tool": {"name": tool_spec["name"]}},
+            structured_output_model=test_output_model_cls,
+        )
+    )
+
+    native_output_client.converse_stream.assert_called_once()
+    assert _mechanism(native_output_client.converse_stream.call_args.kwargs) == "native"
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_skips_native_when_the_model_info_override_lacks_it(
+    native_output_client, test_output_model_cls, messages, alist
+):
+    native_output_client.converse_stream.side_effect = [_validation_error(FORCED_TOOL_CHOICE_REJECTION), {"stream": []}]
+    model = BedrockModel(
+        model_id="m1", model_info=ModelInfo(capabilities=ModelCapabilities(native_structured_output=False))
+    )
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+
+    await alist(
+        model.stream(
+            messages,
+            [tool_spec],
+            tool_choice={"tool": {"name": tool_spec["name"]}},
+            structured_output_model=test_output_model_cls,
+        )
+    )
+
+    tru_mechanisms = [_mechanism(call.kwargs) for call in native_output_client.converse_stream.call_args_list]
+    assert tru_mechanisms == ["forced", "auto"]
 
 
 @pytest.mark.parametrize(
@@ -2622,6 +2918,8 @@ async def test_add_note_on_validation_exception_throughput(bedrock_client, model
         "too many total text bytes",
         "prompt is too long: 903884 tokens > 200000 maximum",
         "This model's maximum context length is 202752 tokens.",
+        # Nova wording (#5739)
+        "Input Tokens Exceeded: Number of input tokens exceeds maximum length. Please update the input to try again.",
     ],
 )
 @pytest.mark.asyncio
@@ -2890,6 +3188,30 @@ def test_explicit_boolean_values_preserved(bedrock_client):
     assert "status" in tool_result
 
 
+@pytest.mark.parametrize(
+    ("model_id", "exp_status_sent"),
+    [
+        ("us.anthropic.claude-sonnet-4-6", True),
+        ("us.amazon.nova-lite-v1:0", True),
+        ("us.meta.llama4-scout-17b-instruct-v1:0", False),
+        ("us.writer.palmyra-x5-v1:0", False),
+    ],
+)
+def test_format_request_auto_sends_status_only_to_models_that_support_it(bedrock_client, model_id, exp_status_sent):
+    """Guards https://github.com/strands-agents/harness-sdk/issues/5741: Nova supports the status field."""
+    model = BedrockModel(model_id=model_id)
+    messages = [
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "tool123", "status": "error", "content": [{"text": "boom"}]}}],
+        }
+    ]
+
+    tool_result = model.format_request(messages)["messages"][0]["content"][0]["toolResult"]
+
+    assert ("status" in tool_result) is exp_status_sent
+
+
 def test_format_request_filters_sdk_unknown_member_content_blocks(model, model_id, caplog):
     """Test that format_request filters out SDK_UNKNOWN_MEMBER content blocks."""
     messages = [
@@ -2912,6 +3234,21 @@ def test_format_request_filters_sdk_unknown_member_content_blocks(model, model_i
 
     for block in content:
         assert "SDK_UNKNOWN_MEMBER" not in block
+
+
+def test_format_request_skips_an_injected_block_it_receives_with_a_warning(bedrock_client, caplog):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-opus-5-5",
+        model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=True)),
+    )
+    messages = [{"role": "user", "content": [{"text": "Hello"}, {"injected": {"text": "cwd: /repo", "source": "env"}}]}]
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        formatted_request = model.format_request(messages)
+
+    assert formatted_request["messages"][0]["content"] == [{"text": "Hello"}]
+    assert "block_type=<injected> | bedrock does not send injected blocks | skipping it" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -2989,6 +3326,7 @@ REDACTED_REASONING = {"reasoningContent": {"redactedContent": b"opaque"}}
         ("us.amazon.nova-pro-v1:0", [REDACTED_REASONING]),
         ("us.meta.llama3-3-70b-instruct-v1:0", [REDACTED_REASONING]),
         ("openai.gpt-5.5", [REDACTED_REASONING]),
+        ("openai.gpt-daybreak-blue-5.6-sol", [REDACTED_REASONING]),
         ("qwen.qwen3-coder-480b-a35b-v1:0", [REDACTED_REASONING]),
         # DeepSeek rejects reasoning content altogether.
         ("us.deepseek.r1-v1:0", []),
@@ -4115,6 +4453,114 @@ def test_cache_strategy_auto_is_none_for_non_claude(bedrock_client):
     assert model._cache_strategy is None
 
 
+def test_model_info_reads_cache_points_for_claude_from_the_shared_model_info(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-6")
+
+    assert model.model_info.capabilities.prompt_caching == "cache_points"
+
+
+def test_model_info_leaves_caching_unknown_for_other_model_ids(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id="amazon.nova-pro-v1:0")
+
+    assert model.model_info.capabilities.prompt_caching is None
+
+
+def test_model_info_treats_a_non_string_model_id_as_unknown(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id=None)
+
+    assert "context_window_limit" not in model.get_config()
+    assert model.model_info == ModelInfo(
+        capabilities=ModelCapabilities(server_side_summary=False, temporary_messages=False)
+    )
+    assert model.stateful is False
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "anthropic.claude-future-9",
+        "arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1",
+        "arn:aws:bedrock:us-east-1:123456789012:custom-model/anthropic.claude-sonnet-4-6/abc",
+        "US.ANTHROPIC.CLAUDE-SONNET-4-6",
+    ],
+)
+def test_cache_strategy_auto_falls_back_to_the_claude_name_test_for_ids_the_model_info_does_not_list(
+    bedrock_client, model_id
+):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
+
+    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False, temporary_messages=False)
+    assert model._cache_strategy == "anthropic"
+
+
+def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc",
+        cache_config=CacheConfig(strategy="auto"),
+    )
+
+    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False, temporary_messages=False)
+    assert model._cache_strategy is None
+
+
+@pytest.mark.parametrize("model_id", ["us.openai.gpt-6-luna", "openai.gpt-6.1-sol", "openai.gpt-5.6-sol"])
+def test_model_info_reports_openai_models_as_implicitly_cached(bedrock_client, model_id):
+    """The listed cache points are for Bedrock's OpenAI-compatible APIs; Converse takes none for these models."""
+    _ = bedrock_client
+
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
+
+    assert model.model_info.capabilities.prompt_caching == "auto"
+    assert model._cache_strategy is None
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}], system_prompt="sys")
+    assert "cachePoint" not in str(request)
+
+
+def test_model_info_override_wins_over_openai_implicit_caching(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="us.openai.gpt-6-luna",
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+    )
+
+    assert model.model_info.capabilities.prompt_caching == "cache_points"
+
+
+def test_cache_strategy_auto_maps_to_anthropic_when_the_model_info_override_says_cache_points(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="amazon.nova-pro-v1:0",
+        cache_config=CacheConfig(strategy="auto"),
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+    )
+
+    assert model._cache_strategy == "anthropic"
+
+
+def test_cache_strategy_auto_is_none_when_the_model_info_override_marks_caching_unsupported(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(
+        model_id="us.anthropic.claude-sonnet-4-6",
+        cache_config=CacheConfig(strategy="auto"),
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="unsupported")),
+    )
+
+    assert model._cache_strategy is None
+
+
 def test_cache_strategy_is_none_without_cache_config(bedrock_client):
     """A caching-capable model still resolves to no strategy until cache_config turns caching on."""
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6")
@@ -4365,6 +4811,43 @@ def test_inject_cache_point_applies_configured_ttl_to_an_honored_point(bedrock_c
     tru_point = cleaned_messages[0]["content"][1]
     exp_point = {"cachePoint": {"type": "default", "ttl": "1h"}}
     assert tru_point == exp_point
+
+
+def test_messages_ttl_false_disables_the_message_cache_point(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0", cache_config=CacheConfig(messages_ttl=False)
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert request["messages"] == [{"role": "user", "content": [{"text": "hi"}]}]
+
+
+def test_messages_ttl_string_sets_the_message_cache_point_ttl(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        cache_config=CacheConfig(ttl="1h", messages_ttl="5m", system_prompt_ttl=False),
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert request["messages"] == [
+        {"role": "user", "content": [{"text": "hi"}, {"cachePoint": {"type": "default", "ttl": "5m"}}]}
+    ]
+
+
+def test_inject_cache_point_applies_messages_ttl_to_an_honored_point(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(cache_config=CacheConfig(strategy="anthropic", ttl="1h", messages_ttl="5m"))
+    cleaned_messages = [
+        {"role": "user", "content": [{"text": "ask"}, {"cachePoint": {"type": "default"}}, {"text": "per-call"}]}
+    ]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"][1] == {"cachePoint": {"type": "default", "ttl": "5m"}}
 
 
 def test_inject_cache_point_normalizes_the_ttl_of_a_relocated_point(bedrock_client):

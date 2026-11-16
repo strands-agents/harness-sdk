@@ -32,6 +32,11 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
     not the unified :class:`~strands.storage.storage.Storage` protocol. It does not resolve
     from the agent-level ``storage`` parameter. For snapshot-based persistence that integrates
     with agent-level storage, use :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager`.
+
+    This manager does not support an agent ``context_manager``. Each message is persisted once, so
+    the edits a context manager makes to history (truncated tool results, in-place summaries) and
+    its stash of offloaded content are not saved, and a restore reloads the unreduced history. Use
+    :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager` with a context manager.
     """
 
     def __init__(

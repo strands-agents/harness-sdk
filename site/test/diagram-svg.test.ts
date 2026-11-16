@@ -53,6 +53,12 @@ describe('prepareDiagramSvg', () => {
     expect(out.trimStart().startsWith('<svg')).toBe(true)
   })
 
+  it('strips comments that removing an inner comment would otherwise splice together', () => {
+    expect(prepareDiagramSvg('<svg><!<!-- a -->-- b --></svg>', 'x', 'X')).toBe(
+      '<svg role="img" aria-label="X" focusable="false"></svg>'
+    )
+  })
+
   it('gives the root svg an accessible name, escaped', () => {
     const out = prepareDiagramSvg(raw, 'agent-loop', 'Model "calls" tools & <loops>')
 

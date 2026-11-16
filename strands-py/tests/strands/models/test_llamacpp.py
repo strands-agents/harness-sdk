@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from strands.models.llamacpp import LlamaCppModel
 from strands.models.model import CacheConfig
@@ -694,6 +694,25 @@ async def test_structured_output_with_json_schema() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_output_shows_the_schema_to_the_model() -> None:
+    class TestOutput(BaseModel):
+        answer: str = Field(description="ANSWER-MARKER")
+
+    model = LlamaCppModel()
+    system_prompts = []
+
+    async def mock_stream(*_args, system_prompt=None, **_kwargs):
+        system_prompts.append(system_prompt)
+        yield {"contentBlockDelta": {"delta": {"text": '{"answer": "yes"}'}}}
+
+    with patch.object(model, "stream", side_effect=mock_stream):
+        [event async for event in model.structured_output(TestOutput, [{"role": "user", "content": [{"text": "hi"}]}])]
+
+    schema = json.dumps(TestOutput.model_json_schema())
+    assert system_prompts == [f"Respond with JSON that matches this JSON schema:\n{schema}"]
+
+
+@pytest.mark.asyncio
 async def test_structured_output_invalid_json_error() -> None:
     """Test structured output raises error for invalid JSON."""
 
@@ -1109,3 +1128,18 @@ class TestCountTokens:
         model.client.post.assert_not_called()
         assert isinstance(result, int)
         assert result >= 0
+
+
+def test_format_request_logs_skipped_blocks_once_per_request(caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.llamacpp")
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    LlamaCppModel()._format_request(messages)
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by llama.cpp" in messages_logged[0]

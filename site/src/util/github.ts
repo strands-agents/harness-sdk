@@ -27,10 +27,9 @@ async function sumOrgStars(): Promise<number> {
   try {
     let total = 0
     for (let page = 1; page <= MAX_PAGES; page++) {
-      const res = await fetch(
-        `https://api.github.com/orgs/${ORG}/repos?per_page=100&type=public&page=${page}`,
-        { signal: controller.signal }
-      )
+      const res = await fetch(`https://api.github.com/orgs/${ORG}/repos?per_page=100&type=public&page=${page}`, {
+        signal: controller.signal,
+      })
       if (!res.ok) return total
       const repos = (await res.json()) as Array<{ stargazers_count?: number; fork?: boolean }>
       if (!Array.isArray(repos) || repos.length === 0) return total

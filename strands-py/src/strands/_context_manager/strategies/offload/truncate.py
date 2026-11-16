@@ -6,6 +6,7 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
+from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
 from ...stash import Stash, _format_stash_refs
@@ -22,6 +23,7 @@ from .base import (
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
+    from ....agent.invocation_context import InvocationContext
 
 from ...types import ContextState
 
@@ -94,6 +96,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         message: Message,
         agent: Agent,
         stash_refs: list[str],
+        invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
         refs = _format_stash_refs(stash_refs)
         if "toolResult" in block:
@@ -141,7 +144,7 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         if len(context.messages) <= 3:
             return False
         if not context.overflow:
-            tokens = await context.agent.model.count_tokens(context.messages)
+            tokens = await ModelProxy(context.agent.model).count_tokens(context.messages)
             utilization = context.agent.model.estimate_utilization(tokens)
             if utilization < 1.0:
                 return False

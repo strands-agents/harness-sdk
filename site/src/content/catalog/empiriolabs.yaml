@@ -1,0 +1,10 @@
+name: EmpirioLabs AI
+description: Run Strands agents on EmpirioLabs AI hosted models through the OpenAI provider, and add its image, video, and speech tools over MCP.
+integrationType: model-provider
+maintainedBy: partner
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/EmpirioLabs-AI/mcp
+docsUrl: https://docs.empiriolabs.ai/integrations#strands-agents
+addedDate: 2026-10-24

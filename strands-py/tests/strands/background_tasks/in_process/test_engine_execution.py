@@ -24,7 +24,9 @@ from ._engine_test_helpers import (
 
 
 @pytest.mark.asyncio
-async def test_admission_and_updates_prevent_callbacks_from_mutating_engine_state() -> None:
+async def test_admission_and_updates_prevent_callbacks_from_mutating_engine_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     statuses: list[str] = []
 
     async def execute(context: InProcessTaskExecutionContext) -> InProcessTaskExecutionOutcome:
@@ -52,6 +54,10 @@ async def test_admission_and_updates_prevent_callbacks_from_mutating_engine_stat
     tru_statuses = statuses
     exp_statuses = ["queued", "working", "completed"]
     assert tru_statuses == exp_statuses
+    assert (
+        f"task_id=<{admitted['task_id']}>, error=<notification failed> | background task update notification failed"
+        in caplog.messages
+    )
 
     assert completed is not None
     completed["status"] = "cancelled"
@@ -91,8 +97,10 @@ async def test_execution_bounds_concurrency() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execution_propagates_asyncio_cancellation() -> None:
+@pytest.mark.parametrize("explicit_cancel", [False, True])
+async def test_execution_propagates_asyncio_cancellation(explicit_cancel: bool) -> None:
     started = asyncio.Event()
+    statuses: list[str] = []
     execution_task: asyncio.Task[None] | None = None
 
     async def execute(_: InProcessTaskExecutionContext) -> InProcessTaskExecutionOutcome:
@@ -102,12 +110,31 @@ async def test_execution_propagates_asyncio_cancellation() -> None:
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
-    engine = create_engine(execute)
+    engine = create_engine(execute, on_task_updated=lambda task: statuses.append(task["status"]))
     task = engine.submit(**create_admission("cancel"))
     await started.wait()
     assert execution_task is not None
 
-    engine.cancel(task["task_id"], reason="Stop work")
+    if explicit_cancel:
+        engine.cancel(task["task_id"], reason="Stop work")
+    execution_task.cancel()
+    await engine.wait_for_idle()
+
+    assert execution_task.cancelled()
+    assert_task(engine.get(task["task_id"]), task, {"status": "cancelled"})
+    tru_statuses = statuses
+    exp_statuses = ["queued", "working", "cancelled"]
+    assert tru_statuses == exp_statuses
+
+
+@pytest.mark.asyncio
+async def test_execution_cancelled_before_start_is_not_requeued() -> None:
+    async def execute(_: InProcessTaskExecutionContext) -> InProcessTaskExecutionOutcome:
+        raise AssertionError("cancelled execution must not start")
+
+    engine = create_engine(execute)
+    task = engine.submit(**create_admission("cancel"))
+    execution_task = next(iter(engine._spawned_tasks))
     execution_task.cancel()
     await engine.wait_for_idle()
 
@@ -192,7 +219,8 @@ async def test_execution_records_classified_failures() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execution_timeout_retains_capacity_until_execution_settles() -> None:
+@pytest.mark.parametrize("cancel_execution", [False, True])
+async def test_execution_timeout_retains_capacity_until_execution_settles(cancel_execution: bool) -> None:
     release, resolve = deferred()
     timed_out = asyncio.Event()
     hung_signal: CancelSignal | None = None
@@ -217,7 +245,10 @@ async def test_execution_timeout_retains_capacity_until_execution_settles() -> N
         assert tru_aborted == exp_aborted
         assert_task(engine.get(next_task["task_id"]), next_task, {"status": "queued"})
     finally:
-        resolve({"status": "completed", "result": create_result("late")})
+        if cancel_execution:
+            release.cancel()
+        else:
+            resolve({"status": "completed", "result": create_result("late")})
 
     await engine.wait_for_idle()
     assert_task(

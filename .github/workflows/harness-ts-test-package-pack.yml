@@ -84,7 +84,7 @@ jobs:
           "
 
       - name: Upload tarball for downstream inspect/publish
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: harness-npm-build-output
           path: harness-ts/*.tgz

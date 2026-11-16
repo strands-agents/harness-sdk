@@ -3,7 +3,7 @@ import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock, OffloadedBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
@@ -116,6 +116,62 @@ describe('ContextManager', () => {
     })
   })
 
+  describe('seeded messages', () => {
+    it('does not overwrite a stashed original with a seeded preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      const preview = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [
+              new OffloadedBlock({
+                text: '[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1]',
+                method: 'truncate',
+                ref: 'tu-1',
+              }),
+            ],
+          }),
+        ],
+      })
+      const cm = new ContextManager({ stash: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [preview] }))
+
+      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+    })
+  })
+
+  describe('seeded messages from a session without placeholder metadata', () => {
+    it('does not overwrite a stashed original with a text-only preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      await view.write('msg-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original user text' })))
+      const restored = new Message({
+        role: 'user',
+        content: [
+          new TextBlock('[Truncated: ~2,000 tokens] original [ref: msg-1_0]'),
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1_0]')],
+          }),
+        ],
+        trackingId: 'msg-1',
+      })
+      const cm = new ContextManager({ stash: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [restored] }))
+
+      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+      expect(await cm.stash!.retrieve('msg-1_0')).toStrictEqual({ data: { text: 'original user text' } })
+    })
+  })
+
   describe('overflow path', () => {
     it('runs strategies on ContextWindowOverflowError and sets retry', async () => {
       let strategyCalled = false
@@ -191,6 +247,28 @@ describe('ContextManager', () => {
       await invokeTrackedHook(agent, event)
 
       expect(messages.length).toBeLessThan(originalLength)
+      expect(event.retry).toBe(true)
+    })
+
+    it('truncates when a strategy throws', async () => {
+      const messages = Array.from(
+        { length: 10 },
+        (_, i) => new Message({ role: i % 2 === 0 ? 'user' : 'assistant', content: [new TextBlock(`msg ${i}`)] })
+      )
+      const strategy = {
+        name: 'failing',
+        apply: async (): Promise<boolean> => {
+          throw new Error('summarizer rejected')
+        },
+      }
+      const cm = new ContextManager({ strategies: [strategy] })
+      const agent = makeMockAgent({ messages, countTokens: async () => 10000, estimateUtilization: () => 1.5 })
+      await cm.initAgent(agent)
+
+      const event = makeOverflowEvent(agent)
+      await invokeTrackedHook(agent, event)
+
+      expect(messages.length).toBeLessThan(10)
       expect(event.retry).toBe(true)
     })
 

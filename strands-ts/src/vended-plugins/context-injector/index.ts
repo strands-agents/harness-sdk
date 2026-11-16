@@ -1,8 +1,8 @@
 /**
  * Context-injection plugin for Strands Agents.
  *
- * Provides the {@link ContextInjector} plugin, which folds just-in-time text into the model input
- * before each call without touching durable history.
+ * Provides the {@link ContextInjector} plugin, which writes just-in-time text into the latest user
+ * message before each model call, as an `InjectedBlock` that stays in the conversation.
  *
  * @example
  * ```typescript

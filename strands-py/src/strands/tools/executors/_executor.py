@@ -5,7 +5,9 @@ thread pools, etc.).
 """
 
 import abc
+import inspect
 import logging
+import threading
 import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -26,6 +28,7 @@ from ..structured_output._structured_output_context import StructuredOutputConte
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...agent import Agent
+    from ...agent.invocation_context import InvocationContext
     from ...background_tasks._background_tasks import _BackgroundTasks
     from ...background_tasks.in_process._manager import _MiddlewareInterrupt
     from ...bidi.agent import BidiAgent
@@ -100,6 +103,7 @@ class ToolExecutor(abc.ABC):
                 cancel_signal=context.cancel_signal,
                 _interrupt_state=agent._interrupt_state,
                 _background_interrupt=middleware_interrupt,
+                invocation_context=context.invocation_context,
             )
             result_event: ToolResultEvent | None = None
             # The dispatching cycle has ended: the metrics trace gets no parent, and the span parents to
@@ -140,6 +144,7 @@ class ToolExecutor(abc.ABC):
                     result=result_event.tool_result,
                     exception=result_event.exception,
                     duration=time.monotonic() - tool_start_time,
+                    invocation_context=context.invocation_context,
                 )
             )
             if after_event.retry and not context.cancel_signal.is_set():
@@ -158,6 +163,7 @@ class ToolExecutor(abc.ABC):
         tracer: Tracer | None = None,
         cycle_span: Any = None,
         cycle_trace: Trace | None = None,
+        invocation_context: "InvocationContext | None" = None,
         **kwargs: Any,
     ) -> AsyncGenerator[TypedEvent, None]:
         """Stream tool events.
@@ -178,6 +184,7 @@ class ToolExecutor(abc.ABC):
             tracer: When set, the tool run records a span and metrics; direct tool calls pass none.
             cycle_span: Parent span for the tool span, when running inside an event loop cycle.
             cycle_trace: Parent trace for the tool metrics, when running inside an event loop cycle.
+            invocation_context: The request the tool call belongs to, handed to the tool's ``ToolContext``.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -213,6 +220,7 @@ class ToolExecutor(abc.ABC):
                     selected_tool=tool_func,
                     tool_use=tool_use,
                     invocation_state=invocation_state,
+                    invocation_context=invocation_context,
                 )
             )
 
@@ -235,6 +243,7 @@ class ToolExecutor(abc.ABC):
                 after_event, _ = await agent.hooks.invoke_callbacks_async(
                     AfterToolCallEvent[LocalAgent](
                         agent=agent,
+                        invocation_context=invocation_context,
                         selected_tool=None,
                         tool_use=tool_use,
                         invocation_state=invocation_state,
@@ -266,7 +275,11 @@ class ToolExecutor(abc.ABC):
                     # same request within that message returns the existing task.
                     pass_id = _ensure_tracking_id(agent.messages[-1])
                     result = await background_tasks.submit_tool_call(
-                        tool_use, invocation_state, pass_id, cast(AgentTool, selected_tool)
+                        tool_use,
+                        invocation_state,
+                        pass_id,
+                        cast(AgentTool, selected_tool),
+                        invocation_context=invocation_context,
                     )
                     yield ToolResultEvent(result, backgrounded=True)
                     tool_results.append(result)
@@ -307,6 +320,7 @@ class ToolExecutor(abc.ABC):
                     invocation_state=invocation_state,
                     cancel_signal=cancel_signal,
                     _interrupt_state=agent._interrupt_state,
+                    invocation_context=invocation_context,
                 )
 
                 result_event: ToolResultEvent | None = None
@@ -359,6 +373,7 @@ class ToolExecutor(abc.ABC):
                 after_event, _ = await agent.hooks.invoke_callbacks_async(
                     AfterToolCallEvent[LocalAgent](
                         agent=agent,
+                        invocation_context=invocation_context,
                         selected_tool=selected_tool,
                         tool_use=tool_use,
                         invocation_state=invocation_state,
@@ -399,6 +414,7 @@ class ToolExecutor(abc.ABC):
                 after_event, _ = await agent.hooks.invoke_callbacks_async(
                     AfterToolCallEvent[LocalAgent](
                         agent=agent,
+                        invocation_context=invocation_context,
                         selected_tool=selected_tool,
                         tool_use=tool_use,
                         invocation_state=invocation_state,
@@ -467,6 +483,7 @@ class ToolExecutor(abc.ABC):
         cycle_span: Any,
         invocation_state: dict[str, Any],
         structured_output_context: "StructuredOutputContext | None" = None,
+        invocation_context: "InvocationContext | None" = None,
     ) -> AsyncGenerator[TypedEvent, None]:
         """Execute the given tools according to this executor's strategy.
 
@@ -478,6 +495,8 @@ class ToolExecutor(abc.ABC):
             cycle_span: Span object for tracing the cycle.
             invocation_state: Context for the tool invocation.
             structured_output_context: Context for structured output management.
+            invocation_context: The request the tool calls belong to, handed to each tool's
+                ``ToolContext``.
 
         Yields:
             Events from the tool execution stream.
@@ -634,6 +653,15 @@ def _end_tool_telemetry(
         cycle_trace.add_child(tool_trace)
 
 
+def _accepts_var_kwargs(func: Callable[..., Any]) -> bool:
+    """Whether ``func`` takes ``**kwargs``, so the framework-supplied ``_tool_context`` can be passed."""
+    try:
+        parameters = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+
+
 async def _run_tool(
     ctx: ExecuteToolContext,
     extra_kwargs: dict[str, Any],
@@ -662,6 +690,16 @@ async def _run_tool(
     # we wrap in ToolStreamEvent, and their last raw value is the result.
     yielded_any = False
     last_raw_event: Any = None
+    if tool_context is None and _accepts_var_kwargs(ctx.tool.stream):
+        # The executor's signal, not the context's: middleware may replace the latter but the
+        # tool always receives the invoking agent's. A BidiAgent has none; fall back to an inert event.
+        tool_context = ToolContext(
+            tool_use=tool_use,
+            agent=ctx.agent,
+            invocation_state=ctx.invocation_state,
+            cancel_signal=getattr(ctx.agent, "cancel_signal", threading.Event()),
+            invocation_context=ctx.invocation_context,
+        )
     stream_kwargs = {**extra_kwargs, "_tool_context": tool_context} if tool_context is not None else extra_kwargs
     try:
         async for event in ctx.tool.stream(tool_use, ctx.invocation_state, **stream_kwargs):

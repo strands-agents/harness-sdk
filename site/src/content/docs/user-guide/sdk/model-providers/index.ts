@@ -31,11 +31,26 @@ async function auxModel() {
   // --8<-- [start:aux_model]
   const agent = new Agent({
     model: new BedrockModel({ modelId: 'global.anthropic.claude-opus-5-20260301-v1:0' }),
-    auxModel: new BedrockModel({ modelId: 'global.anthropic.claude-haiku-4-5-20251001-v1:0' }),
+    auxModel: new BedrockModel({
+      modelId: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+    }),
     contextManager: 'auto',
   })
 
   // A string is a Bedrock model id, like `model`; assign later to change it.
   agent.auxModel = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
   // --8<-- [end:aux_model]
+}
+
+function modelInfo() {
+  // --8<-- [start:model_info]
+  const model = new BedrockModel({
+    modelId:
+      'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3',
+    modelInfo: {
+      limits: { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
+      capabilities: { promptCaching: 'cachePoints' },
+    },
+  })
+  // --8<-- [end:model_info]
 }
