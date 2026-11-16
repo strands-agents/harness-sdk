@@ -5,7 +5,7 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockContext, createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { tool } from '../../tools/tool-factory.js'
-import { ToolValidationError } from '../../errors.js'
+import { PendingInvocationCancelledError, ToolValidationError } from '../../errors.js'
 import { BeforeModelCallEvent } from '../../hooks/events.js'
 import { createErrorResult, Tool, ToolStreamEvent } from '../../tools/tool.js'
 import { DELEGATION_DESCRIPTION_SUFFIX } from '../agent-as-tool.js'
@@ -196,6 +196,66 @@ describe('AgentAsTool', () => {
       )
 
       expect(result).toEqual(createErrorResult("Agent 'helper' cancelled", 'tool-1'))
+      expect(((await takeover) as { stopReason: string }).stopReason).toBe('endTurn')
+    })
+
+    it('still returns an error when the stopPrevious caller withdraws after queueing', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'noop', toolUseId: 'n1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'unreachable' })
+      const noop = { name: 'noop', description: 'does nothing', callback: () => 'ok' }
+      const agent = new Agent({
+        model,
+        name: 'helper',
+        tools: [tool(noop)],
+        printer: false,
+        concurrentInvocationMode: 'stopPrevious',
+      })
+      const asTool = new AgentAsTool({ agent })
+      let takeover: Promise<unknown> | undefined
+      agent.addHook(BeforeModelCallEvent, async () => {
+        if (takeover) return
+        const controller = new AbortController()
+        takeover = agent.invoke('host takes over', { cancelSignal: controller.signal })
+        takeover.catch(() => {})
+        while (agent.pendingInvocations.length === 0) await new Promise((resolve) => setTimeout(resolve, 0))
+        controller.abort()
+      })
+
+      const { result } = await collectGenerator(
+        asTool.stream(createMockContext({ name: 'helper', toolUseId: 'tool-1', input: { input: 'Hello agent' } }))
+      )
+
+      expect(result).toEqual(createErrorResult("Agent 'helper' cancelled", 'tool-1'))
+      await expect(takeover).rejects.toThrow(PendingInvocationCancelledError)
+    })
+
+    it('returns a success result when the wrapped agent stopped itself before a stopPrevious caller arrived', async () => {
+      let takeover: Promise<unknown> | undefined
+      const stop = createMockTool('stop', () => {
+        agent.cancel({ message: 'Answer is 42', afterCurrentTools: true })
+        takeover = agent.invoke('host takes over')
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('Answer is 42')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Host answer' })
+      const agent: Agent = new Agent({
+        model,
+        name: 'test-agent',
+        tools: [stop],
+        printer: false,
+        concurrentInvocationMode: 'stopPrevious',
+      })
+      const asTool = new AgentAsTool({ agent })
+
+      const { result } = await collectGenerator(
+        asTool.stream(createMockContext({ name: 'test-agent', toolUseId: 'tool-1', input: { input: 'Hello agent' } }))
+      )
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('Answer is 42')] })
+      )
       expect(((await takeover) as { stopReason: string }).stopReason).toBe('endTurn')
     })
 

@@ -184,11 +184,6 @@ export class InvocationQueue {
     return true
   }
 
-  /** Whether a `'stopPrevious'` caller is waiting in the queue. */
-  hasStopRequest(): boolean {
-    return this._entries.some((queued) => queued.mode === 'stopPrevious')
-  }
-
   /** Whether a latest-wins caller is waiting to take the turn from the running invocation. */
   hasTakeoverRequest(): boolean {
     return this._entries.some((queued) => isLatestWins(queued.mode))

@@ -604,6 +604,11 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _abortController = new AbortController()
   private _abortSignal: AbortSignal = this._abortController.signal
   private _deferredCancel: boolean = false
+  /**
+   * Whether the pending deferred cancel was issued for a waiting latest-wins caller.
+   * @internal
+   */
+  _stoppedForCaller: boolean = false
   private _cancelMessage?: string | undefined
   private _printer?: Printer
   private _structuredOutputSchema?: z.ZodSchema | undefined
@@ -1047,7 +1052,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     // invocation on its behalf.
     if (options?.cancelSignal?.aborted !== true) {
       if (mode === 'cancelPrevious') this.cancel()
-      if (mode === 'stopPrevious') this.cancel(STOP_PREVIOUS_CANCEL)
+      if (mode === 'stopPrevious') this._stopForCaller()
     }
     await turn
     this._queuedInputTrackingIds = messages.map((message) => message.trackingId)
@@ -1269,7 +1274,8 @@ export class Agent implements LocalAgent, InvokableAgent {
    * option on `invoke` / `stream`.
    *
    * A cancel that arrives after the final model pass (e.g. during background-task
-   * settlement) returns that pass's result with its own `stopReason`.
+   * settlement) resolves the call with that pass's result and its own `stopReason`,
+   * unless a hook set `AfterInvocationEvent.resume`, which still runs.
    *
    * Only the *running* invocation is cancelled; a queued invocation is removed by
    * aborting the `cancelSignal` its caller passed.
@@ -1332,7 +1338,15 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._abortController = new AbortController()
     this._abortSignal = this._abortController.signal
     this._deferredCancel = false
+    this._stoppedForCaller = false
     this._cancelMessage = undefined
+  }
+
+  /** Stops the running invocation after its current step for a waiting caller; a stop already pending is left as is. */
+  private _stopForCaller(): void {
+    if (!this._isInvoking || this._deferredCancel) return
+    this._stoppedForCaller = true
+    this.cancel({ message: 'Superseded by a new request', afterCurrentTools: true })
   }
 
   /**
@@ -1458,7 +1472,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     await this._acquireTurn(args, options)
     // A latest-wins caller still parked behind the interrupt this call resumes: stop after its step.
-    if (this._invocationQueue.hasStopRequest()) this.cancel(STOP_PREVIOUS_CANCEL)
+    if (this._invocationQueue.hasTakeoverRequest()) this._stopForCaller()
     let continuationEvent: AfterInvocationEvent | undefined
     try {
       await this.initialize()
@@ -1604,12 +1618,13 @@ export class Agent implements LocalAgent, InvokableAgent {
           )) !== undefined
         continuationEvent = hasContinuation ? afterInvocationEvent : undefined
 
-        // A cancel that arrived after the final model pass must not be swallowed by another
-        // pass: return the completed result; abandoned inputs re-deliver in a later invocation.
-        // A hook's `resume` is still honoured after an immediate cancel (BackgroundTasks surfaces
-        // `input_required` interrupts that way), but never after a deferred one or while a
-        // latest-wins caller waits.
+        // A requested cancel drops the continuation (it re-delivers in a later invocation). A hook's
+        // `resume` survives an immediate cancel (BackgroundTasks surfaces interrupts that way), not a deferred one.
         const cancelRequested = this._deferredCancel || this._abortSignal.aborted
+        if (cancelRequested && hasContinuation) {
+          await continuations.abandon(afterInvocationEvent, new Error('Continuation abandoned after cancel'))
+          continuationEvent = undefined
+        }
         const resumeDropped = this._deferredCancel || this._invocationQueue.hasTakeoverRequest()
         if (
           (hasContinuation && !cancelRequested) ||
@@ -1990,8 +2005,12 @@ export class Agent implements LocalAgent, InvokableAgent {
       }
 
       // Main agent loop - continues until model stops without requesting tools
+      let stepRan = false
       while (true) {
         this._throwIfCancelled()
+        // A deferred cancel ends the pass once a step has run, on the paths that skip the post-batch check.
+        if (this._deferredCancel && stepRan) throw new CancelledError()
+        stepRan = true
 
         const limitStopReason = reachedLimit(invocationContext)
         if (limitStopReason) {
@@ -3297,8 +3316,6 @@ function isBlankTextBlock(block: ContentBlock): boolean {
 }
 
 const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'
-const STOP_PREVIOUS_CANCEL: CancelOptions = { message: 'Superseded by a new request', afterCurrentTools: true }
-
 const INTERRUPTED_STATE_MESSAGE =
   'Agent is in an interrupted state. Resume by invoking with interruptResponse content blocks.'
 const BLANK_TEXT_PLACEHOLDER = '[blank text]'

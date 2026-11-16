@@ -3,29 +3,20 @@ import { InvocationQueue } from '../invocation-queue.js'
 import { PendingInvocationCancelledError } from '../../errors.js'
 
 describe('InvocationQueue', () => {
-  it('counts queued entries and reports a stop request while a stopPrevious entry waits', () => {
-    const queue = new InvocationQueue()
-    void queue.wait({ mode: 'queue', messages: [], resumesInterrupt: false }).catch(() => {})
-    expect(queue.hasStopRequest()).toBe(false)
-    void queue.wait({ mode: 'stopPrevious', messages: [], resumesInterrupt: false }).catch(() => {})
+  it.each(['cancelPrevious', 'stopPrevious'] as const)(
+    'counts queued entries and reports a takeover request while a %s entry waits',
+    (mode) => {
+      const queue = new InvocationQueue()
+      void queue.wait({ mode: 'queue', messages: [], resumesInterrupt: false }).catch(() => {})
+      expect(queue.hasTakeoverRequest()).toBe(false)
+      void queue.wait({ mode, messages: [], resumesInterrupt: false }).catch(() => {})
 
-    expect(queue.size).toBe(2)
-    expect(queue.hasStopRequest()).toBe(true)
-    queue.handoff()
-    expect(queue.hasStopRequest()).toBe(false)
-  })
-
-  it('reports a takeover request while a cancelPrevious or stopPrevious entry waits', () => {
-    const queue = new InvocationQueue()
-    void queue.wait({ mode: 'queue', messages: [], resumesInterrupt: false }).catch(() => {})
-    expect(queue.hasTakeoverRequest()).toBe(false)
-    void queue.wait({ mode: 'cancelPrevious', messages: [], resumesInterrupt: false }).catch(() => {})
-
-    expect(queue.hasTakeoverRequest()).toBe(true)
-    expect(queue.hasStopRequest()).toBe(false)
-    queue.handoff()
-    expect(queue.hasTakeoverRequest()).toBe(false)
-  })
+      expect(queue.size).toBe(2)
+      expect(queue.hasTakeoverRequest()).toBe(true)
+      queue.handoff()
+      expect(queue.hasTakeoverRequest()).toBe(false)
+    }
+  )
 
   it('resolves waiters FIFO on handoff', async () => {
     const queue = new InvocationQueue()
@@ -154,7 +145,7 @@ describe('InvocationQueue', () => {
     await expect(olderCancel).rejects.toThrow(PendingInvocationCancelledError)
     await expect(olderStop).rejects.toThrow(PendingInvocationCancelledError)
     expect(queue.size).toBe(2)
-    expect(queue.hasStopRequest()).toBe(true)
+    expect(queue.hasTakeoverRequest()).toBe(true)
     queue.handoff()
     await newest
     queue.handoff()
@@ -186,7 +177,7 @@ describe('InvocationQueue', () => {
     await resume
     expect(queue.handoffResume()).toBe(false)
     expect(queue.list().map((entry) => entry.mode)).toEqual(['stopPrevious', 'queue'])
-    expect(queue.hasStopRequest()).toBe(true)
+    expect(queue.hasTakeoverRequest()).toBe(true)
 
     queue.handoff()
     await urgent

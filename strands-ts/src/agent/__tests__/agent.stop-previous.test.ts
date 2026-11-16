@@ -132,6 +132,43 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
     expect(historyShape(agent)).toEqual(['user: a', 'assistant: A', 'user: b', 'assistant: B'])
   })
 
+  it('leaves a stop that is already pending as it is, keeping its message', async () => {
+    const gate = createGate()
+    let finished = false
+    const finish = tool({
+      name: 'finish',
+      description: 'Ends the turn with a final answer',
+      callback: () => {
+        agent.cancel({ message: 'FINAL ANSWER', afterCurrentTools: true })
+        finished = true
+        return 'ok'
+      },
+    })
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'finish', toolUseId: 'f1', input: {} },
+        { type: 'toolUseBlock', name: 'gate', toolUseId: 't1', input: {} },
+      ])
+      .addTurn({ type: 'textBlock', text: 'B' })
+    const agent: Agent = new Agent({
+      model,
+      tools: [finish, gate.tool],
+      printer: false,
+      concurrentInvocationMode: 'stopPrevious',
+    })
+
+    const first = agent.invoke('a')
+    await gate.started
+    await until(() => finished, 'finish tool ran')
+    const second = agent.invoke('b')
+    gate.release()
+
+    const firstResult = await first
+    expect(firstResult.stopReason).toBe('cancelled')
+    expect(resultText(firstResult)).toBe('FINAL ANSWER')
+    expect(resultText(await second)).toBe('B')
+  })
+
   it('works as a per-call ifBusy override on a throw-mode agent', async () => {
     const gate = createGate()
     const model = new MockMessageModel()
@@ -449,6 +486,35 @@ describe("concurrentInvocationMode 'stopPrevious'", () => {
       'user: b',
       'assistant: B',
     ])
+  })
+
+  it('a cancelPrevious caller that queued while the interrupt was being raised is honoured by the resume', async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} })
+      .addTurn({ type: 'textBlock', text: 'B' })
+    const confirm = tool({
+      name: 'confirm',
+      description: 'Asks for confirmation',
+      callback: (_input, context) => `got ${String(context!.interrupt({ name: 'confirm', reason: 'ok?' }))}`,
+    })
+    const agent = new Agent({ model, tools: [confirm], printer: false, concurrentInvocationMode: 'cancelPrevious' })
+    let second: Promise<unknown> | undefined
+    // Fires while the interrupted invocation still holds the turn, so the caller queues as 'cancelPrevious'.
+    agent.addHook(InterruptEvent, () => {
+      second ??= agent.invoke('b')
+    })
+
+    const interrupted = await agent.invoke('a')
+    expect(interrupted.stopReason).toBe('interrupt')
+    await until(() => agent.pendingInvocations.length === 1, 'second parked')
+
+    const resumed = await agent.invoke([
+      new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
+    ])
+
+    expect(resumed.stopReason).toBe('cancelled')
+    expect(resultText((await second) as { lastMessage: { content: readonly unknown[] } })).toBe('B')
+    expect(model.callCount).toBe(2)
   })
 
   it('a queued interrupt response is not a latest-wins caller: it neither displaces nor stops the newer user message', async () => {

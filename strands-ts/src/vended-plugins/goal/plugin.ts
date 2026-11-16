@@ -470,7 +470,7 @@ export class GoalLoop implements Plugin {
     })
 
     // AgentResultEvent fires only on the request's final pass, so a retry still armed here was
-    // dropped by the agent (a deferred cancel or a newer caller). SDK_FIRST so user hooks already see the result.
+    // dropped by the agent (a cancel, or a newer caller). SDK_FIRST so user hooks already see the result.
     agent.addHook(
       AgentResultEvent,
       () => {
