@@ -666,7 +666,44 @@ describe('OpenAIModel', () => {
       })
     })
 
-    it('emits modelMetadataEvent with usage information', async () => {
+    it.each([
+      [
+        'emits modelMetadataEvent with usage information',
+        { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      ],
+      [
+        'surfaces cacheReadInputTokens from prompt_tokens_details',
+        { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 64 } },
+        { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadInputTokens: 64 },
+      ],
+      [
+        'omits cacheReadInputTokens when cached_tokens is zero or absent',
+        { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 0 } },
+        { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+      ],
+      [
+        'surfaces cacheWriteInputTokens from prompt_tokens_details',
+        {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          total_tokens: 120,
+          prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 40 },
+        },
+        { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadInputTokens: 64, cacheWriteInputTokens: 40 },
+      ],
+      [
+        'omits cacheWriteInputTokens when cache_write_tokens is zero or absent',
+        {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          total_tokens: 120,
+          prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 0 },
+        },
+        { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadInputTokens: 64 },
+      ],
+      ['handles usage with undefined properties', {}, { inputTokens: 0, outputTokens: 0, totalTokens: 0 }],
+    ])('%s', async (_, usage, expected) => {
       const mockClient = createMockClient(async function* () {
         yield {
           choices: [{ delta: { role: 'assistant' }, index: 0 }],
@@ -676,7 +713,7 @@ describe('OpenAIModel', () => {
         }
         yield {
           choices: [],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          usage,
         }
       })
 
@@ -686,190 +723,7 @@ describe('OpenAIModel', () => {
       const events = await collectIterator(provider.stream(messages))
 
       const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toBeDefined()
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 10,
-          outputTokens: 5,
-          totalTokens: 15,
-        },
-      })
-    })
-
-    it('surfaces cacheReadInputTokens from prompt_tokens_details', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-            prompt_tokens_details: { cached_tokens: 64 },
-          },
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 100,
-          outputTokens: 20,
-          totalTokens: 120,
-          cacheReadInputTokens: 64,
-        },
-      })
-    })
-
-    it('omits cacheReadInputTokens when cached_tokens is zero or absent', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-            prompt_tokens_details: { cached_tokens: 0 },
-          },
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 100,
-          outputTokens: 20,
-          totalTokens: 120,
-        },
-      })
-    })
-
-    it('surfaces cacheWriteInputTokens from prompt_tokens_details', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-            prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 40 },
-          },
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 100,
-          outputTokens: 20,
-          totalTokens: 120,
-          cacheReadInputTokens: 64,
-          cacheWriteInputTokens: 40,
-        },
-      })
-    })
-
-    it('omits cacheWriteInputTokens when cache_write_tokens is zero or absent', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-            prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 0 },
-          },
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 100,
-          outputTokens: 20,
-          totalTokens: 120,
-          cacheReadInputTokens: 64,
-        },
-      })
-    })
-
-    it('handles usage with undefined properties', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {}, // Empty usage object
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toBeDefined()
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-        },
-      })
+      expect(metadataEvent).toEqual({ type: 'modelMetadataEvent', usage: expected })
     })
 
     // Guards against https://github.com/strands-agents/harness-sdk/issues/4847: OpenAI-compatible
