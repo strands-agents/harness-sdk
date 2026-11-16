@@ -1951,6 +1951,25 @@ describe('OpenAIModel', () => {
       })
     })
 
+    it('appends the format extension to a bare document name', async () => {
+      const captured: { request: any } = { request: null }
+      const mockClient = createMockClientWithCapture(captured)
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new DocumentBlock({ name: 'report', format: 'pdf', source: { bytes: new Uint8Array([1, 2, 3]) } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content[0]).toEqual({
+        type: 'file',
+        file: { file_data: 'data:application/pdf;base64,AQID', filename: 'report.pdf' },
+      })
+    })
+
     it('splits image from tool result into separate user message', async () => {
       const captured: { request: any } = { request: null }
       const mockClient = createMockClientWithCapture(captured)

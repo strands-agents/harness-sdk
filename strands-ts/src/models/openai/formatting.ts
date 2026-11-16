@@ -4,7 +4,7 @@
  * @internal
  */
 
-import type { ImageBlock } from '../../types/media.js'
+import type { DocumentBlock, ImageBlock } from '../../types/media.js'
 import { encodeBase64 } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
 import { logger } from '../../logging/logger.js'
@@ -39,4 +39,14 @@ export function formatImageDataUrl(imageBlock: ImageBlock): string | undefined {
     return imageBlock.source.url
   }
   return undefined
+}
+
+/**
+ * Returns the document's name with an extension matching its format.
+ * OpenAI-compatible endpoints such as Bedrock Mantle reject a `filename` that has no extension.
+ */
+export function formatDocumentFilename(docBlock: DocumentBlock): string {
+  const extension = `.${docBlock.format}`
+  if (docBlock.name.toLowerCase().endsWith(extension)) return docBlock.name
+  return `${docBlock.name}${extension}`
 }

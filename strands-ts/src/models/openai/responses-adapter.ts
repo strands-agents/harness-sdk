@@ -31,7 +31,11 @@ import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
-import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
+import {
+  formatDocumentFilename,
+  formatImageDataUrl,
+  warnManagedParams as warnManagedParamsShared,
+} from './formatting.js'
 import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
 import type { ModelInfo } from '../model-info.js'
@@ -391,7 +395,7 @@ function formatToolResultOutput(resultBlock: ToolResultBlock): string | Response
           parts.push({
             type: 'input_file',
             file_data: `data:${mimeType};base64,${base64}`,
-            filename: docBlock.name,
+            filename: formatDocumentFilename(docBlock),
           })
         } else {
           logger.warn(
@@ -430,7 +434,7 @@ function formatDocumentInput(docBlock: DocumentBlock): Record<string, unknown> |
     return {
       type: 'input_file',
       file_data: `data:${mimeType};base64,${base64}`,
-      filename: docBlock.name,
+      filename: formatDocumentFilename(docBlock),
     }
   }
   logger.warn(`source_type=<${docBlock.source.type}> | only byte source documents supported in responses api`)

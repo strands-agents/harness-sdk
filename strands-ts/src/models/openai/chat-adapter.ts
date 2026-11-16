@@ -14,7 +14,11 @@ import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
-import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
+import {
+  formatDocumentFilename,
+  formatImageDataUrl,
+  warnManagedParams as warnManagedParamsShared,
+} from './formatting.js'
 import { applyCacheConfig } from './cache.js'
 import type { ChatStreamState, OpenAIChatConfig } from './types.js'
 
@@ -191,7 +195,7 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
                     type: 'file',
                     file: {
                       file_data: `data:${mimeType};base64,${base64}`,
-                      filename: docBlock.name,
+                      filename: formatDocumentFilename(docBlock),
                     },
                   })
                   break

@@ -492,6 +492,50 @@ describe("OpenAIModel (api: 'responses')", () => {
       ])
     })
 
+    it('appends the format extension to a bare document name in a tool result', async () => {
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('read')] }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'doc_tool',
+              status: 'success',
+              content: [new DocumentBlock({ name: 'report', format: 'pdf', source: { bytes: new Uint8Array([1]) } })],
+            }),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      const out = req.input.find((i: any) => i.type === 'function_call_output')
+      expect(out.output).toEqual([expect.objectContaining({ type: 'input_file', filename: 'report.pdf' })])
+    })
+
+    it.each([
+      { name: 'report', format: 'pdf', expected: 'report.pdf' },
+      { name: 'report.pdf', format: 'pdf', expected: 'report.pdf' },
+      { name: 'REPORT.PDF', format: 'pdf', expected: 'REPORT.PDF' },
+      { name: 'notes.v2', format: 'txt', expected: 'notes.v2.txt' },
+    ] as const)('sends filename $expected for a user document named $name', async ({ name, format, expected }) => {
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new DocumentBlock({ name, format, source: { bytes: new Uint8Array([1, 2, 3]) } })],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({
+        role: 'user',
+        content: [
+          {
+            type: 'input_file',
+            file_data: expect.stringMatching(/^data:[^;]+;base64,AQID$/),
+            filename: expected,
+          },
+        ],
+      })
+    })
+
     it('keeps tool result output as a plain string when only text is present', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('ping')] }),
