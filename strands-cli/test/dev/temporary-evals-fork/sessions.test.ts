@@ -1,9 +1,16 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ExperimentSummary } from '../../../src/dev/panels/model.js'
+import {
+  readTemporaryRunRecords,
+  saveTemporaryRunRecord,
+  type TemporaryTestRecord,
+} from '../../../src/dev/temporary-evals-fork/background-runs.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
@@ -670,4 +677,131 @@ describe('TEMPORARY dev sessions on open', () => {
       })
     }
   )
+})
+
+const deadProcessId = async (): Promise<number> => {
+  const child = spawn(process.execPath, ['-e', ''])
+  await once(child, 'exit')
+  return child.pid!
+}
+
+const reportsOf = (workspace: DevWorkspace): string => join(workspace.directory!, 'tmp/reports')
+
+const recordFor = async (
+  workspace: DevWorkspace,
+  experiment: ExperimentSummary,
+  pid?: number
+): Promise<TemporaryTestRecord> => {
+  const reports = reportsOf(workspace)
+  const record = {
+    version: 1 as const,
+    experiment: experiment.path,
+    cases: experiment.path,
+    rerun: false,
+    report: join(reports, '20261116-090000-capital.json'),
+    log: join(reports, '20261116-090000-capital.log'),
+    store: join(reports, '20261116-090000-capital.cases'),
+    startedAt: Date.now() - 60_000,
+    ...(pid === undefined ? {} : { pid }),
+  }
+  await saveTemporaryRunRecord(record)
+  return record
+}
+
+const finishRun = (record: TemporaryTestRecord): Promise<TemporaryEvalsExit> =>
+  testingProcess()({
+    command: 'python',
+    args: ['-m', 'strands_evals.cli', 'run', record.cases, '--output', record.report, '--data-store', record.store],
+    cwd: dirname(record.report),
+    env: {},
+    onLine: () => undefined,
+  })
+
+describe('TEMPORARY /test runs after strands dev closes', () => {
+  it('shouldResumeARunThatEndedWhenStrandsDevClosedWithTheCasesItAlreadyFinished', async () => {
+    const testing = testingProcess()
+    let cutAtResume: boolean | undefined
+    let record: TemporaryTestRecord | undefined
+    const spawnTests = vi.fn(async (request: TemporaryEvalsProcess) => {
+      cutAtResume = existsSync(join(record!.store, 'c1.json'))
+      return testing(request)
+    })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnTests })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
+    record = await recordFor(workspace, experiment, await deadProcessId())
+    await writeFileAt(join(record.store, 'c0.json'), '{"output": "Paris"}')
+    await writeFileAt(join(record.store, 'c1.json'), '{"outp')
+
+    await Promise.all([sessions.test.resume(), sessions.test.resume()])
+
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    expect(spawnTests).toHaveBeenCalledTimes(1)
+    const [{ args, detached }] = spawnTests.mock.calls[0]!
+    expect([flagValue(args, '--output'), flagValue(args, '--data-store'), detached]).toEqual([
+      record.report,
+      record.store,
+      true,
+    ])
+    expect(cutAtResume).toBe(false)
+    expect(notices).toContainEqual({
+      status: 'success',
+      text: 'test · capital · resumed the run that stopped when strands dev closed',
+    })
+    await vi.waitFor(async () => expect(await readTemporaryRunRecords(reportsOf(workspace))).toEqual([]))
+  })
+
+  it('shouldShowTheResultsOfARunThatFinishedWhileStrandsDevWasClosed', async () => {
+    const spawnTests = vi.fn()
+    const { workspace, sessions, notices } = await sessionsFor({ spawnTests })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
+    const record = await recordFor(workspace, experiment, await deadProcessId())
+    await finishRun(record)
+
+    await sessions.test.resume()
+
+    expect(runStatus(sessions, experiment.path)).toBe('done')
+    expect(spawnTests).not.toHaveBeenCalled()
+    expect(notices.at(-1)).toEqual({
+      status: 'success',
+      text: 'test · capital · 2 of 3 cases passed · /test shows the results',
+    })
+    expect(await readTemporaryRunRecords(reportsOf(workspace))).toEqual([])
+  })
+
+  it.skipIf(process.platform === 'win32')('shouldFollowARunThatIsStillGoingAndShowItsResultsWhenItEnds', async () => {
+    const spawnTests = vi.fn()
+    const { workspace, sessions } = await sessionsFor({ spawnTests })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
+    const report = join(reportsOf(workspace), '20261116-090000-capital.json')
+    const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', report], { stdio: 'ignore' })
+    await once(live, 'spawn')
+    const record = await recordFor(workspace, experiment, live.pid)
+
+    void sessions.test.resume()
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('running'))
+    await finishRun(record)
+    live.kill()
+
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'), { timeout: 10_000 })
+    expect(spawnTests).not.toHaveBeenCalled()
+    await vi.waitFor(async () => expect(await readTemporaryRunRecords(reportsOf(workspace))).toEqual([]))
+  })
+
+  it('shouldRecordTheProcessOfARunWhileItGoesAndForgetItWhenTheRunEnds', async () => {
+    const testing = testingProcess()
+    let reports = ''
+    const spawnTests = vi.fn(async (request: TemporaryEvalsProcess) => {
+      request.onSpawn?.(4242)
+      await vi.waitFor(async () => expect((await readTemporaryRunRecords(reports))[0]?.pid).toBe(4242))
+      return testing(request)
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnTests })
+    reports = reportsOf(workspace)
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
+
+    sessions.test.run([experiment])
+
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    await vi.waitFor(async () => expect(await readTemporaryRunRecords(reports)).toEqual([]))
+  })
 })

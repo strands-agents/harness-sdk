@@ -29,12 +29,13 @@ interface PanelCommand<State> {
   readonly session: (sessions: TemporaryDevSessions) => PanelSession<State>
   readonly jobs: (state: State) => readonly DevChatJob[]
   readonly view: (sessions: TemporaryDevSessions) => DevChatPanelView
+  readonly resume?: (sessions: TemporaryDevSessions) => Promise<void>
 }
 
 type Sessions = (context?: DevChatCommandContext) => TemporaryDevSessions
 
 const devCommand = <State>(
-  { name, description, session, jobs, view }: PanelCommand<State>,
+  { name, description, session, jobs, view, resume }: PanelCommand<State>,
   sessions: Sessions
 ): DevChatCommand => ({
   spec: { name, usage: `/${name}`, description },
@@ -43,7 +44,7 @@ const devCommand = <State>(
     session(opened).show()
     return view(opened)
   },
-  attach: (context): void => void sessions(context),
+  attach: (context): void => void resume?.(sessions(context)),
   jobs: temporaryJobsFeed(session(sessions()), jobs),
 })
 
@@ -73,6 +74,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
         description: 'TEMPORARY: run this agent on an experiment and show what failed',
         session: ({ test }) => test,
         jobs: temporaryTestJobs,
+        resume: ({ test }) => test.resume(),
         view:
           ({ test }) =>
           (props) =>

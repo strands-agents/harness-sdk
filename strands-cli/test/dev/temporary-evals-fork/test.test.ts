@@ -100,8 +100,10 @@ describe('TEMPORARY /test', () => {
       '2',
     ])
     expect(onStart).toHaveBeenCalledWith({
+      cases: join(workspace.directory!, 'tmp/experiments/support.json'),
       report,
-      cases: join(workspace.directory!, 'tmp/reports/20261111-150405-support.cases'),
+      log: join(workspace.directory!, 'tmp/reports/20261111-150405-support.log'),
+      store: join(workspace.directory!, 'tmp/reports/20261111-150405-support.cases'),
     })
     expect(log).toBe(join(workspace.directory!, 'tmp/reports/20261111-150405-support.log'))
     expect(progress).toContain(`Testing ${workspace.entrypoint} on the 2 cases of ${outcome.experiment}`)

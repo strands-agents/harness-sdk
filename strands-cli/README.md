@@ -315,7 +315,7 @@ Creating or editing candidates never switches the dev chat away from the bound a
 Inside a `strands dev` chat:
 
 - `/experiment` creates and reviews sets of test cases. **Create a new experiment** starts a conversation about what to test, rather than running generation immediately.
-- `/test` selects saved experiments, runs the agent on their cases, and shows results and reports. It runs four cases at once. To stop a run, open it and press `s`.
+- `/test` selects saved experiments, runs the agent on their cases, and shows results and reports. It runs four cases at once. To stop a run, open it and press `s`. A run continues after strands dev closes. When strands dev opens the workspace again, it follows a run that is still active and shows the results of a run that finished. It also resumes a run that stopped, for example after a restart. Cases that finished before are not run again.
 - `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
   Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
 
