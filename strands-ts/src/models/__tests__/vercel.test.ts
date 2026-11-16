@@ -7,6 +7,7 @@ import type {
 } from '@ai-sdk/provider'
 import { APICallError } from '@ai-sdk/provider'
 import { VercelModel } from '../vercel.js'
+import { ModelProxy } from '../model-proxy.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
@@ -20,6 +21,7 @@ import {
   JsonBlock,
   OffloadedBlock,
   UnknownBlock,
+  InjectedBlock,
 } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
 import type { ToolSpec } from '../../tools/types.js'
@@ -1657,7 +1659,7 @@ describe('VercelModel', () => {
         expect(lastUser.content.every((part) => part.providerOptions?.bedrock?.cachePoint === undefined)).toBe(true)
       })
 
-      it('rides the conversation cache point onto an earlier user turn when the final turn is tool results only', async () => {
+      it('places the conversation cache point on the tool result when the final turn is tool results only', async () => {
         const toolResultsOnly = [
           new Message({ role: 'user', content: [new TextBlock('durable prefix')] }),
           new Message({
@@ -1674,9 +1676,9 @@ describe('VercelModel', () => {
         await collect(toolResultsOnly)
 
         const args = callArgs()
-        // The tool-results turn emits no user message, so the breakpoint rides the earlier user turn.
-        expect(args.prompt.filter((message) => message.role === 'user')).toHaveLength(1)
-        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
+        const tool = args.prompt.find((message) => message.role === 'tool')
+        expect(tool?.content[0]?.providerOptions?.bedrock?.cachePoint).toEqual({ type: 'default', ttl: '1h' })
+        expect(bedrockMessageCachePoint(args)).toBeUndefined()
       })
 
       it('keeps the cache point ahead of the trailing blocks a context injector rebuilds each call', async () => {
@@ -1933,6 +1935,85 @@ describe('VercelModel', () => {
           expect.objectContaining({ warn: expect.any(Function) }),
           expect.stringContaining('not supported for this vercel provider')
         )
+      })
+    })
+
+    describe('tool loop through ModelProxy', () => {
+      const PROMPT = 'Plan the work.'
+      const REMINDER = '<todos>1. read the file</todos>'
+
+      /** Where a conversation cache marker sits: the prompt text, a reminder, or a tool result by call id. */
+      type Marker = { text: string } | { toolCallId: string }
+
+      /** Every part across the user and tool messages that carries a conversation cache marker. */
+      const conversationMarkers = (args: LanguageModelV3CallOptions): Marker[] =>
+        args.prompt.flatMap((message): Marker[] => {
+          if (message.role !== 'user' && message.role !== 'tool') return []
+          return message.content.flatMap((part): Marker[] => {
+            const options = part.providerOptions
+            if (options?.anthropic?.cacheControl === undefined && options?.bedrock?.cachePoint === undefined) return []
+            if (part.type === 'tool-result') return [{ toolCallId: part.toolCallId }]
+            return part.type === 'text' ? [{ text: part.text }] : [{ text: `<${part.type}>` }]
+          })
+        })
+
+      /** The conversation an agent sends on each call of a two-tool loop, with a reminder on every user turn or none. */
+      const toolLoopCalls = (withReminder: boolean): Message[][] => {
+        const reminder = withReminder ? [new InjectedBlock({ text: REMINDER, source: 'todos' })] : []
+        const toolTurn = (toolUseId: string): Message[] => [
+          new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'calculator', toolUseId, input: {} })] }),
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock(`result ${toolUseId}`)] }),
+              ...reminder,
+            ],
+          }),
+        ]
+        const first = [new Message({ role: 'user', content: [new TextBlock(PROMPT), ...reminder] })]
+        const second = [...first, ...toolTurn('tu1')]
+        return [first, second, [...second, ...toolTurn('tu2')]]
+      }
+
+      /** Runs each call of the loop through a ModelProxy and returns the markers each call sent. */
+      const markersPerCall = async (provider: string, modelId: string, withReminder: boolean): Promise<Marker[][]> => {
+        const mock = createMockModel(minimalParts, provider, modelId)
+        const proxy = new ModelProxy(new VercelModel({ provider: mock, cacheConfig: {} }))
+        for (const messages of toolLoopCalls(withReminder)) {
+          await collectIterator(proxy.streamAggregated(messages, { toolSpecs }))
+        }
+        return (mock.doStream as ReturnType<typeof vi.fn>).mock.calls.map(([args]) =>
+          conversationMarkers(args as LanguageModelV3CallOptions)
+        )
+      }
+
+      describe.each([
+        ['anthropic', 'anthropic.messages', 'claude-sonnet-4-6'],
+        ['amazon-bedrock Claude', 'amazon-bedrock', 'global.anthropic.claude-sonnet-4-6'],
+      ])('%s', (_name, provider, modelId) => {
+        it.each([
+          ['without a reminder', false],
+          ['with a reminder on every user turn', true],
+        ])('moves the marker onto the newest tool result each call, %s', async (_case, withReminder) => {
+          expect(await markersPerCall(provider, modelId, withReminder)).toStrictEqual([
+            [{ text: PROMPT }],
+            [{ toolCallId: 'tu1' }],
+            [{ toolCallId: 'tu2' }],
+          ])
+        })
+      })
+
+      describe('amazon-bedrock Nova', () => {
+        it.each([
+          ['without a reminder', false],
+          ['with a reminder on every user turn', true],
+        ])('keeps the marker on the prompt that started the loop every call, %s', async (_case, withReminder) => {
+          expect(await markersPerCall('amazon-bedrock', 'us.amazon.nova-pro-v1:0', withReminder)).toStrictEqual([
+            [{ text: PROMPT }],
+            [{ text: PROMPT }],
+            [{ text: PROMPT }],
+          ])
+        })
       })
     })
   })

@@ -13,7 +13,6 @@ import type {
   LanguageModelV3FilePart,
   LanguageModelV3FinishReason,
   LanguageModelV3FunctionTool,
-  LanguageModelV3Message,
   LanguageModelV3Prompt,
   LanguageModelV3ReasoningPart,
   LanguageModelV3StreamPart,
@@ -26,13 +25,14 @@ import type {
   SharedV3ProviderOptions,
 } from '@ai-sdk/provider'
 import { APICallError } from '@ai-sdk/provider'
-import type { SystemPrompt, StopReason } from '../types/messages.js'
+import type { ContentBlock, SystemPrompt, StopReason } from '../types/messages.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import type { ModelStreamEvent, Usage } from './streaming.js'
 import { Message, TextBlock, type ToolResultContent } from '../types/messages.js'
 import { encodeBase64, ImageBlock, DocumentBlock, VideoBlock } from '../types/media.js'
 import {
   Model,
+  latestUserIndex,
   resolveCacheSection,
   type BaseModelConfig,
   type CacheConfig,
@@ -189,7 +189,7 @@ export class VercelModel extends Model<VercelModelConfig> {
   }
 
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
-    const prompt = formatMessages(messages, options?.systemPrompt)
+    const { prompt, cacheCandidates } = formatMessages(messages, options?.systemPrompt, options?.dynamicTrailingBlocks)
     const tools = options?.toolSpecs ? formatTools(options.toolSpecs) : undefined
     const toolChoice = options?.toolChoice ? formatToolChoice(options.toolChoice) : undefined
 
@@ -203,7 +203,7 @@ export class VercelModel extends Model<VercelModelConfig> {
       ...callSettings,
     }
 
-    applyVercelCacheConfig(callOptions, this._provider, cacheConfig, this.modelInfo, options?.dynamicTrailingBlocks)
+    applyVercelCacheConfig(callOptions, this._provider, cacheConfig, this.modelInfo, cacheCandidates)
 
     let result
     try {
@@ -270,8 +270,7 @@ export class VercelModel extends Model<VercelModelConfig> {
  * {@link VercelModelConfig.cacheConfig} for the per-provider routing.
  *
  * @param modelInfo - What the SDK knows about the wrapped model; decides the default `'auto'` strategy
- * @param dynamicTrailingBlocks - Trailing content parts of the last user message a context injector
- * rebuilds every call; the conversation breakpoint stays ahead of them so the cached prefix is stable.
+ * @param cacheCandidates - The parts the conversation breakpoint may sit on, in prompt order
  * @internal
  */
 function applyVercelCacheConfig(
@@ -279,7 +278,7 @@ function applyVercelCacheConfig(
   model: LanguageModelV3,
   cacheConfig: CacheConfig | undefined,
   modelInfo: ModelInfo,
-  dynamicTrailingBlocks = 0
+  cacheCandidates: CacheCandidate[]
 ): void {
   if (!cacheConfig) return
 
@@ -287,11 +286,11 @@ function applyVercelCacheConfig(
   switch (model.provider.split('.')[0]) {
     case 'anthropic':
       if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
-        applyAnthropicCache(callOptions, cacheConfig, dynamicTrailingBlocks)
+        applyAnthropicCache(callOptions, cacheConfig, cacheCandidates)
       }
       break
     case 'amazon-bedrock':
-      applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, model.modelId, modelInfo)
+      applyBedrockCache(callOptions, cacheConfig, cacheCandidates, model.modelId, modelInfo)
       break
     case 'openai':
       if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
@@ -345,7 +344,7 @@ function isCacheStrategySupported(cacheConfig: CacheConfig): boolean {
 function applyAnthropicCache(
   callOptions: LanguageModelV3CallOptions,
   cacheConfig: CacheConfig,
-  dynamicTrailingBlocks: number
+  cacheCandidates: CacheCandidate[]
 ): void {
   if (!isCacheStrategySupported(cacheConfig)) return
 
@@ -370,13 +369,10 @@ function applyAnthropicCache(
 
   const messages = resolveCacheSection(cacheConfig.messagesTTL, cacheConfig.ttl)
   if (messages.enabled) {
-    // ai-sdk honors cacheControl on any user content part, so place it on the durable part directly
+    // ai-sdk honors cacheControl on any user content or tool-result part, so place it on the durable part directly
     // (message-level would land on the last part, ahead of no per-call content).
-    cacheLastUserMessage(callOptions.prompt, (userMessage) => {
-      const part = durableCachePart(userMessage.content, dynamicTrailingBlocks, () => true)
-      if (part) setAnthropicCacheControl(part, messages.ttl)
-      else logger.debug('last user message has no durable content, skipped conversation cache point')
-    })
+    const part = conversationCachePart(cacheCandidates, () => true)
+    if (part) setAnthropicCacheControl(part, messages.ttl)
   }
 }
 
@@ -391,7 +387,7 @@ function applyAnthropicCache(
 function applyBedrockCache(
   callOptions: LanguageModelV3CallOptions,
   cacheConfig: CacheConfig,
-  dynamicTrailingBlocks: number,
+  cacheCandidates: CacheCandidate[],
   modelId: string,
   modelInfo: ModelInfo
 ): void {
@@ -415,11 +411,8 @@ function applyBedrockCache(
 
   const messages = bedrockCacheSection(cacheConfig.messagesTTL, cacheConfig, modelId)
   if (messages.enabled) {
-    cacheLastUserMessage(callOptions.prompt, (userMessage) => {
-      const part = durableCachePart(userMessage.content, dynamicTrailingBlocks, bedrockAcceptsCachePointAfter(modelId))
-      if (part) setBedrockCachePoint(part, messages.ttl)
-      else logger.debug('last user message has no durable part to cache after, skipped conversation cache point')
-    })
+    const part = conversationCachePart(cacheCandidates, bedrockAcceptsCachePointAfter(modelId))
+    if (part) setBedrockCachePoint(part, messages.ttl)
   }
 }
 
@@ -474,17 +467,17 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
 }
 
 /**
- * Picks which parts the wrapped Bedrock model takes a cache point directly after: text only on Nova, anything but a
- * non-PDF document otherwise (the Claude rule).
+ * Picks which parts the wrapped Bedrock model takes a cache point directly after. Nova takes one only directly after
+ * text, and reads an entry only when the point repeats the previous call's position, so its point never sits on a
+ * tool-result turn, reminder text included: in a tool loop it stays on the prompt that started the loop, matching
+ * `BedrockModel`. Claude takes one after anything but a non-PDF document, tool results included.
  *
  * @param modelId - The wrapped Bedrock model id
  * @internal
  */
-function bedrockAcceptsCachePointAfter(
-  modelId: string
-): (part: LanguageModelV3TextPart | LanguageModelV3FilePart) => boolean {
-  if (bedrockLimitsCachePoints(modelId)) return (part) => part.type === 'text'
-  return (part) => !blocksCachePoint(part)
+function bedrockAcceptsCachePointAfter(modelId: string): (candidate: CacheCandidate) => boolean {
+  if (bedrockLimitsCachePoints(modelId)) return ({ part, toolTurn }) => !toolTurn && part.type === 'text'
+  return ({ part }) => part.type === 'tool-result' || !blocksCachePoint(part)
 }
 
 /**
@@ -499,46 +492,23 @@ function blocksCachePoint(part: LanguageModelV3TextPart | LanguageModelV3FilePar
 }
 
 /**
- * Finds the content part the conversation breakpoint should sit on: the last part at or before the
- * durable boundary that the provider accepts a breakpoint after.
+ * Finds the part the single conversation breakpoint sits on: the last candidate the provider accepts a breakpoint
+ * after. Returns undefined when none qualifies, so the caller skips the point.
  *
- * `dynamicTrailingBlocks` counts trailing parts a context injector rebuilds every call (e.g. a
- * per-turn timestamp); the breakpoint must stay ahead of them, or the cached prefix changes every
- * turn and is written but never read. `accepts` rejects part types the provider cannot carry a
- * breakpoint after. Returns undefined when nothing durable remains, so the caller skips the point.
- *
+ * @param cacheCandidates - The parts the breakpoint may sit on, in prompt order
+ * @param accepts - Whether the provider takes a breakpoint directly after the candidate
  * @internal
  */
-function durableCachePart(
-  content: Array<LanguageModelV3TextPart | LanguageModelV3FilePart>,
-  dynamicTrailingBlocks: number,
-  accepts: (part: LanguageModelV3TextPart | LanguageModelV3FilePart) => boolean
-): LanguageModelV3TextPart | LanguageModelV3FilePart | undefined {
-  for (let index = content.length - 1 - dynamicTrailingBlocks; index >= 0; index--) {
-    const part = content[index]
-    if (part && accepts(part)) return part
+function conversationCachePart(
+  cacheCandidates: CacheCandidate[],
+  accepts: (candidate: CacheCandidate) => boolean
+): CacheablePart | undefined {
+  for (let index = cacheCandidates.length - 1; index >= 0; index--) {
+    const candidate = cacheCandidates[index]!
+    if (accepts(candidate)) return candidate.part
   }
+  logger.debug('no durable part to cache after, skipped conversation cache point')
   return undefined
-}
-
-/**
- * Locates the last user message and hands it to the provider-specific setter, which owns where the
- * cache breakpoint lands
- *
- * @internal
- */
-function cacheLastUserMessage(
-  prompt: LanguageModelV3CallOptions['prompt'],
-  setCachePoint: (userMessage: Extract<LanguageModelV3Message, { role: 'user' }>) => void
-): void {
-  for (let index = prompt.length - 1; index >= 0; index--) {
-    const message = prompt[index]
-    if (message?.role === 'user') {
-      setCachePoint(message)
-      return
-    }
-  }
-  logger.debug('no user message to cache, skipped conversation cache point')
 }
 
 /**
@@ -782,44 +752,44 @@ function mapUsage(usage: LanguageModelV3Usage): Usage {
   }
 }
 
+/** A user-turn part a conversation cache breakpoint can sit on. */
+type CacheablePart = LanguageModelV3TextPart | LanguageModelV3FilePart | LanguageModelV3ToolResultPart
+
+/**
+ * A durable part of a formatted user turn, which a conversation cache breakpoint may sit on.
+ *
+ * @internal
+ */
+interface CacheCandidate {
+  /** The formatted part. */
+  readonly part: CacheablePart
+  /** Whether the Strands user message the part came from holds tool results. */
+  readonly toolTurn: boolean
+}
+
+/**
+ * A formatted prompt with the parts its conversation cache breakpoint may sit on.
+ *
+ * @internal
+ */
+interface FormattedPrompt {
+  /** The prompt to send. */
+  readonly prompt: LanguageModelV3Prompt
+  /** The durable parts of every user turn, in prompt order. */
+  readonly cacheCandidates: CacheCandidate[]
+}
+
 /**
  * Converts Strands messages + system prompt to LanguageModelV3 prompt format.
+ *
+ * @param dynamicTrailingBlocks - Trailing blocks of the latest user message the next call sends differently. Their
+ *   parts are left out of the cache candidates, wherever the split into `tool` and `user` messages puts them.
  */
-function formatMessages(messages: Message[], systemPrompt?: SystemPrompt): LanguageModelV3Prompt {
+function formatMessages(messages: Message[], systemPrompt?: SystemPrompt, dynamicTrailingBlocks = 0): FormattedPrompt {
   const prompt: LanguageModelV3Prompt = []
+  const cacheCandidates: CacheCandidate[] = []
 
-  if (systemPrompt) {
-    if (typeof systemPrompt === 'string') {
-      prompt.push({ role: 'system', content: systemPrompt })
-    } else {
-      const textBlocks: string[] = []
-      let hasCachePoints = false
-      let hasGuardContent = false
-
-      for (const block of systemPrompt) {
-        if (isTextBlock(block)) {
-          textBlocks.push(block.text)
-        } else if (block.type === 'cachePointBlock') {
-          hasCachePoints = true
-        } else if (block.type === 'guardContentBlock') {
-          hasGuardContent = true
-        }
-      }
-
-      if (hasCachePoints) {
-        logger.warn('cache points are not supported in vercel system prompts, ignoring cache points')
-      }
-
-      if (hasGuardContent) {
-        logger.warn('guard content is not supported in vercel system prompts, removing guard content block')
-      }
-
-      const text = textBlocks.join('')
-      if (text) {
-        prompt.push({ role: 'system', content: text })
-      }
-    }
-  }
+  formatSystemPrompt(systemPrompt, prompt)
 
   // Build a global toolCallId -> toolName map across all messages
   const toolNameMap = new Map<string, string>()
@@ -831,15 +801,58 @@ function formatMessages(messages: Message[], systemPrompt?: SystemPrompt): Langu
     }
   }
 
-  for (const message of messages) {
+  const latestUser = latestUserIndex(messages)
+  messages.forEach((message, index) => {
     if (message.role === 'user') {
-      formatUserMessage(message, prompt, toolNameMap)
+      const durableBlocks = message.content.length - (index === latestUser ? dynamicTrailingBlocks : 0)
+      cacheCandidates.push(...formatUserMessage(message, prompt, toolNameMap, durableBlocks))
     } else if (message.role === 'assistant') {
       formatAssistantMessage(message, prompt)
     }
+  })
+
+  return { prompt, cacheCandidates }
+}
+
+/**
+ * Formats a Strands system prompt into the prompt's system message, dropping blocks Vercel cannot carry.
+ *
+ * @param systemPrompt - The system prompt, if any
+ * @param prompt - The prompt array to push the system message into
+ */
+function formatSystemPrompt(systemPrompt: SystemPrompt | undefined, prompt: LanguageModelV3Prompt): void {
+  if (!systemPrompt) return
+  if (typeof systemPrompt === 'string') {
+    prompt.push({ role: 'system', content: systemPrompt })
+    return
   }
 
-  return prompt
+  const textBlocks: string[] = []
+  let hasCachePoints = false
+  let hasGuardContent = false
+
+  for (const block of systemPrompt) {
+    if (isTextBlock(block)) {
+      textBlocks.push(block.text)
+    } else if (block.type === 'cachePointBlock') {
+      hasCachePoints = true
+    } else if (block.type === 'guardContentBlock') {
+      hasGuardContent = true
+    }
+  }
+
+  if (hasCachePoints) {
+    logger.warn('cache points are not supported in vercel system prompts, ignoring cache points')
+  }
+
+  if (hasGuardContent) {
+    logger.warn('guard content is not supported in vercel system prompts, removing guard content block')
+  }
+
+  const text = textBlocks.join('')
+  if (text) {
+    prompt.push({ role: 'system', content: text })
+  }
 }
 
 /**
@@ -852,36 +865,26 @@ function formatMessages(messages: Message[], systemPrompt?: SystemPrompt): Langu
  * @param message - The user message to format
  * @param prompt - The prompt array to push formatted messages into
  * @param toolNameMap - Map of toolCallId to toolName for resolving tool result names
+ * @param durableBlocks - How many leading blocks the next call sends the same way
+ * @returns The parts of the durable blocks as cache candidates, in prompt order
  */
-function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, toolNameMap: Map<string, string>): void {
+function formatUserMessage(
+  message: Message,
+  prompt: LanguageModelV3Prompt,
+  toolNameMap: Map<string, string>,
+  durableBlocks = message.content.length
+): CacheCandidate[] {
   const content: Array<LanguageModelV3TextPart | LanguageModelV3FilePart> = []
   const toolResults: LanguageModelV3ToolResultPart[] = []
+  const durable = new Set<CacheablePart>()
 
-  for (const block of message.content) {
-    switch (block.type) {
-      case 'textBlock':
-        content.push({ type: 'text', text: block.text })
-        break
-      case 'imageBlock':
-      case 'documentBlock':
-      case 'videoBlock':
-        content.push(...formatMediaBlock(block))
-        break
-      case 'toolResultBlock':
-        toolResults.push({
-          type: 'tool-result',
-          toolCallId: block.toolUseId,
-          toolName: toolNameMap.get(block.toolUseId) ?? '',
-          output: formatToolResultOutput(block.status, block.content),
-        })
-        break
-      case 'unknownBlock':
-        break
-      default:
-        logger.warn(`block_type=<${block.type}> | unsupported content type in vercel user message, skipping`)
-        break
+  message.content.forEach((block, index) => {
+    for (const part of formatUserBlock(block, toolNameMap)) {
+      if (part.type === 'tool-result') toolResults.push(part)
+      else content.push(part)
+      if (index < durableBlocks) durable.add(part)
     }
-  }
+  })
 
   for (const result of toolResults) {
     prompt.push({ role: 'tool', content: [result] })
@@ -889,6 +892,41 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
 
   if (content.length > 0) {
     prompt.push({ role: 'user', content })
+  }
+
+  const toolTurn = toolResults.length > 0
+  return [...toolResults, ...content].filter((part) => durable.has(part)).map((part) => ({ part, toolTurn }))
+}
+
+/**
+ * Formats one block of a Strands user message into the parts it becomes.
+ *
+ * @param block - The block to format
+ * @param toolNameMap - Map of toolCallId to toolName for resolving tool result names
+ * @returns The formatted parts, empty for a block the prompt leaves out
+ */
+function formatUserBlock(block: ContentBlock, toolNameMap: Map<string, string>): CacheablePart[] {
+  switch (block.type) {
+    case 'textBlock':
+      return [{ type: 'text', text: block.text }]
+    case 'imageBlock':
+    case 'documentBlock':
+    case 'videoBlock':
+      return formatMediaBlock(block)
+    case 'toolResultBlock':
+      return [
+        {
+          type: 'tool-result',
+          toolCallId: block.toolUseId,
+          toolName: toolNameMap.get(block.toolUseId) ?? '',
+          output: formatToolResultOutput(block.status, block.content),
+        },
+      ]
+    case 'unknownBlock':
+      return []
+    default:
+      logger.warn(`block_type=<${block.type}> | unsupported content type in vercel user message, skipping`)
+      return []
   }
 }
 
