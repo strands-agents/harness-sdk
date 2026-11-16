@@ -99,6 +99,9 @@ def _process_property(
     result = {}
     is_nullable = False
 
+    if _has_multiple_non_null_branches(prop):
+        return _process_union(prop, defs, fully_expand)
+
     # Handle anyOf for optional fields (like Optional[Type])
     if "anyOf" in prop:
         # Check if this is an Optional[...] case (one null, one type)
@@ -180,6 +183,39 @@ def _process_property(
                 result[key] = value
 
     return result
+
+
+def _has_multiple_non_null_branches(prop: dict[str, Any]) -> bool:
+    """Whether a property is an anyOf union of several types, rather than Optional[T].
+
+    Args:
+        prop: The property to inspect
+
+    Returns:
+        True if the property's anyOf has more than one non-null branch
+    """
+    non_null_branches = [option for option in prop.get("anyOf", []) if option.get("type") != "null"]
+    return len(non_null_branches) > 1
+
+
+def _process_union(prop: dict[str, Any], defs: dict[str, Any], fully_expand: bool = True) -> dict[str, Any]:
+    """Process an anyOf union, keeping every branch and resolving references inside each one.
+
+    Branches are processed as required so nullability comes only from an explicit null branch.
+
+    Args:
+        prop: The anyOf property to process
+        defs: The definitions dictionary for resolving references
+        fully_expand: Whether to fully expand nested properties
+
+    Returns:
+        Processed property with the resolved anyOf branches and the original metadata
+    """
+    branches = [
+        _process_property(option, defs, is_required=True, fully_expand=fully_expand) for option in prop["anyOf"]
+    ]
+    metadata = {key: value for key, value in prop.items() if key != "anyOf"}
+    return {"anyOf": branches, **metadata}
 
 
 def _process_schema_object(
