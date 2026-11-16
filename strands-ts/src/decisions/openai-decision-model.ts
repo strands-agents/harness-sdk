@@ -83,7 +83,7 @@ export class OpenAIDecisionModel extends DecisionModel {
     return askSystemOne(
       this._providerConfig,
       async (body, cancelSignal) =>
-        toSystemOneResponse(await transport(body, cancelSignal), questions, this._providerConfig.modelId),
+        toSystemOneResponse(await transport(body, cancelSignal), this._providerConfig.modelId),
       state,
       questions,
       options.cancelSignal
@@ -112,16 +112,13 @@ function toOpenAIQuestions(questions: Record<string, Question>): Record<string, 
 /**
  * Maps an OpenAI response to the System One shape: answers arrive as an array named by question id,
  * the documented response omits `model`, `predicate` answers carry `probability`, and choice
- * probabilities are a `{ value, probability }` list. Answers naming a question that was not asked are
- * dropped. Anything else passes through for the shared parser to validate.
+ * probabilities are a `{ value, probability }` list. Anything else passes through for the shared parser
+ * to validate.
  */
-function toSystemOneResponse(payload: unknown, questions: Record<string, Question>, modelId: string): unknown {
+function toSystemOneResponse(payload: unknown, modelId: string): unknown {
   if (!isRecord(payload) || !Array.isArray(payload['answers'])) return payload
   const answers = Object.fromEntries(
-    payload['answers']
-      .filter(isRecord)
-      .filter((answer) => typeof answer['name'] === 'string' && Object.hasOwn(questions, answer['name']))
-      .map((answer) => [String(answer['name']), toSystemOneAnswer(answer)])
+    payload['answers'].filter(isRecord).map((answer) => [String(answer['name']), toSystemOneAnswer(answer)])
   )
   return { ...payload, model: payload['model'] ?? modelId, answers }
 }

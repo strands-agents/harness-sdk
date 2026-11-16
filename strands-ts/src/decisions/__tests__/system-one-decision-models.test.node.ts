@@ -745,20 +745,6 @@ describe('OpenAIDecisionModel', () => {
     ).rejects.toThrow(/question id=<q> \| decision provider declined to answer/)
   })
 
-  it('ignores an answer naming a question that was not asked', async () => {
-    const fetch = fakeFetch({
-      answers: [
-        { type: 'refusal', name: 'never-asked' },
-        { type: 'predicate', name: 'q', probability: 0.99 },
-      ],
-    })
-    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
-
-    const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
-
-    expect(result.answers).toEqual({ q: true })
-  })
-
   it('reads OPENAI_API_KEY', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'openai-env-key')
     const captured: CapturedRequest[] = []
