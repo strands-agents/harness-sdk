@@ -45,7 +45,7 @@ describe('cachesConversationByPrefix', () => {
     ['Bedrock Nova with cacheConfig', () => new BedrockModel({ modelId: NOVA, cacheConfig: {} }), false],
     [
       'Anthropic with cacheConfig',
-      () => new AnthropicModel({ modelId: 'claude-sonnet-4-6', apiKey: 'sk-ant-test', cacheConfig: {} }),
+      () => new AnthropicModel({ modelId: 'claude-sonnet-4-6', client: {} as never, cacheConfig: {} }),
       false,
     ],
     ['OpenAI Chat with cacheConfig', () => openai({ api: 'chat', cacheConfig: {} }), true],
