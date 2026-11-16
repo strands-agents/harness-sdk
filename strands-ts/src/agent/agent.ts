@@ -3054,6 +3054,10 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   private _hasOpenUserTurn(): boolean {
+    // An interrupted turn stays open until it is resumed, so it must not be closed with a cancellation message.
+    if (this._interruptState.activated && this._interruptState.pendingToolExecution) {
+      return false
+    }
     const lastMessage = this.messages[this.messages.length - 1]
     return lastMessage?.role === 'user'
   }

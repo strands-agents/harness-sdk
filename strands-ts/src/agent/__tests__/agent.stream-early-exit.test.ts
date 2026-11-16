@@ -189,6 +189,69 @@ describe('Agent.stream early exit', () => {
       expect(model.callCount).toBe(1)
       expect(toolRun).toHaveBeenCalledOnce()
     })
+
+    it('keeps the run resumable when the consumer breaks before a resumed tool starts', async () => {
+      const { model, toolRun, agent } = createApprovalAgent(2, 'tool-1')
+      const first = await agent.invoke('go')
+      const response = new InterruptResponseContent({ interruptId: first.interrupts![0]!.id, response: 'yes' })
+
+      for await (const event of agent.stream([response])) {
+        if (event.type === 'beforeToolCallEvent') break
+      }
+      const historyAtBreak = agent.messages.map((message) => message.role)
+      const result = await agent.invoke([response])
+
+      expect(historyAtBreak).toStrictEqual(['user'])
+      expect(model.callCount).toBe(3)
+      expect(toolRun).toHaveBeenCalledTimes(2)
+      expect(result.stopReason).toBe('endTurn')
+      expect(agent.messages.map((message) => message.role)).toStrictEqual([
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+      ])
+    })
+
+    it('applies the same history rule to an explicit cancel() during a resumed run', async () => {
+      const { agent } = createApprovalAgent(2, 'tool-1')
+      const first = await agent.invoke('go')
+      const response = new InterruptResponseContent({ interruptId: first.interrupts![0]!.id, response: 'yes' })
+
+      for await (const event of agent.stream([response])) {
+        if (event.type === 'beforeToolCallEvent') {
+          agent.cancel()
+          break
+        }
+      }
+      const historyAtCancel = agent.messages.map((message) => message.role)
+      await agent.invoke([response])
+
+      expect(historyAtCancel).toStrictEqual(['user'])
+      expect(agent.messages.map((message) => message.role)).toStrictEqual([
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+      ])
+    })
+
+    it('rejects new input after a break in a resumed run until the interrupt is answered', async () => {
+      const { agent } = createApprovalAgent(2, 'tool-1')
+      const first = await agent.invoke('go')
+      const response = new InterruptResponseContent({ interruptId: first.interrupts![0]!.id, response: 'yes' })
+
+      for await (const event of agent.stream([response])) {
+        if (event.type === 'beforeToolCallEvent') break
+      }
+
+      await expect(agent.invoke('hello')).rejects.toThrow(TypeError)
+      await expect(agent.invoke([response])).resolves.toMatchObject({ stopReason: 'endTurn' })
+    })
   })
 
   describe('when the consumer breaks at an interrupt raised by a batch of tools', () => {
