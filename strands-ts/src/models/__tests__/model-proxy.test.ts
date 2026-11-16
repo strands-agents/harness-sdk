@@ -215,7 +215,7 @@ describe('ModelProxy', () => {
       ])
     })
 
-    it('renders the injected blocks of earlier user messages as text too, not just the latest', async () => {
+    it('leaves out the injected blocks of earlier user messages', async () => {
       const answer = new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' })
       const latest = userMessage('Now the docs.')
       const messages = [
@@ -229,80 +229,13 @@ describe('ModelProxy', () => {
       ]
 
       expect(await sent(messages)).toEqual([
-        new Message({
-          role: 'user',
-          content: [new TextBlock('Refactor.'), new TextBlock('\n\nreminder')],
-          trackingId: 'msg-1',
-        }),
+        new Message({ role: 'user', content: [new TextBlock('Refactor.')], trackingId: 'msg-1' }),
         answer,
         latest,
       ])
     })
 
-    it('renders an earlier turn identically across two calls, so the shared prefix stays byte-for-byte equal', async () => {
-      const turn1 = [
-        new Message({
-          role: 'user',
-          content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'env: cwd=/repo', source: 'env' })],
-          trackingId: 'msg-1',
-        }),
-      ]
-      const sentTurn1 = await sent(turn1)
-
-      const turn2 = [
-        ...turn1,
-        new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' }),
-        new Message({
-          role: 'user',
-          content: [
-            new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('ok')] }),
-            new InjectedBlock({ text: 'todos: 1/2 done', source: 'todos' }),
-          ],
-          trackingId: 'msg-3',
-        }),
-      ]
-      const sentTurn2 = await sent(turn2)
-
-      // The prefix sent on turn 2 must match turn 1's call exactly, so a prefix-match cache still hits.
-      expect(sentTurn2.slice(0, sentTurn1.length)).toEqual(sentTurn1)
-    })
-
-    it('leaves out earlier injected blocks and keeps the cache point ahead of the latest ones for a model that places its own conversation cache point', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
-      vi.spyOn(model, 'placesConversationCachePoint').mockReturnValue(true)
-      const streamSpy = vi.spyOn(model, 'stream')
-      const answer = new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' })
-      const messages = [
-        new Message({
-          role: 'user',
-          content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'old reminder', source: 'test' })],
-          trackingId: 'msg-1',
-        }),
-        answer,
-        new Message({
-          role: 'user',
-          content: [new TextBlock('Now the docs.'), new InjectedBlock({ text: 'reminder', source: 'test' })],
-          trackingId: 'msg-3',
-        }),
-      ]
-
-      await drain(new ModelProxy(model).streamAggregated(messages))
-
-      expect(streamSpy.mock.calls[0]).toEqual([
-        [
-          new Message({ role: 'user', content: [new TextBlock('Refactor.')], trackingId: 'msg-1' }),
-          answer,
-          new Message({
-            role: 'user',
-            content: [new TextBlock('Now the docs.'), new TextBlock('\n\nreminder')],
-            trackingId: 'msg-3',
-          }),
-        ],
-        { dynamicTrailingBlocks: 1 },
-      ])
-    })
-
-    it('keeps the cache point ahead of per-call text that follows the latest injected text, also when an assistant message follows', async () => {
+    it('keeps the cache point ahead of the latest injected text, also when an assistant message follows', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
       const streamSpy = vi.spyOn(model, 'stream')
       const messages = [
@@ -322,11 +255,9 @@ describe('ModelProxy', () => {
         proxy.streamAggregated([...messages, new Message({ role: 'assistant', content: [new TextBlock('Sure')] })])
       )
 
-      // The rendered injected text is stable from the first call on, so only the per-call text after
-      // it - not the injected text itself - needs to stay out of the cache boundary.
       expect(streamSpy.mock.calls.map((call) => call[1])).toStrictEqual([
-        { dynamicTrailingBlocks: 1 },
-        { dynamicTrailingBlocks: 1 },
+        { dynamicTrailingBlocks: 2 },
+        { dynamicTrailingBlocks: 2 },
       ])
     })
 
@@ -433,6 +364,91 @@ describe('ModelProxy', () => {
       const messages = [userMessage('go')]
 
       expect(await sent(messages)).toBe(messages)
+    })
+
+    describe('for a model whose provider caches the conversation by prefix alone', () => {
+      function prefixCachedModel(): MockMessageModel {
+        const model = new MockMessageModel()
+          .addTurn({ type: 'textBlock', text: 'ok' })
+          .addTurn({ type: 'textBlock', text: 'ok' })
+        model.updateConfig({ modelInfo: { capabilities: { promptCaching: 'auto' } } })
+        return model
+      }
+
+      it('sends every user message injected blocks as text, and each earlier turn unchanged on the next call', async () => {
+        const model = prefixCachedModel()
+        const streamSpy = vi.spyOn(model, 'stream')
+        const proxy = new ModelProxy(model)
+        const firstTurn = [
+          new Message({
+            role: 'user',
+            content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'env: cwd=/repo', source: 'env' })],
+            trackingId: 'msg-1',
+          }),
+        ]
+        const secondTurn = [
+          ...firstTurn,
+          new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' }),
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('ok')] }),
+              new InjectedBlock({ text: 'todos: 1/2 done', source: 'todos' }),
+            ],
+            trackingId: 'msg-3',
+          }),
+        ]
+
+        await drain(proxy.streamAggregated(firstTurn))
+        await drain(proxy.streamAggregated(secondTurn))
+
+        const [first, second] = streamSpy.mock.calls.map((call) => call[0])
+        expect(first).toEqual([
+          new Message({
+            role: 'user',
+            content: [new TextBlock('Refactor.'), new TextBlock('\n\nenv: cwd=/repo')],
+            trackingId: 'msg-1',
+          }),
+        ])
+        expect(second!.slice(0, first!.length)).toEqual(first)
+      })
+
+      it('keeps only per-call text after the latest injected block out of the cached prefix', async () => {
+        const model = prefixCachedModel()
+        const streamSpy = vi.spyOn(model, 'stream')
+        const messages = [
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('Refactor.'),
+              new InjectedBlock({ text: 'reminder', source: 'test' }),
+              new TextBlock('\n\nper-call text'),
+            ],
+          }),
+        ]
+
+        await drain(new ModelProxy(model).streamAggregated(messages, { dynamicTrailingBlocks: 1 }))
+
+        expect(streamSpy.mock.calls[0]![1]).toStrictEqual({ dynamicTrailingBlocks: 1 })
+      })
+
+      it('counts the injected blocks of every user message', async () => {
+        const model = prefixCachedModel()
+        const withEarlier = [
+          new Message({
+            role: 'user',
+            content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'x'.repeat(400), source: 'env' })],
+          }),
+          new Message({ role: 'assistant', content: [new TextBlock('Done.')] }),
+          userMessage('Next.'),
+        ]
+        const withoutEarlier = [
+          new Message({ role: 'user', content: [new TextBlock('Refactor.')] }),
+          ...withEarlier.slice(1),
+        ]
+
+        expect((await model.countTokens(withEarlier)) - (await model.countTokens(withoutEarlier))).toBe(100)
+      })
     })
   })
 

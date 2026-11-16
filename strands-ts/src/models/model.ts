@@ -438,15 +438,15 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
-   * Whether this model, as configured, places its own cache point in the conversation ahead of per-call content.
-   * When it does, the cached prefix ends before an earlier turn's injected text, so that text can be left out of later
-   * calls; when it does not, the provider caches by prefix alone and history has to be sent unchanged.
+   * Whether the provider caches this model's conversation by exact prefix alone, with no cache point of the SDK's in
+   * it. Such a provider reads from cache only when a call repeats the whole earlier request, so earlier injected text
+   * is sent again, unchanged, instead of being left out. A provider that knows how it caches overrides this.
    *
    * @internal
-   * @returns False unless the provider overrides it
+   * @returns Whether `modelInfo.capabilities.promptCaching` is `'auto'`
    */
-  placesConversationCachePoint(): boolean {
-    return false
+  cachesConversationByPrefix(): boolean {
+    return this.modelInfo.capabilities?.promptCaching === 'auto'
   }
 
   /**
@@ -463,8 +463,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * Count tokens for the given input before sending to the model.
    *
    * Used for proactive context management (e.g., triggering compression at a threshold).
-   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON). It counts only the
-   * latest user message's injected blocks, the ones a model reads.
+   * The base implementation uses a character-based heuristic (chars/4 for text, chars/2 for JSON). It counts the
+   * injected blocks the model reads: every user message's when {@link cachesConversationByPrefix} is true, otherwise
+   * only the latest user message's.
    *
    * Subclasses should override this method to use native token counting APIs
    * (e.g., Bedrock CountTokens, Anthropic countTokens, Gemini countTokens)
@@ -475,7 +476,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * @returns Total input token count
    */
   async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    return estimateTokensHeuristic(messages, options)
+    return estimateTokensHeuristic(messages, options, this.cachesConversationByPrefix())
   }
 
   /**
@@ -840,7 +841,11 @@ function estimateContentBlockTokens(block: ContentBlock): number {
  * Estimate token count using character-based heuristics (text: chars/4, JSON: chars/2).
  * Dependency-free fallback used by the base Model class.
  */
-function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptions): number {
+function estimateTokensHeuristic(
+  messages: Message[],
+  options: CountTokensOptions | undefined,
+  keepsEarlierInjected: boolean
+): number {
   let total = 0
 
   if (options?.systemPrompt) {
@@ -854,7 +859,7 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
     }
   }
 
-  total += estimateMessageTokens(messages)
+  total += estimateMessageTokens(messages, keepsEarlierInjected)
 
   if (options?.toolSpecs) {
     for (const spec of options.toolSpecs) {
@@ -865,12 +870,16 @@ function estimateTokensHeuristic(messages: Message[], options?: CountTokensOptio
   return total
 }
 
-/** Counts the messages, with only the latest user message's injected blocks, the ones a model reads. */
-function estimateMessageTokens(messages: Message[]): number {
+/** Counts the messages with the injected blocks a model reads: the latest user message's, or every user message's. */
+function estimateMessageTokens(messages: Message[], keepsEarlierInjected: boolean): number {
   const latestUser = latestUserIndex(messages)
+  const readsInjected = (message: Message, index: number): boolean =>
+    index === latestUser || (keepsEarlierInjected && message.role === 'user')
   return messages
     .flatMap((message, index) =>
-      index === latestUser ? message.content : message.content.filter((block) => block.type !== 'injectedBlock')
+      readsInjected(message, index)
+        ? message.content
+        : message.content.filter((block) => block.type !== 'injectedBlock')
     )
     .reduce((total, block) => total + estimateContentBlockTokens(block), 0)
 }

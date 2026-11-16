@@ -162,8 +162,16 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
     )
   }
 
-  /** @internal */
-  override placesConversationCachePoint(): boolean {
+  /**
+   * OpenAI caches every prompt prefix on its own, except where Responses cache points take over.
+   *
+   * @internal
+   */
+  override cachesConversationByPrefix(): boolean {
+    return this.modelInfo.capabilities?.promptCaching !== 'unsupported' && !this._placesConversationCachePoint()
+  }
+
+  private _placesConversationCachePoint(): boolean {
     const { cacheConfig } = this._config
     return (
       this._api === 'responses' &&

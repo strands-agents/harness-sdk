@@ -173,6 +173,15 @@ export class GoogleModel extends Model<GoogleModelConfig> {
   }
 
   /**
+   * Gemini caches every prompt prefix on its own above a minimum prompt size.
+   *
+   * @internal
+   */
+  override cachesConversationByPrefix(): boolean {
+    return this.modelInfo.capabilities?.promptCaching !== 'unsupported'
+  }
+
+  /**
    * Count tokens using Gemini's native countTokens API.
    *
    * Uses the Gemini countTokens API for message contents. System instructions and tools

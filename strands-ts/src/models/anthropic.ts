@@ -896,11 +896,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     )
   }
 
-  /** @internal */
-  override placesConversationCachePoint(): boolean {
-    return this._cacheSection('messagesTTL').enabled
-  }
-
   /** Resolves a cache section, disabled when `cacheConfig` is unset or its strategy is unknown. */
   private _cacheSection(section: 'toolsTTL' | 'messagesTTL' | 'systemPromptTTL'): ResolvedCacheSection {
     const cacheConfig = this._config.cacheConfig

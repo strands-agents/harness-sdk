@@ -26,6 +26,11 @@ current copy rather than a pile of superseded ones. Each rendered list is stored
 model — older ones are dropped from the request. The lists stay readable in the stored
 messages for anything inspecting history.
 
+In TypeScript, a provider that caches the conversation by prefix alone (such as GPT on
+Bedrock Converse, OpenAI Chat Completions, or Gemini) is the exception: it receives the
+earlier lists too, unchanged on every call, because dropping one would change the prefix
+and its cache would never be read.
+
 The injector fires on every turn, not just fresh user asks: the agent updates the list
 mid-loop via `todo_write`, so it should see the refreshed list on the next model call
 within the same invocation.
@@ -115,8 +120,10 @@ instance to the same agent raises, regardless of what `name` and
 
 :::caution[It re-injects on every model call]
 The list is rendered into every model call, so it costs tokens on each one and changes
-the tail of the request each turn. On a provider without explicit cache points that moves
-the cached prefix boundary. Attach it where the task tracking earns that.
+the tail of the request each turn. In Python, on a provider without explicit cache points,
+that moves the cached prefix boundary. In TypeScript, such a provider keeps every earlier list
+in the request instead, so the prefix holds but the request grows with each list. Attach it
+where the task tracking earns that.
 :::
 
 ## Related

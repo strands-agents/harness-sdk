@@ -634,11 +634,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    *
    * @returns True if caching should be enabled.
    */
-  /** @internal */
-  override placesConversationCachePoint(): boolean {
-    return this._shouldEnableCaching() && this._cacheSection(this._config.cacheConfig?.messagesTTL).enabled
-  }
-
   private _shouldEnableCaching(): boolean {
     const cacheConfig = this._config.cacheConfig
     if (!cacheConfig) {
@@ -664,6 +659,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     return strategy === 'anthropic'
+  }
+
+  /**
+   * Converse caches a model the model info lists as `'auto'` by prefix, unless the SDK places a cache point of its own.
+   *
+   * @internal
+   */
+  override cachesConversationByPrefix(): boolean {
+    if (!super.cachesConversationByPrefix()) return false
+    return !this._shouldEnableCaching() || !this._cacheSection(this._config.cacheConfig?.messagesTTL).enabled
   }
 
   /**

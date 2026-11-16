@@ -184,19 +184,31 @@ export class VercelModel extends Model<VercelModelConfig> {
     )
   }
 
-  /** @internal */
-  override placesConversationCachePoint(): boolean {
+  /**
+   * OpenAI and Gemini cache every prompt prefix on their own; Bedrock caches one by prefix when the model info says so
+   * and no cache point of the SDK's is placed.
+   *
+   * @internal
+   */
+  override cachesConversationByPrefix(): boolean {
+    switch (this._provider.provider.split('.')[0]) {
+      case 'openai':
+      case 'google':
+        return this.modelInfo.capabilities?.promptCaching !== 'unsupported'
+      case 'amazon-bedrock':
+        return super.cachesConversationByPrefix() && !this._placesBedrockConversationCachePoint()
+      default:
+        return super.cachesConversationByPrefix()
+    }
+  }
+
+  private _placesBedrockConversationCachePoint(): boolean {
     const { cacheConfig } = this._config
     if (!cacheConfig || !resolveCacheSection(cacheConfig.messagesTTL, cacheConfig.ttl).enabled) return false
-    if (!isCacheStrategySupported(cacheConfig)) return false
-    switch (this._provider.provider.split('.')[0]) {
-      case 'anthropic':
-        return !infoForbidsAutoCaching(cacheConfig, this.modelInfo, this._provider.modelId)
-      case 'amazon-bedrock':
-        return bedrockModelSupportsCaching(cacheConfig, this._provider.modelId, this.modelInfo)
-      default:
-        return false
-    }
+    return (
+      isCacheStrategySupported(cacheConfig) &&
+      bedrockModelSupportsCaching(cacheConfig, this._provider.modelId, this.modelInfo)
+    )
   }
 
   updateConfig(config: VercelModelConfig): void {

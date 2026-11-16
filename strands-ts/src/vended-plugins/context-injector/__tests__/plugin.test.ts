@@ -40,7 +40,7 @@ describe('ContextInjector', () => {
   })
 
   describe('with an agent', () => {
-    it('sends the injected text last, with no dynamic tail since nothing follows it this call', async () => {
+    it('sends the injected text last and keeps the cache point ahead of it', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const seen: { lastBlock: ContentBlock | undefined; dynamicTrailingBlocks: number }[] = []
       const original = model.stream.bind(model)
@@ -62,7 +62,7 @@ describe('ContextInjector', () => {
       expect(seen).toStrictEqual([
         {
           lastBlock: new TextBlock('\n\n<ctx>INJECTED</ctx>'),
-          dynamicTrailingBlocks: 0,
+          dynamicTrailingBlocks: 1,
         },
       ])
     })
@@ -150,7 +150,7 @@ describe('ContextInjector', () => {
       ])
     })
 
-    it("writes on every tool-result turn with 'everyTurn', and keeps each turn's own text in the request", async () => {
+    it("writes on every tool-result turn with 'everyTurn', and sends only the latest text", async () => {
       let todo = 'v1'
       const tool = createMockTool('todo_write', () => {
         todo = 'v2'
@@ -174,9 +174,7 @@ describe('ContextInjector', () => {
         injected('<todos>v2</todos>'),
       ])
       expect(requests).toHaveLength(2)
-      expectEachRequestExtendsThePrevious(requests)
-      // The first turn's list is superseded but still sent, rendered the same way as on the first call.
-      expect(requests[1]![0]!.content).toStrictEqual([{ text: 'plan the work' }, { text: '\n\n<todos>v1</todos>' }])
+      expect(requests[1]![0]!.content).toStrictEqual([{ text: 'plan the work' }])
       expect(requests[1]![2]!.content).toStrictEqual([
         expect.objectContaining({ toolResult: expect.anything() }),
         { text: '\n\n<todos>v2</todos>' },
@@ -211,7 +209,33 @@ describe('ContextInjector', () => {
       ])
     })
 
-    it('writes on every user turn, and keeps every prior turn a stable prefix of the next request', async () => {
+    it('keeps every request a prefix of the next for a model whose provider caches by prefix alone', async () => {
+      let todo = 'v1'
+      const tool = createMockTool('todo_write', () => {
+        todo = 'v2'
+        return new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('saved')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'todo_write', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'done' })
+        .addTurn({ type: 'textBlock', text: 'again' })
+      model.updateConfig({ modelInfo: { capabilities: { promptCaching: 'auto' } } })
+      const { agent, requests } = setup(
+        model,
+        { trigger: 'everyTurn', renderContent: async () => `<todos>${todo}</todos>` },
+        [tool]
+      )
+
+      await agent.invoke('plan the work')
+      await agent.invoke('next')
+
+      expect(requests).toHaveLength(3)
+      expectEachRequestExtendsThePrevious(requests)
+      expect(requests[2]![0]!.content).toStrictEqual([{ text: 'plan the work' }, { text: '\n\n<todos>v1</todos>' }])
+      expect(requests[2]!.at(-1)!.content).toStrictEqual([{ text: 'next' }, { text: '\n\n<todos>v2</todos>' }])
+    })
+
+    it('writes on every user turn, and sends only the latest text', async () => {
       const model = new MockMessageModel()
         .addTurn({ type: 'textBlock', text: 'one' })
         .addTurn({ type: 'textBlock', text: 'two' })
@@ -222,10 +246,8 @@ describe('ContextInjector', () => {
 
       expect(agent.messages[0]!.content).toStrictEqual([new TextBlock('first'), injected('cwd: /repo')])
       expect(agent.messages[2]!.content).toStrictEqual([new TextBlock('second'), injected('cwd: /repo')])
-      expect(requests).toHaveLength(2)
-      expectEachRequestExtendsThePrevious(requests)
       expect(requests[1]!.map((message) => message.content)).toStrictEqual([
-        [{ text: 'first' }, { text: '\n\ncwd: /repo' }],
+        [{ text: 'first' }],
         [{ text: 'one' }],
         [{ text: 'second' }, { text: '\n\ncwd: /repo' }],
       ])
@@ -381,8 +403,7 @@ describe('ContextInjector', () => {
 
       expect(renderContent).toHaveBeenCalledTimes(1)
       expect(requests[0]![0]!.content).toStrictEqual([{ text: 'ask' }, { text: '\n\nreminder' }])
-      // No new injection fired this call, but the first turn's text is still sent, rendered the same way.
-      expect(requests[1]![0]!.content).toStrictEqual([{ text: 'ask' }, { text: '\n\nreminder' }])
+      expect(requests[1]![0]!.content).toStrictEqual([{ text: 'ask' }])
     })
 
     it('passes the conversation as data, appState and the agent to renderContent', async () => {

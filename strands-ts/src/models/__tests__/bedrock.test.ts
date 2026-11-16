@@ -3912,6 +3912,53 @@ describe('BedrockModel', () => {
         expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
+      it('never anchors the conversation cache point on the latest tool-result message, even after its own text', () => {
+        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
+        const messages = [...toolTurn, new Message({ role: 'user', content: [toolResult, new TextBlock('reminder')] })]
+
+        collectIterator(provider.stream(messages, { toolSpecs }))
+
+        expect(request()?.messages?.[0]?.content).toStrictEqual([
+          { text: 'What is 6 x 7?' },
+          { cachePoint: { type: 'default' } },
+        ])
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
+      })
+
+      it.each([
+        ['a model Converse caches implicitly', 'us.openai.gpt-6-luna', true],
+        ['a model that caches nothing without cacheConfig', 'global.anthropic.claude-sonnet-4-6', false],
+      ])('sends earlier reminders again only to %s', async (_name, modelId, keepsEarlier) => {
+        const proxy = new ModelProxy(new BedrockModel({ modelId }))
+        const prompt = new Message({
+          role: 'user',
+          content: [
+            new TextBlock('What is 6 x 7?'),
+            new InjectedBlock({ text: '<todos>0 done</todos>', source: 'todos' }),
+          ],
+        })
+        const loop = [
+          prompt,
+          new Message({
+            role: 'assistant',
+            content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'id-1', input: {} })],
+          }),
+          new Message({
+            role: 'user',
+            content: [toolResult, new InjectedBlock({ text: '<todos>1 done</todos>', source: 'todos' })],
+          }),
+        ]
+
+        await collectGenerator(proxy.streamAggregated([prompt], { toolSpecs }))
+        const first = globalThis.structuredClone(request()?.messages ?? [])
+        await collectGenerator(proxy.streamAggregated(loop, { toolSpecs }))
+        const second = request()?.messages ?? []
+
+        expect(second.slice(0, first.length)).toEqual(keepsEarlier ? first : expect.anything())
+        expect(JSON.stringify(second[0])).toContain(keepsEarlier ? '<todos>0 done</todos>' : 'What is 6 x 7?')
+        expect(JSON.stringify(second).includes('<todos>0 done</todos>')).toBe(keepsEarlier)
+      })
+
       // The prompt that started the loop may carry a reminder (e.g. an environment injector firing on the user's
       // first turn). The point must sit after the same prompt text whether that message is still the latest one or
       // a tool loop has moved past it, since Nova reads only when the point repeats the previous call's position.

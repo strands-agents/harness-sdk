@@ -15,10 +15,9 @@ import { wellFormedRequest } from './well-formed-request.js'
  *
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every other
- * model, custom ones included, gets injected blocks as text in their place. A model that places its own
- * conversation cache point (`Model.placesConversationCachePoint`) gets only the latest user message's, since its
- * cached prefix ends before them; any other model gets every user message's, the same text on every call, so
- * history stays a byte-for-byte prefix for a provider that caches by prefix alone. A tool result whose content is all `UnknownBlock`s
+ * model, custom ones included, gets injected blocks as text in their place: only the latest user message's, unless
+ * the provider caches the conversation by prefix alone (`Model.cachesConversationByPrefix`). Such a provider gets
+ * every user message's, the same text on every call, so history stays a byte-for-byte prefix. A tool result whose content is all `UnknownBlock`s
  * gets a placeholder text, since providers skip unknown blocks and some reject an empty tool result. Lone
  * UTF-16 surrogates in the messages, system prompt, and tool specs are sent as U+FFFD, since some providers
  * reject a whole request over one.
@@ -73,7 +72,7 @@ export class ModelProxy {
     if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
-    return renderInjectedBlocks(messages, !this._model.placesConversationCachePoint())
+    return renderInjectedBlocks(messages, this._model.cachesConversationByPrefix())
   }
 
   /** Replaces summary blocks with their text, since only a provider with server-side summaries reads them. */
@@ -111,8 +110,8 @@ interface RenderedMessages {
 /**
  * Returns the messages as a model without temporary messages receives them. The latest user message's injected
  * blocks become text blocks in their place. An earlier user message's injected blocks are sent the same way when
- * `keepsEarlier` is set, so history stays a byte-for-byte prefix across calls, and are left out otherwise, since a
- * model whose cache point sits ahead of them loses nothing when they go. An injected block outside a user message is
+ * `keepsEarlier` is set, so history stays a byte-for-byte prefix across calls, and are left out otherwise, so the
+ * model reads each block only on its own turn. An injected block outside a user message is
  * always left out. Messages without an injected block are returned as they are, and the input is never changed.
  *
  * @param messages - The messages of a model call

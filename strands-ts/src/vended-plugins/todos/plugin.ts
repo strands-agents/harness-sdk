@@ -5,13 +5,13 @@
  * {@link ContextInjector} re-renders that list before each model call so the agent keeps its plan
  * in view without restating it.
  *
- * Re-surfacing goes through `ContextInjector` rather than editing `agent.messages` directly. The
- * list is rewritten on every `todo_write` call, so what matters is that the model sees one current
- * copy rather than a pile of superseded ones. Injection gives that: each rendered list is stored as
- * an `injected` block, and a model that places its own conversation cache point receives only the
- * latest user message's as text. A model whose provider caches by prefix alone also receives the
- * earlier lists, unchanged, since dropping them would change the prefix on every call. The lists stay
- * readable in `agent.messages` for anything inspecting history.
+ * Re-surfacing goes through `ContextInjector` rather than editing `agent.messages` directly. Each
+ * rendered list is stored as an `injected` block, and the model normally receives only the latest
+ * user message's, so it sees one current copy rather than a pile of superseded ones. The exception
+ * is a provider that caches the conversation by prefix alone, such as GPT on Bedrock Converse or
+ * Gemini: dropping an earlier list would change the prefix on every call and defeat its cache, so it
+ * receives the earlier lists too, unchanged. The lists stay readable in `agent.messages` for
+ * anything inspecting history.
  *
  * The injector fires on `everyTurn`, not `userTurn`: the agent updates the list mid-loop via
  * `todo_write`, so it should see the refreshed list on the next model call within the same
@@ -69,9 +69,9 @@ export interface TodosConfig {
  * One agent takes one `Todos`. The tool is always named `todo_write`, so registering a second
  * instance throws no matter how `name` and `stateKey` are set.
  *
- * Because the list is re-rendered on every model call, it changes the tail of the request each
- * turn. On a provider without explicit cache points that moves the cached prefix boundary, so
- * weigh it against the task tracking it buys.
+ * Because the list is re-rendered on every model call, it costs tokens on each one, and on a
+ * provider that caches by prefix alone every superseded list stays in the request. Weigh that
+ * against the task tracking it buys.
  *
  * @example
  * ```typescript
