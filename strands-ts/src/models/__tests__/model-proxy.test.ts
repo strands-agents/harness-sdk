@@ -267,6 +267,41 @@ describe('ModelProxy', () => {
       expect(sentTurn2.slice(0, sentTurn1.length)).toEqual(sentTurn1)
     })
 
+    it('leaves out earlier injected blocks and keeps the cache point ahead of the latest ones for a model that places its own conversation cache point', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      vi.spyOn(model, 'placesConversationCachePoint').mockReturnValue(true)
+      const streamSpy = vi.spyOn(model, 'stream')
+      const answer = new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'old reminder', source: 'test' })],
+          trackingId: 'msg-1',
+        }),
+        answer,
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Now the docs.'), new InjectedBlock({ text: 'reminder', source: 'test' })],
+          trackingId: 'msg-3',
+        }),
+      ]
+
+      await drain(new ModelProxy(model).streamAggregated(messages))
+
+      expect(streamSpy.mock.calls[0]).toEqual([
+        [
+          new Message({ role: 'user', content: [new TextBlock('Refactor.')], trackingId: 'msg-1' }),
+          answer,
+          new Message({
+            role: 'user',
+            content: [new TextBlock('Now the docs.'), new TextBlock('\n\nreminder')],
+            trackingId: 'msg-3',
+          }),
+        ],
+        { dynamicTrailingBlocks: 1 },
+      ])
+    })
+
     it('keeps the cache point ahead of per-call text that follows the latest injected text, also when an assistant message follows', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
       const streamSpy = vi.spyOn(model, 'stream')

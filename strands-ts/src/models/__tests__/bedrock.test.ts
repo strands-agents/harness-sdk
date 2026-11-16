@@ -3912,12 +3912,10 @@ describe('BedrockModel', () => {
         expect(allCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
-      // The prompt that started the loop may itself carry a rendered reminder (e.g. an environment
-      // injector firing on the user's first turn). The point must land in the same place whether that
-      // message is still the latest one or a tool loop has since moved past it, or the position shifts
-      // the first time the loop's second message arrives and that call misses the cache even though the
-      // point still ends up on the right message.
-      it('places the conversation cache point on the same spot of the starting prompt whether or not it is still the latest message', async () => {
+      // The prompt that started the loop may carry a reminder (e.g. an environment injector firing on the user's
+      // first turn). The point must sit after the same prompt text whether that message is still the latest one or
+      // a tool loop has moved past it, since Nova reads only when the point repeats the previous call's position.
+      it('places the conversation cache point after the same prompt text whether or not it is still the latest message', async () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
         const proxy = new ModelProxy(provider)
         const startingPrompt = new Message({
@@ -3948,12 +3946,13 @@ describe('BedrockModel', () => {
         )
         const secondCallPosition = request()?.messages?.[0]?.content
 
+        // The reminder is per-call content on call 1 and left out on call 2; the cached prefix is the same.
         expect(firstCallPosition).toStrictEqual([
           { text: 'What is 6 x 7?' },
-          { text: '\n\n<environment>cwd: /repo</environment>' },
           { cachePoint: { type: 'default' } },
+          { text: '\n\n<environment>cwd: /repo</environment>' },
         ])
-        expect(secondCallPosition).toStrictEqual(firstCallPosition)
+        expect(secondCallPosition).toStrictEqual([{ text: 'What is 6 x 7?' }, { cachePoint: { type: 'default' } }])
       })
 
       it('keeps the conversation cache point on the starting prompt across a tool loop whose every turn carries a reminder', async () => {
@@ -3994,7 +3993,7 @@ describe('BedrockModel', () => {
           )
         }
 
-        expect(positions).toStrictEqual([[[0, 2]], [[0, 2]], [[0, 2]]])
+        expect(positions).toStrictEqual([[[0, 1]], [[0, 1]], [[0, 1]]])
       })
 
       it('keeps the conversation cache point on the prompt when an earlier tool-result turn carries its own reminder text', () => {

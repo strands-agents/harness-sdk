@@ -162,6 +162,17 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
     )
   }
 
+  /** @internal */
+  override placesConversationCachePoint(): boolean {
+    const { cacheConfig } = this._config
+    return (
+      this._api === 'responses' &&
+      this.modelInfo.capabilities?.promptCaching === 'cachePoints' &&
+      cacheConfig !== undefined &&
+      cacheConfig.messagesTTL !== false
+    )
+  }
+
   /**
    * Updates the model configuration.
    *

@@ -634,6 +634,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    *
    * @returns True if caching should be enabled.
    */
+  /** @internal */
+  override placesConversationCachePoint(): boolean {
+    return this._shouldEnableCaching() && this._cacheSection(this._config.cacheConfig?.messagesTTL).enabled
+  }
+
   private _shouldEnableCaching(): boolean {
     const cacheConfig = this._config.cacheConfig
     if (!cacheConfig) {

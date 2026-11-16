@@ -15,9 +15,10 @@ import { wellFormedRequest } from './well-formed-request.js'
  *
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every other
- * model, custom ones included, gets each user message's injected blocks rendered as text in their place,
- * the same text on every call, so a message's rendering is stable once sent and history stays a byte-for-byte
- * prefix across calls — only the newest content is new. A tool result whose content is all `UnknownBlock`s
+ * model, custom ones included, gets injected blocks as text in their place. A model that places its own
+ * conversation cache point (`Model.placesConversationCachePoint`) gets only the latest user message's, since its
+ * cached prefix ends before them; any other model gets every user message's, the same text on every call, so
+ * history stays a byte-for-byte prefix for a provider that caches by prefix alone. A tool result whose content is all `UnknownBlock`s
  * gets a placeholder text, since providers skip unknown blocks and some reject an empty tool result. Lone
  * UTF-16 surrogates in the messages, system prompt, and tool specs are sent as U+FFFD, since some providers
  * reject a whole request over one.
@@ -47,7 +48,7 @@ export class ModelProxy {
     invocationContext?: InvocationContext
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
     const { messages: prepared, dynamicTrailingBlocks } = this._prepare(messages)
-    // The cache point stays ahead of content other middleware appended after the injected text for this call only.
+    // The cache point stays ahead of the latest message's content that the next call sends differently.
     const keepsCachePoint = dynamicTrailingBlocks > (options?.dynamicTrailingBlocks ?? 0)
     const result = yield* this._model.streamAggregated(
       ...wellFormedRequest(prepared, keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options)
@@ -72,7 +73,7 @@ export class ModelProxy {
     if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
-    return renderInjectedBlocks(messages)
+    return renderInjectedBlocks(messages, !this._model.placesConversationCachePoint())
   }
 
   /** Replaces summary blocks with their text, since only a provider with server-side summaries reads them. */
@@ -103,35 +104,42 @@ export class ModelProxy {
 interface RenderedMessages {
   /** The messages to send. */
   readonly messages: Message[]
-  /** Trailing blocks of the latest user message after its last injected block, which only this call sends. */
+  /** Trailing blocks of the latest user message that the next call sends differently. */
   readonly dynamicTrailingBlocks: number
 }
 
 /**
- * Returns the messages as a model without temporary messages receives them. Every user message's injected
- * blocks become text blocks in their place, rendered the same way on every call so a message's wire form
- * never changes once sent; an injected block outside a user message is left out, since it belongs to a user
- * turn only. Messages without an injected block are returned as they are, and the input is never changed.
+ * Returns the messages as a model without temporary messages receives them. The latest user message's injected
+ * blocks become text blocks in their place. An earlier user message's injected blocks are sent the same way when
+ * `keepsEarlier` is set, so history stays a byte-for-byte prefix across calls, and are left out otherwise, since a
+ * model whose cache point sits ahead of them loses nothing when they go. An injected block outside a user message is
+ * always left out. Messages without an injected block are returned as they are, and the input is never changed.
  *
  * @param messages - The messages of a model call
+ * @param keepsEarlier - Whether earlier user messages keep their injected text
  * @returns The messages to send, and how many trailing blocks of the latest user message the cache point
  *   must stay ahead of
  */
-function renderInjectedBlocks(messages: Message[]): RenderedMessages {
+function renderInjectedBlocks(messages: Message[], keepsEarlier: boolean): RenderedMessages {
   const latestUser = latestUserIndex(messages)
-  let dynamicTrailingBlocks = 0
   const rendered = messages.map((message, index) => {
     if (!hasInjectedBlock(message)) return message
-    const content = message.role === 'user' ? withInjectedText(message.content) : withoutInjectedBlocks(message.content)
-    if (index === latestUser) {
-      // Rendered injected text is itself stable from this call on, so only content after the last
-      // one - per-call content another middleware appended this same call - still needs to stay
-      // out of the cache boundary.
-      dynamicTrailingBlocks = message.content.length - (lastIndexMatching(message.content, isInjectedBlock) + 1)
-    }
-    return withContent(message, content)
+    const sendsText = message.role === 'user' && (keepsEarlier || index === latestUser)
+    return withContent(message, sendsText ? withInjectedText(message.content) : withoutInjectedBlocks(message.content))
   })
+  const latest = messages[latestUser]
+  const dynamicTrailingBlocks = latest ? perCallTrailingBlocks(latest.content, keepsEarlier) : 0
   return { messages: rendered, dynamicTrailingBlocks }
+}
+
+/**
+ * Trailing blocks of the latest user message that the next call sends differently: from its first injected block on
+ * when later calls leave that text out, or only what follows its last injected block when later calls keep it.
+ */
+function perCallTrailingBlocks(content: ContentBlock[], keepsEarlier: boolean): number {
+  if (!content.some(isInjectedBlock)) return 0
+  const boundary = keepsEarlier ? lastIndexMatching(content, isInjectedBlock) + 1 : content.findIndex(isInjectedBlock)
+  return content.length - boundary
 }
 
 /** Index of the last block matching `predicate`, or -1 when none match. */

@@ -184,6 +184,21 @@ export class VercelModel extends Model<VercelModelConfig> {
     )
   }
 
+  /** @internal */
+  override placesConversationCachePoint(): boolean {
+    const { cacheConfig } = this._config
+    if (!cacheConfig || !resolveCacheSection(cacheConfig.messagesTTL, cacheConfig.ttl).enabled) return false
+    if (!isCacheStrategySupported(cacheConfig)) return false
+    switch (this._provider.provider.split('.')[0]) {
+      case 'anthropic':
+        return !infoForbidsAutoCaching(cacheConfig, this.modelInfo, this._provider.modelId)
+      case 'amazon-bedrock':
+        return bedrockModelSupportsCaching(cacheConfig, this._provider.modelId, this.modelInfo)
+      default:
+        return false
+    }
+  }
+
   updateConfig(config: VercelModelConfig): void {
     this._config = { ...this._config, ...config }
   }

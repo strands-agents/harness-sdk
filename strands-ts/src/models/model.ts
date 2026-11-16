@@ -438,6 +438,18 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Whether this model, as configured, places its own cache point in the conversation ahead of per-call content.
+   * When it does, the cached prefix ends before an earlier turn's injected text, so that text can be left out of later
+   * calls; when it does not, the provider caches by prefix alone and history has to be sent unchanged.
+   *
+   * @internal
+   * @returns False unless the provider overrides it
+   */
+  placesConversationCachePoint(): boolean {
+    return false
+  }
+
+  /**
    * Streams a conversation with the model.
    * Returns an async iterable that yields streaming events as they occur.
    *
