@@ -5,12 +5,12 @@
  * {@link ContextInjector} re-renders that list before each model call so the agent keeps its plan
  * in view without restating it.
  *
- * Re-surfacing goes through `ContextInjector` rather than editing `agent.messages` directly. The
- * list is rewritten on every `todo_write` call, so what matters is that the model sees one current
- * copy rather than a pile of superseded ones. Injection gives that: each rendered list is stored as
- * an `injected` block, and only the latest user message's injected blocks are sent as text — older
- * ones are dropped from the request. The lists stay readable in `agent.messages` for anything
- * inspecting history.
+ * Re-surfacing goes through `ContextInjector` rather than editing `agent.messages` directly, so each
+ * rendered list is stored as an `injected` block on the turn current when it was rendered, and the
+ * agent's next model call sees the freshest copy as part of that turn rather than restating the plan
+ * on the user's behalf. Earlier turns' injected blocks stay in the request too, each rendered the same
+ * way every call so the conversation remains a stable prefix. The lists stay readable in `agent.messages`
+ * for anything inspecting history.
  *
  * The injector fires on `everyTurn`, not `userTurn`: the agent updates the list mid-loop via
  * `todo_write`, so it should see the refreshed list on the next model call within the same

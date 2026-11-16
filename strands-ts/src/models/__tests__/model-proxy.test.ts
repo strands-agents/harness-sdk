@@ -215,7 +215,7 @@ describe('ModelProxy', () => {
       ])
     })
 
-    it('leaves out the injected blocks of earlier user messages', async () => {
+    it('renders the injected blocks of earlier user messages as text too, not just the latest', async () => {
       const answer = new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' })
       const latest = userMessage('Now the docs.')
       const messages = [
@@ -229,10 +229,42 @@ describe('ModelProxy', () => {
       ]
 
       expect(await sent(messages)).toEqual([
-        new Message({ role: 'user', content: [new TextBlock('Refactor.')], trackingId: 'msg-1' }),
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Refactor.'), new TextBlock('\n\nreminder')],
+          trackingId: 'msg-1',
+        }),
         answer,
         latest,
       ])
+    })
+
+    it('renders an earlier turn identically across two calls, so the shared prefix stays byte-for-byte equal', async () => {
+      const turn1 = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Refactor.'), new InjectedBlock({ text: 'env: cwd=/repo', source: 'env' })],
+          trackingId: 'msg-1',
+        }),
+      ]
+      const sentTurn1 = await sent(turn1)
+
+      const turn2 = [
+        ...turn1,
+        new Message({ role: 'assistant', content: [new TextBlock('Done.')], trackingId: 'msg-2' }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('ok')] }),
+            new InjectedBlock({ text: 'todos: 1/2 done', source: 'todos' }),
+          ],
+          trackingId: 'msg-3',
+        }),
+      ]
+      const sentTurn2 = await sent(turn2)
+
+      // The prefix sent on turn 2 must match turn 1's call exactly, so a prefix-match cache still hits.
+      expect(sentTurn2.slice(0, sentTurn1.length)).toEqual(sentTurn1)
     })
 
     it('keeps the cache point ahead of the latest injected text, also when an assistant message follows', async () => {

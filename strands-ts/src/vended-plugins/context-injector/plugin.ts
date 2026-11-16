@@ -44,7 +44,7 @@ export interface ContextInjectorConfig {
  * `InjectedBlock`. The block stays in the conversation and the session. When the model takes temporary
  * messages (`AnthropicModel` on supported Claude models), the model receives each block as a system
  * message it reads only until the next user message, so the stored history is sent unchanged on every call. Every
- * other model receives only the latest user message's blocks, as text.
+ * other model receives each block as text in its message's place, rendered the same way on every call.
  *
  * @example
  * ```typescript

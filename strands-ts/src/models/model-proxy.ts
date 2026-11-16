@@ -14,11 +14,13 @@ import { wellFormedRequest } from './well-formed-request.js'
  * passes through and adds nothing.
  *
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
- * stored, and that provider sends it so the model reads it only until the next user message. Every
- * other model, custom ones included, gets the latest user message's injected blocks as text and none
- * of the earlier ones. A tool result whose content is all `UnknownBlock`s gets a placeholder text, since
- * providers skip unknown blocks and some reject an empty tool result. Lone UTF-16 surrogates in the messages,
- * system prompt, and tool specs are sent as U+FFFD, since some providers reject a whole request over one.
+ * stored, and that provider sends it so the model reads it only until the next user message. Every other
+ * model, custom ones included, gets each user message's injected blocks rendered as text in their place,
+ * the same text on every call, so a message's rendering is stable once sent and history stays a byte-for-byte
+ * prefix across calls — only the newest content is new. A tool result whose content is all `UnknownBlock`s
+ * gets a placeholder text, since providers skip unknown blocks and some reject an empty tool result. Lone
+ * UTF-16 surrogates in the messages, system prompt, and tool specs are sent as U+FFFD, since some providers
+ * reject a whole request over one.
  *
  * @internal
  */
@@ -101,24 +103,26 @@ export class ModelProxy {
 interface RenderedMessages {
   /** The messages to send. */
   readonly messages: Message[]
-  /** Trailing blocks of the latest user message, from its first injected block on, that the next call drops. */
+  /** Trailing blocks of the latest user message, from its first injected block on, that a later call may render differently. */
   readonly dynamicTrailingBlocks: number
 }
 
 /**
- * Returns the messages as a model without temporary messages receives them. The latest user message's
- * injected blocks become text blocks in their place, and every other injected block is left out. Messages
- * without an injected block are returned as they are, and the input is never changed.
+ * Returns the messages as a model without temporary messages receives them. Every user message's injected
+ * blocks become text blocks in their place, rendered the same way on every call so a message's wire form
+ * never changes once sent; an injected block outside a user message is left out, since it belongs to a user
+ * turn only. Messages without an injected block are returned as they are, and the input is never changed.
  *
  * @param messages - The messages of a model call
- * @returns The messages to send, and how many trailing blocks the cache point must stay ahead of
+ * @returns The messages to send, and how many trailing blocks of the latest user message the cache point
+ *   must stay ahead of
  */
 function renderInjectedBlocks(messages: Message[]): RenderedMessages {
   const latestUser = latestUserIndex(messages)
   let dynamicTrailingBlocks = 0
   const rendered = messages.map((message, index) => {
     if (!hasInjectedBlock(message)) return message
-    const content = index === latestUser ? withInjectedText(message.content) : withoutInjectedBlocks(message.content)
+    const content = message.role === 'user' ? withInjectedText(message.content) : withoutInjectedBlocks(message.content)
     if (index === latestUser) {
       dynamicTrailingBlocks = message.content.length - message.content.findIndex(isInjectedBlock)
     }
@@ -183,6 +187,7 @@ function withInjectedText(content: ContentBlock[]): ContentBlock[] {
   })
 }
 
+/** Drops injected blocks outright; only reached for a non-user message, where they don't belong. */
 function withoutInjectedBlocks(content: ContentBlock[]): ContentBlock[] {
   return content.filter((block) => !isInjectedBlock(block))
 }
