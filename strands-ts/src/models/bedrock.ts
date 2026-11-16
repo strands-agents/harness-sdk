@@ -63,7 +63,7 @@ import {
   resolveMaxTokens,
   type ResolvedCacheSection,
 } from '../models/model.js'
-import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
 import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
@@ -598,7 +598,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * model info; a `modelInfo` override still wins over both.
    */
   override get modelInfo(): ModelInfo {
-    return mergeModelInfo(
+    return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
       bedrockCacheModelInfo(this.modelId ?? ''),
