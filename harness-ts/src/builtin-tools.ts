@@ -17,7 +17,7 @@ import {
 import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL } from './defaults.js'
 import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
-import { resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
+import { imageLimits, resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
 import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
 import { type AgentBuilder, type AgentSpec, Choice, CONTEXT_MODES, GENERALIST, makeSubagent } from './tools/subagent.js'
@@ -162,6 +162,7 @@ export async function buildBuiltinTools(
     shell: makeShell(builtinToolConfig(builtins, 'shell') ?? {}),
     read: makeRead({
       media: builtinToolConfig(builtins, 'read')?.media ?? (await supportsMedia(parentConfig.model)),
+      ...(await imageLimits(parentConfig.model)),
     }),
     write,
     edit,

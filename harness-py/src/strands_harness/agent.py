@@ -24,6 +24,7 @@ from strands_harness import defaults
 from strands_harness.interventions import InterventionsOption, resolve_interventions
 from strands_harness.memory import resolve_memory
 from strands_harness.models import (
+    _image_limits,
     _supports_media,
     resolve_model,
     resolve_web_fetch_model,
@@ -88,7 +89,13 @@ def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
     web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
     tools = (
         make_shell(**_builtin_tool_config(enabled, "shell")),
-        make_read(**{"media": _supports_media(parent_config["model"]), **_builtin_tool_config(enabled, "read")}),
+        make_read(
+            **{
+                "media": _supports_media(parent_config["model"]),
+                **_image_limits(parent_config["model"]),
+                **_builtin_tool_config(enabled, "read"),
+            }
+        ),
         write,
         edit,
         make_web_fetch(model=web_fetch_model, **web_fetch_config),
