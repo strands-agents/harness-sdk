@@ -8,6 +8,7 @@ import { HARNESS_VERSION } from '../package-version.js'
 import { ProcessLockBusy, withProcessLock, type LockBusyMessage } from '../process-lock.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { isRecord } from '../values.js'
+import { ignoreStateFolder } from './state-folder.js'
 
 const execute = promisify(execFile)
 const PROBE_TIMEOUT_MS = 30_000
@@ -202,6 +203,7 @@ export const preparePythonRuntime = async (
     const state = join(metadata, 'state')
     await privateDirectory(metadata)
     await privateDirectory(state)
+    ignoreStateFolder(state)
     const setUpEnvironment = async (): Promise<string> => {
       signal?.throwIfAborted()
       if (

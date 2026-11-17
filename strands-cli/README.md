@@ -220,6 +220,8 @@ If an import is missing, check the selected root and declared dependencies. For 
 ### Workspace binding
 
 `.config` is a JSON file. It identifies the persistent project and its entrypoint. `tmp/` is a sibling directory, not part of `.config`.
+Dev writes a `.gitignore` in a new workspace. It ignores `tmp/`, `.config`, and `.strands/state/`, because they hold personal settings, permissions, chats, and run files.
+Each `.strands/state/` folder that setup makes in a project also gets a `.gitignore` that ignores the folder.
 
 A new harness from the picker has this layout:
 

@@ -31,6 +31,8 @@ const stoppedProcessId = async (): Promise<number> => {
 const commands = (run: ReturnType<typeof vi.fn<(request: PythonRuntimeCommand) => Promise<void>>>): string[][] =>
   run.mock.calls.map(([request]) => request.args)
 
+const stateEntries = async (root: string): Promise<string[]> => readdir(join(root, '.strands', 'state'))
+
 describe('dev Python runtime preparation', () => {
   it('shouldRejectGlobalInterpreterPathsBeforeAnyPackageInstall', async () => {
     const root = await temporaryDirectory()
@@ -44,7 +46,7 @@ describe('dev Python runtime preparation', () => {
     await expect(preparePythonRuntime(root, { run })).rejects.toThrow('installation paths must stay inside')
 
     expect(commands(run).some((args) => args.includes('install') || args.includes('ensurepip'))).toBe(false)
-    expect(await readdir(join(root, '.strands/state'))).toEqual([])
+    expect(await stateEntries(root)).toEqual(['.gitignore'])
   })
 
   it('shouldIgnoreInstallationDestinationOverridesWhileKeepingIndexConfiguration', () => {
@@ -119,7 +121,7 @@ describe('dev Python runtime preparation', () => {
       ])
       expect(installation.args).not.toContain('--user')
       if (manifest !== 'none') expect(await readFile(join(root, manifest), 'utf8')).toBe(original)
-      expect(await readdir(join(root, '.strands/state'))).toEqual([])
+      expect(await stateEntries(root)).toEqual(['.gitignore'])
     }
   )
 
@@ -194,7 +196,7 @@ describe('dev Python runtime preparation', () => {
     await expect(preparePythonRuntime(root, { run })).rejects.toThrow('Package index unavailable')
 
     expect(await readFile(runtimePath(root), 'utf8')).toBe('fixture interpreter')
-    expect(await readdir(join(root, '.strands/state'))).toEqual([])
+    expect(await stateEntries(root)).toEqual(['.gitignore'])
   })
 
   it.each([
@@ -214,7 +216,7 @@ describe('dev Python runtime preparation', () => {
 
     expect(await preparePythonRuntime(root, { run, validateEnvironment: true })).toBe(python)
 
-    expect(await readdir(join(root, '.strands', 'state'))).toEqual([])
+    expect(await stateEntries(root)).toEqual(['.gitignore'])
   })
 
   it('shouldStopBeforeInstallingWhenTheInterpreterIsTooOld', async () => {

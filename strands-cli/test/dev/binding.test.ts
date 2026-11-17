@@ -78,7 +78,7 @@ describe('workspace bindings', () => {
       expect((await stat(join(directory, '.config'))).mode & 0o777).toBe(0o600)
       expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o700)
     }
-    expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe('/tmp/\n')
+    expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe('/tmp/\n/.config\n/.strands/state/\n')
     expect(await readdir(directory)).toEqual(['.config', '.gitignore', 'agent', 'tmp'])
     expect(await readdir(agentRoot)).toEqual(['agent.ts'])
   })
@@ -179,19 +179,19 @@ describe('workspace bindings', () => {
     expect(await readdir(sandbox)).toEqual(['workspace'])
   })
 
-  it.each(['logs/', 'logs/\n', 'logs/\r\n', '/tmp/\nlogs/\n'])(
-    'preserves ignore contents %j and appends only when needed',
-    async (contents) => {
-      await writeFile(join(directory, '.gitignore'), contents)
-      await bindWorkspace(directory, binding)
-      const expected = contents.includes('/tmp/')
-        ? contents
-        : `${contents}${contents.endsWith('\n') ? '' : '\n'}/tmp/${contents.includes('\r\n') ? '\r\n' : '\n'}`
-      expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe(expected)
-      await bindWorkspace(directory, binding)
-      expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe(expected)
-    }
-  )
+  it.each([
+    ['logs/', 'logs/\n/tmp/\n/.config\n/.strands/state/\n'],
+    ['logs/\n', 'logs/\n/tmp/\n/.config\n/.strands/state/\n'],
+    ['logs/\r\n', 'logs/\r\n/tmp/\r\n/.config\r\n/.strands/state/\r\n'],
+    ['/tmp/\nlogs/\n', '/tmp/\nlogs/\n/.config\n/.strands/state/\n'],
+    ['/tmp/\n/.config\n/.strands/state/\n', '/tmp/\n/.config\n/.strands/state/\n'],
+  ])('preserves ignore contents %j and appends only when needed', async (contents, expected) => {
+    await writeFile(join(directory, '.gitignore'), contents)
+    await bindWorkspace(directory, binding)
+    expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe(expected)
+    await bindWorkspace(directory, binding)
+    expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe(expected)
+  })
 
   it('keeps existing temporary files and makes the temporary directory private', async () => {
     await mkdir(join(directory, 'tmp'))
@@ -249,7 +249,7 @@ describe('workspace bindings', () => {
   it('handles simultaneous requests for the same target without overwriting the winner', async () => {
     const results = await Promise.all([bindWorkspace(directory, binding), bindWorkspace(directory, binding)])
     expect(results[0]).toEqual(results[1])
-    expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe('/tmp/\n')
+    expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe('/tmp/\n/.config\n/.strands/state/\n')
     expect(await readdir(directory)).toEqual(['.config', '.gitignore', 'agent', 'tmp'])
   })
 })

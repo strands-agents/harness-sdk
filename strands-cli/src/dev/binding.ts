@@ -26,6 +26,7 @@ export interface BoundWorkspace {
 const MAX_CONFIG_BYTES = 64 * 1024
 const MAX_IGNORE_BYTES = 1024 * 1024
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+const WORKSPACE_IGNORES = ['/tmp/', '/.config', '/.strands/state/']
 
 export async function readWorkspaceBinding(directory: string): Promise<BoundWorkspace | undefined> {
   const requested = resolve(expandHome(directory))
@@ -283,11 +284,26 @@ async function readBounded(file: FileHandle, limit: number, path: string): Promi
   return buffer.subarray(0, length)
 }
 
+export const restoreIgnoreLength = async (file: FileHandle, path: string, length: number): Promise<void> => {
+  if (process.platform !== 'win32') return file.truncate(length)
+  const writable = await open(path, constants.O_RDWR)
+  try {
+    if (!sameFile(await file.stat(), await writable.stat())) {
+      throw new Error(`The .gitignore changed during workspace initialization: ${path}`)
+    }
+    await writable.truncate(length)
+  } finally {
+    await writable.close()
+  }
+}
+
 async function appendIgnore(path: string, expected: Stats | undefined, contents: Buffer): Promise<void> {
   const text = contents.toString('utf8')
-  if (text.split(/\r?\n/u).includes('/tmp/')) return
+  const lines = new Set(text.split(/\r?\n/u))
+  const missing = WORKSPACE_IGNORES.filter((line) => !lines.has(line))
+  if (!missing.length) return
   const newline = text.includes('\r\n') ? '\r\n' : '\n'
-  const addition = Buffer.from(`${text && !text.endsWith('\n') ? newline : ''}/tmp/${newline}`)
+  const addition = Buffer.from(`${text && !text.endsWith('\n') ? newline : ''}${missing.join(newline)}${newline}`)
   const creation = expected ? 0 : constants.O_CREAT | constants.O_EXCL
   const file = await open(
     path,
@@ -316,7 +332,7 @@ async function appendIgnore(path: string, expected: Stats | undefined, contents:
         current.subarray(0, contents.length).equals(contents) &&
         addition.subarray(0, current.length - contents.length).equals(current.subarray(contents.length))
       ) {
-        await file.truncate(contents.length)
+        await restoreIgnoreLength(file, path, contents.length)
       }
     }
     if (!expected && sameFile(await file.stat(), await optionalDetails(path))) await unlink(path)

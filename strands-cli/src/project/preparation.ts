@@ -17,6 +17,7 @@ import { sanitizeTerminalText } from '../terminal/text.js'
 import { isRecord } from '../values.js'
 import type { ImportedAgentProject } from './import.js'
 import { cachedPreparation, preparationCacheState, savePreparationCache } from './preparation-cache.js'
+import { ignoreStateFolder } from './state-folder.js'
 
 export interface PreparationProgress {
   stage: PreparationStage
@@ -107,6 +108,7 @@ const privateLogs = async (root: string): Promise<string> => {
     if (!(await lstat(directory)).isDirectory() || (await lstat(directory)).isSymbolicLink())
       throw new Error(`Setup log directory must not be a symbolic link: ${directory}`)
   }
+  ignoreStateFolder(dirname(directory))
   return join(directory, `${randomUUID()}.log`)
 }
 
