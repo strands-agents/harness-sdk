@@ -28,11 +28,10 @@ class TruncateConfig(TypedDict, total=False):
     """Configuration for the truncate method.
 
     Attributes:
-        preview_tokens: Number of tokens to keep as preview text. Defaults to 1,000. Content that already fits is
-            left unchanged. For ``Offload.truncate("*")``, the budget of whole messages kept at the head and the
-            tail; the rest are replaced by one ``[... earlier messages elided, ~N tokens ...]`` marker.
-        preview: Which portion of the text to keep as preview. Defaults to ``"head_tail"``. For
-            ``Offload.truncate("*")``, ``"head"`` keeps only the oldest messages and ``"tail"`` only the newest.
+        preview_tokens: Tokens of preview to keep, or, for ``Offload.truncate("*")``, of whole messages kept at the
+            head and the tail. Defaults to 1,000. Content that already fits is left unchanged.
+        preview: Which portion to keep. Defaults to ``"head_tail"``; for ``Offload.truncate("*")``, ``"head"`` keeps
+            the oldest messages and ``"tail"`` the newest.
     """
 
     preview_tokens: int
