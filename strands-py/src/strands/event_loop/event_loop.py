@@ -28,7 +28,7 @@ from ..experimental.checkpoint import Checkpoint, CheckpointPosition
 from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
 from ..interrupt import InterruptException, PendingToolExecution
 from ..middleware.stages import InvokeModelContext, InvokeModelStage
-from ..models._model_proxy import ModelProxy
+from ..models._model_proxy import ModelProxy, _count_request_tokens
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
@@ -126,14 +126,8 @@ async def _estimate_input_tokens(agent: "Agent") -> int:
         # System prompt and tool spec tokens are already included in the baseline
         return known_baseline + await ModelProxy(agent.model).count_tokens(new_messages)
 
-    # Cold start: resolve tool specs lazily for estimation only
-    tool_specs = agent.tool_registry.get_all_tool_specs()
-    return await ModelProxy(agent.model).count_tokens(
-        messages,
-        tool_specs=tool_specs,
-        system_prompt=agent.system_prompt,
-        system_prompt_content=agent._system_prompt_content,
-    )
+    # Cold start: tool specs are resolved lazily for estimation only
+    return await _count_request_tokens(agent, messages)
 
 
 def _build_checkpoint_stop_event(

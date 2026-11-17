@@ -108,8 +108,8 @@ describe.skipIf(process.platform === 'win32')('ContextOffloader with FileStorage
 
     await expect(retrievalTool.invoke({ reference: refA }, makeToolContext(agentA, refA))).resolves.toBe(contentA)
     await expect(retrievalTool.invoke({ reference: refB }, makeToolContext(agentB, refB))).resolves.toBe(contentB)
-    await expect(retrievalTool.invoke({ reference: refA }, makeToolContext(agentB, refA))).resolves.toContain(
-      'Error: reference not found'
+    await expect(retrievalTool.invoke({ reference: refA }, makeToolContext(agentB, refA))).rejects.toThrow(
+      'reference not found'
     )
   }, 15_000)
 })
