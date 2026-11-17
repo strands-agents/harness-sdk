@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { devNull } from 'node:os'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   preparePythonRuntime,
@@ -211,5 +211,130 @@ describe('dev Python runtime preparation', () => {
     await expect(preparePythonRuntime(root, { run, signal: abort.signal })).rejects.toThrow('cancelled')
     expect(run).not.toHaveBeenCalled()
     expect(await readdir(root)).toEqual([])
+  })
+})
+
+describe('dev Python runtime pip index settings', () => {
+  const INSTALL_SETTINGS = {
+    PIP_CONFIG_FILE: devNull,
+    PIP_REQUIRE_VIRTUALENV: 'true',
+    PIP_NO_CACHE_DIR: '1',
+    PYTHONDONTWRITEBYTECODE: '1',
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('shouldPassEachIndexSettingOfThePipConfigurationWhenTheEnvironmentHasNone', () => {
+    const configList = [
+      "global.cert='/certs/ca.pem'",
+      "global.client-cert='/certs/client.pem'",
+      "global.extra-index-url='https://mirror.example/simple\\nhttps://backup.example/simple'",
+      "global.find-links='/wheels'",
+      "global.index-url='https://packages.example/simple'",
+      "global.keyring-provider='subprocess'",
+      "global.no-index='false'",
+      "global.proxy='http://proxy.example:3128'",
+      "global.retries='3'",
+      "global.timeout='60'",
+      "global.trusted-host='packages.example'",
+      '',
+    ].join('\n')
+
+    const result = pythonInstallEnvironment({ PATH: '/tools' }, configList)
+
+    expect(result).toEqual({
+      PATH: '/tools',
+      PIP_CERT: '/certs/ca.pem',
+      PIP_CLIENT_CERT: '/certs/client.pem',
+      PIP_EXTRA_INDEX_URL: 'https://mirror.example/simple\nhttps://backup.example/simple',
+      PIP_FIND_LINKS: '/wheels',
+      PIP_INDEX_URL: 'https://packages.example/simple',
+      PIP_KEYRING_PROVIDER: 'subprocess',
+      PIP_NO_INDEX: 'false',
+      PIP_PROXY: 'http://proxy.example:3128',
+      PIP_RETRIES: '3',
+      PIP_TIMEOUT: '60',
+      PIP_TRUSTED_HOST: 'packages.example',
+      ...INSTALL_SETTINGS,
+    })
+  })
+
+  it.each([
+    [
+      'the install section comes last',
+      ["global.index-url='https://global.example/simple'", "install.index-url='https://install.example/simple'"],
+    ],
+    [
+      'the install section comes first',
+      ["install.index-url='https://install.example/simple'", "global.index-url='https://global.example/simple'"],
+    ],
+  ])('shouldUseTheInstallSectionOverTheGlobalSectionWhen %s', (_case, lines) => {
+    const result = pythonInstallEnvironment({}, lines.join('\n'))
+
+    expect(result.PIP_INDEX_URL).toBe('https://install.example/simple')
+  })
+
+  it('shouldKeepTheEnvironmentValueWhenTheEnvironmentAlreadySetsTheSetting', () => {
+    const configList = "global.cert='/certs/ca.pem'\ninstall.index-url='https://install.example/simple'\n"
+
+    const result = pythonInstallEnvironment({ PIP_INDEX_URL: 'https://env.example/simple' }, configList)
+
+    expect(result).toMatchObject({ PIP_INDEX_URL: 'https://env.example/simple', PIP_CERT: '/certs/ca.pem' })
+  })
+
+  it('shouldIgnoreInstallDestinationsAndOtherSettingsWhenThePipConfigurationSetsThem', () => {
+    const configList = [
+      "global.target='/outside'",
+      "install.user='true'",
+      "install.prefix='/shared'",
+      "global.root='/root'",
+      "install.require-virtualenv='false'",
+      "download.index-url='https://download.example/simple'",
+    ].join('\n')
+
+    const result = pythonInstallEnvironment({ PATH: '/tools' }, configList)
+
+    expect(result).toEqual({ PATH: '/tools', ...INSTALL_SETTINGS })
+  })
+
+  it.each([
+    ['single-quoted', "'https://packages.example/simple'", 'https://packages.example/simple'],
+    [
+      'double-quoted around a quote',
+      `"https://user:it's@packages.example/simple"`,
+      "https://user:it's@packages.example/simple",
+    ],
+    ['an escaped quote', `'https://packages.example/it\\'s "here"'`, `https://packages.example/it's "here"`],
+    ['escaped backslashes', "'C:\\\\wheels\\\\cache'", 'C:\\wheels\\cache'],
+    [
+      'escaped control characters',
+      "'https://a.example/simple\\nhttps://b.example/simple\\t\\x0b\\u2028'",
+      'https://a.example/simple\nhttps://b.example/simple\t\x0b\u2028',
+    ],
+  ])('shouldReadTheValueAsPythonWroteItWhenTheValueIs %s', (_case, literal, value) => {
+    const result = pythonInstallEnvironment({}, `global.find-links=${literal}`)
+
+    expect(result.PIP_FIND_LINKS).toBe(value)
+  })
+
+  it('shouldPassTheIndexSettingsOfThePipConfigurationWhenItInstallsTheRuntime', async () => {
+    vi.stubEnv('PIP_INDEX_URL', undefined)
+    const root = await temporaryDirectory()
+    await createEnvironment(root)
+    let installed = false
+    const run = vi.fn(async ({ args }: PythonRuntimeCommand): Promise<string | void> => {
+      if (args.join(' ') === '-m pip config list') return "global.index-url='https://packages.example/simple'\n"
+      if (args.includes('install')) installed = true
+      if (args[0] === '-c' && args[1]?.includes('strands_harness') && !installed) throw missing()
+    })
+
+    const python = await preparePythonRuntime(root, { run })
+
+    const listing = run.mock.calls.find(([request]) => request.args.includes('config'))?.[0]
+    const installation = run.mock.calls.find(([request]) => request.args.includes('install'))?.[0]
+    expect(listing).toMatchObject({ command: python, args: ['-m', 'pip', 'config', 'list'] })
+    expect(installation?.env?.PIP_INDEX_URL).toBe('https://packages.example/simple')
   })
 })

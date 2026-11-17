@@ -38,10 +38,56 @@ const INSTALL_DESTINATION_KEYS = new Set([
   'PYTHONUSERBASE',
 ])
 
-export const pythonInstallEnvironment = (environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
+const PIP_INDEX_SETTINGS = new Set([
+  'index-url',
+  'extra-index-url',
+  'no-index',
+  'find-links',
+  'trusted-host',
+  'cert',
+  'client-cert',
+  'proxy',
+  'retries',
+  'timeout',
+  'keyring-provider',
+])
+const PIP_CONFIG_LINE = /^(global|install)\.([a-z-]+)=(.*)$/u
+const PYTHON_ESCAPE = /\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)/gu
+const PYTHON_ESCAPES: Readonly<Record<string, string>> = { n: '\n', t: '\t', r: '\r' }
+
+export const PIP_CONFIG_LIST_ARGUMENTS: readonly string[] = ['-m', 'pip', 'config', 'list']
+
+const pythonString = (literal: string): string => {
+  const quote = literal[0]
+  if ((quote !== "'" && quote !== '"') || !literal.endsWith(quote) || literal.length < 2) return literal
+  return literal
+    .slice(1, -1)
+    .replace(PYTHON_ESCAPE, (_escape, code: string) =>
+      code.length > 1 ? String.fromCodePoint(Number.parseInt(code.slice(1), 16)) : (PYTHON_ESCAPES[code] ?? code)
+    )
+}
+
+const pipEnvironmentName = (setting: string): string => `PIP_${setting.toUpperCase().replaceAll('-', '_')}`
+
+const pipIndexSettings = (configList: string, environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const settings = new Map<string, { section: string; value: string }>()
+  for (const line of configList.split(/\r?\n/u)) {
+    const [, section = '', setting = '', literal = ''] = PIP_CONFIG_LINE.exec(line.trim()) ?? []
+    if (!PIP_INDEX_SETTINGS.has(setting) || settings.get(setting)?.section === 'install') continue
+    settings.set(setting, { section, value: pythonString(literal) })
+  }
+  return Object.fromEntries(
+    [...settings]
+      .map(([setting, { value }]) => [pipEnvironmentName(setting), value] as const)
+      .filter(([name]) => environment[name] === undefined)
+  )
+}
+
+export const pythonInstallEnvironment = (environment: NodeJS.ProcessEnv, pipConfigList = ''): NodeJS.ProcessEnv => ({
   ...Object.fromEntries(
     Object.entries(environment).filter(([key]) => !INSTALL_DESTINATION_KEYS.has(key.toUpperCase()))
   ),
+  ...pipIndexSettings(pipConfigList, environment),
   PIP_CONFIG_FILE: devNull,
   PIP_REQUIRE_VIRTUALENV: 'true',
   PIP_NO_CACHE_DIR: '1',
@@ -53,20 +99,33 @@ export interface PythonRuntimeCommand {
   args: string[]
   cwd: string
   timeout: number
+  env?: NodeJS.ProcessEnv
   signal?: AbortSignal
 }
 
-type CommandRunner = (request: PythonRuntimeCommand) => Promise<void>
+type CommandRunner = (request: PythonRuntimeCommand) => Promise<string | void>
 
-const runCommand: CommandRunner = async ({ command, args, cwd, timeout, signal }) => {
-  await execute(command, args, {
+const runCommand: CommandRunner = async ({ command, args, cwd, timeout, env, signal }) => {
+  const { stdout } = await execute(command, args, {
     cwd,
     timeout,
     maxBuffer: OUTPUT_LIMIT_BYTES,
     windowsHide: true,
-    env: args[0] === '-I' ? pythonInstallEnvironment(process.env) : { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+    env:
+      env ??
+      (args[0] === '-I' ? pythonInstallEnvironment(process.env) : { ...process.env, PYTHONDONTWRITEBYTECODE: '1' }),
     ...(signal ? { signal } : {}),
   })
+  return stdout
+}
+
+const pipConfigList = async (run: CommandRunner, request: PythonRuntimeCommand): Promise<string> => {
+  try {
+    const output = await run(request)
+    return typeof output === 'string' ? output : ''
+  } catch {
+    return ''
+  }
 }
 
 const exists = async (path: string): Promise<boolean> => {
@@ -185,8 +244,9 @@ export const preparePythonRuntime = async (
           : (await exists(join(cwd, 'pyproject.toml')))
             ? ['.']
             : []
-      await run(
-        request(
+      const configured = await pipConfigList(run, request(python, [...PIP_CONFIG_LIST_ARGUMENTS]))
+      await run({
+        ...request(
           python,
           [
             '-I',
@@ -198,8 +258,9 @@ export const preparePythonRuntime = async (
             `strands-harness~=${version[1]}.${version[2]}.0`,
           ],
           INSTALL_TIMEOUT_MS
-        )
-      )
+        ),
+        env: pythonInstallEnvironment(process.env, configured),
+      })
       if (!(await probe(run, request(python, ['-c', RUNTIME_PROBE]))))
         throw new Error('The installed environment still cannot import strands_harness.')
       signal?.throwIfAborted()
