@@ -25,6 +25,7 @@ describe('dev help', () => {
 
     expect(help).toContain(description)
     expect(help).not.toContain('Chat with a Strands harness agent.')
+    expect(help).not.toContain('TEMPORARY')
     expect(commands.filter((command) => !help.includes(command))).toEqual([])
   })
 

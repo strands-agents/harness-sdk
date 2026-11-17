@@ -59,8 +59,8 @@ const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'i
 const COMMAND_USAGE_WIDTH = 26
 
 const TEMPORARY_DEV_COMMAND_SUMMARIES: readonly CommandSummary[] = [
-  ['test [experiment]', 'TEMPORARY: run the agent on an experiment'],
-  ['optimize [experiment]', 'TEMPORARY: tune the agent against an experiment'],
+  ['test [experiment]', 'experimental: run the agent on an experiment'],
+  ['optimize [experiment]', 'experimental: tune the agent against an experiment'],
 ]
 
 const COMMAND_HELP: Record<ChatCommandName, { description: string; commands: readonly CommandSummary[] }> = {
