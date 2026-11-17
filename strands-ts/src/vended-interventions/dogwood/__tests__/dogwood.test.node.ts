@@ -3,7 +3,6 @@ import { DogwoodAuthorization } from '../dogwood.js'
 import { Agent } from '../../../agent/agent.js'
 import { AfterToolCallEvent, BeforeToolCallEvent } from '../../../hooks/events.js'
 import { TextBlock, ToolResultBlock } from '../../../types/messages.js'
-import { logger } from '../../../logging/logger.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import { resolve } from 'node:path'
@@ -38,6 +37,19 @@ const TOOLS: ToolSpec[] = [
   },
 ]
 
+/** An object parameter, which schema generation declares as an entity type of its own. */
+const OBJECT_PARAMETER_TOOLS: ToolSpec[] = [
+  {
+    name: 'http_request',
+    description: 'Make an HTTP request',
+    inputSchema: {
+      type: 'object',
+      properties: { url: { type: 'string' }, headers: { type: 'object', properties: { auth: { type: 'string' } } } },
+      required: ['url'],
+    },
+  },
+]
+
 const PERMIT_SEARCH = 'permit(principal, action == Action::"search", resource);'
 
 /** The same permit, qualified for a hand-written schema that declares `namespace Drupe`. */
@@ -48,16 +60,6 @@ const DELETE_AFTER_SEARCH = `
 permit(principal, action == Action::"search", resource);
 permit(principal, action == Action::"delete_file", resource)
 when temporal { formerly within 1h Action::"search"::response{} };
-`
-
-/**
- * Permits everything, then blocks `delete_file` once a `search` has failed. The
- * history is what enforces this rule, so forgetting it allows the delete.
- */
-const NO_DELETE_AFTER_FAILED_SEARCH = `
-permit(principal, action, resource);
-forbid(principal, action == Action::"delete_file", resource)
-when temporal { formerly within 1h Action::"search"::error{} };
 `
 
 const agent = new Agent()
@@ -429,6 +431,64 @@ describe('DogwoodAuthorization', () => {
       expect(dogwood.beforeToolCall(beforeEvent())).toEqual({ type: 'proceed' })
     })
 
+    // An object parameter is generated as its own entity type and referenced
+    // qualified, so the namespace rewrite has to move those references too or
+    // the schema fails to resolve them.
+    it.each<[string, string | undefined]>([
+      ['', undefined],
+      ['Acme::', 'Acme'],
+      ['Drupe::', 'Drupe'],
+      ['Acme::Prod::', 'Acme::Prod'],
+    ])('generates a schema for an object parameter under the %o prefix', (prefix, namespace) => {
+      const dogwood = new DogwoodAuthorization({
+        policies: `permit(principal, action == ${prefix}Action::"http_request", resource)
+                   when { context has input.headers && context.input.headers has auth };`,
+        tools: OBJECT_PARAMETER_TOOLS,
+        ...(namespace === undefined ? {} : { namespace }),
+      })
+
+      const authed = dogwood.beforeToolCall(
+        beforeEvent('http_request', { input: { url: 'http://x', headers: { auth: 'token' } } })
+      )
+      const anonymous = dogwood.beforeToolCall(
+        beforeEvent('http_request', { toolUseId: 'tool-2', input: { url: 'http://x' } })
+      )
+
+      expect(authed).toEqual({ type: 'proceed' })
+      expect(anonymous).toMatchObject({ type: 'deny' })
+    })
+
+    // An undeclared principal type passes validation and allows the call,
+    // because a rule scoping the principal just never matches.
+    it('rejects a static principal of a type the generated schema does not declare', () => {
+      expect(
+        () =>
+          new DogwoodAuthorization({ policies: PERMIT_SEARCH, tools: TOOLS, principal: { type: 'Admin', id: 'alice' } })
+      ).toThrow('`principal` must be of type `User`, got `Admin`')
+    })
+
+    it('rejects an unqualified static principal under a configured namespace', () => {
+      expect(
+        () =>
+          new DogwoodAuthorization({
+            policies: 'permit(principal, action == Acme::Action::"search", resource);',
+            tools: TOOLS,
+            namespace: 'Acme',
+            principal: { type: 'User', id: 'alice' },
+          })
+      ).toThrow('`principal` must be of type `Acme::User`, got `User`')
+    })
+
+    it('accepts a static principal of any type a hand-written action schema may declare', () => {
+      const dogwood = new DogwoodAuthorization({
+        policies: PERMIT_SEARCH_NAMESPACED,
+        actionSchema: `${FIXTURES}/tools.cedarschema`,
+        principal: { type: 'Drupe::User', id: 'alice' },
+      })
+
+      expect(dogwood.beforeToolCall(beforeEvent())).toEqual({ type: 'proceed' })
+    })
+
     it('reads an action schema from a .cedarschema file on disk', () => {
       const dogwood = new DogwoodAuthorization({
         policies: PERMIT_SEARCH_NAMESPACED,
@@ -502,6 +562,19 @@ describe('DogwoodAuthorization', () => {
       expect(
         dogwood.beforeToolCall(beforeEvent('search', { toolUseId: 'tool-2', invocationState: { userId: 'bob' } }))
       ).toEqual({ type: 'deny', reason: 'Access denied by Dogwood policy' })
+    })
+
+    it('denies when a principal resolver returns an undeclared entity type', () => {
+      const dogwood = new DogwoodAuthorization({
+        policies: PERMIT_SEARCH,
+        tools: TOOLS,
+        principalResolver: (state) => ({ type: String(state.kind), id: 'mallory' }),
+      })
+
+      expect(dogwood.beforeToolCall(beforeEvent('search', { invocationState: { kind: 'Admin' } }))).toEqual({
+        type: 'deny',
+        reason: "Principal type 'Admin' is not declared by the Dogwood action schema; denying",
+      })
     })
 
     it('decides against the fields the context enricher adds', () => {

@@ -138,6 +138,11 @@ histories mixing: a search alice ran never unlocks a delete for bob.
 When `principalResolver` returns `undefined`, the handler denies the call. No identity, no
 access.
 
+A generated schema declares `User` as its only principal type, qualified by `namespace`,
+so a resolver returning any other type denies the call and a static `principal` of another
+type throws at construction. An undeclared type is not an error to Dogwood: a rule that
+scopes the principal simply never matches, so a `forbid` would silently not apply.
+
 ## Policies in files
 
 `policies` and `actionSchema` each take either source text or a path. A value ending in

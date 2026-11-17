@@ -80,7 +80,9 @@ export interface DogwoodAuthorizationConfig {
    *
    * Set it to qualify every one of those — `Acme::Action::"<tool>"` — which a
    * policy then spells out in each rule that scopes an action, names a
-   * principal, reads `context.input`, or writes a temporal predicate.
+   * principal, reads `context.input`, or writes a temporal predicate. A
+   * `principal` or `principalResolver` carries the qualified type too, as in
+   * `{ type: 'Acme::User', id: 'alice' }`.
    *
    * Only valid with `tools`; a hand-written `actionSchema` declares its own.
    */
@@ -89,12 +91,18 @@ export interface DogwoodAuthorizationConfig {
   /**
    * Static principal. Defaults to `User::"anonymous"`, qualified by the schema's
    * namespace when it declares one. Mutually exclusive with `principalResolver`.
+   *
+   * A generated schema declares `User` as its only principal type, so any other
+   * type throws. A hand-written `actionSchema` declares its own.
    */
   principal?: EntityRef
 
   /**
    * Dynamic principal resolver for multi-tenant agents.
    * Return `undefined` to deny (fail-closed). Mutually exclusive with `principal`.
+   *
+   * Against a generated schema the type must be `User`, qualified by
+   * `namespace`; any other type denies the call.
    */
   principalResolver?: ((invocationState: InvocationState) => EntityRef | undefined) | undefined
 
@@ -144,8 +152,8 @@ export interface DogwoodAuthorizationConfig {
  * A tool's result is not recorded, only the fact that it returned, so a
  * predicate on a result field (`response{ output.x: … }`) type-checks and then
  * never matches. A condition compares the tool arguments as the model emitted
- * them, and a generated schema is typed to match: `context.input.method ==
- * "DELETE"` and `context.input.retries == 3`.
+ * them, and a generated schema is typed to match, so an enum parameter is
+ * compared as a string and a number parameter as a whole number.
  *
  * @see {@link https://github.com/dogwood-policy/dogwood-wasm | dogwood-wasm}
  *
@@ -183,6 +191,17 @@ export class DogwoodAuthorization extends InterventionHandler {
   private readonly _defaultPrincipal: EntityRef | undefined
 
   /**
+   * The only entity type a generated schema admits as a principal, or
+   * `undefined` for a hand-written schema, which may declare several.
+   *
+   * An undeclared principal type is not an error to Dogwood: validation passes
+   * and the decision allows, because a rule that scopes the principal simply
+   * never matches. Checking it is the difference between a typo being caught
+   * and a `forbid` silently not applying.
+   */
+  private readonly _principalType: string | undefined
+
+  /**
    * Set by a wasm trap. The module is shared process-wide, so a trap is not
    * assumed recoverable and every later decision denies without calling in.
    */
@@ -204,9 +223,10 @@ export class DogwoodAuthorization extends InterventionHandler {
    * @throws Error when neither `actionSchema` nor `tools` is supplied, when
    * both `principal` and `principalResolver` are, when `entities` is non-empty
    * without `actionSchema`, when `namespace` is supplied with one or is not a
-   * legal Cedar namespace, or when the policy set does not type-check against
-   * the schema. Throws a `DogwoodError` when the policy set, the schema, or a
-   * tool manifest fails to parse.
+   * legal Cedar namespace, when `principal` is not of the type a generated
+   * schema declares, or when the policy set does not type-check against the
+   * schema. Throws a `DogwoodError` when the policy set, the schema, or a tool
+   * manifest fails to parse.
    */
   constructor(config: DogwoodAuthorizationConfig) {
     super()
@@ -247,9 +267,14 @@ export class DogwoodAuthorization extends InterventionHandler {
     )
     this._declaredKinds = new Set(this._authorizer.eventKinds)
     this._resource = { type: `${namespace}Gateway`, id: 'agent' }
+    this._principalType = config.actionSchema ? undefined : `${namespace}User`
     this._defaultPrincipal = config.principalResolver
       ? undefined
       : (config.principal ?? { type: `${namespace}User`, id: 'anonymous' })
+    const principalType = this._defaultPrincipal?.type
+    if (principalType !== undefined && !this._declaresPrincipalType(principalType)) {
+      throw new Error(`\`principal\` must be of type \`${this._principalType}\`, got \`${principalType}\``)
+    }
     this._principalResolver = config.principalResolver
     this._contextEnricher = config.contextEnricher
     this._entities = config.entities ?? []
@@ -274,6 +299,9 @@ export class DogwoodAuthorization extends InterventionHandler {
     const principal = this._defaultPrincipal ?? this._principalResolver?.(invocationState)
     if (!principal?.type || !principal.id) {
       return deny('No principal identity found in invocation state')
+    }
+    if (!this._declaresPrincipalType(principal.type)) {
+      return deny(`Principal type '${principal.type}' is not declared by the Dogwood action schema; denying`)
     }
 
     const action = this._actionsByTool.get(toolName)
@@ -369,6 +397,11 @@ export class DogwoodAuthorization extends InterventionHandler {
     // response into the new one.
     this._allowedCalls.clear()
     this._authorizer.reset()
+  }
+
+  /** Whether the schema admits `type` as a principal. Always true for a hand-written one. */
+  private _declaresPrincipalType(type: string): boolean {
+    return this._principalType === undefined || type === this._principalType
   }
 
   /**
@@ -521,23 +554,26 @@ function retypeForRawArguments(key: string, value: unknown): unknown {
  * is none. Generation hardcodes {@link GENERATED_NAMESPACE} and takes no
  * namespace of its own, so the name is rewritten after the fact.
  *
- * Every reference generation emits inside the namespace is unqualified, so only
- * the declaration itself needs rewriting.
+ * An object parameter is generated as its own entity type and referenced
+ * qualified, so those references move with the declaration. They are rewritten
+ * first, so the rename does not have to exclude the declaration itself.
  */
 function applyNamespace(schema: string, namespace: string | undefined): string {
   if (namespace === GENERATED_NAMESPACE) {
     return schema
   }
+  const requalified = schema.replaceAll(`${GENERATED_NAMESPACE}::`, namespace === undefined ? '' : `${namespace}::`)
   if (namespace !== undefined) {
-    return schema.replace(`namespace ${GENERATED_NAMESPACE} {`, `namespace ${namespace} {`)
+    return requalified.replace(`namespace ${GENERATED_NAMESPACE} {`, `namespace ${namespace} {`)
   }
-  return schema.replace(`namespace ${GENERATED_NAMESPACE} {`, '').replace(/\}\s*$/, '')
+  return requalified.replace(`namespace ${GENERATED_NAMESPACE} {`, '').replace(/\}\s*$/, '')
 }
 
 /** The namespace the schema's actions live in, as a prefix ready to concatenate. */
 function namespacePrefixOf(actions: string[]): string {
   const marker = '::Action::'
-  const index = actions[0]?.indexOf(marker) ?? -1
+  // Last, so a namespace with an `Action` segment of its own stays whole.
+  const index = actions[0]?.lastIndexOf(marker) ?? -1
   return index > 0 ? actions[0]!.slice(0, index + 2) : ''
 }
 
