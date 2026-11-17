@@ -4,11 +4,33 @@ import shape from '../assets/next-steps/shape.svg?raw';
 import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw';
 import { pathWithBase } from '../util/links';
 
-const ctas = [
+interface Cta {
+  label: string
+  href: string
+  external?: boolean
+}
+
+interface Props {
+  title?: string
+  ctas?: Cta[]
+}
+
+const defaultCtas: Cta[] = [
   { label: 'Quickstart', href: pathWithBase('/docs/user-guide/harness/quickstart/') },
   { label: 'Migrate', href: pathWithBase('/docs/user-guide/migrate/choosing-an-agent-foundation/') },
   { label: 'Deploy', href: pathWithBase('/docs/user-guide/sdk/deploy/operating-agents-in-production/') },
 ];
+
+const {
+  title = 'Push the boundaries of what agents can do.',
+  ctas: providedCtas,
+} = Astro.props
+const ctas = providedCtas
+  ? providedCtas.map((cta) => ({
+      ...cta,
+      href: cta.external || cta.href.startsWith('http') ? cta.href : pathWithBase(cta.href),
+    }))
+  : defaultCtas
 ---
 
 <section class="next-steps" aria-label="Next steps">
@@ -23,10 +45,14 @@ const ctas = [
     set:html={shapeMobile}
   />
   <div class="next-steps__content">
-    <h2 class="next-steps__title">Push the boundaries of what agents can do.</h2>
+    <h2 class="next-steps__title">{title}</h2>
     <div class="next-steps__ctas">
       {ctas.map((cta) => (
-        <a href={cta.href} class="next-steps__cta">
+        <a
+          href={cta.href}
+          class="next-steps__cta"
+          {...(cta.external ? { target: '_blank', rel: 'noopener' } : {})}
+        >
           {cta.label}
           <span class="next-steps__cta-arrow" set:html={arrow} />
         </a>

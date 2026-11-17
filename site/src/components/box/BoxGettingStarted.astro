@@ -1,0 +1,1174 @@
+---
+import arrow from '../../assets/banner/arrow.svg?raw'
+import {
+  BOX_BOUNDARY_PANELS,
+  BOX_CAPABILITIES,
+  BOX_EXAMPLE_BOUNDARY,
+  BOX_FEATURED_AGENT_EXAMPLES,
+  BOX_OVERVIEW_DESCRIPTION,
+} from '../../config/box-landing'
+import { pathWithBase } from '../../util/links'
+import CommandPill from '../CommandPill.astro'
+import ToolkitTerminal from '../ToolkitTerminal.astro'
+
+const isExternal = (href: string) => href.startsWith('http')
+const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href))
+const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
+  const panel = BOX_BOUNDARY_PANELS[index]
+  if (!panel) throw new Error(`Missing Box boundary panel for ${capability.id}`)
+
+  return {
+    ...capability,
+    panel,
+    terminalCode: {
+      language: panel.id === 'policy' ? ('policy' as const) : ('toml' as const),
+      rows: panel.code.split('\n').map((line, lineIndex) => ({
+        lineNo: lineIndex + 1,
+        tokens: [{ text: line }],
+      })),
+    },
+  }
+})
+---
+
+<section class="box-start" aria-labelledby="box-start-title">
+  <div class="box-start__inner">
+    <header class="box-start__header">
+      <h2 id="box-start-title">Sandbox your coding agent</h2>
+    </header>
+
+    <div class="box-start__body" data-box-agent-selector>
+      <div class="box-start__experience">
+        <div class="box-start__overview">
+          <div class="box-start__copy">
+            <h3 class="box-start__product">/box</h3>
+            <p class="box-start__summary">{BOX_OVERVIEW_DESCRIPTION}</p>
+            <div class="box-start__launcher">
+              <nav class="box-start__agent-tabs" aria-label="Choose a coding agent" data-box-agent-tablist>
+                {
+                  BOX_FEATURED_AGENT_EXAMPLES.map((example, index) => (
+                    <a
+                      id={`box-agent-tab-${example.id}`}
+                      href={`#box-agent-panel-${example.id}`}
+                      data-box-agent-tab={example.id}
+                      data-default-active={index === 0 ? '' : undefined}
+                    >
+                      {example.title}
+                    </a>
+                  ))
+                }
+              </nav>
+              <div class="box-start__start-commands" aria-live="polite">
+                {
+                  BOX_FEATURED_AGENT_EXAMPLES.map((example, index) => (
+                    <div
+                      class="box-start__start-command"
+                      data-box-overview-command={example.id}
+                      hidden={index !== 0}
+                    >
+                      <CommandPill
+                        command={example.command}
+                        label={`Copy the ${example.title} Box run command`}
+                        surface={`run:box:overview:${example.id}`}
+                      />
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+
+          <div class="box-start__demo">
+            <div class="box-start__panels">
+              {
+                BOX_FEATURED_AGENT_EXAMPLES.map((example) => (
+                  <article
+                    class="box-start__agent-panel"
+                    id={`box-agent-panel-${example.id}`}
+                    aria-labelledby={`box-agent-tab-${example.id}`}
+                    data-box-agent-panel={example.id}
+                    data-box-animate-panel
+                  >
+                    <div class="box-start__run-command">
+                      <CommandPill
+                        command={example.command}
+                        label={`Copy the ${example.title} Box run command`}
+                        surface={`run:box:${example.id}`}
+                      />
+                    </div>
+
+                    <div
+                      class="box-start__session"
+                      aria-label={`${example.title} example scoped Box boundary`}
+                      data-box-example-boundary
+                    >
+                      <header class="box-start__session-header">
+                        <span class="box-start__terminal-dots" aria-hidden="true">
+                          <span></span>
+                          <span></span>
+                          <span></span>
+                        </span>
+                        <span>Example scoped boundary</span>
+                        <span>{example.slug}</span>
+                      </header>
+
+                      <ul class="box-start__decisions">
+                        {
+                          BOX_EXAMPLE_BOUNDARY.map((decision) => (
+                            <li data-box-boundary-decision={decision.id} data-box-animate-row>
+                              <code>{decision.action}</code>
+                              <span
+                                class:list={[
+                                  'box-start__decision-state',
+                                  `box-start__decision-state--${decision.tone}`,
+                                ]}
+                              >
+                                <span aria-hidden="true">{decision.tone === 'blocked' ? '×' : '✓'}</span>
+                                {decision.result}
+                              </span>
+                            </li>
+                          ))
+                        }
+                      </ul>
+                    </div>
+
+                    <footer class="box-start__panel-footer">
+                      <a
+                        href={linkHref(example.href)}
+                        target={isExternal(example.href) ? '_blank' : undefined}
+                        rel={isExternal(example.href) ? 'noopener' : undefined}
+                        data-example-guide={example.id}
+                      >
+                        {example.title} setup
+                        <span aria-hidden="true" set:html={arrow} />
+                      </a>
+                    </footer>
+                  </article>
+                ))
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="box-start__connectors" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+
+      <div class="box-start__capabilities">
+        {
+          capabilityCards.map((capability) => (
+            <div class="box-start__capability-group">
+              <h3 class="box-start__capability-title" data-box-capability-title={capability.id}>
+                {capability.title}
+              </h3>
+              <article
+                class="box-start__capability"
+                data-box-capability={capability.id}
+                data-box-capability-card
+              >
+                <div class="box-start__capability-compact" data-box-capability-compact>
+                  <h4 class="box-start__slug">{capability.slug}</h4>
+                  <p>{capability.description}</p>
+                </div>
+
+                <div
+                  class="box-start__capability-example"
+                  id={`box-capability-${capability.id}-details`}
+                  data-box-capability-code={capability.id}
+                >
+                  <p class="box-start__capability-file">/{capability.panel.filename}</p>
+                  <ToolkitTerminal
+                    code={capability.terminalCode}
+                    copyAriaLabel={`Copy the ${capability.panel.filename} example`}
+                  />
+                </div>
+
+                <a
+                  class="box-start__capability-action"
+                  href={linkHref(capability.panel.href)}
+                  target={isExternal(capability.panel.href) ? '_blank' : undefined}
+                  rel={isExternal(capability.panel.href) ? 'noopener' : undefined}
+                  data-box-capability-action={capability.id}
+                >
+                  {capability.panel.linkLabel}
+                  <span aria-hidden="true" set:html={arrow} />
+                </a>
+
+                <button
+                  type="button"
+                  class="box-start__capability-toggle"
+                  aria-label={`Show ${capability.slug} code example`}
+                  aria-expanded="false"
+                  aria-controls={`box-capability-${capability.id}-details`}
+                  data-box-capability-toggle={capability.id}
+                >
+                  <span class="box-start__capability-toggle-icon" aria-hidden="true">
+                    <svg viewBox="0 0 22 14" fill="none">
+                      <path
+                        d="M8 2L2 7L8 12M14 2L20 7L14 12"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </span>
+                </button>
+              </article>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .box-start {
+    --box-purple: var(--card-accent-purple);
+
+    padding: 72px 48px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .box-start__inner {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .box-start__header {
+    margin-bottom: 18px;
+  }
+
+  .box-start__header h2 {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: normal;
+    line-height: 1.3;
+    text-align: center;
+  }
+
+  .box-start__experience {
+    overflow: hidden;
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    background: var(--card-bg);
+  }
+
+  .box-start__overview {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 40px;
+    padding: 34px;
+  }
+
+  .box-start__copy {
+    align-self: center;
+  }
+
+  .box-start__product {
+    margin: 0;
+    color: var(--box-purple);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+
+  .box-start__summary {
+    margin: 16px 0 0;
+    color: var(--fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .box-start__launcher {
+    margin-top: 22px;
+  }
+
+  .box-start__start-commands,
+  .box-start__start-command {
+    width: 100%;
+  }
+
+  .box-start__start-commands {
+    margin-top: 12px;
+  }
+
+  .box-start__start-command[hidden] {
+    display: none;
+  }
+
+  .box-start__start-command :global(.command-pill__prompt) {
+    color: var(--box-purple);
+  }
+
+  .box-start__start-command :global(.command-pill) {
+    box-sizing: border-box;
+    width: 100%;
+    border-radius: 12px;
+  }
+
+  .box-start__demo {
+    display: flex;
+    align-self: stretch;
+    min-width: 0;
+  }
+
+  .box-start__agent-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    margin: 0;
+  }
+
+  .box-start__agent-tabs a {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 4px 12px;
+    border: 0;
+    border-bottom: 2px solid var(--use-case-muted);
+    background: transparent;
+    color: var(--use-case-muted);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: center;
+    text-decoration: none;
+    transition:
+      color 180ms ease,
+      border-color 180ms ease;
+  }
+
+  .box-start__agent-tabs a:hover {
+    border-bottom-color: var(--box-purple);
+    color: var(--box-purple);
+  }
+
+  .box-start__agent-tabs a:focus-visible {
+    border-bottom-color: var(--box-purple);
+    color: var(--box-purple);
+    outline: none;
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+  }
+
+  .box-start__body:not([data-enhanced='true']) .box-start__agent-tabs a[data-default-active],
+  .box-start__agent-tabs a[aria-selected='true'] {
+    border-bottom-color: var(--box-purple);
+    color: var(--box-purple);
+  }
+
+  .box-start__body[data-enhanced='true'] .box-start__agent-tabs a[aria-selected='false'] {
+    border-bottom-color: var(--use-case-muted);
+    color: var(--use-case-muted);
+  }
+
+  .box-start__panels {
+    display: grid;
+    flex: 1;
+    gap: 14px;
+  }
+
+  .box-start__agent-panel {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  .box-start__agent-panel[hidden] {
+    display: none;
+  }
+
+  .box-start__agent-panel:focus-visible {
+    outline: 2px solid var(--box-purple);
+    outline-offset: 4px;
+  }
+
+  .box-start__session {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--terminal-bg);
+  }
+
+  .box-start__session-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--divider);
+    background: var(--terminal-header-bg);
+    color: var(--terminal-fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .box-start__session-header > span:nth-child(2) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .box-start__terminal-dots {
+    display: inline-flex;
+    gap: 5px;
+  }
+
+  .box-start__terminal-dots span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--card-accent-red);
+  }
+
+  .box-start__terminal-dots span:nth-child(2) {
+    background: var(--card-accent-yellow);
+  }
+
+  .box-start__terminal-dots span:nth-child(3) {
+    background: var(--card-accent-green);
+  }
+
+  .box-start__run-command {
+    width: 100%;
+    margin-bottom: 14px;
+  }
+
+  .box-start__body[data-enhanced='true'] .box-start__run-command {
+    display: none;
+  }
+
+  .box-start__run-command :global(.command-pill) {
+    box-sizing: border-box;
+    width: 100%;
+    justify-content: space-between;
+    padding: 8px 8px 8px 16px;
+    border-color: var(--box-purple);
+    background: var(--toggle-bg);
+  }
+
+  .box-start__run-command :global(.command-pill__command) {
+    font-size: 15px;
+  }
+
+  .box-start__run-command :global(.command-pill__copy) {
+    border-color: var(--box-purple);
+    background: var(--box-purple);
+    color: var(--strands-black);
+    font-weight: 600;
+  }
+
+  .box-start__decisions {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .box-start__decisions li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--divider);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .box-start__decisions li:first-child {
+    border-top: 0;
+  }
+
+  .box-start__decisions code {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--terminal-fg);
+    font: inherit;
+  }
+
+  .box-start__decision-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .box-start__decision-state--allowed,
+  .box-start__decision-state--routed {
+    color: var(--code-string);
+  }
+
+  .box-start__decision-state--blocked {
+    color: var(--card-accent-red);
+  }
+
+  .box-start__panel-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: auto;
+    padding-top: 22px;
+  }
+
+  .box-start__panel-footer a {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: max-content;
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    text-decoration: none;
+  }
+
+  .box-start__panel-footer a:hover {
+    opacity: 0.8;
+  }
+
+  .box-start__panel-footer a span {
+    display: inline-flex;
+    width: 10px;
+    transition: transform 150ms ease;
+  }
+
+  .box-start__panel-footer a:hover span {
+    transform: translateX(3px);
+  }
+
+  .box-start__panel-footer a :global(svg) {
+    width: 100%;
+    height: auto;
+    fill: currentColor;
+  }
+
+  .box-start__capabilities {
+    --box-capability-columns: repeat(3, minmax(0, 1fr));
+
+    display: grid;
+    grid-template-columns: var(--box-capability-columns);
+    gap: 24px;
+    transition: grid-template-columns 300ms ease;
+  }
+
+  .box-start__capabilities:has(.box-start__capability-group:nth-child(1) .box-start__capability.is-open) {
+    --box-capability-columns: 2fr 1fr 1fr;
+  }
+
+  .box-start__capabilities:has(.box-start__capability-group:nth-child(2) .box-start__capability.is-open) {
+    --box-capability-columns: 1fr 2fr 1fr;
+  }
+
+  .box-start__capabilities:has(.box-start__capability-group:nth-child(3) .box-start__capability.is-open) {
+    --box-capability-columns: 1fr 1fr 2fr;
+  }
+
+  .box-start__capability {
+    position: relative;
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 200px;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 24px 26px 52px;
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    background: var(--card-bg);
+  }
+
+  .box-start__capability-group {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .box-start__capability-title {
+    margin: 0;
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: normal;
+    line-height: 1.3;
+    text-align: center;
+  }
+
+  .box-start__capability-compact {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .box-start__body[data-capabilities-enhanced='true'] .box-start__capability-compact {
+    cursor: pointer;
+  }
+
+  .box-start__slug {
+    margin: 0;
+    color: var(--box-purple);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .box-start__capability-compact > p {
+    margin: 0;
+    color: var(--fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .box-start__capability-example {
+    width: 100%;
+    margin-top: 18px;
+  }
+
+  .box-start__body[data-capabilities-enhanced='true'] .box-start__capability-example {
+    display: none;
+  }
+
+  .box-start__body[data-capabilities-enhanced='true'] .box-start__capability.is-open {
+    gap: 20px;
+    min-height: 0;
+    padding-bottom: 48px;
+  }
+
+  .box-start__body[data-capabilities-enhanced='true']
+    .box-start__capability.is-open
+    .box-start__capability-compact {
+    flex: none;
+  }
+
+  .box-start__body[data-capabilities-enhanced='true']
+    .box-start__capability.is-open
+    .box-start__capability-example {
+    display: block;
+    margin-top: 0;
+    animation: box-capability-expand-in 300ms ease both;
+  }
+
+  .box-start__capability-file {
+    margin: 0 0 8px;
+    color: var(--box-purple);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .box-start__capability-action {
+    position: absolute;
+    right: 26px;
+    bottom: 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    text-decoration: none;
+  }
+
+  .box-start__capability-action:hover {
+    opacity: 0.8;
+  }
+
+  .box-start__capability-action span {
+    display: inline-flex;
+    width: 10px;
+    height: 9px;
+  }
+
+  .box-start__capability-action span :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .box-start__capability-toggle {
+    position: absolute;
+    bottom: 16px;
+    left: 26px;
+    display: none;
+    width: 22px;
+    height: 16px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--box-purple);
+    cursor: pointer;
+  }
+
+  .box-start__body[data-capabilities-enhanced='true'] .box-start__capability-toggle {
+    display: inline-flex;
+  }
+
+  .box-start__capability-toggle::before {
+    position: absolute;
+    inset: -14px -11px;
+    content: '';
+  }
+
+  .box-start__capability-toggle:focus-visible {
+    outline: 2px solid var(--box-purple);
+    outline-offset: 8px;
+  }
+
+  .box-start__capability-toggle-icon {
+    display: inline-flex;
+    width: 22px;
+    height: 14px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .box-start__capability-toggle-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .box-start__capability.is-open .box-start__capability-toggle-icon {
+    display: none;
+  }
+
+  .box-start__capability.is-open .box-start__capability-toggle::after {
+    width: 12px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--box-purple);
+    content: '';
+  }
+
+  @keyframes box-capability-expand-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .box-start__connectors {
+    position: relative;
+    display: grid;
+    height: 36px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 24px;
+    margin-top: 48px;
+    margin-bottom: 14px;
+  }
+
+  .box-start__connectors::before,
+  .box-start__connectors::after,
+  .box-start__connectors span {
+    opacity: 0.7;
+  }
+
+  .box-start__connectors::before {
+    position: absolute;
+    top: -48px;
+    left: 50%;
+    height: 48px;
+    border-left: 1.5px dashed var(--fg);
+    transform: translateX(-50%);
+    content: '';
+  }
+
+  .box-start__connectors::after {
+    position: absolute;
+    top: 0;
+    right: calc(16.6667% - 8px);
+    left: calc(16.6667% - 8px);
+    border-top: 1.5px dashed var(--fg);
+    content: '';
+  }
+
+  .box-start__connectors span {
+    position: relative;
+    z-index: 1;
+    width: 0;
+    height: 28px;
+    justify-self: center;
+    border-left: 1.5px dashed var(--fg);
+  }
+
+  .box-start__connectors span::after {
+    position: absolute;
+    bottom: -6px;
+    left: -1px;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 8px solid var(--fg);
+    transform: translateX(-50%);
+    content: '';
+  }
+
+  @media (max-width: 1023px) {
+    .box-start__overview {
+      grid-template-columns: 1fr;
+      gap: 32px;
+    }
+
+    .box-start__connectors {
+      display: none;
+    }
+
+    .box-start__capabilities {
+      --box-capability-columns: repeat(2, minmax(0, 1fr));
+
+      margin-top: 36px;
+    }
+
+    .box-start__capability-group:nth-child(3) {
+      grid-column: 1 / -1;
+    }
+
+    .box-start__capabilities:has(.box-start__capability.is-open) {
+      --box-capability-columns: 1fr;
+    }
+
+    .box-start__capabilities:has(.box-start__capability.is-open) .box-start__capability-group {
+      grid-column: auto;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .box-start {
+      padding: 48px 19px;
+    }
+
+    .box-start__header h2 {
+      font-size: 18px;
+    }
+
+    .box-start__overview {
+      gap: 28px;
+      padding: 22px;
+    }
+
+    .box-start__product {
+      font-size: 22px;
+    }
+
+    .box-start__summary {
+      font-size: 14px;
+    }
+
+    .box-start__agent-tabs {
+      gap: 0;
+    }
+
+    .box-start__session-header {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .box-start__session-header > span:last-child {
+      display: none;
+    }
+
+    .box-start__decisions li {
+      align-items: flex-start;
+      grid-template-columns: 1fr;
+      gap: 5px;
+    }
+
+    .box-start__decision-state {
+      white-space: normal;
+    }
+
+    .box-start__capabilities {
+      --box-capability-columns: 1fr;
+
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-top: 32px;
+    }
+
+    .box-start__capabilities:has(.box-start__capability.is-open) {
+      --box-capability-columns: 1fr;
+    }
+
+    .box-start__capability {
+      min-height: 0;
+      padding: 18px 16px 56px;
+    }
+
+    .box-start__body[data-capabilities-enhanced='true'] .box-start__capability.is-open {
+      gap: 24px;
+      padding: 18px 16px 60px;
+    }
+
+    .box-start__capability-example {
+      margin-top: 24px;
+    }
+
+    .box-start__capability-title {
+      font-size: 18px;
+    }
+
+    .box-start__capability-action {
+      right: 16px;
+      font-size: 13px;
+    }
+
+    .box-start__capability-toggle {
+      left: 16px;
+    }
+
+  }
+
+  @media (max-width: 420px) {
+    .box-start__agent-tabs {
+      gap: 0;
+    }
+
+    .box-start__agent-tabs a {
+      min-height: 44px;
+      padding-inline: 2px;
+      font-size: 11px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .box-start__capabilities,
+    .box-start__agent-tabs a,
+    .box-start__panel-footer a span {
+      transition: none;
+    }
+
+    .box-start__body[data-capabilities-enhanced='true']
+      .box-start__capability.is-open
+      .box-start__capability-example {
+      animation: none;
+    }
+  }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-box-agent-selector]').forEach((root) => {
+    if (root.dataset.enhanced === 'true') return
+
+    const tablist = root.querySelector<HTMLElement>('[data-box-agent-tablist]')
+    const tabs = Array.from(root.querySelectorAll<HTMLAnchorElement>('[data-box-agent-tab]'))
+    const panels = Array.from(root.querySelectorAll<HTMLElement>('[data-box-agent-panel]'))
+    const overviewCommands = Array.from(root.querySelectorAll<HTMLElement>('[data-box-overview-command]'))
+    if (
+      !tablist ||
+      tabs.length === 0 ||
+      tabs.length !== panels.length ||
+      tabs.length !== overviewCommands.length
+    )
+      return
+
+    root.dataset.enhanced = 'true'
+    tablist.setAttribute('role', 'tablist')
+    tablist.setAttribute('aria-orientation', 'horizontal')
+
+    const panelFor = (tab: HTMLAnchorElement) => {
+      const panelId = tab.getAttribute('href')?.slice(1)
+      return panels.find((panel) => panel.id === panelId)
+    }
+
+    const overviewCommandFor = (tab: HTMLAnchorElement) =>
+      overviewCommands.find((command) => command.dataset.boxOverviewCommand === tab.dataset.boxAgentTab)
+
+    const motionAllowed = () => !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    const animatePanel = (panel: HTMLElement) => {
+      if (!motionAllowed() || typeof panel.animate !== 'function') return
+
+      panel.getAnimations().forEach((animation) => animation.cancel())
+      panel.animate(
+        [
+          { opacity: 0, transform: 'translateY(6px)' },
+          { opacity: 1, transform: 'translateY(0)' },
+        ],
+        { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+      )
+
+      panel.querySelectorAll<HTMLElement>('[data-box-animate-row]').forEach((row, index) => {
+        row.getAnimations().forEach((animation) => animation.cancel())
+        row.animate(
+          [
+            { opacity: 0, transform: 'translateY(5px)' },
+            { opacity: 1, transform: 'translateY(0)' },
+          ],
+          {
+            delay: index * 35,
+            duration: 190,
+            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+            fill: 'both',
+          }
+        )
+      })
+    }
+
+    const animateOverviewCommand = (command: HTMLElement) => {
+      if (!motionAllowed() || typeof command.animate !== 'function') return
+
+      command.getAnimations().forEach((animation) => animation.cancel())
+      command.animate(
+        [
+          { opacity: 0, transform: 'translateY(4px)' },
+          { opacity: 1, transform: 'translateY(0)' },
+        ],
+        { duration: 180, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+      )
+    }
+
+    const activate = (
+      selectedTab: HTMLAnchorElement,
+      { focus = false, animate = true, updateHash = true } = {}
+    ) => {
+      const selectedPanel = panelFor(selectedTab)
+      const selectedCommand = overviewCommandFor(selectedTab)
+      if (!selectedPanel || !selectedCommand) return
+
+      tabs.forEach((tab) => {
+        const selected = tab === selectedTab
+        tab.setAttribute('aria-selected', String(selected))
+        tab.tabIndex = selected ? 0 : -1
+      })
+
+      panels.forEach((panel) => {
+        panel.hidden = panel !== selectedPanel
+      })
+
+      overviewCommands.forEach((command) => {
+        command.hidden = command !== selectedCommand
+      })
+
+      if (focus) selectedTab.focus()
+      if (animate) {
+        animatePanel(selectedPanel)
+        animateOverviewCommand(selectedCommand)
+      }
+      if (updateHash) history.replaceState(null, '', `#${selectedPanel.id}`)
+    }
+
+    tabs.forEach((tab) => {
+      const panel = panelFor(tab)
+      if (!panel) return
+
+      tab.setAttribute('role', 'tab')
+      tab.setAttribute('aria-controls', panel.id)
+      tab.setAttribute('aria-selected', 'false')
+      tab.tabIndex = -1
+
+      panel.setAttribute('role', 'tabpanel')
+      panel.setAttribute('aria-labelledby', tab.id)
+      panel.tabIndex = 0
+      panel.hidden = true
+
+      tab.addEventListener('click', (event) => {
+        event.preventDefault()
+        activate(tab)
+      })
+
+      tab.addEventListener('keydown', (event) => {
+        const currentIndex = tabs.indexOf(tab)
+        let nextIndex = currentIndex
+
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length
+        else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length
+        else if (event.key === 'Home') nextIndex = 0
+        else if (event.key === 'End') nextIndex = tabs.length - 1
+        else return
+
+        event.preventDefault()
+        activate(tabs[nextIndex], { focus: true })
+      })
+    })
+
+    const hashPanel = panels.find((panel) => `#${panel.id}` === window.location.hash)
+    const initialTab = hashPanel
+      ? tabs.find((tab) => panelFor(tab) === hashPanel)
+      : tabs.find((tab) => tab.hasAttribute('data-default-active'))
+
+    activate(initialTab ?? tabs[0], { animate: false, updateHash: false })
+  })
+
+  function setCapabilityToggleState(card: HTMLElement, isOpen: boolean) {
+    const toggle = card.querySelector<HTMLButtonElement>('[data-box-capability-toggle]')
+    const slug = card.querySelector<HTMLElement>('.box-start__slug')?.textContent?.trim() ?? card.dataset.boxCapability
+
+    toggle?.setAttribute('aria-expanded', String(isOpen))
+    toggle?.setAttribute('aria-label', `${isOpen ? 'Hide' : 'Show'} ${slug} code example`)
+  }
+
+  function setCapabilityOpen(card: HTMLElement, willOpen: boolean) {
+    if (willOpen) {
+      card
+        .closest<HTMLElement>('[data-box-agent-selector]')
+        ?.querySelectorAll<HTMLElement>('[data-box-capability-card].is-open')
+        .forEach((openCard) => {
+          if (openCard === card) return
+          openCard.classList.remove('is-open')
+          setCapabilityToggleState(openCard, false)
+        })
+    }
+
+    card.classList.toggle('is-open', willOpen)
+    setCapabilityToggleState(card, willOpen)
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-box-agent-selector]').forEach((root) => {
+    if (root.dataset.capabilitiesEnhanced === 'true') return
+
+    const cards = Array.from(root.querySelectorAll<HTMLElement>('[data-box-capability-card]'))
+    if (cards.length === 0) return
+
+    root.dataset.capabilitiesEnhanced = 'true'
+
+    cards.forEach((card) => {
+      const toggle = card.querySelector<HTMLButtonElement>('[data-box-capability-toggle]')
+      const compact = card.querySelector<HTMLElement>('[data-box-capability-compact]')
+      if (!toggle || !compact) return
+
+      setCapabilityToggleState(card, false)
+
+      toggle.addEventListener('click', () => {
+        setCapabilityOpen(card, !card.classList.contains('is-open'))
+      })
+
+      compact.addEventListener('click', (event) => {
+        if (event.target instanceof Element && event.target.closest('a, button')) return
+        setCapabilityOpen(card, true)
+      })
+    })
+  })
+</script>

@@ -1,0 +1,307 @@
+---
+import arrow from '../../assets/banner/arrow.svg?raw'
+import halftone from '../../assets/banner/halftone.svg?url'
+import github from '../../assets/nav/github.svg?raw'
+import {
+  BOX_CORE_REPOSITORY_URL,
+  BOX_LINKS,
+} from '../../config/box-landing'
+import { getRepositoryStarCount } from '../../util/github'
+import { pathWithBase } from '../../util/links'
+import CommandPill from '../CommandPill.astro'
+
+const isExternal = (href: string) => href.startsWith('http')
+const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href))
+const boxStars = await getRepositoryStarCount('strands-agents/box', '550+')
+const heroInstallCommand = 'brew install strands-agents/tap/box'
+---
+
+<section class="box-hero" aria-labelledby="box-hero-title">
+  <div class="box-hero__inner">
+    <div class="box-hero__halftone" aria-hidden="true">
+      <div class="box-hero__halftone-mask" style={`--box-halftone-mask: url("${halftone}")`} />
+    </div>
+    <div class="box-hero__gradient" aria-hidden="true"></div>
+
+    <div class="box-hero__content">
+      <p class="box-hero__product">/box</p>
+      <h1 id="box-hero-title" class="box-hero__title">
+        The policy-enforced<br />
+        sandbox for AI agents.
+      </h1>
+      <div class="box-hero__actions">
+        <div class="box-hero__links">
+          <a
+            href={linkHref(BOX_LINKS.quickstart)}
+            class="box-hero__link box-hero__link--primary"
+            target={isExternal(BOX_LINKS.quickstart) ? '_blank' : undefined}
+            rel={isExternal(BOX_LINKS.quickstart) ? 'noopener' : undefined}
+          >
+            Run Box
+            <span class="box-hero__arrow" set:html={arrow} />
+          </a>
+          <a
+            href={BOX_CORE_REPOSITORY_URL}
+            class="box-hero__link box-hero__link--github"
+            aria-label={`View Strands Box on GitHub, ${boxStars} stars`}
+            target="_blank"
+            rel="noopener"
+          >
+            <span class="box-hero__github-icon" set:html={github} />
+            <span class="box-hero__github-stars">{boxStars}</span>
+          </a>
+        </div>
+
+        <CommandPill
+          command={heroInstallCommand}
+          label="Copy the Box install command"
+          surface="install:box"
+        />
+
+        <p class="box-hero__meta">
+          <span>macOS 15+ (Apple silicon)</span>
+          <span aria-hidden="true">·</span>
+          <span>Linux ARM64</span>
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .box-hero {
+    --box-purple: var(--card-accent-purple);
+
+    width: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .box-hero__inner {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 324px;
+    overflow: hidden;
+  }
+
+  .box-hero__halftone {
+    position: absolute;
+    inset: 24px 0 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: auto;
+    overflow: hidden;
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  .box-hero__halftone-mask {
+    display: block;
+    width: 100%;
+    min-width: 1332px;
+    height: auto;
+    aspect-ratio: 1332 / 750;
+    flex: none;
+    transform: rotate(180deg);
+    background-color: var(--box-purple);
+    -webkit-mask-image: var(--box-halftone-mask);
+    mask-image: var(--box-halftone-mask);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    mask-mode: alpha;
+  }
+
+  .box-hero__gradient {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, transparent 0%, var(--bg) 100%);
+    pointer-events: none;
+  }
+
+  .box-hero__content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    max-width: 1332px;
+    margin: 0 auto;
+    padding: 69px clamp(24px, 5vw, 96px) 48px;
+    text-align: center;
+  }
+
+  .box-hero__product {
+    margin: 0 0 14px;
+    color: var(--box-purple);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1.2;
+  }
+
+  .box-hero__title {
+    max-width: 900px;
+    margin: 0;
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(30px, 3.25vw, 52px);
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    line-height: 1.2;
+  }
+
+  .box-hero__actions {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: min(405px, 100%);
+    margin-top: 24px;
+  }
+
+  .box-hero__links {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .box-hero__link {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 15px;
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+    background: var(--toggle-bg);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .box-hero__link:hover {
+    opacity: 0.75;
+  }
+
+  .box-hero__link--primary {
+    border-color: var(--box-purple);
+    background: var(--box-purple);
+    color: var(--strands-black);
+  }
+
+  .box-hero__link--github {
+    gap: 8px;
+  }
+
+  .box-hero__github-icon {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+  }
+
+  .box-hero__github-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .box-hero__github-stars {
+    font-size: 15px;
+    opacity: 0.78;
+  }
+
+  .box-hero__arrow {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+  }
+
+  .box-hero__arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .box-hero :global(.command-pill) {
+    width: max-content;
+    max-width: 100%;
+    background: var(--toggle-bg);
+  }
+
+  .box-hero :global(.command-pill__prompt) {
+    color: var(--box-purple);
+  }
+
+  .box-hero :global(.command-pill__copy.is-copied) {
+    border-color: transparent;
+    background: var(--box-purple);
+    color: var(--bg);
+  }
+
+  .box-hero__meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 10px;
+    margin: 0;
+    color: var(--use-case-muted);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    line-height: 1.45;
+  }
+
+  @media (max-width: 767px) {
+    .box-hero__inner {
+      min-height: 0;
+      padding: 36px 12px 24px;
+    }
+
+    .box-hero__halftone {
+      top: 12px;
+      bottom: 0;
+      height: auto;
+      opacity: 0.3;
+    }
+
+    .box-hero__content {
+      padding: 0;
+    }
+
+    .box-hero__product {
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+
+    .box-hero__title {
+      font-size: clamp(23px, 7.4vw, 38px);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      line-height: 1.15;
+    }
+
+    .box-hero__actions {
+      margin-top: 20px;
+    }
+
+    .box-hero__link {
+      font-size: 14px;
+    }
+
+    .box-hero__meta {
+      max-width: 320px;
+    }
+  }
+</style>

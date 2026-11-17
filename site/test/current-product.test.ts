@@ -62,13 +62,20 @@ describe('product identity wiring', () => {
     }
   })
 
-  it('every product resolves from its own hub href', async () => {
+  it('every product resolves from its docs hub href', async () => {
     const { currentProduct } = await import('../src/util/current-product')
     for (const p of products) {
-      const resolved = currentProduct(p.href)
-      expect(resolved?.label, `currentProduct("${p.href}")`).toBe(p.label)
+      const docsHref = p.docsHref ?? p.href
+      const resolved = currentProduct(docsHref)
+      expect(resolved?.label, `currentProduct("${docsHref}")`).toBe(p.label)
     }
     expect(currentProduct('/docs/learning/how-agents-really-work/')).toBeUndefined()
+  })
+
+  it('keeps the Box landing page separate from its docs hub', () => {
+    const box = products.find((product) => product.label === 'Box')
+    expect(box?.href).toBe('/box/')
+    expect(box?.docsHref).toBe('/docs/user-guide/box/')
   })
 })
 
