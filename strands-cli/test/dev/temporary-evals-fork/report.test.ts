@@ -190,7 +190,7 @@ describe('TEMPORARY test report', () => {
     const path = content === undefined ? join(await temporaryDirectory(), 'missing.json') : await writeReport(content)
 
     await expect(readTemporaryTestResults(path, RUN)).rejects.toThrow(
-      new RegExp(`^${path} is not a usable test report \\(.*${detail}.*\\)\\. Run the test again\\.$`, 'u')
+      new RegExp(`^${literal(path)} is not a usable test report \\(.*${detail}.*\\)\\. Run the test again\\.$`, 'u')
     )
   })
 })

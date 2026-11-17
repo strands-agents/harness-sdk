@@ -250,7 +250,7 @@ describe('TEMPORARY experiment generation session', () => {
     const { error } = onlyGeneration(experiments)
     expect(error?.summary).toBe('Bedrock denied access to the default model')
     expect(error?.detail).toContain('choose a model that your AWS account can use')
-    expect(error?.detail).toMatch(/Log: strands-dev\/tmp\/\.state\/drafts\/\d{8}-\d{6}-refunds\.log/u)
+    expect(error?.detail).toMatch(/Log: strands-dev[\\/]tmp[\\/]\.state[\\/]drafts[\\/]\d{8}-\d{6}-refunds\.log/u)
     expect(notices.at(-1)).toMatchObject({ status: 'error', text: expect.stringContaining('Bedrock denied access') })
   })
 
@@ -311,7 +311,10 @@ describe('TEMPORARY experiment generation session', () => {
     expect(existsSync(draft)).toBe(false)
     expect(experiments.snapshot().review).toMatchObject({
       path,
-      notice: { tone: 'success', text: 'Saved 3 cases to strands-dev/tmp/experiments/refunds/refunds.json' },
+      notice: {
+        tone: 'success',
+        text: `Saved 3 cases to ${join('strands-dev', 'tmp', 'experiments', 'refunds', 'refunds.json')}`,
+      },
     })
   })
 
@@ -514,7 +517,7 @@ describe('TEMPORARY experiment generation session', () => {
     expect(experiments.snapshot().saved).toEqual([{ name: 'refunds', path, caseCount: 2 }])
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'experiment · refunds · 2 cases saved to strands-dev/tmp/experiments/refunds/refunds.json',
+      text: `experiment · refunds · 2 cases saved to ${join('strands-dev', 'tmp', 'experiments', 'refunds', 'refunds.json')}`,
     })
   })
 
@@ -566,7 +569,7 @@ describe('TEMPORARY experiment generation session', () => {
     await generator.runs[0]!.finish([])
 
     await expect(created).rejects.toThrow(
-      /stopped: Bedrock denied access to the default model\.\nstrands-evals said: AccessDeniedException.*\nLog: strands-dev\/tmp\/\.state\/drafts\/\d{8}-\d{6}-refunds\.log/su
+      /stopped: Bedrock denied access to the default model\.\nstrands-evals said: AccessDeniedException.*\nLog: strands-dev[\\/]tmp[\\/]\.state[\\/]drafts[\\/]\d{8}-\d{6}-refunds\.log/su
     )
   })
 

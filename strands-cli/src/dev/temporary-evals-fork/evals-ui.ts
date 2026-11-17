@@ -4,6 +4,7 @@ import { hostname } from 'node:os'
 import { relative, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 
+import { containsPath } from '../../paths.js'
 import { errorMessage } from '../../terminal/text.js'
 import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace, EvalsBrowserState } from '../panels/model.js'
 import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions } from './environment.js'
@@ -166,8 +167,9 @@ export class TemporaryEvalsUi implements EvalsBrowser {
 
   private runId(experiment: string): string | undefined {
     const root = temporaryExperimentsFolder(temporaryWorkspaceDirectory(this.host().workspace))
-    const path = relative(root, experiment)
-    return path && !path.startsWith('..') && !path.startsWith(sep) ? path.split(sep).join('/') : undefined
+    return experiment !== root && containsPath(root, experiment)
+      ? relative(root, experiment).split(sep).join('/')
+      : undefined
   }
 
   private set(state: EvalsBrowserState): void {

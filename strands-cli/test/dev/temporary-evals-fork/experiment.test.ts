@@ -212,9 +212,9 @@ describe('TEMPORARY experiment generation', () => {
     const files = temporaryGenerationFiles('/w/strands-dev', 'refunds', NOW)
 
     expect(files).toEqual({
-      draft: '/w/strands-dev/tmp/.state/drafts/20261112-153012-refunds.json',
-      log: '/w/strands-dev/tmp/.state/drafts/20261112-153012-refunds.log',
-      progress: '/w/strands-dev/tmp/.state/drafts/20261112-153012-refunds.progress.jsonl',
+      draft: join('/w/strands-dev', 'tmp', '.state', 'drafts', '20261112-153012-refunds.json'),
+      log: join('/w/strands-dev', 'tmp', '.state', 'drafts', '20261112-153012-refunds.log'),
+      progress: join('/w/strands-dev', 'tmp', '.state', 'drafts', '20261112-153012-refunds.progress.jsonl'),
     })
   })
 

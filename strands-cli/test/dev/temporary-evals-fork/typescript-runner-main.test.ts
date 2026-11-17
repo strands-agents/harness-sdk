@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -65,6 +66,7 @@ describe('TEMPORARY TypeScript runner process', () => {
     )
     await replies
     child.stdin.end()
+    await once(child, 'exit')
 
     const parsed = lines.map((line) => JSON.parse(line) as Record<string, unknown>)
     const byId = new Map(parsed.map((reply) => [reply.id, reply]))

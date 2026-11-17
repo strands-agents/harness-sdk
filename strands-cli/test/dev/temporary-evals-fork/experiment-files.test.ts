@@ -48,6 +48,8 @@ const writeFileAt = async (path: string, text: string): Promise<void> => {
   await writeFile(path, text)
 }
 
+const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+
 describe('TEMPORARY experiment files', () => {
   it('shouldListExperimentsByNameWithTheirCaseCountsWhenTheFolderHasFiles', async () => {
     const folder = await temporaryDirectory()
@@ -113,7 +115,10 @@ describe('TEMPORARY experiment files', () => {
     await writeFile(path, content)
 
     await expect(readTemporaryExperimentFile(path)).rejects.toThrow(
-      new RegExp(`^${path} is not a usable Experiment file \\(.*${detail}.*\\)\\. Fix the file or delete it`, 'u')
+      new RegExp(
+        `^${literal(path)} is not a usable Experiment file \\(.*${detail}.*\\)\\. Fix the file or delete it`,
+        'u'
+      )
     )
   })
 
