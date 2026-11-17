@@ -7,6 +7,8 @@ import {
   listTemporaryExperiments,
   readTemporaryExperimentFile,
   temporaryBlankCase,
+  temporaryCaseExpected,
+  temporaryCaseWithExpected,
   temporaryDropIncompleteCases,
   temporaryNamedExperiment,
   temporaryRunnableExperiment,
@@ -245,5 +247,54 @@ describe('TEMPORARY experiment files', () => {
       ['refund-2', 'second question'],
     ])
     expect(await readJson(path)).toEqual(document)
+  })
+})
+
+describe('TEMPORARY expected assertions', () => {
+  const assertionCase = (name: string, assertion: unknown, expected: unknown = null) => ({
+    ...rawCase(name, `question for ${name}`, expected),
+    expected_assertion: assertion,
+  })
+
+  it('shouldReadTheAssertionAsTheExpectedAnswerWhenACaseHasNoExpectedOutput', async () => {
+    const path = join(await temporaryDirectory(), 'from-chats.json')
+    await writeJson(
+      path,
+      experimentDocument(
+        assertionCase('c0', 'The agent refunds order 7.'),
+        assertionCase('c1', 'The agent refunds order 8.', 'Refunded.'),
+        assertionCase('c2', '  ', null)
+      )
+    )
+
+    const { experiment } = await readTemporaryExperimentFile(path)
+
+    expect(experiment.cases).toEqual([
+      { name: 'c0', input: 'question for c0', expected: 'The agent refunds order 7.' },
+      { name: 'c1', input: 'question for c1', expected: 'Refunded.' },
+      { name: 'c2', input: 'question for c2' },
+    ])
+  })
+
+  it('shouldKeepACaseWithOnlyAnAssertionWhenADraftIsChecked', async () => {
+    const path = join(await temporaryDirectory(), 'from-chats.json')
+    const document = experimentDocument(assertionCase('c0', 'The agent refunds order 7.'), assertionCase('c1', ''))
+    await writeJson(path, document)
+
+    const checked = await temporaryDropIncompleteCases(path)
+
+    expect(checked).toEqual({ complete: 1, dropped: 1 })
+    expect(await readJson(path)).toEqual(experimentDocument(assertionCase('c0', 'The agent refunds order 7.')))
+  })
+
+  it.each([
+    ['the assertion when the case has only an assertion', assertionCase('c0', 'Old.'), { expected_assertion: 'New.' }],
+    ['the output when the case has an output', assertionCase('c0', 'Old.', 'Old answer.'), { expected_output: 'New.' }],
+    ['the output when the case has neither', assertionCase('c0', null), { expected_output: 'New.' }],
+  ])('shouldWriteAnEditedAnswerInto %s', (_case, raw, written) => {
+    const edited = temporaryCaseWithExpected(raw, 'New.')
+
+    expect(edited).toEqual({ ...raw, ...written })
+    expect(temporaryCaseExpected(edited)).toBe('New.')
   })
 })

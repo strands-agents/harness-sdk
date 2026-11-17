@@ -133,6 +133,16 @@ describe('TEMPORARY test report', () => {
     expect(result).toMatchObject({ input: '{"order":7,"items":["shoe"]}', actual: '{"refund":true}' })
   })
 
+  it('shouldShowTheAssertionAsTheExpectedAnswerWhenACaseHasNoExpectedOutput', async () => {
+    const graded = row({ name: 'c0', evaluator: 'Correctness', score: 1, passed: true, reason: 'ok', actual: 'done' })
+    const testCase = { ...graded.testCase, expected_output: null, expected_assertion: 'The agent refunds order 7.' }
+    const path = await writeReport({ ...report([graded]), cases: [testCase] })
+
+    const [result] = (await readTemporaryTestResults(path, RUN)).cases
+
+    expect(result).toMatchObject({ expected: 'The agent refunds order 7.', actual: 'done' })
+  })
+
   it('shouldNameCasesLikeTheForkWhenACaseHasNoName', async () => {
     const path = await writeReport(
       report([

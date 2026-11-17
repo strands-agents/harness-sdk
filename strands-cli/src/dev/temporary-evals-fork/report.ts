@@ -4,7 +4,12 @@ import { basename, dirname, join } from 'node:path'
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 import type { CaseResult, EvaluatorVerdict, TestResults } from '../panels/model.js'
-import { temporaryCaseName, temporaryCaseText, type TemporaryRawCase } from './experiment-files.js'
+import {
+  temporaryCaseExpected,
+  temporaryCaseName,
+  temporaryCaseText,
+  type TemporaryRawCase,
+} from './experiment-files.js'
 
 export interface TemporaryTestRun {
   readonly experiment: string
@@ -85,7 +90,7 @@ const groupByCase = (rows: readonly ReportRow[]): Map<string, CaseGroup> => {
 }
 
 const caseResult = (name: string, { testCase, verdicts }: CaseGroup): CaseResult => {
-  const expected = temporaryCaseText(testCase.expected_output)
+  const expected = temporaryCaseExpected(testCase)
   const actual = temporaryCaseText(testCase.actual_output)
   return {
     name,

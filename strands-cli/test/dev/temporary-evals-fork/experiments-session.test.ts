@@ -313,6 +313,31 @@ describe('TEMPORARY experiment generation session', () => {
     })
   })
 
+  it('shouldShowAndEditTheAssertionWhenASavedCaseHasOnlyAnAssertion', async () => {
+    const { workspace, experiments } = await setup()
+    const path = join(workspace.directory!, 'tmp/experiments/from-chats.json')
+    const chatCase = {
+      name: 'refund-order',
+      input: 'refund order 7',
+      expected_output: null,
+      expected_assertion: 'The agent refunds order 7.',
+      metadata: { source: 'strands' },
+    }
+    await writeFileAt(path, JSON.stringify({ cases: [chatCase], evaluators: [{ evaluator_type: 'Correctness' }] }))
+    const [saved] = await experiments.reload()
+
+    experiments.open(saved!)
+    await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(1))
+    const shown = experiments.snapshot().review!.cases[0]
+    experiments.edit(0, { expected: 'The agent refunds order 7 and says when.' })
+    await experiments.save()
+
+    expect(shown).toMatchObject({ expected: 'The agent refunds order 7.' })
+    expect(JSON.parse(await readFile(path, 'utf8')).cases).toEqual([
+      { ...chatCase, expected_assertion: 'The agent refunds order 7 and says when.' },
+    ])
+  })
+
   it('shouldRefuseToSaveWhenNoCaseIsKept', async () => {
     const { experiments, generator, start } = await setup()
     start({ name: 'refunds' })

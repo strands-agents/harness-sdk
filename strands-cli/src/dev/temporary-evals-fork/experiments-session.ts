@@ -37,7 +37,9 @@ import {
   readTemporaryExperimentFile,
   temporaryBlankCase,
   temporaryUniqueCaseNames,
+  temporaryCaseExpected,
   temporaryCaseText,
+  temporaryCaseWithExpected,
   writeTemporaryExperimentCases,
   type TemporaryExperimentDocument,
   type TemporaryRawCase,
@@ -93,7 +95,7 @@ interface OpenReview {
 const reviewCases = (raw: TemporaryExperimentDocument, saved: boolean): ReviewCase[] => {
   const names = temporaryUniqueCaseNames(raw.cases)
   return raw.cases.map((rawCase, index) => {
-    const expected = temporaryCaseText(rawCase.expected_output)
+    const expected = temporaryCaseExpected(rawCase)
     return {
       raw: rawCase,
       change: {},
@@ -139,12 +141,10 @@ const blankCase = (cases: readonly ReviewCase[], { input = '', expected = '' }: 
   }
 }
 
-const rawOf = ({ raw, draft, change }: ReviewCase): TemporaryRawCase => ({
-  ...raw,
-  name: draft.name,
-  ...(change.input === undefined ? {} : { input: change.input }),
-  ...(change.expected === undefined ? {} : { expected_output: change.expected || null }),
-})
+const rawOf = ({ raw, draft, change }: ReviewCase): TemporaryRawCase => {
+  const edited = { ...raw, name: draft.name, ...(change.input === undefined ? {} : { input: change.input }) }
+  return change.expected === undefined ? edited : temporaryCaseWithExpected(edited, change.expected)
+}
 
 const reviewOf = ({ key, name, path, cases, notice }: OpenReview): Review => ({
   key,

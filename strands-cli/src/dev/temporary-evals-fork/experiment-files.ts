@@ -131,13 +131,26 @@ export const temporaryCaseText = (value: unknown): string | undefined => {
   return typeof value === 'string' ? value : JSON.stringify(value)
 }
 
+const hasText = (value: unknown): boolean => Boolean(temporaryCaseText(value)?.trim())
+
+const expectedField = (raw: TemporaryRawCase): 'expected_output' | 'expected_assertion' =>
+  !hasText(raw.expected_output) && hasText(raw.expected_assertion) ? 'expected_assertion' : 'expected_output'
+
+export const temporaryCaseExpected = (raw: TemporaryRawCase): string | undefined =>
+  temporaryCaseText(raw[expectedField(raw)])
+
+export const temporaryCaseWithExpected = (raw: TemporaryRawCase, expected: string): TemporaryRawCase => ({
+  ...raw,
+  [expectedField(raw)]: expected || null,
+})
+
 const unusableExperiment = (path: string, detail: string, cause?: unknown): Error =>
   new Error(`${path} is not a usable Experiment file (${detail}). Fix the file or delete it, then try again.`, {
     cause,
   })
 
 const evalCase = (raw: TemporaryRawCase, index: number): EvalCase => {
-  const expected = temporaryCaseText(raw.expected_output)
+  const expected = temporaryCaseExpected(raw)
   return {
     name: temporaryCaseName(raw, index),
     input: temporaryCaseText(raw.input) ?? '',
