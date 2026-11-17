@@ -288,7 +288,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         const openDevPanel = devPanelCommand(previousController)
         const replacement = await initializeController(launch, conversations)
         if (launch?.reloadedFiles && conversations) replacement.markReloaded?.(launch.reloadedFiles)
-        if (openDevPanel) replacement.openDevCommand?.(openDevPanel)
+        if (openDevPanel) replacement.openDevCommand?.(openDevPanel, { restore: true })
         await Promise.allSettled([previousController.dispose()])
         if (pendingExitCode !== undefined) {
           replacement.close(pendingExitCode)

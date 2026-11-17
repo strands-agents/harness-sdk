@@ -435,8 +435,9 @@ describe('runInkChat', () => {
       data: {},
       appData: {},
     }
+    const open = vi.fn<DevChatCommand['open']>(() => () => null)
     const devCommands: DevChatCommand[] = [
-      { spec: { name: 'optimize', usage: '/optimize', description: 'Tune this agent' }, open: () => () => null },
+      { spec: { name: 'optimize', usage: '/optimize', description: 'Tune this agent' }, open },
     ]
     const conversation = (): ChatController =>
       new ChatController({ ...idleBackend(), captureConversation: async () => snapshot }, { devCommands })
@@ -503,6 +504,7 @@ describe('runInkChat', () => {
         expect(replacement?.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'optimize' })
       )
       expect(replacement?.getSnapshot().runtime.reloadStatus).toBe('↻ agent.ts reloaded · session kept')
+      expect(open.mock.calls.map(([, options]) => options)).toEqual([undefined, { restore: true }])
     } finally {
       instance.unmount()
       await running

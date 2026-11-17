@@ -12,6 +12,7 @@ import {
   type ChatSettings,
   type ChatVoiceStore,
 } from './controller.js'
+import type { DevPanelOpening } from './types.js'
 import type { ChatConversations, ChatInput, ChatTurn } from '../../agent/types.js'
 import { parseCommandInvocation, unquote, type CommandAssistance } from './commands.js'
 import { isUnresolvedBackgroundTask, conversationStatus, conversationTitle, readConversationValue } from './state.js'
@@ -425,12 +426,12 @@ export class ConversationManager implements ChatControllerApi {
     this._active.controller.openContextPanel()
   }
 
-  openDevCommand(name: string): boolean {
+  openDevCommand(name: string, opening?: DevPanelOpening): boolean {
     if (this._snapshot.panel?.kind === 'permission') return false
     if (this._taskOwnerId && !this.dismissPanel()) return false
     const previous = this._panel
     this._panel = undefined
-    if (this._active.controller.openDevCommand(name)) return true
+    if (this._active.controller.openDevCommand(name, opening)) return true
     this._panel = previous
     return false
   }

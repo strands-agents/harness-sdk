@@ -95,9 +95,13 @@ export interface DevChatJobGroup {
   readonly jobs: readonly DevChatJob[]
 }
 
+export interface DevPanelOpening {
+  readonly restore?: boolean
+}
+
 export interface DevChatCommand {
   spec: LocalCommandSpec
-  open(context: DevChatCommandContext): DevChatPanelView
+  open(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
   attach?(context: DevChatCommandContext): void
   jobs?: DevChatJobs
 }
@@ -375,5 +379,5 @@ export interface ChatControllerApi {
   retryMcpServer(name: string): Promise<boolean>
   openModelPanel(): Promise<void>
   openContextPanel(): void
-  openDevCommand?(name: string): boolean
+  openDevCommand?(name: string, opening?: DevPanelOpening): boolean
 }

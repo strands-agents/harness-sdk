@@ -110,6 +110,7 @@ import {
   type DevChatCommandContext,
   type DevChatJobGroup,
   type DevChatNotice,
+  type DevPanelOpening,
   type NewChatPanel,
 } from './types.js'
 
@@ -3013,21 +3014,21 @@ export class ChatController implements ChatControllerApi {
     this._stopWatchingDevJobs = []
   }
 
-  openDevCommand(name: string): boolean {
+  openDevCommand(name: string, opening?: DevPanelOpening): boolean {
     const devCommand = this._devCommand(name)
     if (!devCommand || this._closed || this._panel?.kind === 'permission') return false
-    this._openDevPanel(devCommand)
+    this._openDevPanel(devCommand, opening)
     return true
   }
 
-  private _openDevPanel(devCommand: DevChatCommand): void {
+  private _openDevPanel(devCommand: DevChatCommand, opening?: DevPanelOpening): void {
     if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name) return
     const opened = this._openPanel({
       kind: 'dev',
       command: devCommand.spec.name,
       title: `/${devCommand.spec.name}`,
       rows: [],
-      view: devCommand.open(this._devCommandContext()),
+      view: devCommand.open(this._devCommandContext(), opening),
       close: () => {
         if (this._panel?.id === opened.id) this.dismissPanel()
       },
