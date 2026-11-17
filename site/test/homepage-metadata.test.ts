@@ -147,6 +147,7 @@ describe('homepage machine-readable metadata', () => {
       sdk: {
         heading: sdk?.querySelector('h3')?.text.trim(),
         relation: sections[0]?.querySelector('.toolkit__build-sdk-relation')?.text.trim(),
+        labelledBy: sdk?.getAttribute('aria-labelledby'),
         insideHarnessCard: Boolean(buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')),
         description: sdk?.querySelector('.toolkit__build-sdk-description')?.text.trim() ?? null,
         action: {
@@ -158,7 +159,7 @@ describe('homepage machine-readable metadata', () => {
     }).toEqual({
       label: 'Strands toolkit',
       buildSection: {
-        id: 'build-an-agent',
+        id: undefined,
         labelledBy: 'toolkit-harness-title',
       },
       supportingSection: {
@@ -186,6 +187,7 @@ describe('homepage machine-readable metadata', () => {
       sdk: {
         heading: '/harness-sdk',
         relation: 'Built on',
+        labelledBy: 'toolkit-sdk-relation toolkit-sdk-title',
         insideHarnessCard: true,
         description:
           'The Harness SDK is an agent framework for building agents from the ground up. Add tools, memory, and context management to fit your use case.',
@@ -245,32 +247,65 @@ describe('homepage machine-readable metadata', () => {
     expect(connectors?.querySelectorAll('.toolkit__supporting-connector')).toHaveLength(3)
 
     expect(
-      cards.map((card) => card?.querySelectorAll('.toolkit__card-slug').map((heading) => heading.tagName))
-    ).toEqual([['H3'], ['H3'], ['H3']])
-    expect(
       products.map((product) => ({
-        role: product.querySelector(':scope > .toolkit__supporting-role')?.text.trim(),
-        slug: product.querySelector('.toolkit__card-slug')?.text.trim(),
+        tag: product.tagName,
+        labelledBy: product.getAttribute('aria-labelledby'),
+        role: {
+          tag: product.querySelector(':scope > .toolkit__supporting-role')?.tagName,
+          id: product.querySelector(':scope > .toolkit__supporting-role')?.getAttribute('id'),
+          text: product.querySelector(':scope > .toolkit__supporting-role')?.text.trim(),
+        },
+        slug: {
+          tag: product.querySelector('.toolkit__card-slug')?.tagName,
+          text: product.querySelector('.toolkit__card-slug')?.text.trim(),
+        },
         description: product.querySelector('.toolkit__card-desc')?.text.trim(),
         action: product.querySelector('.toolkit__card-read')?.text.trim(),
       }))
     ).toEqual([
       {
-        role: 'Control agent actions',
-        slug: '/box',
+        tag: 'ARTICLE',
+        labelledBy: 'toolkit-box-role',
+        role: {
+          tag: 'H3',
+          id: 'toolkit-box-role',
+          text: 'Sandbox agent work',
+        },
+        slug: {
+          tag: 'H4',
+          text: '/box',
+        },
         description:
           'Run agents in an OS-enforced sandbox. Set which files, programs, and network destinations they can access.',
-        action: 'Try Strands Box',
+        action: 'Explore Strands Box',
       },
       {
-        role: 'Validate agent behavior',
-        slug: '/evals',
+        tag: 'ARTICLE',
+        labelledBy: 'toolkit-evals-role',
+        role: {
+          tag: 'H3',
+          id: 'toolkit-evals-role',
+          text: 'Validate agent behavior',
+        },
+        slug: {
+          tag: 'H4',
+          text: '/evals',
+        },
         description: 'Run evaluations, detect failures, and measure agent behavior before deployment.',
         action: 'Run an evaluation',
       },
       {
-        role: 'Make fast decisions',
-        slug: '/decider',
+        tag: 'ARTICLE',
+        labelledBy: 'toolkit-decider-role',
+        role: {
+          tag: 'H3',
+          id: 'toolkit-decider-role',
+          text: 'Make fast decisions',
+        },
+        slug: {
+          tag: 'H4',
+          text: '/decider',
+        },
         description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
         action: 'Explore the models',
       },
