@@ -1,0 +1,364 @@
+---
+import Search from '@astrojs/starlight/components/Search.astro';
+import Navigation from '../components/Navigation.astro';
+import halftone from '../assets/banner/halftone.svg?url';
+import arrow from '../assets/banner/arrow.svg?raw';
+import { pathWithBase } from '../util/links';
+import { baseSchemas, serializeJsonLd } from '../util/structured-data';
+import '../styles/fonts.css';
+
+const pageTitle = 'Strands Box | Give your agent what it needs. Protect the rest.';
+const pageDescription = 'An open source sandbox for your coding agent. Control agent access, set limits on actions, and protect your credentials.';
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
+const pageUrl = new URL(pathWithBase('/box-preview/'), siteUrl).href;
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    ...baseSchemas(siteUrl),
+    {
+      '@type': 'WebPage',
+      '@id': pageUrl,
+      name: pageTitle,
+      description: pageDescription,
+      url: pageUrl,
+      isPartOf: { '@id': `${siteUrl}/#website` },
+    },
+  ],
+};
+const agents = [
+  { name: 'Claude Code', profile: 'claude' },
+  { name: 'Codex', profile: 'codex' },
+  { name: 'Kiro', profile: 'kiro' },
+];
+const benefits = [
+  { id: 'access', title: 'Control agent access', description: 'Give your agent the project files it needs. Keep private files out of reach.', href: '/docs/user-guide/box/quickstart/', color: 'var(--card-accent-purple)' },
+  { id: 'actions', title: 'Set limits on actions', description: 'Set rules for what your agent can do, like blocking uploads to sites you haven’t approved.', href: '/docs/user-guide/box/reference/policy/', color: 'var(--card-accent-orange)' },
+  { id: 'credentials', title: 'Protect your credentials', description: 'Let your agent use connected services without seeing the real API keys. Box adds them outside the sandbox.', href: '/docs/user-guide/box/guides/network-and-credentials/', color: 'var(--card-accent-teal)' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={pageDescription} />
+    <script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />
+    <link rel="icon" type="image/svg+xml" href={pathWithBase('/favicon.svg')} />
+    <script is:inline>
+      try {
+        const saved = localStorage.getItem('starlight-theme');
+        document.documentElement.dataset.theme =
+          saved === 'dark' || saved === 'light'
+            ? saved
+            : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      } catch (_) {}
+    </script>
+  </head>
+  <body>
+    <Navigation />
+    <div class="site-search-host"><Search /></div>
+    <main>
+      <section class="hero" aria-labelledby="box-title">
+        <div class="halftone" style={`--halftone-mask: url("${halftone}")`} aria-hidden="true"></div>
+        <div class="hero-inner">
+          <div>
+            <h1 id="box-title">Give your agent what it needs.<br />Protect the rest.</h1>
+          </div>
+          <div class="hero-actions">
+            <a class="pill primary" href={pathWithBase('/docs/user-guide/box/quickstart/')}>
+              Try Box <span class="arrow" set:html={arrow} />
+            </a>
+            <a class="pill" href="https://github.com/strands-agents/box">
+              GitHub <span class="arrow" set:html={arrow} />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section class="content" aria-labelledby="agent-title">
+        <h2 id="agent-title" class="agent-heading">Protect your work while your agent works</h2>
+        <div class="agent-showcase">
+          <div class="agent-copy">
+            <p class="product-name">/box</p>
+            <p>Strands Box CLI isolates your coding agent to help protect your files and credentials from agent mistakes and untrusted code.</p>
+            <p>Create reusable profiles with different permissions, then launch your agent with one command. It uses Strands Box, an open source OS-level sandbox, so no container or VM is needed.</p>
+          </div>
+          <div class="agent-example">
+            <div class="agent-picker" role="group" aria-label="Choose a coding agent">
+              {agents.map((agent, index) => (
+                <button type="button" data-agent={agent.profile} aria-pressed={index === 0 ? 'true' : 'false'}>
+                  {agent.name}
+                </button>
+              ))}
+            </div>
+            <div class="terminal" data-state="ready" aria-label="Illustrative Box session after profile setup">
+              <div class="terminal-bar">
+                <span class="terminal-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span>Example session</span>
+              </div>
+              <div class="terminal-body">
+                <div class="command">
+                  <span class="prompt" aria-hidden="true">$</span>
+                  <code id="agent-command" aria-live="polite">box run claude</code>
+                </div>
+                <ol class="session-events" aria-label="Example requests and results">
+                  <li style="--reveal-delay: 1.1s">
+                    <span>Read project files</span><span class="event-allowed">✓ Allowed</span>
+                  </li>
+                  <li style="--reveal-delay: 1.9s">
+                    <span>Upload to unknown site</span><span class="event-blocked">× Blocked</span>
+                  </li>
+                  <li style="--reveal-delay: 2.7s">
+                    <span>Edit project files</span><span class="event-allowed">✓ Allowed</span>
+                  </li>
+                  <li style="--reveal-delay: 3.5s">
+                    <span>Changes saved</span><span class="event-allowed">✓ Done</span>
+                  </li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="benefits">
+          <div class="benefit-connectors" aria-hidden="true">
+            {benefits.map(() => <span class="benefit-connector"></span>)}
+          </div>
+          <div class="benefit-grid">
+            {benefits.map((benefit) => (
+              <section class="benefit" style={`--benefit-color: ${benefit.color}`}>
+                <h2>{benefit.title}</h2>
+                <a class="diagram-card" href={pathWithBase(benefit.href)} aria-label={`Learn how to ${benefit.title.toLowerCase()}`}>
+                  <p class="benefit-description">{benefit.description}</p>
+                  {benefit.id === 'access' && (
+                    <svg viewBox="0 0 320 220" role="img" aria-labelledby="access-diagram-title">
+                      <title id="access-diagram-title">Example access rules: the agent can use project files inside Box, while private files stay out of reach.</title>
+                      <rect class="boundary" x="10" y="12" width="300" height="110" rx="14" />
+                      <text class="accent-label" x="30" y="35">Box</text>
+                      <rect class="node" x="28" y="54" width="82" height="44" rx="8" />
+                      <text x="69" y="80" text-anchor="middle">Agent</text>
+                      <path class="allowed-line" d="M110 76H180m-6-5 6 5-6 5" />
+                      <rect class="allowed-node" x="182" y="54" width="110" height="44" rx="8" />
+                      <text x="237" y="80" text-anchor="middle">Project files</text>
+                      <path class="muted-line" d="M69 98V174H181" />
+                      <circle class="stop" cx="69" cy="122" r="12" />
+                      <path class="stop-cross" d="m65 118 8 8m0-8-8 8" />
+                      <rect class="node" x="182" y="152" width="110" height="44" rx="8" />
+                      <text x="237" y="178" text-anchor="middle">Private files</text>
+                    </svg>
+                  )}
+                  {benefit.id === 'actions' && (
+                    <svg viewBox="0 0 320 220" role="img" aria-labelledby="actions-diagram-title">
+                      <title id="actions-diagram-title">Example action rule: allow uploads to approved sites, and block uploads to other destinations.</title>
+                      <rect class="node" x="90" y="12" width="140" height="40" rx="8" />
+                      <text x="160" y="36" text-anchor="middle">Upload a file</text>
+                      <path class="accent-line" d="M160 52V77m-5-6 5 6 5-6" />
+                      <rect class="rule-node" x="80" y="79" width="160" height="44" rx="8" />
+                      <text x="160" y="106" text-anchor="middle">Approved site?</text>
+                      <path class="allowed-line" d="M160 123V143H79V170m-5-6 5 6 5-6" />
+                      <path class="blocked-line" d="M160 143H241V170m-5-6 5 6 5-6" />
+                      <text class="allowed-label" x="104" y="137">Yes</text>
+                      <text class="blocked-label" x="198" y="137">No</text>
+                      <rect class="allowed-node" x="18" y="173" width="122" height="36" rx="8" />
+                      <text x="79" y="196" text-anchor="middle">Allow upload</text>
+                      <rect class="blocked-node" x="180" y="173" width="122" height="36" rx="8" />
+                      <text x="241" y="196" text-anchor="middle">Block upload</text>
+                    </svg>
+                  )}
+                  {benefit.id === 'credentials' && (
+                    <svg viewBox="0 0 320 220" role="img" aria-labelledby="credentials-diagram-title">
+                      <title id="credentials-diagram-title">The agent sends a placeholder. Box adds the real key outside the agent before forwarding a permitted request to the service.</title>
+                      <text x="160" y="28" text-anchor="middle">Real key</text>
+                      <g class="accent-line">
+                        <circle cx="154" cy="48" r="7" />
+                        <path d="m159 53 12 12m-4-4 4-4m-8 0 4-4M160 70V99m-5-6 5 6 5-6" />
+                      </g>
+                      <rect class="boundary" x="8" y="87" width="90" height="112" rx="12" />
+                      <rect class="node" x="18" y="106" width="70" height="40" rx="8" />
+                      <text x="53" y="131" text-anchor="middle">Agent</text>
+                      <text class="small-label" x="53" y="178" text-anchor="middle">Placeholder</text>
+                      <path class="muted-line" d="M98 126H125m-6-5 6 5-6 5" />
+                      <rect class="rule-node" x="128" y="106" width="64" height="40" rx="8" />
+                      <text x="160" y="131" text-anchor="middle">Box</text>
+                      <path class="allowed-line" d="M192 126H228m-6-5 6 5-6 5" />
+                      <rect class="allowed-node" x="232" y="106" width="80" height="40" rx="8" />
+                      <text x="272" y="131" text-anchor="middle">Service</text>
+                    </svg>
+                  )}
+                  <span class="diagram-arrow arrow" aria-hidden="true" set:html={arrow} />
+                </a>
+              </section>
+            ))}
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <a href={pathWithBase('/')} class="footer-brand">Strands</a>
+      <a href={pathWithBase('/docs/user-guide/box/')}>Box docs <span aria-hidden="true">↗</span></a>
+      <a href="https://github.com/strands-agents/box">GitHub <span aria-hidden="true">↗</span></a>
+    </footer>
+    <script>
+      const buttons = document.querySelectorAll<HTMLButtonElement>('[data-agent]');
+      const command = document.querySelector<HTMLElement>('#agent-command');
+      const terminal = document.querySelector<HTMLElement>('.terminal');
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+      function playSession() {
+        if (!terminal) return;
+        terminal.classList.remove('is-playing');
+        if (reducedMotion.matches) {
+          terminal.dataset.state = 'complete';
+          return;
+        }
+        void terminal.offsetWidth;
+        terminal.dataset.state = 'playing';
+        terminal.classList.add('is-playing');
+      }
+
+      const observer = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          playSession();
+          observer.disconnect();
+        }
+      }, { threshold: 0.35 });
+      if (terminal) observer.observe(terminal);
+
+      terminal?.querySelector('.session-events li:last-child')?.addEventListener('animationend', () => {
+        if (terminal) terminal.dataset.state = 'complete';
+      });
+      reducedMotion.addEventListener('change', () => {
+        if (reducedMotion.matches && terminal) {
+          terminal.classList.remove('is-playing');
+          terminal.dataset.state = 'complete';
+        }
+      });
+      buttons.forEach((button) => {
+        button.addEventListener('click', () => {
+          buttons.forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+          if (command) command.textContent = `box run ${button.dataset.agent}`;
+          observer.disconnect();
+          playSession();
+        });
+      });
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  .site-search-host { display: contents; }
+  .site-search-host button[data-open-modal] { display: none; }
+</style>
+
+<style>
+  main, footer { font-family: 'Space Grotesk', sans-serif; font-size: 14px; line-height: 1.6; }
+  p, h1, h2 { margin: 0; }
+  a { color: inherit; }
+  a:focus-visible, button:focus-visible { outline: 3px solid var(--accent-green); outline-offset: 5px; }
+  .hero { position: relative; overflow: hidden; }
+  .halftone { position: absolute; inset: 20px 0 0; opacity: 0.4; pointer-events: none; background: var(--halftone-dot); mask: var(--halftone-mask) center / cover no-repeat; transform: rotate(180deg); }
+  .hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(transparent, var(--bg)); pointer-events: none; }
+  .hero-inner { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 48px; align-items: center; max-width: 1332px; margin: auto; padding: 69px clamp(24px, 5vw, 96px) 48px; }
+  h2 { font: 700 20px/1.3 'JetBrains Mono', monospace; }
+  h1 { font: 500 clamp(30px, 3.5vw, 48px)/1.25 'JetBrains Mono', monospace; letter-spacing: 0.02em; color: var(--banner-headline); }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 16px; }
+  .pill { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 180px; padding: 11px 24px; border: 1px solid var(--card-border); border-radius: 999px; text-decoration: none; font: 600 16px/1.3 'JetBrains Mono', monospace; }
+  .hero-actions .pill { min-width: 0; flex: 1; padding-inline: 18px; white-space: nowrap; }
+  .primary { background: var(--toggle-active-bg); border-color: var(--toggle-active-bg); color: var(--strands-black); }
+  .primary:hover { filter: brightness(0.94); }
+  .arrow { display: inline-flex; width: 14px; height: 14px; flex: none; align-items: center; }
+  .arrow :global(svg) { width: 100%; height: 100%; }
+  .content { max-width: 1296px; padding: 40px 48px 64px; margin: auto; }
+  .agent-heading { margin-bottom: 16px; text-align: center; }
+  .agent-copy > p + p { margin-top: 12px; }
+  .agent-showcase { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 48px; padding: 32px; border: 1.5px solid var(--card-border); border-radius: 16px; background: var(--card-bg); }
+  .product-name { font: 700 28px/1.3 'JetBrains Mono', monospace; color: var(--card-accent-purple); margin-bottom: 14px; }
+  .agent-example { min-width: 0; }
+  .agent-picker { display: flex; gap: 8px; width: 100%; margin-bottom: 12px; }
+  .agent-picker button { flex: 1; padding: 10px 14px; border: 1px solid var(--toggle-inactive-border); border-radius: 999px; background: var(--bg); color: var(--fg); font: 600 14px/1.3 'JetBrains Mono', monospace; cursor: pointer; white-space: nowrap; }
+  .agent-picker button[aria-pressed='true'] { background: var(--toggle-active-bg); border-color: var(--toggle-active-bg); color: var(--strands-black); }
+  .terminal { overflow: hidden; border: 1px solid var(--divider); border-radius: 10px; background: var(--terminal-bg); color: var(--terminal-fg); }
+  .terminal-bar { display: flex; gap: 16px; align-items: center; padding: 9px 14px; background: var(--terminal-header-bg); font: 12px/1.5 'JetBrains Mono', monospace; }
+  .terminal-dots { display: flex; gap: 5px; }
+  .terminal-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--terminal-fg); opacity: 0.35; }
+  .terminal-body { padding: 20px; }
+  .command { display: flex; align-items: center; gap: 10px; }
+  .command code, .prompt { font: 500 16px/1.5 'JetBrains Mono', monospace; }
+  .command code { display: inline-block; white-space: nowrap; }
+  .prompt { color: var(--accent-green); }
+  .session-events { display: flex; flex-direction: column; gap: 12px; padding: 0; margin: 22px 0 0; list-style: none; font: 13px/1.5 'JetBrains Mono', monospace; }
+  .session-events li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .session-events li > span:last-child { white-space: nowrap; }
+  .event-allowed { color: var(--accent-green); }
+  .event-blocked { color: var(--card-accent-red); }
+  .is-playing .command code { animation: type-command 0.8s steps(14, end) both; }
+  .is-playing .session-events li { animation: reveal-event 0.3s ease-out var(--reveal-delay) both; }
+  @keyframes type-command { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+  @keyframes reveal-event { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) {
+    .is-playing .command code, .is-playing .session-events li { animation: none; }
+  }
+  .benefits { margin-top: 48px; }
+  .benefit-connectors { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; height: 48px; }
+  .benefit-connectors::before, .benefit-connectors::after, .benefit-connector { opacity: 0.7; }
+  .benefit-connectors::before { content: ''; position: absolute; top: -48px; left: 50%; height: 48px; border-left: 1.5px dashed var(--fg); transform: translateX(-50%); }
+  .benefit-connectors::after { content: ''; position: absolute; top: 0; left: calc(16.6667% - 6.6667px); right: calc(16.6667% - 6.6667px); border-top: 1.5px dashed var(--fg); }
+  .benefit-connector { position: relative; z-index: 1; justify-self: center; width: 0; height: 28px; border-left: 1.5px dashed var(--fg); }
+  .benefit-connector::after { content: ''; position: absolute; bottom: -6px; left: -1px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid var(--fg); transform: translateX(-50%); }
+  .benefit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+  .benefit { display: flex; flex-direction: column; min-width: 0; }
+  .benefit h2 { text-align: center; margin-bottom: 16px; }
+  .diagram-card { position: relative; display: flex; flex-direction: column; align-items: center; flex: 1; padding: 24px 16px 42px; border: 1.5px solid var(--card-border); border-radius: 16px; background: var(--card-bg); text-decoration: none; }
+  .benefit-description { align-self: stretch; min-height: 68px; margin: 0 8px 20px; }
+  .diagram-card:hover { border-color: var(--benefit-color); }
+  .diagram-card > svg { display: block; width: 100%; height: auto; }
+  .diagram-arrow { position: absolute; bottom: 16px; right: 24px; }
+  svg text { fill: var(--fg); font: 14px 'Space Grotesk', sans-serif; }
+  svg .small-label { font-size: 13px; }
+  .node { fill: var(--terminal-bg); stroke: var(--divider); }
+  .boundary { fill: none; stroke: var(--benefit-color); stroke-width: 1.5; stroke-dasharray: 4 4; }
+  .rule-node { fill: color-mix(in srgb, var(--benefit-color) 9%, var(--bg)); stroke: var(--benefit-color); }
+  .allowed-node { fill: color-mix(in srgb, var(--accent-green) 7%, var(--bg)); stroke: var(--accent-green); }
+  .blocked-node { fill: color-mix(in srgb, var(--card-accent-red) 5%, var(--bg)); stroke: var(--card-accent-red); }
+  .accent-line, .allowed-line, .blocked-line, .muted-line { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .accent-line { stroke: var(--benefit-color); }
+  .allowed-line { stroke: var(--accent-green); }
+  .blocked-line { stroke: var(--card-accent-red); }
+  .muted-line { stroke: var(--use-case-muted); }
+  .accent-label { fill: var(--benefit-color); font-weight: 600; }
+  .allowed-label { fill: var(--accent-green); }
+  .blocked-label { fill: var(--card-accent-red); }
+  .stop { fill: var(--bg); stroke: var(--card-accent-red); stroke-width: 1.5; }
+  .stop-cross { stroke: var(--card-accent-red); stroke-width: 1.5; }
+  footer { max-width: 1200px; padding: 24px 0; margin: 0 auto; display: flex; align-items: center; gap: 24px; border-top: 1px solid var(--divider); }
+  footer a { text-decoration: none; }
+  .footer-brand { margin-right: auto; font: 700 20px/1.3 'JetBrains Mono', monospace; }
+  @media (max-width: 1296px) { footer { margin: 0 48px; } }
+  @media (max-width: 1100px) { .benefit h2 { min-height: 52px; } }
+  @media (max-width: 760px) {
+    .hero-inner { grid-template-columns: 1fr; padding: 40px 19px 24px; gap: 24px; }
+    h1 { font-size: clamp(28px, 5.8vw, 42px); }
+    .hero-actions { max-width: 500px; gap: 12px; }
+    .content { padding: 32px 19px 40px; }
+    h2 { font-size: 18px; }
+    .agent-showcase { grid-template-columns: 1fr; padding: 20px 16px; gap: 26px; }
+    .agent-picker { gap: 6px; }
+    .agent-picker button { font-size: 12px; padding: 9px 7px; }
+    .terminal-body { padding: 16px; }
+    .terminal-bar { gap: 10px; padding: 9px 12px; }
+    .session-events { font-size: 12px; }
+    .benefit-connectors { display: none; }
+    .benefit-description { min-height: 0; }
+    .benefit-grid { grid-template-columns: 1fr; gap: 28px; }
+    .benefit h2 { text-align: left; min-height: 0; }
+    .diagram-card { padding: 24px 16px 36px; justify-content: center; }
+    .diagram-card > svg { max-width: 360px; }
+    footer { margin: 0 19px; gap: 20px; }
+    .footer-brand { font-size: 18px; }
+  }
+</style>

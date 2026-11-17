@@ -104,6 +104,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
 │   ├── layouts/                  # Custom layouts
 │   ├── pages/                    # Astro pages, including generated /examples routes
+│   │   ├── box-preview.astro     # Local Box landing-page design preview (noindex)
 │   │   ├── faq.astro             # Standalone FAQ page
 │   │   └── faq/index.md.ts       # Machine-readable FAQ endpoint
 │   ├── plugins/                  # Remark/Rehype plugins
