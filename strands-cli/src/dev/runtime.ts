@@ -1,6 +1,8 @@
 import type { HarnessAgentOptions } from '@strands-agents/harness'
 import { join } from 'node:path'
 
+export const devSessionsFolder = (root: string): string => join(root, '.strands/state/sessions')
+
 export const isolateDevState = (options: HarnessAgentOptions, root: string): HarnessAgentOptions => {
   if (
     options.sessionManager ||
@@ -20,9 +22,7 @@ export const isolateDevState = (options: HarnessAgentOptions, root: string): Har
   return {
     ...options,
     session:
-      session === false
-        ? false
-        : { ...(typeof session === 'object' ? session : {}), dir: join(root, '.strands/state/sessions') },
+      session === false ? false : { ...(typeof session === 'object' ? session : {}), dir: devSessionsFolder(root) },
     memory:
       memory === false
         ? false
