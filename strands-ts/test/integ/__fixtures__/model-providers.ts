@@ -227,7 +227,7 @@ export const vercelBedrock = {
   supports: {
     reasoning: true,
     tools: true,
-    toolThinking: false,
+    toolThinking: true,
     builtInTools: false,
     images: true,
     documents: true,
