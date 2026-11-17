@@ -15,6 +15,8 @@ import type {
   OptimizeReview,
   OptimizeRunState,
   OptimizeState,
+  ProposedEdit,
+  TestCheck,
   TestResults,
   TestRun,
 } from '../panels/model.js'
@@ -25,7 +27,7 @@ import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
 import { TEMPORARY_KNOB_NAMES } from './knobs.js'
 import { TEMPORARY_ITERATION_CHOICES } from './plan.js'
-import type { TemporaryDevSessions } from './sessions.js'
+import type { TemporaryAppliedChange, TemporaryDevSessions } from './sessions.js'
 
 type Input = Readonly<Record<string, JSONValue>>
 type Sessions = () => TemporaryDevSessions
@@ -760,8 +762,48 @@ const once = (read: Evaluators): Evaluators => {
   }
 }
 
+const CHANGE_LIMIT = 600
+
+const signed = (value: number): string => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
+
+const counted = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`
+
+const changedValue = (text: string): string => JSON.stringify(clip(text, CHANGE_LIMIT) ?? '')
+
+const changedEdit = ({ label, kind, target, before, after }: ProposedEdit): string => {
+  const where = target ? ` in ${target}` : ''
+  return kind === 'text'
+    ? `  - ${label}${where}: was ${changedValue(before)}, now ${changedValue(after)}`
+    : `  - ${label}${where}: ${before} → ${after}`
+}
+
+const testCheckText = (check: TestCheck | undefined): string => {
+  if (!check) return ''
+  const range = check.range
+    ? ` (${Math.round(check.confidence * 100)}% confidence range ${signed(check.range[0])} to ${signed(check.range[1])})`
+    : ''
+  return ` The test check gave ${signed(check.difference)} on ${counted(check.cases, 'unseen test case')}${range}.`
+}
+
+const changeSummary = (change: TemporaryAppliedChange): string =>
+  `- ${new Date(change.appliedAt).toISOString()}: /optimize applied ${counted(change.edits.length, 'edit')} ` +
+  `from run ${change.run} of the experiment ${change.experiment}. ` +
+  `The best candidate scored ${change.baseline.toFixed(2)} → ${change.best.toFixed(2)} on the ${change.measuredOn}.` +
+  testCheckText(change.testCheck) +
+  (change.error ? ` Apply stopped early: ${change.error}` : '')
+
+const changesSection = (changes: readonly TemporaryAppliedChange[]): string[] =>
+  changes.length === 0
+    ? []
+    : [
+        [
+          'Changes that strands dev made to this agent in this session. The agent source has them, and strands dev reloaded the agent after each one, so this chat already runs the changed agent:',
+          ...changes.flatMap((change) => [changeSummary(change), ...change.edits.map(changedEdit)]),
+        ].join('\n'),
+      ]
+
 export const temporaryDevChatPart = ({ sessions, evaluators }: TemporaryDevChatHost): DevChatPart => ({
-  instructions: INSTRUCTIONS,
+  instructions: [INSTRUCTIONS, ...changesSection(sessions().optimize.appliedChanges())].join('\n\n'),
   skills: [temporaryCreateExperimentSkill(), ...temporaryWorkflowSkills()],
   tools: [
     statusTool(sessions),

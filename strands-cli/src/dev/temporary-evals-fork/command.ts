@@ -75,9 +75,9 @@ const devCommand = <State>(
   sessions: Sessions
 ): DevChatCommand => ({
   spec: { name, usage: `/${name}`, description, details },
-  open: (context): DevChatPanelView => {
+  open: (context, opening): DevChatPanelView => {
     const opened = sessions(context)
-    session(opened).show()
+    if (!opening?.restore) session(opened).show()
     return view(opened)
   },
   attach: (context): void => void resume?.(sessions(context)),

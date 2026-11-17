@@ -19,7 +19,7 @@ import type {
 } from '../../../src/dev/panels/model.js'
 import { temporaryDevChatPart } from '../../../src/dev/temporary-evals-fork/agent-tools.js'
 import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/evaluators.js'
-import type { TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
+import type { TemporaryAppliedChange, TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import { generationSettings } from '../panels/fixtures.js'
 
 const CAPITAL: ExperimentSummary = {
@@ -173,6 +173,7 @@ const fakeSessions = () => {
         optimize.set({ step: 'pick', runs: (optimize.snapshot().runs ?? []).filter((run) => run.id !== id) })
       ),
       openRun: vi.fn(),
+      appliedChanges: vi.fn((): readonly TemporaryAppliedChange[] => []),
       stop: vi.fn(),
       plan: vi.fn(() => setTimeout(() => optimize.set({ step: 'setup', plan: plan() }), 0)),
       toggleKnob: vi.fn(),
@@ -223,8 +224,9 @@ const CATALOG: readonly TemporaryEvaluator[] = [
   },
 ]
 
-const setup = (evaluators = vi.fn(async () => CATALOG)) => {
+const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly TemporaryAppliedChange[] = []) => {
   const fake = fakeSessions()
+  fake.sessions.optimize.appliedChanges.mockReturnValue(changes)
   const part = temporaryDevChatPart({
     sessions: () => fake.sessions as unknown as TemporaryDevSessions,
     evaluators,
@@ -234,6 +236,65 @@ const setup = (evaluators = vi.fn(async () => CATALOG)) => {
     JSON.parse(await tool(name).run(input))
   return { ...fake, part, tool, call, evaluators }
 }
+
+const APPLIED: TemporaryAppliedChange = {
+  run: '20261117-144415-diffs',
+  experiment: 'diffs',
+  appliedAt: Date.parse('2026-11-17T14:52:03Z'),
+  baseline: 0,
+  best: 1,
+  measuredOn: 'test cases',
+  testCheck: { difference: 1, cases: 2, confidence: 0.9, range: [0.4, 1.6] },
+  edits: [
+    {
+      knob: 'instructions',
+      kind: 'text',
+      label: 'instructions',
+      target: 'agent.ts',
+      before: 'Add 10 to every answer.',
+      after: 'Give the exact answer.',
+      accepted: true,
+    },
+    {
+      knob: 'caching',
+      kind: 'value',
+      label: 'prompt caching',
+      target: 'agent.ts',
+      before: 'auto',
+      after: 'on',
+      accepted: true,
+    },
+  ],
+}
+
+describe('TEMPORARY dev chat instructions', () => {
+  it('shouldTellTheAgentWhatStrandsDevChangedInItWhenAnOptimizationWasApplied', () => {
+    const { part } = setup(undefined, [APPLIED])
+
+    expect(part.instructions).toContain(
+      '- 2026-11-17T14:52:03.000Z: /optimize applied 2 edits from run 20261117-144415-diffs of the experiment diffs. ' +
+        'The best candidate scored 0.00 → 1.00 on the test cases. ' +
+        'The test check gave +1.00 on 2 unseen test cases (90% confidence range +0.40 to +1.60).'
+    )
+    expect(part.instructions).toContain(
+      '  - instructions in agent.ts: was "Add 10 to every answer.", now "Give the exact answer."'
+    )
+    expect(part.instructions).toContain('  - prompt caching in agent.ts: auto → on')
+  })
+
+  it('shouldSayWhereApplyStoppedWhenAnEditCouldNotBeWritten', () => {
+    const { part } = setup(undefined, [{ ...APPLIED, edits: [], error: 'Could not change agent.ts: it changed.' }])
+
+    expect(part.instructions).toContain('/optimize applied 0 edits from run')
+    expect(part.instructions).toContain('Apply stopped early: Could not change agent.ts: it changed.')
+  })
+
+  it('shouldLeaveOutTheChangesWhenStrandsDevChangedNothing', () => {
+    const { part } = setup()
+
+    expect(part.instructions).not.toContain('Changes that strands dev made to this agent')
+  })
+})
 
 describe('TEMPORARY dev chat part', () => {
   it('shouldOfferTheSkillAndLetOnlyTheStatusSkipThePromptWhenThePartIsBuilt', () => {

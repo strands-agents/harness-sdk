@@ -100,6 +100,18 @@ import {
 } from './study.js'
 import { runTemporaryTest } from './test.js'
 
+export interface TemporaryAppliedChange {
+  readonly run: string
+  readonly experiment: string
+  readonly appliedAt: number
+  readonly baseline: number
+  readonly best: number
+  readonly measuredOn: string
+  readonly testCheck?: TestCheck
+  readonly edits: readonly ProposedEdit[]
+  readonly error?: string
+}
+
 export interface TemporaryDevSessions {
   readonly experiments: TemporaryExperiments
   readonly test: TemporaryTest
@@ -488,6 +500,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private runCount = 0
   private pastRuns: PastRuns | undefined
   private pastRunsLoad = 0
+  private readonly changes: TemporaryAppliedChange[] = []
 
   constructor(
     private readonly host: TemporaryHost,
@@ -635,6 +648,10 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   resume(): Promise<void> {
     this.resumed ??= this.resumeRecords()
     return this.resumed
+  }
+
+  appliedChanges(): readonly TemporaryAppliedChange[] {
+    return [...this.changes]
   }
 
   private shownEntry(): RunEntry | undefined {
@@ -1135,20 +1152,37 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private async applyAccepted(entry: RunEntry): Promise<void> {
     if (entry.state.step !== 'review') return
     const { review } = entry.state
-    const applied: string[] = []
-    let applyError: string | undefined
-    for (const [index, edit] of review.edits.entries()) {
+    const accepted = review.edits.flatMap((edit, index) => {
       const write = entry.writers.get(index)
-      if (!edit.accepted || !write) continue
+      return edit.accepted && write ? [{ edit, write }] : []
+    })
+    const change: TemporaryAppliedChange = {
+      run: review.run,
+      experiment: entry.experiment,
+      appliedAt: Date.now(),
+      baseline: review.baseline,
+      best: review.best,
+      measuredOn: review.measuredOn,
+      ...(review.testCheck ? { testCheck: review.testCheck } : {}),
+      edits: accepted.map(({ edit }) => edit),
+    }
+    const recorded = accepted.length > 0 ? this.changes.push(change) - 1 : undefined
+    const applied: string[] = []
+    const written: ProposedEdit[] = []
+    let applyError: string | undefined
+    for (const { edit, write } of accepted) {
       const target = edit.target ?? edit.label
       try {
         await write(edit.after)
         applied.push(target)
+        written.push(edit)
       } catch (error) {
         applyError = `Could not change ${target}: ${errorMessage(error)} Change it by hand, then run /test.`
         break
       }
     }
+    if (recorded !== undefined)
+      this.changes[recorded] = { ...change, edits: written, ...(applyError ? { error: applyError } : {}) }
     this.updateRun(entry, { step: 'review', review: { ...review, applied, ...(applyError ? { applyError } : {}) } })
     const changed = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
     announce(

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { saveTemporaryRunRecord } from '../../../src/dev/temporary-evals-fork/background-runs.js'
 
 import { temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
+import { temporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ImportedAgentProject } from '../../../src/project/import.js'
 import type { DevChatCommandContext } from '../../../src/ui/chat/types.js'
@@ -104,6 +105,21 @@ describe('TEMPORARY dev commands', () => {
     await vi.waitFor(() =>
       expect(announced).toHaveBeenCalledWith('success', 'test · capital · 1 of 1 case passed · /test shows the results')
     )
+  })
+
+  it('shouldKeepTheOptimizePageWhenAReloadOpensThePanelAgainButNotWhenTheDeveloperOpensIt', async () => {
+    const { workspace, project } = await fixture()
+    const { optimize } = temporaryDevSessions({ workspace, agent: () => ({}) })
+    const command = temporaryDevCommands(workspace, project)[2]!
+    optimize.plan({ name: 'missing', path: join(workspace.root, 'missing.json'), caseCount: 0 })
+    await vi.waitFor(() => expect(optimize.snapshot().step).toBe('failed'))
+
+    command.open(context, { restore: true })
+    const restored = optimize.snapshot().step
+    command.open(context)
+
+    expect(restored).toBe('failed')
+    expect(optimize.snapshot().step).toBe('pick')
   })
 
   it.each([0, 1, 2])('shouldOpenAPanelViewWhenCommand%iRuns', async (index) => {

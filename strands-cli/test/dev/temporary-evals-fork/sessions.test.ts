@@ -14,6 +14,7 @@ import {
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
+import { temporaryDevChatPart } from '../../../src/dev/temporary-evals-fork/command.js'
 import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
 import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
@@ -902,6 +903,38 @@ describe('TEMPORARY dev sessions', () => {
       step: 'review',
       review: { run: finished.review.run, edits: [expect.objectContaining({ after: WINNER, accepted: true })] },
     })
+  })
+
+  it('shouldTellTheReloadedAgentWhatApplyChangedInIt', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    const before = sessions.optimize.appliedChanges()
+
+    sessions.optimize.apply()
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+    )
+    const reloaded = temporaryDevChatPart(
+      workspace,
+      { root: workspace.root, entrypoint: workspace.entrypoint, language: 'python' },
+      () => ({})
+    )
+
+    expect(before).toEqual([])
+    expect(sessions.optimize.appliedChanges()).toEqual([
+      expect.objectContaining({
+        experiment: 'capital',
+        edits: [expect.objectContaining({ knob: 'instructions', target: 'instructions.md', after: WINNER })],
+      }),
+    ])
+    expect(reloaded.instructions).toContain('Changes that strands dev made to this agent in this session.')
+    expect(reloaded.instructions).toContain('/optimize applied 1 edit from run')
+    expect(reloaded.instructions).toContain(`now ${JSON.stringify(WINNER)}`)
   })
 
   it('shouldKeepTheBestSoFarWhenTheUserStopsTheRun', async () => {
