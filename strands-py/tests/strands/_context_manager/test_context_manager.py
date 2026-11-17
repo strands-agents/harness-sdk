@@ -232,6 +232,84 @@ class TestContextManagerRunStrategies:
         call_args = strategy2.apply.call_args[0][0]
         assert call_args.utilization == 0.4
 
+    @pytest.mark.asyncio
+    async def test_recount_after_strategy_acts_includes_tool_specs_and_system_prompt(self, mock_agent):
+        # Guards https://github.com/strands-agents/harness-sdk/issues/5990: the post-strategy
+        # recount must use the same inputs as the initial estimate.
+        tool_specs = [{"name": "tool1", "description": "d", "inputSchema": {"json": "{}"}}]
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=tool_specs)
+        mock_agent.system_prompt = "system prompt"
+        mock_agent._system_prompt_content = [ContentBlock(text="system prompt")]
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "acting-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=True)
+
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=9000)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        recount = mock_agent.model.count_tokens.call_args
+        assert recount.kwargs["tool_specs"] == tool_specs
+        assert recount.kwargs["system_prompt"] == "system prompt"
+        assert recount.kwargs["system_prompt_content"] == [ContentBlock(text="system prompt")]
+
+    @pytest.mark.asyncio
+    async def test_strategy_act_drops_stale_usage_metadata(self, mock_agent):
+        # Guards https://github.com/strands-agents/harness-sdk/issues/5990: usage recorded
+        # before a strategy changed the history no longer describes the surviving messages.
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="hello")]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(text="hi")],
+                metadata={"usage": {"inputTokens": 9000, "outputTokens": 10, "totalTokens": 9010}, "other": 1},
+            ),
+        ]
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "acting-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=True)
+
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=9000)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert mock_agent.messages[1]["metadata"] == {"other": 1}
+
+    @pytest.mark.asyncio
+    async def test_no_recount_or_metadata_change_when_strategy_does_not_act(self, mock_agent):
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="hello")]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(text="hi")],
+                metadata={"usage": {"inputTokens": 9000, "outputTokens": 10, "totalTokens": 9010}},
+            ),
+        ]
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "idle-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=False)
+
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=9000)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        mock_agent.model.count_tokens.assert_not_called()
+        assert mock_agent.messages[1]["metadata"] == {
+            "usage": {"inputTokens": 9000, "outputTokens": 10, "totalTokens": 9010}
+        }
+
 
 class TestFromStrategy:
     """Tests for ContextManager.from_strategy() factory."""

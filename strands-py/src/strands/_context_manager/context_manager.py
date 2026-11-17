@@ -274,6 +274,33 @@ class ContextManager(Plugin):
             except Exception:
                 logger.warning("agent_id=<%s> | failed to backfill stash", agent.agent_id, exc_info=True)
 
+    async def apply_strategy(self, strategy: ContextStrategy, context: ContextState) -> bool:
+        """Apply a strategy and, if it acted, refresh utilization on the initial estimate's basis.
+
+        A strategy that changes the history invalidates the provider usage recorded on the
+        surviving messages, so those entries are dropped before the recount. The recount
+        passes the tool specs and system prompt alongside the messages, matching the inputs
+        the initial estimate is computed from.
+        """
+        acted = await strategy.apply(context)
+        if not acted:
+            return False
+        agent = context.agent
+        for message in context.messages:
+            metadata = message.get("metadata")
+            if metadata and "usage" in metadata:
+                updated = metadata.copy()
+                updated.pop("usage", None)
+                message["metadata"] = updated
+        tokens = await ModelProxy(agent.model).count_tokens(
+            context.messages,
+            tool_specs=agent.tool_registry.get_all_tool_specs(),
+            system_prompt=agent.system_prompt,
+            system_prompt_content=agent._system_prompt_content,
+        )
+        context.utilization = agent.model.estimate_utilization(tokens)
+        return True
+
     async def _run_strategies(
         self,
         agent: Agent,
@@ -308,11 +335,9 @@ class ContextManager(Plugin):
             try:
                 if isinstance(strategy, EmergencyTruncateStrategy) and any_acted:
                     context.overflow = False
-                acted = await strategy.apply(context)
+                acted = await self.apply_strategy(strategy, context)
                 if acted:
                     any_acted = True
-                    new_tokens = await ModelProxy(agent.model).count_tokens(messages)
-                    context.utilization = agent.model.estimate_utilization(new_tokens)
                     logger.debug("strategy=<%s>, agent_id=<%s> | strategy applied", strategy.name, agent.agent_id)
             except Exception:
                 logger.warning(
