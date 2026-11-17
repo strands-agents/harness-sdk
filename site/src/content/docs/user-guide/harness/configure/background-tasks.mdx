@@ -45,11 +45,11 @@ tool in the background.
 
 ## Choose the management tool name
 
-To rename the management tool, set
-<Syntax py="background_tasks.tool_name" ts="backgroundTasks.toolName" /> to
-`"manage_background_task"`. The default is `strands_manage_background_task`.
+Strands harness uses `manage_background_task` by default. To keep the old
+name, set <Syntax py="background_tasks.tool_name" ts="backgroundTasks.toolName" /> to
+`"strands_manage_background_task"`. Direct SDK agents retain that default.
 The selected name applies to tool calls and automatic completion records. Update any
-checks that depend on the name when you opt in.
+checks that depend on the name when upgrading the harness.
 
 ## The CLI
 

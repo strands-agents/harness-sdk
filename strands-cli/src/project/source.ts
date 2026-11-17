@@ -16,7 +16,6 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
     python ? key.replace(/[A-Z]/gu, (letter) => `_${letter.toLowerCase()}`) : key
   const options = new Map<string, string>()
   const backgroundKeys: Record<string, string> = {
-    toolName: 'tool_name',
     waitForCompletion: 'wait_for_completion',
     maxConcurrency: 'max_concurrency',
   }

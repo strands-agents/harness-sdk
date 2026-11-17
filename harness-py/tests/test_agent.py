@@ -126,16 +126,20 @@ def test_defaults():
     assert _context_managed(agent)
     assert agent._background_tasks is not None
     assert agent._background_tasks._policy == {"*": "agentic", "subagent": "always"}
+    assert "manage_background_task" in agent.tool_names
+    assert "strands_manage_background_task" not in agent.tool_names
 
 
 def test_background_tasks_true_matches_the_default():
     agent = create_harness(background_tasks=True)
     assert agent._background_tasks is not None
     assert agent._background_tasks._policy == {"*": "agentic", "subagent": "always"}
+    assert "manage_background_task" in agent.tool_names
 
 
 def test_subagent_stays_backgrounded_under_a_custom_policy():
     policy: BackgroundTasksConfig = {
+        "tool_name": "task_admin",
         "agentic": ["subagent"],
         "always": [sample_tool, "subagent"],
         "never": ["*", "subagent"],
@@ -149,6 +153,8 @@ def test_subagent_stays_backgrounded_under_a_custom_policy():
     assert agent._background_tasks._config.get("wait_for_completion") is False
     assert agent._background_tasks._config.get("max_concurrency") == 2
     assert agent._background_tasks._config.get("timeout") == 5.0
+    assert "task_admin" in agent.tool_names
+    assert "manage_background_task" not in agent.tool_names
     assert policy.get("agentic") == ["subagent"]
     assert policy.get("always") == [sample_tool, "subagent"]
     assert policy.get("never") == ["*", "subagent"]

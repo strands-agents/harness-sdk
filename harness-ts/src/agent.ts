@@ -324,6 +324,7 @@ function resolveBackgroundTasks(
   const always = [...omitForced(policy.always ?? []), ...forced]
 
   return {
+    toolName: 'manage_background_task',
     ...policy,
     ...(policy.agentic !== undefined ? { agentic: omitForced(policy.agentic) } : {}),
     ...(always.length > 0 || policy.always !== undefined ? { always } : {}),

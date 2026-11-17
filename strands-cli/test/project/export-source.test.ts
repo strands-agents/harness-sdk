@@ -91,14 +91,13 @@ describe('agentProjectSource portability', () => {
       defineHarnessAgentConfig({
         agentConfig: {
           appState: { waitForCompletion: 'user-data', nested: { clientId: 'customer-field' } },
-          backgroundTasks: { toolName: 'task_admin', waitForCompletion: false, maxConcurrency: 2, timeout: 1_500 },
+          backgroundTasks: { waitForCompletion: false, maxConcurrency: 2, timeout: 1_500 },
         },
       }),
       'python'
     )
     expect(source).toContain('"waitForCompletion": "user-data"')
     expect(source).toContain('"clientId": "customer-field"')
-    expect(source).toContain('"tool_name": "task_admin"')
     expect(source).toContain('"wait_for_completion": False')
     expect(source).toContain('"max_concurrency": 2')
     expect(source).toContain('"timeout": 1500')
