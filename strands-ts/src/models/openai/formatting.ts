@@ -41,7 +41,8 @@ export function formatImageDataUrl(imageBlock: ImageBlock): string | undefined {
   return undefined
 }
 
-const DOCUMENT_EXTENSIONS: ReadonlySet<string> = new Set(DOCUMENT_FORMATS)
+// pptx is not a DocumentFormat, but Mantle accepts it and A2A file parts can carry it.
+const DOCUMENT_EXTENSIONS: ReadonlySet<string> = new Set([...DOCUMENT_FORMATS, 'pptx'])
 
 /**
  * Returns the document's name, appending its format as the extension when the name has no document extension.
