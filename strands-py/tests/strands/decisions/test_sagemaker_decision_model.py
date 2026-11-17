@@ -242,6 +242,14 @@ class TestAsk:
                     "OriginalMessage": '{"detail":[{"msg":"bad","input":{"context window":null}}]}',
                 },
             ),
+            # Not valid JSON, so the detail is not read.
+            (
+                "ModelError",
+                {
+                    "OriginalStatusCode": 422,
+                    "OriginalMessage": '{"detail":"exceeds the context window","limit":NaN}',
+                },
+            ),
             ("ModelError", {"ResponseMetadata": {"HTTPStatusCode": 424}}),
             ("ValidationError", {}),
             ("InternalFailure", {}),
