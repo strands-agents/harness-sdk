@@ -15,7 +15,7 @@ from typing_extensions import NotRequired, TypedDict
 from .citations import CitationsContentBlock
 from .event_loop import Metrics, Usage
 from .media import AudioContent, DocumentContent, ImageContent, VideoContent
-from .offload import OffloadedBlock, OffloadMethod  # noqa: F401  (re-exported beside the blocks that carry it)
+from .offload import OffloadedBlock
 from .tools import ToolResult, ToolUse
 
 
