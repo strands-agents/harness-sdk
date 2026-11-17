@@ -1362,6 +1362,7 @@ describe('workspace with a missing agent', () => {
       agent: { path: project, entrypoint: 'agent.ts', language: 'typescript' },
       origin: { kind: 'cli' },
     })
+    const binding = await readFile(join(folder, '.config'), 'utf8')
     await rm(project, { recursive: true, force: true })
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
@@ -1379,7 +1380,7 @@ describe('workspace with a missing agent', () => {
       detected: false,
       occupiedBy: `a missing agent (${project})`,
     })
-    expect(JSON.parse(await readFile(join(folder, '.config'), 'utf8')).agent.path).toBe(project)
+    expect(await readFile(join(folder, '.config'), 'utf8')).toBe(binding)
   })
 
   it('shouldReplaceTheWorkspaceOnlyAfterConfirmationWhenInitOpensThePicker', async () => {
