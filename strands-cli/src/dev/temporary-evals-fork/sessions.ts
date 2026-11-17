@@ -8,9 +8,9 @@ import { resolveModelTarget } from '../../model/selection.js'
 import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
 import {
+  formatObjective,
   measuredVersions,
   sameCaseSplit,
-  sameObjective,
   type CaseSplit,
   type ExperimentRun,
   type ExperimentSummary,
@@ -69,6 +69,12 @@ import {
   type TemporaryKnobChange,
   type TemporarySpaceVariable,
 } from './knobs.js'
+import {
+  checkTemporaryObjective,
+  temporaryObjectiveArguments,
+  temporaryObjectivePresets,
+  TEMPORARY_USAGE_METRICS,
+} from './objective.js'
 import { runTemporaryOptimization } from './optimize.js'
 import {
   dropTemporaryOptimizeRecord,
@@ -82,8 +88,6 @@ import {
   TEMPORARY_ITERATION_CHOICES,
   TEMPORARY_OPTIMIZE_DEFAULTS,
   temporaryCaseSplit,
-  temporaryObjectiveArguments,
-  temporaryObjectiveChoices,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
   temporarySplitChoices,
@@ -127,6 +131,29 @@ const MILLISECONDS = 1000
 
 type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width' | 'split'> & {
   readonly objective?: OptimizeObjective
+}
+
+const NO_OBJECTIVE: OptimizeObjective = { expression: '', limits: '' }
+
+const objectiveFields = (
+  objective: OptimizeObjective,
+  evaluators: readonly string[]
+): Pick<OptimizePlan, 'objective' | 'objectiveProblem' | 'objectiveWarning'> => {
+  const { problem, warning } = checkTemporaryObjective(objective, evaluators)
+  return {
+    objective,
+    ...(problem ? { objectiveProblem: problem } : {}),
+    ...(warning ? { objectiveWarning: warning } : {}),
+  }
+}
+
+const withObjective = (
+  plan: OptimizePlan,
+  objective: OptimizeObjective,
+  evaluators: readonly string[]
+): OptimizePlan => {
+  const { objectiveProblem: _problem, objectiveWarning: _warning, ...rest } = plan
+  return { ...rest, ...objectiveFields(objective, evaluators) }
 }
 
 const MEASURED_ON: Record<TemporaryMeasurement, string> = {
@@ -203,9 +230,10 @@ const pastSummary = (outcome: TemporaryStudyOutcome, edits: number): string => {
   const early = outcome.ended === 'running' ? 'stopped early · ' : ''
   const best = outcome.best?.score
   const where = MEASURED_ON[outcome.measuredOn]
+  const shown = (value: number): string => formatObjective(value, outcome.measure)
   return edits === 0 || best === undefined
-    ? `${early}no better candidate · ${baseline.toFixed(2)} on ${where}`
-    : `${early}${baseline.toFixed(2)} → ${best.toFixed(2)} on ${where} · ${plural(edits, 'edit')}`
+    ? `${early}no better candidate · ${shown(baseline)} on ${where}`
+    : `${early}${shown(baseline)} → ${shown(best)} on ${where} · ${plural(edits, 'edit')}`
 }
 
 const optimizationRecords = async (folder: string): Promise<PastRun[]> => {
@@ -494,6 +522,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
 
 export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeSession {
   private evaluators = 1
+  private evaluatorNames: readonly string[] = []
   private resumed: Promise<void> | undefined
   private catalog: readonly TemporaryKnob[] = []
   private page: OptimizePage = { step: 'pick' }
@@ -596,15 +625,12 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   setObjective(objective: OptimizeObjective): void {
-    this.updatePlan((plan) => {
-      const chosen = plan.objectiveChoices.find((choice) => sameObjective(choice, objective))
-      return chosen ? { ...plan, objective: chosen } : plan
-    })
+    this.updatePlan((plan) => withObjective(plan, objective, this.evaluatorNames))
   }
 
   start(): string | undefined {
     const page = this.page
-    if (page.step !== 'setup') return undefined
+    if (page.step !== 'setup' || page.plan.objectiveProblem) return undefined
     const knobs = this.catalog.map((knob) => ({
       ...knob,
       enabled: page.plan.knobs.find(({ key }) => key === knob.key)?.enabled ?? false,
@@ -807,17 +833,19 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       const caseCount = experiment.cases.length
       const split = temporaryCaseSplit(caseCount)
       const splitChoices = temporarySplitChoices(caseCount)
-      const objectiveChoices = temporaryObjectiveChoices(experiment.evaluators)
+      const objectivePresets = temporaryObjectivePresets(experiment.evaluators)
       const warning = temporaryOptimizeWarning(caseCount)
       this.evaluators = Math.max(1, experiment.evaluators.length)
+      this.evaluatorNames = experiment.evaluators
       this.showPage({
         step: 'setup',
         plan: this.estimate({
           experiment: { ...summary, caseCount },
           knobs: this.catalog,
           ...(typeof model?.current === 'string' ? { models: { current: model.current, picked: [] } } : {}),
-          objective: objectiveChoices[0],
-          objectiveChoices,
+          ...objectiveFields(objectivePresets[0]?.objective ?? NO_OBJECTIVE, experiment.evaluators),
+          objectivePresets,
+          metrics: [...experiment.evaluators, ...TEMPORARY_USAGE_METRICS],
           split,
           splitChoices,
           repetitions: REPETITIONS,
@@ -1146,6 +1174,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       record,
       baseline,
       best: outcome.best?.score ?? baseline,
+      ...(outcome.measure ? { measure: outcome.measure } : {}),
       measuredOn: MEASURED_ON[outcome.measuredOn],
       edits,
       ...(check ? { testCheck: check } : {}),

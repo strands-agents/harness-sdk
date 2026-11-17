@@ -253,6 +253,36 @@ describe('TEMPORARY optimization trials', () => {
     expect(readerOf([...measuredBaseline(), ...proposed('v1', 1), ...end]).progress().step).toBeUndefined()
   })
 
+  it('shouldCountTokensAsTheScoreSoFarWhenTheObjectiveMinimizesTokens', () => {
+    const progress = readerOf([
+      optimizerConfig({ cases: SPLIT, objective: 'Minimize(tokens)' }),
+      ...optimizerCandidate(base),
+      optimizerTrial({ candidate: 'base', caseName: 'a' }),
+    ]).progress()
+
+    expect(progress.metric).toBe('fewer tokens')
+    expect(progress.measure).toEqual({ kind: 'metric', metric: 'tokens', usage: true, lower: true })
+    expect(progress.baselineCandidate?.scoring).toEqual({ done: 1, total: 4, score: -12 })
+  })
+
+  it.each([
+    ['ATradeOff', 'WeightedSum(Maximize(Contains), Minimize(tokens, scale=1000))', { kind: 'combined' }],
+    ['TheMeanOfEveryEvaluator', 'WeightedSum(Maximize(Contains), Maximize(Equals))', { kind: 'score' }],
+    ['OneEvaluator', 'Maximize(Equals)', { kind: 'metric', metric: 'Equals', usage: false, lower: false }],
+  ])('shouldMeasureTheObjectiveWhenItIs%s', (_case, objective, measure) => {
+    expect(readerOf([optimizerConfig({ objective })]).progress().measure).toEqual(measure)
+  })
+
+  it('shouldGiveNoScoreSoFarWhenTheObjectiveCombinesGoals', () => {
+    const progress = readerOf([
+      optimizerConfig({ cases: SPLIT, objective: 'WeightedSum(Maximize(Contains), Minimize(tokens, scale=1000))' }),
+      ...optimizerCandidate(base),
+      optimizerTrial({ candidate: 'base', caseName: 'a', scores: { Contains: 1 } }),
+    ]).progress()
+
+    expect(progress.baselineCandidate?.scoring).toEqual({ done: 1, total: 4 })
+  })
+
   it('shouldKeepOnlyTheLastTrialWhenACaseRanAgain', () => {
     const progress = readerOf([
       optimizerConfig({ cases: SPLIT }),

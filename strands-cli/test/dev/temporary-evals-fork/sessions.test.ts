@@ -88,6 +88,11 @@ const experimentDocument = (names: readonly string[], evaluators: readonly strin
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 
+const OBJECTIVE_FLAGS = ['--objective', '--at-least', '--at-most']
+
+const objectiveFlags = (args: readonly string[]): string[] =>
+  args.flatMap((arg, index) => (OBJECTIVE_FLAGS.includes(arg) ? [arg, args[index + 1]!] : []))
+
 const exit = { code: 0, stdout: '', stderrTail: [] }
 
 const held = (): { promise: Promise<void>; resolve: () => void } => {
@@ -612,41 +617,53 @@ describe('TEMPORARY dev sessions', () => {
     expect(flagValue(optimizing.mock.calls[0]![0].args, '--split')).toBe('0.7,0.15,0.15')
   })
 
-  it('shouldOfferTheMeanAndEachEvaluatorAsTheObjectiveWhenTheExperimentHasSeveralEvaluators', async () => {
+  it('shouldStartFromTheMeanOfEveryEvaluatorAndOfferPresetsAndEveryMetric', async () => {
     const { workspace, sessions } = await sessionsFor()
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
 
     sessions.optimize.plan(experiment)
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const state = sessions.optimize.snapshot()
+    if (state.step !== 'setup') throw new Error('expected the setup')
+    expect(state.plan.objective).toEqual({ expression: '', limits: '' })
+    expect(state.plan.objectivePresets.map(({ label }) => label).slice(0, 4)).toEqual([
+      'the mean of every evaluator',
+      'Contains only',
+      'Equals only',
+      'fewer tokens, each evaluator at least 0.8',
+    ])
+    expect(state.plan.metrics).toEqual(
+      expect.arrayContaining(['Contains', 'Equals', 'tokens', 'seconds', 'model_calls'])
+    )
+    expect(state.plan).not.toHaveProperty('objectiveProblem')
+  })
+
+  it('shouldNameTheProblemAndNotStartWhenTheObjectiveDoesNotFitTheExperiment', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.setObjective({ expression: 'Maximize(Helpfulness)', limits: '' })
+    const started = sessions.optimize.start()
+    sessions.optimize.setObjective({ expression: 'Minimize(tokens)', limits: '' })
+
+    expect(started).toBeUndefined()
+    expect(optimizing).not.toHaveBeenCalled()
     expect(sessions.optimize.snapshot()).toMatchObject({
-      plan: {
-        objective: { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
-        objectiveChoices: [
-          { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
-          { kind: 'evaluator', evaluator: 'Contains' },
-          { kind: 'evaluator', evaluator: 'Equals' },
-        ],
-      },
+      plan: { objectiveWarning: expect.stringContaining('Every goal is a usage number') },
     })
+    expect(sessions.optimize.snapshot()).not.toHaveProperty('plan.objectiveProblem')
   })
 
-  it('shouldChangeTheObjectiveOnlyToOneOfItsChoices', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-
-    sessions.optimize.setObjective({ kind: 'evaluator', evaluator: 'Equals' })
-    const chosen = sessions.optimize.snapshot()
-    sessions.optimize.setObjective({ kind: 'evaluator', evaluator: 'Helpfulness' })
-
-    expect(chosen).toMatchObject({ plan: { objective: { kind: 'evaluator', evaluator: 'Equals' } } })
-    expect(sessions.optimize.snapshot()).toEqual(chosen)
-  })
-
-  it.each<[string, { kind: 'evaluator'; evaluator: string } | undefined, readonly string[]]>([
-    ['MaximizeTheChosenEvaluator', { kind: 'evaluator', evaluator: 'Equals' }, ['--maximize', 'Equals']],
+  it.each<[string, { expression: string; limits: string } | undefined, readonly string[]]>([
+    [
+      'TheObjectiveAndItsLimits',
+      { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8, seconds <= 30' },
+      ['--objective', 'Minimize(tokens)', '--at-least', 'Contains=0.8', '--at-most', 'seconds=30'],
+    ],
     ['NoObjectiveFlagForTheMeanOfEveryEvaluator', undefined, []],
   ])('shouldGiveTheOptimizer%sWhenTheRunStarts', async (_case, objective, flags) => {
     const optimizing = optimizingProcess()
@@ -659,9 +676,7 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
-    const args = optimizing.mock.calls[0]![0].args
-    const at = args.indexOf('--maximize')
-    expect(at >= 0 ? args.slice(at, at + 2) : []).toEqual(flags)
+    expect(objectiveFlags(optimizing.mock.calls[0]![0].args)).toEqual(flags)
   })
 
   it('shouldRecordTheObjectiveWhenARunStartsSoThatItCanResumeWithIt', async () => {
@@ -684,16 +699,25 @@ describe('TEMPORARY dev sessions', () => {
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    sessions.optimize.setObjective({ kind: 'evaluator', evaluator: 'Contains' })
+    sessions.optimize.setObjective({ expression: 'Maximize(Contains)', limits: 'tokens <= 4000' })
 
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    expect(recorded).toMatchObject({ objective: { kind: 'evaluator', evaluator: 'Contains' } })
+    expect(recorded).toMatchObject({ objective: { expression: 'Maximize(Contains)', limits: 'tokens <= 4000' } })
   })
 
   it.each<[string, unknown, readonly string[]]>([
-    ['TheObjectiveOfTheFirstRun', { kind: 'evaluator', evaluator: 'Equals' }, ['--maximize', 'Equals']],
+    [
+      'TheObjectiveOfTheFirstRun',
+      { expression: 'Minimize(seconds)', limits: 'Equals >= 0.5' },
+      ['--objective', 'Minimize(seconds)', '--at-least', 'Equals=0.5'],
+    ],
+    [
+      'AnObjectiveSavedBeforeTheApiNotation',
+      { kind: 'evaluator', evaluator: 'Equals' },
+      ['--objective', 'Maximize("Equals")'],
+    ],
     ['NoObjectiveFlagWhenTheRecordIsFromBeforeTheObjective', undefined, []],
   ])('shouldResumeAStoppedRunWith%s', async (_case, objective, flags) => {
     const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
@@ -731,9 +755,7 @@ describe('TEMPORARY dev sessions', () => {
     await sessions.optimize.resume()
 
     await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
-    const args = continuing.mock.calls[0]![0].args
-    const at = args.indexOf('--maximize')
-    expect(at >= 0 ? args.slice(at, at + 2) : []).toEqual(flags)
+    expect(objectiveFlags(continuing.mock.calls[0]![0].args)).toEqual(flags)
   })
 
   it('shouldKeepTheRunGoingAndListItWhenTheDeveloperGoesBackToTheList', async () => {

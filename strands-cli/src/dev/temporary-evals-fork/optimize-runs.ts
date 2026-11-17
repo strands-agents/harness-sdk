@@ -29,12 +29,15 @@ const missing = (error: unknown): boolean => isRecord(error) && error.code === '
 const recordPath = ({ record }: Pick<TemporaryOptimizeRecord, 'record'>): string =>
   join(dirname(record), RUNS_FOLDER, `${basename(record)}.json`)
 
-const isObjective = (value: unknown): value is OptimizeObjective =>
-  isRecord(value) &&
-  ((value.kind === 'evaluator' && typeof value.evaluator === 'string') ||
-    (value.kind === 'evaluators' &&
-      Array.isArray(value.evaluators) &&
-      value.evaluators.every((name) => typeof name === 'string')))
+const recordedObjective = (value: unknown): OptimizeObjective | undefined => {
+  if (!isRecord(value)) return undefined
+  if (typeof value.expression === 'string' && typeof value.limits === 'string')
+    return { expression: value.expression, limits: value.limits }
+  if (value.kind === 'evaluator' && typeof value.evaluator === 'string')
+    return { expression: `Maximize(${JSON.stringify(value.evaluator)})`, limits: '' }
+  if (value.kind === 'evaluators' && Array.isArray(value.evaluators)) return { expression: '', limits: '' }
+  return undefined
+}
 
 const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
   isRecord(value) &&
@@ -45,7 +48,7 @@ const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
     (Array.isArray(value.split) &&
       value.split.length === 3 &&
       value.split.every((share) => typeof share === 'number'))) &&
-  (value.objective === undefined || isObjective(value.objective)) &&
+  (value.objective === undefined || recordedObjective(value.objective) !== undefined) &&
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid))
 
@@ -68,7 +71,10 @@ const readRecord = async (path: string): Promise<TemporaryOptimizeRecord | undef
     if (error instanceof SyntaxError || missing(error)) return undefined
     throw error
   }
-  return isOptimizeRecord(value) ? value : undefined
+  if (!isOptimizeRecord(value)) return undefined
+  const objective = recordedObjective(value.objective)
+  const { objective: _saved, ...rest } = value
+  return objective ? { ...rest, objective } : rest
 }
 
 export const readTemporaryOptimizeRecords = async (optimizationFolder: string): Promise<TemporaryOptimizeRecord[]> => {

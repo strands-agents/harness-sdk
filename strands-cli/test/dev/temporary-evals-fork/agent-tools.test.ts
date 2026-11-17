@@ -85,8 +85,9 @@ const KNOBS: readonly Knob[] = [
 const plan = (): OptimizePlan => ({
   experiment: REFUNDS,
   knobs: KNOBS,
-  objective: { kind: 'evaluators', evaluators: ['OutputEvaluator'] },
-  objectiveChoices: [{ kind: 'evaluators', evaluators: ['OutputEvaluator'] }],
+  objective: { expression: '', limits: '' },
+  objectivePresets: [{ label: 'the mean of every evaluator', objective: { expression: '', limits: '' } }],
+  metrics: ['OutputEvaluator', 'tokens'],
   split: { train: 1, validation: 1, test: 0 },
   splitChoices: [{ train: 1, validation: 1, test: 0 }],
   repetitions: 1,
@@ -730,10 +731,42 @@ describe('TEMPORARY dev chat part', () => {
       finishRun({ step: 'review', review: review() })
       await running
 
-      expect(sessions.optimize.setObjective).toHaveBeenCalledWith({ kind: 'evaluator', evaluator })
+      expect(sessions.optimize.setObjective).toHaveBeenCalledWith({ expression: `Maximize(${evaluator})`, limits: '' })
       expect(sessions.optimize.setObjective.mock.invocationCallOrder[0]).toBeLessThan(
         sessions.optimize.start.mock.invocationCallOrder[0]!
       )
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
+
+  it('shouldPassAnyObjectiveOfTheApiAndItsLimitsWhenTheDeveloperAsksForThem', async () => {
+    const { tool, sessions, experiments, finishRun } = setup()
+    const folder = await mkdtemp(join(tmpdir(), 'dev-optimize-objective-'))
+    try {
+      const path = join(folder, 'refunds.json')
+      await writeFile(
+        path,
+        JSON.stringify({
+          evaluators: [{ evaluator_type: 'OutputEvaluator' }],
+          cases: [{ name: 'first', input: 'First request' }],
+        })
+      )
+      experiments.set({ loaded: true, folder, saved: [{ ...REFUNDS, path }], generations: [] })
+
+      const running = tool('strands_dev_optimize').run({
+        experiment: 'refunds',
+        objective: 'WeightedSum(Maximize(OutputEvaluator), Minimize(tokens, scale=1000))',
+        limits: ['seconds <= 30'],
+      })
+      await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
+      finishRun({ step: 'review', review: review() })
+      await running
+
+      expect(sessions.optimize.setObjective).toHaveBeenCalledWith({
+        expression: 'WeightedSum(Maximize(OutputEvaluator), Minimize(tokens, scale=1000))',
+        limits: 'seconds <= 30',
+      })
     } finally {
       await rm(folder, { recursive: true, force: true })
     }
@@ -756,7 +789,7 @@ describe('TEMPORARY dev chat part', () => {
 
       await expect(
         tool('strands_dev_optimize').run({ experiment: 'refunds', objective: 'Helpfulness' })
-      ).rejects.toThrow('Helpfulness is not an evaluator of refunds. Its evaluators: OutputEvaluator.')
+      ).rejects.toThrow('Helpfulness is not an evaluator of this experiment or a usage number')
       expect(sessions.optimize.reset).not.toHaveBeenCalled()
       expect(optimize.snapshot().step).toBe('review')
     } finally {

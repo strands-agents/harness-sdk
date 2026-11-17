@@ -41,7 +41,7 @@ describe('TEMPORARY optimize run records', () => {
     const folder = await temporaryDirectory()
     const record = {
       ...recordIn(folder, '20261111-150405-refunds', 1),
-      objective: { kind: 'evaluator' as const, evaluator: 'Equals' },
+      objective: { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8' },
     }
 
     await saveTemporaryOptimizeRecord(record)
@@ -50,9 +50,24 @@ describe('TEMPORARY optimize run records', () => {
   })
 
   it.each([
+    ['OneEvaluator', { kind: 'evaluator', evaluator: 'Equals' }, { expression: 'Maximize("Equals")', limits: '' }],
+    ['TheMeanOfEveryEvaluator', { kind: 'evaluators', evaluators: ['Contains'] }, { expression: '', limits: '' }],
+  ])('shouldReadAnObjectiveSavedBeforeTheApiNotationAs%s', async (_case, saved, objective) => {
+    const folder = await temporaryDirectory()
+    const record = recordIn(folder, '20261111-150405-refunds', 1)
+    await mkdir(join(folder, 'running'), { recursive: true })
+    await writeFile(
+      join(folder, 'running', '20261111-150405-refunds.json'),
+      JSON.stringify({ ...record, objective: saved })
+    )
+
+    expect(await readTemporaryOptimizeRecords(folder)).toEqual([{ ...record, objective }])
+  })
+
+  it.each([
     ['AnEvaluatorObjectiveWithoutAName', { kind: 'evaluator' }],
-    ['AnUnknownObjectiveKind', { kind: 'cheapest', metric: 'tokens' }],
-    ['AMeanWithoutItsEvaluators', { kind: 'evaluators' }],
+    ['AnUnknownObjectiveShape', { kind: 'cheapest', metric: 'tokens' }],
+    ['AnExpressionWithoutLimits', { expression: 'Minimize(tokens)' }],
   ])('shouldSkipARecordWith%s', async (_case, objective) => {
     const folder = await temporaryDirectory()
     const record = recordIn(folder, '20261111-150405-refunds', 1)

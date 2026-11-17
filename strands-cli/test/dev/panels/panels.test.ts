@@ -436,6 +436,16 @@ const optimizeSession = (initial: OptimizeState) => {
   }
 }
 
+const OBJECTIVE_PRESETS = [
+  { label: 'the mean of every evaluator', objective: { expression: '', limits: '' } },
+  { label: 'Contains only', objective: { expression: 'Maximize(Contains)', limits: '' } },
+  { label: 'Equals only', objective: { expression: 'Maximize(Equals)', limits: '' } },
+  {
+    label: 'fewer tokens, each evaluator at least 0.8',
+    objective: { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8, Equals >= 0.8' },
+  },
+]
+
 const setup: OptimizeState = {
   step: 'setup',
   plan: {
@@ -460,12 +470,9 @@ const setup: OptimizeState = {
         unavailable: 'strands-evals optimize cannot tune tools yet',
       },
     ],
-    objective: { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
-    objectiveChoices: [
-      { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
-      { kind: 'evaluator', evaluator: 'Contains' },
-      { kind: 'evaluator', evaluator: 'Equals' },
-    ],
+    objective: { expression: '', limits: '' },
+    objectivePresets: OBJECTIVE_PRESETS,
+    metrics: ['Contains', 'Equals', 'tokens', 'seconds'],
     split: { train: 10, validation: 5, test: 5 },
     splitChoices: [
       { train: 8, validation: 6, test: 6 },
@@ -620,7 +627,8 @@ const PAST_RUNS: readonly PastRun[] = [
 ]
 
 const OBJECTIVE_ROW = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
-const CASES_ROW = [...OBJECTIVE_ROW, DOWN_KEY]
+const LIMITS_ROW = [...OBJECTIVE_ROW, DOWN_KEY]
+const CASES_ROW = [...LIMITS_ROW, DOWN_KEY]
 const BUDGET_ROW = [...CASES_ROW, DOWN_KEY]
 const START_BUTTON = [...BUDGET_ROW, DOWN_KEY]
 const CANCEL_BUTTON = [...START_BUTTON, DOWN_KEY]
@@ -652,7 +660,7 @@ describe('OptimizePanel', () => {
       enabled: index === 0,
     }))
     const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, knobs } })
-    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 16, session }), 18)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 18, session }), 20)
 
     for (let step = 0; step < downs; step++) await press(DOWN_KEY)
 
@@ -674,7 +682,7 @@ describe('OptimizePanel', () => {
       'RightOnTheObjective',
       [...OBJECTIVE_ROW, RIGHT_KEY],
       'setObjective',
-      [{ kind: 'evaluator', evaluator: 'Contains' }],
+      [{ expression: 'Maximize(Contains)', limits: '' }],
     ],
     ['EnterOnStart', [...START_BUTTON, '\r'], 'start', []],
   ])('shouldCallTheSessionWhenTheUserPresses%sInTheSetup', async (_key, keys, action, args) => {
@@ -869,6 +877,27 @@ describe('OptimizePanel', () => {
     expect(text()).toContain('score 0.54')
   })
 
+  it('shouldShowTokensAndFewerTokensWhenTheObjectiveMinimizesTokens', async () => {
+    const running = scoringState()
+    if (running.step !== 'running') throw new Error('expected a running state')
+    const { session } = optimizeSession({
+      ...running,
+      progress: {
+        ...running.progress,
+        measure: { kind: 'metric', metric: 'tokens', usage: true, lower: true },
+        metric: 'fewer tokens',
+        baseline: -1234,
+        best: { number: 1, score: -900 },
+      },
+    })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toContain('baseline 1,234 tokens')
+    expect(text()).toContain('best 900 tokens (334 tokens fewer)')
+    expect(text()).toContain('fewer tokens')
+  })
+
   it('shouldCountOnlyMeasuredCandidatesInTheRunList', async () => {
     const running = scoringState()
     if (running.step !== 'running') throw new Error('expected a running state')
@@ -918,7 +947,7 @@ describe('OptimizePanel', () => {
   })
 
   it.each([
-    ['Objective', OBJECTIVE_ROW, /› objective\s+█─*\s+maximize the mean of Contains, Equals/u, '←→ objective'],
+    ['Objective', OBJECTIVE_ROW, /› objective\s+█─*\s+the mean of every evaluator/u, '←→ preset · Enter edit'],
     ['Cases', CASES_ROW, /› cases\s+─*█─*\s+10 train \/ 5 validation \/ 5 test/u, '←→ split'],
     ['Budget', BUDGET_ROW, /› budget\s+─*█─*\s+4 steps × 4 candidates/u, '←→ budget'],
   ])('shouldSelectThe%sSliderWhenTheUserMovesDownToIt', async (_row, keys, row, hint) => {
@@ -933,31 +962,98 @@ describe('OptimizePanel', () => {
   })
 
   it.each([
-    ['ContainsAlone', { kind: 'evaluator' as const, evaluator: 'Contains' }, 'maximize Contains only'],
-    ['EqualsAlone', { kind: 'evaluator' as const, evaluator: 'Equals' }, 'maximize Equals only'],
-  ])('shouldShowTheChosenObjectiveWhenItIs%s', async (_case, objective, detail) => {
+    ['APreset', { expression: 'Maximize(Contains)', limits: '' }, 'Contains only', 'Maximize(Contains)'],
+    ['ACustomObjective', { expression: 'Minimize(seconds)', limits: '' }, 'custom', 'Minimize(seconds)'],
+  ])('shouldShowTheObjectiveAndItsExpressionWhenItIs%s', async (_case, objective, label, expression) => {
     const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, objective } })
 
-    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    expect(text()).toMatch(new RegExp(`objective\\s+─*█─*\\s+${detail}`, 'u'))
+    expect(text()).toMatch(new RegExp(`objective\\s+─*█─*\\s+${label}`, 'u'))
+    expect(text()).toContain(expression)
   })
 
-  it('shouldShowTheOnlyEvaluatorAsTextAndSkipItWhenTheExperimentHasOneEvaluator', async () => {
-    const only = { kind: 'evaluators' as const, evaluators: ['OutputEvaluator'] }
+  it('shouldSkipASettingWithOneChoiceButKeepTheObjectiveSelectable', async () => {
+    const only = { train: 10, validation: 5, test: 5 }
     const { session } = optimizeSession({
       ...setup,
-      plan: { ...setup.plan, objective: only, objectiveChoices: [only] },
+      plan: { ...setup.plan, split: only, splitChoices: [only] },
     })
-    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    for (const key of [...OBJECTIVE_ROW, RIGHT_KEY]) await press(key)
+    for (const key of [...LIMITS_ROW, DOWN_KEY]) await press(key)
 
-    expect(text()).toMatch(/ {2}objective {2}maximize OutputEvaluator/u)
-    expect(text()).not.toMatch(/objective\s+[─█]/u)
-    expect(text()).toMatch(/› cases\s+─*█─*/u)
+    expect(text()).toMatch(/ {2}cases {6}10 train/u)
+    expect(text()).toMatch(/› budget\s+─*█─*/u)
+  })
+
+  it('shouldSaveTheTypedObjectiveWhenTheUserEditsItAndPressesEnter', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+    for (const key of OBJECTIVE_ROW) await press(key)
+
+    await press('\r')
+    const editing = text()
+    for (const character of 'Minimize(tokens)') await press(character)
+    await press('\r')
+
+    expect(editing).toContain('metrics: Contains, Equals, tokens, seconds')
+    expect(editing).toContain('Enter save · Esc cancel')
+    expect(session.setObjective).toHaveBeenCalledWith({ expression: 'Minimize(tokens)', limits: '' })
+    expect(session.reset).not.toHaveBeenCalled()
+  })
+
+  it('shouldSaveTheTypedLimitsWhenTheUserEditsThemAndPressesEnter', async () => {
+    const { session } = optimizeSession(setup)
+    const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+    for (const key of LIMITS_ROW) await press(key)
+
+    await press('\r')
+    for (const character of 'tokens <= 4000') await press(character)
+    await press('\r')
+
+    expect(session.setObjective).toHaveBeenCalledWith({ expression: '', limits: 'tokens <= 4000' })
+  })
+
+  it('shouldKeepTheObjectiveAndTheSetupWhenTheUserPressesEscWhileEditing', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+    for (const key of OBJECTIVE_ROW) await press(key)
+    await press('\r')
+    await press('M')
+
+    await press('\u001b')
+
+    await vi.waitFor(() => expect(text()).toContain('←→ preset · Enter edit'))
     expect(session.setObjective).not.toHaveBeenCalled()
-    expect(session.setSplit).toHaveBeenCalled()
+    expect(session.reset).not.toHaveBeenCalled()
+  })
+
+  it('shouldNotStartAndSayWhyWhenTheObjectiveHasAProblem', async () => {
+    const problem = 'Nope is not an evaluator of this experiment or a usage number.'
+    const { session } = optimizeSession({
+      ...setup,
+      plan: { ...setup.plan, objective: { expression: 'Maximize(Nope)', limits: '' }, objectiveProblem: problem },
+    })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    for (const key of [...START_BUTTON, '\r']) await press(key)
+
+    expect(text()).toContain(problem)
+    expect(text()).toContain('fix the objective to start')
+    expect(session.start).not.toHaveBeenCalled()
+  })
+
+  it('shouldWarnWhenEveryGoalIsAUsageNumber', async () => {
+    const warning = 'Every goal is a usage number, so a broken agent can look best.'
+    const { session } = optimizeSession({
+      ...setup,
+      plan: { ...setup.plan, objective: { expression: 'Minimize(tokens)', limits: '' }, objectiveWarning: warning },
+    })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toContain(warning)
   })
 
   it('shouldScrollTheDiffWithTheArrowKeysWhenAnEditIsLongerThanThePanel', async () => {

@@ -7,12 +7,14 @@ import type {
   CaseResult,
   EvalCase,
   EvaluatorVerdict,
+  ObjectiveMeasure,
   OptimizeProgress,
   OptimizeStep,
   ScoringProgress,
   TrialProgress,
 } from '../panels/model.js'
 import { tailTemporaryLines, type TemporaryTail } from './jobs.js'
+import { TEMPORARY_USAGE_METRICS } from './objective.js'
 
 export type TemporaryStudyParams = Readonly<Record<string, unknown>>
 
@@ -38,6 +40,7 @@ export interface TemporaryStudyBest extends TemporaryStudyBaseline {
 
 export interface TemporaryStudyOutcome {
   readonly metric: string
+  readonly measure?: ObjectiveMeasure
   readonly ended: TemporaryStudyEnd
   readonly error?: string
   readonly measuredOn: TemporaryMeasurement
@@ -75,7 +78,7 @@ interface Candidate {
 
 interface Trial {
   readonly split: Split
-  readonly value: number
+  readonly value?: number
   readonly result: CaseResult
 }
 
@@ -133,11 +136,28 @@ const objectiveMetrics = (objective: string): string[] => {
   return terms ? [...terms.matchAll(MAXIMIZED)].flatMap(([, metric]) => (metric ? [metric] : [])) : []
 }
 
+const LONE_OBJECTIVE = /^(Maximize|Minimize)\(([^(),]+)\)$/u
+
+const measureOf = (objective: string): ObjectiveMeasure => {
+  const [, direction, metric] = LONE_OBJECTIVE.exec(objective) ?? []
+  if (metric)
+    return { kind: 'metric', metric, usage: TEMPORARY_USAGE_METRICS.includes(metric), lower: direction === 'Minimize' }
+  return MEAN_OBJECTIVE.test(objective) ? { kind: 'score' } : { kind: 'combined' }
+}
+
 const objectiveName = (objective: string): string => {
-  const single = OBJECTIVE.exec(objective)?.[1]
-  if (single) return single
+  const [, direction, metric] = LONE_OBJECTIVE.exec(objective) ?? []
+  if (metric) {
+    if (direction === 'Maximize') return metric
+    const words = metric.replaceAll('_', ' ')
+    return TEMPORARY_USAGE_METRICS.includes(metric)
+      ? metric === 'seconds'
+        ? 'less time'
+        : `fewer ${words}`
+      : `lower ${words}`
+  }
   const terms = MEAN_OBJECTIVE.exec(objective)?.[1]
-  return terms ? `mean of ${[...terms.matchAll(MAXIMIZED)].map(([, metric]) => metric).join(', ')}` : objective
+  return terms ? `mean of ${[...terms.matchAll(MAXIMIZED)].map(([, name]) => name).join(', ')}` : objective
 }
 const FAILED_STOPS = new Set(['setup', 'proposer_error'])
 const TEST_INTERVAL_CONFIDENCE = 0.9
@@ -241,6 +261,7 @@ class RunState {
   private finalists: readonly string[] | undefined
   private tested = false
   private goals: readonly string[] = []
+  private measure: ObjectiveMeasure = { kind: 'score' }
 
   private readonly handlers = new Map<string, (event: Event) => void>([
     ['config', (event): void => this.readConfig(event)],
@@ -275,6 +296,7 @@ class RunState {
       run,
       record,
       metric: this.metric,
+      measure: this.measure,
       iterations: this.iterations,
       planned: 1 + this.iterations * this.width,
       ...(baseline === undefined ? {} : { baseline }),
@@ -310,16 +332,23 @@ class RunState {
     if (this.isScored(id)) return undefined
     const values = [...(this.trials.get(id)?.values() ?? [])]
       .filter(({ split }) => split === 'train')
-      .map(({ value }) => value)
-    const score = mean(values)
+      .flatMap(({ value }) => (value === undefined ? [] : [value]))
+    const score = this.measure.kind === 'combined' ? undefined : mean(values)
     return { ...this.trialProgress([id], 'train'), ...(score === undefined ? {} : { score }) }
   }
 
-  private trialValue(record: Event, verdicts: readonly EvaluatorVerdict[]): number {
+  private trialValue(record: Event, verdicts: readonly EvaluatorVerdict[]): number | undefined {
+    const { measure } = this
+    if (measure.kind === 'combined') return undefined
+    if (measure.kind === 'metric' && measure.usage) {
+      const used = isRecord(record.usage) ? finite(record.usage[measure.metric]) : undefined
+      return used === undefined ? undefined : measure.lower ? -used : used
+    }
     if (record.status !== 'completed') return 0
     const counted =
       this.goals.length > 0 ? verdicts.filter(({ evaluator }) => this.goals.includes(evaluator)) : verdicts
-    return mean(counted.map(({ score }) => score)) ?? 0
+    const value = mean(counted.map(({ score }) => score)) ?? 0
+    return measure.kind === 'metric' && measure.lower ? -value : value
   }
 
   private finishedIn(ids: readonly string[], split: Split): number {
@@ -369,6 +398,7 @@ class RunState {
     const test = this.testDifference()
     return {
       metric: this.metric,
+      measure: this.measure,
       ended: failed ? 'stopped' : this.champion !== undefined ? 'finished' : 'running',
       ...(failed && this.stopMessage ? { error: this.stopMessage } : {}),
       measuredOn: SPLIT_MEASUREMENT[split],
@@ -394,6 +424,7 @@ class RunState {
     const objective = text(config.objective)
     this.metric = objective ? objectiveName(objective) : ''
     this.goals = objective ? objectiveMetrics(objective) : []
+    this.measure = objective ? measureOf(objective) : { kind: 'score' }
     this.textKeys = new Set(
       (Array.isArray(config.space) ? config.space : [])
         .filter(isRecord)
@@ -449,9 +480,10 @@ class RunState {
       verdicts,
     }
     const byKey = this.trials.get(id) ?? new Map<string, Trial>()
+    const value = this.trialValue(record, verdicts)
     byKey.set(`${record.split}\u0000${caseName}\u0000${run}`, {
       split: record.split,
-      value: this.trialValue(record, verdicts),
+      ...(value === undefined ? {} : { value }),
       result,
     })
     this.trials.set(id, byKey)

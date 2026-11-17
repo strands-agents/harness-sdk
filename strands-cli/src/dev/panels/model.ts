@@ -211,20 +211,29 @@ export interface CaseSplit {
 export const sameCaseSplit = (left: CaseSplit, right: CaseSplit): boolean =>
   left.train === right.train && left.validation === right.validation && left.test === right.test
 
-export type OptimizeObjective =
-  | { readonly kind: 'evaluators'; readonly evaluators: readonly string[] }
-  | { readonly kind: 'evaluator'; readonly evaluator: string }
+export interface OptimizeObjective {
+  readonly expression: string
+  readonly limits: string
+}
+
+export interface ObjectivePreset {
+  readonly label: string
+  readonly objective: OptimizeObjective
+}
+
+const compact = (text: string): string => text.replace(/\s+/gu, '')
 
 export const sameObjective = (left: OptimizeObjective, right: OptimizeObjective): boolean =>
-  left.kind === 'evaluator'
-    ? right.kind === 'evaluator' && left.evaluator === right.evaluator
-    : right.kind === left.kind
+  compact(left.expression) === compact(right.expression) && compact(left.limits) === compact(right.limits)
 
 export interface OptimizePlan {
   readonly experiment: ExperimentSummary
   readonly knobs: readonly Knob[]
   readonly objective: OptimizeObjective
-  readonly objectiveChoices: readonly OptimizeObjective[]
+  readonly objectivePresets: readonly ObjectivePreset[]
+  readonly objectiveProblem?: string
+  readonly objectiveWarning?: string
+  readonly metrics: readonly string[]
   readonly split: CaseSplit
   readonly splitChoices: readonly CaseSplit[]
   readonly repetitions: number
@@ -278,6 +287,7 @@ export interface OptimizeProgress {
   readonly best?: { readonly number: number; readonly score: number }
   readonly candidates: readonly CandidateResult[]
   readonly baselineCandidate?: CandidateResult
+  readonly measure?: ObjectiveMeasure
   readonly step?: OptimizeStep
   readonly startedAt: number
   readonly stopping: boolean
@@ -304,11 +314,43 @@ export interface TestCheck {
   readonly range?: readonly [number, number]
 }
 
+export type ObjectiveMeasure =
+  | { readonly kind: 'score' }
+  | { readonly kind: 'metric'; readonly metric: string; readonly usage: boolean; readonly lower: boolean }
+  | { readonly kind: 'combined' }
+
+const COUNT_DIGITS = 1
+
+const usageText = (value: number, metric: string): string =>
+  metric === 'seconds'
+    ? `${value.toFixed(COUNT_DIGITS)} s`
+    : metric === 'model_calls'
+      ? `${value.toFixed(COUNT_DIGITS)} model calls`
+      : `${Math.round(value).toLocaleString('en-US')} ${metric.replaceAll('_', ' ')}`
+
+const signedText = (value: number): string => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
+
+export const formatObjective = (value: number, measure: ObjectiveMeasure | undefined): string => {
+  if (measure?.kind !== 'metric') return value.toFixed(2)
+  const shown = measure.lower ? -value : value
+  return measure.usage ? usageText(shown, measure.metric) : shown.toFixed(2)
+}
+
+export const formatObjectiveChange = (delta: number, measure: ObjectiveMeasure | undefined): string => {
+  if (measure?.kind !== 'metric') return signedText(delta)
+  if (!measure.usage) return signedText(measure.lower ? -delta : delta)
+  if (delta === 0) return `no change in ${measure.metric.replaceAll('_', ' ')}`
+  const amount = usageText(Math.abs(delta), measure.metric)
+  const fewer = delta > 0 === measure.lower
+  return `${amount} ${fewer ? (measure.metric === 'seconds' ? 'less' : 'fewer') : 'more'}`
+}
+
 export interface OptimizeReview {
   readonly run: string
   readonly record: string
   readonly baseline: number
   readonly best: number
+  readonly measure?: ObjectiveMeasure
   readonly measuredOn: string
   readonly edits: readonly ProposedEdit[]
   readonly testCheck?: TestCheck

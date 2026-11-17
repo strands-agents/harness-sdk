@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useSyncExternalStore, type ReactElement } from 'react'
-import { useInput } from 'ink'
+import { useInput, usePaste } from 'ink'
 import stringWidth from 'string-width'
 
 import { createDiffPreview } from '../../agent/file-changes.js'
@@ -11,8 +11,11 @@ import { ExperimentPicker, type PickerSection } from './picker.js'
 import { CaseReport } from './report.js'
 import {
   sameCaseSplit,
+  formatObjective,
+  formatObjectiveChange,
   measuredVersions,
   sameObjective,
+  type ObjectiveMeasure,
   type CandidateResult,
   type CaseSplit,
   type ExperimentSummary,
@@ -47,13 +50,17 @@ import {
   ProgressBar,
   Rule,
   shortcut,
-  signed,
   SplitLine,
   StoppedView,
   useCursor,
   useElapsed,
   useSyncedState,
+  editText,
+  pasteText,
+  TextField,
+  textValue,
   type ListItem,
+  type TextValue,
   type Tone,
 } from './ui.js'
 
@@ -134,17 +141,17 @@ const startedText = (startedAt: number | undefined): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())} · `
 }
 
-const reviewSummary = ({ baseline, best, measuredOn, edits, applied }: OptimizeReview): string =>
+const reviewSummary = ({ baseline, best, measure, measuredOn, edits, applied }: OptimizeReview): string =>
   edits.length === 0
-    ? `no better candidate · ${baseline.toFixed(2)} on ${measuredOn}`
-    : `${baseline.toFixed(2)} → ${best.toFixed(2)} on ${measuredOn} · ${plural(edits.length, 'edit')}${applied?.length ? ' · applied' : ''}`
+    ? `no better candidate · ${formatObjective(baseline, measure)} on ${measuredOn}`
+    : `${formatObjective(baseline, measure)} → ${formatObjective(best, measure)} on ${measuredOn} · ${plural(edits.length, 'edit')}${applied?.length ? ' · applied' : ''}`
 
 const runSummary = (state: OptimizeRunState): { readonly text: string; readonly tone?: Tone } => {
   switch (state.step) {
     case 'running': {
       const { progress } = state
       const finished = measuredVersions(progress)
-      const best = progress.best ? ` · best ${progress.best.score.toFixed(2)}` : ''
+      const best = progress.best ? ` · best ${formatObjective(progress.best.score, progress.measure)}` : ''
       const status = progress.stopping
         ? 'stopping'
         : progress.baseline === undefined
@@ -247,13 +254,22 @@ interface SetupSlider {
   readonly detail: string
   readonly right?: string
   readonly hint: string
+  readonly editable?: boolean
   readonly move: (step: 1 | -1) => void
 }
+
+type ObjectiveField = keyof OptimizeObjective
 
 type SetupRow =
   | { readonly kind: 'knob'; readonly knob: Knob }
   | { readonly kind: 'slider'; readonly slider: SetupSlider }
+  | { readonly kind: 'limits' }
   | { readonly kind: 'button'; readonly button: SetupButton }
+
+interface ObjectiveEditor {
+  readonly field: ObjectiveField
+  readonly value: TextValue
+}
 
 const splitText = ({ train, validation, test }: CaseSplit): string =>
   `${train} train / ${validation} validation / ${test} test`
@@ -261,30 +277,31 @@ const splitText = ({ train, validation, test }: CaseSplit): string =>
 const splitPosition = ({ split, splitChoices }: OptimizePlan): number =>
   splitChoices.findIndex((choice) => sameCaseSplit(choice, split))
 
-const objectivePosition = ({ objective, objectiveChoices }: OptimizePlan): number =>
-  objectiveChoices.findIndex((choice) => sameObjective(choice, objective))
+const presetPosition = ({ objective, objectivePresets }: OptimizePlan): number =>
+  objectivePresets.findIndex((preset) => sameObjective(preset.objective, objective))
 
-const objectiveText = (objective: OptimizeObjective): string => {
-  if (objective.kind === 'evaluator') return `maximize ${objective.evaluator} only`
-  const [only, ...others] = objective.evaluators
-  if (only && others.length === 0) return `maximize ${only}`
-  return `maximize the mean of ${objective.evaluators.length > 0 ? objective.evaluators.join(', ') : 'every evaluator'}`
+const objectiveSlider = (plan: OptimizePlan, session: OptimizeSession, latest: () => OptimizePlan): SetupSlider => {
+  const position = presetPosition(plan)
+  const custom = position < 0
+  return {
+    key: 'objective',
+    label: 'objective',
+    count: plan.objectivePresets.length + Number(custom),
+    position: custom ? plan.objectivePresets.length : position,
+    detail: custom ? 'custom' : (plan.objectivePresets[position]?.label ?? ''),
+    hint: '←→ preset · Enter edit',
+    editable: true,
+    move: (step): void => {
+      const current = latest()
+      const at = presetPosition(current)
+      const next = current.objectivePresets[(at < 0 ? current.objectivePresets.length : at) + step]
+      if (next) session.setObjective(next.objective)
+    },
+  }
 }
 
 const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () => OptimizePlan): SetupSlider[] => [
-  {
-    key: 'objective',
-    label: 'objective',
-    count: plan.objectiveChoices.length,
-    position: Math.max(0, objectivePosition(plan)),
-    detail: objectiveText(plan.objective),
-    hint: '←→ objective',
-    move: (step): void => {
-      const current = latest()
-      const next = current.objectiveChoices[objectivePosition(current) + step]
-      if (next) session.setObjective(next)
-    },
-  },
+  objectiveSlider(plan, session, latest),
   {
     key: 'cases',
     label: 'cases',
@@ -314,11 +331,17 @@ const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () =
   },
 ]
 
-const setupHints = (focused: SetupRow | undefined, ready: boolean): string[] => {
+const startHint = (plan: OptimizePlan, ready: boolean): string => {
+  if (ready) return 'Enter start'
+  return plan.objectiveProblem ? 'fix the objective to start' : 'check a knob to start'
+}
+
+const setupHints = (focused: SetupRow | undefined, plan: OptimizePlan, ready: boolean): string[] => {
   if (focused?.kind === 'slider') return ['↑↓', focused.slider.hint, 'Esc cancel']
+  if (focused?.kind === 'limits') return ['↑↓', 'Enter edit', 'Esc cancel']
   if (focused?.kind === 'button')
     return focused.button === 'start'
-      ? ['↑↓', ready ? 'Enter start' : 'check a knob to start', 'Esc cancel']
+      ? ['↑↓', startHint(plan, ready), 'Esc cancel']
       : ['↑↓', 'Enter cancel', 'Esc cancel']
   const action = focused?.knob.unavailable
     ? 'not available'
@@ -329,6 +352,40 @@ const setupHints = (focused: SetupRow | undefined, ready: boolean): string[] => 
 }
 
 const hasChoice = ({ count }: SetupSlider): boolean => count > 1
+
+const isSelectable = (slider: SetupSlider): boolean => slider.editable === true || hasChoice(slider)
+
+const FieldRow = ({
+  label,
+  value,
+  active,
+  onPoint,
+}: {
+  label: string
+  value: string
+  active: boolean
+  onPoint: () => void
+}): ReactElement => {
+  const { accent, selection } = useTheme()
+  const clicks = useDevPanelClicks()
+  return (
+    <Box
+      height={1}
+      flexShrink={0}
+      overflow="hidden"
+      {...(active ? { backgroundColor: selection } : {})}
+      {...(clicks ? { ref: clicks.target(onPoint, onPoint) } : {})}
+    >
+      <Text wrap="truncate-end">
+        <Text color={accent}>{active ? '› ' : '  '}</Text>
+        <Text bold={active} dimColor={!active}>
+          {label.padEnd(SLIDER_LABEL_WIDTH)}
+        </Text>
+        <Text>{value}</Text>
+      </Text>
+    </Box>
+  )
+}
 
 const SliderRow = ({
   slider,
@@ -375,7 +432,7 @@ const SliderRow = ({
   )
 }
 
-const SETUP_CHROME_ROWS = 10
+const SETUP_CHROME_ROWS = 12
 const MODEL_CHOOSER_CHROME_ROWS = 5
 const MODEL_FILTER = /^[\w.:/-]$/u
 
@@ -446,31 +503,52 @@ const ModelChooser = ({
   )
 }
 
+const objectiveNotice = (plan: OptimizePlan): { readonly tone: Tone; readonly text: string } | undefined => {
+  if (plan.objectiveProblem) return { tone: 'error', text: plan.objectiveProblem }
+  if (plan.objectiveWarning) return { tone: 'warning', text: plan.objectiveWarning }
+  return plan.warning ? { tone: 'warning', text: plan.warning } : undefined
+}
+
 const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan: OptimizePlan }): ReactElement => {
   const latest = (): OptimizePlan => {
     const state = session.snapshot()
     return state.step === 'setup' ? state.plan : plan
   }
   const sliders = setupSliders(plan, session, latest)
-  const choices = sliders.filter(hasChoice)
   const rows: SetupRow[] = [
     ...plan.knobs.map((knob) => ({ kind: 'knob' as const, knob })),
-    ...choices.map((slider) => ({ kind: 'slider' as const, slider })),
+    ...sliders
+      .filter(isSelectable)
+      .flatMap((slider): SetupRow[] =>
+        slider.key === 'objective' ? [{ kind: 'slider', slider }, { kind: 'limits' }] : [{ kind: 'slider', slider }]
+      ),
     ...SETUP_BUTTONS.map((button) => ({ kind: 'button' as const, button })),
   ]
+  const rowOf = (match: (row: SetupRow) => boolean): number => rows.findIndex(match)
   const firstSlider = plan.knobs.length
-  const firstButton = firstSlider + choices.length
+  const firstButton = rowOf((row) => row.kind === 'button')
+  const limitsRow = rowOf((row) => row.kind === 'limits')
   const cursor = useCursor(rows.length)
+  const editing = useSyncedState<ObjectiveEditor | undefined>(undefined)
   const [choosingModels, setChoosingModels] = useState(false)
-  const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable)
+  const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable) && !plan.objectiveProblem
   const compact = height < FULL_SETUP_ROWS
   const focused = rows[cursor.index]
+  const editor = editing.value
+  const notice = objectiveNotice(plan)
   const cancel = (): void => session.reset()
+  const edit = (field: ObjectiveField): void => editing.set({ field, value: textValue(latest().objective[field]) })
+  const save = ({ field, value }: ObjectiveEditor): void => {
+    session.setObjective({ ...latest().objective, [field]: value.input })
+    editing.set(undefined)
+  }
   const activate = (row: SetupRow | undefined): void => {
     if (row?.kind === 'button') {
       if (row.button === 'cancel') cancel()
       else if (ready) session.start()
-    } else if (row?.kind === 'knob' && !row.knob.unavailable) {
+    } else if (row?.kind === 'slider' && row.slider.editable) edit('expression')
+    else if (row?.kind === 'limits') edit('limits')
+    else if (row?.kind === 'knob' && !row.knob.unavailable) {
       if (row.knob.kind !== 'models') return session.toggleKnob(row.knob.key)
       session.loadModels()
       setChoosingModels(true)
@@ -482,6 +560,13 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
   }
   useInput(
     (input, key) => {
+      const open = editing.current()
+      if (open) {
+        if (key.escape) editing.set(undefined)
+        else if (key.return) save(open)
+        else editing.set((current) => current && { ...current, value: editText(current.value, input, key) })
+        return
+      }
       const row = rows[cursor.current()]
       if (key.escape) cancel()
       else if (key.upArrow) cursor.move(-1)
@@ -492,6 +577,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
     },
     { isActive: !choosingModels }
   )
+  usePaste((text) => editing.set((current) => current && { ...current, value: pasteText(current.value, text) }))
   if (choosingModels && plan.models)
     return (
       <ModelChooser
@@ -502,6 +588,16 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
         onDone={() => setChoosingModels(false)}
       />
     )
+  const editorField = (label: string, placeholder: string): ReactElement => (
+    <TextField
+      label={label}
+      value={editor?.value ?? textValue('')}
+      active
+      labelWidth={SLIDER_LABEL_WIDTH}
+      width={width}
+      placeholder={placeholder}
+    />
+  )
   return (
     <>
       <PanelTitle name={COMMAND} parts={[plan.experiment.name, plural(plan.experiment.caseCount, 'case')]} />
@@ -519,19 +615,41 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
       />
       {compact ? null : <Gap />}
       {sliders.map((slider) => {
-        const row = firstSlider + choices.indexOf(slider)
-        return hasChoice(slider) ? (
+        const row = rowOf((entry) => entry.kind === 'slider' && entry.slider.key === slider.key)
+        const shown = isSelectable(slider) ? (
           <SliderRow key={slider.key} slider={slider} active={cursor.index === row} onPoint={() => cursor.set(row)} />
         ) : (
           <SliderRow key={slider.key} slider={slider} active={false} />
         )
+        if (slider.key !== 'objective') return shown
+        return (
+          <Box key={slider.key} flexDirection="column" flexShrink={0}>
+            {shown}
+            {editor?.field === 'expression' ? (
+              editorField('goal', 'empty means the mean of every evaluator')
+            ) : plan.objective.expression.trim() ? (
+              <Line tone="muted">{`${' '.repeat(SLIDER_LABEL_WIDTH + 2)}${plan.objective.expression.trim()}`}</Line>
+            ) : null}
+            {editor?.field === 'limits' ? (
+              editorField('limits', 'such as tokens <= 4000, Correctness >= 0.8')
+            ) : (
+              <FieldRow
+                label="limits"
+                value={plan.objective.limits.trim() || 'none'}
+                active={cursor.index === limitsRow}
+                onPoint={() => cursor.set(limitsRow)}
+              />
+            )}
+          </Box>
+        )
       })}
-      {compact ? null : (
+      {editor ? <Line tone="muted">{`  metrics: ${plan.metrics.join(', ')}`}</Line> : null}
+      {compact || editor ? null : (
         <Line tone="muted">
           {`${' '.repeat(SLIDER_LABEL_WIDTH + 2)}Train cases guide the search. Validation picks the winner. Test checks it.`}
         </Line>
       )}
-      {plan.warning ? <Line tone="warning">{`  ${plan.warning}`}</Line> : compact ? null : <Gap />}
+      {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : compact ? null : <Gap />}
       <SetupButtons
         ready={ready}
         focused={focused?.kind === 'button' ? focused.button : undefined}
@@ -539,7 +657,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
         onHover={(button) => cursor.set(firstButton + SETUP_BUTTONS.indexOf(button))}
       />
       <Fill />
-      <KeyHints hints={setupHints(focused, ready)} />
+      <KeyHints hints={editor ? ['Enter save', 'Esc cancel'] : setupHints(focused, plan, ready)} />
     </>
   )
 }
@@ -587,18 +705,18 @@ const SetupButtons = ({
 const candidateLabel = ({ number, step }: CandidateResult): string =>
   number === 0 ? 'your agent' : `${step === undefined ? 'final' : `step ${step}`} · ${number}`
 
-const scoringText = ({ done, total, score }: ScoringProgress): string =>
-  `scoring ${done}/${total}${score === undefined ? '' : ` · ${score.toFixed(2)} so far`}`
+const scoringText = ({ done, total, score }: ScoringProgress, measure: ObjectiveMeasure | undefined): string =>
+  `scoring ${done}/${total}${score === undefined ? '' : ` · ${formatObjective(score, measure)} so far`}`
 
-const candidateItem = (candidate: CandidateResult): ListItem => {
+const candidateItem = (candidate: CandidateResult, measure?: ObjectiveMeasure): ListItem => {
   const where = candidate.step === undefined ? 'final' : `step ${candidate.step}`
   if (candidate.number === 0)
     return {
       key: 'baseline',
       label: candidateLabel(candidate),
       detail: candidate.scoring
-        ? scoringText(candidate.scoring)
-        : `baseline ${candidate.score === undefined ? 'not measured' : candidate.score.toFixed(2)}`,
+        ? scoringText(candidate.scoring, measure)
+        : `baseline ${candidate.score === undefined ? 'not measured' : formatObjective(candidate.score, measure)}`,
       mark: { text: '●', tone: 'muted' },
       tone: 'muted',
     }
@@ -606,7 +724,7 @@ const candidateItem = (candidate: CandidateResult): ListItem => {
     return {
       key: String(candidate.number),
       label: candidateLabel(candidate),
-      detail: `${scoringText(candidate.scoring)} · ${candidate.summary}`,
+      detail: `${scoringText(candidate.scoring, measure)} · ${candidate.summary}`,
       mark: { text: '◐', tone: 'warning' },
     }
   if (candidate.failed)
@@ -617,7 +735,7 @@ const candidateItem = (candidate: CandidateResult): ListItem => {
       mark: { text: '✗', tone: 'error' },
       tone: 'error',
     }
-  const delta = candidate.delta === undefined ? '' : `  ${signed(candidate.delta)}`
+  const delta = candidate.delta === undefined ? '' : `  ${formatObjectiveChange(candidate.delta, measure)}`
   return {
     key: String(candidate.number),
     label: `${where} · ${candidate.number}`,
@@ -629,9 +747,14 @@ const candidateItem = (candidate: CandidateResult): ListItem => {
 
 const trialsText = ({ done, total }: TrialProgress): string => `${done} of ${plural(total, 'trial')}`
 
-const trialsSummary = ({ scoring, score }: CandidateResult): string => {
-  if (scoring) return scoring.score === undefined ? 'no score yet' : `score ${scoring.score.toFixed(2)} so far`
-  return score === undefined ? 'not measured' : `score ${score.toFixed(2)}`
+const scoreLabel = (value: number, measure: ObjectiveMeasure | undefined): string =>
+  measure?.kind === 'metric' && measure.usage
+    ? formatObjective(value, measure)
+    : `score ${formatObjective(value, measure)}`
+
+const trialsSummary = ({ scoring, score }: CandidateResult, measure: ObjectiveMeasure | undefined): string => {
+  if (scoring) return scoring.score === undefined ? 'no score yet' : `${scoreLabel(scoring.score, measure)} so far`
+  return score === undefined ? 'not measured' : scoreLabel(score, measure)
 }
 
 const finalistsText = (versions: number): string => {
@@ -659,15 +782,25 @@ const stepText = (step: OptimizeStep, iterations: number): string => {
   }
 }
 
-const scoreText = ({ score, delta, scoring }: CandidateResult, trainCases: number | undefined): string => {
+const scaleText = (measure: ObjectiveMeasure | undefined): string => {
+  if (measure?.kind === 'combined') return ', the value of the objective, higher is better'
+  if (measure?.kind === 'metric' && measure.usage) return ''
+  return measure?.kind === 'metric' && measure.lower ? ', lower is better' : ', from 0 to 1'
+}
+
+const scoreText = (
+  { score, delta, scoring }: CandidateResult,
+  trainCases: number | undefined,
+  measure?: ObjectiveMeasure
+): string => {
   if (scoring)
     return scoring.score === undefined
       ? `0 of ${plural(scoring.total, 'training case')} finished so far`
-      : `${scoring.score.toFixed(2)} so far, on ${scoring.done} of ${scoring.total} training cases`
+      : `${formatObjective(scoring.score, measure)} so far, on ${scoring.done} of ${scoring.total} training cases`
   if (score === undefined) return 'not measured'
   const cases = trainCases === undefined ? 'the training cases' : plural(trainCases, 'training case')
-  const change = delta === undefined ? '' : ` · ${signed(delta)} vs your agent`
-  return `${score.toFixed(2)} average on ${cases}, from 0 to 1${change}`
+  const change = delta === undefined ? '' : ` · ${formatObjectiveChange(delta, measure)} vs your agent`
+  return `${formatObjective(score, measure)} average on ${cases}${scaleText(measure)}${change}`
 }
 
 const RunningView = ({
@@ -704,7 +837,7 @@ const RunningView = ({
         details={open.scoring ? [`${open.scoring.done}/${open.scoring.total} train cases`] : []}
         cases={open.trials ?? []}
         expected={Math.max(open.scoring?.total ?? 0, open.trials?.length ?? 0)}
-        summary={trialsSummary(open)}
+        summary={trialsSummary(open, progress.measure)}
         backHint="Esc back to the run"
         width={width}
         height={height}
@@ -713,9 +846,13 @@ const RunningView = ({
     )
   const best = progress.best
   const summary = [
-    progress.baseline === undefined ? 'measuring the baseline' : `baseline ${progress.baseline.toFixed(2)}`,
+    progress.baseline === undefined
+      ? 'measuring the baseline'
+      : `baseline ${formatObjective(progress.baseline, progress.measure)}`,
     ...(best && progress.baseline !== undefined
-      ? [`best ${best.score.toFixed(2)} (${signed(best.score - progress.baseline)})`]
+      ? [
+          `best ${formatObjective(best.score, progress.measure)} (${formatObjectiveChange(best.score - progress.baseline, progress.measure)})`,
+        ]
       : []),
     progress.metric,
   ]
@@ -738,11 +875,11 @@ const RunningView = ({
       {progress.step ? <Line tone="muted">{`  ${stepText(progress.step, progress.iterations)}`}</Line> : null}
       {candidates.length > 0 ? (
         <ItemList
-          items={candidates.map(candidateItem)}
+          items={candidates.map((candidate) => candidateItem(candidate, progress.measure))}
           selected={index}
           capacity={Math.max(1, height - RUNNING_CHROME_ROWS - Number(Boolean(progress.step)) - detailRows)}
           labelWidth={labelWidthFor(
-            candidates.map((candidate) => candidateItem(candidate).label),
+            candidates.map((candidate) => candidateItem(candidate, progress.measure).label),
             width
           )}
         />
@@ -754,7 +891,7 @@ const RunningView = ({
         <>
           <Field label="  change" value={current.summary} labelWidth={10} />
           {current.rationale ? <Field label="  why" value={current.rationale} labelWidth={10} /> : null}
-          <Field label="  score" value={scoreText(current, progress.trainCases)} labelWidth={10} />
+          <Field label="  score" value={scoreText(current, progress.trainCases, progress.measure)} labelWidth={10} />
         </>
       ) : (
         <Gap rows={2} />
@@ -881,10 +1018,10 @@ const checkVerdict = ({ range, cases }: TestCheck): string => {
   return 'The range includes 0, so the gain may be luck. More test cases make the range narrower.'
 }
 
-const checkLines = (check: TestCheck): readonly [string, string] => {
-  const gain = `${signed(check.difference)} on ${plural(check.cases, 'unseen test case')}`
+const checkLines = (check: TestCheck, measure: ObjectiveMeasure | undefined): readonly [string, string] => {
+  const gain = `${formatObjectiveChange(check.difference, measure)} on ${plural(check.cases, 'unseen test case')}`
   const range = check.range
-    ? ` · ${Math.round(check.confidence * 100)}% confidence range ${signed(check.range[0])} to ${signed(check.range[1])}`
+    ? ` · ${Math.round(check.confidence * 100)}% confidence range ${formatObjectiveChange(check.range[0], measure)} to ${formatObjectiveChange(check.range[1], measure)}`
     : ''
   return [`${gain}${range}`, checkVerdict(check)]
 }
@@ -899,7 +1036,7 @@ const TestCheckLines = ({ review }: { review: OptimizeReview }): ReactElement =>
         tone="muted"
       />
     )
-  const [result, verdict] = checkLines(review.testCheck)
+  const [result, verdict] = checkLines(review.testCheck, review.measure)
   return (
     <>
       <Field label={CHECK_LABEL} value={result} labelWidth={CHECK_LABEL_WIDTH} />
@@ -961,13 +1098,16 @@ const ReviewView = ({
       if (edit && (typed === 'x' || !edit.unavailable)) session.accept(at, typed === 'a')
     } else if (key.return && acceptedNow() > 0) session.apply()
   })
-  const gain = `${review.baseline.toFixed(2)} → ${review.best.toFixed(2)} on ${review.measuredOn} (${signed(review.best - review.baseline)})`
+  const gain = `${formatObjective(review.baseline, review.measure)} → ${formatObjective(review.best, review.measure)} on ${review.measuredOn} (${formatObjectiveChange(review.best - review.baseline, review.measure)})`
   const title = (
     <PanelTitle
       name="review"
       parts={
         review.edits.length === 0
-          ? [`run ${review.run}`, `best stayed at ${review.baseline.toFixed(2)} on ${review.measuredOn}`]
+          ? [
+              `run ${review.run}`,
+              `best stayed at ${formatObjective(review.baseline, review.measure)} on ${review.measuredOn}`,
+            ]
           : [
               `run ${review.run}`,
               gain,

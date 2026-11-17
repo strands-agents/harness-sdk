@@ -26,6 +26,7 @@ import { temporaryCreateExperimentSkill } from './create-experiment-skill.js'
 import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
 import { TEMPORARY_KNOB_NAMES } from './knobs.js'
+import { checkTemporaryObjective, temporaryObjectiveFromRequest } from './objective.js'
 import { TEMPORARY_ITERATION_CHOICES } from './plan.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from './sessions.js'
 
@@ -574,24 +575,16 @@ const tunedKnobs = (knobs: readonly Knob[], tune: readonly KnobKey[]): void => {
   throw new Error(`This agent cannot tune ${unknown.join(', ')}. It can tune ${available.join(', ')}.`)
 }
 
-const SHORT_EVALUATOR_SUFFIX = 'evaluator'
-
-const objectiveFor = async (
-  experiment: ExperimentSummary,
-  name: string | undefined
-): Promise<OptimizeObjective | undefined> => {
-  if (name === undefined) return undefined
+const objectiveFor = async (experiment: ExperimentSummary, input: Input): Promise<OptimizeObjective | undefined> => {
+  const objective = text(input, 'objective') || undefined
+  const limits = textList(input, 'limits')
+  if (objective === undefined && limits === undefined) return undefined
   const { experiment: loaded } = await readTemporaryExperimentFile(experiment.path)
-  const wanted = name.toLowerCase()
-  const evaluator =
-    loaded.evaluators.find((candidate) => candidate === name) ??
-    loaded.evaluators.find((candidate) => candidate.toLowerCase() === wanted) ??
-    loaded.evaluators.find((candidate) => candidate.toLowerCase() === `${wanted}${SHORT_EVALUATOR_SUFFIX}`)
-  if (!evaluator)
-    throw new Error(
-      `${name} is not an evaluator of ${experiment.name}. Its evaluators: ${loaded.evaluators.join(', ') || 'none'}.`
-    )
-  return { kind: 'evaluator', evaluator }
+  const chosen = temporaryObjectiveFromRequest(objective, limits, loaded.evaluators)
+  const { problem } = checkTemporaryObjective(chosen, loaded.evaluators)
+  if (problem)
+    throw new Error(`${problem} The evaluators of ${experiment.name}: ${loaded.evaluators.join(', ') || 'none'}.`)
+  return chosen
 }
 
 const optimizeTool = (sessions: Sessions): DevChatTool => ({
@@ -624,7 +617,20 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
       },
       objective: {
         type: 'string',
-        description: 'One evaluator of the experiment to maximize, by name. Default: the mean of every evaluator.',
+        description:
+          'What the run optimizes, in the notation of the optimization API: Maximize(Helpfulness), ' +
+          'Minimize(tokens), WeightedSum(Maximize(Helpfulness), Minimize(tokens, scale=1000)), or ' +
+          'Pareto(Maximize(Helpfulness), Minimize(seconds, scale=10)). The metrics are the evaluators of the ' +
+          'experiment and the usage numbers tokens, input_tokens, output_tokens, cache_read_tokens, ' +
+          'cache_write_tokens, seconds, and model_calls. A bare evaluator name maximizes it, and a bare usage ' +
+          'name minimizes it. Default: the mean of every evaluator.',
+      },
+      limits: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Limits that the chosen candidate must meet, such as "tokens <= 4000" or "Correctness >= 0.8". ' +
+          'Add an evaluator floor when every goal is a usage number.',
       },
     },
     required: ['experiment'],
@@ -644,7 +650,7 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     if (iterations !== undefined && !TEMPORARY_ITERATION_CHOICES.includes(iterations))
       throw new Error(`iterations must be one of ${TEMPORARY_ITERATION_CHOICES.join(', ')}.`)
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
-    const objective = await objectiveFor(experiment, text(input, 'objective') || undefined)
+    const objective = await objectiveFor(experiment, input)
     if (pendingReview(current))
       throw new Error(
         'There are pending optimization edits. Review and apply them, or explicitly discard them with strands_dev_reject_optimization, before starting another run.'
