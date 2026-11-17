@@ -189,6 +189,16 @@ describe.skipIf(!existsSync(pythonExecutable))('saving agent options into Python
     expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source.replace('claude-sonnet-5', 'claude-haiku-5'))
   })
 
+  it('shouldKeepNonAsciiTextWhenPythonRunsWithALegacyEightBitLocale', async () => {
+    vi.stubEnv('LC_ALL', 'en_US.ISO-8859-1')
+    const source = GENERATED_PYTHON.replace('name="Demo",', 'name="Démo 🐸",  # the name')
+    const workspace = await agent('python', source)
+
+    await saveAgentOptions(workspace, { model: 'bedrock/global.anthropic.claude-haiku-5' })
+
+    expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source.replace('claude-sonnet-5', 'claude-haiku-5'))
+  })
+
   it.each([
     [
       'a multi-line call with a trailing comma',

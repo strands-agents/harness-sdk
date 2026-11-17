@@ -78,7 +78,7 @@ export const readPythonSource = <T>(script: string, source: string, interpreter:
     const fail = (reason: string): void => reject(new PythonReadFailure(reason))
     let child: ChildProcessWithoutNullStreams
     try {
-      child = spawn(interpreter, ['-I', '-c', script], {
+      child = spawn(interpreter, ['-I', '-X', 'utf8', '-c', script], {
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: PYTHON_TIMEOUT_MS,
       })
