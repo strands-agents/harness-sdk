@@ -40,7 +40,6 @@ _SUMMARIZE = unittest.mock.AsyncMock(return_value=SummarizeResult(content=[Conte
 
 
 def _context(messages, utilization=0.5, overflow=False, context_window_limit=DEFAULT_CONTEXT_WINDOW_LIMIT):
-    """A context whose model shares :data:`_SUMMARIZE` and reports ``context_window_limit`` as its window."""
     model = heuristic_model(summarize=_SUMMARIZE, context_window_limit=context_window_limit)
     return make_context(messages, utilization=utilization, overflow=overflow, model=model)
 
@@ -59,7 +58,6 @@ def _window_context(messages: Messages, message_tokens: int, utilization: float,
 
 
 def _texts_of(messages: Messages) -> list[list[str]]:
-    """The text of every block of every message, message by message."""
     return [[block["text"] for block in message["content"]] for message in messages]
 
 
@@ -73,7 +71,6 @@ def _conversation(turns: int) -> Messages:
 
 
 def _tool_call(name: str, tool_use_id: str, text: str) -> Messages:
-    """A tool use of ``name`` and the result that answers it."""
     tool_use = ToolUse(toolUseId=tool_use_id, name=name, input={})
     return [
         Message(role="assistant", content=[ContentBlock(toolUse=tool_use)]),
@@ -90,7 +87,6 @@ def _tool_history(tokens: list[int]) -> Messages:
 
 
 def _result_items(messages: Messages) -> list[dict]:
-    """The first item of every tool result in ``messages``."""
     return [
         block["toolResult"]["content"][0]
         for message in messages
@@ -193,8 +189,6 @@ class TestOffloadTruncate:
 
 
 class TestOffloadBuilder:
-    """Tests for what ``Offload.drop``, ``Offload.truncate``, and ``Offload.summarize`` build."""
-
     @pytest.mark.asyncio
     async def test_drop_replaces_a_tool_result_with_a_marker_naming_its_size(self):
         messages = [make_tool_result_message("x" * 100)]
@@ -252,8 +246,6 @@ class TestOffloadBuilder:
 
 
 class TestMessageLevelWithRoleAlternation:
-    """Tests for the history a message-level pass leaves behind."""
-
     @pytest.mark.parametrize(("target", "role"), [("assistant_text", "assistant"), ("user_text", "user")])
     @pytest.mark.asyncio
     async def test_replaces_the_text_of_every_message_of_the_role_between_the_first_and_the_last(self, target, role):
@@ -418,7 +410,6 @@ _IMAGE_TOKENS = heuristic_count_tokens([Message(role="user", content=[_IMAGE])])
 
 
 def _with_image() -> Message:
-    """A user message holding text, an image, and a tool result."""
     tool_result = ToolResult(toolUseId="tool-1", status="success", content=[{"text": "x" * 4000}])
     return Message(
         role="user",
@@ -466,7 +457,6 @@ async def _count_text_only(messages: Messages) -> int:
 
 
 def _media_blind_context(messages: Messages):
-    """A context whose model counts media as no tokens at all."""
     model = heuristic_model(count_tokens=unittest.mock.AsyncMock(side_effect=_count_text_only))
     return make_context(messages, model=model)
 
@@ -544,8 +534,6 @@ def _all_text(messages: Messages) -> list[str]:
 
 
 class TestPinnedMessageProtection:
-    """Tests for the messages a pin keeps in the history."""
-
     @pytest.mark.asyncio
     async def test_keeps_a_pinned_message(self):
         messages = [
@@ -643,8 +631,6 @@ class TestOverflowBypass:
 
 
 class TestWithoutPreserved:
-    """Tests for the matches a ``preserve_recent`` leaves to act on."""
-
     @pytest.mark.parametrize(
         ("preserve_recent", "count", "left"),
         [
@@ -681,8 +667,6 @@ class TestCollectRemovableWithPair:
 
 
 class TestInsertMarker:
-    """Tests for where a marker standing in for removed messages lands."""
-
     _MARKER = ContentBlock(text="marker")
 
     def test_inserts_an_assistant_message_between_user_messages(self):
@@ -844,8 +828,6 @@ class TestRepeatedMessageLevelReduction:
 
 
 class TestParseCondition:
-    """Tests for the value each condition accepts."""
-
     _EXPECTED = {
         "context_utilization": 'a "N%" string up to "100%" or a whole token count of at least 1000',
         "preserve_recent": 'a "N%" string below "100%" or a whole message count',
@@ -908,8 +890,6 @@ class TestParseCondition:
 
 
 class TestConditionResolution:
-    """Tests for the conditions a strategy resolves against an agent and its history."""
-
     @pytest.mark.parametrize("name", ["utilisation", "threshold", "preserveRecent"])
     def test_rejects_an_unknown_condition_name(self, name):
         # ``.when()`` takes keywords, so a name it does not define only reaches the conditions as a mapping.
@@ -982,8 +962,6 @@ _BLOCK_METHODS = {
 
 
 class TestToolResultsThatAlreadyHoldAPlaceholder:
-    """Tests that a pass over the placeholder it already left is a no-op."""
-
     @staticmethod
     def _history() -> Messages:
         return [*_tool_history([1000, 1000]), _text("user", "next")]
@@ -1183,8 +1161,6 @@ class TestUnconditionedStrategyWarning:
 
 
 class TestWholeMessageConditions:
-    """Tests for the conditions ``Offload.<method>("*")`` needs before it acts."""
-
     @pytest.mark.parametrize("method", ["drop", "truncate", "summarize"])
     @pytest.mark.parametrize("conditions", [{}, {"preserve_recent": 0}, {"preserve_recent": "0%"}])
     def test_rejects_conditions_that_leave_it_acting_on_every_message(self, method, conditions):
@@ -1208,8 +1184,6 @@ class TestWholeMessageConditions:
 
 
 class TestMediaConditions:
-    """Tests for the conditions ``Offload.<method>("media")`` needs before it acts."""
-
     @pytest.mark.parametrize("method", ["drop", "truncate", "summarize"])
     @pytest.mark.parametrize(
         "conditions",

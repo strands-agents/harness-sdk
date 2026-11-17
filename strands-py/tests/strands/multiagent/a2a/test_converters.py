@@ -172,7 +172,6 @@ def test_convert_content_blocks_skips_non_text():
 
 
 def test_convert_an_offloaded_block_to_the_text_the_model_receives():
-    """Test that an offload placeholder converts to its text, without its provenance."""
     content_blocks = [offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)]
 
     parts = convert_content_blocks_to_parts(content_blocks)

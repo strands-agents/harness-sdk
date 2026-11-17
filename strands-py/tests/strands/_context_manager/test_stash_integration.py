@@ -27,7 +27,6 @@ async def _stash_all(stash, messages: Messages) -> None:
 
 
 async def _retrieve(stash, reference, max_result_tokens=None, **inputs):
-    """What ``retrieve_context`` returns for a reference."""
     tool = _create_retrieval_tool(stash, max_result_tokens)
     return await tool._tool_func({"toolUseId": "t1", "input": {"reference": reference, **inputs}})
 
@@ -37,12 +36,10 @@ def _text_message(role: str, text: str, tracking_id: str) -> Message:
 
 
 def _tool_result_content(message: Message) -> list:
-    """The items of the tool result a message's first block holds."""
     return message["content"][0]["toolResult"]["content"]
 
 
 def _marker_of(messages: Messages) -> ContentBlock:
-    """The first placeholder standing in for removed messages."""
     return next(block for message in messages for block in message["content"] if is_offloaded(block))
 
 
@@ -237,7 +234,6 @@ def _server_side_history() -> Messages:
 
 
 def _server_side_model():
-    """A model that reports the server-side summary capability and returns ``_COMPACTION``."""
     model = heuristic_model(summarize=unittest.mock.AsyncMock(return_value=SummarizeResult(content=[_COMPACTION])))
     model.model_info.capabilities.server_side_summary = True
     return model

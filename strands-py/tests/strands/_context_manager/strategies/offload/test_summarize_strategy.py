@@ -93,7 +93,6 @@ def _base_summarize(model):
 
 
 def _replay_kwargs(agent, instructions: str | None = None) -> dict:
-    """Return the keyword arguments a run summary passes to ``summarize()`` for ``agent``."""
     return {
         "tool_specs": AGENT_TOOLS,
         "system_prompt": "You are a coding agent.",
@@ -134,7 +133,6 @@ def _mock_agent(
     server_side_summary: bool = False,
     system_prompt: Any = AGENT_PROMPT,
 ) -> tuple[unittest.mock.MagicMock, unittest.mock.MagicMock]:
-    """An agent on a :func:`_base_model`, with a system prompt, a tool, a cancel signal and agent metadata."""
     model = _base_model(server_side_summary)
     agent = make_agent(messages, model)
     agent.system_prompt_content = system_prompt
@@ -143,18 +141,15 @@ def _mock_agent(
 
 
 def _mock_summarize() -> unittest.mock.AsyncMock:
-    """A ``summarize`` mock replying with a client-side summary."""
     return unittest.mock.AsyncMock(return_value=_summary("Summary of multimodal content"))
 
 
 def _context(messages: Messages, utilization: float = 0.5, **members: Any) -> ContextState:
-    """A context whose model counts tokens heuristically and replies with a mocked ``summarize``."""
     model = heuristic_model(**{"summarize": _mock_summarize(), **members})
     return make_context(messages, utilization=utilization, model=model)
 
 
 def _agent_context(messages: Messages, agent: Any, utilization: float, request: Any = None) -> ContextState:
-    """A context over an agent :func:`_mock_agent` built."""
     return ContextState(messages=messages, agent=agent, utilization=utilization, invocation_context=request)
 
 
@@ -198,7 +193,6 @@ def _text(role: str, text: str) -> Message:
 
 
 def _texts(messages: Messages) -> list[list[str]]:
-    """The text of every block, message by message."""
     return [[block["text"] for block in message["content"]] for message in messages]
 
 
@@ -1157,7 +1151,6 @@ class TestClientSideSummariesUseModelSummarize:
 
     @staticmethod
     def _block_request(label: str, content: str) -> Messages:
-        """The self-contained request one block's summary sends."""
         return [
             Message(
                 role="user",
@@ -1188,8 +1181,6 @@ class TestClientSideSummariesUseModelSummarize:
 
 
 class TestConditionsDecideWhenItFires:
-    """Tests that the conditions decide only when the strategy fires."""
-
     @pytest.mark.asyncio
     async def test_fires_when_utilization_exceeds_threshold(self):
         messages = [_text("user", "initial question"), make_tool_result_message(LARGE_TEXT), _text("assistant", "last")]
@@ -1217,8 +1208,6 @@ class TestConditionsDecideWhenItFires:
 
 
 class TestSummarizingMessageRuns:
-    """Tests that a message-level pass summarizes each contiguous run on its own."""
-
     @pytest.mark.asyncio
     async def test_summarizes_each_contiguous_run_separately_around_pinned_messages(self):
         summarize = unittest.mock.AsyncMock(side_effect=[_summary("late run"), _summary("early run")])
@@ -1337,8 +1326,6 @@ class TestABlockThresholdOnTheMessageTarget:
 
 
 class TestSummarizerDiagnosticsAndModelChoice:
-    """Tests the summarizer's logging, usage accounting and model resolution."""
-
     @pytest.mark.asyncio
     async def test_logs_why_a_media_block_was_offloaded_unsummarized(self, caplog):
         image = ContentBlock(image={"format": "png", "source": {"bytes": b"\x00" * 4000}})

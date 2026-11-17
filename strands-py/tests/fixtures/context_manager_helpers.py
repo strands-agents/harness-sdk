@@ -18,7 +18,6 @@ from strands.types.tools import ToolResult, ToolResultContent
 
 
 def make_tool_result_message(text: str, tool_use_id: str = "tool-123") -> Message:
-    """A user message holding one successful tool result with the given text."""
     tool_result = ToolResult(toolUseId=tool_use_id, status="success", content=[{"text": text}])
     return Message(role="user", content=[ContentBlock(toolResult=tool_result)])
 
@@ -36,7 +35,6 @@ def without_tracking_ids(messages: Messages) -> Messages:
 
 
 def offloaded_by(block: ContentBlock | ToolResultContent) -> str | None:
-    """The offload method that left ``block`` as a placeholder, or None when it is not one."""
     return block["offloaded"]["method"] if is_offloaded(block) else None
 
 
@@ -54,7 +52,6 @@ def heuristic_count_tokens(messages: Messages) -> int:
 
 
 def _measured_items(messages: Messages) -> list[Any]:
-    """The blocks of ``messages``, with a tool result's own items in its place."""
     return [
         item
         for message in messages
@@ -70,7 +67,6 @@ def _item_tokens(item: Any) -> int:
 
 
 def heuristic_model(**members: Any) -> unittest.mock.MagicMock:
-    """A model counting tokens with :func:`heuristic_count_tokens`, with ``members`` set over it."""
     model = unittest.mock.MagicMock()
     model.count_tokens = unittest.mock.AsyncMock(side_effect=heuristic_count_tokens)
     model.context_window_limit = DEFAULT_CONTEXT_WINDOW_LIMIT
@@ -82,7 +78,6 @@ def heuristic_model(**members: Any) -> unittest.mock.MagicMock:
 
 
 def make_agent(messages: Messages | None = None, model: Any = None) -> unittest.mock.MagicMock:
-    """A mock agent over ``messages``, whose model defaults to :func:`heuristic_model`."""
     agent = unittest.mock.MagicMock()
     agent.agent_id = "test-agent"
     agent.session_id = "test-session"
@@ -101,7 +96,6 @@ def make_context(
     overflow: bool = False,
     model: Any = None,
 ) -> ContextState:
-    """A :class:`ContextState` over a mock agent whose model counts tokens with :func:`heuristic_count_tokens`."""
     return ContextState(
         messages=messages,
         agent=make_agent(messages, model),

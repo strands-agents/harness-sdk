@@ -82,8 +82,6 @@ class TestBuildPreview:
 
 
 class TestTruncateToolResultBlock:
-    """Tests for the tool result split into a preview and the items kept as they are."""
-
     def test_truncates_large_text_content(self):
         large_text = "x" * 50000
         tool_result = ToolResult(toolUseId="tool-1", status="success", content=[{"text": large_text}])

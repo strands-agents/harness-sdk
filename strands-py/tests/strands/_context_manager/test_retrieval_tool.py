@@ -312,8 +312,6 @@ class TestInvalidLineRange:
 
 
 class TestBlockText:
-    """Tests for the searchable text a block holds."""
-
     def test_reads_a_text_block(self):
         assert _block_text({"text": "hello"}) == "hello"
 

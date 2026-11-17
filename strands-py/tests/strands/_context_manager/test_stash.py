@@ -93,8 +93,6 @@ class TestStashKeys:
 
 
 class TestStoreRemoved:
-    """Tests for the reference a run of removed messages is retrievable under."""
-
     @staticmethod
     def _run(text: str) -> list[Message]:
         return [Message(role="assistant", content=[ContentBlock(text=text)])]
@@ -110,8 +108,6 @@ class TestStoreRemoved:
 
 
 class TestEnsureStashed:
-    """Tests for the reference an offload placeholder carries for the block it replaces."""
-
     @pytest.mark.asyncio
     async def test_references_a_tool_result_by_tool_use_id_and_any_other_block_by_position(self, stash):
         tool_result = ContentBlock(toolResult=ToolResult(toolUseId="tu-1", status="success", content=[{"text": "a"}]))
@@ -140,8 +136,6 @@ class TestEnsureStashed:
 
 
 class TestKeysOf:
-    """Tests for the keys stored under one reference id."""
-
     @pytest.mark.asyncio
     async def test_returns_the_keys_in_index_order(self, stash):
         for block_index in (2, 0, 1):
