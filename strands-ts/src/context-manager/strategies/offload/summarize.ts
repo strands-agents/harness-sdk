@@ -27,6 +27,7 @@ import {
   removeMessages,
   repairAlternation,
   stashRemoved,
+  withPairs,
 } from '../../message-trimming.js'
 import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
@@ -356,7 +357,7 @@ function withoutReasoning(messages: Message[]): Message[] {
  * A tool use in message 0 or a pin among the summarized messages hands the pass to the client-side summary.
  */
 function serverSideEnd(messages: Message[], model: Model, removable: Message[]): number | undefined {
-  const end = endOf(messages, removable)
+  const end = endOf(messages, withPairs(messages, removable))
   if (end <= 1) return undefined
   // The summary replaces message 0's tool results, which would orphan a tool use kept there.
   if (messages[0]!.content.some((block) => block.type === 'toolUseBlock')) return undefined

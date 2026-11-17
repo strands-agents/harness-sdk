@@ -769,6 +769,60 @@ describe('a summarized run replays the agent request', () => {
 })
 
 describe('server-side summary', () => {
+  // The next model call needs the current prompt intact (#6196).
+  it('keeps the current prompt outside a server-side summary without preserveRecent', async () => {
+    const messages = serverSideMessages()
+    const original = turns(messages)
+    const { agent, summarize } = mockAgent(messages, { serverSideSummary: true })
+    const summary = new SummaryBlock({ provider: 'anthropic', text: 'compacted' })
+    summarize.mockResolvedValue({ content: [summary] })
+
+    expect(
+      await Offload.summarize('*').when({ contextUtilization: '70%' }).apply({ messages, agent, utilization: 0.9 })
+    ).toBe(true)
+
+    expect(turns(summarize.mock.calls[0]![0])).toEqual(original.slice(0, -1))
+    expect(turns(messages)).toEqual([original[0], { role: 'assistant', content: [summary] }, original.at(-1)])
+  })
+
+  // A pending tool result and its call stay together outside the summary (#6196).
+  it.each([
+    { history: true, preserveRecent: undefined },
+    { history: true, preserveRecent: 1 },
+    { history: false, preserveRecent: undefined },
+    { history: false, preserveRecent: 1 },
+  ])('keeps the pending tool pair with history=$history and preserveRecent=$preserveRecent', async (options) => {
+    const prefix = options.history ? serverSideMessages().slice(0, 3) : serverSideMessages().slice(0, 1)
+    const call = new ToolUseBlock({ toolUseId: 'pending', name: 'readFile', input: {} })
+    const result = new ToolResultBlock({ toolUseId: 'pending', status: 'success', content: [new TextBlock('report')] })
+    const messages = [
+      ...prefix,
+      new Message({ role: 'assistant', content: [call] }),
+      new Message({ role: 'user', content: [result] }),
+    ]
+    const original = turns(messages)
+    const { agent, summarize } = mockAgent(messages, { serverSideSummary: true })
+    const summary = new SummaryBlock({ provider: 'anthropic', text: 'compacted' })
+    summarize.mockResolvedValue({ content: [summary] })
+
+    expect(
+      await Offload.summarize('*')
+        .when({
+          contextUtilization: '70%',
+          ...(options.preserveRecent !== undefined && { preserveRecent: options.preserveRecent }),
+        })
+        .apply({ messages, agent, utilization: 0.9 })
+    ).toBe(options.history)
+
+    if (options.history) {
+      expect(turns(summarize.mock.calls[0]![0])).toEqual(turns(prefix))
+      expect(turns(messages)).toEqual([original[0], { role: 'assistant', content: [summary, call] }, original.at(-1)])
+    } else {
+      expect(summarize).not.toHaveBeenCalled()
+      expect(turns(messages)).toEqual(original)
+    }
+  })
+
   /** A history where only message 3 is over a 100-token `blockThreshold`. */
   const sizeFilteredMessages = (): Message[] => [
     new Message({ role: 'user', content: [new TextBlock('task')] }),
