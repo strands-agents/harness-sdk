@@ -542,8 +542,8 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   .toolkit__build-sdk {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 24px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 36px;
     align-items: end;
     padding: 22px 34px;
   }
@@ -934,7 +934,6 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     }
 
     .toolkit__build-action,
-    .toolkit__build-sdk-action,
     .toolkit__card-read {
       right: 16px;
     }
