@@ -1,6 +1,6 @@
 import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
-import { Command } from 'commander'
+import { Command, Option } from 'commander'
 
 import {
   isTemporaryDevCommand,
@@ -48,7 +48,36 @@ export interface ParsedArgs {
 
 export type CliRunMode = 'acp' | 'ink' | 'plain' | 'print'
 
+type ChatCommandName = 'strands' | 'strands dev' | 'strands dev init'
+
+type CommandSummary = readonly [usage: string, summary: string]
+
 const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'interventions'] as const
+
+const COMMAND_USAGE_WIDTH = 26
+
+const TEMPORARY_DEV_COMMAND_SUMMARIES: readonly CommandSummary[] = [
+  ['test [experiment]', 'TEMPORARY: run the agent on an experiment'],
+  ['optimize [experiment]', 'TEMPORARY: tune the agent against an experiment'],
+]
+
+const COMMAND_HELP: Record<ChatCommandName, { description: string; commands: readonly CommandSummary[] }> = {
+  strands: {
+    description: 'Chat with a Strands harness agent.',
+    commands: [
+      ['dev', 'open a local harness workspace'],
+      ['update', 'update the globally installed CLI'],
+    ],
+  },
+  'strands dev': {
+    description: 'Chat with the agent of a local harness workspace. Plain strands keeps its default agent.',
+    commands: [['init', 'set up a workspace and exit'], ...TEMPORARY_DEV_COMMAND_SUMMARIES],
+  },
+  'strands dev init': {
+    description: 'Set up a local harness workspace, then exit without a model request.',
+    commands: [],
+  },
+}
 
 export function parseArgs(argv: string[]): ParsedArgs {
   if (argv[0] === 'update') {
@@ -56,28 +85,34 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
   if (argv[0] === 'dev' && isTemporaryDevCommand(argv[1])) {
     const { workspace, ...temporaryCommand } = parseTemporaryDevCommandArguments(argv[1], argv.slice(2))
-    const parsed = parseChatArgs(workspace ? ['--workspace', workspace] : [], false)
+    const parsed = parseChatArgs(workspace ? ['--workspace', workspace] : [], 'strands dev')
     return { ...parsed, dev: { ...parsed.dev!, temporaryCommand } }
   }
   if (argv[0] === 'dev') {
     const init = argv[1] === 'init'
-    return parseChatArgs(argv.slice(init ? 2 : 1), init)
+    return parseChatArgs(argv.slice(init ? 2 : 1), init ? 'strands dev init' : 'strands dev')
   }
-  return parseChatArgs(argv)
+  return parseChatArgs(argv, 'strands')
 }
 
-const parseChatArgs = (argv: string[], devInit?: boolean): ParsedArgs => {
+const commandsHelp = (commands: readonly CommandSummary[]): string =>
+  `\nCommands:\n${commands.map(([usage, summary]) => `  ${usage.padEnd(COMMAND_USAGE_WIDTH)}${summary}\n`).join('')}`
+
+const chatProgram = (name: ChatCommandName): Command => {
   const collect = (value: string, previous: string[]): string[] => [...previous, value]
+  const dev = name !== 'strands'
+  const init = name === 'strands dev init'
+  const { description, commands } = COMMAND_HELP[name]
   const program = new Command()
   program
-    .name(devInit === undefined ? 'strands' : devInit ? 'strands dev init' : 'strands dev')
-    .description('Chat with a Strands harness agent.')
+    .name(name)
+    .description(description)
     .version(readCliVersion())
-    .argument('[request]', 'an initial request to answer')
-    .option('-p, --print', 'answer the request and exit, without entering the chat loop')
-    .option('--prompt <text>', 'initial request (equivalent to the positional request)')
-    .option('--acp-server', 'serve the agent over ACP on stdin/stdout')
-    .option('--setup', 'open the interactive provider and agent setup wizard')
+    .argument('[request]', init ? '' : 'an initial request to answer')
+    .addOption(new Option('-p, --print', 'answer the request and exit, without entering the chat loop').hideHelp(init))
+    .addOption(new Option('--prompt <text>', 'initial request (equivalent to the positional request)').hideHelp(init))
+    .addOption(new Option('--acp-server', 'serve the agent over ACP on stdin/stdout').hideHelp(dev))
+    .addOption(new Option('--setup', 'open the interactive provider and agent setup wizard').hideHelp(dev))
     .option('--agent <path>', 'load an agent project ZIP, folder, or agent.ts/agent.py')
     .option('--set <field=value>', 'override any portable agent config field (repeatable)', collect, [])
     .option('--env-file <path>', 'load an explicitly trusted env file (repeatable)', collect, [])
@@ -102,26 +137,30 @@ const parseChatArgs = (argv: string[], devInit?: boolean): ParsedArgs => {
     .allowExcessArguments(false)
     .exitOverride()
 
-  if (devInit === undefined) {
-    program.addHelpText(
-      'after',
-      '\nCommands:\n  dev                       open a local harness workspace\n  update                    update the globally installed CLI\n'
-    )
-  } else {
+  if (init) program.usage('[options]')
+  if (dev) {
     program
       .option('--workspace <path>', 'open this dev workspace, or create strands-dev/ in this folder')
       .option('--search-root <path>', 'search another folder for harnesses (repeatable)', collect, [])
       .option('--create <language>', 'create a cli, typescript, or python harness')
   }
+  if (commands.length) program.addHelpText('after', commandsHelp(commands))
+  return program
+}
+
+const parseChatArgs = (argv: string[], name: ChatCommandName): ParsedArgs => {
+  const dev = name !== 'strands'
+  const init = name === 'strands dev init'
+  const program = chatProgram(name)
   program.parse(argv, { from: 'user' })
   const opts = program.opts()
-  if (devInit !== undefined) {
+  if (dev) {
     if (opts.setup || opts.acpServer) program.error('error: strands dev does not support --setup or --acp-server.')
     if (opts.create !== undefined && !['cli', 'typescript', 'python'].includes(opts.create)) {
       program.error('error: --create must be cli, typescript, or python.')
     }
     if (opts.create && opts.agent) program.error('error: --create and --agent cannot be combined.')
-    if (devInit && (opts.print || opts.prompt !== undefined || program.args.length > 0)) {
+    if (init && (opts.print || opts.prompt !== undefined || program.args.length > 0)) {
       program.error('error: strands dev init configures a workspace and does not accept a request.')
     }
   }
@@ -129,9 +168,7 @@ const parseChatArgs = (argv: string[], devInit?: boolean): ParsedArgs => {
     program.error('error: pass the initial request either positionally or with --prompt, not both.')
   }
   return {
-    ...(devInit === undefined
-      ? {}
-      : { dev: { init: devInit, workspace: opts.workspace, searchRoots: opts.searchRoot, create: opts.create } }),
+    ...(dev ? { dev: { init, workspace: opts.workspace, searchRoots: opts.searchRoot, create: opts.create } } : {}),
     update: false,
     request: opts.prompt ?? program.args[0],
     oneShot: Boolean(opts.print),
