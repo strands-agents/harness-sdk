@@ -27,6 +27,7 @@ Which model behaviors the SDKs check against live models, and on which models. E
 
 - `cases`: one entry per conformance case, keyed by its id. `passes` says what the case must show. `requires` names a `ModelInfo` field (`capabilities.promptCaching`); the case applies to a model only when that field is known on the model's resolved model info, and equal to `equals` when the case gives one. A case without `requires` applies to every target. The gate reads the resolved info, not `model-info.json`, so a provider that turns a capability off is not asked to show it.
 - `targets`: the provider and model id pairs every case runs on. `provider` is a shared id (`anthropic`, `bedrock`, `mantle`, `mantle-responses`, `openai`, `openai-responses`, `gemini`, `mistral`) that each SDK maps to one of its model classes. To cover a new model, add its entry to `model-info.json` and a row here.
+- `knownFailures`: target and case pairs that fail today because of a tracked bug, each with its issue number. The case still runs and is recorded as `failed`, but the test run does not go red for it. The run goes red when the case starts passing, so the entry is removed together with the fix.
 
 Every SDK implements every case and maps every provider, or lists the ones it leaves out with a reason; a test in each SDK fails when a case id or provider id here is in neither list.
 

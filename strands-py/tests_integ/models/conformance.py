@@ -25,6 +25,10 @@ _SHARED = json.loads(
     (pathlib.Path(__file__).parents[2] / ".." / "shared" / "conformance.json").read_text(encoding="utf-8")
 )
 CASES: dict[str, dict[str, Any]] = _SHARED["cases"]
+# (provider, model, case) -> the issue that tracks why the case fails there.
+KNOWN_FAILURES: dict[tuple[str, str, str], int] = {
+    (row["provider"], row["model"], row["case"]): row["issue"] for row in _SHARED["knownFailures"]
+}
 
 # Shared case and provider ids this SDK does not run, with the reason.
 OMITTED_CASES: dict[str, str] = {}
@@ -166,8 +170,11 @@ def provider_error_reason(error: BaseException | None) -> str | None:
 
 
 def _outcome(report: pytest.TestReport, error: BaseException | None) -> dict[str, str]:
-    if report.passed:
+    # A strict xfail that passes reports as failed with no exception, and one that fails reports as skipped.
+    if report.passed or (report.failed and error is None):
         return {"status": "passed"}
+    if hasattr(report, "wasxfail"):
+        return {"status": "failed"}
     if not report.skipped:
         reason = provider_error_reason(error)
         return {"status": "error", "reason": reason} if reason else {"status": "failed"}
