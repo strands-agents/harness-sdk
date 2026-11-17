@@ -8,6 +8,7 @@ import type { ChatDiffLine } from '../../agent/types.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
 import { useDevPanelClicks } from '../../ui/panels/dev.js'
+import { clipboardNoticeText, useClipboard } from '../../ui/clipboard.js'
 import { BROWSER_KEY, browserHints, BrowserView, useBrowserNotice } from './browser.js'
 import { ExperimentPicker, type PickerSection } from './picker.js'
 import { CaseReport } from './report.js'
@@ -100,6 +101,8 @@ const FULL_SETUP_ROWS = 12
 const DIFF_INDENT = 2
 const REVIEW_CHROME_ROWS = 3
 const MAX_EDIT_ROWS = 3
+const MAX_NOTICE_ROWS = 3
+const NOTICE_INDENT = 4
 const RUNNING_CHROME_ROWS = 5
 
 export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
@@ -1219,12 +1222,20 @@ const ReviewView = ({
     [review.edits]
   )
   const scroll = useSyncedState(0)
+  const { copyText, clipboardNotice } = useClipboard()
   const index = cursor.index
+  const focused = review.edits[index]
   const accepted = review.edits.filter((edit) => edit.accepted && !edit.unavailable).length
   const applied = review.applied !== undefined
+  const notice = clipboardNotice
+    ? clipboardNoticeText(clipboardNotice)
+    : focused?.unavailable && !applied
+      ? `${focused.unavailable} Press c to copy the new text, and a to check the file again.`
+      : undefined
+  const noticeRows = notice ? wrapWords(notice, Math.max(1, width - NOTICE_INDENT)).slice(0, MAX_NOTICE_ROWS) : []
   const listRows = Math.min(review.edits.length, MAX_EDIT_ROWS)
   const checkRows = useMemo(() => testCheckRows(review, width), [review, width])
-  const diffHeight = Math.max(1, height - REVIEW_CHROME_ROWS - checkRows.length - listRows)
+  const diffHeight = Math.max(1, height - REVIEW_CHROME_ROWS - checkRows.length - listRows - noticeRows.length)
   const rows = useMemo(() => wrapDiff(diffs[index] ?? [], width), [diffs, index, width])
   const page = Math.max(1, diffHeight - 1)
   const lastOffset = Math.max(0, rows.length - page)
@@ -1257,7 +1268,10 @@ const ReviewView = ({
     else if (typed === 'a' || typed === 'x') {
       const at = cursor.current()
       const edit = review.edits[at]
-      if (edit && (typed === 'x' || !edit.unavailable)) session.accept(at, typed === 'a')
+      if (edit && (typed === 'a' || !edit.unavailable)) session.accept(at, typed === 'a')
+    } else if (typed === 'c') {
+      const edit = review.edits[cursor.current()]
+      if (edit) copyText(edit.after)
     } else if (key.return && acceptedNow() > 0) session.apply()
   })
   const gain = `${formatObjective(review.baseline, review.measure)} → ${formatObjective(review.best, review.measure)} on ${review.measuredOn} (${formatObjectiveChange(review.best - review.baseline, review.measure)})`
@@ -1326,12 +1340,14 @@ const ReviewView = ({
       <Rule width={width} />
       <DiffLines rows={rows} height={diffHeight} offset={Math.min(scroll.value, lastOffset)} />
       <Fill />
+      {noticeRows.map((row) => (
+        <Line key={row} tone={clipboardNotice?.status === 'success' ? 'muted' : 'warning'}>{`  ${row}`}</Line>
+      ))}
       <KeyHints
         hints={[
           ...(review.edits.length > 1 ? ['←→ edit'] : []),
           ...(scrolls ? ['↑↓ scroll'] : []),
-          'a accept',
-          'x reject',
+          ...(focused?.unavailable ? ['c copy the new text', 'a check again'] : ['a accept', 'x reject']),
           accepted > 0 ? 'Enter apply accepted' : 'accept an edit to apply',
           ...browserHints(browser),
           BACK_HINT,

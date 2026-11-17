@@ -1652,6 +1652,58 @@ describe('OptimizePanel', () => {
     expect(text()).toContain('Could not change agent.py')
   })
 
+  it('shouldSayWhyAnEditCannotBeAcceptedAndCheckTheFileAgainWhenTheUserPressesA', async () => {
+    const reason = 'Paste the new instructions into agent.ts yourself; the old text is not a plain string there.'
+    const { session } = optimizeSession(
+      reviewWithEdits({
+        edits: [
+          {
+            knob: 'instructions',
+            kind: 'text',
+            label: 'instructions',
+            before: 'Be quick.',
+            after: 'Check the date.',
+            accepted: false,
+            unavailable: reason,
+          },
+        ],
+      })
+    )
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    await press('a')
+
+    expect(text().replace(/\s+/gu, ' ')).toContain(
+      `${reason} Press c to copy the new text, and a to check the file again.`
+    )
+    expect(text()).toContain('c copy the new text · a check again')
+    expect(text()).not.toContain('a accept')
+    expect(session.accept).toHaveBeenCalledWith(0, true)
+  })
+
+  it('shouldCopyTheNewTextOfTheEditWhenTheUserPressesC', async () => {
+    const { session } = optimizeSession(
+      reviewWithEdits({
+        edits: [
+          {
+            knob: 'instructions',
+            kind: 'text',
+            label: 'instructions',
+            before: 'Be quick.',
+            after: 'Check the date.',
+            accepted: false,
+            unavailable: 'Paste the new instructions into agent.ts yourself.',
+          },
+        ],
+      })
+    )
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    await press('c')
+
+    await vi.waitFor(() => expect(text()).toContain('15 chars copied to clipboard'))
+  })
+
   it('shouldNotApplyWhenTheOnlyAcceptedEditIsRejectedInTheSameBurstAsEnter', async () => {
     const reviewState: OptimizeState = {
       step: 'review',
