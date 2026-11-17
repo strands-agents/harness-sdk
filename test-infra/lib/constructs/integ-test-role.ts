@@ -2,6 +2,17 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 
+// Bedrock id prefixes of the model families in shared/model-info.json. The model conformance tests run on any
+// model the table lists, so the role covers whole families and a new model needs no deploy.
+const CONFORMANCE_MODEL_FAMILIES = [
+  'anthropic.claude-',
+  'amazon.nova-',
+  'openai.gpt-',
+  'mistral.',
+  'xai.grok-',
+  'zai.glm-',
+];
+
 function requiredInternalEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -141,6 +152,11 @@ export class IntegTestRole extends Construct {
           'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-120b-1:0',
           // Default embedder for S3VectorSearchStrategy integration tests.
           'arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0',
+          // A cross-region profile also needs its foundation model in every region it routes to.
+          ...CONFORMANCE_MODEL_FAMILIES.flatMap((family) => [
+            `arn:aws:bedrock:*::foundation-model/${family}*`,
+            `arn:aws:bedrock:*:*:inference-profile/*.${family}*`,
+          ]),
         ],
       }),
     );

@@ -270,6 +270,30 @@ test('internal mode grants the Bedrock models the integ suites invoke', () => {
   );
 });
 
+test('internal mode grants the model families the conformance tests run on', () => {
+  const template = synth({ internal: true });
+
+  const policies = template.findResources('AWS::IAM::Policy');
+  const statements = Object.values(policies).flatMap(
+    (p: any) => p.Properties?.PolicyDocument?.Statement ?? [],
+  );
+  const invokeStatement = statements.find(
+    (statement: any) =>
+      Array.isArray(statement.Action) && statement.Action.includes('bedrock:InvokeModelWithResponseStream'),
+  );
+
+  expect(invokeStatement.Resource).toEqual(
+    expect.arrayContaining(
+      ['anthropic.claude-', 'amazon.nova-', 'openai.gpt-', 'mistral.', 'xai.grok-', 'zai.glm-'].flatMap(
+        (family) => [
+          `arn:aws:bedrock:*::foundation-model/${family}*`,
+          `arn:aws:bedrock:*:*:inference-profile/*.${family}*`,
+        ],
+      ),
+    ),
+  );
+});
+
 test('community mode does not attach the legacy broad policy', () => {
   const template = synth({ internal: false });
 
