@@ -729,10 +729,15 @@ describe('OpenAIDecisionModel', () => {
       answered: { question: 'also ok?', choices: 'boolean' },
     })
 
-    expect(result.answers).toEqual({ refused: new Uncertain('openai declined to answer'), answered: true })
-    expect(result.metadata.probabilities).toEqual({
-      refused: {},
-      answered: { true: 0.99, false: 0.010000000000000009 },
+    expect(result).toEqual({
+      answers: { refused: new Uncertain('openai declined to answer'), answered: true },
+      metadata: {
+        latencyMs: expect.any(Number),
+        providerName: 'openai',
+        modelId: 'gpt-6-luna',
+        probabilities: { refused: {}, answered: { true: 0.99, false: 0.010000000000000009 } },
+        confidence: { refused: 0, answered: 0.98 },
+      },
     })
   })
 
