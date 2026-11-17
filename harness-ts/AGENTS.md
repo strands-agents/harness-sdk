@@ -27,6 +27,8 @@ harness-ts/
 │   ├── internal.ts    # `@strands-agents/harness/internal`: plumbing for the CLI (resolve*, normalize*)
 │   └── tsconfig.json  # build project config (emits to ../dist)
 ├── test/              # vitest suite
+│   ├── scenarios/     # offline scenario tests, plus the recorder and scripted model both modes share
+│   └── integration/   # live-model tests (need AWS credentials); scenarios/ holds the live scenario tests
 ├── package.json
 └── vitest.config.ts
 ```
@@ -47,6 +49,7 @@ npm run type-check   # tsc --noEmit
 npm run lint         # eslint
 npm run format       # prettier --write
 npm test             # vitest
+npm run test:integ   # live-model tests; STRANDS_INTEG_MODEL and STRANDS_INTEG_SWITCH_MODEL pick the models
 npm run check        # lint + format:check + type-check + test:coverage
 ```
 
