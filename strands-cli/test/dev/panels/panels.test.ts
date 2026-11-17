@@ -1111,6 +1111,21 @@ describe('OptimizePanel', () => {
     expect(text()).toContain(verdict)
   })
 
+  it('shouldWrapTheTestCheckAtSpacesWhenThePanelIsNarrow', async () => {
+    const testCheck: TestCheck = { difference: 0.15, cases: 3, confidence: 0.9, range: [-0.11, 0.4] }
+    const { session } = optimizeSession(reviewWithEdits({ testCheck }))
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, width: 60, session }), 24)
+
+    const rows = text().split('\n')
+    const first = rows.findIndex((row) => row.includes('test check'))
+    const flat = text().replace(/\s+/gu, ' ')
+    expect(flat).toContain('test check +0.15 on 3 unseen test cases · 90% confidence range -0.11 to +0.40')
+    expect(flat).toContain('The range includes 0, so the gain may be luck. More test cases make the range narrower.')
+    expect(rows.slice(first, first + 5).join('\n')).not.toContain('…')
+    expect(rows.slice(first, first + 5).every((row) => row.trimEnd().length <= 60)).toBe(true)
+  })
+
   it('shouldSayThatNoTestCaseCheckedTheWinnerWhenTheRunHadNone', async () => {
     const { session } = optimizeSession(reviewWithEdits())
 

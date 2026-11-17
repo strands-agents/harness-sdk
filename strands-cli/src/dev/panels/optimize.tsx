@@ -3,6 +3,7 @@ import { useInput, usePaste } from 'ink'
 import stringWidth from 'string-width'
 
 import { createDiffPreview } from '../../agent/file-changes.js'
+import { wrapWords } from '../../terminal/text.js'
 import type { ChatDiffLine } from '../../agent/types.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
@@ -1026,24 +1027,33 @@ const checkLines = (check: TestCheck, measure: ObjectiveMeasure | undefined): re
   return [`${gain}${range}`, checkVerdict(check)]
 }
 
-const TestCheckLines = ({ review }: { review: OptimizeReview }): ReactElement => {
-  if (!review.testCheck)
-    return (
-      <Field
-        label={CHECK_LABEL}
-        value="No test cases were left to check the winner on unseen cases."
-        labelWidth={CHECK_LABEL_WIDTH}
-        tone="muted"
-      />
-    )
-  const [result, verdict] = checkLines(review.testCheck, review.measure)
-  return (
-    <>
-      <Field label={CHECK_LABEL} value={result} labelWidth={CHECK_LABEL_WIDTH} />
-      <Field label="" value={verdict} labelWidth={CHECK_LABEL_WIDTH} tone="muted" />
-    </>
-  )
+interface CheckRow {
+  readonly text: string
+  readonly muted: boolean
 }
+
+const testCheckRows = (review: OptimizeReview, width: number): CheckRow[] => {
+  const room = Math.max(1, width - CHECK_LABEL_WIDTH)
+  const wrapped = (text: string, muted: boolean): CheckRow[] =>
+    wrapWords(text, room).map((part) => ({ text: part, muted }))
+  if (!review.testCheck) return wrapped('No test cases were left to check the winner on unseen cases.', true)
+  const [result, verdict] = checkLines(review.testCheck, review.measure)
+  return [...wrapped(result, false), ...wrapped(verdict, true)]
+}
+
+const TestCheckLines = ({ rows }: { rows: readonly CheckRow[] }): ReactElement => (
+  <>
+    {rows.map((row, index) => (
+      <Field
+        key={index}
+        label={index === 0 ? CHECK_LABEL : ''}
+        value={row.text}
+        labelWidth={CHECK_LABEL_WIDTH}
+        {...(row.muted ? { tone: 'muted' as const } : {})}
+      />
+    ))}
+  </>
+)
 
 const ReviewView = ({
   session,
@@ -1061,8 +1071,8 @@ const ReviewView = ({
   const accepted = review.edits.filter((edit) => edit.accepted && !edit.unavailable).length
   const applied = review.applied !== undefined
   const listRows = Math.min(review.edits.length, MAX_EDIT_ROWS)
-  const checkRows = review.testCheck ? 2 : 1
-  const diffHeight = Math.max(1, height - REVIEW_CHROME_ROWS - checkRows - listRows)
+  const checkRows = useMemo(() => testCheckRows(review, width), [review, width])
+  const diffHeight = Math.max(1, height - REVIEW_CHROME_ROWS - checkRows.length - listRows)
   const rows = useMemo(() => wrapDiff(diffs[index] ?? [], width), [diffs, index, width])
   const page = Math.max(1, diffHeight - 1)
   const lastOffset = Math.max(0, rows.length - page)
@@ -1150,7 +1160,7 @@ const ReviewView = ({
   return (
     <>
       {title}
-      <TestCheckLines review={review} />
+      <TestCheckLines rows={checkRows} />
       <ItemList
         items={items}
         selected={index}
