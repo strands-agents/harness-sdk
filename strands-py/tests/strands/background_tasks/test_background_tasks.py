@@ -21,7 +21,7 @@ from strands.types.tools import ToolResult, ToolSpec, ToolUse
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
-_MANAGE_TOOL_NAME = "manage_background_task"
+_MANAGE_TOOL_NAME = "strands_manage_background_task"
 
 
 def _assistant_text(text: str) -> dict[str, Any]:
@@ -35,12 +35,12 @@ def _assistant_tool_use(tool_name: str, tool_use_id: str, tool_input: dict[str, 
     }
 
 
-def _deliveries(messages: Messages) -> list[ToolUse]:
+def _deliveries(messages: Messages, tool_name: str = _MANAGE_TOOL_NAME) -> list[ToolUse]:
     return [
         block["toolUse"]
         for message in messages
         for block in message["content"]
-        if "toolUse" in block and block["toolUse"]["name"] == _MANAGE_TOOL_NAME
+        if "toolUse" in block and block["toolUse"]["name"] == tool_name
     ]
 
 
@@ -60,12 +60,10 @@ def _schema_properties(spec: ToolSpec) -> dict[str, Any]:
     return spec["inputSchema"]["json"]["properties"]
 
 
-async def _invoke_management_tool(
-    agent: Agent, tool_input: dict[str, Any], tool_name: str = _MANAGE_TOOL_NAME
-) -> ToolResult:
+async def _invoke_management_tool(agent: Agent, tool_input: dict[str, Any]) -> ToolResult:
     # Direct tool calls are refused while the agent is interrupted, so stream the tool itself.
-    management_tool = agent.tool_registry.registry[tool_name]
-    tool_use: ToolUse = {"name": tool_name, "toolUseId": "management-use", "input": tool_input}
+    management_tool = agent.tool_registry.registry[_MANAGE_TOOL_NAME]
+    tool_use: ToolUse = {"name": _MANAGE_TOOL_NAME, "toolUseId": "management-use", "input": tool_input}
     result: ToolResult | None = None
     async for event in management_tool.stream(tool_use, {"agent": agent}):
         if isinstance(event, ToolResultEvent):
@@ -141,30 +139,25 @@ def work() -> str:
 def test__init__registers_management_tool_only_when_enabled(background_tasks: Any, enabled: bool) -> None:
     agent = Agent(model=MockedModelProvider([]), background_tasks=background_tasks, callback_handler=None)
     assert (_MANAGE_TOOL_NAME in agent.tool_registry.registry) is enabled
-    assert ("strands_manage_background_task" in agent.tool_registry.registry) is enabled
 
 
 @pytest.mark.asyncio
-async def test_deprecated_management_tool_forwards_calls_in_the_foreground() -> None:
-    legacy_name = "strands_manage_background_task"
+async def test_management_tool_name_controls_foreground_calls() -> None:
+    tool_name = "manage_background_task"
     agent = Agent(
         model=MockedModelProvider(
-            [_assistant_tool_use(legacy_name, "legacy-use", {"mode": "list"}), _assistant_text("Listed.")]
+            [_assistant_tool_use(tool_name, "management-use", {"mode": "list"}), _assistant_text("Listed.")]
         ),
-        background_tasks={"always": ["*"]},
+        background_tasks={"tool_name": tool_name, "always": ["*"]},
         callback_handler=None,
     )
-    tool_specs = _capture_tool_specs(agent)
 
-    with pytest.warns(UserWarning, match="Use manage_background_task instead"):
-        await agent.invoke_async("List tasks.")
+    await agent.invoke_async("List tasks.")
 
-    tru_result = _tool_result(agent, "legacy-use")
-    exp_result = {"toolUseId": "legacy-use", "status": "success", "content": [{"json": {"tasks": []}}]}
+    assert list(agent.tool_registry.registry) == [tool_name]
+    tru_result = _tool_result(agent, "management-use")
+    exp_result = {"toolUseId": "management-use", "status": "success", "content": [{"json": {"tasks": []}}]}
     assert tru_result == exp_result
-    legacy_spec = next(spec for spec in tool_specs[0] if spec["name"] == legacy_name)
-    assert "deprecated" in legacy_spec["description"]
-    assert "_background_execution" not in _schema_properties(legacy_spec)
 
 
 @pytest.mark.parametrize(
@@ -395,6 +388,8 @@ async def test_surfaces_and_resumes_interrupts_raised_by_background_tools() -> N
 
 @pytest.mark.asyncio
 async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_results() -> None:
+    tool_name = "task_admin"
+
     @tool(name="work")
     def work(value: str) -> str:
         """Perform work."""
@@ -407,7 +402,9 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
             _assistant_text("Result received."),
         ]
     )
-    agent = Agent(model=model, tools=[work], background_tasks={"agentic": [work]}, callback_handler=None)
+    agent = Agent(
+        model=model, tools=[work], background_tasks={"tool_name": tool_name, "agentic": [work]}, callback_handler=None
+    )
     tool_specs = _capture_tool_specs(agent)
     middleware_calls = 0
     retried = False
@@ -444,13 +441,13 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
     exp_requested_input = {"value": "background", "_background_execution": True}
     assert tru_requested_input == exp_requested_input
 
-    tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _MANAGE_TOOL_NAME, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
+    tru_deliveries = _deliveries(agent.messages, tool_name)
+    exp_deliveries = [{"name": tool_name, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
     assert tru_deliveries == exp_deliveries
     assert tru_deliveries[0]["name"] in {spec["name"] for spec in tool_specs[0]}
     assert tru_deliveries[0]["input"]["task_id"] == tru_deliveries[0]["toolUseId"]
 
-    tru_result = _delivered_result(agent)
+    tru_result = _tool_result(agent, tru_deliveries[0]["toolUseId"])
     exp_result = {
         "toolUseId": ANY,
         "status": "success",
@@ -931,10 +928,7 @@ async def test_surfaces_and_resumes_interrupts_from_background_tools() -> None:
     assert "_background_execution" not in _schema_properties(management_spec)
 
     blocked_task = next(task for task in _persisted_tasks(agent) or [] if task["tool_name"] == "blocked")
-    with pytest.warns(UserWarning, match="Use manage_background_task instead"):
-        tru_blocked = await _invoke_management_tool(
-            agent, {"mode": "get", "task_id": blocked_task["task_id"]}, "strands_manage_background_task"
-        )
+    tru_blocked = await _invoke_management_tool(agent, {"mode": "get", "task_id": blocked_task["task_id"]})
     exp_blocked = {
         "toolUseId": "management-use",
         "status": "success",
@@ -970,10 +964,7 @@ async def test_surfaces_and_resumes_interrupts_from_background_tools() -> None:
     }
     assert tru_listing == exp_listing
 
-    with pytest.warns(UserWarning, match="Use manage_background_task instead"):
-        tru_cancelled = await _invoke_management_tool(
-            agent, {"mode": "cancel", "task_id": blocked_task["task_id"]}, "strands_manage_background_task"
-        )
+    tru_cancelled = await _invoke_management_tool(agent, {"mode": "cancel", "task_id": blocked_task["task_id"]})
     exp_cancelled = {
         "toolUseId": "management-use",
         "status": "success",

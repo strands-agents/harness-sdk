@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -6,7 +6,6 @@ import { Agent } from '../../agent/agent.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
 import { AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
 import { Interrupt } from '../../interrupt.js'
-import { logger } from '../../logging/logger.js'
 import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
@@ -18,11 +17,9 @@ import type { BackgroundTask } from '../types.js'
 
 const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 
-function deliveries(agent: Agent): ToolUseBlock[] {
+function deliveries(agent: Agent, toolName = 'strands_manage_background_task'): ToolUseBlock[] {
   const blocks = agent.messages.flatMap((message) => message.content)
-  return blocks.filter(
-    (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === 'manage_background_task'
-  )
+  return blocks.filter((block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === toolName)
 }
 
 function persistedTasks(agent: Agent): BackgroundTask[] | undefined {
@@ -30,35 +27,26 @@ function persistedTasks(agent: Agent): BackgroundTask[] | undefined {
 }
 
 describe('BackgroundTasks', () => {
-  it.each(['manage_background_task', 'strands_manage_background_task'])(
-    'runs %s calls in the foreground',
-    async (name) => {
-      using warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-      const model = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name, toolUseId: 'manage-use', input: { mode: 'list' } })
-        .addTurn({ type: 'textBlock', text: 'Listed.' })
-      const agent = new Agent({ model, backgroundTasks: { always: ['*'] }, printer: false })
+  it('registers the custom management tool name and runs its calls in the foreground', async () => {
+    const toolName = 'manage_background_task'
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: toolName, toolUseId: 'management-use', input: { mode: 'list' } })
+      .addTurn({ type: 'textBlock', text: 'Listed.' })
+    const agent = new Agent({ model, backgroundTasks: { toolName, always: ['*'] }, printer: false })
 
-      await agent.invoke('List tasks.')
+    await agent.invoke('List tasks.')
 
-      expect(agent.messages.flatMap((message) => message.content)).toContainEqual({
-        type: 'toolResultBlock',
-        toolUseId: 'manage-use',
-        status: 'success',
-        content: [{ type: 'jsonBlock', json: { tasks: [] } }],
-      })
-      expect(agent.toolRegistry.get('strands_manage_background_task')?.description).toContain(
-        'Use manage_background_task instead.'
-      )
-      expect(warn.mock.calls).toEqual(
-        name === 'strands_manage_background_task'
-          ? [[expect.stringContaining('replacement=<manage_background_task> | tool name is deprecated')]]
-          : []
-      )
-    }
-  )
+    expect(agent.tools.map((tool) => tool.name)).toEqual([toolName])
+    expect(agent.messages.flatMap((message) => message.content)).toContainEqual({
+      type: 'toolResultBlock',
+      toolUseId: 'management-use',
+      status: 'success',
+      content: [{ type: 'jsonBlock', json: { tasks: [] } }],
+    })
+  })
 
   it('dispatches selected calls through the normal tool pipeline and delivers their results', async () => {
+    const toolName = 'task_admin'
     const work = tool({
       name: 'work',
       description: 'Perform work.',
@@ -77,7 +65,7 @@ describe('BackgroundTasks', () => {
     const agent = new Agent({
       model,
       tools: [work],
-      backgroundTasks: { agentic: [work] },
+      backgroundTasks: { toolName, agentic: [work] },
       printer: false,
     })
     let toolSpecs: readonly ToolSpec[] | undefined
@@ -104,10 +92,10 @@ describe('BackgroundTasks', () => {
     expect(toolSpecs?.find((spec) => spec.name === 'work')?.inputSchema?.properties).toHaveProperty(
       '_background_execution'
     )
-    const [delivery] = deliveries(agent)
+    const [delivery] = deliveries(agent, toolName)
     expect(delivery).toEqual({
       type: 'toolUseBlock',
-      name: 'manage_background_task',
+      name: toolName,
       toolUseId: expect.any(String),
       input: { mode: 'get', taskId: delivery!.toolUseId },
     })
@@ -255,7 +243,7 @@ describe('BackgroundTasks', () => {
     expect(deliveries(agent)).toEqual([
       {
         type: 'toolUseBlock',
-        name: 'manage_background_task',
+        name: 'strands_manage_background_task',
         toolUseId: expect.any(String),
         input: { mode: 'get', taskId: expect.any(String) },
       },
@@ -511,7 +499,7 @@ describe('BackgroundTasks', () => {
     expect(deliveries(agent)).toEqual([
       {
         type: 'toolUseBlock',
-        name: 'manage_background_task',
+        name: 'strands_manage_background_task',
         toolUseId: 'working',
         input: { mode: 'get', taskId: 'working' },
       },
