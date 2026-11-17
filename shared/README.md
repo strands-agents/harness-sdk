@@ -20,3 +20,26 @@ Keys and multi-word values are camelCase, matching the TypeScript `ModelInfo` ty
 - `defaults`: what the SDK assumes when a model's entry does not say, today `limits.contextWindow`. Defaults are the SDK's policy, not a fact about any model, so they live apart from `models`.
 - `models`: one entry per model, keyed by the shortest id that names it (`claude-opus-5-5`, `gpt-5.4`, `amazon.nova-pro-v1:0`). A lookup tries the id as given, then without a trailing Bedrock version suffix (`-v1:0`), then without a trailing date (`-20260401`, `@20251001`), then with leading dot-separated segments removed one at a time. So `us.anthropic.claude-opus-5-5-20260401-v1:0`, an ARN and `claude-opus-5-5` all resolve to the one `claude-opus-5-5` entry. Add a separate entry only when the same model differs between providers (`openai.gpt-6.1-sol` on Bedrock). Fields: `limits.contextWindow` and `limits.maxOutputTokens` in tokens; `capabilities` as in `ModelInfo`. A model the file does not list is unknown: the SDK uses its defaults for it, so new ids need an entry.
 - `capabilities.defaultEffort`: the effort the vendor's own agent harness runs the model at by default (Claude Code, Codex, Gemini CLI), in the vendor's level names; the vendor's documented API default when it has no harness or the harness does not cover the model. Leave it out when neither is documented. Sources as of 2026-11: [Claude Code model config](https://code.claude.com/docs/en/model-config) (`high`, except `medium` for the 5.5 models and `xhigh` for Opus 4.7), Codex's bundled `codex-rs/models-manager/models.json` (`default_reasoning_level`), and Gemini CLI's `packages/core/src/config/defaultModelConfigs.ts` (`thinkingLevel: HIGH` for the Gemini 3.x models it lists). It is for the harness, which reads its own copy of this file to resolve `effort="auto"` (#4683); the SDKs skip it. Values are the harness effort levels: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+
+## `conformance.json`
+
+Which model behaviors the SDKs check against live models, and on which models. Each SDK's integration tests read this file directly from the repository; it is not copied into a package.
+
+- `cases`: one entry per conformance case, keyed by its id. `passes` says what the case must show. `requires` names a `ModelInfo` field (`capabilities.promptCaching`); the case applies to a model only when that field is known on the model's resolved model info, and equal to `equals` when the case gives one. A case without `requires` applies to every target. The gate reads the resolved info, not `model-info.json`, so a provider that turns a capability off is not asked to show it.
+- `targets`: the provider and model id pairs every case runs on. `provider` is a shared id (`anthropic`, `bedrock`, `mantle`, `mantle-responses`, `openai`, `openai-responses`, `gemini`, `mistral`) that each SDK maps to one of its model classes. To cover a new model, add its entry to `model-info.json` and a row here.
+
+Every SDK implements every case and maps every provider, or lists the ones it leaves out with a reason; a test in each SDK fails when a case id or provider id here is in neither list.
+
+### Results
+
+When `STRANDS_CONFORMANCE_RESULTS` names a file, each run appends one JSON object per line to it, one per case and target:
+
+```json
+{"sdk": "python", "provider": "anthropic", "model": "claude-opus-5-5", "case": "prompt-caching", "status": "passed"}
+```
+
+- `sdk`: `python` or `typescript`.
+- `status`: `passed`, `failed`, `skipped` (the case applies but did not run, for example missing credentials) or `not-applicable` (the case's `requires` does not hold for the model, or the SDK leaves the case or provider out).
+- `reason`: present for `skipped` and `not-applicable`.
+
+When a line repeats an earlier `sdk`, `provider`, `model` and `case`, the later line wins.

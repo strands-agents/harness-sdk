@@ -1,0 +1,76 @@
+{
+  "$comment": "Model conformance: the cases every SDK runs against live models, and the provider and model pairs they run on. Edit here; each SDK's integration tests read this file (see shared/README.md).",
+  "cases": {
+    "tool-use": {
+      "passes": "An agent turn that asks for a tool calls it and ends the turn normally."
+    },
+    "context-window": {
+      "passes": "The model id resolves to a model info entry, and the model config reports that entry's context window."
+    },
+    "structured-output": {
+      "passes": "An agent asked for structured output returns an object that matches the schema."
+    },
+    "max-output-tokens": {
+      "requires": "limits.maxOutputTokens",
+      "passes": "A turn that sets no output token limit is accepted, so the default taken from the model info is within the model's ceiling."
+    },
+    "forced-tool-choice": {
+      "requires": "capabilities.forcedToolChoice",
+      "equals": true,
+      "passes": "A model call with a tool choice that forces a tool stops with a tool use."
+    },
+    "native-structured-output": {
+      "requires": "capabilities.nativeStructuredOutput",
+      "equals": true,
+      "passes": "A model call that asks for native structured output, with no tool forced, returns text that is one JSON object matching the schema."
+    },
+    "prompt-caching": {
+      "requires": "capabilities.promptCaching",
+      "equals": "cachePoints",
+      "passes": "With automatic caching on and a long system prompt, a later turn of a conversation reads input tokens that an earlier turn cached."
+    },
+    "server-side-summary": {
+      "requires": "capabilities.serverSideSummary",
+      "equals": true,
+      "passes": "Summarizing a conversation returns a summary produced by the provider, and a later turn that replays it can answer from the summarized history."
+    },
+    "temporary-messages": {
+      "requires": "capabilities.temporaryMessages",
+      "equals": true,
+      "passes": "Text injected into a turn as a temporary message is accepted by the provider and used in the answer."
+    }
+  },
+  "targets": [
+    { "provider": "anthropic", "model": "claude-sonnet-4-6" },
+    { "provider": "anthropic", "model": "claude-sonnet-4-5" },
+    { "provider": "anthropic", "model": "claude-opus-4-8" },
+    { "provider": "anthropic", "model": "claude-opus-5" },
+    { "provider": "anthropic", "model": "claude-opus-5-5" },
+    { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+    { "provider": "anthropic", "model": "claude-haiku-5-5" },
+    { "provider": "bedrock", "model": "global.anthropic.claude-sonnet-4-6" },
+    { "provider": "bedrock", "model": "us.anthropic.claude-haiku-5-5" },
+    { "provider": "bedrock", "model": "us.amazon.nova-pro-v1:0" },
+    { "provider": "bedrock", "model": "us.amazon.nova-2-lite-v1:0" },
+    { "provider": "bedrock", "model": "us.xai.grok-4.7" },
+    { "provider": "bedrock", "model": "mistral.mistral-large-3-675b-instruct" },
+    { "provider": "bedrock", "model": "openai.gpt-oss-120b-1:0" },
+    { "provider": "mantle", "model": "google.gemma-4-31b" },
+    { "provider": "mantle", "model": "openai.gpt-oss-120b" },
+    { "provider": "mantle-responses", "model": "google.gemma-4-31b" },
+    { "provider": "mantle-responses", "model": "openai.gpt-oss-120b" },
+    { "provider": "openai", "model": "chat-latest" },
+    { "provider": "openai", "model": "gpt-5.4" },
+    { "provider": "openai-responses", "model": "gpt-5.4" },
+    { "provider": "openai-responses", "model": "gpt-5.6" },
+    { "provider": "gemini", "model": "gemini-2.5-flash" },
+    { "provider": "gemini", "model": "gemini-4-hydrogen" },
+    { "provider": "gemini", "model": "gemini-4-argon" },
+    { "provider": "gemini", "model": "gemini-3.8-flash" },
+    { "provider": "mistral", "model": "mistral-medium-3-5" },
+    { "provider": "mistral", "model": "mistral-large-4-0" },
+    { "provider": "mistral", "model": "ministral-14b-2512" },
+    { "provider": "mistral", "model": "mistral-small-2603" },
+    { "provider": "mistral", "model": "codestral-2508" }
+  ]
+}
