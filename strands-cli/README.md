@@ -147,7 +147,8 @@ With `--workspace`, the two flags use that folder.
 When that folder holds the workspace of another agent, the two flags stop with an error that names the folder and the agent. They do not replace it.
 
 Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
-An existing workspace reopens with its recorded initial copy instead of creating another one. `--agent` selects another entrypoint for one launch without changing the manifest.
+An existing workspace reopens with its recorded initial copy instead of creating another one.
+When `--agent` names another entrypoint of the project that the workspace binds, that entrypoint runs for one launch. `.config` and the initial copy do not change.
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
 `strands dev init` prepares the workspace and exits without a model request.
 

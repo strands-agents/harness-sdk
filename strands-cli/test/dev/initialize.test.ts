@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { bindExistingAgent } from '../../src/dev/create.js'
 import { ensureInitialCandidate, initializeWorkspaceBinding } from '../../src/dev/initialize.js'
 import { initializeDevWorkspace, readDevWorkspace } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
@@ -54,6 +55,23 @@ describe('workspace initialization', () => {
     expect(await ensureInitialCandidate(bound)).toBe(initial)
     expect(install).toHaveBeenCalledOnce()
     expect(await readFile(join(initial, 'agent/src/agent.ts'), 'utf8')).toBe('candidate edits')
+    expect(await readdir(join(bound.directory!, 'tmp'))).toHaveLength(2)
+  })
+
+  it('shouldCopyAndReuseTheBoundAgentWhenTheLaunchRunsAnotherEntrypoint', async () => {
+    const root = await temporaryDirectory()
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
+    await writeFile(join(root, 'agent.ts'), 'export const agent = {name:"bound"}')
+    await writeFile(join(root, 'other.ts'), 'export const agent = {name:"other"}')
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+    const bound = await bindExistingAgent(join(root, 'strands-dev'), join(root, 'agent.ts'))
+    const other = { ...bound, entrypoint: join(root, 'other.ts'), config: { ...bound.config, entrypoint: 'other.ts' } }
+
+    const initial = await ensureInitialCandidate(other)
+
+    expect(JSON.parse(await readFile(join(initial, 'candidate.json'), 'utf8')).source.entrypoint).toBe(bound.entrypoint)
+    expect(await ensureInitialCandidate(other)).toBe(initial)
+    expect(await ensureInitialCandidate(bound)).toBe(initial)
     expect(await readdir(join(bound.directory!, 'tmp'))).toHaveLength(2)
   })
 

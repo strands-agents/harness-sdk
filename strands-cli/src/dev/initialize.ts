@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 
-import { bindWorkspace } from './binding.js'
+import { bindWorkspace, readWorkspaceBinding } from './binding.js'
 import { createCandidate, type Candidate } from './candidates.js'
 import { boundDevWorkspace, type DevWorkspace } from './workspace.js'
 import { isRecord } from '../values.js'
@@ -64,6 +64,11 @@ const initialCandidate = async (workspace: DevWorkspace): Promise<string | undef
   }
 }
 
+const withBoundAgent = async (workspace: DevWorkspace, directory: string): Promise<DevWorkspace> => {
+  const binding = await readWorkspaceBinding(directory)
+  return binding ? { ...boundDevWorkspace(binding), directory } : workspace
+}
+
 export const ensureInitialCandidate = async (
   workspace: DevWorkspace,
   signal?: AbortSignal,
@@ -71,7 +76,8 @@ export const ensureInitialCandidate = async (
 ): Promise<string> => {
   if (!workspace.directory) throw new Error('Initialize the workspace binding before creating its initial copy.')
   signal?.throwIfAborted()
-  const existing = await initialCandidate(workspace)
+  const bound = await withBoundAgent(workspace, workspace.directory)
+  const existing = await initialCandidate(bound)
   if (existing) return existing
   const lock = join(workspace.directory, 'tmp', '.initializing')
   try {
@@ -86,9 +92,9 @@ export const ensureInitialCandidate = async (
   }
   let candidate: Candidate | undefined
   try {
-    const ready = await initialCandidate(workspace)
+    const ready = await initialCandidate(bound)
     if (ready) return ready
-    candidate = await createCandidate(workspace, signal, prepare)
+    candidate = await createCandidate(bound, signal, prepare)
     signal?.throwIfAborted()
     const marker = join(workspace.directory, 'tmp', 'initial.json')
     const staged = join(lock, 'initial.json')
