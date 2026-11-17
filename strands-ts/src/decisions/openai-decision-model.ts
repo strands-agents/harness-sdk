@@ -111,7 +111,7 @@ function toOpenAIQuestions(questions: Record<string, Question>): Record<string, 
 
 /**
  * Maps an OpenAI response to the System One shape: answers arrive as an array named by question id,
- * the documented response omits `model`, `predicate` answers carry `probability`, and choice
+ * the guide's examples omit `model`, `predicate` answers carry `probability`, and choice
  * probabilities are a `{ value, probability }` list. Anything else passes through for the shared parser
  * to validate.
  */
