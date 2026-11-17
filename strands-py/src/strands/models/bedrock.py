@@ -722,6 +722,9 @@ class BedrockModel(Model):
         Returns:
             The blocks, with a cache point replaced rather than mutated since the caller owns the block.
         """
+        if not system_blocks:
+            return system_blocks
+
         ttl: str | None = None
         cache_config = self.config.get("cache_config")
         caching = cache_config is not None and self._cache_strategy == "anthropic"
