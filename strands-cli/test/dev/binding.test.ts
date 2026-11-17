@@ -1,5 +1,18 @@
 import { execFileSync } from 'node:child_process'
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,7 +31,7 @@ let agentRoot: string
 let binding: WorkspaceBinding
 
 beforeEach(async () => {
-  sandbox = await mkdtemp(join(tmpdir(), 'strands-binding-'))
+  sandbox = await realpath(await mkdtemp(join(tmpdir(), 'strands-binding-')))
   directory = join(sandbox, 'workspace')
   agentRoot = join(directory, 'agent')
   await mkdir(agentRoot, { recursive: true })
@@ -82,6 +95,22 @@ describe('workspace bindings', () => {
     expect(await readdir(external)).toEqual(['agent.py'])
     expect(await readFile(join(external, 'agent.py'), 'utf8')).toBe('agent = object()\n')
   })
+
+  it.runIf(process.platform === 'win32')(
+    'shouldBindTheAgentFolderAsItIsOnDiskWhenThePathUsesOtherLetterCase',
+    async () => {
+      const external = join(sandbox, 'external')
+      await mkdir(external)
+      await writeFile(join(external, 'agent.py'), 'agent = object()\n')
+      binding.agent = { path: external.toUpperCase(), entrypoint: 'agent.py', language: 'python' }
+
+      const bound = await bindWorkspace(directory, binding)
+
+      expect(bound.agentRoot).toBe(external)
+      expect(bound.entrypoint).toBe(join(external, 'agent.py'))
+      expect(await readWorkspaceBinding(directory)).toEqual(bound)
+    }
+  )
 
   it.each(['ts', 'mts', 'js', 'mjs'])(
     'accepts supported TypeScript project entrypoints ending in %s',

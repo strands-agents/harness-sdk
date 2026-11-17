@@ -183,15 +183,17 @@ export async function updateWorkspaceCli(directory: string, cli: Record<string, 
 }
 
 async function resolveBinding(directory: string, binding: WorkspaceBinding): Promise<BoundWorkspace> {
-  const agentRoot = resolve(directory, binding.agent.path)
-  const entrypoint = resolve(agentRoot, binding.agent.entrypoint)
+  const requestedRoot = resolve(directory, binding.agent.path)
+  const requestedEntrypoint = resolve(requestedRoot, binding.agent.entrypoint)
   const tmp = join(directory, 'tmp')
-  if (containsPath(tmp, agentRoot) || containsPath(tmp, entrypoint)) {
+  if (containsPath(tmp, requestedRoot) || containsPath(tmp, requestedEntrypoint)) {
     throw new Error(`Workspace binding cannot target temporary files under ${tmp}`)
   }
-  if (!containsPath(agentRoot, entrypoint))
-    throw new Error(`Agent entrypoint must stay inside ${agentRoot}: ${entrypoint}`)
-  await assertDirectory(agentRoot)
+  if (!containsPath(requestedRoot, requestedEntrypoint))
+    throw new Error(`Agent entrypoint must stay inside ${requestedRoot}: ${requestedEntrypoint}`)
+  await assertDirectory(requestedRoot)
+  const agentRoot = await realpath(requestedRoot)
+  const entrypoint = resolve(agentRoot, binding.agent.entrypoint)
   await assertDirectory(parse(entrypoint).dir)
   assertType(entrypoint, await lstat(entrypoint), false)
   if ((await realpath(entrypoint)) !== entrypoint) throw new Error(`Agent entrypoint path changed: ${entrypoint}`)
