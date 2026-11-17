@@ -762,6 +762,18 @@ describe('OpenAIDecisionModel', () => {
     ).rejects.toThrow(/question id=<q> \| decision provider declined to answer/)
   })
 
+  it('sends message state as JSON text input', async () => {
+    const captured: CapturedRequest[] = []
+    const fetch = fakeFetch({ answers: [{ type: 'predicate', name: 'q', probability: 0.99 }] }, { captured })
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    await decision.ask([new Message({ role: 'user', content: [new TextBlock('hello')] })], {
+      q: { question: 'Greeting?', choices: 'boolean' },
+    })
+
+    expect(captured[0]?.body['input']).toBe('[{"role":"user","content":[{"text":"hello"}]}]')
+  })
+
   it('reads OPENAI_API_KEY', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'openai-env-key')
     const captured: CapturedRequest[] = []
