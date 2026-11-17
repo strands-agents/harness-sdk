@@ -119,14 +119,7 @@ describe('TEMPORARY apply an optimized setting', () => {
 
   it.each([
     { name: 'TextThatFits', after: 'Answer in two words.', expected: { target: 'agent.py' } },
-    {
-      name: 'TextThatCannotFit',
-      after: "Answer with the capital's name\nonly.",
-      expected: {
-        unavailable:
-          'Paste the new instructions into agent.py yourself; the string there cannot hold line breaks, quotes, or backslashes, and the new text has some.',
-      },
-    },
+    { name: 'TextThatNeedsEscapes', after: "Answer with the capital's name\nonly.", expected: { target: 'agent.py' } },
   ])('shouldCheckTheNewTextAtOnceWhenTheCallerGives$name', async ({ after, expected }) => {
     const root = await project({ 'agent.py': PYTHON_AGENT('"Answer in one word."') })
 
@@ -216,7 +209,16 @@ describe('TEMPORARY apply an optimized setting', () => {
       source: 'agent = create_harness(instructions="Answer in one word.")\n',
       before: 'Answer in one word.',
       after: 'Answer in one word.\nBe kind.',
-      message: 'line breaks, quotes, or backslashes',
+      written: 'agent = create_harness(instructions="""Answer in one word.\nBe kind.""")\n',
+    },
+    {
+      name: 'ALineBreakInATypeScriptString',
+      file: 'agent.ts',
+      source: "export const agent = createHarness({ instructions: 'Answer in one word.' })\n",
+      before: 'Answer in one word.',
+      after: 'Answer in one word.\nSay `hi` and ${name}.',
+      written:
+        'export const agent = createHarness({ instructions: `Answer in one word.\nSay \\`hi\\` and \\${name}.` })\n',
     },
     {
       name: 'TheQuoteOfAOneLineString',
@@ -224,7 +226,7 @@ describe('TEMPORARY apply an optimized setting', () => {
       source: "export const agent = createHarness({ instructions: 'Answer in one word.' })\n",
       before: 'Answer in one word.',
       after: "Don't explain.",
-      message: 'line breaks, quotes, or backslashes',
+      written: "export const agent = createHarness({ instructions: 'Don\\'t explain.' })\n",
     },
     {
       name: 'ClosingQuotesOfATripleQuotedString',
@@ -232,7 +234,7 @@ describe('TEMPORARY apply an optimized setting', () => {
       source: 'agent = create_harness(instructions="""Say hi.""")\n',
       before: 'Say hi.',
       after: 'Say "hi"',
-      message: 'backslashes or closing quotes',
+      written: 'agent = create_harness(instructions="""Say \\"hi\\"""")\n',
     },
     {
       name: 'ABacktickInATemplate',
@@ -240,7 +242,7 @@ describe('TEMPORARY apply an optimized setting', () => {
       source: 'export const agent = createHarness({ instructions: `Say hi.` })\n',
       before: 'Say hi.',
       after: 'Say `hi`.',
-      message: 'backslashes, backticks, or ${',
+      written: 'export const agent = createHarness({ instructions: `Say \\`hi\\`.` })\n',
     },
     {
       name: 'ANewFieldInATemplate',
@@ -248,7 +250,7 @@ describe('TEMPORARY apply an optimized setting', () => {
       source: 'export const agent = createHarness({ instructions: `Pay {total} now.` })\n',
       before: 'Pay ',
       after: 'Pay $',
-      message: 'backslashes, backticks, or ${',
+      written: 'export const agent = createHarness({ instructions: `Pay \\${total} now.` })\n',
     },
     {
       name: 'BracesInAnFString',
@@ -256,17 +258,81 @@ describe('TEMPORARY apply an optimized setting', () => {
       source: 'agent = create_harness(instructions=f"Answer in one word.")\n',
       before: 'Answer in one word.',
       after: 'Answer with {one} word.',
-      message: 'braces or line breaks, quotes, or backslashes',
+      written: 'agent = create_harness(instructions=f"Answer with {{one}} word.")\n',
     },
-  ])('shouldWriteNothingWhenTheNewTextHas$name', async ({ file, source, before, after, message }) => {
+    {
+      name: 'ABackslashInARawString',
+      file: 'agent.py',
+      source: "agent = create_harness(instructions=r'Use C:\\tmp.')\n",
+      before: 'Use C:\\tmp.',
+      after: "Use C:\\tmp, it's fine.",
+      written: "agent = create_harness(instructions='Use C:\\\\tmp, it\\'s fine.')\n",
+    },
+  ])('shouldEscapeTheNewTextWhenItHas$name', async ({ file, source, before, after, written }) => {
     const root = await project({ [file]: source })
 
-    const location = target(await locate(root, file, before))
+    await target(await locate(root, file, before)).write(after)
 
-    await expect(location.write(after)).rejects.toThrow(
-      `Paste the new instructions into ${file} yourself; the string there cannot hold ${message}, and the new text has some.`
+    expect(await read(root, file)).toBe(written)
+  })
+
+  it.each([
+    {
+      name: 'EscapesInThePythonString',
+      file: 'agent.py',
+      source: 'agent = create_harness(instructions="Answer in one word.\\tThen stop.")\n',
+      written: 'agent = create_harness(instructions="Answer in two words.\\tThen stop.")\n',
+    },
+    {
+      name: 'EscapesInTheTypeScriptString',
+      file: 'agent.ts',
+      source: "export const agent = createHarness({ instructions: 'Answer in one word.\\nThen stop.' })\n",
+      written: 'export const agent = createHarness({ instructions: `Answer in two words.\nThen stop.` })\n',
+    },
+    {
+      name: 'TypeScriptStringsJoinedByPlus',
+      file: 'agent.ts',
+      source: "export const agent = createHarness({\n  instructions: 'Answer in ' +\n    'one word.',\n})\n",
+      written: "export const agent = createHarness({\n  instructions: 'Answer in two words.',\n})\n",
+    },
+    {
+      name: 'PythonStringsSideBySideInParentheses',
+      file: 'agent.py',
+      source: 'agent = create_harness(\n    instructions=(\n        "Answer in "\n        "one word."\n    )\n)\n',
+      written: 'agent = create_harness(\n    instructions=(\n        "Answer in two words."\n    )\n)\n',
+    },
+  ])('shouldReplaceTheOldTextWhenTheEntrypointHas$name', async ({ file, source, written }) => {
+    const root = await project({ [file]: source })
+
+    await target(await locate(root, file, 'Answer in one word.')).write('Answer in two words.')
+
+    expect(await read(root, file)).toBe(written)
+  })
+
+  it('shouldFindTheTextAgainWhenAnEarlierApplyWroteItWithEscapes', async () => {
+    const root = await project({
+      'agent.ts': "export const agent = createHarness({ instructions: 'Answer in one word.' })\n",
+    })
+    await target(await locate(root, 'agent.ts', 'Answer in one word.')).write("Don't explain.\nBe `brief`.")
+
+    await target(await locate(root, 'agent.ts', "Don't explain.\nBe `brief`.")).write('Answer in two words.')
+
+    expect(await read(root, 'agent.ts')).toBe(
+      'export const agent = createHarness({ instructions: `Answer in two words.` })\n'
     )
-    expect(await read(root, file)).toBe(source)
+  })
+
+  it.each([
+    ['ALineThatEndsTheStatement', 'A = "Answer in "\n"one word."\nagent = create_harness(instructions=A)\n'],
+    ['AVariableBetweenTheStrings', 'agent = create_harness(instructions="Answer in " + NAME + "one word.")\n'],
+  ])('shouldNotJoinStringsThatAreNotOneValueWhenTheSourceHas%s', async (_case, source) => {
+    const root = await project({ 'agent.py': source })
+
+    const location = await locate(root, 'agent.py', 'Answer in one word.')
+
+    expect(location).toEqual({
+      unavailable: 'Paste the new instructions into agent.py yourself; the old text is not a plain string there.',
+    })
   })
 
   it.each([
@@ -288,11 +354,6 @@ describe('TEMPORARY apply an optimized setting', () => {
     {
       name: 'AnFStringWithFields',
       source: 'agent = create_harness(instructions=f"Answer in one word. {SUFFIX}")\n',
-      reason: 'the old text is not a plain string there.',
-    },
-    {
-      name: 'EscapesInTheString',
-      source: 'agent = create_harness(instructions="Answer in one word.\\tThen stop.")\n',
       reason: 'the old text is not a plain string there.',
     },
     {

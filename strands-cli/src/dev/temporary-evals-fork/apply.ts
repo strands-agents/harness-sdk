@@ -25,11 +25,19 @@ export type TemporaryEditLocation = TemporaryEditTarget | { readonly unavailable
 type LiteralKind = 'plain' | 'triple' | 'template'
 
 interface Literal {
+  readonly open: number
   readonly start: number
   readonly end: number
+  readonly close: number
   readonly kind: LiteralKind
   readonly quote: string
   readonly prefix: string
+  readonly depth: number
+}
+
+interface Chain {
+  readonly literals: readonly Literal[]
+  readonly value: string
 }
 
 type Rewritten = { readonly content: string } | { readonly problem: string }
@@ -65,13 +73,33 @@ const REGEX_AFTER = new Set([
 const WORD = /[A-Za-z0-9_$]+/uy
 const LINE_BREAK = /[\r\n]/u
 const FORMATTED = /[ft]/u
+const RAW = /r/giu
 const BRACES = /[{}]/u
+const OPENING_BRACKETS = '([{'
+const CLOSING_BRACKETS = ')]}'
+const JAVASCRIPT_JOIN = /^\s*\+\s*$/u
+const PYTHON_JOIN = /^(?:[ \t\f]|\\\r?\n)*\+?(?:[ \t\f]|\\\r?\n)*$/u
+const PYTHON_BRACKETED_JOIN = /^\s*\+?\s*$/u
 const EFFORT_LEVEL = /^[A-Za-z0-9_-]+$/u
-const LIMITS: Readonly<Record<LiteralKind, string>> = {
-  plain: 'line breaks, quotes, or backslashes',
-  triple: 'backslashes or closing quotes',
-  template: 'backslashes, backticks, or ${',
+const HEX = /^[0-9a-fA-F]+$/u
+const OCTAL_DIGIT = /[0-7]/u
+const DIGIT = /[0-9]/u
+const LAST_CONTROL_CODE = 0x1f
+const DELETE_CODE = 0x7f
+const JAVASCRIPT_ESCAPES: Readonly<Record<string, string>> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v' }
+const PYTHON_ESCAPES: Readonly<Record<string, string>> = {
+  '\\': '\\',
+  "'": "'",
+  '"': '"',
+  a: '\u0007',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+  v: '\v',
 }
+const LINE_CONTINUATIONS = new Set(['\n', '\u2028', '\u2029'])
 
 const lineEnd = (source: string, from: number): number => {
   const end = source.indexOf('\n', from)
@@ -96,16 +124,22 @@ const isQuote = (char: string | undefined): boolean => char === "'" || char === 
 const isComment = (source: string, index: number): boolean =>
   source[index] === '/' && (source[index + 1] === '/' || source[index + 1] === '*')
 
+const bracketStep = (char: string): number =>
+  OPENING_BRACKETS.includes(char) ? 1 : CLOSING_BRACKETS.includes(char) ? -1 : 0
+
 const pythonLiterals = (source: string): Literal[] => {
   const literals: Literal[] = []
+  let depth = 0
   const string = (open: number, prefix: string): number => {
     const quote = source[open]!
     const delimiter = source.startsWith(quote.repeat(3), open) ? quote.repeat(3) : quote
     const start = open + delimiter.length
     for (let index = start; index < source.length; index = stepOver(source, index)) {
       if (source.startsWith(delimiter, index)) {
-        literals.push({ start, end: index, kind: delimiter.length > 1 ? 'triple' : 'plain', quote, prefix })
-        return index + delimiter.length
+        const kind = delimiter.length > 1 ? 'triple' : 'plain'
+        const close = index + delimiter.length
+        literals.push({ open: open - prefix.length, start, end: index, close, kind, quote, prefix, depth })
+        return close
       }
       if (delimiter.length === 1 && source[index] === '\n') return index
     }
@@ -117,11 +151,13 @@ const pythonLiterals = (source: string): Literal[] => {
     const word = wordAt(source, index)
     if (char === '#') index = lineEnd(source, index)
     else if (isQuote(char)) index = string(index, '')
-    else if (!word) index += 1
-    else {
+    else if (!word) {
+      depth = Math.max(0, depth + bracketStep(char))
+      index += 1
+    } else {
       const prefix = word.toLowerCase()
       index += word.length
-      if (isQuote(source[index]) && PYTHON_PREFIXES.has(prefix)) index = string(index, prefix)
+      if (isQuote(source[index]) && PYTHON_PREFIXES.has(prefix)) index = string(index, word)
     }
   }
   return literals
@@ -129,14 +165,14 @@ const pythonLiterals = (source: string): Literal[] => {
 
 const javascriptLiterals = (source: string): Literal[] => {
   const literals: Literal[] = []
-  const add = (start: number, end: number, kind: LiteralKind, quote: string): void => {
-    literals.push({ start, end, kind, quote, prefix: '' })
+  const add = (open: number, start: number, end: number, kind: LiteralKind, quote: string): void => {
+    literals.push({ open, start, end, close: end + 1, kind, quote, prefix: '', depth: 0 })
   }
   const quoted = (open: number): number => {
     const quote = source[open]!
     for (let index = open + 1; index < source.length; index = stepOver(source, index)) {
       if (source[index] === quote) {
-        add(open + 1, index, 'plain', quote)
+        add(open, open + 1, index, 'plain', quote)
         return index + 1
       }
       if (source[index] === '\n') return index
@@ -154,14 +190,16 @@ const javascriptLiterals = (source: string): Literal[] => {
     return source.length
   }
   const template = (open: number): number => {
-    let start = open + 1
-    let index = start
+    let index = open + 1
+    let interpolated = false
     while (index < source.length) {
-      if (source[index] === '`' || source.startsWith('${', index)) add(start, index, 'template', '`')
-      if (source[index] === '`') return index + 1
+      if (source[index] === '`') {
+        if (!interpolated) add(open, open + 1, index, 'template', '`')
+        return index + 1
+      }
       if (source.startsWith('${', index)) {
+        interpolated = true
         index = code(index + 2, true)
-        start = index
       } else index = stepOver(source, index)
     }
     return source.length
@@ -200,19 +238,180 @@ const javascriptLiterals = (source: string): Literal[] => {
   return literals
 }
 
-const sourceLiterals = (entry: string, content: string): Literal[] =>
-  extname(entry) === '.py' ? pythonLiterals(content) : javascriptLiterals(content)
+const isPython = (entry: string): boolean => extname(entry) === '.py'
 
-const literalHolds = ({ kind, quote, prefix }: Literal, content: string): boolean => {
-  if (content.includes('\\') || prefix.includes('b')) return false
-  if (FORMATTED.test(prefix) && BRACES.test(content)) return false
+const sourceLiterals = (entry: string, content: string): Literal[] =>
+  isPython(entry) ? pythonLiterals(content) : javascriptLiterals(content)
+
+const hexCode = (text: string, length: number): number | undefined =>
+  text.length === length && HEX.test(text) ? Number.parseInt(text, 16) : undefined
+
+const decodedJavaScript = (raw: string, kind: LiteralKind): string | undefined => {
+  let value = ''
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]!
+    if (char === '\r' && kind === 'template') {
+      value += '\n'
+      if (raw[index + 1] === '\n') index += 1
+      continue
+    }
+    if (char !== '\\') {
+      value += char
+      continue
+    }
+    const next = raw[index + 1]
+    if (next === undefined) return undefined
+    index += 1
+    if (next === '\r') {
+      if (raw[index + 1] === '\n') index += 1
+    } else if (LINE_CONTINUATIONS.has(next)) continue
+    else if (next in JAVASCRIPT_ESCAPES) value += JAVASCRIPT_ESCAPES[next]
+    else if (next === '0' && !DIGIT.test(raw[index + 1] ?? '')) value += '\0'
+    else if (DIGIT.test(next)) return undefined
+    else if (next === 'x') {
+      const code = hexCode(raw.slice(index + 1, index + 3), 2)
+      if (code === undefined) return undefined
+      value += String.fromCharCode(code)
+      index += 2
+    } else if (next === 'u' && raw[index + 1] === '{') {
+      const close = raw.indexOf('}', index + 2)
+      const code = close < 0 ? undefined : hexCode(raw.slice(index + 2, close), close - index - 2)
+      if (code === undefined || code > 0x10ffff) return undefined
+      value += String.fromCodePoint(code)
+      index = close
+    } else if (next === 'u') {
+      const code = hexCode(raw.slice(index + 1, index + 5), 4)
+      if (code === undefined) return undefined
+      value += String.fromCharCode(code)
+      index += 4
+    } else value += next
+  }
+  return value
+}
+
+const pythonEscape = (raw: string, index: number): { readonly value: string; readonly length: number } | undefined => {
+  const next = raw[index + 1]
+  if (next === undefined) return undefined
+  if (next === '\n') return { value: '', length: 2 }
+  if (next === '\r') return { value: '', length: raw[index + 2] === '\n' ? 3 : 2 }
+  const known = PYTHON_ESCAPES[next]
+  if (known !== undefined) return { value: known, length: 2 }
+  if (OCTAL_DIGIT.test(next)) {
+    let digits = next
+    while (digits.length < 3 && OCTAL_DIGIT.test(raw[index + 1 + digits.length] ?? ''))
+      digits += raw[index + 1 + digits.length]
+    return { value: String.fromCharCode(Number.parseInt(digits, 8)), length: 1 + digits.length }
+  }
+  const widths: Readonly<Record<string, number>> = { x: 2, u: 4, U: 8 }
+  const width = widths[next]
+  if (width !== undefined) {
+    const code = hexCode(raw.slice(index + 2, index + 2 + width), width)
+    if (code === undefined || code > 0x10ffff) return undefined
+    return { value: String.fromCodePoint(code), length: 2 + width }
+  }
+  if (next === 'N') return undefined
+  return { value: `\\${next}`, length: 2 }
+}
+
+const decodedPython = (raw: string, prefix: string): string | undefined => {
+  const lower = prefix.toLowerCase()
+  if (lower.includes('b')) return undefined
+  const formatted = FORMATTED.test(lower)
+  const escapes = !lower.includes('r')
+  let value = ''
+  for (let index = 0; index < raw.length;) {
+    const char = raw[index]!
+    if (formatted && (char === '{' || char === '}')) {
+      if (raw[index + 1] !== char) return undefined
+      value += char
+      index += 2
+    } else if (escapes && char === '\\') {
+      const escape = pythonEscape(raw, index)
+      if (!escape) return undefined
+      value += escape.value
+      index += escape.length
+    } else {
+      value += char
+      index += 1
+    }
+  }
+  return value
+}
+
+const decoded = (entry: string, content: string, literal: Literal): string | undefined => {
+  const raw = content.slice(literal.start, literal.end)
+  return isPython(entry) ? decodedPython(raw, literal.prefix) : decodedJavaScript(raw, literal.kind)
+}
+
+const joined = (entry: string, content: string, left: Literal, right: Literal): boolean => {
+  const gap = content.slice(left.close, right.open)
+  if (!isPython(entry)) return JAVASCRIPT_JOIN.test(gap)
+  return PYTHON_JOIN.test(gap) || (left.depth > 0 && right.depth > 0 && PYTHON_BRACKETED_JOIN.test(gap))
+}
+
+const literalChains = (entry: string, content: string): Chain[] => {
+  const groups: Literal[][] = []
+  for (const literal of sourceLiterals(entry, content)) {
+    const group = groups.at(-1)
+    const last = group?.at(-1)
+    if (group && last && joined(entry, content, last, literal)) group.push(literal)
+    else groups.push([literal])
+  }
+  return groups.flatMap((literals) => {
+    const values = literals.map((literal) => decoded(entry, content, literal))
+    return values.every((value) => value !== undefined) ? [{ literals, value: values.join('') }] : []
+  })
+}
+
+const holdsVerbatim = ({ kind, quote, prefix }: Literal, content: string): boolean => {
+  if (content.includes('\\') || prefix.toLowerCase().includes('b')) return false
+  if (FORMATTED.test(prefix.toLowerCase()) && BRACES.test(content)) return false
   if (kind === 'plain') return !LINE_BREAK.test(content) && !content.includes(quote)
-  if (kind === 'template') return !content.includes('`') && !content.includes('${')
+  if (kind === 'template') return !content.includes('`') && !content.includes('${') && !content.includes('\r')
   return !content.includes(quote.repeat(3)) && !content.endsWith(quote)
 }
 
-const limits = (literal: Literal): string =>
-  FORMATTED.test(literal.prefix) ? `braces or ${LIMITS[literal.kind]}` : LIMITS[literal.kind]
+const isControl = (char: string): boolean => {
+  const code = char.charCodeAt(0)
+  return code <= LAST_CONTROL_CODE || code === DELETE_CODE
+}
+
+const controlEscape = (char: string): string => `\\x${char.charCodeAt(0).toString(16).padStart(2, '0')}`
+
+const javascriptLiteral = (value: string, { kind, quote }: Literal): string => {
+  if (kind === 'template' || LINE_BREAK.test(value)) {
+    const body = value.replaceAll('\\', '\\\\').replaceAll('`', '\\`').replaceAll('${', '\\${').replaceAll('\r', '\\r')
+    return `\`${body}\``
+  }
+  const body = [...value]
+    .map((char) => {
+      if (char === '\\' || char === quote) return `\\${char}`
+      if (char === '\t') return '\\t'
+      if (char === '\u2028' || char === '\u2029') return `\\u${char.charCodeAt(0).toString(16)}`
+      return isControl(char) ? controlEscape(char) : char
+    })
+    .join('')
+  return `${quote}${body}${quote}`
+}
+
+const pythonLiteral = (value: string, { kind, quote, prefix }: Literal): string => {
+  const kept = prefix.replace(RAW, '')
+  const formatted = FORMATTED.test(kept.toLowerCase())
+  const triple = kind === 'triple' || LINE_BREAK.test(value)
+  const delimiter = triple ? quote.repeat(3) : quote
+  const body = [...value]
+    .map((char) => {
+      if (char === '\\' || char === quote) return `\\${char}`
+      if (formatted && (char === '{' || char === '}')) return `${char}${char}`
+      if (triple && (char === '\n' || char === '\t')) return char
+      if (char === '\n') return '\\n'
+      if (char === '\t') return '\\t'
+      if (char === '\r') return '\\r'
+      return isControl(char) ? controlEscape(char) : char
+    })
+    .join('')
+  return `${kept}${delimiter}${body}${delimiter}`
+}
 
 const occurrences = (content: string, text: string): number => {
   let count = 0
@@ -220,25 +419,35 @@ const occurrences = (content: string, text: string): number => {
   return count
 }
 
+const rewriteChain = (
+  entry: string,
+  content: string,
+  { literals, value }: Chain,
+  before: string,
+  after: string
+): string => {
+  const [first] = literals
+  const last = literals.at(-1)
+  const at = value.indexOf(before)
+  const next = value.slice(0, at) + after + value.slice(at + before.length)
+  if (!first || !last) return content
+  const raw = content.slice(first.start, first.end)
+  if (literals.length === 1 && raw === value && holdsVerbatim(first, next))
+    return content.slice(0, first.start) + next + content.slice(first.end)
+  const literal = isPython(entry) ? pythonLiteral(next, first) : javascriptLiteral(next, first)
+  return content.slice(0, first.open) + literal + content.slice(last.close)
+}
+
 const literalMatcher =
   (entry: string, before: string): Matcher =>
   (content) => {
     const paste = `Paste the new instructions into ${entry} yourself`
-    const count = occurrences(content, before)
+    const chains = literalChains(entry, content)
+    const count = chains.reduce((total, chain) => total + occurrences(chain.value, before), 0)
     if (count > 1) return { unavailable: `${paste}; the old text is there ${count} times.` }
-    const at = content.indexOf(before)
-    const literal =
-      at < 0
-        ? undefined
-        : sourceLiterals(entry, content).find(({ start, end }) => start <= at && at + before.length <= end)
-    if (!literal || !literalHolds(literal, content.slice(literal.start, literal.end)))
-      return { unavailable: `${paste}; the old text is not a plain string there.` }
-    return {
-      rewrite: (after): Rewritten =>
-        literalHolds(literal, content.slice(literal.start, at) + after + content.slice(at + before.length, literal.end))
-          ? { content: content.slice(0, at) + after + content.slice(at + before.length) }
-          : { problem: `${paste}; the string there cannot hold ${limits(literal)}, and the new text has some.` },
-    }
+    const chain = chains.find(({ value }) => value.includes(before))
+    if (!chain || !before) return { unavailable: `${paste}; the old text is not a plain string there.` }
+    return { rewrite: (after): Rewritten => ({ content: rewriteChain(entry, content, chain, before, after) }) }
   }
 
 const textFileMatcher =
