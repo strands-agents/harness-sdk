@@ -52,12 +52,12 @@ const workspaceFixture = async (): Promise<DevWorkspace> => {
   }
 }
 
-const environmentRunner = (workspace: DevWorkspace) =>
-  vi.fn(async ({ args }: TemporaryCommandRequest): Promise<string> => {
+const environmentRunner = () =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
     if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
     if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(workspace.directory!, 'tmp/optimization/.venv/lib/site-packages')
+      const sitePackages = join(dirname(dirname(command)), 'lib/site-packages')
       await mkdir(sitePackages, { recursive: true })
       return sitePackages
     }
@@ -212,9 +212,9 @@ describe('TEMPORARY experiment generation', () => {
     const files = temporaryGenerationFiles('/w/strands-dev', 'refunds', NOW)
 
     expect(files).toEqual({
-      draft: '/w/strands-dev/tmp/experiments/drafts/20261112-153012-refunds.json',
-      log: '/w/strands-dev/tmp/experiments/drafts/20261112-153012-refunds.log',
-      progress: '/w/strands-dev/tmp/experiments/drafts/20261112-153012-refunds.progress.jsonl',
+      draft: '/w/strands-dev/tmp/.state/drafts/20261112-153012-refunds.json',
+      log: '/w/strands-dev/tmp/.state/drafts/20261112-153012-refunds.log',
+      progress: '/w/strands-dev/tmp/.state/drafts/20261112-153012-refunds.progress.jsonl',
     })
   })
 
@@ -232,7 +232,7 @@ describe('TEMPORARY experiment generation', () => {
 
     const outcome = await generateTemporaryExperiment(
       { workspace, settings: settings(), context: 'context', files, onEvent: (event) => events.push(event) },
-      { run: environmentRunner(workspace), spawnGenerator: generating(completeCases(2), progress) }
+      { run: environmentRunner(), spawnGenerator: generating(completeCases(2), progress) }
     )
 
     expect(outcome).toEqual({ path: files.draft, cases: 2, dropped: 0 })
@@ -246,7 +246,7 @@ describe('TEMPORARY experiment generation', () => {
     await expect(
       generateTemporaryExperiment(
         { workspace, settings: settings(), context: 'context', files },
-        { run: environmentRunner(workspace), spawnGenerator: generating([]) }
+        { run: environmentRunner(), spawnGenerator: generating([]) }
       )
     ).rejects.toThrow('wrote no cases, because every case failed')
 
@@ -266,7 +266,7 @@ describe('TEMPORARY experiment generation', () => {
 
     const outcome = await generateTemporaryExperiment(
       { workspace, settings: settings(), context: 'context', files },
-      { run: environmentRunner(workspace), spawnGenerator: generating(written) }
+      { run: environmentRunner(), spawnGenerator: generating(written) }
     )
 
     expect(outcome).toEqual({ path: files.draft, cases: 1, dropped: 3 })
@@ -281,7 +281,7 @@ describe('TEMPORARY experiment generation', () => {
       generateTemporaryExperiment(
         { workspace, settings: settings(), context: 'context', files },
         {
-          run: environmentRunner(workspace),
+          run: environmentRunner(),
           spawnGenerator: generating([{ name: 'c0', input: '', expected_output: 'answer 0' }]),
         }
       )
@@ -309,7 +309,7 @@ describe('TEMPORARY experiment generation', () => {
           context: 'context',
           files: temporaryGenerationFiles(workspace.directory!, 'refunds', NOW),
         },
-        { run: environmentRunner(workspace), spawnGenerator: rejected }
+        { run: environmentRunner(), spawnGenerator: rejected }
       )
     ).rejects.toThrow(
       'strands-evals generate stopped with exit code 2: argument --evaluator: ToolCalled needs tool_name.\n' +
@@ -333,14 +333,14 @@ describe('TEMPORARY experiment generation', () => {
           files: temporaryGenerationFiles(workspace.directory!, 'refunds', NOW),
           signal: abort.signal,
         },
-        { run: environmentRunner(workspace), spawnGenerator }
+        { run: environmentRunner(), spawnGenerator }
       )
     ).rejects.toThrow()
 
     expect(spawnGenerator).not.toHaveBeenCalled()
     await prepareTemporaryOptimizerEnvironment(
       { workspaceDirectory: workspace.directory!, projectRoot: workspace.root, language: 'python' },
-      { run: environmentRunner(workspace) }
+      { run: environmentRunner() }
     )
   })
 
@@ -409,12 +409,12 @@ describe('TEMPORARY experiment generation', () => {
     const failure = temporaryGenerationError(new Error('strands-evals generate stopped with exit code 3'), {
       settings: settings({ model: reported.includes('inference-profile') ? '' : 'us.model' }),
       reported,
-      log: 'strands-dev/tmp/experiments/drafts/refunds.log',
+      log: 'strands-dev/tmp/.state/drafts/refunds.log',
     })
 
     expect(failure.summary).toBe(summary)
     expect(failure.detail).toContain(next)
-    expect(failure.detail).toContain('Log: strands-dev/tmp/experiments/drafts/refunds.log')
+    expect(failure.detail).toContain('Log: strands-dev/tmp/.state/drafts/refunds.log')
     expect(failure.detail.match(/strands-evals said/gu)).toHaveLength(1)
   })
 })

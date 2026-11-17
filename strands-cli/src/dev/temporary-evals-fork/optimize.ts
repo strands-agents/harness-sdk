@@ -1,24 +1,28 @@
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
 
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryModelDiscovery } from './knobs.js'
 import { temporaryRunFolder } from './study.js'
 import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './experiment-files.js'
-import { ignoreProgress, prepareTemporaryOptimizerEnvironment, temporaryOptimizationFolder } from './environment.js'
+import { ignoreProgress, prepareTemporaryOptimizerEnvironment } from './environment.js'
 import type { TemporaryCommandRunner } from './environment.js'
 import {
   assertTemporaryForkArguments,
   spawnTemporaryEvals,
   temporaryEvalsEnvironment,
   temporaryEvalsFailure,
-  temporaryExperimentsFolder,
   temporaryLanguageArguments,
-  temporaryRunName,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
+import {
+  temporaryExperimentHome,
+  temporaryExperimentsFolder,
+  temporaryOptimizationFiles,
+  temporaryOptimizationOf,
+  temporaryRunStamp,
+} from './layout.js'
 
 export interface TemporaryOptimizationRequest {
   workspace: DevWorkspace
@@ -50,9 +54,6 @@ export interface TemporaryOptimizationDependencies {
 
 const WRAPPER_OWNED_FLAGS = ['--agent', '--record', '--resume', '--json', '--rich', '--typescript-runner']
 
-const recordFolder = (workspaceDirectory: string, experiment: string, now: Date): string =>
-  join(temporaryOptimizationFolder(workspaceDirectory), temporaryRunName(experiment, now))
-
 export const runTemporaryOptimization = async (
   request: TemporaryOptimizationRequest,
   dependencies: TemporaryOptimizationDependencies = {}
@@ -70,13 +71,18 @@ export const runTemporaryOptimization = async (
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
     { ...(dependencies.run ? { run: dependencies.run } : {}), ...(signal ? { signal } : {}), onProgress }
   )
-  const record = request.continuing ?? recordFolder(directory, experiment, request.now?.() ?? new Date())
+  const files = request.continuing
+    ? temporaryOptimizationOf(request.continuing)
+    : temporaryOptimizationFiles(
+        temporaryExperimentHome(directory, experiment),
+        temporaryRunStamp(request.now?.() ?? new Date())
+      )
+  const { record, log } = files
   if (!request.continuing && existsSync(record))
     throw new Error(`The optimization record ${record} already exists. Wait a second, then try again.`)
   const resumed = request.continuing !== undefined && (await temporaryRunFolder(record)) !== undefined
-  const log = `${record}.log`
-  await mkdir(temporaryOptimizationFolder(directory), { recursive: true })
-  const runnable = await temporaryRunnableExperiment(experiment, `${record}.experiment.json`)
+  await mkdir(files.folder, { recursive: true })
+  const runnable = await temporaryRunnableExperiment(experiment, files.copy)
   onProgress(`Optimizing ${workspace.entrypoint} against ${experiment}`)
   onProgress(`Record: ${record}`)
   onProgress('Measuring the baseline. The optimizer reports each candidate when it finishes.')

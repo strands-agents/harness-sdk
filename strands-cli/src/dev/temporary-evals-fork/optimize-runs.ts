@@ -1,15 +1,15 @@
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import type { OptimizeObjective } from '../panels/model.js'
 import { isRecord } from '../../values.js'
 import { isTemporaryProcessAlive } from './background-runs.js'
 import { stopTemporaryProcessGroup } from './evals-process.js'
+import { listTemporaryOptimizations, temporaryOptimizationFiles, temporaryOptimizationOf } from './layout.js'
 import type { TemporarySplitShares } from './plan.js'
 
 const RECORD_VERSION = 1
-const RUNS_FOLDER = 'running'
 const POLL_MS = 1000
 
 export interface TemporaryOptimizeRecord {
@@ -27,7 +27,7 @@ export interface TemporaryOptimizeRecord {
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
 
 const recordPath = ({ record }: Pick<TemporaryOptimizeRecord, 'record'>): string =>
-  join(dirname(record), RUNS_FOLDER, `${basename(record)}.json`)
+  temporaryOptimizationOf(record).resume
 
 const recordedObjective = (value: unknown): OptimizeObjective | undefined => {
   if (!isRecord(value)) return undefined
@@ -77,17 +77,10 @@ const readRecord = async (path: string): Promise<TemporaryOptimizeRecord | undef
   return objective ? { ...rest, objective } : rest
 }
 
-export const readTemporaryOptimizeRecords = async (optimizationFolder: string): Promise<TemporaryOptimizeRecord[]> => {
-  const folder = join(optimizationFolder, RUNS_FOLDER)
-  let names: string[]
-  try {
-    names = await readdir(folder)
-  } catch (error) {
-    if (missing(error)) return []
-    throw error
-  }
+export const readTemporaryOptimizeRecords = async (workspaceDirectory: string): Promise<TemporaryOptimizeRecord[]> => {
+  const runs = await listTemporaryOptimizations(workspaceDirectory)
   const records = await Promise.all(
-    names.filter((name) => name.endsWith('.json')).map((name) => readRecord(join(folder, name)))
+    runs.map(({ home, stamp }) => readRecord(temporaryOptimizationFiles(home, stamp).resume))
   )
   return records
     .filter((record): record is TemporaryOptimizeRecord => record !== undefined)

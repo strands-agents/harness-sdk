@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -10,6 +10,8 @@ import {
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const RUN = { experiment: 'refunds', seconds: 12.5 }
+const STAMP = '20261111-205909'
+const RERUN_STAMP = '20261111-210000'
 
 interface Row {
   name: string | null
@@ -56,11 +58,17 @@ const ROWS = [
   row({ name: 'c1', evaluator: 'judge', score: 0, passed: false, reason: 'An error occurred: boom' }),
 ]
 
-const writeReport = async (content: unknown): Promise<string> => {
-  const path = join(await temporaryDirectory(), '20261111-205909-refunds.json')
+const experimentHome = async (): Promise<string> =>
+  join(await temporaryDirectory(), 'strands-dev/tmp/experiments/refunds')
+
+const writeRunReport = async (home: string, content: unknown, stamp = STAMP): Promise<string> => {
+  const path = join(home, 'runs', stamp, 'report.json')
+  await mkdir(dirname(path), { recursive: true })
   await writeFile(path, typeof content === 'string' ? content : JSON.stringify(content))
   return path
 }
+
+const writeReport = async (content: unknown): Promise<string> => writeRunReport(await experimentHome(), content)
 
 describe('TEMPORARY test report', () => {
   it('shouldGroupTheVerdictsByCaseWhenTheReportHasSeveralEvaluators', async () => {
@@ -189,44 +197,142 @@ describe('TEMPORARY test report', () => {
 
 const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 
+const latestReport = (home: string): string => join(home, 'refunds.report.json')
+
+const latestRecord = (home: string): string => join(home, '.state/latest.json')
+
+const readJson = async (path: string): Promise<unknown> => JSON.parse(await readFile(path, 'utf8'))
+
+const rememberRun = async (home: string, content: unknown, stamp: string, only?: string[]) => {
+  const path = await writeRunReport(home, content, stamp)
+  return rememberTemporaryTestResults(home, await readTemporaryTestResults(path, RUN), only)
+}
+
 describe('TEMPORARY last test run', () => {
   it('shouldReadTheRememberedResultsWhenTheExperimentRanBefore', async () => {
-    const path = await writeReport(report(ROWS))
-    const results = await readTemporaryTestResults(path, RUN)
+    const home = await experimentHome()
+    const results = await readTemporaryTestResults(await writeRunReport(home, report(ROWS)), RUN)
 
-    await rememberTemporaryTestResults(dirname(path), 'refunds', results)
+    const remembered = await rememberTemporaryTestResults(home, results)
 
-    expect(await readTemporaryLatestTestResults(dirname(path), 'refunds')).toEqual(results)
+    expect(remembered).toEqual({ ...results, report: latestReport(home) })
+    expect(await readTemporaryLatestTestResults(home)).toEqual(remembered)
   })
 
-  it('shouldReturnNothingWhenTheExperimentNeverRan', async () => {
-    expect(await readTemporaryLatestTestResults(await temporaryDirectory(), 'refunds')).toBeUndefined()
+  it('shouldReplaceTheLatestReportAndRecordTheRunWhenAFullRunFollowsAnother', async () => {
+    const home = await experimentHome()
+    await rememberRun(home, report(ROWS, 0.375), STAMP)
+    const second = report([ROWS[0]!], 1)
+
+    await rememberRun(home, second, RERUN_STAMP)
+
+    expect(await readJson(latestReport(home))).toEqual(second)
+    expect(await readJson(latestRecord(home))).toEqual({ run: join('runs', RERUN_STAMP), seconds: 12.5 })
+  })
+
+  it('shouldReplaceTheRerunRowsAndKeepTheOtherCasesWhenFailedCasesRunAgain', async () => {
+    const home = await experimentHome()
+    await rememberRun(home, report(ROWS, 0.375), STAMP)
+    const rerun = [
+      row({ name: 'c1', evaluator: 'Equals', score: 1, passed: true, reason: 'matches', actual: 'answer for c1' }),
+      row({ name: 'c1', evaluator: 'judge', score: 1, passed: true, reason: 'complete', actual: 'answer for c1' }),
+    ]
+
+    const results = await rememberRun(home, report(rerun, 1), RERUN_STAMP, ['c1'])
+
+    expect(await readJson(latestReport(home))).toEqual(report([ROWS[0]!, rerun[0]!, ROWS[2]!, rerun[1]!], 0.875))
+    expect(results).toMatchObject({ overall: 0.875, report: latestReport(home) })
+    expect(results.cases.map(({ name, passed }) => ({ name, passed }))).toEqual([
+      { name: 'c0', passed: false },
+      { name: 'c1', passed: true },
+    ])
+  })
+
+  it('shouldAppendTheCaseWhenTheRerunHasACaseTheLatestReportLacks', async () => {
+    const home = await experimentHome()
+    await rememberRun(home, report(ROWS, 0.375), STAMP)
+    const added = row({
+      name: 'c2',
+      evaluator: 'Equals',
+      score: 1,
+      passed: true,
+      reason: 'ok',
+      actual: 'answer for c2',
+    })
+
+    const results = await rememberRun(home, report([added], 1), RERUN_STAMP, ['c2'])
+
+    expect(await readJson(latestReport(home))).toEqual(report([...ROWS, added], 0.5))
+    expect(results.cases.map(({ name }) => name)).toEqual(['c0', 'c1', 'c2'])
   })
 
   it.each([
-    { record: '{"report": ', detail: 'JSON' },
-    { record: JSON.stringify({ report: 'r.json' }), detail: 'it has no report file or run time' },
-  ])('shouldAskForANewTestRunWhenTheLastRunRecordHas$detail', async ({ record, detail }) => {
-    const folder = await temporaryDirectory()
-    const path = join(folder, 'latest', 'refunds.json')
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, record)
+    { label: 'AllNotApplicableAndPassed', outputs: [{ not_applicable: true, test_pass: true }], overall: 1 },
+    { label: 'NotApplicableButFailed', outputs: [{ not_applicable: true, test_pass: false }], overall: 0.5 },
+    { label: 'Empty', outputs: [], overall: 0.5 },
+    {
+      label: 'PartlyNotApplicable',
+      outputs: [
+        { not_applicable: true, test_pass: true },
+        { not_applicable: false, test_pass: true },
+      ],
+      overall: 0.5,
+    },
+  ])('shouldRecomputeTheOverallScoreWhenTheRerunOutputsAre$label', async ({ outputs, overall }) => {
+    const home = await experimentHome()
+    const previous = [
+      row({ name: 'c0', evaluator: 'Equals', score: 1, passed: true, reason: 'matches' }),
+      row({ name: 'c1', evaluator: 'Equals', score: 0, passed: false, reason: 'differs' }),
+    ]
+    await rememberRun(home, report(previous, 0.5), STAMP)
 
-    await expect(readTemporaryLatestTestResults(folder, 'refunds')).rejects.toThrow(
+    const results = await rememberRun(
+      home,
+      { ...report([previous[1]!], 0), detailed_results: [outputs] },
+      RERUN_STAMP,
+      ['c1']
+    )
+
+    expect(results.overall).toBe(overall)
+  })
+
+  it('shouldPruneTheOldestTestRunsWhenItRemembersAResult', async () => {
+    const home = await experimentHome()
+    const old = Array.from({ length: 21 }, (_, index) => `20261111-2000${String(index).padStart(2, '0')}`)
+    await Promise.all(old.map((stamp) => mkdir(join(home, 'runs', stamp), { recursive: true })))
+
+    await rememberRun(home, report(ROWS, 0.375), STAMP)
+
+    expect((await readdir(join(home, 'runs'))).sort()).toEqual([...old.slice(2), STAMP])
+  })
+
+  it('shouldReturnNothingWhenTheExperimentNeverRan', async () => {
+    expect(await readTemporaryLatestTestResults(await experimentHome())).toBeUndefined()
+  })
+
+  it.each([
+    { record: '{"run": ', detail: 'JSON' },
+    { record: JSON.stringify({ run: join('runs', STAMP) }), detail: 'it has no run time' },
+  ])('shouldAskForANewTestRunWhenTheLastRunRecordHas$detail', async ({ record, detail }) => {
+    const home = await experimentHome()
+    await mkdir(dirname(latestRecord(home)), { recursive: true })
+    await writeFile(latestRecord(home), record)
+
+    await expect(readTemporaryLatestTestResults(home)).rejects.toThrow(
       new RegExp(
-        `^${literal(path)} is not a usable record of the last test run \\(.*${detail}.*\\)\\. Run the test again\\.$`,
+        `^${literal(latestRecord(home))} is not a usable record of the last test run \\(.*${detail}.*\\)\\. Run the test again\\.$`,
         'u'
       )
     )
   })
 
   it('shouldAskForANewTestRunWhenTheRememberedReportIsGone', async () => {
-    const path = await writeReport(report(ROWS))
-    await rememberTemporaryTestResults(dirname(path), 'refunds', await readTemporaryTestResults(path, RUN))
-    await rm(path)
+    const home = await experimentHome()
+    await rememberRun(home, report(ROWS), STAMP)
+    await rm(latestReport(home))
 
-    await expect(readTemporaryLatestTestResults(dirname(path), 'refunds')).rejects.toThrow(
-      `${path} is not a usable test report`
+    await expect(readTemporaryLatestTestResults(home)).rejects.toThrow(
+      `${latestReport(home)} is not a usable test report`
     )
   })
 })

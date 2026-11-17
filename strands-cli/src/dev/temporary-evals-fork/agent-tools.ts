@@ -9,6 +9,7 @@ import type {
   Generation,
   GenerationSettings,
   Knob,
+  EvalsBrowser,
   KnobKey,
   OptimizeObjective,
   OptimizeProgress,
@@ -51,10 +52,11 @@ const KNOB_NAMES = TEMPORARY_KNOB_NAMES.join(', ')
 const INSTRUCTIONS = `strands_dev_create_experiment, strands_dev_test, and strands_dev_optimize spend the developer's money the moment you call them. Two turns, never one: in the turn that asks for the work, name the experiments and case counts and stop; call the tool only in a later turn, after the developer answered. "Run my tests", "check my agent against my examples", and "make my agent better" ask for that first turn. A scope that looks obvious is still not approval, and neither is one saved experiment or one evident choice. Finish the turn with your question as the last thing you write.
 
 Experiments, tests, and optimization:
-- tmp/experiments/<name>.json: a saved experiment. "cases" holds the test cases (name, input, expected_output or expected_assertion, and optional expected_trajectory and metadata). "evaluators" says how each case is scored.
-- tmp/experiments/drafts/: generated cases that wait for a review in /experiment.
-- tmp/reports/: test reports, one JSON file and one log for each run.
-- tmp/optimization/<time>-<experiment>/: the records of optimization runs.
+- tmp/experiments/<name>/<name>.json: a saved experiment. "cases" holds the test cases (name, input, expected_output or expected_assertion, and optional expected_trajectory and metadata). "evaluators" says how each case is scored.
+- tmp/experiments/<name>/<name>.report.json: the report of the latest test run of that experiment.
+- tmp/experiments/<name>/runs/<time>/: one test run, with report.json and run.log.
+- tmp/experiments/<name>/optimizations/<time>/: one optimization run, with the optimizer record in optimizer/ and run.log.
+- tmp/.state/drafts/: generated cases that wait for a review in /experiment.
 
 The developer can open a panel with /experiment, /test, or /optimize, or ask you in plain words. A plain-words request still belongs to a skill: activate manage-experiments, run-tests, or optimize-harness before you answer one, and use these tools:
 - strands_dev_status: the experiments, the drafts, the running jobs, and the last results. Call it again in every turn that asks what exists. The developer, the panels, and finished runs change these files between turns, so an answer from an earlier turn is stale and repeating it is a false claim about the workspace.
@@ -68,6 +70,8 @@ The developer can open a panel with /experiment, /test, or /optimize, or ask you
 - strands_dev_cancel_optimization: stop the active optimization when the developer asks.
 - strands_dev_reject_optimization: discard pending optimization edits without applying them when the developer asks.
 - strands_dev_apply_optimization: write the edits that the developer accepts into the agent source.
+
+The evals UI is a local browser page with larger views of experiments, reports, and optimization runs. In /experiment, /test, and /optimize, the developer presses o to open the current item there. Never write the page address yourself; strands dev gives it to the developer.
 
 Apply optimization edits only when the developer says which edits to apply. A run continues when the turn is cancelled; its progress shows below the chat input, and /test or /optimize shows the result.
 
@@ -373,6 +377,13 @@ const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefin
   return found ? runStatus(found.run) : undefined
 }
 
+const EVALS_UI_OPENING = 'The developer presses o in /experiment, /test, or /optimize to open the current item.'
+
+const evalsUiStatus = (ui: EvalsBrowser): object => {
+  const { status, detail } = ui.snapshot()
+  return defined({ status, detail, open: status === 'ready' ? EVALS_UI_OPENING : undefined })
+}
+
 const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevChatTool => ({
   name: 'strands_dev_status',
   readOnly: true,
@@ -383,7 +394,7 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
     'An answer from an earlier turn is stale, because files and runs change in between.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   run: async (): Promise<string> => {
-    const { experiments, test, optimize } = sessions()
+    const { experiments, test, optimize, ui } = sessions()
     await test.show()
     const [saved, pastChats] = await Promise.all([experiments.reload(), history.pastChats()])
     const { folder, generations } = experiments.snapshot()
@@ -395,6 +406,7 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
       ),
       generations: generations.map(generationStatus),
       optimization: optimizationStatus(optimize.snapshot()),
+      evalsUi: evalsUiStatus(ui),
       newExperiment: {
         ...experiments.suggested(),
         pastChats,
@@ -434,7 +446,7 @@ const createTool = (sessions: Sessions): DevChatTool => ({
     'Start the paid generation run. This call starts the paid run itself and asks nothing first, so call it ' +
     'only after the developer answered yes, in an earlier turn, to the proposal you named. ' +
     'Being asked for test cases is not that answer, and a scope that looks obvious is not that answer. ' +
-    'Generates test cases with strands-evals ExperimentGenerator and saves tmp/experiments/<name>.json. ' +
+    'Generates test cases with strands-evals ExperimentGenerator and saves tmp/experiments/<name>/<name>.json. ' +
     'It takes minutes. Settings you leave out use the suggested values.',
   inputSchema: {
     type: 'object',

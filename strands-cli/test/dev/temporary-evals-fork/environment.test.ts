@@ -1,21 +1,31 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, utimes, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   prepareTemporaryOptimizerEnvironment,
   temporaryVenvPython,
   type TemporaryCommandRequest,
 } from '../../../src/dev/temporary-evals-fork/environment.js'
-import { TEMPORARY_EVALS_FORK_REQUIREMENT } from '../../../src/dev/temporary-evals-fork/fork.js'
+import { TEMPORARY_EVALS_FORK, TEMPORARY_EVALS_FORK_REQUIREMENT } from '../../../src/dev/temporary-evals-fork/fork.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 interface Layout {
   projectRoot: string
   workspaceDirectory: string
-  sitePackages: string
+  projectPaths: string[]
 }
+
+interface FakePython {
+  version?: string
+  pipConfig?: string
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const PACKAGES_FILE = 'temporary_strands_dev_packages.pth'
+const MARKER_FILE = 'temporary-evals-fork.json'
 
 const writeExecutable = async (path: string): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
@@ -25,40 +35,82 @@ const writeExecutable = async (path: string): Promise<void> => {
 const layout = async (): Promise<Layout> => {
   const projectRoot = await temporaryDirectory()
   await writeExecutable(temporaryVenvPython(join(projectRoot, '.venv')))
-  const workspaceDirectory = join(projectRoot, 'strands-dev')
-  const sitePackages = join(workspaceDirectory, 'tmp/optimization/.venv/lib/python3.12/site-packages')
-  return { projectRoot, workspaceDirectory, sitePackages }
+  return {
+    projectRoot,
+    workspaceDirectory: join(projectRoot, 'strands-dev'),
+    projectPaths: [join(projectRoot, '.venv/lib/python3.12/site-packages')],
+  }
 }
 
-const fakeRunner = ({ projectRoot, sitePackages }: Layout, version = '3.12.4') =>
-  vi.fn(async ({ args }: TemporaryCommandRequest): Promise<string> => {
+const pythonTag = (version: string): string => `cpython-${version.split('.').slice(0, 2).join('')}-linux-x86_64`
+
+const sharedFolder = (version = '3.12.4', commit: string = TEMPORARY_EVALS_FORK.commit): string =>
+  join(homedir(), '.strands', 'temporary-evals', `${commit.slice(0, 12)}-${pythonTag(version)}`)
+
+const buildingFolder = (): string => `${sharedFolder()}.${process.pid}.tmp`
+
+const sitePackagesOf = (venv: string): string => join(venv, 'lib', 'site-packages')
+
+const workspaceVenv = ({ workspaceDirectory }: Layout): string => join(workspaceDirectory, 'tmp/.state/evals-env')
+
+const siteDirectories = (...paths: string[]): string =>
+  paths.map((path) => `import site; site.addsitedir(${JSON.stringify(path)})\n`).join('')
+
+const packagesHook = (paths: Layout): Promise<string> =>
+  readFile(join(sitePackagesOf(workspaceVenv(paths)), PACKAGES_FILE), 'utf8')
+
+const usedDaysAgo = async (folder: string, days: number): Promise<void> => {
+  await mkdir(folder, { recursive: true })
+  await writeFile(join(folder, MARKER_FILE), '{}')
+  const used = new Date(Date.now() - days * DAY_MS)
+  await utimes(join(folder, MARKER_FILE), used, used)
+}
+
+const fakeRunner = ({ projectPaths }: Layout, { version = '3.12.4', pipConfig = '' }: FakePython = {}) =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version'))
-      return JSON.stringify({ version, paths: [join(projectRoot, '.venv/lib/python3.12/site-packages')] })
+      return JSON.stringify({ version, tag: pythonTag(version), paths: projectPaths })
     if (args[0] === '-m' && args[1] === 'venv') {
       await writeExecutable(temporaryVenvPython(args[3]!))
-      await mkdir(sitePackages, { recursive: true })
+      await mkdir(sitePackagesOf(args[3]!), { recursive: true })
       return ''
     }
-    if (args[1]?.includes('site.getsitepackages()[0]')) return `${sitePackages}\n`
+    if (args[1]?.includes('site.getsitepackages()[0]')) return `${sitePackagesOf(dirname(dirname(command)))}\n`
+    if (args.join(' ') === '-m pip config list') return pipConfig
     return ''
   })
 
+const requests = (run: ReturnType<typeof fakeRunner>): TemporaryCommandRequest[] =>
+  run.mock.calls.map(([request]) => request)
+
 const installs = (run: ReturnType<typeof fakeRunner>): TemporaryCommandRequest[] =>
-  run.mock.calls.map(([request]) => request).filter((request) => request.args.includes('install'))
+  requests(run).filter((request) => request.args.includes('install'))
+
+const venvRequests = (run: ReturnType<typeof fakeRunner>): TemporaryCommandRequest[] =>
+  requests(run).filter((request) => request.args[1] === 'venv')
 
 describe('TEMPORARY optimizer environment', () => {
+  beforeEach(async () => {
+    const home = await temporaryDirectory()
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('shouldInstallTheForkWithTheProjectPackagesVisibleWhenTheEnvironmentIsMissing', async () => {
     const paths = await layout()
     const run = fakeRunner(paths)
 
     const python = await prepareTemporaryOptimizerEnvironment(paths, { run })
 
-    expect(python).toBe(temporaryVenvPython(join(paths.workspaceDirectory, 'tmp/optimization/.venv')))
-    expect(await readFile(join(paths.sitePackages, 'temporary_strands_dev_project.pth'), 'utf8')).toBe(
-      `import site; site.addsitedir(${JSON.stringify(join(paths.projectRoot, '.venv/lib/python3.12/site-packages'))})\n`
-    )
+    expect(python).toBe(temporaryVenvPython(workspaceVenv(paths)))
+    expect(await packagesHook(paths)).toBe(siteDirectories(sitePackagesOf(sharedFolder()), ...paths.projectPaths))
+    expect(existsSync(sitePackagesOf(sharedFolder()))).toBe(true)
     const [install] = installs(run)
-    expect(install?.command).toBe(python)
+    expect(install?.command).toBe(temporaryVenvPython(buildingFolder()))
     expect(install?.args).toContain(TEMPORARY_EVALS_FORK_REQUIREMENT)
     expect(install?.env?.PIP_REQUIRE_VIRTUALENV).toBe('true')
   })
@@ -76,12 +128,15 @@ describe('TEMPORARY optimizer environment', () => {
 
   it('shouldRebuildTheEnvironmentWhenTheProjectPythonChanges', async () => {
     const paths = await layout()
-    await prepareTemporaryOptimizerEnvironment(paths, { run: fakeRunner(paths, '3.12.4') })
-    const run = fakeRunner(paths, '3.13.1')
+    await prepareTemporaryOptimizerEnvironment(paths, { run: fakeRunner(paths, { version: '3.12.4' }) })
+    const run = fakeRunner(paths, { version: '3.13.1' })
 
     await prepareTemporaryOptimizerEnvironment(paths, { run })
 
     expect(installs(run)).toHaveLength(1)
+    expect(await packagesHook(paths)).toBe(
+      siteDirectories(sitePackagesOf(sharedFolder('3.13.1')), ...paths.projectPaths)
+    )
   })
 
   it('shouldExplainHowToPrepareTheProjectWhenItHasNoPythonEnvironment', async () => {
@@ -99,11 +154,9 @@ describe('TEMPORARY optimizer environment', () => {
 
     await prepareTemporaryOptimizerEnvironment({ ...paths, language: 'typescript' }, { run })
 
-    const venv = run.mock.calls.map(([request]) => request).find((request) => request.args[1] === 'venv')
-    expect(venv?.command).toBe('/opt/python3.12')
-    expect(existsSync(join(paths.sitePackages, 'temporary_strands_dev_project.pth'))).toBe(false)
+    expect(venvRequests(run).map(({ command }) => command)).toEqual(['/opt/python3.12', '/opt/python3.12'])
+    expect(await packagesHook(paths)).toBe(siteDirectories(sitePackagesOf(sharedFolder())))
     expect(installs(run)).toHaveLength(1)
-    vi.unstubAllEnvs()
   })
 
   it.each([
@@ -113,10 +166,10 @@ describe('TEMPORARY optimizer environment', () => {
     const paths = await layout()
 
     await expect(
-      prepareTemporaryOptimizerEnvironment({ ...paths, language }, { run: fakeRunner(paths, '3.9.6') })
+      prepareTemporaryOptimizerEnvironment({ ...paths, language }, { run: fakeRunner(paths, { version: '3.9.6' }) })
     ).rejects.toThrow(`needs Python 3.10 or later, but`)
     await expect(
-      prepareTemporaryOptimizerEnvironment({ ...paths, language }, { run: fakeRunner(paths, '3.9.6') })
+      prepareTemporaryOptimizerEnvironment({ ...paths, language }, { run: fakeRunner(paths, { version: '3.9.6' }) })
     ).rejects.toThrow(hint)
   })
 
@@ -124,7 +177,7 @@ describe('TEMPORARY optimizer environment', () => {
     {
       failing: 'install',
       message:
-        /Could not install strands-agents-evals from .+\nERROR: No matching distribution\nCheck your network connection and that git is installed/u,
+        /Could not install strands-agents-evals from .+\nERROR: No matching distribution\nCheck your network connection, your pip index settings, and that git is installed/u,
     },
     {
       failing: 'venv',
@@ -188,7 +241,8 @@ describe('TEMPORARY optimizer environment', () => {
       prepareTemporaryOptimizerEnvironment(paths, { run }),
     ])
 
-    expect(run.mock.calls.filter(([request]) => request.args[1] === 'venv')).toHaveLength(1)
+    expect(venvRequests(run).map(({ args }) => args.at(-1))).toEqual([buildingFolder(), workspaceVenv(paths)])
+    expect(installs(run)).toHaveLength(1)
   })
 
   it('shouldFinishTheSharedSetupForTheOtherCallerWhenOneCallerStops', async () => {
@@ -211,6 +265,68 @@ describe('TEMPORARY optimizer environment', () => {
     release()
 
     await expect(stopped).rejects.toThrow('stopped by the user')
-    await expect(other).resolves.toBe(temporaryVenvPython(join(paths.workspaceDirectory, 'tmp/optimization/.venv')))
+    await expect(other).resolves.toBe(temporaryVenvPython(workspaceVenv(paths)))
+  })
+
+  it('shouldInstallTheForkOnceWhenTwoWorkspacesUseTheSamePython', async () => {
+    const first = await layout()
+    const second = await layout()
+    const firstRun = fakeRunner(first)
+    const secondRun = fakeRunner(second)
+
+    await prepareTemporaryOptimizerEnvironment(first, { run: firstRun })
+    await prepareTemporaryOptimizerEnvironment(second, { run: secondRun })
+
+    expect(installs(firstRun)).toHaveLength(1)
+    expect(installs(secondRun)).toEqual([])
+    expect(await packagesHook(second)).toBe(siteDirectories(sitePackagesOf(sharedFolder()), ...second.projectPaths))
+  })
+
+  it('shouldListTheSharedPackagesBeforeEachProjectPathWhenItMakesTheWorkspaceEnvironment', async () => {
+    const paths = await layout()
+    const projectPaths = [
+      join(paths.projectRoot, '.venv/lib/python3.12/site-packages'),
+      join(paths.projectRoot, '.venv/lib64/python3.12/site-packages'),
+    ]
+    const run = fakeRunner({ ...paths, projectPaths })
+
+    await prepareTemporaryOptimizerEnvironment(paths, { run })
+
+    expect(await packagesHook(paths)).toBe(siteDirectories(sitePackagesOf(sharedFolder()), ...projectPaths))
+    expect(venvRequests(run).at(-1)).toMatchObject({
+      command: temporaryVenvPython(join(paths.projectRoot, '.venv')),
+      args: ['-m', 'venv', '--without-pip', workspaceVenv(paths)],
+    })
+  })
+
+  it('shouldPassThePipIndexSettingsToTheInstallWhenPipIsConfiguredForAnIndex', async () => {
+    vi.stubEnv('PIP_INDEX_URL', undefined)
+    vi.stubEnv('PIP_TRUSTED_HOST', undefined)
+    const paths = await layout()
+    const run = fakeRunner(paths, {
+      pipConfig: "global.index-url='https://packages.example/simple'\ninstall.trusted-host='packages.example'\n",
+    })
+
+    await prepareTemporaryOptimizerEnvironment(paths, { run })
+
+    expect(installs(run)[0]?.env).toMatchObject({
+      PIP_INDEX_URL: 'https://packages.example/simple',
+      PIP_TRUSTED_HOST: 'packages.example',
+      PIP_REQUIRE_VIRTUALENV: 'true',
+    })
+  })
+
+  it('shouldDeleteTheSharedEnvironmentOfAnotherCommitWhenNothingUsedItForMoreThanSevenDays', async () => {
+    const stale = sharedFolder('3.12.4', '0'.repeat(40))
+    const recent = sharedFolder('3.12.4', '1'.repeat(40))
+    await usedDaysAgo(stale, 8)
+    await usedDaysAgo(recent, 6)
+    const paths = await layout()
+
+    await prepareTemporaryOptimizerEnvironment(paths, { run: fakeRunner(paths) })
+
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(recent)).toBe(true)
+    expect(existsSync(sharedFolder())).toBe(true)
   })
 })

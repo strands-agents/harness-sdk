@@ -47,11 +47,12 @@ describe('TEMPORARY dev commands', () => {
 
     const details = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
 
-    expect(details.map((text) => text.match(/strands-dev\/tmp\/\w+\//)?.[0])).toEqual([
-      'strands-dev/tmp/experiments/',
-      'strands-dev/tmp/reports/',
-      'strands-dev/tmp/optimization/',
+    expect(details.map((text) => text.match(/strands-dev\/tmp\/[\w<>/.]*[\w>/]/u)?.[0])).toEqual([
+      'strands-dev/tmp/experiments/<name>/<name>.json',
+      'strands-dev/tmp/experiments/<name>/runs/',
+      'strands-dev/tmp/experiments/<name>/optimizations/',
     ])
+    expect(details[1]).toContain('the latest one as <name>.report.json')
     expect(details.every((text) => text.includes('TEMPORARY: a fork of strands-evals'))).toBe(true)
   })
 
@@ -65,11 +66,11 @@ describe('TEMPORARY dev commands', () => {
 
   it('shouldShowATestThatFinishedWhileStrandsDevWasClosedWhenTheChatAttaches', async () => {
     const { workspace, project } = await fixture()
-    const experiment = join(workspace.directory!, 'tmp/experiments/capital.json')
-    const reports = join(workspace.directory!, 'tmp/reports')
-    const report = join(reports, '20261116-090000-capital.json')
+    const experiment = join(workspace.directory!, 'tmp/experiments/capital/capital.json')
+    const run = join(workspace.directory!, 'tmp/experiments/capital/runs/20261116-090000')
+    const report = join(run, 'report.json')
     await mkdir(dirname(experiment), { recursive: true })
-    await mkdir(reports, { recursive: true })
+    await mkdir(run, { recursive: true })
     await writeFile(
       experiment,
       JSON.stringify({
@@ -94,8 +95,8 @@ describe('TEMPORARY dev commands', () => {
       cases: experiment,
       rerun: false,
       report,
-      log: join(reports, '20261116-090000-capital.log'),
-      store: join(reports, '20261116-090000-capital.cases'),
+      log: join(run, 'run.log'),
+      store: join(run, '.state/cases'),
       startedAt: Date.now(),
     })
     const announced = vi.fn(() => ({ update: vi.fn() }))
@@ -105,6 +106,18 @@ describe('TEMPORARY dev commands', () => {
     await vi.waitFor(() =>
       expect(announced).toHaveBeenCalledWith('success', 'test · capital · 1 of 1 case passed · /test shows the results')
     )
+  })
+
+  it('shouldStartTheEvalsUiWhenTheChatAttachesAndKeepTheChatWorkingWhenItCannotStart', async () => {
+    const { workspace, project } = await fixture()
+    const announced = vi.fn(() => ({ update: vi.fn() }))
+
+    temporaryDevCommands(workspace, project)[0]!.attach?.({ ...context, report: announced })
+
+    await vi.waitFor(() =>
+      expect(announced).toHaveBeenCalledWith('error', expect.stringContaining('evals UI unavailable · '))
+    )
+    expect(temporaryDevSessions({ workspace, agent: () => ({}) }).ui.snapshot().status).toBe('unavailable')
   })
 
   it('shouldKeepTheOptimizePageWhenAReloadOpensThePanelAgainButNotWhenTheDeveloperOpensIt', async () => {

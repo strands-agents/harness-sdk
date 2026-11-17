@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
@@ -9,14 +9,24 @@ import {
   spawnTemporaryEvals,
   temporaryEvalsEnvironment,
   temporaryEvalsFailure,
-  temporaryExperimentsFolder,
   temporaryLanguageArguments,
-  temporaryReportsFolder,
-  temporaryRunName,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
-import { resolveTemporaryExperiment, temporaryCaseCount, temporaryRunnableExperiment } from './experiment-files.js'
+import {
+  readTemporaryExperimentFile,
+  resolveTemporaryExperiment,
+  temporaryCaseCount,
+  temporaryNamedExperiment,
+  temporaryRunnableExperiment,
+  writeTemporaryExperimentFile,
+} from './experiment-files.js'
+import {
+  temporaryExperimentHome,
+  temporaryExperimentsFolder,
+  temporaryFreeStamp,
+  temporaryTestRunFiles,
+} from './layout.js'
 
 export interface TemporaryTestFiles {
   readonly cases: string
@@ -39,12 +49,16 @@ export interface TemporaryTestRequest {
   background?: boolean
   detached?: boolean
   resume?: TemporaryTestFiles
+  only?: readonly string[]
+  startedAt?: number
 }
 
 export interface TemporaryTestOutcome {
   experiment: string
   name: string
+  home: string
   report: string
+  seconds: number
   passed: number
   checks: number
   overall: number
@@ -56,6 +70,7 @@ export interface TemporaryTestDependencies {
 }
 
 const TEST_WORKERS = 4
+const MILLISECONDS_PER_SECOND = 1000
 
 const TEST_OWNED_FLAGS = [
   '--agent',
@@ -98,16 +113,26 @@ const assertCases = (experiment: string, cases: number): void => {
     )
 }
 
-const newTestFiles = async (experiment: string, folder: string, now: Date): Promise<TemporaryTestFiles> => {
-  const name = temporaryRunName(experiment, now)
-  const report = join(folder, `${name}.json`)
-  if (existsSync(report)) throw new Error(`The report ${report} already exists. Wait a second, then try again.`)
+const onlyCases = async (experiment: string, copy: string, names: readonly string[]): Promise<string> => {
+  const { raw } = await readTemporaryExperimentFile(experiment)
+  await writeTemporaryExperimentFile(copy, temporaryNamedExperiment(raw), names)
+  return copy
+}
+
+const newTestFiles = async (
+  experiment: string,
+  home: string,
+  now: Date,
+  only: readonly string[] | undefined
+): Promise<TemporaryTestFiles> => {
+  const stamp = temporaryFreeStamp((candidate) => existsSync(temporaryTestRunFiles(home, candidate).folder), now)
+  const { folder, report, log, store, copy } = temporaryTestRunFiles(home, stamp)
   await mkdir(folder, { recursive: true })
   return {
-    cases: await temporaryRunnableExperiment(experiment, join(folder, `${name}.experiment.json`)),
+    cases: only ? await onlyCases(experiment, copy, only) : await temporaryRunnableExperiment(experiment, copy),
     report,
-    log: join(folder, `${name}.log`),
-    store: join(folder, `${name}.cases`),
+    log,
+    store,
   }
 }
 
@@ -134,8 +159,9 @@ export const runTemporaryTest = async (
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
     { ...(dependencies.run ? { run: dependencies.run } : {}), ...(signal ? { signal } : {}), onProgress }
   )
-  const files =
-    request.resume ?? (await newTestFiles(experiment, temporaryReportsFolder(directory), request.now?.() ?? new Date()))
+  const home = temporaryExperimentHome(directory, experiment)
+  const startedAt = request.startedAt ?? Date.now()
+  const files = request.resume ?? (await newTestFiles(experiment, home, request.now?.() ?? new Date(), request.only))
   const { report, log } = files
   onProgress(`Testing ${workspace.entrypoint} on the ${cases} cases of ${experiment}`)
   onProgress(`Report: ${report}`)
@@ -175,6 +201,6 @@ export const runTemporaryTest = async (
     throw new Error(`strands-evals run finished without writing ${report}. The full output is in ${log}.`)
   const scores = await readScores(report)
   assertChecked(experiment, report, scores.checks)
-  const inFolder = dirname(experiment) === temporaryExperimentsFolder(directory)
-  return { experiment, name: inFolder ? basename(experiment, '.json') : experiment, report, ...scores }
+  const name = home === dirname(experiment) ? basename(experiment, '.json') : experiment
+  return { experiment, name, home, report, seconds: (Date.now() - startedAt) / MILLISECONDS_PER_SECOND, ...scores }
 }

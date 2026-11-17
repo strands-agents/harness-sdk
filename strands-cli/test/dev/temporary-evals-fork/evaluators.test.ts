@@ -28,12 +28,12 @@ const workspaceFixture = async (language: DevWorkspaceConfig['language'] = 'pyth
   }
 }
 
-const environmentRunner = (workspace: DevWorkspace) =>
-  vi.fn(async ({ args }: TemporaryCommandRequest): Promise<string> => {
+const environmentRunner = () =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
     if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
     if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(workspace.directory!, 'tmp/optimization/.venv/lib/site-packages')
+      const sitePackages = join(dirname(dirname(command)), 'lib/site-packages')
       await mkdir(sitePackages, { recursive: true })
       return sitePackages
     }
@@ -84,7 +84,7 @@ const listing = (stdout: string, code = 0, stderrTail: string[] = []) =>
   vi.fn(async (_process: TemporaryEvalsProcess): Promise<TemporaryEvalsExit> => ({ code, stdout, stderrTail }))
 
 const read = async (workspace: DevWorkspace, spawnEvals: ReturnType<typeof listing>) =>
-  readTemporaryEvaluators(workspace, {}, { run: environmentRunner(workspace), spawnEvals })
+  readTemporaryEvaluators(workspace, {}, { run: environmentRunner(), spawnEvals })
 
 describe('TEMPORARY evaluator catalog', () => {
   it('shouldRunTheCatalogCommandOfTheForkInTheProjectWhenItReadsTheEvaluators', async () => {

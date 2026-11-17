@@ -9,7 +9,7 @@ import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const FIRST = 'a'.repeat(40)
 const SECOND = 'b'.repeat(40)
-const PYTHON = '/desk/strands-dev/tmp/optimization/.venv/bin/python'
+const PYTHON = '/desk/strands-dev/tmp/.state/evals-env/bin/python'
 const SKILL = '.agents/skills/session-converter'
 const SKILL_MD = [
   '---',
@@ -80,7 +80,7 @@ const setup = async (environment: NodeJS.ProcessEnv = {}) => {
     environment,
     python: async () => PYTHON,
   })
-  const folder = join(workspace.directory!, 'tmp', 'skills', 'session-converter')
+  const folder = join(workspace.directory!, 'tmp', '.state', 'skills', 'session-converter')
   const requested = (): string[] => github.fetch.mock.calls.map(([url]) => String(url))
   return { workspace, github, history, folder, requested }
 }
@@ -108,7 +108,7 @@ describe('TEMPORARY session-converter skill', () => {
     expect(guide).toContain(`${join(workspace.directory!, '.strands/state/sessions')} is their <directory>`)
     expect(guide).toContain('Skip 20261117t101500z-current, which is this chat.')
     expect(guide).toContain(`"${PYTHON}" -m strands_evals.cli validate <file>`)
-    expect(guide).toContain(join(workspace.directory!, 'tmp', 'experiments', '<name>.json'))
+    expect(guide).toContain(join(workspace.directory!, 'tmp', 'experiments', '<name>', '<name>.json'))
     expect(guide).toContain('call strands_dev_evaluators before you write "evaluators"')
     expect(guide).toContain("ask the skill's questions one at a time")
     expect(guide).toContain('wait for a yes')

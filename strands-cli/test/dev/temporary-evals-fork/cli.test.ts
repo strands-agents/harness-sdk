@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
@@ -19,7 +20,7 @@ const workspaceFixture = async (language: 'python' | 'typescript' = 'python'): P
   const root = await temporaryDirectory()
   const directory = join(root, 'strands-dev')
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await writeFileAt(join(directory, 'tmp/experiments/support.json'), JSON.stringify({ cases: [{ name: 'a' }] }))
+  await writeFileAt(join(directory, 'tmp/experiments/support/support.json'), JSON.stringify({ cases: [{ name: 'a' }] }))
   return {
     directory,
     root,
@@ -28,16 +29,24 @@ const workspaceFixture = async (language: 'python' | 'typescript' = 'python'): P
   }
 }
 
-const run = (workspace: DevWorkspace) =>
-  vi.fn(async ({ args }: TemporaryCommandRequest): Promise<string> => {
+const sitePackagesOf = (python: string): string => join(dirname(dirname(python)), 'lib', 'site-packages')
+
+const run = () =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
     if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
     if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(workspace.directory!, 'tmp/optimization/.venv/lib/site-packages')
+      const sitePackages = sitePackagesOf(command)
       await mkdir(sitePackages, { recursive: true })
       return sitePackages
     }
     return ''
+  })
+
+const reportingTests = (report: unknown) =>
+  vi.fn(async ({ args }: { args: string[] }) => {
+    await writeFileAt(args[args.indexOf('--output') + 1]!, JSON.stringify(report))
+    return { code: 0, stdout: '', stderrTail: [] }
   })
 
 const captured = (): { stream: PassThrough; text: () => string } => {
@@ -64,7 +73,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     const code = await runTemporaryDevCommand(
       parseArgs(['dev', 'optimize', 'support']),
       { stdout: stdout.stream, stderr: stderr.stream },
-      { openWorkspace: async () => opened(workspace), prepareProject, run: run(workspace), spawnOptimizer }
+      { openWorkspace: async () => opened(workspace), prepareProject, run: run(), spawnOptimizer }
     )
 
     expect(code).toBe(0)
@@ -98,11 +107,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     const workspace = await workspaceFixture()
     const stdout = captured()
     const stderr = captured()
-    const spawnTests = vi.fn(async ({ args }: { args: string[] }) => {
-      const report = args[args.indexOf('--output') + 1]!
-      await writeFileAt(report, JSON.stringify({ overall_score: 0.5, test_passes: passes }))
-      return { code: 0, stdout: '', stderrTail: [] }
-    })
+    const spawnTests = reportingTests({ overall_score: 0.5, test_passes: passes })
 
     const exit = await runTemporaryDevCommand(
       parseArgs(['dev', 'test', 'support']),
@@ -110,7 +115,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       {
         openWorkspace: async () => opened(workspace),
         prepareProject: vi.fn(async () => {}),
-        run: run(workspace),
+        run: run(),
         spawnTests,
       }
     )
@@ -124,10 +129,7 @@ describe('TEMPORARY strands dev optimize command', () => {
   it('shouldKeepTheWorkspaceInTheNextStepWhenDevTestRunsOnAnotherWorkspace', async () => {
     const workspace = await workspaceFixture()
     const stdout = captured()
-    const spawnTests = vi.fn(async ({ args }: { args: string[] }) => {
-      await writeFileAt(args[args.indexOf('--output') + 1]!, JSON.stringify({ overall_score: 0, test_passes: [false] }))
-      return { code: 0, stdout: '', stderrTail: [] }
-    })
+    const spawnTests = reportingTests({ overall_score: 0, test_passes: [false] })
 
     await runTemporaryDevCommand(
       parseArgs(['dev', 'test', 'support', '--workspace', '/work/desk']),
@@ -135,11 +137,65 @@ describe('TEMPORARY strands dev optimize command', () => {
       {
         openWorkspace: async () => opened(workspace),
         prepareProject: vi.fn(async () => {}),
-        run: run(workspace),
+        run: run(),
         spawnTests,
       }
     )
 
     expect(stdout.text()).toContain('Run strands dev optimize --workspace /work/desk support to improve')
+  })
+
+  it('shouldWriteTheLatestResultWhenAHeadlessTestFinishes', async () => {
+    const workspace = await workspaceFixture()
+    const stderr = captured()
+    const report = {
+      overall_score: 1,
+      cases: [{ name: 'a', evaluator: 'Equals' }],
+      scores: [1],
+      test_passes: [true],
+      reasons: ['matches'],
+    }
+
+    await runTemporaryDevCommand(
+      parseArgs(['dev', 'test', 'support']),
+      { stdout: captured().stream, stderr: stderr.stream },
+      {
+        openWorkspace: async () => opened(workspace),
+        prepareProject: vi.fn(async () => {}),
+        run: run(),
+        spawnTests: reportingTests(report),
+      }
+    )
+
+    const home = join(workspace.directory!, 'tmp/experiments/support')
+    const latest = JSON.parse(await readFile(join(home, '.state/latest.json'), 'utf8')) as {
+      run: string
+      seconds: number
+    }
+    expect(dirname(latest.run)).toBe('runs')
+    expect(latest.seconds).toBeGreaterThanOrEqual(0)
+    expect(JSON.parse(await readFile(join(home, latest.run, 'report.json'), 'utf8'))).toEqual(report)
+    expect(JSON.parse(await readFile(join(home, 'support.report.json'), 'utf8'))).toEqual(report)
+    expect(stderr.text()).not.toContain('warning:')
+  })
+
+  it('shouldWarnOnStderrWhenAHeadlessTestCannotWriteTheLatestResult', async () => {
+    const workspace = await workspaceFixture()
+    const stderr = captured()
+
+    const exit = await runTemporaryDevCommand(
+      parseArgs(['dev', 'test', 'support']),
+      { stdout: captured().stream, stderr: stderr.stream },
+      {
+        openWorkspace: async () => opened(workspace),
+        prepareProject: vi.fn(async () => {}),
+        run: run(),
+        spawnTests: reportingTests({ overall_score: 1, test_passes: [true] }),
+      }
+    )
+
+    expect(exit).toBe(0)
+    expect(stderr.text()).toMatch(/warning: \/test cannot show this result: .+ is not a usable test report/u)
+    expect(existsSync(join(workspace.directory!, 'tmp/experiments/support/.state/latest.json'))).toBe(false)
   })
 })

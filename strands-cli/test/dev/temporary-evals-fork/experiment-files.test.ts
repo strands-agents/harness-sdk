@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -41,23 +41,34 @@ const writeJson = async (path: string, value: unknown): Promise<void> => {
 
 const readJson = async (path: string): Promise<any> => JSON.parse(await readFile(path, 'utf8'))
 
+const experimentFile = (folder: string, name: string): string => join(folder, name, `${name}.json`)
+
+const writeFileAt = async (path: string, text: string): Promise<void> => {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, text)
+}
+
 describe('TEMPORARY experiment files', () => {
   it('shouldListExperimentsByNameWithTheirCaseCountsWhenTheFolderHasFiles', async () => {
     const folder = await temporaryDirectory()
-    await writeJson(join(folder, 'refunds.json'), experimentDocument(rawCase('c0'), rawCase('c1')))
-    await writeJson(join(folder, 'billing.json'), experimentDocument(rawCase('c0')))
-    await writeJson(join(folder, 'billing-v2.json'), experimentDocument())
-    await writeFile(join(folder, 'broken.json'), '{"cases": [')
+    await writeFileAt(
+      experimentFile(folder, 'refunds'),
+      JSON.stringify(experimentDocument(rawCase('c0'), rawCase('c1')))
+    )
+    await writeFileAt(experimentFile(folder, 'billing'), JSON.stringify(experimentDocument(rawCase('c0'))))
+    await writeFileAt(experimentFile(folder, 'billing-v2'), JSON.stringify(experimentDocument()))
+    await writeFileAt(experimentFile(folder, 'broken'), '{"cases": [')
     await writeFile(join(folder, 'notes.txt'), 'not an experiment')
-    await mkdir(join(folder, 'drafts'))
+    await writeJson(join(folder, 'loose.json'), experimentDocument(rawCase('c0')))
+    await writeFileAt(join(folder, 'drafts', 'refunds.json'), JSON.stringify(experimentDocument(rawCase('c0'))))
 
     const experiments = await listTemporaryExperiments(folder)
 
     expect(experiments).toEqual([
-      { name: 'billing', path: join(folder, 'billing.json'), caseCount: 1 },
-      { name: 'billing-v2', path: join(folder, 'billing-v2.json'), caseCount: 0 },
-      { name: 'broken', path: join(folder, 'broken.json'), caseCount: 0 },
-      { name: 'refunds', path: join(folder, 'refunds.json'), caseCount: 2 },
+      { name: 'billing', path: experimentFile(folder, 'billing'), caseCount: 1 },
+      { name: 'billing-v2', path: experimentFile(folder, 'billing-v2'), caseCount: 0 },
+      { name: 'broken', path: experimentFile(folder, 'broken'), caseCount: 0 },
+      { name: 'refunds', path: experimentFile(folder, 'refunds'), caseCount: 2 },
     ])
   })
 

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -16,17 +16,45 @@ import {
 } from '../../../src/dev/temporary-evals-fork/background-runs.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
-const recordIn = (reports: string, pid?: number): TemporaryTestRecord => ({
-  version: 1,
-  experiment: join(reports, '../experiments/capital.json'),
-  cases: join(reports, '../experiments/capital.json'),
-  rerun: false,
-  report: join(reports, '20261116-090000-capital.json'),
-  log: join(reports, '20261116-090000-capital.log'),
-  store: join(reports, '20261116-090000-capital.cases'),
-  startedAt: 1_763_283_600_000,
-  ...(pid === undefined ? {} : { pid }),
-})
+const STAMP = '20261116-090000'
+const INSIDE_HOME = 'tmp/experiments/capital'
+const OUTSIDE_HOME = 'tmp/.state/outside-experiments/capital'
+
+interface RunPlace {
+  readonly home?: string
+  readonly stamp?: string
+  readonly pid?: number
+}
+
+const runFolder = (workspace: string, home: string, stamp: string): string => join(workspace, home, 'runs', stamp)
+
+const recordIn = (
+  workspace: string,
+  { home = INSIDE_HOME, stamp = STAMP, pid }: RunPlace = {}
+): TemporaryTestRecord => {
+  const run = runFolder(workspace, home, stamp)
+  const experiment =
+    home === INSIDE_HOME ? join(workspace, INSIDE_HOME, 'capital.json') : join(dirname(workspace), 'capital.json')
+  return {
+    version: 1,
+    experiment,
+    cases: join(run, '.state/experiment.json'),
+    rerun: false,
+    report: join(run, 'report.json'),
+    log: join(run, 'run.log'),
+    store: join(run, '.state/cases'),
+    startedAt: 1_763_283_600_000,
+    ...(pid === undefined ? {} : { pid }),
+  }
+}
+
+const savedRecordFile = (workspace: string, home = INSIDE_HOME, stamp = STAMP): string =>
+  join(runFolder(workspace, home, stamp), '.state/record.json')
+
+const writeFileAt = async (path: string, text: string): Promise<void> => {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, text)
+}
 
 const running = async (...args: string[]) => {
   const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', ...args], {
@@ -48,40 +76,62 @@ const alive = (pid: number): boolean => {
 
 describe('TEMPORARY test run records', () => {
   it('shouldReadBackASavedRecordAndForgetItWhenItIsDropped', async () => {
-    const reports = await temporaryDirectory()
-    const record = recordIn(reports, 4242)
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace, { pid: 4242 })
 
     await saveTemporaryRunRecord(record)
-    const saved = await readTemporaryRunRecords(reports)
+    const saved = await readTemporaryRunRecords(workspace)
     await dropTemporaryRunRecord(record)
 
     expect(saved).toEqual([record])
-    expect(await readTemporaryRunRecords(reports)).toEqual([])
+    expect(await readTemporaryRunRecords(workspace)).toEqual([])
+  })
+
+  it('shouldSaveTheRecordInTheStateFolderOfItsRun', async () => {
+    const workspace = await temporaryDirectory()
+
+    await saveTemporaryRunRecord(recordIn(workspace))
+
+    expect(await readdir(dirname(savedRecordFile(workspace)))).toEqual(['record.json'])
+  })
+
+  it.each([
+    ['TheRunsFolderOfItsExperiment', INSIDE_HOME],
+    ['TheHomeOfAnExperimentOutsideTheExperimentsFolder', OUTSIDE_HOME],
+  ])('shouldFindTheRecordOfAnUnfinishedRunWhenItIsIn%s', async (_case, home) => {
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace, { home })
+    await writeFileAt(savedRecordFile(workspace, home), JSON.stringify(record))
+
+    expect(await readTemporaryRunRecords(workspace)).toEqual([record])
   })
 
   it('shouldSkipRecordsThatAreNotWholeOrNotRunRecords', async () => {
-    const reports = await temporaryDirectory()
-    await mkdir(join(reports, 'running'))
-    await writeFile(join(reports, 'running', 'cut.json'), '{"version": 1, "experi')
-    await writeFile(join(reports, 'running', 'other.json'), '{"version": 2}')
-    await saveTemporaryRunRecord(recordIn(reports))
+    const workspace = await temporaryDirectory()
+    await writeFileAt(savedRecordFile(workspace, INSIDE_HOME, '20261116-070000'), '{"version": 1, "experi')
+    await writeFileAt(savedRecordFile(workspace, INSIDE_HOME, '20261116-080000'), '{"version": 2}')
+    await saveTemporaryRunRecord(recordIn(workspace))
 
-    expect(await readTemporaryRunRecords(reports)).toEqual([recordIn(reports)])
+    expect(await readTemporaryRunRecords(workspace)).toEqual([recordIn(workspace)])
   })
 
   it('shouldFindNoRecordsWhenNoRunWasEverRecorded', async () => {
-    expect(await readTemporaryRunRecords(join(await temporaryDirectory(), 'reports'))).toEqual([])
+    expect(await readTemporaryRunRecords(join(await temporaryDirectory(), 'strands-dev'))).toEqual([])
   })
 })
 
 describe.skipIf(process.platform === 'win32')('TEMPORARY test runs that outlive strands dev', () => {
   it('shouldTreatARunAsAliveOnlyWhileItsProcessStillWritesItsReport', async () => {
-    const reports = await temporaryDirectory()
-    const record = recordIn(reports)
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace)
     const child = await running(record.report)
 
     const live = await isTemporaryRunAlive({ ...record, pid: child.pid! })
-    const reused = await isTemporaryRunAlive({ ...record, pid: child.pid!, report: join(reports, 'other.json') })
+    const reused = await isTemporaryRunAlive({
+      ...record,
+      pid: child.pid!,
+      report: recordIn(workspace, { stamp: '20261116-100000' }).report,
+    })
     child.kill()
     await once(child, 'exit')
 
@@ -92,8 +142,8 @@ describe.skipIf(process.platform === 'win32')('TEMPORARY test runs that outlive 
   })
 
   it('shouldStopTheRunAndReturnWhenItsProcessHasEnded', async () => {
-    const reports = await temporaryDirectory()
-    const record = recordIn(reports)
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace)
     const child = await running(record.report)
     const stop = new AbortController()
 
@@ -107,8 +157,8 @@ describe.skipIf(process.platform === 'win32')('TEMPORARY test runs that outlive 
 
 describe('TEMPORARY case results before a resume', () => {
   it('shouldRemoveOnlyTheCaseResultsThatAreNotWholeJson', async () => {
-    const store = join(await temporaryDirectory(), 'run.cases')
-    await mkdir(store)
+    const { store } = recordIn(await temporaryDirectory())
+    await mkdir(store, { recursive: true })
     await writeFile(join(store, 'done.json'), '{"output": "Paris"}')
     await writeFile(join(store, 'cut.json'), '{"outp')
     await writeFile(join(store, 'notes.txt'), 'keep')
@@ -119,7 +169,7 @@ describe('TEMPORARY case results before a resume', () => {
   })
 
   it('shouldDoNothingWhenTheRunSavedNoCaseYet', async () => {
-    const store = join(await temporaryDirectory(), 'run.cases')
+    const { store } = recordIn(await temporaryDirectory())
 
     await clearUnreadableCaseResults(store)
 

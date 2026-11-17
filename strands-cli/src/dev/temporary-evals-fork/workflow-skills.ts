@@ -6,7 +6,9 @@ Use the developer's request and earlier conversation first. Plain-language reque
 
 Answer the question that was asked and stop. Answer it from tool output read in this turn: call strands_dev_status again in every turn that asks what exists, including a repeated question, because the developer, the panels, and finished runs change the workspace between turns. Reusing an earlier answer states a workspace that may no longer exist, and saying you just checked when you did not is a false claim.
 
-Before a paid run, briefly explain the concrete scope, that model calls cost money, and that the run can take minutes; obtain approval before starting. Being asked to run, test, or improve something is not that approval: end that turn with the scope and wait for a separate answer. A specific run already approved after that explanation needs no repeated approval. Approval for one run is not permission for additional runs or a larger scope. Do not invent a price or model-call count that the tools have not supplied.`
+Before a paid run, briefly explain the concrete scope, that model calls cost money, and that the run can take minutes; obtain approval before starting. Being asked to run, test, or improve something is not that approval: end that turn with the scope and wait for a separate answer. A specific run already approved after that explanation needs no repeated approval. Approval for one run is not permission for additional runs or a larger scope. Do not invent a price or model-call count that the tools have not supplied.
+
+The evals UI shows experiments, reports, and optimization runs in a browser. When the developer wants a closer look, tell them to press o in /experiment, /test, or /optimize. strands_dev_status says if the evals UI is ready.`
 
 const MANAGE_EXPERIMENTS = `# Manage experiments in dev chat
 

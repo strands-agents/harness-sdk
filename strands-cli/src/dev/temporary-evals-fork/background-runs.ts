@@ -1,15 +1,15 @@
 import { execFile } from 'node:child_process'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { promisify } from 'node:util'
 
 import { isRecord } from '../../values.js'
 import { stopTemporaryProcessGroup } from './evals-process.js'
+import { listTemporaryTestRuns, temporaryTestRunFiles, temporaryTestRunOf } from './layout.js'
 
 const runCommand = promisify(execFile)
 const RECORD_VERSION = 1
-const RUNS_FOLDER = 'running'
 const POLL_MS = 1000
 
 export interface TemporaryTestRecord {
@@ -17,6 +17,7 @@ export interface TemporaryTestRecord {
   readonly experiment: string
   readonly cases: string
   readonly rerun: boolean
+  readonly only?: readonly string[]
   readonly report: string
   readonly log: string
   readonly store: string
@@ -26,13 +27,14 @@ export interface TemporaryTestRecord {
 
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
 
-const recordPath = ({ report }: TemporaryTestRecord): string => join(dirname(report), RUNS_FOLDER, basename(report))
+const recordPath = ({ report }: TemporaryTestRecord): string => temporaryTestRunOf(report).record
 
 const isTestRecord = (value: unknown): value is TemporaryTestRecord =>
   isRecord(value) &&
   value.version === RECORD_VERSION &&
   ['experiment', 'cases', 'report', 'log', 'store'].every((key) => typeof value[key] === 'string') &&
   typeof value.rerun === 'boolean' &&
+  (value.only === undefined || (Array.isArray(value.only) && value.only.every((name) => typeof name === 'string'))) &&
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid))
 
@@ -58,17 +60,10 @@ const readRecord = async (path: string): Promise<TemporaryTestRecord | undefined
   return isTestRecord(value) ? value : undefined
 }
 
-export const readTemporaryRunRecords = async (reportsFolder: string): Promise<TemporaryTestRecord[]> => {
-  const folder = join(reportsFolder, RUNS_FOLDER)
-  let names: string[]
-  try {
-    names = await readdir(folder)
-  } catch (error) {
-    if (missing(error)) return []
-    throw error
-  }
+export const readTemporaryRunRecords = async (workspaceDirectory: string): Promise<TemporaryTestRecord[]> => {
+  const runs = await listTemporaryTestRuns(workspaceDirectory)
   const records = await Promise.all(
-    names.filter((name) => name.endsWith('.json')).map((name) => readRecord(join(folder, name)))
+    runs.map(({ home, stamp }) => readRecord(temporaryTestRunFiles(home, stamp).record))
   )
   return records.filter((record): record is TemporaryTestRecord => record !== undefined)
 }

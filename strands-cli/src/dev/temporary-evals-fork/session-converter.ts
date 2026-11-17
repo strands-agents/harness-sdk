@@ -9,7 +9,8 @@ import { isRecord } from '../../values.js'
 import { devSessionsFolder } from '../runtime.js'
 import type { DevWorkspace } from '../workspace.js'
 import { prepareTemporaryOptimizerEnvironment } from './environment.js'
-import { temporaryExperimentsFolder, temporaryWorkspaceDirectory } from './evals-process.js'
+import { temporaryWorkspaceDirectory } from './evals-process.js'
+import { temporaryExperimentFile, temporarySkillsFolder } from './layout.js'
 
 export const TEMPORARY_SESSION_CONVERTER_SOURCE = 'github.com/strands-agents/evals'
 
@@ -188,7 +189,7 @@ const strandsDevRules = ({ python, workspaceDirectory, currentChat }: Guide): st
   'Evaluators: call strands_dev_evaluators before you write "evaluators". Replace each unavailable evaluator with ' +
     'the nearest available one, and tell the developer.',
   'Cases: give every case a non-blank input and expected_assertion.',
-  `File: save the experiment as ${join(temporaryExperimentsFolder(workspaceDirectory), '<name>.json')}. Use a short new ` +
+  `File: save the experiment as ${temporaryExperimentFile(workspaceDirectory, '<name>')}. Use a short new ` +
     'name of letters, numbers, dots, dashes, and underscores, not <timestamp>_<uuid>. Never replace a file.',
   'Cost: reading the chats in step 3 uses the chat model, and synthesizing cases calls a Bedrock model about one ' +
     'time for each case. Before each, say what it reads or makes, and wait for a yes.',
@@ -232,7 +233,7 @@ export const temporarySessionHistory = ({
       workspace.directory ? countPastChats(devSessionsFolder(workspace.directory), currentChat()) : 0,
     converter: async (): Promise<string> => {
       const workspaceDirectory = temporaryWorkspaceDirectory(workspace)
-      const folder = join(workspaceDirectory, 'tmp', 'skills', SKILL_NAME)
+      const folder = join(temporarySkillsFolder(workspaceDirectory), SKILL_NAME)
       const [download, interpreter] = await Promise.all([
         newestSkill({ fetch, environment }, folder),
         evalsPython(workspaceDirectory),

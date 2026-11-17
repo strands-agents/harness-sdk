@@ -160,6 +160,12 @@ const objectiveName = (objective: string): string => {
   return terms ? `mean of ${[...terms.matchAll(MAXIMIZED)].map(([, name]) => name).join(', ')}` : objective
 }
 const FAILED_STOPS = new Set(['setup', 'proposer_error'])
+const PROPOSER_STOP = 'proposer_error'
+const CREDENTIAL_ERRORS =
+  /ProfileNotFound|NoCredentials|CredentialRetrieval|ExpiredToken|UnrecognizedClient|InvalidClientTokenId|AccessDenied|SSOToken|TokenRetrieval/u
+const PROPOSER_CREDENTIALS =
+  "The proposer is the optimizer's own AWS Bedrock model. It uses the AWS credentials and region of the shell that " +
+  'started strands dev, not the chat provider. Set AWS_PROFILE or AWS credentials that can call Bedrock, then start the run again.'
 const TEST_INTERVAL_CONFIDENCE = 0.9
 const SPLIT_MEASUREMENT: Record<Split, TemporaryMeasurement> = {
   train: 'search',
@@ -250,6 +256,7 @@ class RunState {
   private champion: string | undefined
   private stopReason: string | undefined
   private stopMessage: string | undefined
+  private proposerError: string | undefined
   private test: TestReport | undefined
   private readonly candidates = new Map<string, Candidate>()
   private readonly scores = new Map<string, Map<Split, number>>()
@@ -270,6 +277,7 @@ class RunState {
     ['score', (event): void => this.readScore(event)],
     ['iteration_end', (event): void => this.readIterationEnd(event)],
     ['finalists', ({ candidate_ids }): void => void (this.finalists = texts(candidate_ids))],
+    ['proposer_error', (event): void => this.readProposerError(event)],
     ['stop', (event): void => this.readStop(event)],
     ['picked', ({ report }): void => this.readPicked(report)],
     ['test', ({ report }): void => this.readTest(report)],
@@ -395,12 +403,13 @@ class RunState {
     const bestScore = this.score(bestId, split)
     const baselineScore = this.score(this.baselineId, split)
     const failed = this.stopReason !== undefined && FAILED_STOPS.has(this.stopReason)
+    const error = failed ? this.stopError() : undefined
     const test = this.testDifference()
     return {
       metric: this.metric,
       measure: this.measure,
       ended: failed ? 'stopped' : this.champion !== undefined ? 'finished' : 'running',
-      ...(failed && this.stopMessage ? { error: this.stopMessage } : {}),
+      ...(error ? { error } : {}),
       measuredOn: SPLIT_MEASUREMENT[split],
       baseline: {
         params: (this.baselineId === undefined ? undefined : this.candidates.get(this.baselineId)?.values) ?? {},
@@ -506,6 +515,17 @@ class RunState {
   private readStop({ reason, message }: Event): void {
     this.stopReason = text(reason)
     this.stopMessage = text(message)
+  }
+
+  private readProposerError({ error_type: type, error }: Event): void {
+    this.proposerError = [text(type), text(error)].filter(Boolean).join(': ') || undefined
+  }
+
+  private stopError(): string | undefined {
+    const detail = this.proposerError
+    if (this.stopReason !== PROPOSER_STOP || !detail) return this.stopMessage
+    const failure = `The proposer failed with ${detail}${/[.!?]$/u.test(detail) ? '' : '.'}`
+    return CREDENTIAL_ERRORS.test(detail) ? `${failure} ${PROPOSER_CREDENTIALS}` : failure
   }
 
   private readPicked(report: unknown): void {

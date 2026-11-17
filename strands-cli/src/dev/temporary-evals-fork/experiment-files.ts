@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { link, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 import { missingCaseField, type EvalCase, type Experiment, type ExperimentSummary } from '../panels/model.js'
 import { isTemporaryExperimentName } from './experiment.js'
+import { listTemporaryExperimentFiles } from './layout.js'
 
 export type TemporaryExperimentUse = 'optimize' | 'test'
 
@@ -26,15 +27,6 @@ const isFile = async (path: string): Promise<boolean> => {
     return (await stat(path)).isFile()
   } catch (error) {
     if (isRecord(error) && error.code === 'ENOENT') return false
-    throw error
-  }
-}
-
-const experimentNames = async (folder: string): Promise<string[]> => {
-  try {
-    return (await readdir(folder)).filter((name) => name.endsWith('.json')).sort()
-  } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT') return []
     throw error
   }
 }
@@ -66,18 +58,18 @@ export const resolveTemporaryExperiment = async (
   requested?: string,
   use: TemporaryExperimentUse = 'optimize'
 ): Promise<string> => {
-  const names = await experimentNames(folder)
+  const names = await listTemporaryExperimentFiles(folder)
   if (requested) {
-    for (const candidate of [resolve(requested), join(folder, requested), join(folder, `${requested}.json`)]) {
+    for (const candidate of [resolve(requested), join(folder, requested, `${requested}.json`)]) {
       if (await isFile(candidate)) return candidate
     }
     throw missingExperiment(folder, requested, names, use)
   }
-  if (names.length === 1) return join(folder, names[0]!)
+  if (names.length === 1) return names[0]!
   if (names.length === 0)
     throw new Error(
       `There is no experiment to ${use} yet. Draft cases with /experiment in a strands dev chat, ` +
-        `or save an Experiment JSON file in ${folder}.`
+        `or save an Experiment JSON file as ${join(folder, '<name>', '<name>.json')}.`
     )
   const example = basename(names[0]!, '.json')
   throw new Error(
@@ -175,10 +167,11 @@ const countCases = async (path: string): Promise<number> => {
 
 export const listTemporaryExperiments = async (folder: string): Promise<ExperimentSummary[]> => {
   const summaries = await Promise.all(
-    (await experimentNames(folder)).map(async (file) => {
-      const path = join(folder, file)
-      return { name: basename(file, '.json'), path, caseCount: await countCases(path) }
-    })
+    (await listTemporaryExperimentFiles(folder)).map(async (path) => ({
+      name: basename(path, '.json'),
+      path,
+      caseCount: await countCases(path),
+    }))
   )
   return summaries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 }

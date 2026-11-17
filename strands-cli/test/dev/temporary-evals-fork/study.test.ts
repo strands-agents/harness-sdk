@@ -38,6 +38,16 @@ const winner = {
 
 const untrained = ({ train: _train, ...candidate }: OptimizerCandidate): OptimizerCandidate => candidate
 
+const PROPOSER_STOP_MESSAGE = 'a proposer raised; see the proposer_error event'
+
+const PROPOSER_CREDENTIALS =
+  "The proposer is the optimizer's own AWS Bedrock model. It uses the AWS credentials and region of the shell that " +
+  'started strands dev, not the chat provider. Set AWS_PROFILE or AWS credentials that can call Bedrock, then ' +
+  'start the run again.'
+
+const proposerError = (type: string, error: string): string =>
+  JSON.stringify({ event: 'proposer_error', iteration: 1, block: 'instructions', redraw: 0, error_type: type, error })
+
 const searchLines = (): string[] => [
   optimizerConfig(),
   ...optimizerCandidate(baseline),
@@ -436,6 +446,48 @@ describe('TEMPORARY optimization run', () => {
     ]).outcome()
 
     expect(outcome).toMatchObject({ ended: 'stopped', error: 'the baseline failed every case' })
+  })
+
+  it.each([
+    [
+      'ACredentialErrorType',
+      'ProfileNotFound',
+      'The config profile (dev) could not be found',
+      `The proposer failed with ProfileNotFound: The config profile (dev) could not be found. ${PROPOSER_CREDENTIALS}`,
+    ],
+    [
+      'ACredentialErrorInItsText',
+      'ClientError',
+      'An error occurred (ExpiredTokenException) when calling the ConverseStream operation: the token is expired',
+      'The proposer failed with ClientError: An error occurred (ExpiredTokenException) when calling the ' +
+        `ConverseStream operation: the token is expired. ${PROPOSER_CREDENTIALS}`,
+    ],
+    ['AnotherError', 'RuntimeError', 'model down', 'The proposer failed with RuntimeError: model down.'],
+    [
+      'AnErrorThatEndsWithAPeriod',
+      'AccessDeniedException',
+      'You do not have access to the model.',
+      `The proposer failed with AccessDeniedException: You do not have access to the model. ${PROPOSER_CREDENTIALS}`,
+    ],
+  ])('shouldNameTheProposerErrorWhenTheRunStopsBecauseOf%s', (_case, type, error, message) => {
+    const outcome = readerOf([
+      optimizerConfig(),
+      ...optimizerCandidate(baseline),
+      proposerError(type, error),
+      optimizerStop('proposer_error', PROPOSER_STOP_MESSAGE),
+    ]).outcome()
+
+    expect(outcome).toMatchObject({ ended: 'stopped', error: message })
+  })
+
+  it('shouldReportTheStopMessageWhenTheProposerFailedWithoutAnErrorEvent', () => {
+    const outcome = readerOf([
+      optimizerConfig(),
+      ...optimizerCandidate(baseline),
+      optimizerStop('proposer_error', PROPOSER_STOP_MESSAGE),
+    ]).outcome()
+
+    expect(outcome).toMatchObject({ ended: 'stopped', error: PROPOSER_STOP_MESSAGE })
   })
 
   it('shouldReportRunningAndTheLeaderWhenNoChampionIsPickedYet', () => {

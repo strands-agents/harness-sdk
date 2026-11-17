@@ -1,8 +1,13 @@
+import { basename } from 'node:path'
+
 import type { ParsedArgs } from '../../cli/arguments.js'
 import { errorMessage } from '../../terminal/text.js'
 import type { PreparedDevRun } from '../prepare.js'
 import type { DevWorkspace } from '../workspace.js'
 import { runTemporaryOptimization, type TemporaryOptimizationDependencies } from './optimize.js'
+import { temporaryWorkspaceDirectory } from './evals-process.js'
+import { temporaryWorkspaceReady } from './layout-migration.js'
+import { readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import { runTemporaryTest, type TemporaryTestDependencies, type TemporaryTestOutcome } from './test.js'
 
 export interface TemporaryDevCommandDependencies extends TemporaryOptimizationDependencies, TemporaryTestDependencies {
@@ -57,11 +62,26 @@ const optimize = async (
   code: 0,
 })
 
+const rememberTest = async (
+  { home, report, seconds }: TemporaryTestOutcome,
+  warn: (line: string) => void
+): Promise<void> => {
+  try {
+    await rememberTemporaryTestResults(
+      home,
+      await readTemporaryTestResults(report, { experiment: basename(home), seconds })
+    )
+  } catch (error) {
+    warn(`warning: /test cannot show this result: ${errorMessage(error)}`)
+  }
+}
+
 const test = async (
   shared: Shared,
   dependencies: TemporaryDevCommandDependencies
 ): Promise<{ lines: string[]; code: number }> => {
   const outcome = await runTemporaryTest(shared, dependencies)
+  await rememberTest(outcome, shared.onProgress)
   const workspace = shared.workspaceOption ? ` --workspace ${shared.workspaceOption}` : ''
   return {
     lines: temporaryTestSummary(outcome, `strands dev optimize${workspace}`),
@@ -82,6 +102,10 @@ export const runTemporaryDevCommand = async (
   try {
     const opened = await open(args)
     if (!opened) return 1
+    const { problems } = await temporaryWorkspaceReady(temporaryWorkspaceDirectory(opened.workspace))
+    problems.forEach((problem) =>
+      output.stderr.write(`warning: could not move to the new workspace layout: ${problem}\n`)
+    )
     const { lines, code } = await RUNNERS[request.name](
       {
         workspace: opened.workspace,

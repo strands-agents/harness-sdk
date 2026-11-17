@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -21,7 +21,9 @@ import { temporaryDevChatPart } from '../../../src/dev/temporary-evals-fork/comm
 import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
 import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
+import { readTemporaryOptimizeRecords } from '../../../src/dev/temporary-evals-fork/optimize-runs.js'
 import {
+  TemporaryOptimize,
   TemporaryTest,
   temporaryDevSessions,
   temporaryOptimizeJobs,
@@ -66,12 +68,12 @@ const workspaceFixture = async (): Promise<DevWorkspace> => {
   }
 }
 
-const environmentRunner = (workspace: DevWorkspace) =>
-  vi.fn(async ({ args }: TemporaryCommandRequest): Promise<string> => {
+const environmentRunner = () =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
     if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
     if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(workspace.directory!, 'tmp/optimization/.venv/lib/site-packages')
+      const sitePackages = join(dirname(dirname(command)), 'lib/site-packages')
       await mkdir(sitePackages, { recursive: true })
       return sitePackages
     }
@@ -106,13 +108,16 @@ const held = (): { promise: Promise<void>; resolve: () => void } => {
   return { promise, resolve }
 }
 
-const testingProcess = () =>
-  vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+const testingProcess = (failingByRun: readonly (readonly string[])[] = [['c1']]) => {
+  let runs = 0
+  return vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+    const failing = new Set(failingByRun[Math.min(runs, failingByRun.length - 1)])
+    runs += 1
     const experiment = JSON.parse(await readFile(args[3]!, 'utf8')) as ReturnType<typeof experimentDocument>
     const store = flagValue(args, '--data-store')
     await mkdir(store, { recursive: true })
     await Promise.all(experiment.cases.map(({ name }) => writeFile(join(store, `${name}.json`), '{}')))
-    const passes = experiment.cases.map(({ name }) => name !== 'c1')
+    const passes = experiment.cases.map(({ name }) => !failing.has(name))
     await writeFileAt(
       flagValue(args, '--output'),
       JSON.stringify({
@@ -131,6 +136,7 @@ const testingProcess = () =>
     )
     return exit
   })
+}
 
 const studyLines = (best: number, values: { baseline?: object; winner?: object } = {}): string[] => [
   optimizerConfig(),
@@ -156,6 +162,24 @@ const optimizingProcess = () =>
     await writeOptimizerRun(flagValue(args, '--record'), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
     return exit
   })
+
+const proposerError = (type: string, error: string): string =>
+  JSON.stringify({ event: 'proposer_error', iteration: 1, block: 'instructions', redraw: 0, error_type: type, error })
+
+const resumeRecordOf = (record: string): string => join(dirname(record), '.state/record.json')
+
+const runLogOf = (record: string): string => join(dirname(record), 'run.log')
+
+const optimizationName = (record: string): string => `${basename(dirname(record))}-capital`
+
+const optimizationFiles = (workspace: DevWorkspace, stamp = '20261111-150405') => {
+  const folder = join(workspace.directory!, 'tmp/experiments/capital/optimizations', stamp)
+  return {
+    record: join(folder, 'optimizer'),
+    space: join(folder, '.state/space.json'),
+    resume: join(folder, '.state/record.json'),
+  }
+}
 
 const chat = () => {
   const notices: { status: ChatNotice['status']; text: string }[] = []
@@ -184,10 +208,16 @@ const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> =
     workspace,
     agent: () => ({ description: 'Answers capital city questions', tools: [] }),
     context,
-    dependencies: { run: environmentRunner(workspace), ...dependencies },
+    dependencies: { run: environmentRunner(), ...dependencies },
   })
   return { workspace, sessions, notices }
 }
+
+const experimentHome = (workspace: DevWorkspace, name = 'capital'): string =>
+  join(workspace.directory!, 'tmp/experiments', name)
+
+const experimentFile = (workspace: DevWorkspace, name: string): string =>
+  join(experimentHome(workspace, name), `${name}.json`)
 
 const savedExperiment = async (
   workspace: DevWorkspace,
@@ -195,7 +225,7 @@ const savedExperiment = async (
   name = 'capital',
   evaluators?: readonly string[]
 ): Promise<ExperimentSummary> => {
-  const path = join(workspace.directory!, `tmp/experiments/${name}.json`)
+  const path = experimentFile(workspace, name)
   await writeFileAt(path, JSON.stringify(experimentDocument(names, evaluators)))
   return { name, path, caseCount: names.length }
 }
@@ -209,16 +239,38 @@ const finished = (sessions: ReturnType<typeof temporaryDevSessions>, path: strin
 const runStatus = (sessions: ReturnType<typeof temporaryDevSessions>, path: string) =>
   sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run.status
 
+const restartedHost =
+  (workspace: DevWorkspace, dependencies?: Partial<TemporarySessionDependencies>) => (): TemporarySessionHost => ({
+    workspace,
+    agent: () => ({}),
+    ...(dependencies ? { dependencies } : {}),
+  })
+
 const restartedTest = (
   workspace: DevWorkspace,
   dependencies?: Partial<TemporarySessionDependencies>
 ): TemporaryTest => {
-  const host = (): TemporarySessionHost => ({ workspace, agent: () => ({}), ...(dependencies ? { dependencies } : {}) })
+  const host = restartedHost(workspace, dependencies)
   return new TemporaryTest(host, new TemporaryExperiments(host))
 }
 
-const remembered = async (workspace: DevWorkspace, name: string): Promise<void> =>
-  vi.waitFor(() => expect(existsSync(join(workspace.directory!, 'tmp/reports/latest', `${name}.json`))).toBe(true))
+const restartedOptimize = (
+  workspace: DevWorkspace,
+  dependencies?: Partial<TemporarySessionDependencies>
+): TemporaryOptimize => {
+  const host = restartedHost(workspace, dependencies)
+  return new TemporaryOptimize(host, new TemporaryExperiments(host))
+}
+
+const remembered = async (
+  sessions: ReturnType<typeof temporaryDevSessions>,
+  workspace: DevWorkspace,
+  experiment: ExperimentSummary
+): Promise<void> =>
+  vi.waitFor(() => {
+    expect(runStatus(sessions, experiment.path)).toBe('done')
+    expect(existsSync(join(experimentHome(workspace, experiment.name), '.state/latest.json'))).toBe(true)
+  })
 
 const strictTestingProcess = (failing: ReadonlySet<string>) =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
@@ -300,6 +352,62 @@ describe('TEMPORARY dev sessions', () => {
       typeof experimentDocument
     >
     expect(rerun.cases.map(({ name }) => name)).toEqual(['c1'])
+  })
+
+  it('shouldMergeTheRerunCasesIntoTheFullResultWhenTheFailedCasesRunAgain', async () => {
+    const testing = testingProcess([['c1', 'c4', 'c6'], ['c6']])
+    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7'])
+    sessions.test.run([experiment])
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+
+    sessions.test.rerunFailed(experiment.path)
+    await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+
+    const results = finished(sessions, experiment.path)
+    expect(results.cases.map(({ name, passed, verdicts }) => [name, passed, verdicts[0]?.reason])).toEqual([
+      ['c0', true, 'matches'],
+      ['c1', true, 'matches'],
+      ['c2', true, 'matches'],
+      ['c3', true, 'matches'],
+      ['c4', true, 'matches'],
+      ['c5', true, 'matches'],
+      ['c6', false, 'named the wrong city'],
+      ['c7', true, 'matches'],
+    ])
+    expect(results.overall).toBe(7 / 8)
+    expect(results.report).toBe(join(experimentHome(workspace), 'capital.report.json'))
+    expect(notices.at(-1)).toEqual({
+      status: 'success',
+      text: 'test · capital · 2 of 3 rerun cases passed · 7 of 8 cases passed · /test shows the results',
+    })
+  })
+
+  it('shouldCountAndRecordOnlyTheRerunCasesWhileTheFailedCasesRunAgain', async () => {
+    const gate = held()
+    const testing = testingProcess([['c1', 'c2']])
+    const spawnTests = vi.fn(async (process: TemporaryEvalsProcess) => {
+      if (spawnTests.mock.calls.length > 1) await gate.promise
+      return testing(process)
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnTests })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.test.run([experiment])
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+
+    sessions.test.rerunFailed(experiment.path)
+    await vi.waitFor(() => expect(spawnTests).toHaveBeenCalledTimes(2))
+    const rerunning = temporaryTestJobs(sessions.test.snapshot())
+    const recorded = await readTemporaryRunRecords(workspace.directory!)
+    gate.resolve()
+
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    expect(rerunning.map(({ label, total }) => [label, total])).toEqual([['capital', 2]])
+    expect(recorded).toEqual([
+      expect.objectContaining({ experiment: experiment.path, rerun: true, only: ['c1', 'c2'] }),
+    ])
+    expect(finished(sessions, experiment.path).cases).toHaveLength(4)
   })
 
   it('shouldPlanTheSplitAndUpdateTheEstimateWhenTheBudgetChanges', async () => {
@@ -455,7 +563,7 @@ describe('TEMPORARY dev sessions', () => {
       workspace,
       agent: () => ({ description: 'Answers capital city questions', tools: [] }),
       context,
-      dependencies: { run: environmentRunner(workspace), spawnOptimizer: optimizingProcess() },
+      dependencies: { run: environmentRunner(), spawnOptimizer: optimizingProcess() },
     })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
@@ -482,8 +590,7 @@ describe('TEMPORARY dev sessions', () => {
     const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
       await vi.waitFor(async () => {
-        const [name] = await readdir(join(flagValue(process.args, '--record'), '..', 'running'))
-        recorded = JSON.parse(await readFile(join(flagValue(process.args, '--record'), '..', 'running', name!), 'utf8'))
+        recorded = JSON.parse(await readFile(resumeRecordOf(flagValue(process.args, '--record')), 'utf8'))
         expect(recorded).toMatchObject({ pid: 4242 })
       })
       await writeOptimizerRun(flagValue(process.args, '--record'), [
@@ -501,14 +608,19 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    const record = flagValue(optimizing.mock.calls[0]![0].args, '--record')
+    const stamp = basename(dirname(record))
     expect(optimizing.mock.calls[0]![0]).toMatchObject({ detached: true })
+    expect(stamp).toMatch(/^\d{8}-\d{6}$/u)
+    expect(record).toBe(join(experimentHome(workspace), 'optimizations', stamp, 'optimizer'))
     expect(recorded).toMatchObject({
       version: 1,
       experiment: experiment.path,
+      record,
       iterations: 4,
-      space: expect.stringMatching(/\.space\.json$/u),
+      space: join(dirname(record), '.state/space.json'),
     })
-    expect(await readdir(join(workspace.directory!, 'tmp/optimization/running'))).toEqual([])
+    expect(existsSync(resumeRecordOf(record))).toBe(false)
   })
 
   it.each([
@@ -528,9 +640,7 @@ describe('TEMPORARY dev sessions', () => {
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    const folder = join(workspace.directory!, 'tmp/optimization')
-    const record = join(folder, '20261111-150405-capital')
-    const space = join(folder, '20261111-150405-capital.space.json')
+    const { record, space, resume } = optimizationFiles(workspace)
     await writeFileAt(
       space,
       JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions', about: '' }] })
@@ -541,7 +651,7 @@ describe('TEMPORARY dev sessions', () => {
       finished ? { baseline_id: 'base', validation: { champion_id: 'win' } } : undefined
     )
     await writeFileAt(
-      join(folder, 'running', '20261111-150405-capital.json'),
+      resume,
       JSON.stringify({
         version: 1,
         experiment: experiment.path,
@@ -568,7 +678,7 @@ describe('TEMPORARY dev sessions', () => {
     expect(continuing).toHaveBeenCalledTimes(finished ? 0 : 1)
     if (!finished)
       expect(continuing.mock.calls[0]![0].args).toEqual(expect.arrayContaining(['--resume', record, '--space', space]))
-    expect(await readdir(join(folder, 'running'))).toEqual([])
+    expect(existsSync(resume)).toBe(false)
   })
 
   it.each<[string, readonly number[] | undefined, readonly string[]]>([
@@ -585,16 +695,14 @@ describe('TEMPORARY dev sessions', () => {
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    const folder = join(workspace.directory!, 'tmp/optimization')
-    const record = join(folder, '20261111-150405-capital')
-    const space = join(folder, '20261111-150405-capital.space.json')
+    const { record, space, resume } = optimizationFiles(workspace)
     await writeFileAt(
       space,
       JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
     )
     await writeOptimizerRun(record, studyLines(0.6))
     await writeFileAt(
-      join(folder, 'running', '20261111-150405-capital.json'),
+      resume,
       JSON.stringify({
         version: 1,
         experiment: experiment.path,
@@ -620,8 +728,7 @@ describe('TEMPORARY dev sessions', () => {
     const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
       await vi.waitFor(async () => {
-        const [name] = await readdir(join(flagValue(process.args, '--record'), '..', 'running'))
-        recorded = JSON.parse(await readFile(join(flagValue(process.args, '--record'), '..', 'running', name!), 'utf8'))
+        recorded = JSON.parse(await readFile(resumeRecordOf(flagValue(process.args, '--record')), 'utf8'))
         expect(recorded).toMatchObject({ pid: 4242 })
       })
       await writeOptimizerRun(flagValue(process.args, '--record'), [
@@ -730,8 +837,7 @@ describe('TEMPORARY dev sessions', () => {
     const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
       await vi.waitFor(async () => {
-        const [name] = await readdir(join(flagValue(process.args, '--record'), '..', 'running'))
-        recorded = JSON.parse(await readFile(join(flagValue(process.args, '--record'), '..', 'running', name!), 'utf8'))
+        recorded = JSON.parse(await readFile(resumeRecordOf(flagValue(process.args, '--record')), 'utf8'))
         expect(recorded).toMatchObject({ pid: 4242 })
       })
       await writeOptimizerRun(flagValue(process.args, '--record'), [
@@ -776,16 +882,14 @@ describe('TEMPORARY dev sessions', () => {
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-    const folder = join(workspace.directory!, 'tmp/optimization')
-    const record = join(folder, '20261111-150405-capital')
-    const space = join(folder, '20261111-150405-capital.space.json')
+    const { record, space, resume } = optimizationFiles(workspace)
     await writeFileAt(
       space,
       JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
     )
     await writeOptimizerRun(record, studyLines(0.6))
     await writeFileAt(
-      join(folder, 'running', '20261111-150405-capital.json'),
+      resume,
       JSON.stringify({
         version: 1,
         experiment: experiment.path,
@@ -847,6 +951,34 @@ describe('TEMPORARY dev sessions', () => {
       ])
       return exit
     })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: failing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
+    const record = flagValue(failing.mock.calls[0]![0].args, '--record')
+    expect(sessions.optimize.snapshot()).toMatchObject({
+      message: `a proposer raised; see the proposer_error event. The full optimizer output is in ${runLogOf(record)}.`,
+      record,
+    })
+    expect(notices.at(-1)).toEqual({
+      status: 'error',
+      text: `optimize · run ${optimizationName(record)} failed · /optimize shows why`,
+    })
+  })
+
+  it('shouldNameTheProposerErrorAndTheCredentialsItUsesWhenTheProposerCannotSignIn', async () => {
+    const failing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(flagValue(args, '--record'), [
+        ...studyLines(0.6),
+        proposerError('ProfileNotFound', 'The config profile (dev) could not be found'),
+        optimizerStop('proposer_error', 'a proposer raised; see the proposer_error event'),
+      ])
+      return exit
+    })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: failing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
@@ -855,11 +987,49 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
+    const record = flagValue(failing.mock.calls[0]![0].args, '--record')
     expect(sessions.optimize.snapshot()).toMatchObject({
-      message: expect.stringMatching(
-        /^a proposer raised; see the proposer_error event\. The full optimizer output is in /u
-      ),
+      message:
+        'The proposer failed with ProfileNotFound: The config profile (dev) could not be found. ' +
+        "The proposer is the optimizer's own AWS Bedrock model. It uses the AWS credentials and region of the shell " +
+        'that started strands dev, not the chat provider. Set AWS_PROFILE or AWS credentials that can call Bedrock, ' +
+        `then start the run again. The full optimizer output is in ${runLogOf(record)}.`,
+      record,
     })
+  })
+
+  it('shouldDropTheRecordOfARunThatFailsSoThatTheNextStartDoesNotRunItAgain', async () => {
+    const failing = vi.fn(async (process: TemporaryEvalsProcess) => {
+      process.onSpawn?.(4242)
+      await vi.waitFor(async () =>
+        expect(JSON.parse(await readFile(resumeRecordOf(flagValue(process.args, '--record')), 'utf8'))).toMatchObject({
+          pid: 4242,
+        })
+      )
+      return { code: 1, stdout: '', stderrTail: ['strands-evals optimize: error: the agent file did not load'] }
+    })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: failing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
+    const restarted = restartedOptimize(workspace, { run: environmentRunner(), spawnOptimizer: failing })
+
+    await restarted.resume()
+
+    const record = flagValue(failing.mock.calls[0]![0].args, '--record')
+    expect(sessions.optimize.snapshot()).toMatchObject({
+      message:
+        'strands-evals optimize stopped with exit code 1: the agent file did not load\n' +
+        `The full optimizer output is in ${runLogOf(record)}.`,
+      record,
+    })
+    expect(notices.at(-1)).toEqual({ status: 'error', text: 'optimize · capital stopped · /optimize shows why' })
+    expect(existsSync(resumeRecordOf(record))).toBe(false)
+    expect(await readTemporaryOptimizeRecords(workspace.directory!)).toEqual([])
+    expect(restarted.snapshot().runs).toEqual([])
+    expect(failing).toHaveBeenCalledTimes(1)
   })
 
   it('shouldRunTwoOptimizationsAtOnceWhenTheDeveloperStartsAnotherFromTheList', async () => {
@@ -928,15 +1098,17 @@ describe('TEMPORARY dev sessions', () => {
     const optimizing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    const optimization = join(workspace.directory!, 'tmp/optimization')
-    await writeOptimizerRun(join(optimization, '20261110-090000-capital'), [
+    const stoppedEarly = optimizationFiles(workspace, '20261110-090000').record
+    const neverStarted = optimizationFiles(workspace, '20261110-080000').record
+    const olderOptimizer = optimizationFiles(workspace, '20261109-080000').record
+    await writeOptimizerRun(stoppedEarly, [
       optimizerConfig(),
       ...optimizerCandidate({ id: 'base', number: 0, values: { instructions: BASELINE }, train: 0.5 }),
       optimizerIterationEnd(['base']),
       optimizerStop(),
     ])
-    await mkdir(join(optimization, '20261110-080000-capital'), { recursive: true })
-    await writeFileAt(join(optimization, '20261109-080000-capital', 'study.jsonl'), '{}\n')
+    await mkdir(neverStarted, { recursive: true })
+    await writeFileAt(join(olderOptimizer, 'study.jsonl'), '{}\n')
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
     sessions.optimize.start()
@@ -953,18 +1125,20 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.openPastRun(finished.review.record)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
 
+    const latest = optimizationFiles(workspace, basename(dirname(finished.review.record))).record
+    expect(finished.review.run).toBe(optimizationName(latest))
     expect(
-      listed.pastRuns?.runs.map(({ record, experiment: name, summary, opens }) => [
-        basename(record),
-        name,
-        summary,
-        opens,
-      ])
+      listed.pastRuns?.runs.map(({ record, experiment: name, summary, opens }) => [record, name, summary, opens])
     ).toEqual([
-      [finished.review.run, 'capital', '0.50 → 0.90 on training cases · 1 edit', true],
-      ['20261110-090000-capital', 'capital', 'stopped early · no better candidate · 0.50 on training cases', true],
-      ['20261110-080000-capital', 'capital', 'no report, because the run stopped before it started', false],
-      ['20261109-080000-capital', 'capital', 'made by the older optimizer, so it cannot be opened', false],
+      [latest, 'capital', '0.50 → 0.90 on training cases · 1 edit', true],
+      [stoppedEarly, 'capital', 'stopped early · no better candidate · 0.50 on training cases', true],
+      [neverStarted, 'capital', 'no report, because the run stopped before it started', false],
+      [olderOptimizer, 'capital', 'made by the older optimizer, so it cannot be opened', false],
+    ])
+    expect(listed.pastRuns?.runs.map(({ startedAt }) => startedAt).slice(1)).toEqual([
+      Date.UTC(2026, 10, 10, 9),
+      Date.UTC(2026, 10, 10, 8),
+      Date.UTC(2026, 10, 9, 8),
     ])
     expect(listed.pastRuns?.runs[0]?.startedAt).toBeGreaterThan(Date.UTC(2026, 0, 1))
     expect(sessions.optimize.snapshot()).toMatchObject({
@@ -1158,7 +1332,7 @@ describe('TEMPORARY dev sessions on open', () => {
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
-    const path = join(workspace.directory!, 'tmp/experiments/plain.json')
+    const path = experimentFile(workspace, 'plain')
     await writeFileAt(
       path,
       JSON.stringify({
@@ -1180,14 +1354,20 @@ describe('TEMPORARY dev sessions on open', () => {
       ['case_1', 'question q1'],
       ['case_3', 'question q3'],
     ])
-    expect(finished(sessions, path).cases.map(({ name }) => name)).toEqual(['case_1', 'case_3'])
+    expect(finished(sessions, path).cases.map(({ name, input }) => [name, input])).toEqual([
+      ['case_0', 'question q0'],
+      ['case_1', 'question q1'],
+      ['case_2', 'question q2'],
+      ['case_3', 'question q3'],
+      ['case_4', 'question q4'],
+    ])
   })
 
   it('shouldShowTheLastReportWhenTheTestPanelOpensAfterARestart', async () => {
     const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
     sessions.test.run([experiment])
-    await remembered(workspace, experiment.name)
+    await remembered(sessions, workspace, experiment)
     const restarted = restartedTest(workspace)
 
     await restarted.show()
@@ -1195,14 +1375,15 @@ describe('TEMPORARY dev sessions on open', () => {
     expect(restarted.snapshot().runs).toEqual([
       { experiment, run: { status: 'done', results: finished(sessions, experiment.path) } },
     ])
+    expect(finished(sessions, experiment.path).report).toBe(join(experimentHome(workspace), 'capital.report.json'))
   })
 
   it('shouldShowWhyTheLastReportCannotBeReadWhenTheTestPanelOpensAfterARestart', async () => {
     const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0'])
     sessions.test.run([experiment])
-    await remembered(workspace, experiment.name)
-    await writeFileAt(finished(sessions, experiment.path).report, '{"overall_score": ')
+    await remembered(sessions, workspace, experiment)
+    await writeFileAt(join(experimentHome(workspace), 'capital.report.json'), '{"overall_score": ')
     const restarted = restartedTest(workspace)
 
     await restarted.show()
@@ -1215,15 +1396,13 @@ describe('TEMPORARY dev sessions on open', () => {
   it('shouldKeepARunningTestWhenTheTestPanelOpensAgainDuringTheRun', async () => {
     const workspace = await workspaceFixture()
     const experiment = await savedExperiment(workspace, ['c0', 'c1'])
-    const reports = join(workspace.directory!, 'tmp/reports')
-    const earlier = join(reports, 'earlier-capital.json')
+    const earlier = join(experimentHome(workspace), 'runs/20261116-080000/report.json')
     await writeFileAt(
       earlier,
       JSON.stringify({ overall_score: 1, scores: [1], test_passes: [true], cases: [{ name: 'c0' }] })
     )
     await rememberTemporaryTestResults(
-      reports,
-      experiment.name,
+      experimentHome(workspace),
       await readTemporaryTestResults(earlier, { experiment: experiment.name, seconds: 1 })
     )
     let release = (): void => undefined
@@ -1235,7 +1414,7 @@ describe('TEMPORARY dev sessions on open', () => {
       await gate
       return testing(process)
     })
-    const restarted = restartedTest(workspace, { run: environmentRunner(workspace), spawnTests: held })
+    const restarted = restartedTest(workspace, { run: environmentRunner(), spawnTests: held })
     await restarted.show()
     restarted.run([experiment])
     await vi.waitFor(() => expect(held).toHaveBeenCalled())
@@ -1250,19 +1429,25 @@ describe('TEMPORARY dev sessions on open', () => {
   it('shouldKeepTheResultsAndWarnWhenTheLastReportCannotBeSaved', async () => {
     const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1'])
-    await writeFileAt(join(workspace.directory!, 'tmp/reports/latest'), 'a file where the folder goes')
+    await writeFileAt(join(experimentHome(workspace), '.state'), 'a file where the folder goes')
 
     sessions.test.run([experiment])
 
-    await vi.waitFor(() => expect(notices.at(-1)?.status).toBe('error'))
-    expect(runStatus(sessions, experiment.path)).toBe('done')
-    expect(notices.at(-1)?.text).toMatch(/^test · capital · \/test cannot show this report after a restart: /u)
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    expect(finished(sessions, experiment.path).cases).toHaveLength(2)
+    expect(notices).toEqual([
+      {
+        status: 'error',
+        text: expect.stringMatching(/^test · capital · \/test cannot show this report after a restart: /u),
+      },
+      { status: 'success', text: 'test · capital · 1 of 2 cases passed · /test shows the results' },
+    ])
   })
 
   it('shouldRunAndRerunCasesThatShareANameWhenTheDataStoreNeedsUniqueNames', async () => {
     const testing = strictTestingProcess(new Set(['question refund']))
     const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
-    const path = join(workspace.directory!, 'tmp/experiments/starter.json')
+    const path = experimentFile(workspace, 'starter')
     await writeFileAt(
       path,
       JSON.stringify({
@@ -1281,12 +1466,17 @@ describe('TEMPORARY dev sessions on open', () => {
     await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
 
+    const rerun = JSON.parse(await readFile(testing.mock.calls[1]![0].args[3]!, 'utf8')) as {
+      cases: { name: string; input: string }[]
+    }
     expect(first).toEqual([
       ['Greeting', true],
       ['greeting-2', false],
     ])
-    expect(finished(sessions, path).cases.map(({ name, input }) => [name, input])).toEqual([
-      ['greeting-2', 'question refund'],
+    expect(rerun.cases.map(({ name, input }) => [name, input])).toEqual([['greeting-2', 'question refund']])
+    expect(finished(sessions, path).cases.map(({ name, input, passed }) => [name, input, passed])).toEqual([
+      ['Greeting', 'question greeting', true],
+      ['greeting-2', 'question refund', false],
     ])
   })
 
@@ -1340,22 +1530,22 @@ const deadProcessId = async (): Promise<number> => {
   return child.pid!
 }
 
-const reportsOf = (workspace: DevWorkspace): string => join(workspace.directory!, 'tmp/reports')
+const testRunOf = (workspace: DevWorkspace): string => join(experimentHome(workspace), 'runs/20261116-090000')
 
 const recordFor = async (
   workspace: DevWorkspace,
   experiment: ExperimentSummary,
   pid?: number
 ): Promise<TemporaryTestRecord> => {
-  const reports = reportsOf(workspace)
+  const run = testRunOf(workspace)
   const record = {
     version: 1 as const,
     experiment: experiment.path,
     cases: experiment.path,
     rerun: false,
-    report: join(reports, '20261116-090000-capital.json'),
-    log: join(reports, '20261116-090000-capital.log'),
-    store: join(reports, '20261116-090000-capital.cases'),
+    report: join(run, 'report.json'),
+    log: join(run, 'run.log'),
+    store: join(run, '.state/cases'),
     startedAt: Date.now() - 60_000,
     ...(pid === undefined ? {} : { pid }),
   }
@@ -1363,8 +1553,8 @@ const recordFor = async (
   return record
 }
 
-const finishRun = (record: TemporaryTestRecord): Promise<TemporaryEvalsExit> =>
-  testingProcess()({
+const finishRun = (record: TemporaryTestRecord, failing: readonly string[] = ['c1']): Promise<TemporaryEvalsExit> =>
+  testingProcess([failing])({
     command: 'python',
     args: ['-m', 'strands_evals.cli', 'run', record.cases, '--output', record.report, '--data-store', record.store],
     cwd: dirname(record.report),
@@ -1402,7 +1592,7 @@ describe('TEMPORARY /test runs after strands dev closes', () => {
       status: 'success',
       text: 'test · capital · resumed the run that stopped when strands dev closed',
     })
-    await vi.waitFor(async () => expect(await readTemporaryRunRecords(reportsOf(workspace))).toEqual([]))
+    await vi.waitFor(async () => expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([]))
   })
 
   it('shouldShowTheResultsOfARunThatFinishedWhileStrandsDevWasClosed', async () => {
@@ -1420,14 +1610,44 @@ describe('TEMPORARY /test runs after strands dev closes', () => {
       status: 'success',
       text: 'test · capital · 2 of 3 cases passed · /test shows the results',
     })
-    expect(await readTemporaryRunRecords(reportsOf(workspace))).toEqual([])
+    expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([])
+  })
+
+  it('shouldMergeARerunThatFinishedWhileStrandsDevWasClosedIntoTheFullResult', async () => {
+    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
+    sessions.test.run([experiment])
+    await remembered(sessions, workspace, experiment)
+    const cases = join(testRunOf(workspace), '.state/experiment.json')
+    await writeFileAt(cases, JSON.stringify(experimentDocument(['c1'])))
+    const record = {
+      ...(await recordFor(workspace, experiment, await deadProcessId())),
+      cases,
+      rerun: true,
+      only: ['c1'],
+    }
+    await saveTemporaryRunRecord(record)
+    await finishRun(record, [])
+
+    await sessions.test.resume()
+
+    expect(finished(sessions, experiment.path).cases.map(({ name, passed }) => [name, passed])).toEqual([
+      ['c0', true],
+      ['c1', true],
+      ['c2', true],
+    ])
+    expect(notices.at(-1)).toEqual({
+      status: 'success',
+      text: 'test · capital · 1 of 1 rerun case passed · 3 of 3 cases passed · /test shows the results',
+    })
+    expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([])
   })
 
   it.skipIf(process.platform === 'win32')('shouldFollowARunThatIsStillGoingAndShowItsResultsWhenItEnds', async () => {
     const spawnTests = vi.fn()
     const { workspace, sessions } = await sessionsFor({ spawnTests })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
-    const report = join(reportsOf(workspace), '20261116-090000-capital.json')
+    const report = join(testRunOf(workspace), 'report.json')
     const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', report], { stdio: 'ignore' })
     await once(live, 'spawn')
     const record = await recordFor(workspace, experiment, live.pid)
@@ -1439,24 +1659,24 @@ describe('TEMPORARY /test runs after strands dev closes', () => {
 
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'), { timeout: 10_000 })
     expect(spawnTests).not.toHaveBeenCalled()
-    await vi.waitFor(async () => expect(await readTemporaryRunRecords(reportsOf(workspace))).toEqual([]))
+    await vi.waitFor(async () => expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([]))
   })
 
   it('shouldRecordTheProcessOfARunWhileItGoesAndForgetItWhenTheRunEnds', async () => {
     const testing = testingProcess()
-    let reports = ''
+    let directory = ''
     const spawnTests = vi.fn(async (request: TemporaryEvalsProcess) => {
       request.onSpawn?.(4242)
-      await vi.waitFor(async () => expect((await readTemporaryRunRecords(reports))[0]?.pid).toBe(4242))
+      await vi.waitFor(async () => expect((await readTemporaryRunRecords(directory))[0]?.pid).toBe(4242))
       return testing(request)
     })
     const { workspace, sessions } = await sessionsFor({ spawnTests })
-    reports = reportsOf(workspace)
+    directory = workspace.directory!
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
 
     sessions.test.run([experiment])
 
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
-    await vi.waitFor(async () => expect(await readTemporaryRunRecords(reports)).toEqual([]))
+    await vi.waitFor(async () => expect(await readTemporaryRunRecords(directory)).toEqual([]))
   })
 })

@@ -3,6 +3,7 @@ import { dirname, relative } from 'node:path'
 import type { DevChatCommandContext } from '../../ui/chat/types.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryAgentFacts } from './agent-context.js'
+import type { TemporaryUiDependencies } from './evals-ui.js'
 import { temporaryWorkspaceDirectory } from './evals-process.js'
 import type { TemporaryExperimentDependencies } from './experiment.js'
 import type { TemporaryOptimizationDependencies } from './optimize.js'
@@ -17,6 +18,7 @@ export interface TemporarySessionHost {
   readonly agent: () => TemporaryAgentFacts
   readonly context?: DevChatCommandContext
   readonly dependencies?: TemporarySessionDependencies
+  readonly evalsUi?: TemporaryUiDependencies
 }
 
 export type TemporaryHost = () => TemporarySessionHost

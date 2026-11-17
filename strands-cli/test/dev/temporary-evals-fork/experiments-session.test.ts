@@ -45,12 +45,12 @@ const workspaceFixture = async (): Promise<DevWorkspace> => {
   }
 }
 
-const environmentRunner = (workspace: DevWorkspace) =>
-  vi.fn(async ({ args }: TemporaryCommandRequest): Promise<string> => {
+const environmentRunner = () =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
     if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
     if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(workspace.directory!, 'tmp/optimization/.venv/lib/site-packages')
+      const sitePackages = join(dirname(dirname(command)), 'lib/site-packages')
       await mkdir(sitePackages, { recursive: true })
       return sitePackages
     }
@@ -119,7 +119,7 @@ const setup = async (model = 'bedrock/us.anthropic.claude-test') => {
       tools: [{ name: 'lookup_order', description: 'Find an order' }],
     }),
     context,
-    dependencies: { run: environmentRunner(workspace), spawnGenerator: generator.spawn },
+    dependencies: { run: environmentRunner(), spawnGenerator: generator.spawn },
   })
   await experiments.reload()
   const start = (overrides: Partial<GenerationSettings> = {}): string | undefined =>
@@ -220,13 +220,15 @@ describe('TEMPORARY experiment generation session', () => {
   it.each<[string, Partial<GenerationSettings>, string]>([
     ['a name with a space', { name: 'my cases' }, 'letters, numbers, dots, dashes, and underscores'],
     ['a saved name', { name: 'capital' }, 'An experiment named capital exists already'],
+    ['the name of a folder that keeps only runs', { name: 'retired' }, 'An experiment named retired exists already'],
     ['no task', { task: '  ' }, 'Describe the task of the agent'],
   ])('shouldRefuseToStartWhenTheSettingsHave%s', async (_case, overrides, message) => {
     const { workspace, experiments, generator, start } = await setup()
     await writeFileAt(
-      join(workspace.directory!, 'tmp/experiments/capital.json'),
+      join(workspace.directory!, 'tmp/experiments/capital/capital.json'),
       JSON.stringify(experimentDocument(['c0']))
     )
+    await mkdir(join(workspace.directory!, 'tmp/experiments/retired/runs'), { recursive: true })
     await experiments.reload()
 
     expect(start(overrides)).toContain(message)
@@ -248,7 +250,7 @@ describe('TEMPORARY experiment generation session', () => {
     const { error } = onlyGeneration(experiments)
     expect(error?.summary).toBe('Bedrock denied access to the default model')
     expect(error?.detail).toContain('choose a model that your AWS account can use')
-    expect(error?.detail).toMatch(/Log: strands-dev\/tmp\/experiments\/drafts\/\d{8}-\d{6}-refunds\.log/u)
+    expect(error?.detail).toMatch(/Log: strands-dev\/tmp\/\.state\/drafts\/\d{8}-\d{6}-refunds\.log/u)
     expect(notices.at(-1)).toMatchObject({ status: 'error', text: expect.stringContaining('Bedrock denied access') })
   })
 
@@ -297,7 +299,7 @@ describe('TEMPORARY experiment generation session', () => {
     experiments.add({ input: 'my own question', expected: 'my own answer' })
     const saved = await experiments.save()
 
-    const path = join(workspace.directory!, 'tmp/experiments/refunds.json')
+    const path = join(workspace.directory!, 'tmp/experiments/refunds/refunds.json')
     expect(saved).toEqual({ name: 'refunds', path, caseCount: 3 })
     const written = JSON.parse(await readFile(path, 'utf8')) as ReturnType<typeof experimentDocument>
     expect(written.cases.map(({ name }) => name)).toEqual(['c0', 'c1', 'case-3'])
@@ -309,13 +311,13 @@ describe('TEMPORARY experiment generation session', () => {
     expect(existsSync(draft)).toBe(false)
     expect(experiments.snapshot().review).toMatchObject({
       path,
-      notice: { tone: 'success', text: 'Saved 3 cases to strands-dev/tmp/experiments/refunds.json' },
+      notice: { tone: 'success', text: 'Saved 3 cases to strands-dev/tmp/experiments/refunds/refunds.json' },
     })
   })
 
   it('shouldShowAndEditTheAssertionWhenASavedCaseHasOnlyAnAssertion', async () => {
     const { workspace, experiments } = await setup()
-    const path = join(workspace.directory!, 'tmp/experiments/from-chats.json')
+    const path = join(workspace.directory!, 'tmp/experiments/from-chats/from-chats.json')
     const chatCase = {
       name: 'refund-order',
       input: 'refund order 7',
@@ -336,6 +338,45 @@ describe('TEMPORARY experiment generation session', () => {
     expect(JSON.parse(await readFile(path, 'utf8')).cases).toEqual([
       { ...chatCase, expected_assertion: 'The agent refunds order 7 and says when.' },
     ])
+  })
+
+  it('shouldRefuseToSaveWhenTheExperimentFileChangedAfterItOpened', async () => {
+    const { workspace, experiments } = await setup()
+    const path = join(workspace.directory!, 'tmp/experiments/refunds/refunds.json')
+    await writeFileAt(path, JSON.stringify(experimentDocument(['c0', 'c1'])))
+    const [saved] = await experiments.reload()
+    experiments.open(saved!)
+    await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(2))
+    const changed = JSON.stringify(experimentDocument(['c0', 'c1', 'c2']))
+    await writeFile(path, changed)
+    experiments.edit(0, { expected: 'a better answer' })
+
+    const result = await experiments.save()
+
+    expect(result).toBeUndefined()
+    expect(experiments.snapshot().review?.notice).toEqual({
+      tone: 'error',
+      text: 'refunds changed on disk after you opened it, for example in the evals UI. Nothing was saved. Press Esc, then open it again.',
+    })
+    expect(await readFile(path, 'utf8')).toBe(changed)
+  })
+
+  it('shouldSaveAgainAfterItsOwnSaveWhenNothingElseChangedTheFile', async () => {
+    const { workspace, experiments } = await setup()
+    const path = join(workspace.directory!, 'tmp/experiments/refunds/refunds.json')
+    await writeFileAt(path, JSON.stringify(experimentDocument(['c0', 'c1'])))
+    const [saved] = await experiments.reload()
+    experiments.open(saved!)
+    await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(2))
+    experiments.edit(0, { expected: 'first edit' })
+    await experiments.save()
+    experiments.edit(1, { expected: 'second edit' })
+
+    const result = await experiments.save()
+
+    expect(result).toEqual({ name: 'refunds', path, caseCount: 2 })
+    const written = JSON.parse(await readFile(path, 'utf8')) as ReturnType<typeof experimentDocument>
+    expect(written.cases.map(({ expected_output }) => expected_output)).toEqual(['first edit', 'second edit'])
   })
 
   it('shouldRefuseToSaveWhenNoCaseIsKept', async () => {
@@ -370,7 +411,7 @@ describe('TEMPORARY experiment generation session', () => {
       tone: 'error',
       text: 'c1 has a blank input or expected answer. Press e to fix it, or d to drop the case.',
     })
-    expect(existsSync(join(workspace.directory!, 'tmp/experiments/refunds.json'))).toBe(false)
+    expect(existsSync(join(workspace.directory!, 'tmp/experiments/refunds/refunds.json'))).toBe(false)
   })
 
   it('shouldLeaveOutAndCountAsFailedTheGeneratedCasesWithABlankInputOrExpectedAnswer', async () => {
@@ -413,7 +454,7 @@ describe('TEMPORARY experiment generation session', () => {
   it('shouldOfferADraftForReviewWhenAnEarlierSessionLeftOne', async () => {
     const { workspace, experiments } = await setup()
     await writeFileAt(
-      join(workspace.directory!, 'tmp/experiments/drafts/20261112-101010-refunds.json'),
+      join(workspace.directory!, 'tmp/.state/drafts/20261112-101010-refunds.json'),
       JSON.stringify(experimentDocument(['c0', 'c1']))
     )
 
@@ -426,7 +467,7 @@ describe('TEMPORARY experiment generation session', () => {
 
   it('shouldDeleteAnUnreadableDraftWhenItIsDismissed', async () => {
     const { workspace, experiments } = await setup()
-    const draft = join(workspace.directory!, 'tmp/experiments/drafts/20261112-101010-broken.json')
+    const draft = join(workspace.directory!, 'tmp/.state/drafts/20261112-101010-broken.json')
     await writeFileAt(draft, '{"cases": [')
     await experiments.reload()
     expect(onlyGeneration(experiments)).toMatchObject({ name: 'broken', phase: 'failed' })
@@ -461,7 +502,7 @@ describe('TEMPORARY experiment generation session', () => {
     await generator.runs[0]!.finish(['c0', 'c1'])
     const result = await created
 
-    const path = join(workspace.directory!, 'tmp/experiments/refunds.json')
+    const path = join(workspace.directory!, 'tmp/experiments/refunds/refunds.json')
     expect(result).toMatchObject({ name: 'refunds', path, caseCount: 2, failed: 0 })
     expect(result.cases.map(({ name, input }) => [name, input])).toEqual([
       ['c0', 'question c0'],
@@ -473,7 +514,7 @@ describe('TEMPORARY experiment generation session', () => {
     expect(experiments.snapshot().saved).toEqual([{ name: 'refunds', path, caseCount: 2 }])
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'experiment · refunds · 2 cases saved to strands-dev/tmp/experiments/refunds.json',
+      text: 'experiment · refunds · 2 cases saved to strands-dev/tmp/experiments/refunds/refunds.json',
     })
   })
 
@@ -485,7 +526,9 @@ describe('TEMPORARY experiment generation session', () => {
     await generator.runs[0]!.finish(['refund', 'refund', ''])
     await created
 
-    const saved = JSON.parse(await readFile(join(workspace.directory!, 'tmp/experiments/refunds.json'), 'utf8')) as {
+    const saved = JSON.parse(
+      await readFile(join(workspace.directory!, 'tmp/experiments/refunds/refunds.json'), 'utf8')
+    ) as {
       cases: { name: string }[]
     }
     expect(saved.cases.map(({ name }) => name)).toEqual(['refund', 'refund-2', 'case_2'])
@@ -494,7 +537,7 @@ describe('TEMPORARY experiment generation session', () => {
   it('shouldRejectTheChatRequestWithoutGeneratingWhenTheNameIsTaken', async () => {
     const { workspace, experiments, generator } = await setup()
     await writeFileAt(
-      join(workspace.directory!, 'tmp/experiments/capital.json'),
+      join(workspace.directory!, 'tmp/experiments/capital/capital.json'),
       JSON.stringify(experimentDocument(['c0']))
     )
 
@@ -523,7 +566,7 @@ describe('TEMPORARY experiment generation session', () => {
     await generator.runs[0]!.finish([])
 
     await expect(created).rejects.toThrow(
-      /stopped: Bedrock denied access to the default model\.\nstrands-evals said: AccessDeniedException.*\nLog: strands-dev\/tmp\/experiments\/drafts\/\d{8}-\d{6}-refunds\.log/su
+      /stopped: Bedrock denied access to the default model\.\nstrands-evals said: AccessDeniedException.*\nLog: strands-dev\/tmp\/\.state\/drafts\/\d{8}-\d{6}-refunds\.log/su
     )
   })
 

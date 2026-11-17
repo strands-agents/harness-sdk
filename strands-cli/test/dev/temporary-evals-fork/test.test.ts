@@ -9,6 +9,7 @@ import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
+const STAMP = '20261111-150405'
 const EXPERIMENT = JSON.stringify({ cases: [{ name: 'a' }, { name: 'b' }], evaluators: [] })
 
 const writeFileAt = async (path: string, text = EXPERIMENT): Promise<void> => {
@@ -16,14 +17,17 @@ const writeFileAt = async (path: string, text = EXPERIMENT): Promise<void> => {
   await writeFile(path, text)
 }
 
+const experimentFile = (directory: string, name: string): string =>
+  join(directory, 'tmp/experiments', name, `${name}.json`)
+
 const workspaceFixture = async (
-  experiments: string[] = ['support.json'],
+  experiments: string[] = ['support'],
   language: 'python' | 'typescript' = 'python'
 ): Promise<DevWorkspace> => {
   const root = await temporaryDirectory()
   const directory = join(root, 'strands-dev')
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await Promise.all(experiments.map((name) => writeFileAt(join(directory, 'tmp/experiments', name))))
+  await Promise.all(experiments.map((name) => writeFileAt(experimentFile(directory, name))))
   return {
     directory,
     root,
@@ -32,12 +36,19 @@ const workspaceFixture = async (
   }
 }
 
-const environmentRunner = (workspace: DevWorkspace) =>
-  vi.fn(async ({ args }: TemporaryCommandRequest): Promise<string> => {
+const supportHome = (workspace: DevWorkspace): string => join(workspace.directory!, 'tmp/experiments/support')
+
+const runFile = (workspace: DevWorkspace, file: string, stamp = STAMP): string =>
+  join(supportHome(workspace), 'runs', stamp, file)
+
+const sitePackagesOf = (python: string): string => join(dirname(dirname(python)), 'lib', 'site-packages')
+
+const environmentRunner = () =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
     if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
     if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(workspace.directory!, 'tmp/optimization/.venv/lib/site-packages')
+      const sitePackages = sitePackagesOf(command)
       await mkdir(sitePackages, { recursive: true })
       return sitePackages
     }
@@ -54,7 +65,7 @@ const reporting = (passes: boolean[], overall: number) =>
   })
 
 describe('TEMPORARY /test', () => {
-  it('shouldRunTheExperimentAndSaveTheReportInTheReportsFolder', async () => {
+  it('shouldRunTheExperimentAndSaveTheReportInItsRunFolder', async () => {
     const workspace = await workspaceFixture()
     const spawnTests = reporting([true, false], 0.5)
     const progress: string[] = []
@@ -68,14 +79,17 @@ describe('TEMPORARY /test', () => {
         onProgress: (line) => progress.push(line),
         onStart,
       },
-      { run: environmentRunner(workspace), spawnTests }
+      { run: environmentRunner(), spawnTests }
     )
 
-    const report = join(workspace.directory!, 'tmp/reports/20261111-150405-support.json')
+    const experiment = experimentFile(workspace.directory!, 'support')
+    const report = runFile(workspace, 'report.json')
     expect(outcome).toEqual({
-      experiment: join(workspace.directory!, 'tmp/experiments/support.json'),
+      experiment,
       name: 'support',
+      home: supportHome(workspace),
       report,
+      seconds: expect.any(Number),
       passed: 1,
       checks: 2,
       overall: 0.5,
@@ -85,7 +99,7 @@ describe('TEMPORARY /test', () => {
       '-m',
       'strands_evals.cli',
       'run',
-      join(workspace.directory!, 'tmp/experiments/support.json'),
+      experiment,
       '--agent',
       workspace.entrypoint,
       '--output',
@@ -93,19 +107,19 @@ describe('TEMPORARY /test', () => {
       '--fail-on',
       'none',
       '--data-store',
-      join(workspace.directory!, 'tmp/reports/20261111-150405-support.cases'),
+      runFile(workspace, '.state/cases'),
       '--max-workers',
       '4',
       '--max-workers',
       '2',
     ])
     expect(onStart).toHaveBeenCalledWith({
-      cases: join(workspace.directory!, 'tmp/experiments/support.json'),
+      cases: experiment,
       report,
-      log: join(workspace.directory!, 'tmp/reports/20261111-150405-support.log'),
-      store: join(workspace.directory!, 'tmp/reports/20261111-150405-support.cases'),
+      log: runFile(workspace, 'run.log'),
+      store: runFile(workspace, '.state/cases'),
     })
-    expect(log).toBe(join(workspace.directory!, 'tmp/reports/20261111-150405-support.log'))
+    expect(log).toBe(runFile(workspace, 'run.log'))
     expect(progress).toContain(`Testing ${workspace.entrypoint} on the 2 cases of ${outcome.experiment}`)
   })
 
@@ -113,25 +127,46 @@ describe('TEMPORARY /test', () => {
     const workspace = await workspaceFixture()
     const spawnTests = reporting([true, false], 0.5)
 
-    await runTemporaryTest({ workspace, now: () => NOW }, { run: environmentRunner(workspace), spawnTests })
+    await runTemporaryTest({ workspace, now: () => NOW }, { run: environmentRunner(), spawnTests })
 
     const [{ args }] = spawnTests.mock.calls[0]!
     expect(args.slice(args.indexOf('--max-workers'))).toEqual(['--max-workers', '4'])
   })
 
+  it('shouldStartANewRunFolderWhenAnotherRunStartedInTheSameSecond', async () => {
+    const workspace = await workspaceFixture()
+    const run = environmentRunner()
+    const spawnTests = reporting([true, false], 0.5)
+
+    const first = await runTemporaryTest({ workspace, now: () => NOW }, { run, spawnTests })
+    const second = await runTemporaryTest({ workspace, now: () => NOW }, { run, spawnTests })
+
+    expect(first.report).toBe(runFile(workspace, 'report.json'))
+    expect(second.report).toBe(runFile(workspace, 'report.json', `${STAMP}-2`))
+  })
+
+  it('shouldCountTheSecondsFromTheGivenStartWhenTheRunStartedEarlier', async () => {
+    const workspace = await workspaceFixture()
+
+    const outcome = await runTemporaryTest(
+      { workspace, startedAt: Date.now() - 90_000 },
+      { run: environmentRunner(), spawnTests: reporting([true], 1) }
+    )
+
+    expect(outcome.seconds).toBeGreaterThanOrEqual(90)
+    expect(outcome.seconds).toBeLessThan(120)
+  })
+
   it('shouldRunACopyWithUniqueCaseNamesWhenTheExperimentRepeatsAName', async () => {
     const workspace = await workspaceFixture([])
-    const experiment = join(workspace.directory!, 'tmp/experiments/support.json')
+    const experiment = experimentFile(workspace.directory!, 'support')
     const document = JSON.stringify({ cases: [{ name: 'refund' }, { name: 'refund' }, {}], evaluators: [] })
     await writeFileAt(experiment, document)
     const spawnTests = reporting([true, true, true], 1)
 
-    const outcome = await runTemporaryTest(
-      { workspace, now: () => NOW },
-      { run: environmentRunner(workspace), spawnTests }
-    )
+    const outcome = await runTemporaryTest({ workspace, now: () => NOW }, { run: environmentRunner(), spawnTests })
 
-    const copy = join(workspace.directory!, 'tmp/reports/20261111-150405-support.experiment.json')
+    const copy = runFile(workspace, '.state/experiment.json')
     expect(spawnTests.mock.calls[0]![0].args[3]).toBe(copy)
     expect(JSON.parse(await readFile(copy, 'utf8'))).toEqual({
       cases: [{ name: 'refund' }, { name: 'refund-2' }, { name: 'case_2' }],
@@ -141,11 +176,43 @@ describe('TEMPORARY /test', () => {
     expect(outcome).toMatchObject({ experiment, name: 'support' })
   })
 
-  it('shouldPassTheTypescriptRunnerWhenTheAgentIsTypeScript', async () => {
-    const workspace = await workspaceFixture(['support.json'], 'typescript')
+  it('shouldRunACopyWithOnlyTheNamedCasesWhenSomeCasesRunAgain', async () => {
+    const workspace = await workspaceFixture()
     const spawnTests = reporting([true], 1)
 
-    await runTemporaryTest({ workspace }, { run: environmentRunner(workspace), spawnTests })
+    await runTemporaryTest({ workspace, now: () => NOW, only: ['b'] }, { run: environmentRunner(), spawnTests })
+
+    const copy = runFile(workspace, '.state/experiment.json')
+    expect(spawnTests.mock.calls[0]![0].args[3]).toBe(copy)
+    expect(JSON.parse(await readFile(copy, 'utf8'))).toEqual({ cases: [{ name: 'b' }], evaluators: [] })
+    expect(await readFile(experimentFile(workspace.directory!, 'support'), 'utf8')).toBe(EXPERIMENT)
+  })
+
+  it('shouldKeepTheRunInAnOutsideHomeWhenTheExperimentIsOutsideTheFolder', async () => {
+    const workspace = await workspaceFixture([])
+    const experiment = join(workspace.root, 'cases', 'refunds.json')
+    await writeFileAt(experiment)
+    const spawnTests = reporting([true, true], 1)
+
+    const outcome = await runTemporaryTest(
+      { workspace, experiment, now: () => NOW },
+      { run: environmentRunner(), spawnTests }
+    )
+
+    const home = join(workspace.directory!, 'tmp/.state/outside-experiments/refunds')
+    expect(outcome).toMatchObject({
+      experiment,
+      name: experiment,
+      home,
+      report: join(home, 'runs', STAMP, 'report.json'),
+    })
+  })
+
+  it('shouldPassTheTypescriptRunnerWhenTheAgentIsTypeScript', async () => {
+    const workspace = await workspaceFixture(['support'], 'typescript')
+    const spawnTests = reporting([true], 1)
+
+    await runTemporaryTest({ workspace }, { run: environmentRunner(), spawnTests })
 
     expect(spawnTests.mock.calls[0]![0].args).toContain('--typescript-runner')
   })
@@ -153,7 +220,7 @@ describe('TEMPORARY /test', () => {
   it.each([
     { experiments: [], requested: undefined, message: 'There is no experiment to test yet' },
     { experiments: [], requested: 'refunds', message: 'then run strands dev test again' },
-    { experiments: ['a.json', 'b.json'], requested: undefined, message: 'for example strands dev test a' },
+    { experiments: ['a', 'b'], requested: undefined, message: 'for example strands dev test a' },
   ])('shouldGuideTheUserToAnExperimentWhen$message', async ({ experiments, requested, message }) => {
     const workspace = await workspaceFixture(experiments)
     const spawnTests = reporting([true], 1)
@@ -161,7 +228,7 @@ describe('TEMPORARY /test', () => {
     await expect(
       runTemporaryTest(
         { workspace, ...(requested ? { experiment: requested } : {}) },
-        { run: environmentRunner(workspace), spawnTests }
+        { run: environmentRunner(), spawnTests }
       )
     ).rejects.toThrow(message)
     expect(spawnTests).not.toHaveBeenCalled()
@@ -188,7 +255,7 @@ describe('TEMPORARY /test', () => {
       stderrTail: ['strands-evals: error: Unable to locate credentials'],
     }))
 
-    await expect(runTemporaryTest({ workspace }, { run: environmentRunner(workspace), spawnTests })).rejects.toThrow(
+    await expect(runTemporaryTest({ workspace }, { run: environmentRunner(), spawnTests })).rejects.toThrow(
       new RegExp(`exit code ${code}: Unable to locate credentials\\n${step}`, 'u')
     )
   })
@@ -201,12 +268,10 @@ describe('TEMPORARY /test', () => {
     { content: JSON.stringify({ cases: [], evaluators: [] }), message: /has no cases, so there is nothing to test/u },
   ])('shouldExplainWhatToFixWhenTheExperimentFileCannotBeTested', async ({ content, message }) => {
     const workspace = await workspaceFixture([])
-    await writeFileAt(join(workspace.directory!, 'tmp/experiments/support.json'), content)
+    await writeFileAt(experimentFile(workspace.directory!, 'support'), content)
     const spawnTests = reporting([true], 1)
 
-    await expect(runTemporaryTest({ workspace }, { run: environmentRunner(workspace), spawnTests })).rejects.toThrow(
-      message
-    )
+    await expect(runTemporaryTest({ workspace }, { run: environmentRunner(), spawnTests })).rejects.toThrow(message)
     expect(spawnTests).not.toHaveBeenCalled()
   })
 
@@ -214,7 +279,7 @@ describe('TEMPORARY /test', () => {
     const workspace = await workspaceFixture()
 
     await expect(
-      runTemporaryTest({ workspace }, { run: environmentRunner(workspace), spawnTests: reporting([], 0) })
+      runTemporaryTest({ workspace }, { run: environmentRunner(), spawnTests: reporting([], 0) })
     ).rejects.toThrow(/has no results\. Check that .+support\.json lists evaluators/u)
   })
 })

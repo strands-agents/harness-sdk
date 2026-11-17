@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { DevChatTool } from '../../../src/dev/chat-extension.js'
 import type {
+  EvalsBrowserState,
   ExperimentsState,
   ExperimentSummary,
   GenerationSettings,
@@ -135,6 +136,7 @@ const fakeSessions = () => {
   })
   const test = state<TestState>({ runs: [] })
   const optimize = state<OptimizeState>({ step: 'pick' })
+  const ui = state<EvalsBrowserState>({ status: 'ready' })
   const finishRun = (run: OptimizeRunState): void =>
     optimize.set({ ...run, runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: run }] })
   const sessions = {
@@ -191,8 +193,9 @@ const fakeSessions = () => {
           setTimeout(() => finishRun({ step: 'review', review: { ...current.review, applied: ['agent.py'] } }), 0)
       }),
     },
+    ui: { ...ui, open: vi.fn() },
   }
-  return { sessions, experiments, test, optimize, finishRun }
+  return { sessions, experiments, test, optimize, ui, finishRun }
 }
 
 const progress = () => ({
@@ -358,7 +361,21 @@ describe('TEMPORARY dev chat part', () => {
       ],
       generations: [],
       optimization: { step: 'idle' },
+      evalsUi: { status: 'ready', open: expect.stringContaining('presses o in /experiment, /test, or /optimize') },
     })
+  })
+
+  it.each([
+    [{ status: 'starting' as const, detail: 'Installing strands-agents-evals' }],
+    [{ status: 'unavailable' as const, detail: 'the page server exited with code 1' }],
+  ])('shouldSayWhyTheEvalsUiCannotOpenYetWhenTheStatusShowsIt %o', async (shown) => {
+    const { call, ui } = setup()
+    ui.set(shown)
+
+    const status = await call('strands_dev_status')
+
+    expect(status).toMatchObject({ evalsUi: shown })
+    expect(JSON.stringify(status)).not.toContain('127.0.0.1')
   })
 
   it('shouldGiveTheLastResultFromAnEarlierSessionWhenTheStatusFollowsARestart', async () => {

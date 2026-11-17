@@ -1,13 +1,15 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { dirname, join, relative } from 'node:path'
 import { promisify } from 'node:util'
 
+import { strandsUserPath } from '../../paths.js'
 import { redactPreparationOutput } from '../../project/preparation.js'
-import { pythonInstallEnvironment } from '../../project/python-runtime.js'
+import { PIP_CONFIG_LIST_ARGUMENTS, pythonInstallEnvironment } from '../../project/python-runtime.js'
 import { isRecord } from '../../values.js'
 import { TEMPORARY_EVALS_FORK, TEMPORARY_EVALS_FORK_REQUIREMENT } from './fork.js'
+import { temporaryEvalsEnvironmentFolder } from './layout.js'
 
 export interface TemporaryCommandRequest {
   command: string
@@ -30,11 +32,19 @@ const PROBE_TIMEOUT_MS = 30_000
 const VENV_TIMEOUT_MS = 120_000
 const INSTALL_TIMEOUT_MS = 900_000
 const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024
-const PROJECT_SITE_PROBE =
-  'import json, platform, site; print(json.dumps({"version": platform.python_version(), "paths": site.getsitepackages()}))'
+const PROJECT_SITE_PROBE = [
+  'import json, platform, site, sys, sysconfig',
+  'tag = sys.implementation.cache_tag + ("t" if sysconfig.get_config_var("Py_GIL_DISABLED") else "")',
+  'print(json.dumps({"version": platform.python_version(), "tag": f"{tag}-{sysconfig.get_platform()}", "paths": site.getsitepackages()}))',
+].join('; ')
 const OPTIMIZER_SITE_PROBE = 'import site; print(site.getsitepackages()[0])'
-const PROJECT_PACKAGES_FILE = 'temporary_strands_dev_project.pth'
+const PACKAGES_FILE = 'temporary_strands_dev_packages.pth'
 const MARKER_FILE = 'temporary-evals-fork.json'
+const SHARED_FOLDER = 'temporary-evals'
+const SHARED_COMMIT_LENGTH = 12
+const SHARED_UNUSED_MS = 7 * 24 * 60 * 60 * 1000
+const UNSAFE_PATH_CHARACTERS = /[^A-Za-z0-9._-]/gu
+const TAKEN_CODES = new Set(['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'])
 const MINIMUM_PYTHON_MINOR = 10
 const DETAIL_LINES = 3
 const FORK_LABEL = `strands-agents-evals from ${TEMPORARY_EVALS_FORK.repository} at ${TEMPORARY_EVALS_FORK.commit.slice(0, 7)}`
@@ -61,8 +71,14 @@ const projectPackagesHook = (paths: readonly string[]): string =>
 export const temporaryVenvPython = (venv: string): string =>
   join(venv, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
 
-export const temporaryOptimizationFolder = (workspaceDirectory: string): string =>
-  join(workspaceDirectory, 'tmp', 'optimization')
+interface ProjectPython {
+  readonly version: string
+  readonly tag?: string
+  readonly paths: string[]
+}
+
+const pythonTag = ({ version, tag }: ProjectPython): string =>
+  tag ?? `python${version.split('.').slice(0, 2).join('.')}`
 
 const readMarker = async (path: string): Promise<string | undefined> => {
   try {
@@ -78,7 +94,7 @@ const projectSitePackages = async (
   python: string,
   cwd: string,
   signal: AbortSignal | undefined
-): Promise<{ version: string; paths: string[] }> => {
+): Promise<ProjectPython> => {
   const output = await run({
     command: python,
     args: ['-c', PROJECT_SITE_PROBE],
@@ -86,7 +102,7 @@ const projectSitePackages = async (
     timeout: PROBE_TIMEOUT_MS,
     ...(signal ? { signal } : {}),
   })
-  return JSON.parse(output) as { version: string; paths: string[] }
+  return JSON.parse(output) as ProjectPython
 }
 
 export interface TemporaryOptimizerTarget {
@@ -163,7 +179,7 @@ export const prepareTemporaryOptimizerEnvironment = async (
   target: TemporaryOptimizerTarget,
   { signal, ...options }: TemporaryEnvironmentOptions = {}
 ): Promise<string> => {
-  const key = temporaryOptimizationFolder(target.workspaceDirectory)
+  const key = temporaryEvalsEnvironmentFolder(target.workspaceDirectory)
   let work = preparing.get(key)
   if (!work) {
     work = prepareEnvironment(target, options).finally(() => preparing.delete(key))
@@ -172,66 +188,172 @@ export const prepareTemporaryOptimizerEnvironment = async (
   return untilAborted(work, signal)
 }
 
+interface Build {
+  readonly run: TemporaryCommandRunner
+  readonly signal: AbortSignal | undefined
+  readonly onProgress: (line: string) => void
+}
+
+const commandRequest =
+  ({ signal }: Build, cwd: string) =>
+  (command: string, args: string[], timeout: number, env?: NodeJS.ProcessEnv): TemporaryCommandRequest => ({
+    command,
+    args,
+    cwd,
+    timeout,
+    ...(env ? { env } : {}),
+    ...(signal ? { signal } : {}),
+  })
+
+const sharedFolder = (tag: string): string =>
+  strandsUserPath(
+    SHARED_FOLDER,
+    `${TEMPORARY_EVALS_FORK.commit.slice(0, SHARED_COMMIT_LENGTH)}-${tag.replace(UNSAFE_PATH_CHARACTERS, '_')}`
+  )
+
+const sharedMarker = (tag: string, sitePackages: string): string =>
+  JSON.stringify({ requirement: TEMPORARY_EVALS_FORK_REQUIREMENT, tag, sitePackages })
+
+const readySharedPackages = async (folder: string, tag: string): Promise<string | undefined> => {
+  const text = await readMarker(join(folder, MARKER_FILE))
+  if (text === undefined) return undefined
+  let marker: unknown
+  try {
+    marker = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (!isRecord(marker) || typeof marker.sitePackages !== 'string') return undefined
+  if (text !== sharedMarker(tag, marker.sitePackages)) return undefined
+  const sitePackages = join(folder, marker.sitePackages)
+  return existsSync(sitePackages) ? sitePackages : undefined
+}
+
+const pipConfigList = async (
+  build: Build,
+  request: ReturnType<typeof commandRequest>,
+  python: string
+): Promise<string> => {
+  try {
+    return await build.run(request(python, [...PIP_CONFIG_LIST_ARGUMENTS], PROBE_TIMEOUT_MS))
+  } catch {
+    return ''
+  }
+}
+
+const settle = async (building: string, folder: string, tag: string): Promise<void> => {
+  try {
+    await rename(building, folder)
+    return
+  } catch (error) {
+    if (!isRecord(error) || typeof error.code !== 'string' || !TAKEN_CODES.has(error.code)) throw error
+  }
+  if (await readySharedPackages(folder, tag)) {
+    await rm(building, { recursive: true, force: true })
+    return
+  }
+  const aside = `${folder}.${process.pid}.old`
+  await rename(folder, aside)
+  await rename(building, folder)
+  await rm(aside, { recursive: true, force: true })
+}
+
+const pruneSharedEnvironments = async (kept: string): Promise<void> => {
+  const parent = dirname(kept)
+  const now = Date.now()
+  for (const name of await readdir(parent).catch(() => [])) {
+    const folder = join(parent, name)
+    if (folder === kept) continue
+    const marker = await stat(join(folder, MARKER_FILE)).catch(() => undefined)
+    const used = marker?.mtimeMs ?? (await stat(folder).catch(() => undefined))?.mtimeMs ?? now
+    if (now - used > SHARED_UNUSED_MS) await rm(folder, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+const buildSharedPackages = async (build: Build, projectPython: string, tag: string): Promise<string> => {
+  const folder = sharedFolder(tag)
+  const ready = await readySharedPackages(folder, tag)
+  if (ready) {
+    const now = new Date()
+    await utimes(join(folder, MARKER_FILE), now, now).catch(() => undefined)
+    return ready
+  }
+  const building = `${folder}.${process.pid}.tmp`
+  const request = commandRequest(build, dirname(folder))
+  const python = temporaryVenvPython(building)
+  build.onProgress(`Creating the shared TEMPORARY evals environment in ${folder}`)
+  await mkdir(dirname(folder), { recursive: true })
+  await rm(building, { recursive: true, force: true })
+  const cannotCreate = (detail: string): string =>
+    `Could not create the optimizer environment in ${folder}:\n${detail}\n` +
+    `Check that ${projectPython} -m venv works (some Linux systems need the python3-venv package), then try again.`
+  await step(build.run(request(projectPython, ['-m', 'venv', '--clear', building], VENV_TIMEOUT_MS)), cannotCreate)
+  const sitePackages = (
+    await step(build.run(request(python, ['-c', OPTIMIZER_SITE_PROBE], PROBE_TIMEOUT_MS)), cannotCreate)
+  ).trim()
+  const configured = await pipConfigList(build, request, python)
+  build.onProgress(`Installing ${FORK_LABEL}. This takes about a minute, once for each version of the fork.`)
+  await step(
+    build.run(
+      request(
+        python,
+        ['-m', 'pip', 'install', '--disable-pip-version-check', '--prefer-binary', TEMPORARY_EVALS_FORK_REQUIREMENT],
+        INSTALL_TIMEOUT_MS,
+        pythonInstallEnvironment(process.env, configured)
+      )
+    ),
+    (detail) =>
+      `Could not install ${FORK_LABEL}:\n${detail}\n` +
+      'Check your network connection, your pip index settings, and that git is installed, then try again.'
+  )
+  const inside = relative(building, sitePackages)
+  await writeFile(join(building, MARKER_FILE), sharedMarker(tag, inside))
+  await settle(building, folder, tag)
+  await pruneSharedEnvironments(folder)
+  return join(folder, inside)
+}
+
+const sharing = new Map<string, Promise<string>>()
+
+const sharedPackages = (build: Build, projectPython: string, tag: string): Promise<string> => {
+  const key = sharedFolder(tag)
+  let work = sharing.get(key)
+  if (!work) {
+    work = buildSharedPackages(build, projectPython, tag).finally(() => sharing.delete(key))
+    sharing.set(key, work)
+  }
+  return work
+}
+
 const prepareEnvironment = async (
   target: TemporaryOptimizerTarget,
   { run = runCommand, signal, onProgress = ignoreProgress }: TemporaryEnvironmentOptions = {}
 ): Promise<string> => {
   const { workspaceDirectory, projectRoot, language = 'python' } = target
+  const build: Build = { run, signal, onProgress }
   const projectPython = basePython(target)
-  const folder = temporaryOptimizationFolder(workspaceDirectory)
-  const venv = join(folder, '.venv')
-  const python = temporaryVenvPython(venv)
-  const marker = join(venv, MARKER_FILE)
   const probed = await step(
     projectSitePackages(run, projectPython, projectRoot, signal),
     (detail) => `Could not start ${projectPython}:\n${detail}\n${PYTHON_START_HINT[language]}`
   )
   assertSupportedPython(projectPython, probed.version, language)
-  const project = { version: probed.version, paths: language === 'python' ? probed.paths : [] }
-  const expected = JSON.stringify({
-    requirement: TEMPORARY_EVALS_FORK_REQUIREMENT,
-    project,
-    hook: projectPackagesHook(project.paths),
-  })
+  const shared = await sharedPackages(build, projectPython, pythonTag(probed))
+  const paths = [shared, ...(language === 'python' ? probed.paths : [])]
+  const venv = temporaryEvalsEnvironmentFolder(workspaceDirectory)
+  const python = temporaryVenvPython(venv)
+  const marker = join(venv, MARKER_FILE)
+  const expected = JSON.stringify({ version: probed.version, hook: projectPackagesHook(paths) })
   if (existsSync(python) && (await readMarker(marker)) === expected) return python
-  const request = (
-    command: string,
-    args: string[],
-    timeout: number,
-    env?: NodeJS.ProcessEnv
-  ): TemporaryCommandRequest => ({
-    command,
-    args,
-    cwd: folder,
-    timeout,
-    ...(env ? { env } : {}),
-    ...(signal ? { signal } : {}),
-  })
-  onProgress(`Creating the TEMPORARY optimizer environment in ${venv}`)
-  await mkdir(folder, { recursive: true })
+  const request = commandRequest(build, dirname(venv))
   const cannotCreate = (detail: string): string =>
     `Could not create the optimizer environment in ${venv}:\n${detail}\n` +
     `Check that ${projectPython} -m venv works (some Linux systems need the python3-venv package), then try again.`
-  await step(run(request(projectPython, ['-m', 'venv', '--clear', venv], VENV_TIMEOUT_MS)), cannotCreate)
+  await mkdir(dirname(venv), { recursive: true })
+  await step(run(request(projectPython, ['-m', 'venv', '--without-pip', venv], VENV_TIMEOUT_MS)), cannotCreate)
   const sitePackages = (
     await step(run(request(python, ['-c', OPTIMIZER_SITE_PROBE], PROBE_TIMEOUT_MS)), cannotCreate)
   ).trim()
-  if (project.paths.length > 0)
-    await writeFile(join(sitePackages, PROJECT_PACKAGES_FILE), projectPackagesHook(project.paths))
-  onProgress(`Installing ${FORK_LABEL}. This takes about a minute the first time.`)
-  await step(
-    run(
-      request(
-        python,
-        ['-m', 'pip', 'install', '--disable-pip-version-check', '--prefer-binary', TEMPORARY_EVALS_FORK_REQUIREMENT],
-        INSTALL_TIMEOUT_MS,
-        pythonInstallEnvironment(process.env)
-      )
-    ),
-    (detail) =>
-      `Could not install ${FORK_LABEL}:\n${detail}\n` +
-      'Check your network connection and that git is installed, then try again.'
-  )
+  await writeFile(join(sitePackages, PACKAGES_FILE), projectPackagesHook(paths))
   await writeFile(marker, expected)
   return python
 }

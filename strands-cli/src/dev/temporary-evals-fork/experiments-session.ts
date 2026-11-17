@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { readdir, rm } from 'node:fs/promises'
+import { readdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
@@ -21,16 +21,17 @@ import {
 import { temporaryAgentContext } from './agent-context.js'
 import { generatorModelProblem } from './generator-model.js'
 import { temporaryCreateExperimentPrompt, temporaryRetryExperimentPrompt } from './create-experiment-skill.js'
-import { temporaryExperimentsFolder, temporaryWorkspaceDirectory } from './evals-process.js'
+import { temporaryWorkspaceDirectory } from './evals-process.js'
 import {
   generateTemporaryExperiment,
   isTemporaryExperimentName,
-  temporaryDraftsFolder,
   temporaryGenerationError,
   temporaryGenerationFiles,
   type TemporaryGenerationEvent,
   type TemporaryGenerationFiles,
 } from './experiment.js'
+import { temporaryDraftsFolder, temporaryExperimentFile, temporaryExperimentsFolder } from './layout.js'
+import { temporaryWorkspaceReady } from './layout-migration.js'
 import {
   createTemporaryExperimentCases,
   listTemporaryExperiments,
@@ -87,10 +88,13 @@ interface OpenReview {
   readonly key: string
   readonly name: string
   readonly path?: string
+  readonly onDisk?: string
   readonly raw: TemporaryExperimentDocument
   readonly cases: readonly ReviewCase[]
   readonly notice?: Notice
 }
+
+const fileText = (path: string): Promise<string | undefined> => readFile(path, 'utf8').catch(() => undefined)
 
 const reviewCases = (raw: TemporaryExperimentDocument, saved: boolean): ReviewCase[] => {
   const names = temporaryUniqueCaseNames(raw.cases)
@@ -197,6 +201,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
   private async readFolder(): Promise<readonly ExperimentSummary[]> {
     const folder = this.folder()
     try {
+      await temporaryWorkspaceReady(this.directory())
       const [saved, context] = await Promise.all([
         listTemporaryExperiments(folder),
         temporaryAgentContext(this.host().workspace, this.host().agent()),
@@ -336,12 +341,17 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
         tone: 'error',
         text: `${incomplete.draft.name} has a blank input or expected answer. Press e to fix it, or d to drop the case.`,
       })
-    const path = opened.path ?? join(this.folder(), `${opened.name}.json`)
+    const path = opened.path ?? temporaryExperimentFile(this.directory(), opened.name)
     const shown = shownPath(this.host().workspace, path)
     if (!opened.path && existsSync(path))
       return this.note({
         tone: 'error',
         text: `${shown} exists already, so nothing was saved. Move that file, then save again.`,
+      })
+    if (opened.path && opened.onDisk !== undefined && (await fileText(path)) !== opened.onDisk)
+      return this.note({
+        tone: 'error',
+        text: `${opened.name} changed on disk after you opened it, for example in the evals UI. Nothing was saved. Press Esc, then open it again.`,
       })
     const cases = kept.map(rawOf)
     try {
@@ -349,6 +359,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     } catch (error) {
       return this.note({ tone: 'error', text: `Could not save the cases to ${shown}: ${errorMessage(error)}` })
     }
+    const onDisk = await fileText(path)
     if (!opened.path) this.forget(opened.key)
     await this.reload()
     const raw = { ...opened.raw, cases }
@@ -356,6 +367,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       key: path,
       name: opened.name,
       path,
+      ...(onDisk === undefined ? {} : { onDisk }),
       raw,
       cases: reviewCases(raw, true),
       notice: { tone: 'success', text: `Saved ${plural(cases.length, 'case')} to ${shown}` },
@@ -424,7 +436,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
   }
 
   private isTaken(name: string, except?: string): boolean {
-    return this.takenNames(except).has(name) || existsSync(join(this.folder(), `${name}.json`))
+    return this.takenNames(except).has(name) || existsSync(join(this.folder(), name))
   }
 
   private freeName(): string {
@@ -592,7 +604,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
 
   private async saveDraft(job: Job, draft: TemporaryExperimentDocument): Promise<TemporaryCreatedExperiment> {
     const { name } = job.generation
-    const path = join(this.folder(), `${name}.json`)
+    const path = temporaryExperimentFile(this.directory(), name)
     const shown = shownPath(this.host().workspace, path)
     if (existsSync(path)) {
       throw new Error(`${shown} exists already, so the cases stay a draft. Open /experiment to review and save them.`)
@@ -613,11 +625,13 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
 
   private async openSaved(experiment: ExperimentSummary): Promise<void> {
     try {
+      const onDisk = await fileText(experiment.path)
       const { raw } = await readTemporaryExperimentFile(experiment.path)
       this.opened = {
         key: experiment.path,
         name: experiment.name,
         path: experiment.path,
+        ...(onDisk === undefined ? {} : { onDisk }),
         raw,
         cases: reviewCases(raw, true),
       }

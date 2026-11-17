@@ -40,7 +40,7 @@ const paragraphs = (...lines: readonly string[]): string => lines.join('\n\n')
 
 const EXPERIMENT_DETAILS = paragraphs(
   'An experiment is a set of test cases for this agent. Each case has an input, and it can have an expected output. The evaluators of the experiment give each answer a score.',
-  'Select New experiment, and tell the agent in the chat what to test. Before it starts, the agent asks for your approval. Then it makes the cases with an AWS Bedrock model and saves them in strands-dev/tmp/experiments/<name>.json. Generation makes paid model calls and can take minutes. Your chat model does not change.',
+  'Select New experiment, and tell the agent in the chat what to test. Before it starts, the agent asks for your approval. Then it makes the cases with an AWS Bedrock model and saves them in strands-dev/tmp/experiments/<name>/<name>.json. Generation makes paid model calls and can take minutes. Your chat model does not change.',
   'While the agent makes the cases, a line below the chat input shows the progress. Click the line to open this panel. Generation stops if strands dev closes.',
   'Open a saved experiment to review its cases. You can drop, edit, or add cases, and then save the experiment. When a generation fails, open it to see why. Then try it again, or fix the problem in the chat.',
   'Use /test to run the agent on an experiment, and /optimize to tune the agent against it. You can also ask the agent in plain words, for example "what experiments do I have?"',
@@ -52,7 +52,7 @@ const TEST_DETAILS = paragraphs(
   'Select one or more experiments, and start the test. While it runs, a line below the chat input shows the progress. You can stop the test from the panel.',
   'The test continues when you close the panel or strands dev. When strands dev opens again, it shows the results, or it continues the test from where it stopped. On Windows, the test stops when strands dev closes, and continues at the next start.',
   'When the test is done, open its report. The report shows each case as passed or failed. Open a case to read its input, the expected output, the output of the agent, and the score and reason from each evaluator. You can run the failed cases again, or all the cases.',
-  'A test does not change the agent source. It makes paid model calls and can take minutes. strands dev saves each report in strands-dev/tmp/reports/.',
+  'A test does not change the agent source. It makes paid model calls and can take minutes. strands dev saves each report in strands-dev/tmp/experiments/<name>/runs/, and the latest one as <name>.report.json.',
   'From a shell, strands dev test <experiment> runs the same test and prints the result.',
   'TEMPORARY: a fork of strands-evals runs the tests for now.'
 )
@@ -67,7 +67,7 @@ const OPTIMIZE_DETAILS = paragraphs(
   'At the end, review each proposed edit. ←→ selects an edit, and ↑↓ scrolls its change. Accept or reject each edit, and then apply the accepted edits. The agent source does not change until you apply them. Then use /test on the new version.',
   'The test check shows the gain on test cases that the search did not use, and its 90% confidence range. If the range includes 0, the gain can be luck.',
   '/optimize always opens the list. The list shows the runs that go on, and the past runs. Select a run to see its progress or to open its report again.',
-  'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/tmp/optimization/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
+  'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/tmp/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
   'TEMPORARY: a fork of strands-evals runs the upstream optimizer for now.'
 )
 
@@ -98,10 +98,11 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
           show: () => experiments.refresh(),
         }),
         jobs: temporaryGenerationJobs,
+        resume: async ({ ui }) => ui.start(),
         view:
-          ({ experiments }) =>
+          ({ experiments, ui }) =>
           (props) =>
-            createElement(ExperimentPanel, { ...props, session: experiments }),
+            createElement(ExperimentPanel, { ...props, session: experiments, browser: ui }),
       },
       sessions
     ),
@@ -115,9 +116,9 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
         jobs: temporaryTestJobs,
         resume: ({ test }) => test.resume(),
         view:
-          ({ test }) =>
+          ({ test, ui }) =>
           (props) =>
-            createElement(TestPanel, { ...props, session: test }),
+            createElement(TestPanel, { ...props, session: test, browser: ui }),
       },
       sessions
     ),
@@ -130,9 +131,9 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
         session: ({ optimize }) => optimize,
         jobs: temporaryOptimizeJobs,
         view:
-          ({ optimize }) =>
+          ({ optimize, ui }) =>
           (props) =>
-            createElement(OptimizePanel, { ...props, session: optimize }),
+            createElement(OptimizePanel, { ...props, session: optimize, browser: ui }),
         resume: ({ optimize }) => optimize.resume(),
       },
       sessions

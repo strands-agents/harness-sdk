@@ -1,5 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { basename, dirname, relative } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
@@ -10,6 +11,7 @@ import {
   temporaryCaseText,
   type TemporaryRawCase,
 } from './experiment-files.js'
+import { pruneTemporaryTestRuns, temporaryLatestRecord, temporaryLatestReport, temporaryTestRunOf } from './layout.js'
 
 export interface TemporaryTestRun {
   readonly experiment: string
@@ -117,29 +119,127 @@ export const readTemporaryTestResults = async (
   }
 }
 
-const LATEST_FOLDER = 'latest'
-
-const latestRecord = (reportsFolder: string, experiment: string): string =>
-  join(reportsFolder, LATEST_FOLDER, `${experiment}.json`)
-
 const unusableRecord = (path: string, detail: string, cause?: unknown): Error =>
   new Error(`${path} is not a usable record of the last test run (${detail}). Run the test again.`, { cause })
 
-export const rememberTemporaryTestResults = async (
-  reportsFolder: string,
-  experiment: string,
-  { report, seconds }: TestResults
-): Promise<void> => {
-  const path = latestRecord(reportsFolder, experiment)
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, `${JSON.stringify({ report: basename(report), seconds })}\n`)
+const REPORT_ROW_FIELDS = [
+  'cases',
+  'scores',
+  'test_passes',
+  'reasons',
+  'detailed_results',
+  'diagnoses',
+  'recommendations',
+] as const
+
+type ReportDocument = Record<string, unknown>
+type ReportRowFields = Partial<Record<(typeof REPORT_ROW_FIELDS)[number], unknown>>
+
+const readDocument = async (path: string): Promise<ReportDocument> => {
+  let document: unknown
+  try {
+    document = JSON.parse(await readFile(path, 'utf8'))
+  } catch (error) {
+    throw unusableReport(path, errorMessage(error), error)
+  }
+  parseReport(path, document)
+  return document as ReportDocument
 }
 
-export const readTemporaryLatestTestResults = async (
-  reportsFolder: string,
-  experiment: string
-): Promise<TestResults | undefined> => {
-  const path = latestRecord(reportsFolder, experiment)
+const documentRows = (document: ReportDocument): ReportRowFields[] => {
+  const cases = Array.isArray(document.cases) ? document.cases : []
+  return cases.map((_case, index) =>
+    Object.fromEntries(
+      REPORT_ROW_FIELDS.flatMap((field) => {
+        const values = document[field]
+        return Array.isArray(values) && index < values.length ? [[field, values[index]]] : []
+      })
+    )
+  )
+}
+
+const rowKeys = (rows: readonly ReportRowFields[]): string[] => {
+  const positions = new Map<string, number>()
+  return rows.map(({ cases }) => {
+    const testCase = isRecord(cases) ? cases : {}
+    const evaluator = evaluatorOf(testCase)
+    const position = positions.get(evaluator) ?? 0
+    positions.set(evaluator, position + 1)
+    return JSON.stringify([evaluator, temporaryCaseName(testCase, position)])
+  })
+}
+
+const caseOfKey = (key: string): string => (JSON.parse(key) as [string, string])[1]
+
+const isApplicable = (outputs: unknown): boolean =>
+  !Array.isArray(outputs) ||
+  outputs.length === 0 ||
+  outputs.some((output) => !isRecord(output) || output.not_applicable !== true || output.test_pass !== true)
+
+const overallScore = (rows: readonly ReportRowFields[]): number => {
+  const applicable = rows
+    .filter(({ detailed_results: details }) => details === undefined || isApplicable(details))
+    .map(({ scores }) => (typeof scores === 'number' ? scores : 0))
+  return applicable.length > 0 ? applicable.reduce((sum, score) => sum + score, 0) / applicable.length : 0
+}
+
+const mergedDocument = (
+  previous: ReportDocument,
+  rerun: ReportDocument,
+  names: ReadonlySet<string>
+): ReportDocument => {
+  const previousRows = documentRows(previous)
+  const rerunRows = documentRows(rerun)
+  const rerunKeys = rowKeys(rerunRows)
+  const replacements = new Map(rerunKeys.map((key, index) => [key, rerunRows[index]!]))
+  const previousKeys = rowKeys(previousRows)
+  const kept = previousRows.flatMap((row, index) => {
+    const key = previousKeys[index]!
+    if (!names.has(caseOfKey(key))) return [row]
+    const replacement = replacements.get(key)
+    return replacement ? [replacement] : []
+  })
+  const known = new Set(previousKeys)
+  const rows = [...kept, ...rerunRows.filter((_row, index) => !known.has(rerunKeys[index]!))]
+  const fields = REPORT_ROW_FIELDS.filter((field) => field in previous || field in rerun)
+  return {
+    ...previous,
+    overall_score: overallScore(rows),
+    ...Object.fromEntries(fields.map((field) => [field, rows.map((row) => row[field] ?? null)])),
+  }
+}
+
+const writeLatest = async (
+  latest: string,
+  results: TestResults,
+  only: readonly string[] | undefined
+): Promise<void> => {
+  const staging = `${latest}.${process.pid}.tmp`
+  await mkdir(dirname(latest), { recursive: true })
+  if (only && existsSync(latest)) {
+    const merged = mergedDocument(await readDocument(latest), await readDocument(results.report), new Set(only))
+    await writeFile(staging, `${JSON.stringify(merged, null, 2)}\n`)
+  } else await copyFile(results.report, staging)
+  await rename(staging, latest)
+}
+
+export const rememberTemporaryTestResults = async (
+  home: string,
+  results: TestResults,
+  only?: readonly string[]
+): Promise<TestResults> => {
+  const latest = temporaryLatestReport(home)
+  const record = temporaryLatestRecord(home)
+  const run = temporaryTestRunOf(results.report).folder
+  await writeLatest(latest, results, only)
+  await mkdir(dirname(record), { recursive: true })
+  await writeFile(record, `${JSON.stringify({ run: relative(home, run), seconds: results.seconds })}\n`)
+  await pruneTemporaryTestRuns(home, [run]).catch(() => 0)
+  return readTemporaryTestResults(latest, { experiment: results.experiment, seconds: results.seconds })
+}
+
+export const readTemporaryLatestTestResults = async (home: string): Promise<TestResults | undefined> => {
+  const path = temporaryLatestRecord(home)
   let record: unknown
   try {
     record = JSON.parse(await readFile(path, 'utf8'))
@@ -147,10 +247,6 @@ export const readTemporaryLatestTestResults = async (
     if (isRecord(error) && error.code === 'ENOENT') return undefined
     throw unusableRecord(path, errorMessage(error), error)
   }
-  if (!isRecord(record) || typeof record.report !== 'string' || typeof record.seconds !== 'number')
-    throw unusableRecord(path, 'it has no report file or run time')
-  return readTemporaryTestResults(join(reportsFolder, basename(record.report)), {
-    experiment,
-    seconds: record.seconds,
-  })
+  if (!isRecord(record) || typeof record.seconds !== 'number') throw unusableRecord(path, 'it has no run time')
+  return readTemporaryTestResults(temporaryLatestReport(home), { experiment: basename(home), seconds: record.seconds })
 }

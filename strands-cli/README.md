@@ -326,13 +326,45 @@ Inside a `strands dev` chat:
 You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-tests`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. These skills are not slash commands: dev adds only `/experiment`, `/test`, and `/optimize`. Reading cases or past results does not start a new run. Tests support one or several experiments; optimization returns proposed edits for explicit acceptance, and can be stopped or its pending proposals discarded on request.
 
 Generation, testing, and optimization call models and can incur charges. Review and approve the proposed run before it starts.
-Running jobs show progress below the chat input. Experiments, drafts, reports, and optimization records live under the workspace's `tmp/` folder.
+Running jobs show progress below the chat input. Dev keeps each experiment and its history in one folder:
+
+```text
+strands-dev/tmp/
+  experiments/
+    <name>/
+      <name>.json            the experiment
+      <name>.report.json     the latest test report
+      runs/<time>/           one test run, with report.json and run.log
+      optimizations/<time>/  one optimization run, with optimizer/ and run.log
+  .state/                    drafts, downloaded skills, and the evals environment of the workspace
+```
+
+Dev keeps the 20 newest test runs of each experiment. A rerun of the failed cases replaces only those cases in `<name>.report.json`.
+At startup, dev moves the files of the old `tmp/reports/` and `tmp/optimization/` folders into this layout.
+
+### Evals UI
+
+When the chat starts, dev also starts the evals UI of strands-evals for `strands-dev/tmp/experiments/`.
+The evals UI is a local web page with larger views of experiments, reports, and optimization runs.
+In `/experiment`, `/test`, and `/optimize`, push `o` to open the current item in a browser.
+
+The page server listens on `127.0.0.1` only, on a free port. Each start makes a new random token.
+The page link contains the token. The server rejects each request that does not have the token.
+When dev runs on a remote computer over SSH, it does not open a browser. Instead, `o` shows an `ssh -N -L` command and the page link.
+
+You can edit cases on the page, and the page saves them to the experiment file.
+Dev reads the file again when you open the experiment in `/experiment`.
+If the file changed after dev read it, dev does not write over the file. Then open the experiment again.
+If the evals UI cannot start, the chat continues to work. A message gives the cause, and `o` tries again.
 
 The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
 
 **Temporary dependency:** the evaluation workflow installs `strands-agents-evals[optimization]` from the pinned
-[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/e7bfdad0ea30c5e183294412ad466969a9c4d743)
+[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/3e6839f915ed40b0844d4f0bd85b821e9a556e1e)
 in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
+
+Dev installs the fork one time for each fork commit and Python version, in `~/.strands/temporary-evals/`. All workspaces share that environment.
+Dev deletes an environment that no workspace used for 7 days. The install uses the package index settings of your pip configuration.
 
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
 

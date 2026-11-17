@@ -14,12 +14,11 @@ import {
   spawnTemporaryEvals,
   temporaryEvalsEnvironment,
   temporaryEvalsFailure,
-  temporaryExperimentsFolder,
-  temporaryRunName,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
 import { tailTemporaryLines } from './jobs.js'
+import { temporaryDraftsFolder, temporaryRunStamp } from './layout.js'
 
 export type TemporaryGenerationEvent =
   | { readonly event: 'topics' }
@@ -65,20 +64,16 @@ export interface TemporaryExperimentDependencies {
 }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
-const DRAFTS_FOLDER = 'drafts'
 const SUMMARY_LIMIT = 140
 
 export const isTemporaryExperimentName = (name: string): boolean => NAME.test(name)
-
-export const temporaryDraftsFolder = (workspaceDirectory: string): string =>
-  join(temporaryExperimentsFolder(workspaceDirectory), DRAFTS_FOLDER)
 
 export const temporaryGenerationFiles = (
   workspaceDirectory: string,
   name: string,
   now: Date
 ): TemporaryGenerationFiles => {
-  const stem = join(temporaryDraftsFolder(workspaceDirectory), temporaryRunName(name, now))
+  const stem = join(temporaryDraftsFolder(workspaceDirectory), `${temporaryRunStamp(now)}-${name}`)
   return { draft: `${stem}.json`, log: `${stem}.log`, progress: `${stem}.progress.jsonl` }
 }
 

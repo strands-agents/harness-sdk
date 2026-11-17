@@ -5,28 +5,8 @@ import { join } from 'node:path'
 import { URL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  spawnTemporaryEvals,
-  temporaryEvalsFailure,
-  temporaryRunName,
-  temporaryRunNameParts,
-} from '../../../src/dev/temporary-evals-fork/evals-process.js'
+import { spawnTemporaryEvals, temporaryEvalsFailure } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
-
-describe('TEMPORARY run names', () => {
-  it('shouldReadTheStartTimeAndExperimentBackWhenARunNameIsParsed', () => {
-    const name = temporaryRunName('/w/strands-dev/tmp/experiments/refund-desk.json', new Date('2026-11-16T22:05:10Z'))
-
-    expect(temporaryRunNameParts(name)).toEqual({
-      startedAt: Date.parse('2026-11-16T22:05:10Z'),
-      experiment: 'refund-desk',
-    })
-  })
-
-  it.each(['.venv', '20261116-2205-refunds', 'refunds'])('shouldNotParse%sAsARunName', (name) => {
-    expect(temporaryRunNameParts(name)).toBeUndefined()
-  })
-})
 
 describe('TEMPORARY strands-evals failures', () => {
   it.each([

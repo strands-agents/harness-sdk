@@ -9,14 +9,18 @@ import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
+const STAMP = '20261111-150405'
 
 const writeFileAt = async (path: string, text = '{}'): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, text)
 }
 
+const experimentFile = (directory: string, name: string): string =>
+  join(directory, 'tmp/experiments', name, `${name}.json`)
+
 const workspaceFixture = async (
-  experiments: string[] = ['support.json'],
+  experiments: string[] = ['support'],
   language: 'python' | 'typescript' = 'python'
 ): Promise<DevWorkspace> => {
   const root = await temporaryDirectory()
@@ -24,10 +28,7 @@ const workspaceFixture = async (
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
   await Promise.all(
     experiments.map((name) =>
-      writeFileAt(
-        join(directory, 'tmp/experiments', name),
-        JSON.stringify({ cases: [{ name: 'greeting', input: 'Hello' }] })
-      )
+      writeFileAt(experimentFile(directory, name), JSON.stringify({ cases: [{ name: 'greeting', input: 'Hello' }] }))
     )
   )
   return {
@@ -38,12 +39,19 @@ const workspaceFixture = async (
   }
 }
 
-const environmentRunner = (workspace: DevWorkspace) =>
-  vi.fn(async ({ args }: TemporaryCommandRequest): Promise<string> => {
+const evalsEnvironment = (workspace: DevWorkspace): string => join(workspace.directory!, 'tmp/.state/evals-env')
+
+const optimizationFile = (workspace: DevWorkspace, file: string): string =>
+  join(workspace.directory!, 'tmp/experiments/support/optimizations', STAMP, file)
+
+const sitePackagesOf = (python: string): string => join(dirname(dirname(python)), 'lib', 'site-packages')
+
+const environmentRunner = () =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
     if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
     if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(workspace.directory!, 'tmp/optimization/.venv/lib/site-packages')
+      const sitePackages = sitePackagesOf(command)
       await mkdir(sitePackages, { recursive: true })
       return sitePackages
     }
@@ -64,17 +72,18 @@ describe('TEMPORARY dev optimization', () => {
 
     const outcome = await runTemporaryOptimization(
       { workspace, forkArguments: ['--width', '2'], now: () => NOW, onProgress: (line) => progress.push(line) },
-      { run: environmentRunner(workspace), spawnOptimizer }
+      { run: environmentRunner(), spawnOptimizer }
     )
 
-    const record = join(workspace.directory!, 'tmp/optimization/20261111-150405-support')
-    const [{ command, args, cwd, env }] = spawnOptimizer.mock.calls[0]!
-    expect(command).toBe(temporaryVenvPython(join(workspace.directory!, 'tmp/optimization/.venv')))
+    const experiment = experimentFile(workspace.directory!, 'support')
+    const record = optimizationFile(workspace, 'optimizer')
+    const [{ command, args, cwd, env, log }] = spawnOptimizer.mock.calls[0]!
+    expect(command).toBe(temporaryVenvPython(evalsEnvironment(workspace)))
     expect(args).toEqual([
       '-m',
       'strands_evals.cli',
       'optimize',
-      join(workspace.directory!, 'tmp/experiments/support.json'),
+      experiment,
       '--agent',
       workspace.entrypoint,
       '--record',
@@ -85,8 +94,9 @@ describe('TEMPORARY dev optimization', () => {
     ])
     expect(cwd).toBe(workspace.root)
     expect(env.PATH?.startsWith(dirname(command))).toBe(true)
+    expect(log).toBe(optimizationFile(workspace, 'run.log'))
     expect(outcome).toEqual({
-      experiment: join(workspace.directory!, 'tmp/experiments/support.json'),
+      experiment,
       record,
       summary: ['ships candidate 3', 'record: somewhere'],
     })
@@ -95,7 +105,7 @@ describe('TEMPORARY dev optimization', () => {
 
   it('shouldGiveTheOptimizerACopyWithUniqueCaseNamesWhenCasesRepeatOrLackANameAndKeepTheExperimentFile', async () => {
     const workspace = await workspaceFixture()
-    const experiment = join(workspace.directory!, 'tmp/experiments/support.json')
+    const experiment = experimentFile(workspace.directory!, 'support')
     const original = JSON.stringify({
       cases: [
         { name: 'greeting', input: 'Hello' },
@@ -106,9 +116,9 @@ describe('TEMPORARY dev optimization', () => {
     await writeFile(experiment, original)
     const spawnOptimizer = succeeding()
 
-    await runTemporaryOptimization({ workspace, now: () => NOW }, { run: environmentRunner(workspace), spawnOptimizer })
+    await runTemporaryOptimization({ workspace, now: () => NOW }, { run: environmentRunner(), spawnOptimizer })
 
-    const copy = join(workspace.directory!, 'tmp/optimization/20261111-150405-support.experiment.json')
+    const copy = optimizationFile(workspace, '.state/experiment.json')
     expect(spawnOptimizer.mock.calls[0]![0].args[3]).toBe(copy)
     const named = JSON.parse(await readFile(copy, 'utf8')) as { cases: { name: string; input: string }[] }
     expect(named.cases.map(({ name, input }) => [name, input])).toEqual([
@@ -120,32 +130,32 @@ describe('TEMPORARY dev optimization', () => {
   })
 
   it('shouldUseTheNamedExperimentWhenSeveralExist', async () => {
-    const workspace = await workspaceFixture(['billing.json', 'support.json'])
+    const workspace = await workspaceFixture(['billing', 'support'])
     const spawnOptimizer = succeeding()
 
     await runTemporaryOptimization(
       { workspace, experiment: 'billing', now: () => NOW },
-      { run: environmentRunner(workspace), spawnOptimizer }
+      { run: environmentRunner(), spawnOptimizer }
     )
 
-    expect(spawnOptimizer.mock.calls[0]![0].args[3]).toBe(join(workspace.directory!, 'tmp/experiments/billing.json'))
+    expect(spawnOptimizer.mock.calls[0]![0].args[3]).toBe(experimentFile(workspace.directory!, 'billing'))
   })
 
   it.each([
     { experiments: [], requested: undefined, message: 'Draft cases with /experiment in a strands dev chat' },
     {
-      experiments: ['billing.json', 'support.json'],
+      experiments: ['billing', 'support'],
       requested: undefined,
       message: 'for example strands dev optimize billing',
     },
     {
-      experiments: ['support.json'],
+      experiments: ['support'],
       requested: 'refunds',
       message: 'Use one of support, or draft cases with /experiment',
     },
     { experiments: [], requested: 'refunds', message: 'then run strands dev optimize again' },
     {
-      experiments: ['support.json'],
+      experiments: ['support'],
       requested: './missing/refunds.json',
       message: 'Check the path, or name an experiment in',
     },
@@ -156,7 +166,7 @@ describe('TEMPORARY dev optimization', () => {
     await expect(
       runTemporaryOptimization(
         { workspace, ...(requested ? { experiment: requested } : {}) },
-        { run: environmentRunner(workspace), spawnOptimizer }
+        { run: environmentRunner(), spawnOptimizer }
       )
     ).rejects.toThrow(message)
     expect(spawnOptimizer).not.toHaveBeenCalled()
@@ -166,7 +176,7 @@ describe('TEMPORARY dev optimization', () => {
     'shouldRejectFlagsThatStrandsDevOwnsWhen%sIsPassed',
     async (...forkArguments) => {
       const workspace = await workspaceFixture()
-      const run = environmentRunner(workspace)
+      const run = environmentRunner()
 
       await expect(runTemporaryOptimization({ workspace, forkArguments }, { run })).rejects.toThrow('strands dev sets')
       expect(run).not.toHaveBeenCalled()
@@ -175,8 +185,8 @@ describe('TEMPORARY dev optimization', () => {
 
   it('shouldStartTheTypescriptRunnerAndUseTheSystemPythonWhenTheWorkspaceAgentIsTypeScript', async () => {
     vi.stubEnv('PYTHON', '/opt/python3.12')
-    const workspace = await workspaceFixture(['support.json'], 'typescript')
-    const run = environmentRunner(workspace)
+    const workspace = await workspaceFixture(['support'], 'typescript')
+    const run = environmentRunner()
     const spawnOptimizer = succeeding()
 
     await runTemporaryOptimization({ workspace }, { run, spawnOptimizer })
@@ -195,14 +205,14 @@ describe('TEMPORARY dev optimization', () => {
     ['--record when the optimizer died before it made a run', false, '--record'],
   ])('shouldContinueARecordedRunWith %s', async (_, hasRun, flag) => {
     const workspace = await workspaceFixture()
-    const record = join(workspace.directory!, 'tmp/optimization/20261111-150405-support')
+    const record = optimizationFile(workspace, 'optimizer')
     await mkdir(hasRun ? join(record, '20261111-150406-abc123') : record, { recursive: true })
     if (hasRun) await writeFile(join(record, '20261111-150406-abc123', 'events.jsonl'), '')
     const spawnOptimizer = succeeding()
 
     await runTemporaryOptimization(
       { workspace, continuing: record, now: () => NOW },
-      { run: environmentRunner(workspace), spawnOptimizer }
+      { run: environmentRunner(), spawnOptimizer }
     )
 
     const { args } = spawnOptimizer.mock.calls[0]![0]
@@ -220,7 +230,7 @@ describe('TEMPORARY dev optimization', () => {
 
     await runTemporaryOptimization(
       { workspace, detached: true, onSpawn, now: () => NOW },
-      { run: environmentRunner(workspace), spawnOptimizer }
+      { run: environmentRunner(), spawnOptimizer }
     )
 
     expect(spawnOptimizer.mock.calls[0]![0]).toMatchObject({ detached: true })
@@ -235,10 +245,8 @@ describe('TEMPORARY dev optimization', () => {
       stderrTail: ['strands-evals: error: agent.py must export a Strands Agent as "agent"'],
     }))
 
-    await expect(
-      runTemporaryOptimization({ workspace }, { run: environmentRunner(workspace), spawnOptimizer })
-    ).rejects.toThrow(
-      /stopped with exit code 2: agent\.py must export a Strands Agent .*\nThe full optimizer output is in .+\.log\./u
+    await expect(runTemporaryOptimization({ workspace }, { run: environmentRunner(), spawnOptimizer })).rejects.toThrow(
+      /stopped with exit code 2: agent\.py must export a Strands Agent .*\nThe full optimizer output is in .+run\.log\./u
     )
   })
 
@@ -251,7 +259,7 @@ describe('TEMPORARY dev optimization', () => {
     const spawnOptimizer = succeeding()
     const environment = { PATH: '/usr/bin', ...given }
 
-    await runTemporaryOptimization({ workspace, environment }, { run: environmentRunner(workspace), spawnOptimizer })
+    await runTemporaryOptimization({ workspace, environment }, { run: environmentRunner(), spawnOptimizer })
 
     expect(spawnOptimizer.mock.calls[0]![0].env.AWS_DEFAULT_REGION).toBe(expected)
     expect(environment).toEqual({ PATH: '/usr/bin', ...given })
@@ -260,7 +268,7 @@ describe('TEMPORARY dev optimization', () => {
   it('shouldPrepareTheProjectAfterTheChecksPassAndBeforeTheOptimizerRuns', async () => {
     const workspace = await workspaceFixture()
     const order: string[] = []
-    const run = environmentRunner(workspace)
+    const run = environmentRunner()
     const spawnOptimizer = vi.fn(async () => {
       order.push('optimize')
       return { code: 0, stdout: '', stderrTail: [] }
@@ -290,8 +298,9 @@ describe('TEMPORARY dev optimization', () => {
     'shouldStreamTheOptimizerStderrAndReturnItsStdoutWhenTheRealProcessRuns',
     async () => {
       const workspace = await workspaceFixture()
-      const run = environmentRunner(workspace)
-      const python = temporaryVenvPython(join(workspace.directory!, 'tmp/optimization/.venv'))
+      const run = environmentRunner()
+      const venv = evalsEnvironment(workspace)
+      const python = temporaryVenvPython(venv)
       const progress: string[] = []
       const script = "#!/bin/sh\necho 'candidate  0 baseline complete' >&2\necho 'ships candidate 0: {}'\nexit 0\n"
 
@@ -300,7 +309,7 @@ describe('TEMPORARY dev optimization', () => {
         {
           run: async (request) => {
             const output = await run(request)
-            if (request.args.includes('install')) {
+            if (request.args.includes(venv)) {
               await writeFile(python, script)
               await chmod(python, 0o755)
             }
@@ -311,14 +320,15 @@ describe('TEMPORARY dev optimization', () => {
 
       expect(progress).toContain('candidate  0 baseline complete')
       expect(outcome.summary).toEqual(['ships candidate 0: {}'])
-      expect(await readFile(`${outcome.record}.log`, 'utf8')).toBe('candidate  0 baseline complete\n')
+      expect(await readFile(join(dirname(outcome.record), 'run.log'), 'utf8')).toBe('candidate  0 baseline complete\n')
     }
   )
 
   it.skipIf(process.platform === 'win32')('shouldReportTheStderrTailWhenTheRealProcessFails', async () => {
     const workspace = await workspaceFixture()
-    const run = environmentRunner(workspace)
-    const python = temporaryVenvPython(join(workspace.directory!, 'tmp/optimization/.venv'))
+    const run = environmentRunner()
+    const venv = evalsEnvironment(workspace)
+    const python = temporaryVenvPython(venv)
     const script = "#!/bin/sh\necho 'strands-evals: error: the record is in use' >&2\nexit 2\n"
 
     await expect(
@@ -327,7 +337,7 @@ describe('TEMPORARY dev optimization', () => {
         {
           run: async (request) => {
             const output = await run(request)
-            if (request.args.includes('install')) {
+            if (request.args.includes(venv)) {
               await writeFile(python, script)
               await chmod(python, 0o755)
             }
@@ -335,6 +345,6 @@ describe('TEMPORARY dev optimization', () => {
           },
         }
       )
-    ).rejects.toThrow(/stopped with exit code 2: the record is in use\nThe full optimizer output is in .+\.log\./u)
+    ).rejects.toThrow(/stopped with exit code 2: the record is in use\nThe full optimizer output is in .+run\.log\./u)
   })
 })
