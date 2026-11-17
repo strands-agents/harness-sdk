@@ -892,6 +892,10 @@ describe('OptimizePanel', () => {
     )
     expect(flat).toContain('It tries 4 steps of 4 candidates: about 230 rollouts of your agent with')
     expect(flat).toContain(
+      "The proposer is the optimizer's own AWS Bedrock model. It uses the AWS credentials and region of the shell " +
+        'that started strands dev, not the chat provider.'
+    )
+    expect(flat).toContain(
       '⚠ To rewrite the instructions, a proposer agent writes shell commands and runs them on this machine.'
     )
     expect(flat).toContain('This is not a sandbox')
@@ -990,6 +994,7 @@ describe('OptimizePanel', () => {
 
     expect(text()).toContain('The optimizer tunes the effort of your agent')
     expect(text()).not.toContain('shell commands')
+    expect(text()).not.toContain('The proposer is')
   })
 
   it('shouldGoBackToTheSetupAndNotStartWhenTheUserPressesEscOnTheConfirm', async () => {

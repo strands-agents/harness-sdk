@@ -590,16 +590,21 @@ const PROPOSER_RISK =
   'cases can carry prompt injection. To protect your credentials, run strands dev in a container or VM that has ' +
   'only the credentials that the run needs.'
 
+const PROPOSER_MODEL =
+  "The proposer is the optimizer's own AWS Bedrock model. It uses the AWS credentials and region of the shell " +
+  'that started strands dev, not the chat provider.'
+
 const tunedKnobs = ({ knobs }: OptimizePlan): Knob[] => knobs.filter((knob) => knob.enabled && !knob.unavailable)
 
-const proposerWarnings = (knobs: readonly Knob[]): string[] => {
-  const texts = knobs.filter(({ kind }) => kind === 'text').map(({ label }) => label)
-  return texts.length === 0
+const textKnobs = (knobs: readonly Knob[]): string[] =>
+  knobs.filter(({ kind }) => kind === 'text').map(({ label }) => label)
+
+const proposerWarnings = (texts: readonly string[]): string[] =>
+  texts.length === 0
     ? []
     : [
         `To rewrite the ${listed(texts)}, a proposer agent writes shell commands and runs them on this machine. ${PROPOSER_RISK}`,
       ]
-}
 
 const triedModels = (plan: OptimizePlan, knobs: readonly Knob[], agent: RunAgent | undefined): string => {
   const current = plan.models?.current ?? agentModel(agent)
@@ -609,6 +614,7 @@ const triedModels = (plan: OptimizePlan, knobs: readonly Knob[], agent: RunAgent
 
 const paidOptimization = (plan: OptimizePlan, agent: RunAgent | undefined, start: () => void): PaidRun => {
   const knobs = tunedKnobs(plan)
+  const texts = textKnobs(knobs)
   const { train, validation, test } = plan.split
   return {
     title: [plan.experiment.name],
@@ -618,8 +624,9 @@ const paidOptimization = (plan: OptimizePlan, agent: RunAgent | undefined, start
       `It tries ${plural(plan.iterations, 'step')} of ${plural(plan.width, 'candidate')}: about ${plan.rollouts} ` +
         `rollouts of your agent with ${triedModels(plan, knobs, agent)}, and ${judgeCallsText(plan.judgeCalls, 'about ')}.`,
       usageSentence(plan.usage),
+      ...(texts.length > 0 ? [PROPOSER_MODEL] : []),
     ],
-    warnings: [...proposerWarnings(knobs), ...fileToolWarnings(agent)],
+    warnings: [...proposerWarnings(texts), ...fileToolWarnings(agent)],
     start,
   }
 }
