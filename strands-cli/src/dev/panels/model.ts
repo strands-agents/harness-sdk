@@ -412,3 +412,23 @@ export interface OptimizeSession {
   apply(): void
   reset(): void
 }
+
+export type EvalsBrowserPlace =
+  | { readonly view: 'runs' | 'opt-runs' }
+  | { readonly view: 'experiment' | 'report'; readonly experiment: string; readonly case?: string }
+
+export interface EvalsBrowserNotice {
+  readonly tone: 'normal' | 'muted' | 'warning'
+  readonly lines: readonly string[]
+}
+
+export interface EvalsBrowserState {
+  readonly status: 'off' | 'starting' | 'ready' | 'unavailable'
+  readonly detail?: string
+}
+
+export interface EvalsBrowser {
+  subscribe(listener: () => void): () => void
+  snapshot(): EvalsBrowserState
+  open(place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined>
+}

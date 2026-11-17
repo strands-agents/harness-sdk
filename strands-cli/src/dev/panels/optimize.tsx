@@ -8,6 +8,7 @@ import type { ChatDiffLine } from '../../agent/types.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
 import { useDevPanelClicks } from '../../ui/panels/dev.js'
+import { BROWSER_KEY, browserHints, BrowserView, useBrowserNotice } from './browser.js'
 import { ExperimentPicker, type PickerSection } from './picker.js'
 import { CaseReport } from './report.js'
 import {
@@ -32,6 +33,8 @@ import {
   type OptimizeRun,
   type OptimizeRunState,
   type OptimizeSession,
+  type EvalsBrowser,
+  type OptimizeState,
   type PastRuns,
   type ProposedEdit,
   type TestCheck,
@@ -67,7 +70,16 @@ import {
 
 export interface OptimizePanelProps extends DevChatPanelProps {
   readonly session: OptimizeSession
+  readonly browser?: EvalsBrowser
 }
+
+const BROWSABLE_STEPS: ReadonlySet<OptimizeState['step']> = new Set([
+  'pick',
+  'running',
+  'review',
+  'cancelled',
+  'failed',
+])
 
 const COMMAND = 'optimize'
 const BACK_HINT = 'Esc back to the list'
@@ -84,6 +96,21 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
   const { session } = props
   const state = useSyncExternalStore(session.subscribe, session.snapshot)
   const use = useCallback((experiment: ExperimentSummary) => session.plan(experiment), [session])
+  const browser = useBrowserNotice(props.browser)
+  useInput((input, key) => {
+    if (!browser.notice && BROWSABLE_STEPS.has(state.step) && shortcut(input, key) === BROWSER_KEY)
+      browser.open({ view: 'opt-runs' })
+  })
+  if (browser.notice)
+    return (
+      <BrowserView
+        command={COMMAND}
+        notice={browser.notice}
+        width={props.width}
+        onRetry={browser.retry}
+        onBack={browser.dismiss}
+      />
+    )
   switch (state.step) {
     case 'pick':
       return (
@@ -93,6 +120,7 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
           command={COMMAND}
           onUse={use}
           section={runsSection(state.runs ?? [], state.pastRuns, session)}
+          extraHints={browserHints(props.browser)}
         />
       )
     case 'setup':
@@ -806,6 +834,7 @@ const scoreText = (
 
 const RunningView = ({
   session,
+  browser,
   width,
   height,
   progress,
@@ -903,6 +932,7 @@ const RunningView = ({
           '↑↓',
           ...(current ? ['Enter open trials'] : []),
           progress.stopping ? 'stopping, the best so far is kept' : 'x stop and keep best',
+          ...browserHints(browser),
           'Esc back to the list, the run goes on',
         ]}
       />
@@ -1057,6 +1087,7 @@ const TestCheckLines = ({ rows }: { rows: readonly CheckRow[] }): ReactElement =
 
 const ReviewView = ({
   session,
+  browser,
   width,
   height,
   review,
@@ -1181,6 +1212,7 @@ const ReviewView = ({
           'a accept',
           'x reject',
           accepted > 0 ? 'Enter apply accepted' : 'accept an edit to apply',
+          ...browserHints(browser),
           BACK_HINT,
         ]}
       />

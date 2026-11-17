@@ -41,6 +41,7 @@ export interface ExperimentPickerProps extends DevChatPanelProps {
   readonly command: string
   readonly onUse: (experiment: ExperimentSummary) => void
   readonly section?: PickerSection
+  readonly extraHints?: readonly string[]
 }
 
 type PickerRow =
@@ -121,6 +122,7 @@ export const ExperimentPicker = ({
   command,
   onUse,
   section,
+  extraHints = [],
   openCommand,
   close,
   width,
@@ -182,7 +184,14 @@ export const ExperimentPicker = ({
       {waiting ? (
         <Line tone="muted">{'  Grey experiments are still generating, or wait for review in /experiment.'}</Line>
       ) : null}
-      <KeyHints hints={['↑↓', rows[index]?.kind === 'extra' ? 'Enter open the report' : 'Enter choose', 'Esc close']} />
+      <KeyHints
+        hints={[
+          '↑↓',
+          rows[index]?.kind === 'extra' ? 'Enter open the report' : 'Enter choose',
+          ...extraHints,
+          'Esc close',
+        ]}
+      />
     </>
   )
 }

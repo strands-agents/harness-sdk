@@ -9,6 +9,8 @@ import {
   type CaseChange,
   type CaseField,
   type DraftCase,
+  type EvalsBrowser,
+  type EvalsBrowserPlace,
   type ExperimentSession,
   type ExperimentsState,
   type ExperimentSummary,
@@ -40,10 +42,14 @@ import {
   type ListItem,
   type TextValue,
 } from './ui.js'
+import { BROWSER_KEY, browserHints, BrowserView, useBrowserNotice } from './browser.js'
 
 export interface ExperimentPanelProps extends DevChatPanelProps {
   readonly session: ExperimentSession
+  readonly browser?: EvalsBrowser
 }
+
+type OpenInBrowser = (place: EvalsBrowserPlace) => void
 
 type View = { readonly kind: 'home' } | { readonly kind: 'detail'; readonly id: string }
 
@@ -57,8 +63,19 @@ export const ExperimentPanel = (props: ExperimentPanelProps): ReactElement => {
   const { session, close } = props
   const state = useSyncExternalStore(session.subscribe, session.snapshot)
   const [view, setView] = useState<View>({ kind: 'home' })
+  const browser = useBrowserNotice(props.browser)
   const home = (): void => setView({ kind: 'home' })
-  if (state.review) return <ReviewView {...props} review={state.review} />
+  if (browser.notice)
+    return (
+      <BrowserView
+        command={COMMAND}
+        notice={browser.notice}
+        width={props.width}
+        onRetry={browser.retry}
+        onBack={browser.dismiss}
+      />
+    )
+  if (state.review) return <ReviewView {...props} review={state.review} onBrowser={browser.open} />
   const shown = view.kind === 'detail' ? state.generations.find(({ id }) => id === view.id) : undefined
   if (shown)
     return (
@@ -81,6 +98,7 @@ export const ExperimentPanel = (props: ExperimentPanelProps): ReactElement => {
         session.startInChat()
       }}
       onDetail={(id) => setView({ kind: 'detail', id })}
+      onBrowser={browser.open}
     />
   )
 }
@@ -171,12 +189,15 @@ const HomeView = ({
   close,
   width,
   height,
+  browser,
   onNew,
   onDetail,
+  onBrowser,
 }: ExperimentPanelProps & {
   state: ExperimentsState
   onNew: () => void
   onDetail: (id: string) => void
+  onBrowser: OpenInBrowser
 }): ReactElement => {
   const rows = homeRows(state)
   const now = useNow(state.generations.some(isGenerating))
@@ -193,6 +214,8 @@ const HomeView = ({
     else if (key.upArrow) cursor.move(-1)
     else if (key.downArrow) cursor.move(1)
     else if (typed === 'n') onNew()
+    else if (typed === BROWSER_KEY && browser)
+      onBrowser(row?.kind === 'saved' ? { view: 'experiment', experiment: row.experiment.path } : { view: 'runs' })
     else if (key.return) {
       if (row?.kind === 'new') onNew()
       else if (row?.kind === 'saved') session.open(row.experiment)
@@ -238,7 +261,7 @@ const HomeView = ({
       ) : (
         <Line tone="muted">{`  ${homeNote(current)}`}</Line>
       )}
-      <KeyHints hints={['↑↓', 'Enter open', 'n new', ...actions, 'Esc close']} />
+      <KeyHints hints={['↑↓', 'Enter open', 'n new', ...actions, ...browserHints(browser), 'Esc close']} />
     </>
   )
 }
@@ -279,7 +302,14 @@ const reviewTitle = (review: Review): { name: string; parts: string[] } => {
     : { name: 'review', parts: [review.name, `${review.cases.length} drafted`, `${kept} kept`] }
 }
 
-const ReviewView = ({ session, width, height, review }: ExperimentPanelProps & { review: Review }): ReactElement => {
+const ReviewView = ({
+  session,
+  browser,
+  width,
+  height,
+  review,
+  onBrowser,
+}: ExperimentPanelProps & { review: Review; onBrowser: OpenInBrowser }): ReactElement => {
   const cursor = useCursor(review.cases.length)
   const editing = useSyncedState<CaseEditor | undefined>(undefined)
   const editor = editing.value
@@ -325,6 +355,8 @@ const ReviewView = ({ session, width, height, review }: ExperimentPanelProps & {
     else if (typed === 'e' && item)
       editing.set(editorFor(missingCaseField(item) ?? 'expected', item.input, item.expected ?? '', at))
     else if (typed === 'n') editing.set(editorFor('input', '', ''))
+    else if (typed === BROWSER_KEY && browser && review.path)
+      onBrowser({ view: 'experiment', experiment: review.path, ...(item ? { case: item.name } : {}) })
     else if (key.return) void session.save()
   })
   usePaste((text) => typeInto((value) => pasteText(value, text)))
@@ -384,7 +416,16 @@ const ReviewView = ({ session, width, height, review }: ExperimentPanelProps & {
         hints={
           editor
             ? ['Tab field', 'Enter save the case', 'Esc cancel']
-            : ['Space keep', 'd drop', 'a keep all', 'e edit', 'n new case', 'Enter save', 'Esc back']
+            : [
+                'Space keep',
+                'd drop',
+                'a keep all',
+                'e edit',
+                'n new case',
+                'Enter save',
+                ...(review.path ? browserHints(browser) : []),
+                'Esc back',
+              ]
         }
       />
     </>

@@ -5,10 +5,13 @@ import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { useSpinner } from '../../ui/animation.js'
 import {
   isGenerating,
+  type EvalsBrowser,
+  type EvalsBrowserPlace,
   type ExperimentRun,
   type ExperimentsState,
   type ExperimentSummary,
   type Generation,
+  type CaseResult,
   type TestResults,
   type TestRun,
   type TestSession,
@@ -34,11 +37,15 @@ import {
   type ListItem,
   type Tone,
 } from './ui.js'
+import { BROWSER_HINT, BROWSER_KEY, browserHints, BrowserView, useBrowserNotice } from './browser.js'
 import { CaseReport } from './report.js'
 
 export interface TestPanelProps extends DevChatPanelProps {
   readonly session: TestSession
+  readonly browser?: EvalsBrowser
 }
+
+type OpenInBrowser = (place: EvalsBrowserPlace) => void
 
 const COMMAND = 'test'
 const LIST_CHROME_ROWS = 3
@@ -53,8 +60,19 @@ export const TestPanel = (props: TestPanelProps): ReactElement => {
   const tests = useSyncExternalStore(session.subscribe, session.snapshot)
   const experiments = useSyncExternalStore(session.experiments.subscribe, session.experiments.snapshot)
   const [open, setOpen] = useState<string | undefined>()
+  const browser = useBrowserNotice(props.browser)
   const shown = tests.runs.find(({ experiment }) => experiment.path === open)
   const back = (): void => setOpen(undefined)
+  if (browser.notice)
+    return (
+      <BrowserView
+        command={COMMAND}
+        notice={browser.notice}
+        width={props.width}
+        onRetry={browser.retry}
+        onBack={browser.dismiss}
+      />
+    )
   if (shown?.run.status === 'running')
     return (
       <RunningView
@@ -70,6 +88,8 @@ export const TestPanel = (props: TestPanelProps): ReactElement => {
       <ResultsView
         {...props}
         results={shown.run.results}
+        experiment={shown.experiment.path}
+        onBrowser={browser.open}
         onBack={back}
         onRerun={() => session.rerunFailed(shown.experiment.path)}
         onRunAgain={() => session.run([shown.experiment])}
@@ -85,7 +105,7 @@ export const TestPanel = (props: TestPanelProps): ReactElement => {
         retry={() => session.run([shown.experiment])}
       />
     )
-  return <TestList {...props} tests={tests} experiments={experiments} onOpen={setOpen} />
+  return <TestList {...props} tests={tests} experiments={experiments} onOpen={setOpen} onBrowser={browser.open} />
 }
 
 export const testRows = ({ saved, generations }: ExperimentsState, { runs }: TestState): TestRow[] => [
@@ -140,6 +160,11 @@ const rowItem = (row: TestRow, chosen: ReadonlySet<string>): ListItem => {
 
 const selectable = (row: TestRow | undefined): boolean => row !== undefined && row.kind !== 'waiting'
 
+const browserPlace = (row: TestRow | undefined): EvalsBrowserPlace =>
+  row?.kind === 'experiment'
+    ? { view: row.run?.status === 'done' ? 'report' : 'experiment', experiment: row.experiment.path }
+    : { view: 'runs' }
+
 const OPEN_HINTS: Record<TestRun['status'], string> = {
   running: 'Enter show progress',
   done: 'Enter open report',
@@ -160,11 +185,14 @@ const TestList = ({
   openCommand,
   width,
   height,
+  browser,
   onOpen,
+  onBrowser,
 }: TestPanelProps & {
   tests: TestState
   experiments: ExperimentsState
   onOpen: (path: string) => void
+  onBrowser: OpenInBrowser
 }): ReactElement => {
   const rows = testRows(experiments, tests)
   const chosen = useSyncedState<ReadonlySet<string>>(new Set())
@@ -203,6 +231,7 @@ const TestList = ({
     else if (typed === 'a')
       chosen.set((current) => (current.size === ready.length ? new Set() : new Set(ready.map(({ path }) => path))))
     else if (key.rightArrow && row?.kind === 'experiment' && row.run) onOpen(row.experiment.path)
+    else if (typed === BROWSER_KEY && browser) onBrowser(browserPlace(row))
     else if (key.return) {
       const picked = ready.filter(({ path }) => chosen.current().has(path))
       if (picked.length > 0) {
@@ -239,7 +268,9 @@ const TestList = ({
       {waiting ? (
         <Line tone="muted">{'  Grey experiments are still generating, or wait for review in /experiment.'}</Line>
       ) : null}
-      <KeyHints hints={['Space select', 'a all', enterHint(chosen.value.size, current), 'Esc close']} />
+      <KeyHints
+        hints={['Space select', 'a all', enterHint(chosen.value.size, current), ...browserHints(browser), 'Esc close']}
+      />
     </>
   )
 }
@@ -287,14 +318,19 @@ const RunningView = ({
 }
 
 const ResultsView = ({
+  browser,
   width,
   height,
   results,
+  experiment,
+  onBrowser,
   onBack,
   onRerun,
   onRunAgain,
 }: TestPanelProps & {
   results: TestResults
+  experiment: string
+  onBrowser: OpenInBrowser
   onBack: () => void
   onRerun: () => void
   onRunAgain: () => void
@@ -311,6 +347,17 @@ const ResultsView = ({
       keys={[
         ...(failed > 0 ? [{ key: 'r', hint: 'r rerun failed', run: onRerun }] : []),
         { key: 'a', hint: 'a rerun all', run: onRunAgain },
+        ...(browser
+          ? [
+              {
+                key: BROWSER_KEY,
+                hint: BROWSER_HINT,
+                inCase: true,
+                run: (current?: CaseResult) =>
+                  onBrowser({ view: 'report', experiment, ...(current ? { case: current.name } : {}) }),
+              },
+            ]
+          : []),
       ]}
       backHint="Esc back to the list"
       width={width}

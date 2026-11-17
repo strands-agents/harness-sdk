@@ -26,7 +26,8 @@ import {
 export interface ReportKey {
   readonly key: string
   readonly hint: string
-  readonly run: () => void
+  readonly run: (current?: CaseResult) => void
+  readonly inCase?: boolean
 }
 
 export interface CaseReportProps {
@@ -98,7 +99,7 @@ export const CaseReport = ({
     else if (key.upArrow) cursor.move(-1)
     else if (key.downArrow) cursor.move(1)
     else if (key.return || key.rightArrow) read(cursor.current())
-    else keys.find((choice) => choice.key === typed)?.run()
+    else keys.find((choice) => choice.key === typed)?.run(current)
   })
   if (reading.value && current)
     return (
@@ -108,6 +109,7 @@ export const CaseReport = ({
         width={width}
         height={height}
         result={current}
+        keys={keys.filter(({ inCase }) => inCase)}
         onBack={() => reading.set(false)}
       />
     )
@@ -195,6 +197,7 @@ const CaseView = ({
   width,
   height,
   result,
+  keys,
   onBack,
 }: {
   command: string
@@ -202,6 +205,7 @@ const CaseView = ({
   width: number
   height: number
   result: CaseResult
+  keys: readonly ReportKey[]
   onBack: () => void
 }): ReactElement => {
   const { success, error } = useTheme()
@@ -219,8 +223,10 @@ const CaseView = ({
   const offset = Math.min(scroll.value, lastOffset)
   const scrollBy = (step: number): void =>
     scroll.set((value) => Math.max(0, Math.min(lastOffset, Math.min(value, lastOffset) + step)))
-  useInput((_input, key) => {
+  useInput((input, key) => {
+    const typed = shortcut(input, key)
     if (key.escape || key.return || key.leftArrow || key.backspace || key.delete) onBack()
+    else if (keys.some((choice) => choice.key === typed)) keys.find((choice) => choice.key === typed)?.run(result)
     else if (key.upArrow) scrollBy(-1)
     else if (key.downArrow) scrollBy(1)
     else if (key.pageUp) scrollBy(-page)
@@ -254,7 +260,9 @@ const CaseView = ({
           </Box>
         ))}
       </Box>
-      <KeyHints hints={scrolls ? ['↑↓ scroll', 'Esc back to the report'] : ['Esc back to the report']} />
+      <KeyHints
+        hints={[...(scrolls ? ['↑↓ scroll'] : []), ...keys.map(({ hint }) => hint), 'Esc back to the report']}
+      />
     </>
   )
 }
