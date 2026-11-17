@@ -142,7 +142,9 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
             limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
         )
     assert lookup_model_info("amazon.nova-pro-v1:0") == ModelInfo(
-        capabilities=ModelCapabilities(forced_tool_choice=True, native_structured_output=False),
+        capabilities=ModelCapabilities(
+            prompt_caching="cache_points", forced_tool_choice=True, native_structured_output=False
+        ),
         limits=ModelLimits(context_window=300_000),
     )
     assert lookup_model_info("claude-future-9") == ModelInfo()
@@ -231,26 +233,54 @@ def test_package_copy_matches_the_shared_data():
 _DEFAULT_EFFORT_VALUES = {"minimal", "low", "medium", "high", "xhigh", "max"}
 
 
+# Read by the TypeScript SDK, skipped by the Python loader.
+_MODEL_APIS = {"converse"}
+_BOOLEAN_CACHE_POINT_RULE_KEYS = {"toolsCachePoint", "cachePointTTL"}
+
+
+def _assert_model_info_shape(model_id, entry):
+    for key, value in entry.get("limits", {}).items():
+        assert key in _LIMIT_KEYS, f"{model_id}.limits.{key}"
+        assert isinstance(value, int) and value > 0, f"{model_id}.limits.{key}"
+    for key, value in entry.get("capabilities", {}).items():
+        if key == "promptCaching":
+            assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
+        elif key == "defaultEffort":
+            assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
+        else:
+            assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
+            assert isinstance(value, bool), f"{model_id}.{key}"
+
+
+def _assert_cache_point_rules_shape(model_id, rules):
+    for key, value in rules.items():
+        if key == "cachePointPlacement":
+            assert value == "afterText", f"{model_id}.{key}"
+        elif key == "maxCachePoints":
+            assert isinstance(value, int) and value > 0, f"{model_id}.{key}"
+        else:
+            assert key in _BOOLEAN_CACHE_POINT_RULE_KEYS, f"{model_id}.cachePointRules.{key}"
+            assert isinstance(value, bool), f"{model_id}.{key}"
+
+
 def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry():
     data = json.loads(_SHARED_DATA.read_text(encoding="utf-8"))
 
     assert sorted(data.keys()) == ["$comment", "defaults", "models"]
-    assert data["defaults"] == {"limits": {"contextWindow": DEFAULT_CONTEXT_WINDOW_LIMIT}}
+    assert set(data["defaults"]) == {"limits", "cachePointRules"}
+    assert data["defaults"]["limits"] == {"contextWindow": DEFAULT_CONTEXT_WINDOW_LIMIT}
+    assert set(data["defaults"]["cachePointRules"]) == {"maxCachePoints"}
+    _assert_cache_point_rules_shape("defaults", data["defaults"]["cachePointRules"])
 
     for model_id, entry in data["models"].items():
         assert _MODEL_ID_PATTERN.match(model_id), model_id
-        assert set(entry) <= {"limits", "capabilities"}, model_id
-        for key, value in entry.get("limits", {}).items():
-            assert key in _LIMIT_KEYS, f"{model_id}.limits.{key}"
-            assert isinstance(value, int) and value > 0, f"{model_id}.limits.{key}"
-        for key, value in entry.get("capabilities", {}).items():
-            if key == "promptCaching":
-                assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
-            elif key == "defaultEffort":
-                assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
-            else:
-                assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
-                assert isinstance(value, bool), f"{model_id}.{key}"
+        assert set(entry) <= {"limits", "capabilities", "apis", "cachePointRules"}, model_id
+        _assert_model_info_shape(model_id, entry)
+        for api, info in entry.get("apis", {}).items():
+            assert api in _MODEL_APIS, f"{model_id}.apis.{api}"
+            assert set(info) <= {"limits", "capabilities"}, f"{model_id}.apis.{api}"
+            _assert_model_info_shape(f"{model_id}.apis.{api}", info)
+        _assert_cache_point_rules_shape(model_id, entry.get("cachePointRules", {}))
 
 
 def test_lookup_keeps_the_typed_fields_and_skips_the_rest():

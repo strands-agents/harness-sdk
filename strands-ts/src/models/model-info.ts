@@ -100,9 +100,49 @@ export const ModelInfo = Object.freeze({
  */
 export const SERVER_SIDE_SUMMARY_OFF: ModelInfo = Object.freeze({ capabilities: { serverSideSummary: false } })
 
+/**
+ * An API a provider reaches a model through, where that API changes what the model supports: `'converse'` is the
+ * Bedrock Converse API (`BedrockModel`, and `VercelModel` on amazon-bedrock).
+ *
+ * @internal
+ */
+export type ModelApi = 'converse'
+
+/**
+ * Where a model takes cache points, as far as it differs from the provider's own rules. Kept out of
+ * {@link ModelInfo}; read it with {@link lookupCachePointRules}.
+ *
+ * @internal
+ */
+export interface CachePointRules {
+  /** `'afterText'` when a cache point may sit only directly after text; unset leaves the provider's rule. */
+  readonly cachePointPlacement?: 'afterText'
+  /** `false` when the model rejects a cache point after the tool definitions. */
+  readonly toolsCachePoint?: boolean
+  /** `false` when the model rejects any cache point `ttl`. */
+  readonly cachePointTTL?: boolean
+  /** Most cache points one request may carry, across tool definitions, system prompt and messages. */
+  readonly maxCachePoints?: number
+}
+
+/**
+ * A shared model info entry: the model's {@link ModelInfo}, what changes on a given API, and its cache-point rules.
+ *
+ * @internal
+ */
+export interface ModelEntry extends ModelInfo {
+  /** Facts that hold only on one API, merged over the entry by {@link lookupModelInfo}. */
+  readonly apis?: Readonly<Partial<Record<ModelApi, ModelInfo>>>
+  /** Where the model takes cache points. */
+  readonly cachePointRules?: CachePointRules
+}
+
 interface ModelInfoData {
-  readonly defaults: { readonly limits: { readonly contextWindow: number } }
-  readonly models: Readonly<Record<string, ModelInfo>>
+  readonly defaults: {
+    readonly limits: { readonly contextWindow: number }
+    readonly cachePointRules: CachePointRules & { readonly maxCachePoints: number }
+  }
+  readonly models: Readonly<Record<string, ModelEntry>>
 }
 
 // Bedrock appends a version to some ids (`claude-3-5-haiku-20241022-v1:0`); the base id carries the facts.
@@ -127,21 +167,39 @@ const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } 
   keyof ModelLimits,
   true
 >)
+const MODEL_APIS = Object.keys({ converse: true } satisfies Record<ModelApi, true>)
+const CACHE_POINT_RULE_FIELDS = Object.keys({
+  cachePointPlacement: true,
+  toolsCachePoint: true,
+  cachePointTTL: true,
+  maxCachePoints: true,
+} satisfies Record<keyof CachePointRules, true>)
+
+function pick(section: object | undefined, keys: readonly string[]): object | undefined {
+  const picked = Object.fromEntries(Object.entries(section ?? {}).filter(([key]) => keys.includes(key)))
+  return Object.keys(picked).length > 0 ? picked : undefined
+}
 
 // Keeps the fields the SDK types and skips the rest, as the Python SDK does: the data file is shared
 // with other consumers (the harness), so it can carry fields the SDK doesn't read.
 function knownFields(entry: ModelInfo): ModelInfo {
-  const pick = (section: object | undefined, keys: readonly string[]): object | undefined => {
-    const picked = Object.fromEntries(Object.entries(section ?? {}).filter(([key]) => keys.includes(key)))
-    return Object.keys(picked).length > 0 ? picked : undefined
-  }
   const capabilities = pick(entry.capabilities, CAPABILITY_FIELDS)
   const limits = pick(entry.limits, LIMIT_FIELDS)
   return { ...(capabilities ? { capabilities } : {}), ...(limits ? { limits } : {}) } as ModelInfo
 }
 
-const MODELS: Readonly<Record<string, ModelInfo>> = Object.fromEntries(
-  Object.entries(data.models).map(([id, entry]) => [id, Object.freeze(knownFields(entry))])
+function knownEntry(entry: ModelEntry): ModelEntry {
+  const apis = Object.entries(pick(entry.apis, MODEL_APIS) ?? {}).map(([api, info]) => [api, knownFields(info)])
+  const cachePointRules = pick(entry.cachePointRules, CACHE_POINT_RULE_FIELDS)
+  return {
+    ...knownFields(entry),
+    ...(apis.length > 0 ? { apis: Object.fromEntries(apis) } : {}),
+    ...(cachePointRules ? { cachePointRules } : {}),
+  } as ModelEntry
+}
+
+const MODELS: Readonly<Record<string, ModelEntry>> = Object.fromEntries(
+  Object.entries(data.models).map(([id, entry]) => [id, Object.freeze(knownEntry(entry))])
 )
 
 /**
@@ -155,7 +213,7 @@ const MODELS: Readonly<Record<string, ModelInfo>> = Object.fromEntries(
  * @param modelId - The model id to look up
  * @returns The entry, or undefined when the id is not in the data
  */
-export function lookupModel(modelId: string): ModelInfo | undefined {
+export function lookupModel(modelId: string): ModelEntry | undefined {
   let candidate = modelId
   for (;;) {
     const unversioned = candidate.replace(VERSION_SUFFIX, '')
@@ -169,14 +227,43 @@ export function lookupModel(modelId: string): ModelInfo | undefined {
 }
 
 /**
- * What the shared model info data knows about a model.
+ * What the shared model info data knows about a model, on `api` when given.
  *
  * @internal
  * @param modelId - The model id to describe
+ * @param api - The API the model is reached through; its facts win over the entry's
  * @returns What the data knows about the model; empty when it knows nothing
  */
-export function lookupModelInfo(modelId: string): ModelInfo {
-  return ModelInfo.merge(lookupModel(modelId))
+export function lookupModelInfo(modelId: string, api?: ModelApi): ModelInfo {
+  const entry = lookupModel(modelId)
+  return ModelInfo.merge(entry, api ? entry?.apis?.[api] : undefined)
+}
+
+/**
+ * Where a model takes cache points: the data's defaults, then the model's own rules.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns The model's cache-point rules; the defaults when the data does not list it
+ */
+export function lookupCachePointRules(modelId: string): CachePointRules & { readonly maxCachePoints: number } {
+  return Object.freeze({ ...data.defaults.cachePointRules, ...lookupModel(modelId)?.cachePointRules })
+}
+
+/**
+ * Whether `api` caches a model implicitly while the model takes cache points elsewhere, so a caller who wants cache
+ * points must reach it through another API.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @param api - The API the model is reached through
+ * @returns True when `api` caches implicitly and the model's entry takes cache points
+ */
+export function cachePointsOnlyOffApi(modelId: string, api: ModelApi): boolean {
+  return (
+    lookupModelInfo(modelId, api).capabilities?.promptCaching === 'auto' &&
+    lookupModelInfo(modelId).capabilities?.promptCaching === 'cachePoints'
+  )
 }
 
 /**

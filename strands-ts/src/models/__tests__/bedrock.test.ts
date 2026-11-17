@@ -550,6 +550,52 @@ describe('BedrockModel', () => {
       }
     )
 
+    describe('Converse caching for a model that takes cache points on another provider', () => {
+      const converseWarning = (modelId: string): string =>
+        `model_id=<${modelId}> | converse caches this model implicitly, cache points are supported through the openai model provider (bedrock mantle)`
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      it.each(['us.openai.gpt-6-luna', 'openai.gpt-6.1-sol'])(
+        'warns that cache points go through the OpenAI model provider and sends none: %s',
+        (modelId) => {
+          const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
+
+          collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+          expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].system).toEqual([{ text: 'Be helpful' }])
+          expect(warnOnce).toHaveBeenCalledWith(logger, converseWarning(modelId))
+        }
+      )
+
+      it.each([
+        'us.xai.grok-4.7',
+        'us.openai.gpt-5.4',
+        'openai.gpt-oss-120b',
+        'global.anthropic.claude-sonnet-4-6',
+        'us.amazon.nova-pro-v1:0',
+      ])('does not warn for a model Converse handles on its own: %s', (modelId) => {
+        const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
+
+        collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+        expect(warnOnce).not.toHaveBeenCalledWith(logger, converseWarning(modelId))
+      })
+
+      it.each([undefined, { strategy: 'anthropic' as const }])(
+        'does not warn when cacheConfig is %j',
+        (cacheConfig) => {
+          const provider = new BedrockModel({
+            modelId: 'us.openai.gpt-6-luna',
+            ...(cacheConfig ? { cacheConfig } : {}),
+          })
+
+          collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful' }))
+
+          expect(warnOnce).not.toHaveBeenCalledWith(logger, converseWarning('us.openai.gpt-6-luna'))
+        }
+      )
+    })
+
     it("places cache points on an implicitly cached OpenAI model when the strategy is 'anthropic'", async () => {
       const provider = new BedrockModel({ modelId: 'us.openai.gpt-6-luna', cacheConfig: { strategy: 'anthropic' } })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
@@ -3660,6 +3706,81 @@ describe('BedrockModel', () => {
         const withKeyRequest = mockConverseStreamCommand.mock.lastCall?.[0]
 
         expect(withKeyRequest).toStrictEqual(withoutKeyRequest)
+      })
+    })
+
+    describe('cache point budget', () => {
+      const CLAUDE = 'global.anthropic.claude-sonnet-4-6'
+      const toolSpecs = [{ name: 'calculator', description: 'Calculate', inputSchema: { type: 'object' as const } }]
+      const budgetWarning = `model_id=<${CLAUDE}>, max_cache_points=<4> | request carries more cache points than bedrock allows, dropped the oldest extras`
+      const request = (): ConverseStreamCommandInput | undefined => mockConverseStreamCommand.mock.lastCall?.[0]
+      const cachePointCount = (): number => {
+        const call = request()
+        return [
+          ...(call?.toolConfig?.tools ?? []),
+          ...(call?.system ?? []),
+          ...(call?.messages ?? []).flatMap((message) => message.content ?? []),
+        ].filter((block) => 'cachePoint' in block).length
+      }
+      const historyWithCachePoints = (turns: number): Message[] =>
+        Array.from({ length: turns }, (_, turn) => [
+          new Message({
+            role: 'user',
+            content: [new TextBlock(`ask ${turn}`), new CachePointBlock({ cacheType: 'default' })],
+          }),
+          new Message({ role: 'assistant', content: [new TextBlock(`answer ${turn}`)] }),
+        ]).flat()
+
+      it('drops the earliest caller-placed system cache point when caching is on', () => {
+        const provider = new BedrockModel({ modelId: CLAUDE, cacheConfig: { strategy: 'auto' } })
+        const systemPrompt: SystemContentBlock[] = [
+          new TextBlock('a'),
+          new CachePointBlock({ cacheType: 'default' }),
+          new TextBlock('b'),
+          new CachePointBlock({ cacheType: 'default' }),
+          new TextBlock('c'),
+          new CachePointBlock({ cacheType: 'default' }),
+        ]
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt }))
+
+        expect(cachePointCount()).toBe(4)
+        expect(request()?.system).toEqual([
+          { text: 'a' },
+          { text: 'b' },
+          { cachePoint: { type: 'default' } },
+          { text: 'c' },
+          { cachePoint: { type: 'default' } },
+        ])
+        expect(request()?.toolConfig?.tools?.at(-1)).toEqual({ cachePoint: { type: 'default' } })
+        expect(request()?.messages?.[0]?.content).toEqual([{ text: 'Hello' }, { cachePoint: { type: 'default' } }])
+        expect(warnOnce).toHaveBeenCalledWith(logger, budgetWarning)
+      })
+
+      it('drops the oldest caller-placed message cache point when caching is off', () => {
+        const provider = new BedrockModel({ modelId: CLAUDE })
+
+        collectIterator(provider.stream(historyWithCachePoints(5)))
+
+        expect(cachePointCount()).toBe(4)
+        const userContent = request()
+          ?.messages?.filter((message) => message.role === 'user')
+          .map((message) => message.content)
+        expect(userContent?.[0]).toEqual([{ text: 'ask 0' }])
+        for (const [turn, content] of (userContent ?? []).slice(1).entries()) {
+          expect(content).toEqual([{ text: `ask ${turn + 1}` }, { cachePoint: { type: 'default' } }])
+        }
+        expect(warnOnce).toHaveBeenCalledWith(logger, budgetWarning)
+      })
+
+      it('keeps every cache point within the budget, without a warning', () => {
+        const provider = new BedrockModel({ modelId: CLAUDE })
+
+        collectIterator(provider.stream(historyWithCachePoints(4)))
+
+        expect(cachePointCount()).toBe(4)
+        expect(warnOnce).not.toHaveBeenCalledWith(logger, budgetWarning)
       })
     })
 

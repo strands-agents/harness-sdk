@@ -13,6 +13,7 @@ import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
 import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
+import { resolveCacheStrategy, type CacheStrategyResolution } from '../cache-strategy.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
@@ -222,11 +223,20 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
     return this._config.modelId ?? MODEL_DEFAULTS.openai.modelId
   }
 
+  /** Resolves `cacheConfig` with the rules of the configured API. */
+  protected override _resolveCacheStrategy(): CacheStrategyResolution {
+    return resolveCacheStrategy(this._config.cacheConfig, this._api === 'chat' ? 'openaiChat' : 'openaiResponses', {
+      promptCaching: this.modelInfo.capabilities?.promptCaching,
+    })
+  }
+
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     if (!messages || messages.length === 0) {
       throw new Error('At least one message is required')
     }
 
+    // Surfaces the one-time warning for an explicit cache strategy this API falls back from.
+    this._cacheStrategy()
     if (this._api === 'chat') {
       yield* this._streamChat(messages, options)
     } else {

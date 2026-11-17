@@ -214,6 +214,7 @@ export type {
   CacheConfig,
 } from './models/model.js'
 export type { SummarizeResult } from './models/summarize.js'
+export type { CacheStrategy, ResolvedCacheStrategy } from './models/cache-strategy.js'
 export type { ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 export { ModelInfo } from './models/model-info.js'
 

@@ -55,7 +55,6 @@ interface ResolvedOpenAICache {
  */
 function hasPlacementConfig(cacheConfig: CacheConfig, supportsMessageCaching: boolean): boolean {
   return (
-    (!supportsMessageCaching && cacheConfig.strategy !== undefined && cacheConfig.strategy !== 'auto') ||
     (cacheConfig.toolsTTL !== undefined && cacheConfig.toolsTTL !== true) ||
     (cacheConfig.systemPromptTTL !== undefined && cacheConfig.systemPromptTTL !== true) ||
     (!supportsMessageCaching && cacheConfig.messagesTTL !== undefined && cacheConfig.messagesTTL !== true)
@@ -144,7 +143,7 @@ export function warnUnsupportedRetention(ttl: string): void {
  */
 export function applyCacheConfig(
   request: CacheableRequest,
-  cacheConfig: CacheConfig | undefined,
+  cacheConfig: CacheConfig | false | undefined,
   agentMetadata?: AgentMetadata,
   supportsMessageCaching = false
 ): void {

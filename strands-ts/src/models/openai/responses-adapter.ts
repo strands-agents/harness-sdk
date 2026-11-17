@@ -33,6 +33,7 @@ import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
+import { appliedCacheConfig, resolveCacheStrategy } from '../cache-strategy.js'
 import type { OpenAIResponsesConfig } from './types.js'
 import type { ModelInfo } from '../model-info.js'
 
@@ -67,9 +68,11 @@ export function formatResponsesRequest(
   stateful: boolean,
   modelInfo: ModelInfo
 ): ResponseCreateParamsStreaming {
-  const { cacheConfig } = config
-  const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
-  const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
+  const cacheConfig = appliedCacheConfig(config.cacheConfig)
+  const promptCaching = modelInfo.capabilities?.promptCaching
+  const cachePoints = promptCaching === 'cachePoints'
+  const sdkCaching = resolveCacheStrategy(cacheConfig, 'openaiResponses', { promptCaching }).strategy === 'sdk'
+  const cacheMessages = sdkCaching && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
   const { input, explicitCache } = cacheMessages
     ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL)
     : { input: formatResponsesMessages(messages), explicitCache: false }

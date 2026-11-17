@@ -147,6 +147,10 @@ Pass `caching` off to disable what Strands harness configures:
   </Tab>
 </Tabs>
 
+In TypeScript, `model.resolvedCacheStrategy` reports the caching mode the model resolved to: `sdk` where Strands
+places cache points, `implicit` where the provider caches on its own. See
+[caching modes](../../../sdk/model-providers/amazon-bedrock-prompt-caching/#caching-modes).
+
 Turning caching off has no effect where caching is automatic. Enabling caching explicitly
 on a pre-built `Model` instance is ignored with a warning, because Strands harness cannot know the
 instance's provider: configure caching on the instance itself in that case. For the
