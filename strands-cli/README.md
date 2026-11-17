@@ -334,6 +334,8 @@ Inside a `strands dev` chat:
 - `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
   Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
 
+In the panels, a paid run starts only after a confirm step. The confirm step shows the case count and the model. For `/optimize`, the confirm step also shows the token and time estimate when strands dev has one. When the run tunes a text knob, the confirm step tells you that the proposer runs shell commands that can use your credentials. Enter starts the run, and Esc cancels it.
+
 You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-tests`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. These skills are not slash commands: dev adds only `/experiment`, `/test`, and `/optimize`. Reading cases or past results does not start a new run. Tests support one or several experiments; optimization returns proposed edits for explicit acceptance, and can be stopped or its pending proposals discarded on request.
 
 Generation, testing, and optimization call models and can incur charges. Review and approve the proposed run before it starts.

@@ -164,6 +164,12 @@ export interface TestState {
   readonly runs: readonly ExperimentRun[]
 }
 
+export interface RunAgent {
+  readonly model?: string
+  readonly folder: string
+  readonly fileTools: readonly string[]
+}
+
 export interface TestSession {
   readonly experiments: ExperimentSession
   subscribe(listener: () => void): () => void
@@ -171,6 +177,7 @@ export interface TestSession {
   run(experiments: readonly ExperimentSummary[]): void
   rerunFailed(path: string): void
   stop(path: string): void
+  agent?(): RunAgent
 }
 
 export type KnobKey = string
@@ -431,6 +438,7 @@ export interface OptimizeSession {
   accept(index: number, accepted: boolean): void
   apply(): void
   reset(): void
+  agent?(): RunAgent
 }
 
 export type EvalsBrowserPlace =

@@ -26,6 +26,7 @@ import {
   KeyHints,
   labelWidthFor,
   Line,
+  PaidRunView,
   PanelTitle,
   Paragraph,
   pasteText,
@@ -38,8 +39,10 @@ import {
   TextField,
   textValue,
   useCursor,
+  usePaidRunConfirm,
   useSyncedState,
   type ListItem,
+  type PaidRun,
   type TextValue,
 } from './ui.js'
 import { BROWSER_KEY, browserHints, BrowserView, useBrowserNotice } from './browser.js'
@@ -58,6 +61,17 @@ const SECOND_MS = 1000
 const ROOMY_HEIGHT = 14
 const DETAIL_LABEL_WIDTH = 10
 const MISSING_FIELD = 'Write both the input and the expected answer before you save the case.'
+const DEFAULT_GENERATOR_MODEL = 'the strands-evals default model on AWS Bedrock'
+
+const paidGeneration = ({ name, settings }: Generation, start: () => void): PaidRun => ({
+  title: [name],
+  facts: [
+    `The generator writes ${plural(settings.cases, 'case')} for ${name} again with ` +
+      `${settings.model || DEFAULT_GENERATOR_MODEL}.`,
+    'Generation makes paid model calls and can take minutes.',
+  ],
+  start,
+})
 
 export const ExperimentPanel = (props: ExperimentPanelProps): ReactElement => {
   const { session, close } = props
@@ -435,6 +449,7 @@ const ReviewView = ({
 const DetailView = ({
   session,
   generation,
+  width,
   height,
   onBack,
   onFixInChat,
@@ -447,7 +462,14 @@ const DetailView = ({
   const ready = generation.phase === 'ready'
   const now = useNow(running)
   const [problem, setProblem] = useState<string | undefined>()
+  const confirm = usePaidRunConfirm()
+  const retry = (): void => {
+    const failure = session.generate(generation.settings, generation.id)
+    if (failure) setProblem(failure)
+    else onBack()
+  }
   useInput((input, key) => {
+    if (confirm.asking()) return
     const typed = shortcut(input, key)
     if (key.escape) onBack()
     else if (ready) {
@@ -455,16 +477,24 @@ const DetailView = ({
     } else if (running && typed === 'x') {
       session.cancel(generation.id)
       onBack()
-    } else if (!running && typed === 'r') {
-      const failure = session.generate(generation.settings, generation.id)
-      if (failure) setProblem(failure)
-      else onBack()
-    } else if (!running && (typed === 'e' || key.return)) onFixInChat()
+    } else if (!running && typed === 'r') confirm.ask(paidGeneration(generation, retry))
+    else if (!running && (typed === 'e' || key.return)) onFixInChat()
     else if (!running && typed === 'd') {
       session.dismiss(generation.id)
       onBack()
     }
   })
+  if (confirm.pending)
+    return (
+      <PaidRunView
+        command={COMMAND}
+        run={confirm.pending}
+        width={width}
+        height={height}
+        backHint="Esc back"
+        onAnswer={confirm.answer}
+      />
+    )
   return (
     <>
       <PanelTitle

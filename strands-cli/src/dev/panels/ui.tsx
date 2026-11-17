@@ -7,6 +7,7 @@ import { EditableText } from '../../ui/text-input.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { useDevPanelClicks } from '../../ui/panels/dev.js'
+import type { RunAgent } from './model.js'
 
 export type Tone = 'success' | 'error' | 'warning' | 'muted'
 
@@ -395,6 +396,17 @@ export interface PaidRunConfirm {
   readonly asking: () => boolean
   readonly ask: (run: PaidRun) => void
   readonly answer: (start: boolean) => void
+}
+
+export const agentModel = (agent: RunAgent | undefined): string => agent?.model ?? 'the model that the agent file sets'
+
+export const fileToolWarnings = (agent: RunAgent | undefined): string[] => {
+  const tools = agent?.fileTools ?? []
+  if (!agent || tools.length === 0) return []
+  return [
+    `The cases run in ${agent.folder}. The ${listed(tools)} ${tools.length === 1 ? 'tool' : 'tools'} of your agent ` +
+      'can change files there.',
+  ]
 }
 
 export const usePaidRunConfirm = (): PaidRunConfirm => {

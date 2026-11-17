@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ExperimentPanel, generationSummary } from '../../../src/dev/panels/experiment.js'
 import { ExperimentPicker } from '../../../src/dev/panels/picker.js'
-import { experimentsSession, generation, panelProps, show } from './fixtures.js'
+import { experimentsSession, generation, generationSettings, panelProps, show } from './fixtures.js'
 
 const ENTER = '\r'
 const DOWN = '\u001b[B'
@@ -127,7 +127,7 @@ describe('ExperimentPanel home', () => {
     expect(session.review).toHaveBeenCalledWith('generation-1')
   })
 
-  it('shouldShowWhyAndRetryWhenTheUserOpensAFailedGeneration', async () => {
+  it('shouldShowWhyAndRetryWhenTheUserOpensAFailedGenerationAndConfirms', async () => {
     const { session } = mixed()
     const { press, text } = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
     for (let step = 0; step < 3; step++) await press(DOWN)
@@ -135,10 +135,48 @@ describe('ExperimentPanel home', () => {
     await press(ENTER)
     const detail = text()
     await press('r')
+    const confirm = text().replace(/\s+/gu, ' ')
+    await press(ENTER)
 
     expect(detail).toContain('✗ AWS credentials are missing or expired')
     expect(detail).toContain('Refresh your AWS credentials, then retry.')
+    expect(confirm).toContain('experiment · returns · start a paid run?')
+    expect(confirm).toContain('The generator writes 10 cases for returns again with us.anthropic.claude-test.')
     expect(session.generate).toHaveBeenCalledWith(expect.objectContaining({ name: 'refunds' }), 'generation-3')
+  })
+
+  it('shouldGoBackToTheFailedGenerationAndNotRetryWhenTheUserPressesEscOnTheConfirm', async () => {
+    const { session } = mixed()
+    const { press, text } = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
+    for (let step = 0; step < 3; step++) await press(DOWN)
+    await press(ENTER)
+
+    await press('r')
+    await press(ESC)
+
+    await vi.waitFor(() => expect(text()).toContain('r retry · Enter fix it in the chat'))
+    expect(session.generate).not.toHaveBeenCalled()
+  })
+
+  it('shouldNameTheDefaultGeneratorModelWhenTheRetryHasNoModel', async () => {
+    const { session } = experimentsSession({
+      generations: [
+        generation({
+          id: 'generation-3',
+          phase: 'failed',
+          settings: generationSettings({ name: 'refunds', model: '' }),
+          error: { summary: 'Bedrock denied access', detail: 'Check the model access.' },
+        }),
+      ],
+    })
+    const { press, text } = await show(createElement(ExperimentPanel, { ...panelProps(), session }), 24)
+    await press(DOWN)
+    await press(ENTER)
+
+    await press('r')
+
+    expect(text().replace(/\s+/gu, ' ')).toContain('again with the strands-evals default model on AWS Bedrock.')
+    expect(session.generate).not.toHaveBeenCalled()
   })
 })
 

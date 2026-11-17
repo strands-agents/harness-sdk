@@ -40,10 +40,13 @@ import {
   type OptimizeState,
   type PastRuns,
   type ProposedEdit,
+  type RunAgent,
   type TestCheck,
 } from './model.js'
 import {
+  agentModel,
   Field,
+  fileToolWarnings,
   formatSeconds,
   Fill,
   Gap,
@@ -587,8 +590,6 @@ const PROPOSER_RISK =
   'cases can carry prompt injection. To protect your credentials, run strands dev in a container or VM that has ' +
   'only the credentials that the run needs.'
 
-const AGENT_FILE_MODEL = 'the model that the agent file sets'
-
 const tunedKnobs = ({ knobs }: OptimizePlan): Knob[] => knobs.filter((knob) => knob.enabled && !knob.unavailable)
 
 const proposerWarnings = (knobs: readonly Knob[]): string[] => {
@@ -600,13 +601,13 @@ const proposerWarnings = (knobs: readonly Knob[]): string[] => {
       ]
 }
 
-const triedModels = (plan: OptimizePlan, knobs: readonly Knob[]): string => {
-  const current = plan.models?.current ?? AGENT_FILE_MODEL
+const triedModels = (plan: OptimizePlan, knobs: readonly Knob[], agent: RunAgent | undefined): string => {
+  const current = plan.models?.current ?? agentModel(agent)
   const others = knobs.some(({ kind }) => kind === 'models') ? (plan.models?.picked.length ?? 0) : 0
   return others > 0 ? `${current} and ${plural(others, 'other model')}` : current
 }
 
-const paidOptimization = (plan: OptimizePlan, start: () => void): PaidRun => {
+const paidOptimization = (plan: OptimizePlan, agent: RunAgent | undefined, start: () => void): PaidRun => {
   const knobs = tunedKnobs(plan)
   const { train, validation, test } = plan.split
   return {
@@ -615,10 +616,10 @@ const paidOptimization = (plan: OptimizePlan, start: () => void): PaidRun => {
       `The optimizer tunes the ${listed(knobs.map(({ label }) => label))} of your agent on ${train} train, ` +
         `${validation} validation, and ${plural(test, 'test case')} of ${plan.experiment.name}.`,
       `It tries ${plural(plan.iterations, 'step')} of ${plural(plan.width, 'candidate')}: about ${plan.rollouts} ` +
-        `rollouts of your agent with ${triedModels(plan, knobs)}, and ${judgeCallsText(plan.judgeCalls, 'about ')}.`,
+        `rollouts of your agent with ${triedModels(plan, knobs, agent)}, and ${judgeCallsText(plan.judgeCalls, 'about ')}.`,
       usageSentence(plan.usage),
     ],
-    warnings: proposerWarnings(knobs),
+    warnings: [...proposerWarnings(knobs), ...fileToolWarnings(agent)],
     start,
   }
 }
@@ -667,7 +668,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
   const activate = (row: SetupRow | undefined): void => {
     if (row?.kind === 'button') {
       if (row.button === 'cancel') cancel()
-      else if (ready) confirm.ask(paidOptimization(latest(), () => session.start()))
+      else if (ready) confirm.ask(paidOptimization(latest(), session.agent?.(), () => session.start()))
     } else if (row?.kind === 'slider' && row.slider.editable) edit('expression')
     else if (row?.kind === 'limits') edit('limits')
     else if (row?.kind === 'knob' && !row.knob.unavailable) {

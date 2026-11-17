@@ -12,12 +12,15 @@ import {
   type ExperimentSummary,
   type Generation,
   type CaseResult,
+  type RunAgent,
   type TestResults,
   type TestRun,
   type TestSession,
   type TestState,
 } from './model.js'
 import {
+  agentModel,
+  fileToolWarnings,
   formatSeconds,
   Fill,
   Gap,
@@ -25,7 +28,9 @@ import {
   KeyHints,
   labelWidthFor,
   Line,
+  listed,
   oneLine,
+  PaidRunView,
   PanelTitle,
   plural,
   ProgressBar,
@@ -33,8 +38,10 @@ import {
   StoppedView,
   useCursor,
   useElapsed,
+  usePaidRunConfirm,
   useSyncedState,
   type ListItem,
+  type PaidRun,
   type Tone,
 } from './ui.js'
 import { BROWSER_HINT, BROWSER_KEY, browserHints, BrowserView, useBrowserNotice } from './browser.js'
@@ -55,14 +62,67 @@ type TestRow =
   | { readonly kind: 'waiting'; readonly generation: Generation }
   | { readonly kind: 'new' }
 
+interface TestScope {
+  readonly title: readonly string[]
+  readonly cases: string
+  readonly detail?: string
+}
+
+const experimentsScope = (experiments: readonly ExperimentSummary[]): TestScope => {
+  const [only] = experiments
+  if (only && experiments.length === 1)
+    return { title: [only.name], cases: `the ${plural(only.caseCount, 'case')} of ${only.name}` }
+  const total = experiments.reduce((sum, { caseCount }) => sum + caseCount, 0)
+  return {
+    title: [plural(experiments.length, 'experiment')],
+    cases: `${plural(total, 'case')} from ${plural(experiments.length, 'experiment')}`,
+    detail: `: ${listed(experiments.map(({ name, caseCount }) => `${name} ${caseCount}`))}`,
+  }
+}
+
+const againScope = ({ name, caseCount }: ExperimentSummary, failed?: number): TestScope => ({
+  title: [name],
+  cases:
+    failed === undefined
+      ? `the ${plural(caseCount, 'case')} of ${name} again`
+      : `the ${plural(failed, 'failed case')} of ${name} again`,
+})
+
+const paidTest = (
+  { title, cases, detail = '' }: TestScope,
+  agent: RunAgent | undefined,
+  start: () => void
+): PaidRun => ({
+  title,
+  facts: [
+    `Your agent answers ${cases} with ${agentModel(agent)}${detail}.`,
+    'Each answer makes paid model calls, and each evaluator that uses a judge model makes more.',
+  ],
+  warnings: fileToolWarnings(agent),
+  start,
+})
+
 export const TestPanel = (props: TestPanelProps): ReactElement => {
   const { session } = props
   const tests = useSyncExternalStore(session.subscribe, session.snapshot)
   const experiments = useSyncExternalStore(session.experiments.subscribe, session.experiments.snapshot)
   const [open, setOpen] = useState<string | undefined>()
   const browser = useBrowserNotice(props.browser)
+  const confirm = usePaidRunConfirm()
   const shown = tests.runs.find(({ experiment }) => experiment.path === open)
   const back = (): void => setOpen(undefined)
+  const ask = (scope: TestScope, start: () => void): void => confirm.ask(paidTest(scope, session.agent?.(), start))
+  if (confirm.pending)
+    return (
+      <PaidRunView
+        command={COMMAND}
+        run={confirm.pending}
+        width={props.width}
+        height={props.height}
+        backHint="Esc back"
+        onAnswer={confirm.answer}
+      />
+    )
   if (browser.notice)
     return (
       <BrowserView
@@ -91,8 +151,10 @@ export const TestPanel = (props: TestPanelProps): ReactElement => {
         experiment={shown.experiment.path}
         onBrowser={browser.open}
         onBack={back}
-        onRerun={() => session.rerunFailed(shown.experiment.path)}
-        onRunAgain={() => session.run([shown.experiment])}
+        onRerun={() =>
+          ask(againScope(shown.experiment, failedCases(shown.run)), () => session.rerunFailed(shown.experiment.path))
+        }
+        onRunAgain={() => ask(againScope(shown.experiment), () => session.run([shown.experiment]))}
       />
     )
   if (shown?.run.status === 'failed')
@@ -102,7 +164,7 @@ export const TestPanel = (props: TestPanelProps): ReactElement => {
         command={`${COMMAND} · ${shown.experiment.name}`}
         message={shown.run.message}
         close={back}
-        retry={() => session.run([shown.experiment])}
+        retry={() => ask(againScope(shown.experiment), () => session.run([shown.experiment]))}
       />
     )
   return <TestList {...props} tests={tests} experiments={experiments} onOpen={setOpen} onBrowser={browser.open} />
@@ -118,6 +180,9 @@ export const testRows = ({ saved, generations }: ExperimentsState, { runs }: Tes
     .map((generation) => ({ kind: 'waiting' as const, generation })),
   { kind: 'new' },
 ]
+
+const failedCases = (run: TestRun): number =>
+  run.status === 'done' ? run.results.cases.filter(({ passed }) => !passed).length : 0
 
 const runDetail = (experiment: ExperimentSummary, run: TestRun | undefined): { text: string; tone?: Tone } => {
   const cases = plural(experiment.caseCount, 'case')
@@ -197,6 +262,7 @@ const TestList = ({
   const rows = testRows(experiments, tests)
   const chosen = useSyncedState<ReadonlySet<string>>(new Set())
   const cursor = useCursor(rows.length, Math.max(0, rows.findIndex(selectable)))
+  const confirm = usePaidRunConfirm()
   const step = (direction: 1 | -1): void => {
     for (let index = cursor.current() + direction; index >= 0 && index < rows.length; index += direction) {
       if (selectable(rows[index])) {
@@ -206,10 +272,17 @@ const TestList = ({
     }
   }
   const ready = rows.flatMap((row) => (row.kind === 'experiment' ? [row.experiment] : []))
+  const runTests = (picked: readonly ExperimentSummary[]): void =>
+    confirm.ask(
+      paidTest(experimentsScope(picked), session.agent?.(), () => {
+        session.run(picked)
+        chosen.set(new Set())
+      })
+    )
   const activate = (row: TestRow | undefined): void => {
     if (row?.kind === 'new') openCommand('experiment')
     else if (row?.kind === 'experiment' && row.run) onOpen(row.experiment.path)
-    else if (row?.kind === 'experiment') session.run([row.experiment])
+    else if (row?.kind === 'experiment') runTests([row.experiment])
   }
   const click = (index: number): void => {
     if (!selectable(rows[index])) return
@@ -217,6 +290,7 @@ const TestList = ({
     activate(rows[index])
   }
   useInput((input, key) => {
+    if (confirm.asking()) return
     const typed = shortcut(input, key)
     const row = rows[cursor.current()]
     if (key.escape) close()
@@ -234,10 +308,8 @@ const TestList = ({
     else if (typed === BROWSER_KEY && browser) onBrowser(browserPlace(row))
     else if (key.return) {
       const picked = ready.filter(({ path }) => chosen.current().has(path))
-      if (picked.length > 0) {
-        session.run(picked)
-        chosen.set(new Set())
-      } else activate(row)
+      if (picked.length > 0) runTests(picked)
+      else activate(row)
     }
   })
   const running = tests.runs.filter(({ run }) => run.status === 'running').length
@@ -250,6 +322,17 @@ const TestList = ({
       ]
     : ['reading experiments']
   const current = rows[cursor.index]
+  if (confirm.pending)
+    return (
+      <PaidRunView
+        command={COMMAND}
+        run={confirm.pending}
+        width={width}
+        height={height}
+        backHint="Esc back to the list"
+        onAnswer={confirm.answer}
+      />
+    )
   return (
     <>
       <PanelTitle name={COMMAND} parts={parts} />

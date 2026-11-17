@@ -12,6 +12,7 @@ import type {
   OptimizeState,
   PastRun,
   PastRuns,
+  RunAgent,
   TestCheck,
   TestResults,
   TestSession,
@@ -152,7 +153,7 @@ describe('TestPanel', () => {
     expect(session.stop).toHaveBeenCalledWith(capital.path)
   })
 
-  it('shouldRunTheSelectedExperimentsWhenTheUserSelectsSomeAndPressesEnter', async () => {
+  it('shouldRunTheSelectedExperimentsWhenTheUserSelectsSomeAndConfirmsEnter', async () => {
     const { session } = testSession()
     const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
 
@@ -162,30 +163,107 @@ describe('TestPanel', () => {
     await press(' ')
     const selected = text()
     await press('\r')
+    const confirm = text().replace(/\s+/gu, ' ')
+    await press('\r')
 
     expect(selected).toContain('2 selected')
     expect(selected).toContain('Enter run 2')
+    expect(confirm).toContain('test · 2 experiments · start a paid run?')
+    expect(confirm).toContain(
+      'Your agent answers 10 cases from 2 experiments with the model that the agent file sets: capital 4 and cities 6.'
+    )
     expect(session.run).toHaveBeenCalledWith([capital, cities])
   })
 
-  it('shouldRunEveryExperimentWhenTheUserSelectsAllAndPressesEnter', async () => {
+  it('shouldRunEveryExperimentWhenTheUserSelectsAllAndConfirmsEnter', async () => {
     const { session } = testSession()
     const { press } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
 
     await press('a')
     await press('\r')
+    await press('\r')
 
     expect(session.run).toHaveBeenCalledWith([capital, refunds, cities])
   })
 
-  it('shouldRunTheHighlightedExperimentWhenNothingIsSelected', async () => {
+  it('shouldRunTheHighlightedExperimentWhenNothingIsSelectedAndTheUserConfirms', async () => {
     const { session } = testSession()
     const { press } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
 
     await press(DOWN_KEY)
     await press('\r')
+    await press('\r')
 
     expect(session.run).toHaveBeenCalledWith([refunds])
+  })
+
+  it.each<[string, TestState['runs'], string[], string]>([
+    ['EnterOnAnExperiment', [], [DOWN_KEY, '\r'], 'Your agent answers the 2 cases of refunds with'],
+    ['EnterOnAStoppedRun', withStoppedRun(), [DOWN_KEY, DOWN_KEY, '\r', '\r'], 'answers the 6 cases of cities again'],
+    ['RInTheReport', withRuns(), [DOWN_KEY, '\r', 'r'], 'answers the 1 failed case of refunds again'],
+    ['AInTheReport', withRuns(), [DOWN_KEY, '\r', 'a'], 'answers the 2 cases of refunds again'],
+  ])('shouldAskAndNotRunWhenTheUserPresses%s', async (_key, runs, keys, scope) => {
+    const { session } = testSession(runs)
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    for (const key of keys) await press(key)
+
+    expect(text()).toContain('start a paid run?')
+    expect(text().replace(/\s+/gu, ' ')).toContain(scope)
+    expect(text()).toContain('Each answer makes paid model calls')
+    expect(session.run).not.toHaveBeenCalled()
+    expect(session.rerunFailed).not.toHaveBeenCalled()
+  })
+
+  it('shouldRunAgainWhenTheUserConfirmsTheRetryOfAStoppedRun', async () => {
+    const { session } = testSession(withStoppedRun())
+    const { press } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    for (const key of [DOWN_KEY, DOWN_KEY, '\r', '\r', '\r']) await press(key)
+
+    expect(session.run).toHaveBeenCalledWith([cities])
+  })
+
+  it('shouldKeepTheSelectionAndNotRunWhenTheUserPressesEscOnTheConfirm', async () => {
+    const { session } = testSession()
+    const props = freshProps()
+    const { press, text } = await show(createElement(TestPanel, { ...props, session }), 24)
+
+    for (const key of [' ', DOWN_KEY, ' ', '\r', '\u001b']) await press(key)
+
+    await vi.waitFor(() => expect(text()).toContain('2 selected'))
+    expect(session.run).not.toHaveBeenCalled()
+    expect(props.close).not.toHaveBeenCalled()
+  })
+
+  it.each<[string, RunAgent, string[], string[]]>([
+    [
+      'ShellAndWriteTools',
+      { model: 'us.anthropic.claude-sonnet-4-6', folder: '/w/project', fileTools: ['shell', 'write'] },
+      [
+        'Your agent answers the 4 cases of capital with us.anthropic.claude-sonnet-4-6.',
+        '⚠ The cases run in /w/project. The shell and write tools of your agent can change files there.',
+      ],
+      [],
+    ],
+    [
+      'NoFileTools',
+      { model: 'us.anthropic.claude-sonnet-4-6', folder: '/w/project', fileTools: [] },
+      ['Your agent answers the 4 cases of capital with us.anthropic.claude-sonnet-4-6.'],
+      ['can change files'],
+    ],
+  ])('shouldShowTheModelAndTheFileRiskOfTheAgentWhenItHas%s', async (_case, agent, shown, hidden) => {
+    const { session } = testSession()
+    const { press, text } = await show(
+      createElement(TestPanel, { ...panelProps, session: { ...session, agent: () => agent } }),
+      24
+    )
+
+    await press('\r')
+
+    const flat = text().replace(/\s+/gu, ' ')
+    for (const line of shown) expect(flat).toContain(line)
+    for (const line of hidden) expect(flat).not.toContain(line)
   })
 
   it('shouldSkipExperimentsThatAreStillGeneratingWhenTheUserMovesDown', async () => {
@@ -208,6 +286,7 @@ describe('TestPanel', () => {
     await press(RIGHT_KEY)
     const lines = text().split('\n')
     await press('r')
+    await press('\r')
 
     const failed = lines.findIndex((line) => line.includes('✗ refund-window'))
     expect(failed).toBeGreaterThanOrEqual(0)
@@ -295,11 +374,12 @@ describe('TestPanel', () => {
     expect(session.run).not.toHaveBeenCalled()
   })
 
-  it('shouldRunTheExperimentWhenTheUserClicksOneThatHasNotRun', async () => {
+  it('shouldRunTheExperimentWhenTheUserClicksOneThatHasNotRunAndThenStartTheRun', async () => {
     const { session } = testSession(withRuns())
     const { click } = await showInFrame(session, new DevPanelClicks())
 
     await click('cities')
+    await click('[ Start the run ]')
 
     expect(session.run).toHaveBeenCalledWith([cities])
   })
@@ -324,6 +404,7 @@ describe('TestPanel', () => {
     const report = text()
 
     await press('a')
+    await press('\r')
 
     expect(report).toContain('↑↓ · Enter open case · r rerun failed · a rerun all · Esc back to the list')
     expect(session.run).toHaveBeenCalledWith([refunds])
@@ -416,6 +497,8 @@ const openFailedCase = async ({ reason, actual }: { reason: string; actual: stri
   await shown.press(openKey)
   return { ...shown, session, props }
 }
+
+type OptimizeAction = Exclude<keyof OptimizeSession, 'agent'>
 
 const optimizeSession = (initial: OptimizeState) => {
   const states = store(initial)
@@ -685,7 +768,7 @@ describe('OptimizePanel', () => {
     expect(lines.filter((line) => /^(↑ \d+ previous|↓ \d+ more|…)/.test(line))).toEqual([overflow])
   })
 
-  it.each<[string, string[], keyof OptimizeSession, unknown[]]>([
+  it.each<[string, string[], OptimizeAction, unknown[]]>([
     ['SpaceOnEffort', ['\u001b[B', ' '], 'toggleKnob', ['effort']],
     ['EnterOnInstructions', ['\r'], 'toggleKnob', ['instructions']],
     ['RightOnTheBudget', [...BUDGET_ROW, RIGHT_KEY], 'setIterations', [6]],
@@ -762,7 +845,7 @@ describe('OptimizePanel', () => {
     expect(session.start).not.toHaveBeenCalled()
   })
 
-  it.each<[string, string[], keyof OptimizeSession, unknown[]]>([
+  it.each<[string, string[], OptimizeAction, unknown[]]>([
     ['AKnob', ['effort'], 'toggleKnob', ['effort']],
     ['StartAndThenStartTheRun', ['[ Start ]', '[ Start the run ]'], 'start', []],
   ])('shouldActWhenTheUserClicks%sInTheSetup', async (_target, labels, action, args) => {
@@ -868,6 +951,21 @@ describe('OptimizePanel', () => {
         .split('\n')
         .filter((line) => line.includes('The split leaves'))
     ).toHaveLength(1)
+  })
+
+  it('shouldShowTheAgentModelAndTheFileRiskWhenTheSessionKnowsTheAgent', async () => {
+    const agent: RunAgent = { model: 'us.anthropic.claude-sonnet-4-6', folder: '/w/project', fileTools: ['edit'] }
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(
+      createElement(OptimizePanel, { ...panelProps, session: { ...session, agent: () => agent } }),
+      30
+    )
+
+    for (const key of [...START_BUTTON, '\r']) await press(key)
+
+    const flat = text().replace(/\s+/gu, ' ')
+    expect(flat).toContain('rollouts of your agent with us.anthropic.claude-sonnet-4-6')
+    expect(flat).toContain('⚠ The cases run in /w/project. The edit tool of your agent can change files there.')
   })
 
   it('shouldNotWarnAboutShellCommandsWhenTheRunTunesNoText', async () => {
@@ -1382,7 +1480,7 @@ describe('OptimizePanel', () => {
     expect(text()).toContain(note)
   })
 
-  it.each<[string, string, keyof OptimizeSession, unknown[], string[]]>([
+  it.each<[string, string, OptimizeAction, unknown[], string[]]>([
     ['AKnob', 'effort', 'toggleKnob', ['effort'], ['\r']],
     ['StartAndConfirms', '[ Start ]', 'start', [], ['\r', '\r']],
   ])('shouldActOn%sUnderThePointerWhenTheUserPointsAtItAndPressesEnter', async (_target, label, action, args, keys) => {
