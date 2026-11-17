@@ -10,6 +10,8 @@ import {
 } from '../../../src/dev/temporary-evals-fork/jobs.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
+const POLLED = { timeout: 5000 }
+
 class Counter extends Store<{ readonly running: readonly string[]; readonly tick: number }> {
   constructor() {
     super({ running: [], tick: 0 })
@@ -84,9 +86,9 @@ describe('tailTemporaryLines', () => {
     await writeFile(path, '{"type":"study"}\n{"type":')
 
     const tail = tailTemporaryLines(path, (line) => lines.push(line))
-    await vi.waitFor(() => expect(lines).toEqual(['{"type":"study"}']))
+    await vi.waitFor(() => expect(lines).toEqual(['{"type":"study"}']), POLLED)
     await appendFile(path, '"run"}\n')
-    await vi.waitFor(() => expect(lines).toEqual(['{"type":"study"}', '{"type":"run"}']))
+    await vi.waitFor(() => expect(lines).toEqual(['{"type":"study"}', '{"type":"run"}']), POLLED)
     await tail.stop()
 
     expect(lines).toEqual(['{"type":"study"}', '{"type":"run"}'])
@@ -114,7 +116,7 @@ describe('watchTemporaryFileCount', () => {
     await mkdir(folder)
     await writeFile(join(folder, 'c0.json'), '{}')
     await writeFile(join(folder, 'c1.json'), '{}')
-    await vi.waitFor(() => expect(counts.at(-1)).toBe(2))
+    await vi.waitFor(() => expect(counts.at(-1)).toBe(2), POLLED)
     stop()
 
     expect(counts).not.toContain(3)
