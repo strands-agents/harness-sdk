@@ -147,7 +147,7 @@ describe('TEMPORARY evaluator catalog', () => {
 
     await expect(read(workspace, spawnEvals)).rejects.toThrow(
       "strands-evals evaluators stopped with exit code 2: argument command: invalid choice: 'evaluators'\n" +
-        'Restart strands dev so that it installs the TEMPORARY evals fork again, then try again.'
+        'Restart strands dev so that it installs the evals fork again, then try again.'
     )
   })
 

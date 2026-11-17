@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { parseArgs } from '../../../src/cli/arguments.js'
+import { parseTemporaryDevCommandArguments } from '../../../src/dev/temporary-evals-fork/arguments.js'
 
 describe('TEMPORARY strands dev optimize arguments', () => {
   it('shouldParseTheExperimentWorkspaceAndForkFlagsWhenDevOptimizeIsCalled', () => {
@@ -25,5 +26,16 @@ describe('TEMPORARY strands dev optimize arguments', () => {
       experiment: 'refunds',
       forkArguments: ['--max-workers', '2'],
     })
+  })
+
+  it.each(['optimize', 'test'] as const)('shouldLabelTheCommandExperimentalWhenDev%sPrintsItsHelp', (name) => {
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+
+    expect(() => parseTemporaryDevCommandArguments(name, ['--help'])).toThrow()
+    const help = write.mock.calls.map(([text]) => String(text)).join('')
+    write.mockRestore()
+
+    expect(help).toContain('Experimental: ')
+    expect(help).not.toContain('TEMPORARY')
   })
 })

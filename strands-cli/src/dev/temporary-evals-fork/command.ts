@@ -44,7 +44,7 @@ const EXPERIMENT_DETAILS = paragraphs(
   'While the agent makes the cases, a line below the chat input shows the progress. Click the line to open this panel. Generation stops if strands dev closes.',
   'Open a saved experiment to review its cases. You can drop, edit, or add cases, and then save the experiment. When a generation fails, open it to see why. Then try it again, or fix the problem in the chat.',
   'Use /test to run the agent on an experiment, and /optimize to tune the agent against it. You can also ask the agent in plain words, for example "what experiments do I have?"',
-  'TEMPORARY: a fork of strands-evals makes the cases for now.'
+  'Experimental: a fork of strands-evals makes the cases for now.'
 )
 
 const TEST_DETAILS = paragraphs(
@@ -54,7 +54,7 @@ const TEST_DETAILS = paragraphs(
   'When the test is done, open its report. The report shows each case as passed or failed. Open a case to read its input, the expected output, the output of the agent, and the score and reason from each evaluator. You can run the failed cases again, or all the cases.',
   'A test does not change the agent source. It makes paid model calls and can take minutes. strands dev saves each report in strands-dev/tmp/experiments/<name>/runs/, and the latest one as <name>.report.json.',
   'From a shell, strands dev test <experiment> runs the same test and prints the result.',
-  'TEMPORARY: a fork of strands-evals runs the tests for now.'
+  'Experimental: a fork of strands-evals runs the tests for now.'
 )
 
 const OPTIMIZE_DETAILS = paragraphs(
@@ -68,7 +68,7 @@ const OPTIMIZE_DETAILS = paragraphs(
   'The test check shows the gain on test cases that the search did not use, and its 90% confidence range. If the range includes 0, the gain can be luck.',
   '/optimize always opens the list. The list shows the runs that go on, and the past runs. Select a run to see its progress or to open its report again.',
   'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/tmp/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
-  'TEMPORARY: a fork of strands-evals runs the upstream optimizer for now.'
+  'Experimental: a fork of strands-evals runs the upstream optimizer for now.'
 )
 
 const devCommand = <State>(
@@ -90,7 +90,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
     devCommand(
       {
         name: 'experiment',
-        description: 'TEMPORARY: generate test cases for this agent with strands-evals, and review them',
+        description: 'Generate test cases for this agent with strands-evals, and review them',
         details: EXPERIMENT_DETAILS,
         session: ({ experiments }) => ({
           subscribe: experiments.subscribe,
@@ -110,7 +110,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
     devCommand(
       {
         name: 'test',
-        description: 'TEMPORARY: run this agent on an experiment and show what failed',
+        description: 'Run this agent on an experiment and show what failed',
         details: TEST_DETAILS,
         session: ({ test }) => test,
         jobs: temporaryTestJobs,
@@ -126,7 +126,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
     devCommand(
       {
         name: 'optimize',
-        description: 'TEMPORARY: tune this agent against an experiment and review the changes',
+        description: 'Tune this agent against an experiment and review the changes',
         details: OPTIMIZE_DETAILS,
         session: ({ optimize }) => optimize,
         jobs: temporaryOptimizeJobs,

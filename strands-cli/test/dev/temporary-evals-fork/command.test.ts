@@ -39,7 +39,11 @@ describe('TEMPORARY dev commands', () => {
 
     expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/test', '/optimize'])
     expect(commands.every(({ spec }) => spec.replacement === undefined)).toBe(true)
-    expect(commands.every(({ spec }) => spec.description.startsWith('TEMPORARY: '))).toBe(true)
+    expect(commands.map(({ spec }) => spec.description)).toEqual([
+      'Generate test cases for this agent with strands-evals, and review them',
+      'Run this agent on an experiment and show what failed',
+      'Tune this agent against an experiment and review the changes',
+    ])
   })
 
   it('shouldExplainWhereEachCommandSavesItsFilesWhenHelpShowsTheDetails', async () => {
@@ -53,7 +57,8 @@ describe('TEMPORARY dev commands', () => {
       'strands-dev/tmp/experiments/<name>/optimizations/',
     ])
     expect(details[1]).toContain('the latest one as <name>.report.json')
-    expect(details.every((text) => text.includes('TEMPORARY: a fork of strands-evals'))).toBe(true)
+    expect(details.every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
+    expect(details.some((text) => text.includes('TEMPORARY'))).toBe(false)
   })
 
   it('shouldReportNoRunningJobsWhenNothingRuns', async () => {
