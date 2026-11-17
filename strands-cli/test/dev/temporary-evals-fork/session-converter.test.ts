@@ -3,12 +3,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { temporarySessionHistory } from '../../../src/dev/temporary-evals-fork/session-converter.js'
+import { TEMPORARY_EVALS_FORK } from '../../../src/dev/temporary-evals-fork/fork.js'
+import {
+  temporarySessionHistory,
+  type TemporaryEvalsSource,
+} from '../../../src/dev/temporary-evals-fork/session-converter.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const FIRST = 'a'.repeat(40)
 const SECOND = 'b'.repeat(40)
+const REPOSITORY = 'https://github.com/example/evals'
 const PYTHON = '/desk/strands-dev/tmp/.state/evals-env/bin/python'
 const SKILL = '.agents/skills/session-converter'
 const SKILL_MD = [
@@ -24,7 +29,6 @@ const SKILL_MD = [
 
 const fakeGitHub = () => {
   const state = {
-    commit: FIRST,
     files: new Map<string, string>([
       ['SKILL.md', SKILL_MD],
       ['assets/segmenter.md', '# segmenter'],
@@ -33,9 +37,8 @@ const fakeGitHub = () => {
     reachable: true,
   }
   const answer = (url: string): globalThis.Response => {
-    if (url === 'https://api.github.com/repos/strands-agents/evals/commits/main')
-      return new globalThis.Response(state.commit)
-    if (url === `https://api.github.com/repos/strands-agents/evals/git/trees/${state.commit}?recursive=1`)
+    const tree = /^https:\/\/api\.github\.com\/repos\/[\w.-]+\/[\w.-]+\/git\/trees\/[0-9a-f]{40}\?recursive=1$/u
+    if (tree.test(url))
       return globalThis.Response.json({
         truncated: false,
         tree: [
@@ -44,8 +47,8 @@ const fakeGitHub = () => {
           ...[...state.files.keys()].map((file) => ({ path: `${SKILL}/${file}`, type: 'blob' })),
         ],
       })
-    const raw = `https://raw.githubusercontent.com/strands-agents/evals/${state.commit}/${SKILL}/`
-    const file = url.startsWith(raw) ? state.files.get(url.slice(raw.length)) : undefined
+    const raw = /^https:\/\/raw\.githubusercontent\.com\/[\w.-]+\/[\w.-]+\/[0-9a-f]{40}\/(.+)$/u.exec(url)?.[1]
+    const file = raw?.startsWith(`${SKILL}/`) ? state.files.get(raw.slice(SKILL.length + 1)) : undefined
     return file === undefined ? new globalThis.Response('missing', { status: 404 }) : new globalThis.Response(file)
   }
   const fetch = vi.fn(
@@ -73,16 +76,19 @@ const workspaceFixture = async (): Promise<DevWorkspace> => {
 const setup = async (environment: NodeJS.ProcessEnv = {}) => {
   const workspace = await workspaceFixture()
   const github = fakeGitHub()
-  const history = temporarySessionHistory({
-    workspace,
-    currentChat: () => '20261117t101500z-current',
-    fetch: github.fetch,
-    environment,
-    python: async () => PYTHON,
-  })
+  const historyAt = (evals?: TemporaryEvalsSource) =>
+    temporarySessionHistory({
+      workspace,
+      currentChat: () => '20261117t101500z-current',
+      ...(evals ? { evals } : {}),
+      fetch: github.fetch,
+      environment,
+      python: async () => PYTHON,
+    })
+  const history = historyAt({ repository: REPOSITORY, commit: FIRST })
   const folder = join(workspace.directory!, 'tmp', '.state', 'skills', 'session-converter')
   const requested = (): string[] => github.fetch.mock.calls.map(([url]) => String(url))
-  return { workspace, github, history, folder, requested }
+  return { workspace, github, history, historyAt, folder, requested }
 }
 
 const chatFolder = async (workspace: DevWorkspace, name: string, saved = true): Promise<void> => {
@@ -91,19 +97,21 @@ const chatFolder = async (workspace: DevWorkspace, name: string, saved = true): 
 }
 
 describe('TEMPORARY session-converter skill', () => {
-  it('shouldDownloadTheNewestSkillAndGiveItWithTheStrandsDevRulesWhenNothingWasDownloaded', async () => {
+  it('shouldDownloadTheSkillOfThePinnedEvalsAndGiveItWithTheStrandsDevRulesWhenNothingWasDownloaded', async () => {
     const { workspace, history, folder, requested } = await setup()
 
     const guide = await history.converter()
 
     expect(await readFile(join(folder, 'SKILL.md'), 'utf8')).toBe(SKILL_MD)
     expect(await readFile(join(folder, 'assets', 'segmenter.md'), 'utf8')).toBe('# segmenter')
-    expect(requested().filter((url) => url.startsWith('https://raw.githubusercontent.com/'))).toEqual(
-      ['SKILL.md', 'assets/segmenter.md', 'scripts/synthesize_cases.py'].map(
-        (file) => `https://raw.githubusercontent.com/strands-agents/evals/${FIRST}/${SKILL}/${file}`
-      )
-    )
-    expect(guide).toContain(`commit ${FIRST.slice(0, 7)}, into ${folder}`)
+    expect(requested()).toEqual([
+      `https://api.github.com/repos/example/evals/git/trees/${FIRST}?recursive=1`,
+      ...['SKILL.md', 'assets/segmenter.md', 'scripts/synthesize_cases.py'].map(
+        (file) => `https://raw.githubusercontent.com/example/evals/${FIRST}/${SKILL}/${file}`
+      ),
+    ])
+    expect(guide).toContain(`the skill of strands-evals ${FIRST.slice(0, 7)} from github.com/example/evals`)
+    expect(guide).toContain('strands dev runs the same version of strands-evals.')
     expect(guide).toContain(join(folder, 'scripts', 'synthesize_cases.py'))
     expect(guide).toContain(`${join(workspace.directory!, '.strands/state/sessions')} is their <directory>`)
     expect(guide).toContain('Skip 20261117t101500z-current, which is this chat.')
@@ -116,39 +124,53 @@ describe('TEMPORARY session-converter skill', () => {
     expect(guide.endsWith('Follow [assets/segmenter.md](assets/segmenter.md).')).toBe(true)
   })
 
-  it('shouldDownloadNothingAgainWhenMainStillHasTheSameCommit', async () => {
+  it('shouldUseTheEvalsPinOfStrandsDevWhenNoVersionIsGiven', async () => {
+    const { historyAt, requested } = await setup()
+
+    await historyAt().converter()
+
+    const repository = TEMPORARY_EVALS_FORK.repository.replace('https://github.com/', '')
+    expect(requested()[0]).toBe(
+      `https://api.github.com/repos/${repository}/git/trees/${TEMPORARY_EVALS_FORK.commit}?recursive=1`
+    )
+  })
+
+  it('shouldDownloadNothingWhenThePinnedVersionWasDownloadedBefore', async () => {
     const { history, requested } = await setup()
     await history.converter()
     const before = requested().length
 
-    await history.converter()
+    const guide = await history.converter()
 
-    expect(requested().slice(before)).toEqual(['https://api.github.com/repos/strands-agents/evals/commits/main'])
+    expect(requested()).toHaveLength(before)
+    expect(guide).toContain('strands dev runs the same version of strands-evals.')
   })
 
-  it('shouldReplaceTheWholeFolderWhenMainHasANewCommit', async () => {
-    const { github, history, folder } = await setup()
+  it('shouldReplaceTheWholeFolderWhenThePinMovesToANewVersion', async () => {
+    const { github, history, historyAt, folder } = await setup()
     await history.converter()
-    github.state.commit = SECOND
     github.state.files.delete('scripts/synthesize_cases.py')
     github.state.files.set('assets/segmenter.md', '# segmenter v2')
 
-    const guide = await history.converter()
+    const guide = await historyAt({ repository: REPOSITORY, commit: SECOND }).converter()
 
-    expect(guide).toContain(`commit ${SECOND.slice(0, 7)}`)
+    expect(guide).toContain(`strands-evals ${SECOND.slice(0, 7)}`)
     expect(await readFile(join(folder, 'assets', 'segmenter.md'), 'utf8')).toBe('# segmenter v2')
     expect(existsSync(join(folder, 'scripts', 'synthesize_cases.py'))).toBe(false)
   })
 
-  it('shouldUseTheEarlierDownloadAndSaySoWhenGitHubCannotBeReached', async () => {
-    const { github, history } = await setup()
+  it('shouldUseTheEarlierDownloadAndSaySoWhenThePinMovedAndGitHubCannotBeReached', async () => {
+    const { github, history, historyAt } = await setup()
     await history.converter()
     github.state.reachable = false
 
-    const guide = await history.converter()
+    const guide = await historyAt({ repository: REPOSITORY, commit: SECOND }).converter()
 
-    expect(guide).toContain(`commit ${FIRST.slice(0, 7)}`)
-    expect(guide).toContain('A newer version could not be downloaded (fetch failed), so this is an earlier one.')
+    expect(guide).toContain(`strands-evals ${FIRST.slice(0, 7)}`)
+    expect(guide).toContain(
+      'The skill of the installed strands-evals could not be downloaded (fetch failed), so this skill comes from ' +
+        'an earlier version.'
+    )
   })
 
   it('shouldNameTheCauseAndANextStepWhenNothingCanBeDownloaded', async () => {
@@ -156,9 +178,18 @@ describe('TEMPORARY session-converter skill', () => {
     github.state.reachable = false
 
     await expect(history.converter()).rejects.toThrow(
-      'strands dev could not download the session-converter skill from github.com/strands-agents/evals ' +
-        '(fetch failed). Check the network connection and try again, or describe what to test instead.'
+      `strands dev could not download the session-converter skill of strands-evals ${FIRST.slice(0, 7)} from ` +
+        'github.com/example/evals (fetch failed). Check the network connection and try again, or describe what ' +
+        'to test instead.'
     )
+  })
+
+  it('shouldRefuseAPinThatIsNotAGitHubRepository', async () => {
+    const { historyAt } = await setup()
+
+    await expect(
+      historyAt({ repository: 'https://gitlab.com/example/evals', commit: FIRST }).converter()
+    ).rejects.toThrow('https://gitlab.com/example/evals is not a GitHub repository')
   })
 
   it.each([
@@ -183,7 +214,6 @@ describe('TEMPORARY session-converter skill', () => {
       (init?.headers as Record<string, string>).Authorization,
     ])
     expect(authorization).toEqual([
-      ['api.github.com', 'Bearer token-1'],
       ['api.github.com', 'Bearer token-1'],
       ['raw.githubusercontent.com', undefined],
       ['raw.githubusercontent.com', undefined],

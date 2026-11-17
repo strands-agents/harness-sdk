@@ -2,6 +2,7 @@ import { Skill } from '@strands-agents/sdk/vended-plugins/skills'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { URL } from 'node:url'
 
 import { assertPortablePathComponent } from '../../project/packaging.js'
 import { errorMessage } from '../../terminal/text.js'
@@ -10,18 +11,15 @@ import { devSessionsFolder } from '../runtime.js'
 import type { DevWorkspace } from '../workspace.js'
 import { prepareTemporaryOptimizerEnvironment } from './environment.js'
 import { temporaryWorkspaceDirectory } from './evals-process.js'
+import { TEMPORARY_EVALS_FORK } from './fork.js'
 import { temporaryExperimentFile, temporarySkillsFolder } from './layout.js'
 
-export const TEMPORARY_SESSION_CONVERTER_SOURCE = 'github.com/strands-agents/evals'
-
-const REPOSITORY = 'strands-agents/evals'
-const BRANCH = 'main'
 const SKILL_NAME = 'session-converter'
 const SKILL_PATH = `.agents/skills/${SKILL_NAME}`
 const REQUEST_TIMEOUT_MS = 20_000
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 const MAX_SKILL_FILES = 50
-const COMMIT = /^[0-9a-f]{40}$/u
+const GITHUB_REPOSITORY = /^[\w.-]+\/[\w.-]+$/u
 
 type Fetch = typeof globalThis.fetch
 
@@ -30,9 +28,15 @@ export interface TemporarySessionHistory {
   converter(): Promise<string>
 }
 
+export interface TemporaryEvalsSource {
+  readonly repository: string
+  readonly commit: string
+}
+
 export interface TemporarySessionHistoryOptions {
   readonly workspace: DevWorkspace
   readonly currentChat: () => string | undefined
+  readonly evals?: TemporaryEvalsSource
   readonly fetch?: Fetch
   readonly environment?: NodeJS.ProcessEnv
   readonly python?: () => Promise<string>
@@ -47,6 +51,15 @@ interface Download {
 interface GitHub {
   readonly fetch: Fetch
   readonly environment: NodeJS.ProcessEnv
+  readonly repository: string
+}
+
+const githubRepository = (url: string): string => {
+  const parsed = new URL(url)
+  const path = parsed.pathname.replace(/^\/+|\/+$/gu, '').replace(/\.git$/u, '')
+  if (parsed.host !== 'github.com' || !GITHUB_REPOSITORY.test(path))
+    throw new Error(`${url} is not a GitHub repository`)
+  return path
 }
 
 const countPastChats = async (folder: string, current: string | undefined): Promise<number> => {
@@ -74,17 +87,11 @@ const fetchText = async ({ fetch }: GitHub, url: string, headers: Record<string,
 
 const githubApi = (github: GitHub, path: string, accept: string): Promise<string> => {
   const token = github.environment.GITHUB_TOKEN || github.environment.GH_TOKEN
-  return fetchText(github, `https://api.github.com/repos/${REPOSITORY}/${path}`, {
+  return fetchText(github, `https://api.github.com/repos/${github.repository}/${path}`, {
     Accept: accept,
     'User-Agent': 'strands-cli',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   })
-}
-
-const newestCommit = async (github: GitHub): Promise<string> => {
-  const commit = (await githubApi(github, `commits/${BRANCH}`, 'application/vnd.github.sha')).trim()
-  if (!COMMIT.test(commit)) throw new Error(`GitHub sent no commit for the ${BRANCH} branch`)
-  return commit
 }
 
 const skillFiles = async (github: GitHub, commit: string): Promise<string[]> => {
@@ -141,29 +148,29 @@ const readRecord = async (folder: string): Promise<Download | undefined> => {
     : undefined
 }
 
-const downloadNewest = async (github: GitHub, folder: string): Promise<Download> => {
-  const commit = await newestCommit(github)
+const downloadPinned = async (github: GitHub, folder: string, commit: string): Promise<Download> => {
   const earlier = await readRecord(folder)
   if (earlier?.commit === commit) return earlier
   const files = await skillFiles(github, commit)
   const raw = (file: string): string =>
-    `https://raw.githubusercontent.com/${REPOSITORY}/${commit}/${SKILL_PATH}/${file}`
+    `https://raw.githubusercontent.com/${github.repository}/${commit}/${SKILL_PATH}/${file}`
   const texts = await Promise.all(files.map((file) => fetchText(github, raw(file), { 'User-Agent': 'strands-cli' })))
   await replaceFolder(folder, new Map(files.map((file, index) => [file, texts[index]!])))
   const download = { commit, files }
-  await writeFile(recordPath(folder), `${JSON.stringify({ repository: REPOSITORY, branch: BRANCH, ...download })}\n`)
+  await writeFile(recordPath(folder), `${JSON.stringify({ repository: github.repository, ...download })}\n`)
   return download
 }
 
-const newestSkill = async (github: GitHub, folder: string): Promise<Download> => {
+const pinnedSkill = async (github: GitHub, folder: string, commit: string): Promise<Download> => {
   try {
-    return await downloadNewest(github, folder)
+    return await downloadPinned(github, folder, commit)
   } catch (error) {
     const earlier = await readRecord(folder)
     if (earlier) return { ...earlier, stale: errorMessage(error) }
     throw new Error(
-      `strands dev could not download the ${SKILL_NAME} skill from ${TEMPORARY_SESSION_CONVERTER_SOURCE} ` +
-        `(${errorMessage(error)}). Check the network connection and try again, or describe what to test instead.`,
+      `strands dev could not download the ${SKILL_NAME} skill of strands-evals ${commit.slice(0, 7)} from ` +
+        `github.com/${github.repository} (${errorMessage(error)}). Check the network connection and try again, ` +
+        'or describe what to test instead.',
       { cause: error }
     )
   }
@@ -171,6 +178,7 @@ const newestSkill = async (github: GitHub, folder: string): Promise<Download> =>
 
 interface Guide {
   readonly folder: string
+  readonly repository: string
   readonly download: Download
   readonly python: string
   readonly workspaceDirectory: string
@@ -198,14 +206,16 @@ const strandsDevRules = ({ python, workspaceDirectory, currentChat }: Guide): st
 ]
 
 const guideText = (guide: Guide): string => {
-  const { folder, download } = guide
+  const { folder, repository, download } = guide
+  const version = `strands-evals ${download.commit.slice(0, 7)}`
   return [
-    `Follow the ${SKILL_NAME} skill below. strands dev downloaded it from ${TEMPORARY_SESSION_CONVERTER_SOURCE}, ` +
-      `branch ${BRANCH}, commit ${download.commit.slice(0, 7)}, into ${folder}. Its links, such as ` +
-      'assets/segmenter.md, and <skill_dir> refer to that folder.' +
+    `Follow the ${SKILL_NAME} skill below. It is the skill of ${version} from github.com/${repository}, ` +
+      `and strands dev saved it in ${folder}. Its links, such as assets/segmenter.md, and <skill_dir> refer to ` +
+      'that folder.' +
       (download.stale
-        ? ` A newer version could not be downloaded (${download.stale}), so this is an earlier one.`
-        : ''),
+        ? ` The skill of the installed strands-evals could not be downloaded (${download.stale}), so this skill ` +
+          'comes from an earlier version.'
+        : ' strands dev runs the same version of strands-evals.'),
     `Files:\n${download.files.map((file) => `  ${join(folder, ...file.split('/'))}`).join('\n')}`,
     ['In this strands dev chat, these rules replace the matching parts of the skill:', ...strandsDevRules(guide)].join(
       '\n- '
@@ -217,6 +227,7 @@ const guideText = (guide: Guide): string => {
 export const temporarySessionHistory = ({
   workspace,
   currentChat,
+  evals = TEMPORARY_EVALS_FORK,
   fetch = globalThis.fetch,
   environment = process.env,
   python,
@@ -234,11 +245,19 @@ export const temporarySessionHistory = ({
     converter: async (): Promise<string> => {
       const workspaceDirectory = temporaryWorkspaceDirectory(workspace)
       const folder = join(temporarySkillsFolder(workspaceDirectory), SKILL_NAME)
+      const repository = githubRepository(evals.repository)
       const [download, interpreter] = await Promise.all([
-        newestSkill({ fetch, environment }, folder),
+        pinnedSkill({ fetch, environment, repository }, folder, evals.commit),
         evalsPython(workspaceDirectory),
       ])
-      return guideText({ folder, download, python: interpreter, workspaceDirectory, currentChat: currentChat() })
+      return guideText({
+        folder,
+        repository,
+        download,
+        python: interpreter,
+        workspaceDirectory,
+        currentChat: currentChat(),
+      })
     },
   }
 }
