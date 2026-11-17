@@ -466,7 +466,8 @@ function parseUsage(value: unknown): { inputTokens: number; outputTokens: number
   return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
 }
 
-function requireRecord(value: unknown, name: string): Record<string, unknown> {
+/** @internal */
+export function requireRecord(value: unknown, name: string): Record<string, unknown> {
   if (!isRecord(value)) throw new ModelError(`${name} must be an object`)
   return value
 }

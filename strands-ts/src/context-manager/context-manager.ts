@@ -10,11 +10,11 @@ import { createAuxiliaryInvocationContext, type InvocationContext } from '../age
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
-import { ModelProxy } from '../models/model-proxy.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
 import { EPHEMERAL } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
+import { countRequestTokens } from '../models/model-proxy.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
 import { resolveStrategies } from './presets.js'
@@ -70,8 +70,8 @@ export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig
  * Manages context reduction for an agent's conversation.
  *
  * On context overflow, runs the strategy pipeline (offload, summarize, emergency truncate).
- * The emergency truncation is always appended as the final strategy — it recomputes
- * utilization and only fires if the window is still overflowing after user strategies.
+ * The emergency truncation is always appended as the final strategy — it fires only if the
+ * window is still overflowing after the user strategies have run.
  *
  * Configured through the Agent's `contextManager` parameter — pass a preset
  * string (`'auto'`, `'agentic'`), a `ContextManagerConfig`, or a `ContextManager`
@@ -211,7 +211,7 @@ export class ContextManager implements Plugin {
     invocationContext?: InvocationContext
   ): Promise<boolean> {
     const messages = agent.messages
-    const inputTokens = precomputedInputTokens ?? (await new ModelProxy(agent.model).countTokens(messages))
+    const inputTokens = precomputedInputTokens ?? (await countRequestTokens(agent, messages))
     const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
 
     const strategyContext: ContextState = {
@@ -230,9 +230,7 @@ export class ContextManager implements Plugin {
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(
-            await new ModelProxy(agent.model).countTokens(messages)
-          )
+          strategyContext.utilization = agent.model.estimateUtilization(await countRequestTokens(agent, messages))
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {

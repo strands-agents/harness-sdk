@@ -55,6 +55,10 @@ function responseBody(answers: Record<string, unknown>, usage: unknown = { input
   return { model: 'resolved-model', answers, usage }
 }
 
+function envelope(result: unknown) {
+  return { code: 0, message: 'ok', data: { result, creditsUsed: 1 } }
+}
+
 function fakeFetch(
   payload: unknown,
   options: { status?: number; captured?: CapturedRequest[] } = {}
@@ -348,6 +352,17 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       )
     })
 
+    it('rejects a flat response that omits the model', async () => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ answers: { q: { type: 'noul', noul: 1 } } }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /model must be a non-empty string/
+      )
+    })
+
     it('rejects a server answer typed as refused instead of treating it as Uncertain', async () => {
       const decision = create({
         apiKey: 'test-key',
@@ -500,6 +515,131 @@ describe('DecisionsAPIDecisionModel', () => {
 
       await expect(decision.ask('state', questions)).rejects.toThrow(/at most 8 questions/)
       expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('reads the enveloped decisionapi.net response and reports the requested model', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({
+          code: 0,
+          message: 'ok',
+          data: {
+            result: {
+              answers: { q: { type: 'noul', noul: 0.99 } },
+              usage: { input_tokens: 281, output_tokens: 23 },
+              elapsedMs: 1879,
+            },
+            creditsUsed: 1,
+          },
+        }),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result).toEqual({
+        answers: { q: true },
+        usage: { inputTokens: 281, outputTokens: 23, totalTokens: 304 },
+        metadata: {
+          latencyMs: expect.any(Number),
+          providerName: 'decisionsApi',
+          modelId: '~typesafe/jev-latest',
+          probabilities: { q: { true: 0.99, false: expect.closeTo(0.01) } },
+          confidence: { q: expect.closeTo(0.98) },
+        },
+      })
+    })
+
+    it('reports a non-default requested model for an enveloped response', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        modelId: 'pinned-model',
+        fetch: fakeFetch(envelope({ answers: { q: { type: 'noul', noul: 0.99 } } })),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result.metadata.modelId).toBe('pinned-model')
+    })
+
+    it('reports the model named by an enveloped result', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        modelId: 'pinned-model',
+        fetch: fakeFetch(envelope({ model: 'served-model', answers: { q: { type: 'noul', noul: 0.99 } } })),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result.metadata.modelId).toBe('served-model')
+    })
+
+    it('leaves TypeSafeDecisionModel rejecting the envelope', async () => {
+      const decision = new TypeSafeDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch(envelope({ answers: { q: { type: 'noul', noul: 0.99 } } })),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /model must be a non-empty string/
+      )
+    })
+
+    it.each([-1, false])('rejects an enveloped error body with code %s sent with HTTP 200', async (code) => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code, message: 'request rejected' }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        `error code ${String(code)}: request rejected`
+      )
+    })
+
+    it.each([
+      { payload: { code: 0 }, message: 'data must be an object' },
+      { payload: { code: 0, data: { result: [] } }, message: 'result must be an object' },
+    ])('rejects the malformed envelope $payload', async ({ payload, message }) => {
+      const decision = new DecisionsAPIDecisionModel({ apiKey: 'test-key', fetch: fakeFetch(payload) })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(message)
+    })
+
+    it('maps an enveloped HTTP 401 to an HTTP failure rather than an envelope error', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code: -1, message: 'Invalid API key.' }, { status: 401 }),
+      })
+
+      const error = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+
+      expect(error).toBeInstanceOf(ModelError)
+      expect((error as Error).message).toMatch(/HTTP 401: Invalid API key\./)
+      expect((error as Error).cause).toBeDefined()
+    })
+
+    it.each([429, 503, 529])('maps an enveloped HTTP %s to ModelThrottledError', async (status) => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code: -1, message: 'retry later' }, { status }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toBeInstanceOf(
+        ModelThrottledError
+      )
+    })
+
+    it('maps an enveloped HTTP 413 to ContextWindowOverflowError', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code: -1, message: 'request too large' }, { status: 413 }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toBeInstanceOf(
+        ContextWindowOverflowError
+      )
     })
   })
 })

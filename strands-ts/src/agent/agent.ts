@@ -32,7 +32,7 @@ import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
 import { Model } from '../models/model.js'
-import { ModelProxy } from '../models/model-proxy.js'
+import { countRequestTokens, ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import type { AgentMetadata } from './agent-metadata.js'
@@ -2416,15 +2416,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolChoice?: ToolChoice,
     structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
-    const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
-    if (this.systemPrompt !== undefined) {
-      streamOptions.systemPrompt = this.systemPrompt
-    }
-    if (toolChoice) {
-      streamOptions.toolChoice = toolChoice
-    }
-
     let attemptCount = 1
     while (true) {
       // An abort during retry backoff must stop before another model attempt begins.
@@ -2433,7 +2424,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       let projectedInputTokens: number | undefined
       try {
         // Context management continues to size against the agent's default model.
-        projectedInputTokens = await this._estimateInputTokens(streamOptions)
+        projectedInputTokens = await this._estimateInputTokens()
       } catch (error) {
         logger.debug(`error=<${error}> | token estimation failed, proceeding without estimate`)
       }
@@ -2493,7 +2484,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       if (modelContinuation !== undefined) {
         try {
-          projectedInputTokens = await this._estimateInputTokens(streamOptions)
+          projectedInputTokens = await this._estimateInputTokens()
         } catch (error) {
           projectedInputTokens = undefined
           logger.debug(
@@ -2943,10 +2934,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * estimates only new messages added after it. Falls back to full estimation when no metadata is
    * available (cold start or first call).
    *
-   * @param streamOptions - The stream options containing system prompt and tool specs
    * @returns Estimated input token count
    */
-  private async _estimateInputTokens(streamOptions: StreamOptions): Promise<number> {
+  private async _estimateInputTokens(): Promise<number> {
     // Find the last assistant message with usage metadata
     let lastAssistantIdx = -1
     for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -2968,10 +2958,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await new ModelProxy(this.model).countTokens(this.messages, {
-        ...(streamOptions.systemPrompt !== undefined && { systemPrompt: streamOptions.systemPrompt }),
-        ...(streamOptions.toolSpecs !== undefined && { toolSpecs: streamOptions.toolSpecs }),
-      })
+      estimate = await countRequestTokens(this, this.messages)
     }
 
     return estimate
