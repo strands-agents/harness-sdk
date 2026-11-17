@@ -213,7 +213,7 @@ describe('SageMakerDecisionModel', () => {
     })
 
     it.each([
-      ['a zero-length', new Uint8Array()],
+      ['an empty', new Uint8Array()],
       ['a null', null],
     ])('rejects %s response body as a non-object response', async (_, body) => {
       mockSend.mockResolvedValue({ Body: body })
