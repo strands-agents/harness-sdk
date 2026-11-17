@@ -47,10 +47,7 @@ def _resolve_preview_tokens(config: TruncateConfig | None = None) -> int:
 
 
 def _head_share(config: TruncateConfig | None = None) -> float:
-    """The share of the preview budget kept from the head, for the configured preview mode.
-
-    A mode outside ``TruncateConfig`` falls back to the default, so a typo still shortens the content.
-    """
+    """The share of the preview budget kept from the head, for the configured preview mode."""
     return PREVIEW_HEAD_SHARE.get((config or {}).get("preview", DEFAULT_PREVIEW), PREVIEW_HEAD_SHARE[DEFAULT_PREVIEW])
 
 
