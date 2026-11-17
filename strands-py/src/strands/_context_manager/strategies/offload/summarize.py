@@ -1,9 +1,4 @@
-"""Summarize strategy — replaces content with a summary the model writes.
-
-Reading order: ``apply`` in base.py routes a block target to ``_replace_block``, which summarizes that block on its
-own, and target ``"*"`` to ``_apply_per_message``, which tries one server-side summary of the conversation's start
-before summarizing each removable run client-side.
-"""
+"""Summarize strategy — replaces content with a summary the model writes."""
 
 from __future__ import annotations
 

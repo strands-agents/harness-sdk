@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .base import EmergencyTruncateStrategy, OffloadStrategy
+from .base import OffloadStrategy
 from .conditions import OffloadConditions
 from .drop import DropStrategy
 from .summarize import SummarizeStrategy
@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from .summarize import SummarizeConfig
 
 __all__ = [
-    "EmergencyTruncateStrategy",
     "Offload",
     "OffloadConditions",
     "OffloadStrategy",

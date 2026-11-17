@@ -1,9 +1,4 @@
-"""Base offload strategy: conditions, target routing, eager hooks, and the shared execution paths.
-
-Reading order: ``apply`` checks ``reached``, then a block target runs ``_transform_blocks``, which calls each
-strategy's ``_replace_block``, and target ``"*"`` runs ``_apply_per_message`` on ``_removable_messages``, which hands
-them to ``remove_messages`` in message_trimming.py before ``repair_alternation`` restores alternation.
-"""
+"""Base offload strategy: conditions, target routing, eager hooks, and the shared execution paths."""
 
 from __future__ import annotations
 

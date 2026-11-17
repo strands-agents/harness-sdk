@@ -6,7 +6,8 @@ import pytest
 
 from strands._context_manager.context_manager import ContextManager
 from strands._context_manager.placeholder import offload_placeholder
-from strands._context_manager.strategies.offload import EmergencyTruncateStrategy, Offload
+from strands._context_manager.strategies.offload import Offload
+from strands._context_manager.strategies.offload.base import EmergencyTruncateStrategy
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent

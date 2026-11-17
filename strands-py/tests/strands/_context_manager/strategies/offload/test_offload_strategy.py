@@ -16,7 +16,8 @@ from strands._context_manager.placeholder import (
     format_elided,
     offload_placeholder,
 )
-from strands._context_manager.strategies.offload import EmergencyTruncateStrategy, Offload
+from strands._context_manager.strategies.offload import Offload
+from strands._context_manager.strategies.offload.base import EmergencyTruncateStrategy
 from strands._context_manager.strategies.offload.conditions import ParsedCondition, ResolvedConditions, parse_condition
 from strands._context_manager.strategies.offload.target import OffloadTargetMatcher
 from strands.hooks.events import MessageAddedEvent

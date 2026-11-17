@@ -8,7 +8,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from typing_extensions import TypedDict
 
@@ -24,33 +24,16 @@ T = TypeVar("T")
 class OffloadConditions(TypedDict, total=False):
     """Conditions that determine when and how an offload strategy fires.
 
-    - ``context_utilization`` sets when the strategy fires. ``"80%"`` fires at 80% of the context window; a whole
-      number of 1,000 or more fires at that many input tokens, and raises if it exceeds the model's context window.
-      Both measure what the next request carries: the messages, plus the system prompt and tool specs.
-    - ``block_threshold`` sets how large each block, or each message for target ``"*"``, must be to act on. A whole
-      number selects content larger than that many tokens; ``"5%"`` selects content larger than 5% of the context
-      window (10,000 tokens of a 200,000-token window).
-    - ``preserve_recent`` sets which matching messages it never touches. A whole number keeps that many of the newest;
-      ``"70%"`` keeps the newest 70% of them.
-
-    With no ``context_utilization``, the strategy runs before every model call, or on each message as it arrives when
-    the target isn't ``"*"`` and ``preserve_recent`` is unset or 0. ``block_threshold`` doesn't change when it runs.
-
-    Granularity: target ``"*"`` acts on whole messages, and ``block_threshold`` measures each message. Drop removes
-    them, summarize merges each contiguous run, and truncate elides the middle and doesn't take a ``block_threshold``.
-    Any other target acts on each block, and ``block_threshold`` measures each block. ``context_utilization`` only
-    gates when the strategy fires, and ``preserve_recent`` only protects the newest matching messages.
-
-    Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
-    strategy's threshold and gets skipped.
+    Target ``"*"`` acts on whole messages, so ``block_threshold`` measures each message; any other target acts on each
+    block. With no ``context_utilization``, the strategy runs before every model call, or on each message as it arrives
+    when the target isn't ``"*"`` and ``preserve_recent`` is unset or 0.
 
     Attributes:
         context_utilization: Context usage at or above which the strategy fires: ``"80%"`` of the context window, or a
             whole number of 1,000 or more input tokens, at most the model's context window.
         block_threshold: Size above which a message (target ``"*"``) or block is offloaded: a whole number of tokens
             above 0, or ``"5%"`` of the context window. Unset, there is no size check. Media the token count measures
-            as 0, alone or in a tool result, always passes, except in a strategy acting on arrival, which leaves it
-            alone until ``context_utilization`` or ``preserve_recent`` defers the strategy past the model reading it.
+            as 0 always passes, except in a strategy acting on arrival, which leaves it alone.
         preserve_recent: Newest matching messages never touched: a count, or ``"70%"`` of the matches, rounded up so a
             share above 0 keeps at least one.
     """
@@ -119,25 +102,12 @@ CONDITION_RULES: dict[str, _ConditionRule] = {
     ),
 }
 
-*_LEADING_NAMES, _FINAL_NAME = CONDITION_RULES
-CONDITION_NAMES = f"{', '.join(_LEADING_NAMES)}, or {_FINAL_NAME}"
+CONDITION_NAMES = ", ".join(CONDITION_RULES)
 
 
-def build_conditions(
-    *,
-    context_utilization: int | str | None = None,
-    block_threshold: int | str | None = None,
-    preserve_recent: int | str | None = None,
-) -> OffloadConditions:
-    """Collect the conditions that were supplied into an :class:`OffloadConditions`."""
-    conditions = OffloadConditions()
-    if context_utilization is not None:
-        conditions["context_utilization"] = context_utilization
-    if block_threshold is not None:
-        conditions["block_threshold"] = block_threshold
-    if preserve_recent is not None:
-        conditions["preserve_recent"] = preserve_recent
-    return conditions
+def build_conditions(**supplied: int | str | None) -> OffloadConditions:
+    """The supplied conditions, without the ones left unset."""
+    return cast(OffloadConditions, {name: value for name, value in supplied.items() if value is not None})
 
 
 def parse_condition(name: str, raw: Any) -> ParsedCondition | None:

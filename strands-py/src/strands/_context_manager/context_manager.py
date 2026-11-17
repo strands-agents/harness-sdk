@@ -19,7 +19,8 @@ from ..types.exceptions import ContextWindowOverflowException
 from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _retrieval_calls_before
 from .stash import Stash
-from .strategies.offload import EmergencyTruncateStrategy, Offload
+from .strategies.offload import Offload
+from .strategies.offload.base import EmergencyTruncateStrategy
 from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
 if TYPE_CHECKING:
