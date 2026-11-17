@@ -55,12 +55,6 @@ def _resolve_preset(name: str) -> list[ContextStrategy]:
 def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStrategy]:
     """Resolve a mixed list of strategies and preset names into a flat strategy list.
 
-    Args:
-        entries: List of raw strategies and/or preset name strings.
-
-    Returns:
-        Flattened list of concrete strategies.
-
     Raises:
         ValueError: When an entry is neither a strategy nor a known preset name.
     """

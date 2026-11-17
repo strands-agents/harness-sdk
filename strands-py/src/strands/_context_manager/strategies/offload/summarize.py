@@ -146,13 +146,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
     def _server_side_end(self, context: ContextState, model: Model, removable: list[Message]) -> int | None:
         """The end of the opening messages a server-side summary replaces, or None to summarize client-side.
 
-        A ``block_threshold`` selects messages by size, which a block covering the conversation's start cannot
-        honour. The mismatch is in the configuration rather than the history, so it reads the same on every pass and
-        is warned about once. A tool use in message 0, whose results the summary replaces, or a pin among the
-        summarized messages hands the pass to the client-side summary too.
-
-        The end stops before any message that may not be removed, so the summary never takes the message the next
-        model call responds to, nor a tool use whose result is that message.
+        A ``block_threshold``, a tool use in message 0, or a pin among the summarized messages hands the pass to the
+        client-side summary. The end stops before any message that may not be removed, so the summary never takes the
+        message the next model call responds to, nor a tool use whose result is that message.
         """
         messages = context.messages
         if not _can_replay_server_side(model, context.agent.model):
@@ -196,9 +192,6 @@ class SummarizeStrategy(BaseOffloadStrategy):
         is sent, even ones ``removable`` leaves out. The summary becomes an assistant message at index 1, followed by
         the placeholder the messages it stands for are retrievable under. A summary without a ``provider``, which a
         capable model returns when its own summary request failed, is placed as a client-side marker instead.
-
-        Returns:
-            False when the summary failed or held no text, leaving the history unchanged.
         """
         messages = context.messages
         replaced = end - 1
@@ -229,9 +222,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
     async def _removed_reference(self, removed: Messages, model: Model, stash: Stash | None) -> ContentBlock | None:
         """The placeholder the messages a server-side summary stands for are retrievable under.
 
-        None when they were not stashed — the summary then stands alone rather than carrying a reference that
-        resolves to nothing. The tokens it reports cover every message the summary stands for, so a provider that
-        keeps sending message 0 as text is over-reported by that message rather than under-reported by it.
+        None when they were not stashed, so the summary stands alone rather than carrying a dead reference.
         """
         stash_ref = await stash_removed(stash, removed, self._method)
         if stash_ref is None:
@@ -243,9 +234,6 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """Place the client-side summary a server-side-capable model fell back to.
 
         It covers the messages the server-side summary would have, so the summary already paid for is the one used.
-
-        Returns:
-            False when the summary held no text, leaving the history unchanged.
         """
         if not summary:
             logger.warning("model=<%s> | summary held no text | leaving the content unsummarized", type(model).__name__)

@@ -358,19 +358,7 @@ class BaseOffloadStrategy(ABC):
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
-        """Transform a block. Return the replacement, or None to skip.
-
-        Args:
-            block: The block to replace.
-            message: The message holding the block.
-            tokens: Size the replacement stands for: the block's own tokens plus what a placeholder it holds already
-                stood for, so a replacement records it rather than losing it.
-            agent: The agent the strategy is attached to.
-            stash_ref: Stashes the original and returns the reference it is retrievable under; :meth:`_placeholder`
-                awaits it, so returning None never stores a block left in place.
-            tool_name: Name of the tool that produced a tool result, when its tool use is in the conversation.
-            invocation_context: The request this reduction runs for, if any.
-        """
+        """Transform a block. Return the replacement, or None to skip."""
         ...
 
 

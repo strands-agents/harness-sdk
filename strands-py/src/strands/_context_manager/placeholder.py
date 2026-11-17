@@ -20,15 +20,6 @@ def offload_placeholder(method: OffloadMethod, preview: str, stash_ref: str | No
     """The block that stands in for offloaded content.
 
     The preview, followed by the stash reference when the original is retrievable.
-
-    Args:
-        method: Offload method that replaced the content.
-        preview: Text that stands in for the original.
-        stash_ref: Reference the original is retrievable under, or None when it was not stashed.
-        tokens: Size of the content it stands for, when the token count measured it.
-
-    Returns:
-        The placeholder block, a text block carrying its provenance under ``offloaded``.
     """
     offloaded = OffloadedBlock(method=method)
     if stash_ref is not None:
@@ -85,13 +76,7 @@ def format_offloaded(tokens: int, media_kind: str | None = None) -> str:
 
 
 def format_summarized(description: str, tokens: int, summary: str | None = None) -> str:
-    """Marker for summarized content, followed by the summary when there is one.
-
-    Args:
-        description: What was summarized, such as ``"tool result"`` or ``"earlier messages"``.
-        tokens: Size of the original.
-        summary: The summary text.
-    """
+    """Marker for summarized content, followed by the summary when there is one."""
     return _with_body(_marker("Summarized", description, _approx_tokens(tokens)), summary)
 
 

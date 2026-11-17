@@ -78,12 +78,7 @@ def _build_preview(full_text: str, block_count: int, config: TruncateConfig | No
 def _truncate_tool_result_block(
     tool_result: ToolResult, config: TruncateConfig | None = None
 ) -> tuple[str, list[ToolResultContent]] | None:
-    """Split a tool result into a preview of its text and JSON items, and the items kept as they are.
-
-    Returns:
-        The preview, and the items kept as they are: media, whose payload can't be previewed as text, and
-        placeholders. None when nothing would be truncated.
-    """
+    """Split a tool result into a preview of its text and JSON items, and the items kept as they are."""
     textual: list[str] = []
     kept: list[ToolResultContent] = []
 

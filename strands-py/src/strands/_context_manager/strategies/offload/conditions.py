@@ -45,12 +45,7 @@ class OffloadConditions(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class ParsedCondition:
-    """A parsed condition: a count in the condition's unit, or a share of a whole.
-
-    Attributes:
-        value: The count, or a share's percent as written.
-        is_share: Whether ``value`` is a percent of a whole rather than a count.
-    """
+    """A condition's value: a count in the condition's unit, or, with ``is_share``, a percent of a whole."""
 
     value: float
     is_share: bool
@@ -62,11 +57,6 @@ class ParsedCondition:
         # Exact decimal arithmetic: a percent is inexact as a binary float, and the product lands just above the
         # answer often enough to matter, so "1.1%" of 200,000 would round up to 2,201.
         return math.ceil(Fraction(str(self.value)) * whole / 100)
-
-    @property
-    def share(self) -> float:
-        """A share's fraction of the whole, for a condition compared against one directly."""
-        return self.value / 100
 
 
 @dataclass(frozen=True)
@@ -86,19 +76,15 @@ MIN_UTILIZATION_TOKENS = 1000
 
 CONDITION_RULES: dict[str, _ConditionRule] = {
     "context_utilization": _ConditionRule(
-        percent_in_range=lambda percent: 0 < percent <= 100,
-        min_count=MIN_UTILIZATION_TOKENS,
-        expected=f'a "N%" string up to "100%" or a whole token count of at least {MIN_UTILIZATION_TOKENS}',
+        lambda percent: 0 < percent <= 100,
+        MIN_UTILIZATION_TOKENS,
+        f'a "N%" string up to "100%" or a whole token count of at least {MIN_UTILIZATION_TOKENS}',
     ),
     "block_threshold": _ConditionRule(
-        percent_in_range=lambda percent: 0 < percent < 100,
-        min_count=1,
-        expected='a "N%" string below "100%" or a whole token count above 0',
+        lambda percent: 0 < percent < 100, 1, 'a "N%" string below "100%" or a whole token count above 0'
     ),
     "preserve_recent": _ConditionRule(
-        percent_in_range=lambda percent: 0 <= percent < 100,
-        min_count=0,
-        expected='a "N%" string below "100%" or a whole message count',
+        lambda percent: 0 <= percent < 100, 0, 'a "N%" string below "100%" or a whole message count'
     ),
 }
 
@@ -111,14 +97,7 @@ def build_conditions(**supplied: int | str | None) -> OffloadConditions:
 
 
 def parse_condition(name: str, raw: Any) -> ParsedCondition | None:
-    """Parse one offload condition value: a ``"N%"`` string is a share, and a whole number is a count.
-
-    Args:
-        name: The condition name.
-        raw: The value as supplied, or None when unset.
-
-    Returns:
-        The parsed condition, or None when unset.
+    """Parse one condition value: a ``"N%"`` string is a share, a whole number a count, and None unset.
 
     Raises:
         ValueError: When the value is not accepted for the condition.
@@ -132,7 +111,8 @@ def parse_condition(name: str, raw: Any) -> ParsedCondition | None:
             return ParsedCondition(percent, True)
     if isinstance(raw, int) and not isinstance(raw, bool) and raw >= rule.min_count:
         return ParsedCondition(raw, False)
-    raise ValueError(f"{name}={_format_value(raw)} is invalid: expected {rule.expected}{_percent_hint(raw)}")
+    shown = f'"{raw}"' if isinstance(raw, str) else raw
+    raise ValueError(f"{name}={shown} is invalid: expected {rule.expected}{_percent_hint(raw)}")
 
 
 def _percent_hint(raw: Any) -> str:
@@ -162,9 +142,6 @@ class ResolvedConditions:
     def __init__(self, conditions: OffloadConditions | None = None) -> None:
         """Parse the conditions as supplied.
 
-        Args:
-            conditions: The conditions as supplied.
-
         Raises:
             ValueError: When a condition name is unknown or its value is invalid.
         """
@@ -192,16 +169,13 @@ class ResolvedConditions:
         utilization = self.context_utilization
         if utilization is None or context.overflow:
             return True
-        limit = _effective_window_limit(context.agent)
-        share = utilization.share if utilization.is_share else utilization.value / limit
-        return context.utilization >= share
+        whole = 100 if utilization.is_share else _effective_window_limit(context.agent)
+        return context.utilization >= utilization.value / whole
 
     def threshold_tokens(self, agent: Agent) -> int | None:
         """Tokens above which content is offloaded, or None when ``block_threshold`` is unset so nothing is checked."""
         threshold = self.block_threshold
-        if threshold is None:
-            return None
-        return threshold.of(_effective_window_limit(agent)) if threshold.is_share else int(threshold.value)
+        return None if threshold is None else threshold.of(_effective_window_limit(agent))
 
     def without_preserved(self, matching: list[T]) -> list[T]:
         """``matching`` without the newest ones ``preserve_recent`` protects."""
@@ -210,9 +184,6 @@ class ResolvedConditions:
 
     def check_fits(self, agent: Agent) -> None:
         """Check a token-count ``context_utilization`` fits the model's context window.
-
-        Args:
-            agent: The agent the strategy is attached to.
 
         Raises:
             ValueError: When it is larger than the model's context window.

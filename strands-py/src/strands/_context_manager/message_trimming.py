@@ -181,9 +181,6 @@ async def remove_messages(
 
     Each run is stashed under its own reference. A run whose text is None is kept, and a failed stash write leaves
     the placeholder without a reference. Callers restore alternation once they are done.
-
-    Returns:
-        Whether anything was removed.
     """
     acted = False
     # Last run first, so removing a run leaves the earlier runs' positions unchanged.

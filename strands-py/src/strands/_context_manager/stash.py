@@ -47,9 +47,6 @@ def _parse_stash_key(key: str) -> tuple[str, int] | None:
     """Split a ``<id>_<index>`` stash key.
 
     The id may itself contain ``_``, so the index is whatever follows the last one.
-
-    Returns:
-        The id and index, or None when the text after the last ``_`` is not an index.
     """
     owner, separator, index = key.rpartition("_")
     if not separator or not owner or not index.isdecimal():
@@ -101,14 +98,6 @@ class Stash:
         (``<toolUseId>_<i>``). Any other block is referenced by its position (``<tracking_id>_<block_index>``).
         History edits move blocks between messages and positions, so the key a block was stored under on arrival
         can differ from its key now; storing here keeps every emitted reference resolvable.
-
-        Args:
-            block: The block about to be replaced.
-            message: The message containing the block.
-            block_index: Index of the block within the message.
-
-        Returns:
-            The reference.
         """
         if "toolResult" in block:
             tool_result = block["toolResult"]
@@ -127,12 +116,6 @@ class Stash:
         begin at the same message: a later pass removes the message an earlier marker was folded into, and a
         server-side summary always stands for the messages after message 0. Deriving it would have the second
         removal overwrite the first, leaving the earlier content unretrievable.
-
-        Args:
-            removed: The removed messages, in conversation order.
-
-        Returns:
-            The reference the placeholder left in their place carries.
         """
         reference = f"removed-{uuid.uuid4()}"
         await self.store(reference, 0, _encode(removed))

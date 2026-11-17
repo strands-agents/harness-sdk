@@ -10,17 +10,14 @@ from ....types.tools import ToolResult, ToolResultContent
 from ...types import is_text_block, is_tool_result_block
 
 OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_text", "user_text", "media"] | list[str]
-"""Target for offload operations. This union is intentionally extensible — new string-literal members can be added
-freely as new content categories emerge.
+"""What a strategy acts on.
 
-- ``"tool_results"`` — all successful tool result blocks
-- ``"tool_result_errors"`` — all failed tool result blocks
-- ``"assistant_text"`` — text blocks in assistant messages
-- ``"user_text"`` — text blocks in user messages (excluding tool results)
-- ``"media"`` — image, document, video, and audio blocks outside tool results
-- ``list[str]`` — tool results from tools to include (e.g. ``["bash"]`` or ``["tool::bash"]``) and, prefixed with
-  ``!``, tools to exclude. A list of only exclusions acts on every other tool.
 - ``"*"`` — whole messages
+- ``"tool_results"`` / ``"tool_result_errors"`` — successful / failed tool result blocks
+- ``"assistant_text"`` / ``"user_text"`` — text blocks in assistant / user messages, never tool results
+- ``"media"`` — image, document, video, and audio blocks outside tool results
+- ``list[str]`` — tool results from these tools (``["bash"]`` or ``["tool::bash"]``), with ``!`` to exclude one; a
+  list of only exclusions acts on every other tool
 """
 
 _MEDIA_KINDS = ("image", "document", "video", "audio")
@@ -32,7 +29,7 @@ _TOOL_PREFIX = "tool::"
 
 
 def media_kind(block: ContentBlock | ToolResultContent) -> str | None:
-    """The media kind of a block, such as ``"image"``, for markers, or None when it is not media."""
+    """The block's media kind, such as ``"image"``, or None when it is not media."""
     return next((kind for kind in _MEDIA_KINDS if kind in block), None)
 
 
@@ -42,18 +39,12 @@ def is_media_block(block: ContentBlock | ToolResultContent) -> bool:
 
 
 def is_protocol_block(block: ContentBlock) -> bool:
-    """Whether a block is protocol rather than content.
-
-    Tool uses, cache points, and reasoning are never stored or offloaded.
-    """
+    """Whether a block is protocol rather than content: a tool use, cache point, or reasoning, never offloaded."""
     return any(key in block for key in _PROTOCOL_KEYS)
 
 
 def build_tool_name_map(messages: Messages) -> dict[str, str]:
-    """Build a toolUseId -> toolName map from all assistant messages in the conversation.
-
-    Built once per pass, so naming each tool result is a lookup rather than a scan.
-    """
+    """A toolUseId -> toolName map for the whole conversation, built once per pass so naming a result is a lookup."""
     name_map: dict[str, str] = {}
     for message in messages:
         if message["role"] != "assistant":

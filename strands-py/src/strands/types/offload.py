@@ -9,18 +9,15 @@ OffloadMethod = Literal["drop", "truncate", "summarize"]
 
 
 class OffloadedBlock(TypedDict):
-    """Provenance of the text a context manager's strategy left in place of content it offloaded.
+    """Provenance of the text a strategy left in place of content it offloaded, under a block's ``offloaded`` key.
 
-    The block carrying it is text to every reader of ``agent.messages`` and to every model provider — the content
-    really is text — so only code that cares where the text came from reads this (``"offloaded" in block``). Text
-    stored without the key, such as a session saved before placeholders carried their provenance, reads back as
-    plain text.
+    The block reads as plain text everywhere else, so text stored without the key reads back as plain text.
 
     Attributes:
         method: Offload method that left the placeholder.
-        ref: Stash reference under which the original is retrievable; absent when it was not stashed.
-        tokens: Size of the content this placeholder stands for, in tokens, including any placeholder it replaced;
-            absent when the token count could not measure it.
+        ref: Stash reference the original is retrievable under; absent when it was not stashed.
+        tokens: Size of the content it stands for, including any placeholder it replaced; absent when the token
+            count could not measure it.
     """
 
     method: OffloadMethod
