@@ -333,7 +333,7 @@ Running jobs show progress below the chat input. Experiments, drafts, reports, a
 The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
 
 **Temporary dependency:** the evaluation workflow installs `strands-agents-evals[optimization]` from the pinned
-[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/dd073cca0b43265840635430499efb5a1661afc1)
+[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/e7bfdad0ea30c5e183294412ad466969a9c4d743)
 in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
 
 **Save to Base CLI** in `/settings` selects the persistent agent as the default for plain `strands`.
