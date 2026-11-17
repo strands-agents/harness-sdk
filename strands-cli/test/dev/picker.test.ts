@@ -1196,7 +1196,7 @@ describe('HarnessPicker', () => {
 
     await vi.waitFor(() =>
       expect(frame().join('\n')).toContain(
-        'Skipped support/agent.ts. Expected export const agent = await createHarness(...)'
+        `Skipped ${join('support', 'agent.ts')}. Expected export const agent = await createHarness(...)`
       )
     )
     expect(frame().join('\n')).not.toContain('No local harnesses found.')
@@ -1216,7 +1216,9 @@ describe('HarnessPicker', () => {
       { stdin: ttyInput(), stdout: output }
     )
 
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Skipped a/agent.ts and 2 more. Expected'))
+    await vi.waitFor(() =>
+      expect(frame().join('\n')).toContain(`Skipped ${join('a', 'agent.ts')} and 2 more. Expected`)
+    )
     expect(frame().join('\n')).toContain('Project harness')
     expect(frame().join('\n')).toContain('1 / 3')
   })

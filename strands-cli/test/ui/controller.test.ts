@@ -2016,7 +2016,7 @@ describe('ChatController', () => {
     const hint = controller.getSnapshot().completedTurns[0]?.recoveryHint
     expect(controller.getSnapshot().panel).toBeUndefined()
     expect(hint).toContain('Refresh your credentials, then restart Strands so that it loads them.')
-    expect(hint).toContain('dev --workspace /project/strands-dev --session-id saved-session')
+    expect(hint).toMatch(/strands dev --workspace '?\S*strands-dev'? --session-id saved-session/u)
     expect(hint).not.toContain('Press s')
     await controller.dispose()
   })
