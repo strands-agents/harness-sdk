@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { Agent, Message, TextBlock } from '@strands-agents/sdk'
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 import { lookupModelInfo } from '$/sdk/models/model-info.js'
+import { FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES } from '$/sdk/models/native-output.js'
 import { ContextInjector } from '$/sdk/vended-plugins/context-injector/index.js'
 
 import {
@@ -36,6 +37,32 @@ const profilePrompt = 'Create a profile for John, a 25 year old dentist.'
 const expectedProfile = { name: 'John', age: 25, occupation: expect.stringMatching(/dentist/i) }
 
 const userMessage = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
+
+// The Anthropic client puts the response body into its error text as JSON, which escapes the quotes in the message.
+const apiErrorMessage = (error: unknown): string => {
+  const message = (error as { error?: { error?: { message?: unknown } } }).error?.error?.message
+  return typeof message === 'string' ? message : String(error)
+}
+
+const forcedToolChoiceOutcome = async (model: Model): Promise<'accepted' | 'refused' | 'no tool use'> => {
+  // A model that accepts a forced call can still end a turn without one, so only a tool use or a refusal is final.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const events = await collectIterator(
+        model.stream([userMessage('Hello there!')], { toolSpecs: [echoTool.toolSpec], toolChoice: { any: {} } })
+      )
+      const startsToolUse = events.some(
+        (event) => event.type === 'modelContentBlockStartEvent' && event.start?.type === 'toolUseStart'
+      )
+      if (startsToolUse) return 'accepted'
+    } catch (error) {
+      const providerMessage = apiErrorMessage(error)
+      if (!FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES.some((message) => providerMessage.includes(message))) throw error
+      return 'refused'
+    }
+  }
+  return 'no tool use'
+}
 
 const implementations: Record<string, (context: CaseContext) => Promise<void>> = {
   'tool-use': async ({ model }) => {
@@ -71,11 +98,11 @@ const implementations: Record<string, (context: CaseContext) => Promise<void>> =
   },
 
   'forced-tool-choice': async ({ model }) => {
-    const events = await collectIterator(
-      model.stream([userMessage('Hello there!')], { toolSpecs: [echoTool.toolSpec], toolChoice: { any: {} } })
-    )
+    expect(await forcedToolChoiceOutcome(model)).toBe('accepted')
+  },
 
-    expect(events.find((event) => event.type === 'modelMessageStopEvent')?.stopReason).toBe('toolUse')
+  'forced-tool-choice-refused': async ({ model }) => {
+    expect(await forcedToolChoiceOutcome(model)).toBe('refused')
   },
 
   'native-structured-output': async ({ model }) => {
