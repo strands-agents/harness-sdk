@@ -3,9 +3,10 @@ import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
   httpTransport,
+  isRecord,
   resolveSystemOneProviderConfig,
   toWireQuestions,
-  toWireState,
+  toWireStateText,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
@@ -73,7 +74,7 @@ export class GeminiDecisionModel extends DecisionModel {
       ...providerConfig,
       buildRequestBody: (state, questions): Record<string, unknown> => ({
         model: providerConfig.modelId,
-        input: toGeminiInput(state),
+        input: toWireStateText(state),
         questions: toWireQuestions(questions, ''),
       }),
     }
@@ -96,30 +97,24 @@ export class GeminiDecisionModel extends DecisionModel {
   }
 }
 
-function toGeminiInput(state: DecisionInput): string {
-  return typeof state === 'string' ? state : JSON.stringify(toWireState(state))
-}
-
 /**
  * Maps a Gemini response to the System One shape: Gemini does not echo the model and reports usage as
  * `total_input_tokens` and `total_output_tokens`. Anything else passes through for the shared parser to validate.
  */
 function toSystemOneResponse(payload: unknown, modelId: string): unknown {
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return payload
-  const response = payload as Record<string, unknown>
+  if (!isRecord(payload)) return payload
   // A prompt blocked by Gemini's input policy can come back as a success with empty `answers`.
-  const feedback = response['prompt_feedback'] as Record<string, unknown> | undefined
-  if (typeof feedback === 'object' && feedback !== null && feedback['block_reason'] !== undefined) {
+  const feedback = payload['prompt_feedback']
+  if (isRecord(feedback) && feedback['block_reason'] !== undefined) {
     const detail = typeof feedback['block_reason_message'] === 'string' ? `: ${feedback['block_reason_message']}` : ''
     throw new ModelError(`gemini decision prompt was blocked (${String(feedback['block_reason'])})${detail}`)
   }
-  const usage = response['usage'] as Record<string, unknown> | undefined
+  const usage = payload['usage']
   return {
-    ...response,
-    model: response['model'] ?? modelId,
-    ...(typeof usage === 'object' &&
-      usage !== null && {
-        usage: { input_tokens: usage['total_input_tokens'], output_tokens: usage['total_output_tokens'] },
-      }),
+    ...payload,
+    model: payload['model'] ?? modelId,
+    ...(isRecord(usage) && {
+      usage: { input_tokens: usage['total_input_tokens'], output_tokens: usage['total_output_tokens'] },
+    }),
   }
 }

@@ -189,8 +189,16 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
   }
 }
 
-/** @internal */
-export function toWireState(state: DecisionInput): unknown {
+/**
+ * Serializes state as one text input, for APIs that take a string rather than System One `state`.
+ *
+ * @internal
+ */
+export function toWireStateText(state: DecisionInput): string {
+  return typeof state === 'string' ? state : JSON.stringify(toWireState(state))
+}
+
+function toWireState(state: DecisionInput): unknown {
   if (typeof state === 'string' || state.length === 0) return state
   if (state[0] instanceof Message) {
     return (state as Message[]).map((message) => ({
@@ -440,7 +448,8 @@ function requireRecord(value: unknown, name: string): Record<string, unknown> {
   return value
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+/** @internal */
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
