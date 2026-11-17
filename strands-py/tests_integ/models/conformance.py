@@ -18,6 +18,7 @@ from strands.models.anthropic import AnthropicModel
 from strands.models.gemini import GeminiModel
 from strands.models.mistral import MistralModel
 from strands.models.openai import OpenAIModel
+from strands.types.exceptions import ModelThrottledException
 from tests_integ.models import providers
 
 _SHARED = json.loads(
@@ -30,6 +31,8 @@ OMITTED_CASES: dict[str, str] = {}
 OMITTED_PROVIDERS: dict[str, str] = {}
 
 NOT_APPLICABLE = "not applicable"
+# HTTP statuses that mean the provider could not serve the call, which says nothing about the case.
+_PROVIDER_ERROR_STATUSES = frozenset({401, 403, 404, 408, 429})
 _MANTLE_CONFIG = {"region": "us-east-1"}
 
 
@@ -142,7 +145,39 @@ def not_applicable_reason(case_id: str, model: Model) -> str | None:
     return None if value == expected else f"{path} is not {spec['equals']}"
 
 
-def record(item: pytest.Item, report: pytest.TestReport) -> None:
+def _http_status(error: BaseException) -> int | None:
+    """The HTTP status a vendor SDK error carries, wherever that SDK keeps it."""
+    response = getattr(error, "response", None)
+    metadata = response.get("ResponseMetadata", {}) if isinstance(response, dict) else {}
+    candidates = (getattr(error, "status_code", None), getattr(error, "code", None), metadata.get("HTTPStatusCode"))
+    return next((status for status in candidates if isinstance(status, int)), None)
+
+
+def provider_error_reason(error: BaseException | None) -> str | None:
+    """Why a failure is the provider's (throttling, credentials, an outage, a model not served), or None."""
+    while error is not None:
+        if isinstance(error, ModelThrottledException):
+            return type(error).__name__
+        status = _http_status(error)
+        if status is not None and (status in _PROVIDER_ERROR_STATUSES or status >= 500):
+            return f"{type(error).__name__} (HTTP {status})"
+        error = error.__cause__ or error.__context__
+    return None
+
+
+def _outcome(report: pytest.TestReport, error: BaseException | None) -> dict[str, str]:
+    if report.passed:
+        return {"status": "passed"}
+    if not report.skipped:
+        reason = provider_error_reason(error)
+        return {"status": "error", "reason": reason} if reason else {"status": "failed"}
+    reason = str(report.longrepr[2]).removeprefix("Skipped: ")
+    if reason.startswith(NOT_APPLICABLE):
+        return {"status": "not-applicable", "reason": reason.removeprefix(f"{NOT_APPLICABLE}: ")}
+    return {"status": "skipped", "reason": reason}
+
+
+def record(item: pytest.Item, report: pytest.TestReport, error: BaseException | None) -> None:
     """Append the result record for a finished conformance test to STRANDS_CONFORMANCE_RESULTS."""
     path = os.environ.get("STRANDS_CONFORMANCE_RESULTS")
     case_id = getattr(getattr(item, "function", None), "conformance_case", None)
@@ -152,13 +187,7 @@ def record(item: pytest.Item, report: pytest.TestReport) -> None:
 
     target: Target = item.callspec.params["target"]
     result = {"sdk": "python", "provider": target.provider, "model": target.model_id, "case": case_id}
-    if report.skipped:
-        reason = str(report.longrepr[2]).removeprefix("Skipped: ")
-        applicable = not reason.startswith(NOT_APPLICABLE)
-        result["status"] = "skipped" if applicable else "not-applicable"
-        result["reason"] = reason if applicable else reason.removeprefix(f"{NOT_APPLICABLE}: ")
-    else:
-        result["status"] = "passed" if report.passed else "failed"
+    result.update(_outcome(report, error))
 
     with open(path, "a", encoding="utf-8") as results:
         results.write(json.dumps(result) + "\n")
