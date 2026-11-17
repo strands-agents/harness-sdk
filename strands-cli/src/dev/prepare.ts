@@ -153,6 +153,18 @@ const workspaceSettings = (directory: string): ConfigLayer => ({
   write: (sections) => updateWorkspaceCli(directory, sections),
 })
 
+const pickerUnavailable = (init: boolean): DevFailure =>
+  new DevFailure(
+    [
+      init ? 'No harness selected.' : 'No dev workspace in this folder.',
+      'Reason: The harness picker needs a terminal.',
+      init
+        ? 'Next: Pass --agent <path> for an existing agent, or --create <language> for a new one. The language is cli, typescript, or python.'
+        : 'Next: Run strands dev init in a terminal, or pass --workspace <path>, --agent <path>, or --create <language>.',
+    ].join('\n'),
+    undefined
+  )
+
 const selectWorkspace = async (
   args: ParsedArgs,
   { snapshot, claims, screen, reselecting, warning, deferDependencies, leaving }: WorkspaceSelection
@@ -170,8 +182,7 @@ const selectWorkspace = async (
   if (existing && !reselecting) return existing
   if (destination && !dev.init && !reselecting)
     throw new Error(`No dev workspace at ${destination}. Run strands dev init --workspace <path> --create cli.`)
-  if (!screen)
-    throw new Error('Run strands dev init in a terminal, or select --workspace, --agent, or --create explicitly.')
+  if (!screen) throw pickerUnavailable(dev.init)
   const base = await baseHarnessSelection(snapshot, cwd, destination).catch((error: unknown) => {
     if (leaving) return undefined
     throw error

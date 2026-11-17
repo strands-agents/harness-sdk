@@ -8,6 +8,7 @@ import { containsPath, strandsUserPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { bindWorkspace, readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/binding.js'
 import { bindExistingAgent, createDevWorkspace } from '../../src/dev/create.js'
+import { DevFailure } from '../../src/dev/errors.js'
 import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
@@ -203,6 +204,16 @@ describe('prepareDevRun', () => {
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
 
     await expect(prepareDevRun(parseArgs(['dev']))).rejects.toThrow('Run strands dev init')
+  })
+
+  it('shouldNameTheMissingFlagsWhenInitRunsWithoutATerminal', async () => {
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+
+    const failure: unknown = await prepareDevRun(parseArgs(['dev', 'init'])).catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(DevFailure)
+    expect(String(failure)).toContain('Next: Pass --agent <path> for an existing agent, or --create <language>')
+    expect(String(failure)).not.toContain('Run strands dev init')
   })
 
   it('shouldShowTheBaseCliBeforeDiscoveredHarnessesWhenThePickerOpens', async () => {
