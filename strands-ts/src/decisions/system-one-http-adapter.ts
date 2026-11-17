@@ -26,6 +26,11 @@ export interface SystemOneRequestConfig {
    * `Uncertain` is still decided on the shared `|2p - 1|` scale.
    */
   noulConfidenceFromProvider?: boolean
+  /**
+   * How far a Choice answer's probabilities may sum from `1`, for APIs that round more coarsely than the
+   * default check allows. Defaults to the 4-decimal rounding tolerance.
+   */
+  probabilitySumTolerance?: number
 }
 
 /** @internal */
@@ -101,6 +106,9 @@ export function resolveSystemOneProviderConfig(
     ...(defaults.apiKeyHeader !== undefined && { apiKeyHeader: defaults.apiKeyHeader }),
     ...(defaults.noulConfidenceFromProvider !== undefined && {
       noulConfidenceFromProvider: defaults.noulConfidenceFromProvider,
+    }),
+    ...(defaults.probabilitySumTolerance !== undefined && {
+      probabilitySumTolerance: defaults.probabilitySumTolerance,
     }),
   }
 }
@@ -317,7 +325,7 @@ function parseResult<const Q extends Record<string, Question>>(
     const rawAnswer = rawAnswers[String(id)]
     if (rawAnswer === undefined)
       throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
-    const parsed = parseAnswer(rawAnswer, question, String(id), config.noulConfidenceFromProvider === true)
+    const parsed = parseAnswer(rawAnswer, question, String(id), config)
     const minConfidence = resolveMinConfidence(question, config.defaultMinConfidence)
     const thresholdConfidence = parsed.thresholdConfidence ?? parsed.confidence
     answers[id] = (
@@ -331,15 +339,10 @@ function parseResult<const Q extends Record<string, Question>>(
   return { modelId, answers, probabilities, confidence, ...(usage !== undefined && { usage }) }
 }
 
-function parseAnswer(
-  rawAnswer: unknown,
-  question: Question,
-  id: string,
-  noulConfidenceFromProvider: boolean
-): ParsedAnswer {
+function parseAnswer(rawAnswer: unknown, question: Question, id: string, config: SystemOneRequestConfig): ParsedAnswer {
   const answer = requireRecord(rawAnswer, `answer for question id=<${id}>`)
-  if (question.choices === 'boolean') return parseNoulAnswer(answer, id, noulConfidenceFromProvider)
-  return parseChoiceAnswer(answer, question.choices, id)
+  if (question.choices === 'boolean') return parseNoulAnswer(answer, id, config.noulConfidenceFromProvider === true)
+  return parseChoiceAnswer(answer, question.choices, id, config.probabilitySumTolerance)
 }
 
 function parseNoulAnswer(
@@ -364,7 +367,12 @@ function parseNoulAnswer(
   }
 }
 
-function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly string[], id: string): ParsedAnswer {
+function parseChoiceAnswer(
+  answer: Record<string, unknown>,
+  choices: readonly string[],
+  id: string,
+  sumTolerance: number | undefined
+): ParsedAnswer {
   if (answer['type'] !== 'choice') {
     throw new ModelError(`answer for choice question id=<${id}> must have type 'choice'`)
   }
@@ -388,9 +396,9 @@ function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly st
   const probabilityValues = Object.values(probabilities)
   const sum = probabilityValues.reduce((total, probability) => total + probability, 0)
   const isRounded = probabilityValues.every((p) => Math.abs(p * 1e4 - Math.round(p * 1e4)) < 1e-6)
-  const tolerance = isRounded
-    ? choices.length * PROBABILITY_ROUNDING_TOLERANCE + PROBABILITY_TOLERANCE
-    : PROBABILITY_TOLERANCE
+  const tolerance =
+    sumTolerance ??
+    (isRounded ? choices.length * PROBABILITY_ROUNDING_TOLERANCE + PROBABILITY_TOLERANCE : PROBABILITY_TOLERANCE)
   if (Math.abs(sum - 1) > tolerance) {
     throw new ModelError(`probabilities for question id=<${id}> must sum to 1`)
   }

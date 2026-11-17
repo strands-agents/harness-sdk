@@ -13,6 +13,9 @@ const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/decisi
 const GEMINI_DEFAULT_MODEL_ID = 'gemini-decision-1'
 const GEMINI_DEFAULT_MIN_CONFIDENCE = 0.5
 const GEMINI_MAX_QUESTIONS = 1000
+// Gemini rounds each Choice probability on the server (about 2 significant figures), so a distribution can
+// sum to 0.999 or 1.001; the default 4-decimal tolerance rejects that.
+const GEMINI_PROBABILITY_SUM_TOLERANCE = 0.01
 
 /** Options for constructing a {@link GeminiDecisionModel}. */
 export interface GeminiDecisionModelOptions {
@@ -63,6 +66,7 @@ export class GeminiDecisionModel extends DecisionModel {
       defaultMinConfidence: GEMINI_DEFAULT_MIN_CONFIDENCE,
       maxQuestions: GEMINI_MAX_QUESTIONS,
       noulConfidenceFromProvider: true,
+      probabilitySumTolerance: GEMINI_PROBABILITY_SUM_TOLERANCE,
     })
     this._providerConfig = {
       ...providerConfig,

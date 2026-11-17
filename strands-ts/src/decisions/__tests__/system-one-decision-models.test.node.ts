@@ -603,6 +603,26 @@ describe('GeminiDecisionModel', () => {
     await expect(throttled.ask('state', question)).rejects.toThrow(ModelThrottledError)
   })
 
+  it('accepts Choice probabilities rounded by Gemini but rejects a malformed distribution', async () => {
+    const choiceAnswer = (probabilities: Record<string, number>): typeof globalThis.fetch =>
+      fakeFetch({ answers: { q: { type: 'choice', choice: 'billing', probabilities, confidence: 0.99 } } })
+    const question = {
+      q: { question: 'Which team?', choices: ['billing', 'shipping', 'other', 'technical'] },
+    } as const
+
+    const rounded = new GeminiDecisionModel({
+      apiKey: 'test-key',
+      fetch: choiceAnswer({ billing: 0.99, shipping: 0.004, other: 0.003, technical: 0.002 }),
+    })
+    const malformed = new GeminiDecisionModel({
+      apiKey: 'test-key',
+      fetch: choiceAnswer({ billing: 0.9, shipping: 0.004, other: 0.003, technical: 0.002 }),
+    })
+
+    expect((await rounded.ask('I was charged twice.', question)).answers.q).toBe('billing')
+    await expect(malformed.ask('I was charged twice.', question)).rejects.toThrow(/must sum to 1/)
+  })
+
   it('rejects a Noul answer without the Gemini confidence', async () => {
     const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.9 } } })
     const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
