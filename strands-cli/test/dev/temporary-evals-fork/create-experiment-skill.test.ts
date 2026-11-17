@@ -50,6 +50,26 @@ describe('TEMPORARY create-experiment flow', () => {
   })
 
   it.each([
+    ['three sources', 'Cases come from one of three sources'],
+    ['the source that the request names', 'Use the source that the request names'],
+    ['a goal for a retried generation', 'a retry of a failed generation uses a goal'],
+    ['one plain question when the source is open', 'Otherwise ask one plain question before anything else'],
+    ['past chats only when there are some', 'Offer past chats only when newExperiment.pastChats'],
+    ['the number of past chats', 'You have 12 past chats with this agent'],
+    ['the newest session-converter skill', 'call strands_dev_session_converter and follow the skill that it returns'],
+  ])('shouldAskWhereTheCasesComeFromWith %s', (_rule, line) => {
+    expect(instructions()).toContain(line)
+  })
+
+  it('shouldAskForTheSourceBeforeTheGoal', () => {
+    const text = instructions()
+
+    expect(text.indexOf('## Choose where the cases come from')).toBeLessThan(
+      text.indexOf('## Start from the conversation, not a questionnaire')
+    )
+  })
+
+  it.each([
     ['one step at a time', 'Move forward one step at a time'],
     ['one question for each message', 'Do not stack several questions in one message'],
     ['what it took from the answer', 'say in one line what you took from it'],

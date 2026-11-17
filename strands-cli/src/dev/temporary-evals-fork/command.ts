@@ -12,6 +12,7 @@ import { temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
 import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
+import { temporarySessionHistory } from './session-converter.js'
 import {
   temporaryDevSessions,
   temporaryOptimizeJobs,
@@ -154,6 +155,7 @@ export const temporaryDevChatPart = (
   return temporaryAgentTools({
     sessions: () => temporaryDevSessions({ workspace: target, agent }),
     evaluators: () => readTemporaryEvaluators(target),
+    history: temporarySessionHistory({ workspace: target, currentChat: () => agent().sessionId }),
   })
 }
 

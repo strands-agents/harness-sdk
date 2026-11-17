@@ -228,14 +228,19 @@ const CATALOG: readonly TemporaryEvaluator[] = [
 const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly TemporaryAppliedChange[] = []) => {
   const fake = fakeSessions()
   fake.sessions.optimize.appliedChanges.mockReturnValue(changes)
+  const history = {
+    pastChats: vi.fn(async (): Promise<number> => 12),
+    converter: vi.fn(async (): Promise<string> => 'Follow the session-converter skill below.'),
+  }
   const part = temporaryDevChatPart({
     sessions: () => fake.sessions as unknown as TemporaryDevSessions,
     evaluators,
+    history,
   })
   const tool = (name: string): DevChatTool => part.tools.find((candidate) => candidate.name === name)!
   const call = async (name: string, input: Record<string, JSONValue> = {}): Promise<unknown> =>
     JSON.parse(await tool(name).run(input))
-  return { ...fake, part, tool, call, evaluators }
+  return { ...fake, part, tool, call, evaluators, history }
 }
 
 const APPLIED: TemporaryAppliedChange = {
@@ -311,6 +316,7 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_status', true],
       ['strands_dev_evaluators', false],
       ['strands_dev_create_experiment', false],
+      ['strands_dev_session_converter', false],
       ['strands_dev_read_experiment', true],
       ['strands_dev_test_results', true],
       ['strands_dev_test', false],
@@ -337,6 +343,7 @@ describe('TEMPORARY dev chat part', () => {
       newExperiment: {
         name: 'experiment-2',
         task: 'Answer refund questions',
+        pastChats: 12,
         agentContext: 'agent.py · 1 tool',
         generator: { provider: 'bedrock', defaultModel: 'evals Python SDK default (not the chat model)' },
       },
@@ -369,6 +376,15 @@ describe('TEMPORARY dev chat part', () => {
     const status = await call('strands_dev_status')
 
     expect(status).toMatchObject({ experiments: [{ name: 'refunds', lastTest: { status: 'done', passed: 1 } }] })
+  })
+
+  it('shouldGiveTheNewestSessionConverterSkillWhenTheAgentAsksForIt', async () => {
+    const { tool, history } = setup()
+
+    const guide = await tool('strands_dev_session_converter').run({})
+
+    expect(guide).toBe('Follow the session-converter skill below.')
+    expect(history.converter).toHaveBeenCalledTimes(1)
   })
 
   it('shouldListTheUsableEvaluatorsAndReadTheCatalogOnceWhenItIsAskedTwice', async () => {

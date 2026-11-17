@@ -7,6 +7,7 @@ import type { DevWorkspace } from '../workspace.js'
 export interface TemporaryAgentFacts {
   description?: string
   model?: string
+  sessionId?: string
   tools?: readonly ChatToolInfo[]
 }
 

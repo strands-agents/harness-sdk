@@ -28,6 +28,7 @@ import type { TemporaryStore } from './jobs.js'
 import { TEMPORARY_KNOB_NAMES } from './knobs.js'
 import { checkTemporaryObjective, temporaryObjectiveFromRequest } from './objective.js'
 import { TEMPORARY_ITERATION_CHOICES } from './plan.js'
+import type { TemporarySessionHistory } from './session-converter.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from './sessions.js'
 
 type Input = Readonly<Record<string, JSONValue>>
@@ -37,6 +38,7 @@ type Evaluators = () => Promise<readonly TemporaryEvaluator[]>
 export interface TemporaryDevChatHost {
   readonly sessions: Sessions
   readonly evaluators: Evaluators
+  readonly history: TemporarySessionHistory
 }
 
 const MAX_CASES = 50
@@ -49,7 +51,7 @@ const KNOB_NAMES = TEMPORARY_KNOB_NAMES.join(', ')
 const INSTRUCTIONS = `strands_dev_create_experiment, strands_dev_test, and strands_dev_optimize spend the developer's money the moment you call them. Two turns, never one: in the turn that asks for the work, name the experiments and case counts and stop; call the tool only in a later turn, after the developer answered. "Run my tests", "check my agent against my examples", and "make my agent better" ask for that first turn. A scope that looks obvious is still not approval, and neither is one saved experiment or one evident choice. Finish the turn with your question as the last thing you write.
 
 Experiments, tests, and optimization:
-- tmp/experiments/<name>.json: a saved experiment. "cases" holds the test cases (name, input, expected_output, and optional expected_trajectory and metadata). "evaluators" says how each case is scored.
+- tmp/experiments/<name>.json: a saved experiment. "cases" holds the test cases (name, input, expected_output or expected_assertion, and optional expected_trajectory and metadata). "evaluators" says how each case is scored.
 - tmp/experiments/drafts/: generated cases that wait for a review in /experiment.
 - tmp/reports/: test reports, one JSON file and one log for each run.
 - tmp/optimization/<time>-<experiment>/: the records of optimization runs.
@@ -58,6 +60,7 @@ The developer can open a panel with /experiment, /test, or /optimize, or ask you
 - strands_dev_status: the experiments, the drafts, the running jobs, and the last results. Call it again in every turn that asks what exists. The developer, the panels, and finished runs change these files between turns, so an answer from an earlier turn is stale and repeating it is a false claim about the workspace.
 - strands_dev_evaluators: the evaluators that can score this agent, with what each one checks and the settings it needs.
 - strands_dev_create_experiment: generate test cases and save them as an experiment. Use the create-experiment skill to help the developer shape a test goal naturally; keep technical defaults in the background.
+- strands_dev_session_converter: the newest session-converter skill from strands-evals, to build an experiment from past chats or traces. The create-experiment skill says when to use it.
 - strands_dev_read_experiment: read saved cases and evaluator definitions without running anything. Use the manage-experiments skill for browsing and explaining them.
 - strands_dev_test: run this agent on one or more experiments and report each case. Use the run-tests skill for plain-language test requests.
 - strands_dev_test_results: inspect existing test results without rerunning an experiment.
@@ -370,19 +373,19 @@ const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefin
   return found ? runStatus(found.run) : undefined
 }
 
-const statusTool = (sessions: Sessions): DevChatTool => ({
+const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevChatTool => ({
   name: 'strands_dev_status',
   readOnly: true,
   description:
     'Show the strands dev workspace: the saved experiments with their last test result, the generations that run or failed, ' +
-    'the optimization state, and the suggested settings for a new experiment. ' +
+    'the optimization state, and the suggested settings for a new experiment with the number of past chats. ' +
     'Call it again in every turn that asks what exists, including a repeated question. ' +
     'An answer from an earlier turn is stale, because files and runs change in between.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   run: async (): Promise<string> => {
     const { experiments, test, optimize } = sessions()
     await test.show()
-    const saved = await experiments.reload()
+    const [saved, pastChats] = await Promise.all([experiments.reload(), history.pastChats()])
     const { folder, generations } = experiments.snapshot()
     const { runs } = test.snapshot()
     return reply({
@@ -394,6 +397,7 @@ const statusTool = (sessions: Sessions): DevChatTool => ({
       optimization: optimizationStatus(optimize.snapshot()),
       newExperiment: {
         ...experiments.suggested(),
+        pastChats,
         agentContext: experiments.agentSummary(),
         generator: {
           provider: 'bedrock',
@@ -481,6 +485,16 @@ const createTool = (sessions: Sessions): DevChatTool => ({
       inputs: created.cases.map(({ name, input: question }) => ({ name, input: clip(question) })),
     })
   },
+})
+
+const sessionConverterTool = (history: TemporarySessionHistory): DevChatTool => ({
+  name: 'strands_dev_session_converter',
+  description:
+    'Load the newest session-converter skill from strands-agents/evals main, with the strands dev rules for it. ' +
+    'Use it to build an experiment from past chats or traces instead of from a goal. ' +
+    'It downloads the skill from GitHub, and the first call can take a minute while strands dev prepares the evals environment.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  run: (): Promise<string> => history.converter(),
 })
 
 const requestedExperiments = async (sessions: Sessions, input: Input): Promise<ExperimentSummary[]> => {
@@ -808,13 +822,14 @@ const changesSection = (changes: readonly TemporaryAppliedChange[]): string[] =>
         ].join('\n'),
       ]
 
-export const temporaryDevChatPart = ({ sessions, evaluators }: TemporaryDevChatHost): DevChatPart => ({
+export const temporaryDevChatPart = ({ sessions, evaluators, history }: TemporaryDevChatHost): DevChatPart => ({
   instructions: [INSTRUCTIONS, ...changesSection(sessions().optimize.appliedChanges())].join('\n\n'),
   skills: [temporaryCreateExperimentSkill(), ...temporaryWorkflowSkills()],
   tools: [
-    statusTool(sessions),
+    statusTool(sessions, history),
     evaluatorsTool(once(evaluators)),
     createTool(sessions),
+    sessionConverterTool(history),
     readExperimentTool(sessions),
     testResultsTool(sessions),
     testTool(sessions),

@@ -9,9 +9,20 @@ This is a developer-assistance workflow for this local strands dev chat only. It
 
 Help the developer turn something they want to learn about the agent into a small set of useful test cases. /experiment opens and edits these cases; /test and /optimize can run them later.
 
+## Choose where the cases come from
+
+Call strands_dev_status first. Cases come from one of three sources:
+- A goal: generate new cases from what the developer wants to try or check. The rest of this skill covers this source.
+- Past chats: build cases from the developer's earlier strands dev chats with this agent.
+- Other sources: traces in Langfuse, CloudWatch, or OpenSearch, chats from another harness, or a session file.
+
+Use the source that the request names; a retry of a failed generation uses a goal. Otherwise ask one plain question before anything else. Offer past chats only when newExperiment.pastChats in strands_dev_status is above 0, and give that number, for example: "You have 12 past chats with this agent. Build cases from them, describe what to test, or pull from traces?" Without past chats, ask whether to describe what to test or to pull from traces or files.
+
+For past chats or other sources, call strands_dev_session_converter and follow the skill that it returns, with the strands dev rules at its top. It is the newest session-converter skill from strands-evals, so do not use the goal steps below for these sources.
+
 ## Start from the conversation, not a questionnaire
 
-Call strands_dev_status to check existing experiments and defaults. Treat its settings as internal starting points, not a script to read back. Use the developer's request and earlier conversation first. The agent's description, instructions, and tools can provide context, but do not substitute a generic agent description for a test goal.
+Treat the settings of strands_dev_status as internal starting points, not a script to read back. Use the developer's request and earlier conversation first. The agent's description, instructions, and tools can provide context, but do not substitute a generic agent description for a test goal.
 
 If the goal is missing, ask one brief, open question about what they want to try or check. If they already gave a goal or an example, build on it rather than asking again. Ask a follow-up only when the answer materially changes the cases. Do not always ask about failure modes, demand a task statement, or present numbered setup questions. Match the developer's language and level of detail. If they want a broad first pass, propose a sensible starting scope without requiring more input.
 
@@ -52,7 +63,7 @@ Tool settings reference (use silently unless asked):
 export const temporaryCreateExperimentSkill = (): AgentExtensionSkill => ({
   name: TEMPORARY_CREATE_EXPERIMENT_SKILL,
   description:
-    'Help a developer explore what to test in this local strands dev chat, then generate experiment cases after approval. Not part of the exported agent.',
+    'Help a developer explore what to test in this local strands dev chat, from a goal, past chats, or traces, then make experiment cases after approval. Not part of the exported agent.',
   instructions: INSTRUCTIONS,
 })
 
