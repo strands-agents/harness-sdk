@@ -2061,13 +2061,20 @@ describe('VercelModel', () => {
         it.each(REMINDER_CASES)(
           'keeps the marker on the prompt that started the loop every call, %s',
           async (_case, reminder) => {
-            for (const rounds of [SINGLE_ROUNDS, PARALLEL_ROUNDS]) {
-              expect(await markersPerCall('amazon-bedrock', NOVA, toolLoopCalls(reminder, rounds))).toStrictEqual([
-                [{ text: PROMPT }],
-                [{ text: PROMPT }],
-                [{ text: PROMPT }],
-              ])
-            }
+            expect(await markersPerCall('amazon-bedrock', NOVA, toolLoopCalls(reminder, SINGLE_ROUNDS))).toStrictEqual([
+              [{ text: PROMPT }],
+              [{ text: PROMPT }],
+              [{ text: PROMPT }],
+            ])
+          }
+        )
+
+        it.each(REMINDER_CASES)(
+          'moves the marker onto durable text that follows tool results, as BedrockModel does, %s',
+          async (_case, reminder) => {
+            expect(
+              await markersPerCall('amazon-bedrock', NOVA, toolLoopCalls(reminder, PARALLEL_ROUNDS))
+            ).toStrictEqual([[{ text: PROMPT }], [{ text: PROMPT }], [{ text: 'note' }]])
           }
         )
 
