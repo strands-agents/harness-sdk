@@ -366,7 +366,7 @@ describe('invalid workspace bindings', () => {
     expect((await readdir(directory)).sort()).toEqual([name, 'agent'].sort())
   })
 
-  it('rejects FIFO metadata without blocking', async () => {
+  it.skipIf(process.platform === 'win32')('rejects FIFO metadata without blocking', async () => {
     execFileSync('mkfifo', [join(directory, '.config')])
     await expect(readWorkspaceBinding(directory)).rejects.toThrow('regular file')
     await expect(bindWorkspace(directory, binding)).rejects.toThrow('regular file')

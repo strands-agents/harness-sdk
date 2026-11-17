@@ -84,7 +84,7 @@ await editFile(${JSON.stringify(root)}, ${JSON.stringify(file)}, async (content)
     expect(await readFile(file, 'utf8')).toBe('start\neditor\nsaved\n')
   })
 
-  it('shouldKeepTheFileModeWhenTheEditReplacesTheFile', async () => {
+  it.skipIf(process.platform === 'win32')('shouldKeepTheFileModeWhenTheEditReplacesTheFile', async () => {
     const { root, file } = await project()
     await chmod(file, 0o640)
 
