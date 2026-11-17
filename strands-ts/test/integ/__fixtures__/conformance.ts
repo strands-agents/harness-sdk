@@ -35,6 +35,19 @@ export type ConformanceStatus = 'passed' | 'failed' | 'error' | 'skipped' | 'not
 export const cases: Record<string, ConformanceCase> = conformance.cases
 export const targets: ConformanceTarget[] = conformance.targets
 
+/**
+ * The issue that tracks why a case fails on a target, or undefined when it is expected to pass.
+ *
+ * @param target - The provider and model
+ * @param caseId - The case id
+ * @returns The issue number from the shared known failures
+ */
+export function knownFailureIssue(target: ConformanceTarget, caseId: string): number | undefined {
+  return conformance.knownFailures.find(
+    (known) => known.provider === target.provider && known.model === target.model && known.case === caseId
+  )?.issue
+}
+
 // Factories set no output token limit, so the cases run on each provider's defaults.
 export const providers: Record<string, ConformanceProvider> = {
   anthropic: {

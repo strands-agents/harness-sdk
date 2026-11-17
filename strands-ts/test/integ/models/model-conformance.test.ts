@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { Agent, Message, TextBlock } from '@strands-agents/sdk'
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
+import { lookupModelInfo } from '$/sdk/models/model-info.js'
 import { ContextInjector } from '$/sdk/vended-plugins/context-injector/index.js'
 
 import {
   cases,
+  knownFailureIssue,
   notApplicableReason,
   omittedCases,
   omittedProviders,
@@ -16,7 +18,7 @@ import {
 } from '../__fixtures__/conformance.js'
 import { echoTool, hasToolUse, isInBrowser } from '../__fixtures__/test-helpers.js'
 import type { Model } from '@strands-agents/sdk'
-import type { ConformanceConfig } from '../__fixtures__/conformance.js'
+import type { ConformanceConfig, ConformanceStatus } from '../__fixtures__/conformance.js'
 
 /**
  * Model conformance: every case in shared/conformance.json runs on every target it lists. A case whose `requires`
@@ -24,6 +26,7 @@ import type { ConformanceConfig } from '../__fixtures__/conformance.js'
  */
 
 interface CaseContext {
+  modelId: string
   model: Model
   create: (config?: ConformanceConfig) => Model
 }
@@ -44,10 +47,10 @@ const implementations: Record<string, (context: CaseContext) => Promise<void>> =
     expect(hasToolUse(agent.messages, echoTool.name)).toBe(true)
   },
 
-  'context-window': async ({ model }) => {
-    const contextWindow = model.modelInfo.limits?.contextWindow
+  'context-window': async ({ modelId, model }) => {
+    const contextWindow = lookupModelInfo(modelId).limits?.contextWindow
 
-    expect(contextWindow).toBeDefined()
+    expect(contextWindow, 'the model id resolves to no entry in shared/model-info.json').toBeDefined()
     expect(model.getConfig().contextWindowLimit).toBe(contextWindow)
   },
 
@@ -173,29 +176,34 @@ describe.each(targets)('Model conformance: $provider $model', (target) => {
   }
 
   for (const caseId of Object.keys(cases)) {
-    it(caseId, async (ctx) => {
-      const [status, reason] = unavailable() ?? []
-      if (status) {
-        await recordResult(target, caseId, status, reason)
-        return ctx.skip(reason)
+    // A known failure still runs and is recorded; the run goes red when it starts passing.
+    it(caseId, { fails: knownFailureIssue(target, caseId) !== undefined }, async (ctx) => {
+      // Recorded when the attempt finishes, so a timeout or a throw before the case body still leaves a record.
+      let status: ConformanceStatus = 'failed'
+      let reason: string | undefined
+      ctx.onTestFinished(() => recordResult(target, caseId, status, reason))
+
+      const skip = (skipStatus: ConformanceStatus, skipReason: string | undefined): void => {
+        status = skipStatus
+        reason = skipReason
+        ctx.skip(skipReason)
       }
+      const [unavailableStatus, unavailableReason] = unavailable() ?? []
+      if (unavailableStatus) return skip(unavailableStatus, unavailableReason)
 
       const run = implementations[caseId]
       const model = provider!.create(target.model)
       const notApplicable = run ? notApplicableReason(cases[caseId]!, model.modelInfo) : omittedCases[caseId]
-      if (!run || notApplicable) {
-        await recordResult(target, caseId, 'not-applicable', notApplicable)
-        return ctx.skip(notApplicable)
-      }
+      if (!run || notApplicable) return skip('not-applicable', notApplicable)
 
       try {
-        await run({ model, create: (config) => provider!.create(target.model, config) })
+        await run({ modelId: target.model, model, create: (config) => provider!.create(target.model, config) })
+        status = 'passed'
       } catch (error) {
-        const reason = providerErrorReason(error)
-        await recordResult(target, caseId, reason ? 'error' : 'failed', reason)
+        reason = providerErrorReason(error)
+        if (reason) status = 'error'
         throw error
       }
-      await recordResult(target, caseId, 'passed')
     })
   }
 })
