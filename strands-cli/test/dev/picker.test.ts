@@ -597,9 +597,7 @@ describe('HarnessPicker', () => {
     input.write('\u001b[A')
     await vi.waitFor(() => expect(text()).toContain('Source: /launch/strands-workspace'))
     input.write('\r')
-    await vi.waitFor(() =>
-      expect(text()).toContain('Creates /launch/strands-workspace with the agent and its strands-dev folder.')
-    )
+    await vi.waitFor(() => expect(text()).toContain('Folder: /launch/strands-workspace'))
     expect(text()).toContain('Enter create')
     input.write('\r')
 
@@ -728,13 +726,64 @@ describe('HarnessPicker', () => {
     )
   })
 
-  it('shouldIgnoreTextThatCannotBeInAFolderNameWhenTypingTheName', async () => {
+  it('shouldKeepTheAllowedCharactersAndSayWhatWasRemovedWhenTheInputHasOthers', async () => {
     const { press, text } = await createForm()
 
     await press(' /x')
+
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-harnessx'))
+    expect(text()).toContain('Removed space and "/". Use letters, digits, ".", "_", and "-".')
+  })
+
+  it('shouldKeepTheAllowedPartOfAPasteWhenThePasteHasOtherCharacters', async () => {
+    const { press, text } = await createForm()
+    await press('\u0015')
+
+    await press('support agent/v2')
+
+    await vi.waitFor(() => expect(text()).toContain('› Name: supportagentv2'))
+    expect(text()).toContain('Removed space and "/".')
+  })
+
+  it('shouldShowTheAllowedCharactersAgainWhenTheNextInputIsAllowed', async () => {
+    const { press, text } = await createForm()
+    await press(' ')
+    await vi.waitFor(() => expect(text()).toContain('Removed space.'))
+
     await press('y')
 
     await vi.waitFor(() => expect(text()).toContain('› Name: new-harnessy'))
+    expect(text()).toContain('Use letters, digits, ".", "_", and "-". Up to 64 characters.')
+    expect(text()).not.toContain('Removed')
+  })
+
+  it.each([
+    ['an empty name', ['\u0015'], 'Enter a name.'],
+    ['a dot', ['\u0015', '.'], 'Enter a name other than "." or "..".'],
+    ['two dots', ['\u0015', '..'], 'Enter a name other than "." or "..".'],
+  ])('shouldSayWhatTheNameNeedsWhenEnterIsPressedWith %s', async (_case, keys, message) => {
+    const { press, text, selected } = await createForm()
+    for (const key of keys) await press(key)
+
+    await press('\r')
+
+    await vi.waitFor(() => expect(text()).toContain(message))
+    expect(selected).not.toHaveBeenCalled()
+  })
+
+  it('shouldShowTheProjectFolderThatTheNameDoesNotChangeWhenTheProjectGoesInTheLaunchFolder', async () => {
+    const { press, text } = await createForm({ newProject: '/launch/strands-workspace' })
+
+    await press('-bot')
+
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-harness-bot'))
+    expect(text()).toContain('Folder: /launch/strands-workspace')
+  })
+
+  it('shouldSayTheFolderComesNextWhenTheNewHarnessNeedsAFolder', async () => {
+    const { text } = await createForm({ folderFor: () => ({ path: '/work/strands-dev', detected: false }) })
+
+    expect(text()).toContain('Folder: chosen in the next step')
   })
 
   it('shouldShowLeftAndRightInTheHintOnlyWhenTheLanguageFieldIsSelected', async () => {

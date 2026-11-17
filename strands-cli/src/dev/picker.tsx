@@ -16,6 +16,7 @@ import { devFailure, WorkspaceFolderInUse } from './errors.js'
 import { WorkspaceReplacementConfirmation } from './settings.js'
 import { basename, dirname, isAbsolute, relative } from 'node:path'
 import { isWorkspaceFolderName, WORKSPACE_FOLDER } from './workspace.js'
+import { editHarnessName, HARNESS_NAME_RULE, harnessNameProblem, type HarnessNameField } from './harness-name.js'
 
 export type HarnessChoice =
   | { kind: 'cli' }
@@ -67,9 +68,6 @@ interface PickerRow {
 
 const FOLDER_LABEL = 'Workspace folder: '
 const DEFAULT_NAME = 'new-harness'
-const NAME_LIMIT = 64
-const NAME_CHARACTERS = /^[a-zA-Z0-9._-]*$/u
-const isNameDraft = (value: string): boolean => value.length <= NAME_LIMIT && NAME_CHARACTERS.test(value)
 const prefilledFolder = ({ path }: FolderSuggestion): string => dirname(path)
 const opensAtOnce = (
   suggested: FolderSuggestion | undefined
@@ -226,7 +224,7 @@ export const HarnessPicker = ({
   const [placing, setPlacing] = useState<HarnessChoice>()
   const [language, setLanguage] = useState<'typescript' | 'python'>('typescript')
   const [field, setField] = useState<FormField>('name')
-  const [nameField, setNameField] = useState({ value: DEFAULT_NAME, cursor: DEFAULT_NAME.length })
+  const [nameField, setNameField] = useState<HarnessNameField>({ value: DEFAULT_NAME, cursor: DEFAULT_NAME.length })
   const name = nameField.value
   const [folder, setFolder] = useState({ value: '', cursor: 0, suggested: { path: '', detected: false } })
   const [failure, setFailure] = useState<string>()
@@ -345,22 +343,17 @@ export const HarnessPicker = ({
     folder.value.trim() === prefilledFolder(folder.suggested) ? folder.suggested.path : folder.value.trim()
   const editForm = (input: string, key: Key): void => {
     if (key.tab) return setLanguage(otherLanguage)
-    if (key.return)
-      return name && name !== '.' && name !== '..' ? choose({ kind: 'create', name, language }) : undefined
+    if (key.return) {
+      const problem = harnessNameProblem(name)
+      if (!problem) return choose({ kind: 'create', name, language })
+      return setNameField((current) => ({ ...current, notice: problem }))
+    }
     if (key.upArrow || key.downArrow) return setField(key.downArrow ? 'language' : 'name')
     if (field === 'language') {
       if (key.leftArrow || key.rightArrow) setLanguage(otherLanguage)
       return
     }
-    setNameField((current) => {
-      const { state } = reduceInputSequence(
-        { ...emptyEditor(), input: current.value, cursor: current.cursor },
-        input,
-        key,
-        'idle'
-      )
-      return isNameDraft(state.input) ? { value: state.input, cursor: state.cursor } : current
-    })
+    setNameField((current) => editHarnessName(current, input, key))
   }
   const harnessRows = harnesses.map(harnessRow)
   const choices = rows.filter(({ selectable }) => selectable !== false)
@@ -404,6 +397,11 @@ export const HarnessPicker = ({
   const detailNoteRows = cli ? lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice)
   const step = placing ? 'folder' : creating ? 'name' : 'list'
   const createsInPlace = opensAtOnce(folderOf({ kind: 'create', name, language }))
+  const projectFolder = !createsInPlace
+    ? 'chosen in the next step'
+    : newProject
+      ? sanitizeTerminalText(newProject)
+      : undefined
   const languageModelNotice = modelNotice?.(language)
   const next = {
     list: opensAtOnce(folderOf(selected.choice)) ? 'open' : 'continue',
@@ -527,25 +525,38 @@ export const HarnessPicker = ({
         </Box>
       ) : creating ? (
         <Box flexDirection="column" gap={1}>
-          <Box>
-            <Text {...(field === 'name' ? { color: accent, bold: true } : {})}>{nameLabel}</Text>
-            <EditableText
-              value={name}
-              cursor={nameField.cursor}
-              width={Math.max(1, detailWidth - nameLabel.length)}
-              active={field === 'name' && !busy}
-              placeholder=""
-            />
+          <Box flexDirection="column">
+            <Box>
+              <Text {...(field === 'name' ? { color: accent, bold: true } : {})}>{nameLabel}</Text>
+              <EditableText
+                value={name}
+                cursor={nameField.cursor}
+                width={Math.max(1, detailWidth - nameLabel.length)}
+                active={field === 'name' && !busy}
+                placeholder=""
+              />
+            </Box>
+            <Box paddingLeft={2}>
+              {nameField.notice ? (
+                <Text color={warningColor}>{sanitizeTerminalText(nameField.notice)}</Text>
+              ) : (
+                <Text dimColor>{HARNESS_NAME_RULE}</Text>
+              )}
+            </Box>
           </Box>
-          <Text {...(field === 'language' ? { color: accent, bold: true } : {})}>
-            {field === 'language' ? '›' : ' '} Language: {language}
-          </Text>
-          <Text dimColor>A new local project. Your CLI default stays unchanged.</Text>
-          {createsInPlace && newProject ? (
-            <Text dimColor wrap="truncate-middle">
-              Creates {sanitizeTerminalText(newProject)} with the agent and its strands-dev folder.
+          <Box flexDirection="column">
+            <Text {...(field === 'language' ? { color: accent, bold: true } : {})}>
+              {field === 'language' ? '›' : ' '} Language: {language}
             </Text>
-          ) : null}
+            {projectFolder ? (
+              <Box paddingLeft={2}>
+                <Text dimColor wrap="truncate-middle">
+                  Folder: {projectFolder}
+                </Text>
+              </Box>
+            ) : null}
+          </Box>
+          <Text dimColor>A new local project. Your CLI default stays unchanged.</Text>
           {languageModelNotice ? <Text color={warningColor}>{sanitizeTerminalText(languageModelNotice)}</Text> : null}
         </Box>
       ) : (

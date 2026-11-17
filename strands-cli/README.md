@@ -133,6 +133,8 @@ The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`
 When `strands-workspace/` holds the same new harness, dev opens it.
 When it holds a different harness, dev asks you to type DELETE before it replaces that project.
 If the model module of the saved profile is in the other language, the new harness uses the `model` of the profile. The form shows a note.
+The form shows the project folder under the name. The name is the harness name. It does not change the folder.
+A name can have letters, digits, `.`, `_`, and `-`, and at most 64 characters. The form removes other characters and shows a note.
 
 Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
 Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N`, or when the path is already a workspace.
