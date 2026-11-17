@@ -2071,6 +2071,16 @@ describe('VercelModel', () => {
           }
         )
 
+        it('falls back to an earlier user turn when the latest has no text', async () => {
+          const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
+          const messages = [
+            new Message({ role: 'user', content: [new TextBlock(PROMPT)] }),
+            new Message({ role: 'assistant', content: [new TextBlock('Send a picture.')] }),
+            new Message({ role: 'user', content: [image, new InjectedBlock({ text: REMINDER, source: 'todos' })] }),
+          ]
+          expect(await markersPerCall('amazon-bedrock', NOVA, [messages])).toStrictEqual([[{ text: PROMPT }]])
+        })
+
         it('follows the modelId override behind an inference profile ARN, dropping the ttl Nova rejects', async () => {
           const config = { modelId: NOVA, cacheConfig: { ttl: '1h' as const } }
           const calls = toolLoopCalls(true, SINGLE_ROUNDS)
@@ -2094,15 +2104,14 @@ describe('VercelModel', () => {
         ])
       })
 
-      it('never marks a tool result behind an id that names no model, under an explicit strategy', async () => {
+      it('treats an id that names no model as Claude under an explicit strategy, as BedrockModel does', async () => {
         const config = { cacheConfig: { strategy: 'anthropic' as const } }
-        const markers = await markersPerCall(
-          'amazon-bedrock',
-          PROFILE_ARN,
-          toolLoopCalls(false, PARALLEL_ROUNDS),
-          config
-        )
-        expect(markers).toStrictEqual([[{ text: PROMPT }], [{ text: PROMPT }], [{ text: 'note' }]])
+        const calls = toolLoopCalls(false, PARALLEL_ROUNDS)
+        expect(await markersPerCall('amazon-bedrock', PROFILE_ARN, calls, config)).toStrictEqual([
+          [{ text: PROMPT }],
+          [{ toolCallId: 'tu2' }],
+          [{ text: 'note' }],
+        ])
       })
     })
   })

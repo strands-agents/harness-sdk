@@ -99,7 +99,9 @@ export interface VercelModelConfig extends BaseModelConfig, LanguageModelCallSet
    * field (`ttl`, `toolsTTL`, `systemPromptTTL`, `messagesTTL`); Bedrock honors `systemPromptTTL` and
    * `messagesTTL`, caches tools as part of that prefix (so `toolsTTL` is inert), and under the default
    * `'auto'` strategy caches only models known to support it; OpenAI honors `cacheKey` and a retention
-   * `ttl`; every other provider ignores it with a one-time warning.
+   * `ttl`; every other provider ignores it with a one-time warning. On Bedrock, where the conversation cache point
+   * may go follows `modelId`, so set it to the underlying model when the provider's id does not name it, like an
+   * application inference profile ARN for Nova.
    */
   cacheConfig?: CacheConfig
 }
@@ -463,7 +465,10 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
   const promptCaching = modelInfo.capabilities?.promptCaching
   // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
   // keep the historical name test so caching does not turn off until the data catches up.
-  const supported = promptCaching === undefined ? namesClaude(modelId) : promptCaching === 'cachePoints'
+  const supported =
+    promptCaching === undefined
+      ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
+      : promptCaching === 'cachePoints'
   // A model the provider caches implicitly needs no cache points, so it gets no warning.
   if (!supported && promptCaching !== 'auto') {
     warnOnce(
@@ -475,30 +480,18 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
 }
 
 /**
- * Reports whether a Bedrock model id names a Claude model.
- *
- * @internal
- */
-function namesClaude(modelId: string): boolean {
-  const id = modelId.toLowerCase()
-  return id.includes('claude') || id.includes('anthropic')
-}
-
-/**
  * Picks which parts the wrapped Bedrock model takes a cache point directly after. Nova takes one only directly after
  * text, and reads an entry only when the point repeats the previous call's position, so its point never sits on a
  * tool-result turn, durable text and reminder text included: in a tool loop it stays on the prompt that started the
- * loop. Claude takes one after anything but a non-PDF document, tool results included. An id that names
- * neither, like an inference profile ARN without a `modelId` override, gets the Claude rule without tool results,
- * since Nova rejects a cache point after one.
+ * loop. Every other model gets the Claude rule, after anything but a non-PDF document, tool results included,
+ * as `BedrockModel` does for an id it cannot place.
  *
  * @param modelId - The model the model info describes
  * @internal
  */
 function bedrockAcceptsCachePointAfter(modelId: string): (candidate: CacheCandidate) => boolean {
   if (bedrockLimitsCachePoints(modelId)) return ({ part, toolTurn }) => !toolTurn && part.type === 'text'
-  const afterToolResult = namesClaude(modelId)
-  return ({ part }) => (part.type === 'tool-result' ? afterToolResult : !blocksCachePoint(part))
+  return ({ part }) => part.type === 'tool-result' || !blocksCachePoint(part)
 }
 
 /**
@@ -514,7 +507,9 @@ function blocksCachePoint(part: LanguageModelV3TextPart | LanguageModelV3FilePar
 
 /**
  * Finds the part the single conversation breakpoint sits on: the last candidate the provider accepts a breakpoint
- * after. Returns undefined when none qualifies, so the caller skips the point.
+ * after. Returns undefined when none qualifies, so the caller skips the point. Anthropic looks for the previous
+ * call's entry only about 20 blocks back from the point, so a call adding more blocks than that since the last one,
+ * like a wide round of parallel tool use, writes the prefix without reading it.
  *
  * @param cacheCandidates - The parts the breakpoint may sit on, in prompt order
  * @param accepts - Whether the provider takes a breakpoint directly after the candidate
