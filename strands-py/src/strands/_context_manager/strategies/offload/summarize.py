@@ -14,9 +14,9 @@ from ....types.content import ContentBlock, Message, Messages, split_system_prom
 from ....types.tools import ToolResultContent
 from ...content_rendering import format_tool_result_label, tool_result_to_content_blocks
 from ...message_trimming import (
-    RemovalPlaceholder,
+    _replace_run,
+    _split_into_runs,
     new_message,
-    placeholder_for,
     remove_messages,
     removed_tokens,
     repair_alternation,
@@ -118,29 +118,32 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not removable:
             return False
 
+        messages = context.messages
         end = self._server_side_end(context, model, removable)
         if end is not None:
             return await self._summarize_server_side(context, model, end)
 
-        async def summarize(run: Messages) -> RemovalPlaceholder | None:
-            return await self._summarize_run(context, model, run)
+        acted = False
+        # Last run first, so removing a run leaves the earlier runs' positions unchanged.
+        for run in reversed(_split_into_runs(messages, with_pairs(messages, removable))):
+            summary = await self._summarize_run(context, model, run)
+            if not summary:
+                continue
+            tokens = await removed_tokens(run, model)
+            marker = format_summarized(REMOVED_MESSAGES, tokens, summary)
+            if await _replace_run(messages, run, marker, tokens, "summarize", context.stash):
+                logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(run), tokens)
+                acted = True
+        return acted
 
-        return await remove_messages(context.messages, removable, summarize, "summarize", context.stash)
-
-    async def _summarize_run(self, context: ContextState, model: Model, run: Messages) -> RemovalPlaceholder | None:
-        """The summary marker for a run and the tokens it stands for; a failure is logged and keeps the run."""
+    async def _summarize_run(self, context: ContextState, model: Model, run: Messages) -> str:
+        """The summary of one run, or "" when the model call failed, which keeps the run for a later pass."""
         request = _run_request(context.messages, run)
         # A summarizer other than the agent's model cannot take reasoning signed for the model that wrote it.
         if model is not context.agent.model:
             request = _without_reasoning(request)
         log_fields = f"run_length=<{len(run)}>"
-        summary = await self._try_summarize(request, model, context.agent, context.invocation_context, log_fields)
-        if not summary:
-            return None
-
-        tokens = await removed_tokens(run, model)
-        logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(run), tokens)
-        return RemovalPlaceholder(format_summarized(REMOVED_MESSAGES, tokens, summary), tokens)
+        return await self._try_summarize(request, model, context.agent, context.invocation_context, log_fields)
 
     def _server_side_end(self, context: ContextState, model: Model, removable: list[Message]) -> int | None:
         """The end of the opening messages a server-side summary replaces, or None to summarize client-side.
@@ -227,9 +230,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
             " so thinking blocks kept after it will be dropped",
             type(model).__name__,
         )
-        text_for = placeholder_for(model, lambda tokens: format_summarized(REMOVED_MESSAGES, tokens, summary))
         return await remove_messages(
-            context.messages, list(context.messages[1:end]), text_for, "summarize", context.stash
+            context.messages,
+            list(context.messages[1:end]),
+            model,
+            lambda tokens: format_summarized(REMOVED_MESSAGES, tokens, summary),
+            "summarize",
+            context.stash,
         )
 
     async def _replace_block(

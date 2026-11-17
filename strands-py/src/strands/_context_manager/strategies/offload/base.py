@@ -13,7 +13,7 @@ from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message, Messages
 from ....types.offload import OffloadMethod
 from ....types.tools import ToolResult, ToolResultContent
-from ...message_trimming import collect_removable_with_pair, placeholder_for, remove_messages, repair_alternation
+from ...message_trimming import collect_removable_with_pair, remove_messages, repair_alternation
 from ...placeholder import (
     carried_tokens,
     format_elided,
@@ -388,8 +388,10 @@ class EmergencyTruncateStrategy:
         # Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
         if removable[remove_count]["role"] != "assistant":
             remove_count += 1
-        text_for = placeholder_for(context.agent.model, format_elided)
-        if not await remove_messages(messages, removable[:remove_count], text_for, "truncate", context.stash):
+        model = context.agent.model
+        if not await remove_messages(
+            messages, removable[:remove_count], model, format_elided, "truncate", context.stash
+        ):
             return False
         repair_alternation(messages)
         return True

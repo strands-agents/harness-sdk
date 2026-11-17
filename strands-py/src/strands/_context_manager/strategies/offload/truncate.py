@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResultContent
-from ...message_trimming import placeholder_for, remove_messages, with_pairs
+from ...message_trimming import remove_messages, with_pairs
 from ...methods.truncate import (
     TruncateConfig,
     _head_share,
@@ -107,8 +107,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         # A middle of only placeholders has nothing new to elide.
         if all(is_offloaded(block) for message in middle for block in message["content"]):
             return False
-        text_for = placeholder_for(context.agent.model, format_elided)
-        return await remove_messages(messages, middle, text_for, "truncate", context.stash)
+        return await remove_messages(messages, middle, context.agent.model, format_elided, "truncate", context.stash)
 
     async def _select_middle(self, eligible: list[Message], agent: Agent) -> list[Message]:
         """The eligible messages between the head and the tail kept within the preview token budget."""

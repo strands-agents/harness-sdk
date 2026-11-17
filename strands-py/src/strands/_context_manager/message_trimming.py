@@ -7,8 +7,8 @@ user/assistant alternation.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 from ..models._model_proxy import ModelProxy
 from ..types.content import ContentBlock, Message, MessageMetadata, Messages, Role, _ensure_tracking_id
@@ -22,21 +22,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RemovalPlaceholder(NamedTuple):
-    """The placeholder left for a removed run: its text and the tokens it stands for."""
-
-    text: str
-    tokens: int
-
-
-PlaceholderText = Callable[[Messages], Awaitable[RemovalPlaceholder | None]]
-"""Writes the placeholder for messages about to be removed with their tool pairs.
-
-Its text reads like ``[Dropped: earlier messages, ~1,200 tokens]`` or a summary. Returning None keeps them, as
-summarize does when its model call fails.
-"""
-
-
 async def removed_tokens(run: Messages, model: Model) -> int:
     """The tokens a run stands for once it is removed.
 
@@ -48,19 +33,6 @@ async def removed_tokens(run: Messages, model: Model) -> int:
     """
     carried = carried_tokens([block for message in run for block in message["content"]])
     return await ModelProxy(model).count_tokens(run) + carried
-
-
-def placeholder_for(model: Model, format_marker: Callable[[int], str]) -> PlaceholderText:
-    """A :func:`remove_messages` placeholder reading ``format_marker(tokens)``.
-
-    For the methods that always leave a marker. Summarize writes its own, since a failed summary keeps the run.
-    """
-
-    async def text_for(removed: Messages) -> RemovalPlaceholder | None:
-        tokens = await removed_tokens(removed, model)
-        return RemovalPlaceholder(format_marker(tokens), tokens)
-
-    return text_for
 
 
 def _index_of(messages: Messages, message: Message) -> int | None:
@@ -173,31 +145,33 @@ def _merge_metadata(earlier: MessageMetadata | None, later: MessageMetadata | No
 async def remove_messages(
     messages: Messages,
     to_remove: list[Message],
-    text_for: PlaceholderText,
+    model: Model,
+    format_marker: Callable[[int], str],
     method: OffloadMethod,
     stash: Stash | None,
 ) -> bool:
-    """Remove messages with their tool pairs, leaving one placeholder for each contiguous run of them.
+    """Remove messages with their tool pairs, leaving one ``format_marker(tokens)`` placeholder per contiguous run.
 
-    Each run is stashed under its own reference. A run whose text is None is kept, and a failed stash write leaves
-    the placeholder without a reference. Callers restore alternation once they are done.
+    For the methods that always leave a marker. Summarize drives :func:`_replace_run` itself, since a failed summary
+    keeps the run it was called for. Callers restore alternation once they are done.
     """
     acted = False
     # Last run first, so removing a run leaves the earlier runs' positions unchanged.
     for run in reversed(_split_into_runs(messages, with_pairs(messages, to_remove))):
-        if await _remove_run(messages, run, text_for, method, stash):
+        tokens = await removed_tokens(run, model)
+        if await _replace_run(messages, run, format_marker(tokens), tokens, method, stash):
             acted = True
     return acted
 
 
-async def _remove_run(
-    messages: Messages, run: Messages, text_for: PlaceholderText, method: OffloadMethod, stash: Stash | None
+async def _replace_run(
+    messages: Messages, run: Messages, text: str, tokens: int, method: OffloadMethod, stash: Stash | None
 ) -> bool:
-    """Replace a contiguous run of messages with one placeholder."""
-    placeholder = await text_for(run)
-    if placeholder is None:
-        return False
+    """Replace a contiguous run of messages with one placeholder reading ``text``, stashed under its own reference.
 
+    A failed stash write leaves the placeholder without a reference, rather than keeping content already accounted
+    for.
+    """
     stash_ref = await stash_removed(stash, run, method)
     start = _index_of(messages, run[0])
     if start is None:
@@ -205,7 +179,7 @@ async def _remove_run(
     # Stashed before the splice and the marker inserted without an await between: a cancellation here would
     # otherwise leave the run neither in the history nor retrievable.
     del messages[start : start + len(run)]
-    insert_marker(messages, start, offload_placeholder(method, placeholder.text, stash_ref, placeholder.tokens))
+    insert_marker(messages, start, offload_placeholder(method, text, stash_ref, tokens))
     return True
 
 

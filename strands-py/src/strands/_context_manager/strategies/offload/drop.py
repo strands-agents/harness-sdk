@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResultContent
-from ...message_trimming import placeholder_for, remove_messages
+from ...message_trimming import remove_messages
 from ...placeholder import format_dropped, format_dropped_messages
 from ...types import ContextState
 from .base import BaseOffloadStrategy
@@ -37,9 +37,9 @@ class DropStrategy(BaseOffloadStrategy):
         return DropStrategy(self._target, conditions)
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        text_for = placeholder_for(context.agent.model, format_dropped_messages)
         removable = await self._removable_messages(context)
-        return await remove_messages(context.messages, removable, text_for, "drop", context.stash)
+        model = context.agent.model
+        return await remove_messages(context.messages, removable, model, format_dropped_messages, "drop", context.stash)
 
     async def _replace_block(
         self,
