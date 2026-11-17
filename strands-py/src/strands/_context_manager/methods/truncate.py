@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Literal, NamedTuple
+from typing import Literal
 
 from typing_extensions import TypedDict
 
@@ -37,18 +37,6 @@ class TruncateConfig(TypedDict, total=False):
 
     preview_tokens: int
     preview: Literal["head", "tail", "head_tail"]
-
-
-class _TruncatedToolResult(NamedTuple):
-    """A tool result split by :func:`_truncate_tool_result_block`.
-
-    Attributes:
-        preview: Preview of the result's text and JSON items.
-        kept: Items kept as they are: media, whose payload can't be previewed as text, and placeholders.
-    """
-
-    preview: str
-    kept: list[ToolResultContent]
 
 
 def _resolve_preview_tokens(config: TruncateConfig | None = None) -> int:
@@ -89,11 +77,12 @@ def _build_preview(full_text: str, block_count: int, config: TruncateConfig | No
 
 def _truncate_tool_result_block(
     tool_result: ToolResult, config: TruncateConfig | None = None
-) -> _TruncatedToolResult | None:
+) -> tuple[str, list[ToolResultContent]] | None:
     """Split a tool result into a preview of its text and JSON items, and the items kept as they are.
 
     Returns:
-        The split result, or None when nothing would be truncated.
+        The preview, and the items kept as they are: media, whose payload can't be previewed as text, and
+        placeholders. None when nothing would be truncated.
     """
     textual: list[str] = []
     kept: list[ToolResultContent] = []
@@ -111,7 +100,7 @@ def _truncate_tool_result_block(
 
     full_text = "\n".join(textual)
     preview = _build_preview(full_text, len(textual), config)
-    return None if preview == full_text else _TruncatedToolResult(preview, kept)
+    return None if preview == full_text else (preview, kept)
 
 
 def _truncate_text_block(block: ContentBlock, config: TruncateConfig | None = None) -> str | None:

@@ -132,9 +132,10 @@ class TruncateStrategy(BaseOffloadStrategy):
             truncated = _truncate_tool_result_block(tool_result, self._truncate_config)
             if truncated is None:
                 return None
+            result_preview, kept = truncated
             logger.debug("tool_use_id=<%s>, tokens=<%s> | truncated tool result", tool_result["toolUseId"], tokens)
-            placeholder = await self._placeholder(truncated.preview, stash_ref, tokens)
-            return placeholder_result(tool_result, [placeholder, *truncated.kept])
+            placeholder = await self._placeholder(result_preview, stash_ref, tokens)
+            return placeholder_result(tool_result, [placeholder, *kept])
 
         if is_text_block(block):
             preview = _truncate_text_block(block, self._truncate_config)

@@ -88,12 +88,11 @@ class TestTruncateToolResultBlock:
         large_text = "x" * 50000
         tool_result = ToolResult(toolUseId="tool-1", status="success", content=[{"text": large_text}])
 
-        truncated = _truncate_tool_result_block(tool_result, {"preview_tokens": 100})
+        preview, kept = _truncate_tool_result_block(tool_result, {"preview_tokens": 100})
 
-        assert truncated is not None
-        assert "[Truncated:" in truncated.preview
-        assert len(truncated.preview) < len(large_text)
-        assert truncated.kept == []
+        assert "[Truncated:" in preview
+        assert len(preview) < len(large_text)
+        assert kept == []
 
     def test_returns_none_for_short_content(self):
         tool_result = ToolResult(toolUseId="tool-1", status="success", content=[{"text": "short result"}])
@@ -102,29 +101,26 @@ class TestTruncateToolResultBlock:
     def test_truncates_json_content(self):
         tool_result = ToolResult(toolUseId="tool-1", status="success", content=[{"json": {"key": "v" * 50000}}])
 
-        truncated = _truncate_tool_result_block(tool_result, {"preview_tokens": 100})
+        preview, _ = _truncate_tool_result_block(tool_result, {"preview_tokens": 100})
 
-        assert truncated is not None
-        assert "[Truncated:" in truncated.preview
+        assert "[Truncated:" in preview
 
     def test_keeps_media_as_it_is(self):
         image = {"image": {"format": "png", "source": {"bytes": b"img"}}}
         tool_result = ToolResult(toolUseId="tool-1", status="success", content=[{"text": "x" * 50000}, image])
 
-        truncated = _truncate_tool_result_block(tool_result, {"preview_tokens": 100})
+        _, kept = _truncate_tool_result_block(tool_result, {"preview_tokens": 100})
 
-        assert truncated is not None
-        assert truncated.kept == [image]
+        assert kept == [image]
 
     def test_keeps_a_placeholder_out_of_the_preview(self):
         placeholder = {"text": "[Dropped: ~5 tokens]", "offloaded": {"method": "drop"}}
         tool_result = ToolResult(toolUseId="tool-1", status="success", content=[placeholder, {"text": "y" * 50000}])
 
-        truncated = _truncate_tool_result_block(tool_result, {"preview_tokens": 100})
+        preview, kept = _truncate_tool_result_block(tool_result, {"preview_tokens": 100})
 
-        assert truncated is not None
-        assert truncated.kept == [placeholder]
-        assert "[Dropped:" not in truncated.preview
+        assert kept == [placeholder]
+        assert "[Dropped:" not in preview
 
     def test_returns_none_when_no_textual_content(self):
         tool_result = ToolResult(
