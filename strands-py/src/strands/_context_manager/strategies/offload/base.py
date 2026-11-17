@@ -345,7 +345,11 @@ class BaseOffloadStrategy(ABC):
         A strategy acting on arrival is the exception: there it would take media the model has not read, which is
         what ``Offload.<method>("media")`` refuses outright, so it needs conditions to reach media at all.
         """
-        return measured == 0 and not self._runs_eagerly and _holds_media(block)
+        if measured != 0 or self._runs_eagerly:
+            return False
+        if is_tool_result_block(block):
+            return any(is_media_block(item) for item in block["toolResult"]["content"])
+        return is_media_block(block)
 
     @abstractmethod
     async def _replace_block(
@@ -423,10 +427,3 @@ def _without_protected_pairs(messages: Messages, unprotected: list[Message]) -> 
         and id(message) in unprotected_ids
         and all(id(partner) in unprotected_ids for partner in collect_removable_with_pair(messages, index))
     ]
-
-
-def _holds_media(block: ContentBlock) -> bool:
-    """Whether a block is media, or a tool result holding media."""
-    if is_tool_result_block(block):
-        return any(is_media_block(item) for item in block["toolResult"]["content"])
-    return is_media_block(block)

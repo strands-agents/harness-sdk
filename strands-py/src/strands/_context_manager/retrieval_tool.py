@@ -52,7 +52,8 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
                 tool_use_id,
                 f'reference not found: {reference}. Pass only the <id> from the placeholder\'s "[ref: <id>]".',
             )
-        if any(_entry_is_offloaded(entry) for entry in entries):
+        # A placeholder stands where the original content no longer is.
+        if any(not isinstance(entry, list) and is_offloaded(entry) for entry in entries):
             return _error(tool_use_id, f"original content for reference {reference} is no longer available")
 
         if inputs.get("pattern") is None and inputs.get("line_range") is None:
@@ -135,7 +136,11 @@ def _full_content(entries: list[_StashEntry], max_chars: int) -> list[ToolResult
     Tool result items, and removed messages rendered as role markers and their content, are returned as blocks, so
     media reaches the model as media and only their text is cut to ``max_chars``; anything else is returned as JSON.
     """
-    blocks = [block for entry in entries for block in _entry_blocks(entry)]
+    blocks = [
+        block
+        for entry in entries
+        for block in (flatten_messages_to_content(entry) if isinstance(entry, list) else [entry])
+    ]
     items = [item for item in (_as_result_item(block) for block in blocks) if item is not None]
     if len(items) == len(blocks):
         return _clip_text(items, max_chars)
@@ -149,7 +154,12 @@ def _search_entries(
     tool_use_id: str, entries: list[_StashEntry], inputs: Mapping[str, Any], max_chars: int
 ) -> ToolResult:
     """The lines of the entries' text that match ``pattern`` or fall in ``line_range``."""
-    text = _join_text(_entry_text(entry) for entry in entries)
+    text = _join_text(
+        _join_text(_block_text(block) for message in entry for block in message["content"])
+        if isinstance(entry, list)
+        else _block_text(entry)
+        for entry in entries
+    )
     if text is None:
         return _error(tool_use_id, "cannot search non-text content. Omit pattern/line_range to retrieve full content.")
 
@@ -171,13 +181,6 @@ def _search_entries(
     except ValueError as error:
         return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=str(error))])
     return ToolResult(toolUseId=tool_use_id, status="success", content=[ToolResultContent(text=found)])
-
-
-def _entry_blocks(entry: _StashEntry) -> list[ContentBlock | ToolResultContent]:
-    """An entry as content blocks: removed messages rendered with role markers, or the stored block itself."""
-    if isinstance(entry, list):
-        return list(flatten_messages_to_content(entry))
-    return [entry]
 
 
 def _as_result_item(block: ContentBlock | ToolResultContent) -> ToolResultContent | None:
@@ -225,13 +228,6 @@ def _clip_text(items: list[ToolResultContent], max_chars: int) -> list[ToolResul
     return kept
 
 
-def _entry_text(entry: _StashEntry) -> str | None:
-    """The searchable text of an entry: its text, JSON, and tool-result text, in order."""
-    if isinstance(entry, list):
-        return _join_text(_block_text(block) for message in entry for block in message["content"])
-    return _block_text(entry)
-
-
 def _block_text(block: ContentBlock | ToolResultContent) -> str | None:
     """The searchable text of a block, or None when it holds none."""
     data: Mapping[str, Any] = block
@@ -250,11 +246,6 @@ def _join_text(parts: Any) -> str | None:
     """The present parts joined by newlines, or None when none of them held text."""
     present = [part for part in parts if part is not None]
     return "\n".join(present) if present else None
-
-
-def _entry_is_offloaded(entry: _StashEntry) -> bool:
-    """Whether an entry is a placeholder, which stands where the original content no longer is."""
-    return not isinstance(entry, list) and is_offloaded(entry)
 
 
 def _error(tool_use_id: str, message: str) -> ToolResult:

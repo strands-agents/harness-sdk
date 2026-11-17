@@ -156,7 +156,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if self._conditions.block_threshold is not None:
             self._warn_server_side_skip(context, model)
             return None
-        end = _end_of(messages, with_pairs(messages, removable))
+        removable_ids = {id(message) for message in with_pairs(messages, removable)}
+        end = max((index + 1 for index, message in enumerate(messages) if id(message) in removable_ids), default=0)
         if end <= 1:
             return None
         if any("toolUse" in block for block in messages[0]["content"]):
@@ -208,8 +209,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
             logger.warning("messages=<%d>, error=<%s> | summarization failed", replaced, error, exc_info=True)
             return False
         _record_summary_usage(context.invocation_context, result)
-        summary = _provider_summary(result)
-        if summary is None:
+        # Only a summary the provider wrote can be replayed by the agent's model.
+        summary = _first_summary(result)
+        if summary is None or not summary["summary"].get("provider"):
             return await self._place_text_summary(context, model, end, _summary_text(result))
 
         # Message 0 stays in the history, but a provider sending the summary as a compaction block stops sending
@@ -367,12 +369,6 @@ def _model_id(model: Model) -> object:
     return config.get("model_id") if isinstance(config, dict) else getattr(config, "model_id", None)
 
 
-def _end_of(messages: Messages, removable: list[Message]) -> int:
-    """The index just past the last of ``removable`` in ``messages``."""
-    removable_ids = {id(message) for message in removable}
-    return max((index + 1 for index, message in enumerate(messages) if id(message) in removable_ids), default=0)
-
-
 def _run_request(messages: Messages, run: Messages) -> Messages:
     """The conversation a run's summary sends, which holds only message 0 and the messages the run replaces.
 
@@ -408,12 +404,6 @@ def _summary_message(summary: ContentBlock, reference: ContentBlock | None) -> M
     provider's summary text is signed, so the reference cannot be written into it.
     """
     return new_message("assistant", [summary, reference] if reference else [summary])
-
-
-def _provider_summary(result: SummarizeResult) -> ContentBlock | None:
-    """``result``'s summary when its provider wrote it, which is the only form the agent's model can replay."""
-    summary = _first_summary(result)
-    return summary if summary and summary["summary"].get("provider") else None
 
 
 def _summary_text(result: SummarizeResult) -> str:

@@ -123,10 +123,6 @@ def _percent_hint(raw: Any) -> str:
     return f'; for {percent}%, write "{percent}%"'
 
 
-def _format_value(raw: Any) -> str:
-    return f'"{raw}"' if isinstance(raw, str) else str(raw)
-
-
 def _effective_window_limit(agent: Agent) -> int:
     """The model's context window, falling back to the default ``estimate_utilization`` uses."""
     return agent.model.context_window_limit or DEFAULT_CONTEXT_WINDOW_LIMIT

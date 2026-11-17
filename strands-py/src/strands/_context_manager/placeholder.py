@@ -82,7 +82,8 @@ def format_summarized(description: str, tokens: int, summary: str | None = None)
 
 def format_truncated(block_count: int, tokens: int, preview: str) -> str:
     """Marker for ``block_count`` blocks shortened to ``preview``, followed by the preview."""
-    return _with_body(_marker("Truncated", _count_of(block_count, "block"), _approx_tokens(tokens)), preview)
+    blocks = f"{block_count} block" if block_count == 1 else f"{block_count} blocks"
+    return _with_body(_marker("Truncated", blocks, _approx_tokens(tokens)), preview)
 
 
 def format_elided(tokens: int) -> str:
@@ -100,10 +101,6 @@ def _marker(label: str, *details: str | None) -> str:
 def _approx_tokens(tokens: int) -> str:
     """The size as ``~2,525 tokens``, or empty when the token count could not measure it."""
     return f"~{tokens:,} tokens" if tokens else ""
-
-
-def _count_of(count: int, noun: str) -> str:
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def _with_body(header: str, body: str | None) -> str:

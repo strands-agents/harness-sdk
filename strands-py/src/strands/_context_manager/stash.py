@@ -54,15 +54,6 @@ def _parse_stash_key(key: str) -> tuple[str, int] | None:
     return owner, int(index)
 
 
-def _resolve_stash_namespace(
-    storage: Storage, session_id: str, agent_id: str, *, custom_stash_namespace: bool
-) -> Storage:
-    """Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent."""
-    if custom_stash_namespace and getattr(storage, "_namespaced", None) is _NAMESPACED:
-        return storage
-    return _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
-
-
 class Stash:
     """Namespaced storage wrapper for persisting offloaded content blocks."""
 
@@ -71,8 +62,11 @@ class Stash:
     ) -> None:
         self._base_storage = storage
         self._session_id = session_id
-        self._storage = _resolve_stash_namespace(
-            storage, session_id, agent_id, custom_stash_namespace=custom_stash_namespace
+        # A caller-scoped view is the exact stash root when allowed; otherwise namespace per session and agent.
+        self._storage = (
+            storage
+            if custom_stash_namespace and getattr(storage, "_namespaced", None) is _NAMESPACED
+            else _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
         )
 
     @property
