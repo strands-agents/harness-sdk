@@ -22,6 +22,7 @@ import type {
 } from '../agent/types.js'
 import type { ParsedArgs } from '../cli/arguments.js'
 import type { CliConfigSnapshot, CliConfigStore, DetectedProviderEnvironment } from '../config/store.js'
+import type { DevStateManager } from '../dev/runtime.js'
 import { modelChangeMode } from '../model/runtime.js'
 import { effortDisplayLabel, effortOptions, effortValue, validateEffortSelection } from '../model/selection.js'
 import { terminateProcessTree } from '../terminal/process-tree.js'
@@ -70,6 +71,7 @@ export interface TypescriptMetadata {
   sessionDirectory: string
   sessionIdentity: ChatConversation['session']
   managedSession: boolean
+  turnedOffState: readonly DevStateManager[]
   currentModel: string
   provider: string
   selection: NonNullable<ChatConversation['selection']>

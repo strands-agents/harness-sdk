@@ -2136,6 +2136,27 @@ describe('ChatController', () => {
     await controller.dispose()
   })
 
+  it('shouldShowWhatDevDeactivatedWhenADevChatOpensAnAgentWithCustomState', async () => {
+    const controller = new ChatController(idleBackend(), {
+      turnedOffState: ['session', 'memory'],
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+      },
+    })
+
+    expect(controller.getSnapshot().notices).toContainEqual({
+      id: 'dev-state',
+      status: 'error',
+      text: 'Dev deactivated the custom session manager and memory of this agent in this chat. Thus the chat cannot write into the stores of the agent. Dev does not save this chat.',
+    })
+    await controller.dispose()
+  })
+
   it('shouldNotOpenAFixPanelWhenATurnFailsOutsideADevChat', async () => {
     const backend = idleBackend({
       async *stream() {

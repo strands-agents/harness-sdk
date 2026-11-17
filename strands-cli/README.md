@@ -283,6 +283,10 @@ Legacy `.strands/config.json` agents remain in place. Startup creates a `.config
 For the old `strands-dev/base-cli/` layout, select Base CLI and type the folder that contains `strands-dev/`.
 Dev then creates the control files in `strands-dev/` and binds the existing agent.
 
+The dev chat keeps its sessions and memory in the `.strands/state/` folder of the workspace, apart from the stores of the agent.
+When the agent sets its own session manager, memory manager, memory stores, or storage, dev deactivates them in the dev chat.
+A notice in the chat tells you what dev deactivated. Without the session manager, dev does not save the chat.
+
 ### Workspace Settings
 
 In a dev session, `/settings` includes **Strands dev workspace**. This section shows the workspace folder and active agent path.

@@ -715,6 +715,53 @@ const timer = setInterval(() => {
     }
   }, 30000)
 
+  it('shouldTurnOffTheCustomSessionManagerWhenADevChatOpensTheAgent', async () => {
+    const ownSessions = join(root, 'own-sessions')
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'
+import { FileStorage, Model, SessionManager } from '@strands-agents/sdk'
+class LocalModel extends Model {
+  getConfig() { return { modelId: 'local', contextWindowLimit: 10000 } }
+  updateConfig() {}
+  async *stream() {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent' }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'local answer' } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+  }
+}
+const sessionManager = new SessionManager({ sessionId: 'own', storage: { snapshot: new FileStorage(${JSON.stringify(ownSessions)}) }, saveLatestOn: 'message' })
+export const agent = await createHarness({ ...${JSON.stringify(defaults)}, name: 'Dev', sessionManager })
+agent.model = new LocalModel()
+`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = {
+      args: parseArgs(['dev', '--workspace', directory, '--agent', project().entrypoint]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    }
+    const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+
+    try {
+      await chat.submit('hello')
+
+      expect(chat.getSnapshot().notices.map(({ text }) => text)).toContain(
+        'Dev deactivated the custom session manager of this agent in this chat. Thus the chat cannot write into the stores of the agent. Dev does not save this chat.'
+      )
+      expect(JSON.stringify(chat.getSnapshot().completedTurns)).toContain('local answer')
+      expect(existsSync(ownSessions)).toBe(false)
+    } finally {
+      await chat.dispose()
+    }
+  }, 30000)
+
   it('keeps the old process usable after a replacement evaluates and fails', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'original'\n")
     const authored = source()

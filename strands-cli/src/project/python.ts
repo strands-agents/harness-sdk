@@ -30,6 +30,7 @@ import type {
   ChatRunResult,
 } from '../agent/types.js'
 import { CliConfigStore } from '../config/store.js'
+import type { DevStateManager } from '../dev/runtime.js'
 import { discoverProviderModels } from '../model/discovery.js'
 import {
   effortDisplayLabel,
@@ -68,6 +69,7 @@ interface PythonState {
   tools: { name: string; description: string }[]
   skills: SkillInfo[]
   privatePaths: string[] | null
+  turnedOffState?: DevStateManager[]
 }
 
 type WorkerMessage =
@@ -238,6 +240,9 @@ export class PythonBackend implements ChatBackend {
   }
   get privatePaths(): readonly string[] | null {
     return this._state.privatePaths
+  }
+  get turnedOffState(): readonly DevStateManager[] {
+    return this._state.turnedOffState ?? []
   }
 
   info(): ReturnType<NonNullable<ChatBackend['info']>> {

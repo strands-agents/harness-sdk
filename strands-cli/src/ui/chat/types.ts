@@ -30,6 +30,7 @@ import type { ChatSettings, SettingsCategory } from '../../config/settings.js'
 import type { ProfileEffort } from '../../config/store.js'
 import type { AgentProjectOutput } from '../../project/export.js'
 import type { ImportedAgentProject } from '../../project/import.js'
+import type { DevStateManager } from '../../dev/runtime.js'
 import type { ChatSessionRuntime, FailedTurn, ResumeSession } from '../../session/sessions.js'
 import type { LocalCommandSpec } from './commands.js'
 import type { CommandAssistance } from './commands.js'
@@ -317,6 +318,7 @@ export interface ChatControllerOptions {
   initialMessages?: readonly Message[]
   initialTurns?: readonly ChatTurn[]
   failedTurns?: readonly FailedTurn[]
+  turnedOffState?: readonly DevStateManager[]
   initialConfigurationBaseline?: ChatConfigurationBaseline
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void

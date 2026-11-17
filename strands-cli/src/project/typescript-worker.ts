@@ -12,6 +12,7 @@ import {
 import type { ChatEvent, ChatRunResult } from '../agent/types.js'
 import { invocationAgentForRun } from '../cli/invocation.js'
 import type { RuntimeConfig } from '../config/store.js'
+import type { DevStateManager } from '../dev/runtime.js'
 import { effortForModel, effortOptions, validateEffortSelection } from '../model/selection.js'
 import { DEFAULT_SESSION_DIR, sessionSettings } from '../session/sessions.js'
 import { errorMessage } from '../terminal/text.js'
@@ -39,6 +40,7 @@ let owner: InteractiveRuntime | undefined
 let active: InteractiveRuntimeBackend | undefined
 let config: TypescriptConfig | undefined
 let managedSession = false
+let turnedOffState: readonly DevStateManager[] = []
 let nextId = 1
 let shutdown: Promise<void> | undefined
 let initialization: Promise<unknown> | undefined
@@ -115,6 +117,7 @@ function metadata(): TypescriptMetadata {
     sessionDirectory: runtime.sessionDirectory,
     sessionIdentity: backend.sessionIdentity,
     managedSession,
+    turnedOffState,
     currentModel: runtime.current,
     provider: runtime.provider,
     selection: runtime.forkConfiguration(),
@@ -181,6 +184,7 @@ async function initialize(
       input.project
     )
     if (closing) throw new Error('TypeScript runtime closed during initialization.')
+    turnedOffState = invocation.turnedOffState ?? []
     const configured = sessionSettings(invocation.options.session)
     const initialDirectory = resolve(input.initialWorkspace, configured.dir ?? DEFAULT_SESSION_DIR)
     const saved = input.conversation?.session

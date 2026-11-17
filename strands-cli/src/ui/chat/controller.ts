@@ -61,6 +61,7 @@ import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
 import { modelControlErrorMessage, profileEffort } from '../../model/selection.js'
 import { isExpiredModelCredential, isModelCredentialFailure } from '../../model/credential-failure.js'
+import { devStateNotice } from '../../dev/runtime.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import { canUseNativePicker, chooseDirectory } from '../../terminal/directory-picker.js'
@@ -305,6 +306,8 @@ export class ChatController implements ChatControllerApi {
         status: 'success',
         text: `strands dev · ${backend.name}\nWorkspace: ${root}\nHarness: ${entrypoint} (${origin})\nModel, tools, and instructions come from this workspace.`,
       })
+      const stateNotice = devStateNotice(options.turnedOffState ?? [])
+      if (stateNotice) this._notices.push({ id: 'dev-state', status: 'error', text: stateNotice })
     }
     this._snapshot = this._createSnapshot()
     for (const command of this._devCommands) command.attach?.(this._devCommandContext())

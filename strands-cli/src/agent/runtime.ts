@@ -121,6 +121,10 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
     mcpServers: configuredMcpServers,
     ...portableAgentOptions
   } = options.agentOptions ?? {}
+  const sessionManagerCleared =
+    options.agentOptions !== undefined &&
+    Object.hasOwn(options.agentOptions, 'sessionManager') &&
+    options.agentOptions.sessionManager === undefined
   const sourceDefinition =
     options.project && typeof portableAgentOptions.model === 'string'
       ? {
@@ -380,6 +384,9 @@ export async function createInteractiveRuntime(options: CreateInteractiveRuntime
     }
     // Exported source factories retain authored options unless the override contains the key.
     if (configuredMcpServers) Reflect.set(controllerOptions, 'mcpServers', undefined)
+    if (sessionManagerCleared && request.sessionManager === undefined) {
+      Reflect.set(controllerOptions, 'sessionManager', undefined)
+    }
 
     const configSnapshot = config.snapshot()
     let exportProfile = {

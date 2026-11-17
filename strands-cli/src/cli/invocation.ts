@@ -15,13 +15,14 @@ import { importAgentProject, type ImportedAgentProject } from '../project/import
 import type { AgentFactory } from '../project/typescript.js'
 import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
-import { isolateDevState } from '../dev/runtime.js'
+import { isolateDevState, type DevStateManager } from '../dev/runtime.js'
 
 interface InvocationAgent {
   profile?: HarnessAgentConfig
   options: HarnessAgentOptions
   buildAgent?: AgentFactory
   project?: ImportedAgentProject
+  turnedOffState?: readonly DevStateManager[]
 }
 
 interface InvocationConfigStore {
@@ -50,12 +51,15 @@ export async function invocationAgentForRun(
       ...(await projectOverrides(args, cwd, authored.options)),
       printer: false,
     }
-    const options = args.dev?.workspace ? isolateDevState(configured, args.dev.workspace) : configured
+    const { options, turnedOff } = args.dev?.workspace
+      ? isolateDevState(configured, args.dev.workspace)
+      : { options: configured, turnedOff: [] }
     requireBedrockRegion(options.model)
     return {
       options,
       buildAgent: authored.createAgent,
       project,
+      turnedOffState: turnedOff,
     }
   }
   const baseDir = snapshot.profileBaseDir ?? cwd

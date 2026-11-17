@@ -152,6 +152,7 @@ export async function createTypescriptChat(
         initialMessages: messages,
         ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
         ...(failedTurns ? { failedTurns } : {}),
+        turnedOffState: backend.state.turnedOffState,
         ...(conversation?.configurationBaseline
           ? { initialConfigurationBaseline: conversation.configurationBaseline }
           : {}),
@@ -369,6 +370,7 @@ export async function createPythonChat(
       initialMessages: backend.messages,
       ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
       ...(failedTurns ? { failedTurns } : {}),
+      turnedOffState: backend.turnedOffState,
       ...(conversation?.configurationBaseline
         ? { initialConfigurationBaseline: conversation.configurationBaseline }
         : {}),

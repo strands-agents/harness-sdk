@@ -407,8 +407,9 @@ class Runtime:
         if flags.get("sessionId") is not None and (session is True or isinstance(session, dict)):
             self.options["session"] = {**(session if isinstance(session, dict) else {}), "id": flags["sessionId"]}
         self.explicit_option_keys = set(self.options)
+        self.turned_off_state = getattr(module, "_strands_turned_off_state", [])
         if command.get("devWorkspace"):
-            isolated = isolate_dev_options({**authored, **self.options}, Path(command["devWorkspace"]).resolve())
+            isolated, _ = isolate_dev_options({**authored, **self.options}, Path(command["devWorkspace"]).resolve())
             for key in ("session", "memory"):
                 self.options[key] = isolated.get(key, False)
                 self.explicit_option_keys.add(key)
@@ -721,6 +722,7 @@ class Runtime:
             ),
             "messages": display_messages(self.agent),
             "privatePaths": agent_private_paths(self.agent),
+            "turnedOffState": self.turned_off_state,
             "tools": [
                 {"name": spec["name"], "description": spec.get("description", "")}
                 for spec in self.agent.tool_registry.get_all_tool_specs()
@@ -1053,22 +1055,30 @@ def direct_harness_assignment(entrypoint):
 
 
 def isolate_dev_options(options, root):
-    if any(options.get(key) is not None for key in ("session_manager", "memory_manager", "storage")):
-        raise ValueError("Dev cannot isolate custom session, memory, or storage managers.")
     result = dict(options)
+    turned_off = []
     for key, directory in (("session", "sessions"), ("memory", "memory")):
         configured = options.get(key, True)
-        if configured is False:
-            continue
-        if configured is not True and not isinstance(configured, dict):
-            raise ValueError(f"Dev cannot isolate a custom {key} manager.")
-        if isinstance(configured, dict) and configured.get("stores"):
-            raise ValueError("Dev cannot isolate custom memory stores.")
-        result[key] = {
-            **(configured if isinstance(configured, dict) else {}),
-            "dir": str(root / ".strands" / "state" / directory),
-        }
-    return result
+        manager = options.get(f"{key}_manager")
+        custom = (
+            manager is not None
+            or (configured not in (True, False, None) and not isinstance(configured, dict))
+            or (isinstance(configured, dict) and bool(configured.get("stores")))
+        )
+        if custom:
+            turned_off.append(key)
+            result[key] = False
+            if manager is not None:
+                result[f"{key}_manager"] = None
+        elif configured is not False and configured is not None:
+            result[key] = {
+                **(configured if isinstance(configured, dict) else {}),
+                "dir": str(root / ".strands" / "state" / directory),
+            }
+    if options.get("storage") is not None:
+        turned_off.append("storage")
+        result["storage"] = None
+    return result, turned_off
 
 
 def installed_project_module(entrypoint, root):
@@ -1102,11 +1112,12 @@ def load_project(entrypoint, root, dev_root=None):
     original_create_harness = strands_harness.create_harness
 
     def capture_create_harness(*args, **options):
+        turned_off = []
         if dev_root is not None:
-            options = isolate_dev_options(options, dev_root)
+            options, turned_off = isolate_dev_options(options, dev_root)
         agent = original_create_harness(*args, **options)
         if captured is not None:
-            captured.append((agent, args, options))
+            captured.append((agent, args, options, turned_off))
         return agent
 
     strands_harness.create_harness = capture_create_harness
@@ -1125,13 +1136,16 @@ def load_project(entrypoint, root, dev_root=None):
     agent = getattr(module, "agent", None)
     if not isinstance(agent, Agent):
         raise TypeError('Export a Strands Agent as "agent".')
-    construction = next(((args, options) for candidate, args, options in captured if candidate is agent), None)
+    construction = next(
+        ((args, options, turned_off) for candidate, args, options, turned_off in captured if candidate is agent), None
+    )
     captured = None
     if construction is not None:
         module._strands_options = construction[1]
+        module._strands_turned_off_state = construction[2]
     if not callable(getattr(module, "create_agent", None)) and direct_harness_assignment(entrypoint):
         if construction is not None:
-            args, options = construction
+            args, options, _ = construction
 
             def create_agent(**overrides):
                 return original_create_harness(*args, **{**options, **overrides})

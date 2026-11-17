@@ -241,6 +241,36 @@ ${(name === 'memory store'
     expect(chat.actionableCommandToken('/optimize-harness')).toBeUndefined()
   })
 
+  it('shouldTurnOffTheCustomSessionManagerWhenADevChatOpensTheAgent', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(
+      entrypoint,
+      `from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
+${factorySource.replace('"session": False,', '"session": False, "session_manager": SnapshotSessionManager("own", storage=LocalFileStorage("own-sessions")),')}`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    const config = CliConfigStore.memory()
+    await config.setPermissionMode('bypassPermissions')
+    const chat = await createPythonChat(
+      entrypoint,
+      config,
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+
+    await chat.submit('{"tool":"status"}')
+
+    expect(chat.getSnapshot().notices.map(({ text }) => text)).toContain(
+      'Dev deactivated the custom session manager of this agent in this chat. Thus the chat cannot write into the stores of the agent. Dev does not save this chat.'
+    )
+    expect(JSON.stringify(chat.getSnapshot().completedTurns)).toContain('Turn complete.')
+    expect(existsSync(join(root, 'own-sessions'))).toBe(false)
+  })
+
   it.each([
     '{"dir": "custom-memory"}',
     'MemoryManager(stores=[FileMemoryStore(name="private", storage=LocalFileStorage("custom-memory").namespace(""), writable=False)], injection=False)',
