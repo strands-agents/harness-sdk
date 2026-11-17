@@ -192,7 +192,7 @@ becomes a session manager keyed by the case ID:
 <Tabs>
 <Tab label="Python">
 
-```python {26,50}
+```python {27,51}
 --8<-- "user-guide/migrate/langgraph_imports.py:graph_migrated_imports"
 
 --8<-- "user-guide/migrate/langgraph.py:graph_migrated"
@@ -272,12 +272,12 @@ graph:
 
 ```python
 builder.set_session_manager(
-    FileSessionManager(session_id=case_id, storage_dir="./cases/")
+    SnapshotSessionManager(session_id=case_id, storage=LocalFileStorage("./cases/"))
 )
 ```
 
-Attach a `FileSessionManager`, `S3SessionManager` or `SnapshotSessionManager`
-(with a `storage` argument) to the graph with `set_session_manager`. An agent
+Attach a `SnapshotSessionManager` to the graph with `set_session_manager`. Use
+`LocalFileStorage` for local runs or `S3Storage` for shared storage. An agent
 inside the graph must **not** carry its own session manager; `add_node` raises
 `ValueError` if it does.
 </Tab>

@@ -356,7 +356,7 @@ agent("Where did we leave off?")
 ```
 
 Set `session={"dir": ...}` to choose where state lives (default `./.agent/sessions`). For
-multi-host setups, pass your own `SessionManager` instance (for example `S3SessionManager`) as `session`
+multi-host setups, pass your own `SessionManager` instance (for example `SnapshotSessionManager` with `S3Storage`) as `session`
 and it takes over. Turn persistence off with `session=False` for a throwaway run.
 
 The default manager saves after each completed message, including tool results, so an interrupted

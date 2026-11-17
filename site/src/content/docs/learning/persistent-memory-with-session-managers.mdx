@@ -24,66 +24,20 @@ notices below.
 
 Session managers persist conversation history and agent state across runs. Without them, everything resets when the process stops. They're implemented as hook providers, so persistence is just another harness behavior layered in through hooks.
 
-## File session manager (record-based)
-
-Run these examples from `samples/09-persistent-memory`.
-
-The record-based approach persists each message individually. It's still supported for existing sessions and available for existing record-based Graph/Swarm sessions.
-
-```python
-from strands import Agent
-from strands.session.file_session_manager import FileSessionManager
-
-from customer_service_tools import lookup_customer, get_order_history, process_refund
-
-SYSTEM_PROMPT = "Help customers with their orders using the available tools."
-
-session_manager = FileSessionManager(
-    session_id="customer-session-001",
-    storage_dir="./sessions",
-)
-
-agent = Agent(
-    tools=[lookup_customer, get_order_history, process_refund],
-    system_prompt=SYSTEM_PROMPT,
-    context_manager="auto",
-    session_manager=session_manager,
-)
-```
-
-📂 [file_session_manager.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/09-persistent-memory/file_session_manager.py)
-
-## S3 session manager (record-based)
-
-Same record-based approach, backed by S3 instead of local disk:
-
-```python
-from strands import Agent
-from strands.session.s3_session_manager import S3SessionManager
-
-session_manager = S3SessionManager(
-    session_id="customer-session-001",
-    bucket="my-agent-sessions",
-    prefix="customer-service/",
-    region_name="us-east-1",
-)
-
-agent = Agent(session_manager=session_manager)
-```
-
-📂 [s3_session_manager.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/09-persistent-memory/s3_session_manager.py)
-
 ## Snapshot session manager
 
-<CourseNotice title="" variant="addition">
+<CourseNotice>
 
-The `FileSessionManager` and `S3SessionManager` examples shown in the video are
-still valid. `SnapshotSessionManager` is an optional alternative for saving and
-restoring a conversation. You do not need to switch to follow this lesson.
+The video shows `FileSessionManager` and `S3SessionManager`. These repository-based
+managers are deprecated and will be removed in v2.0.0. Use `SnapshotSessionManager`
+as shown below. To keep existing repository-based sessions, see
+[Migrate repository-based sessions](/docs/user-guide/sdk/agents/migrate-repository-sessions/).
 
 See the [session management docs](/docs/user-guide/sdk/agents/session-management/) for setup and examples.
 
 </CourseNotice>
+
+Run these examples from `samples/09-persistent-memory`.
 
 `SnapshotSessionManager` saves the session state together, instead of saving each
 message as a separate record.
@@ -125,13 +79,8 @@ session_manager = SnapshotSessionManager(
 
 📂 [snapshot_session_manager.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/09-persistent-memory/snapshot_session_manager.py)
 
-## When to use which
-
-| Manager | Best For |
-|---|---|
-| `SnapshotSessionManager` | Save and restore a single agent, Graph/Swarm, or Bidi session. |
-| `FileSessionManager` | Existing record-based sessions; retains their storage format. |
-| `S3SessionManager` | Same as File but with S3 for cross-machine access. |
+`SnapshotSessionManager` saves and restores a single agent, a Graph or Swarm, or a
+Bidi session.
 
 ## Sessions, memory, and storage
 

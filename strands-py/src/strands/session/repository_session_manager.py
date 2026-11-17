@@ -5,6 +5,8 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import deprecated
+
 from ..agent.state import AgentState
 from ..tools._tool_helpers import generate_missing_tool_result_content
 from ..types.agent import LocalAgent
@@ -25,8 +27,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@deprecated(
+    "RepositorySessionManager is deprecated and will be removed in v2.0.0. "
+    "Use SnapshotSessionManager instead; implement a custom Storage backend rather than a "
+    "SessionRepository. See the migration guide: "
+    "https://strandsagents.com/docs/user-guide/sdk/agents/migrate-repository-sessions/",
+    category=None,
+)
 class RepositorySessionManager(SessionManager[LocalAgent]):
     """Session manager for persisting agents in a SessionRepository.
+
+    Deprecated: This class will be removed in v2.0.0. Use
+    :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager` instead,
+    implementing a custom ``Storage`` backend rather than a ``SessionRepository``. See the
+    [migration guide](https://strandsagents.com/docs/user-guide/sdk/agents/migrate-repository-sessions/)
+    for migration steps.
 
     This manager uses a :class:`SessionRepository` (a structured per-message CRUD interface),
     not the unified :class:`~strands.storage.storage.Storage` protocol. It does not resolve
@@ -57,6 +72,16 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             **kwargs: Additional keyword arguments for future extensibility.
 
         """
+        if self.__class__ is RepositorySessionManager:
+            warnings.warn(
+                "RepositorySessionManager is deprecated and will be removed in v2.0.0. "
+                "Use SnapshotSessionManager instead; implement a custom Storage backend rather than a "
+                "SessionRepository. See the migration guide: "
+                "https://strandsagents.com/docs/user-guide/sdk/agents/migrate-repository-sessions/",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self.session_repository = session_repository
         self.session_id = session_id
         session = session_repository.read_session(session_id)

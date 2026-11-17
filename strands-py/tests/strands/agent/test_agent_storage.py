@@ -223,6 +223,8 @@ class TestRepositorySessionManagerWarnOnce:
 
         with warnings.catch_warnings(record=True) as recorded:
             warnings.simplefilter("default", UserWarning)
+            # RepositorySessionManager is deprecated; count only the storage nudge.
+            warnings.simplefilter("ignore", DeprecationWarning)
 
             session_mgr = RepositorySessionManager("test-session", session_repository=repository)
             agent = Agent(

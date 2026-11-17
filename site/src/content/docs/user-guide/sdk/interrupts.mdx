@@ -366,7 +366,8 @@ from typing import Any
 from strands import Agent, tool
 from strands.agent import AgentResult
 from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
-from strands.session import FileSessionManager
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
 from strands.types.agent import AgentInput
 
 
@@ -406,7 +407,10 @@ class ApprovalHook(HookProvider):
 def server(prompt: AgentInput) -> AgentResult:
     agent = Agent(
         hooks=[ApprovalHook("myapp")],
-        session_manager=FileSessionManager(session_id="myapp", storage_dir="/path/to/storage"),
+        session_manager=SnapshotSessionManager(
+            session_id="myapp",
+            storage=LocalFileStorage("/path/to/storage"),
+        ),
         system_prompt="You delete files older than 5 days",
         tools=[delete_files, inspect_files],
         callback_handler=None,

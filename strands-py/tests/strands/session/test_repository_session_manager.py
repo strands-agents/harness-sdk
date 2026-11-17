@@ -1,6 +1,7 @@
 """Tests for AgentSessionManager."""
 
 import copy
+import warnings
 from unittest.mock import Mock
 
 import pytest
@@ -15,6 +16,7 @@ from strands.hooks import AfterInvocationEvent
 from strands.interrupt import _InterruptState
 from strands.session.file_session_manager import FileSessionManager
 from strands.session.repository_session_manager import RepositorySessionManager
+from strands.session.session_repository import SessionRepository
 from strands.types.content import ContentBlock
 from strands.types.exceptions import SessionException
 from strands.types.session import Session, SessionAgent, SessionMessage, SessionType
@@ -31,6 +33,35 @@ def mock_repository():
 def session_manager(mock_repository):
     """Create a session manager with mock repository."""
     return RepositorySessionManager(session_id="test-session", session_repository=mock_repository)
+
+
+def test__init__emits_deprecation_warning(mock_repository):
+    """RepositorySessionManager is deprecated in favor of SnapshotSessionManager."""
+    with pytest.warns(DeprecationWarning, match="RepositorySessionManager is deprecated"):
+        RepositorySessionManager(session_id="test-session", session_repository=mock_repository)
+
+
+def test_subclassing_does_not_emit_deprecation_warning():
+    """Static deprecation metadata does not warn while subclasses are defined."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+
+        class CustomRepositorySessionManager(RepositorySessionManager):
+            pass
+
+    assert issubclass(CustomRepositorySessionManager, RepositorySessionManager)
+
+
+def test_session_repository_has_static_deprecation_metadata():
+    """SessionRepository guides custom implementations toward Storage without runtime warnings."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+
+        class CustomSessionRepository(SessionRepository):
+            pass
+
+    assert "SessionRepository is deprecated" in SessionRepository.__deprecated__
+    assert issubclass(CustomSessionRepository, SessionRepository)
 
 
 @pytest.fixture
