@@ -1,6 +1,6 @@
 import { setImmediate } from 'node:timers'
 
-import type { ContentBlockData } from '@strands-agents/sdk'
+import { Message, TextBlock, type ContentBlockData } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ChatController } from '../../src/ui/chat/controller.js'
@@ -1870,7 +1870,9 @@ describe('ChatController', () => {
         {
           status: 'error',
           error: 'The security token included in the request is expired',
-          recoveryHint: expect.stringContaining('Refresh your credentials, then resend your message.'),
+          recoveryHint: expect.stringContaining(
+            'Refresh your credentials, then restart Strands so that it loads them.'
+          ),
         },
       ],
     })
@@ -1977,6 +1979,160 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain(
       'Refresh your credentials, then resend your message.'
     )
+    await controller.dispose()
+  })
+
+  it('shouldAdviseARestartWithoutAPanelWhenADevChatTurnFailsWithAnExpiredToken', async () => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('The security token included in the request is expired')
+      },
+    })
+    Object.assign(backend, {
+      sessionIdentity: {
+        sessionId: 'saved-session',
+        sessionDirectory: '/project/strands-dev/.strands/state/sessions',
+        workspace: '/project',
+        configured: { sessionId: null, sessionDir: '/project/strands-dev/.strands/state/sessions' },
+      },
+    })
+    const controller = new ChatController(backend, {
+      streamPresentation: {},
+      requestSetup: vi.fn(),
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+    })
+
+    await controller.submit('hello')
+
+    const hint = controller.getSnapshot().completedTurns[0]?.recoveryHint
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    expect(hint).toContain('Refresh your credentials, then restart Strands so that it loads them.')
+    expect(hint).toContain('dev --workspace /project/strands-dev --session-id saved-session')
+    expect(hint).not.toContain('Press s')
+    await controller.dispose()
+  })
+
+  it('shouldSaveTheFailedPromptForAResumeWhenAUserTurnFails', async () => {
+    const saveFailedTurns = vi.fn(async () => {})
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('The security token included in the request is expired')
+        },
+      }),
+      {
+        streamPresentation: {},
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+          saveFailedTurns,
+        },
+      }
+    )
+
+    await controller.submit('first question')
+    await controller.submit('second question')
+
+    expect(saveFailedTurns).toHaveBeenLastCalledWith([
+      { prompt: 'first question', error: 'The security token included in the request is expired' },
+      { prompt: 'second question', error: 'The security token included in the request is expired' },
+    ])
+    await controller.dispose()
+  })
+
+  it('shouldClearTheSavedFailedPromptsWhenALaterTurnCompletes', async () => {
+    const saveFailedTurns = vi.fn(async () => {})
+    let fail = true
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          if (fail) throw new Error('socket hang up')
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      {
+        streamPresentation: {},
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+          saveFailedTurns,
+        },
+      }
+    )
+
+    await controller.submit('first question')
+    fail = false
+    await controller.submit('first question')
+    await controller.submit('next question')
+
+    expect(saveFailedTurns.mock.calls).toEqual([[[{ prompt: 'first question', error: 'socket hang up' }]], [[]]])
+    await controller.dispose()
+  })
+
+  it('shouldReportANoticeWhenTheFailedPromptCannotBeSaved', async () => {
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('socket hang up')
+        },
+      }),
+      {
+        streamPresentation: {},
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+          saveFailedTurns: async () => Promise.reject(new Error('disk full')),
+        },
+      }
+    )
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().notices).toContainEqual(
+      expect.objectContaining({
+        status: 'error',
+        text: 'The failed message could not be saved for a resume: disk full',
+      })
+    )
+    await controller.dispose()
+  })
+
+  it('shouldShowTheSavedFailedPromptsAfterTheRestoredConversationWhenASessionResumes', async () => {
+    const controller = new ChatController(idleBackend(), {
+      initialMessages: [
+        new Message({ role: 'user', content: [new TextBlock('earlier question')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('earlier answer')] }),
+      ],
+      failedTurns: [{ prompt: 'failed question', error: 'The security token included in the request is expired' }],
+    })
+
+    expect(controller.getSnapshot().completedTurns).toMatchObject([
+      { prompt: 'earlier question', status: 'complete' },
+      {
+        prompt: 'failed question',
+        status: 'error',
+        error: 'The security token included in the request is expired',
+        recoveryHint: 'The conversation does not include this message. Send it again to retry.',
+      },
+    ])
     await controller.dispose()
   })
 

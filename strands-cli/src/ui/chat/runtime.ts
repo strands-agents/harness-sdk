@@ -48,11 +48,11 @@ import {
   type RuntimeBackendRequest,
 } from '../../agent/runtime.js'
 
-async function restoreSessionNames(
+async function restoreSessionRecord(
   sessions: FileSessionRuntime,
   conversation?: ChatConversation
-): Promise<Pick<SessionTarget, 'name' | 'agentName'>> {
-  const names: Pick<SessionTarget, 'name' | 'agentName'> = sessions.current
+): Promise<Pick<SessionTarget, 'name' | 'agentName' | 'failedTurns'>> {
+  const names: Pick<SessionTarget, 'name' | 'agentName' | 'failedTurns'> = sessions.current
     ? await sessions.resolve(sessions.current)
     : {}
   if (!conversation?.agentName) return names
@@ -128,7 +128,7 @@ export async function createTypescriptChat(
         currentSessionResumable: backend.sessionIdentity !== undefined,
       })
       const conversation = initialOptions.conversation
-      const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
+      const { name: sessionName, agentName, failedTurns } = await restoreSessionRecord(sessions, conversation)
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       const controller = new ChatController(backend, {
         runtime: {
@@ -151,6 +151,7 @@ export async function createTypescriptChat(
         settings: { ...config.snapshot().settings, ...settings },
         initialMessages: messages,
         ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
+        ...(failedTurns ? { failedTurns } : {}),
         ...(conversation?.configurationBaseline
           ? { initialConfigurationBaseline: conversation.configurationBaseline }
           : {}),
@@ -345,7 +346,7 @@ export async function createPythonChat(
       workspace: backend.cwd,
       currentSessionResumable: backend.sessionIdentity !== undefined,
     })
-    const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
+    const { name: sessionName, agentName, failedTurns } = await restoreSessionRecord(sessions, conversation)
     return new ChatController(backend, {
       runtime: {
         cwd: backend.cwd,
@@ -367,6 +368,7 @@ export async function createPythonChat(
       settings: snapshot.settings,
       initialMessages: backend.messages,
       ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
+      ...(failedTurns ? { failedTurns } : {}),
       ...(conversation?.configurationBaseline
         ? { initialConfigurationBaseline: conversation.configurationBaseline }
         : {}),
@@ -572,7 +574,7 @@ export async function createInteractiveChat(
       conversation
     )
     try {
-      const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
+      const { name: sessionName, agentName, failedTurns } = await restoreSessionRecord(sessions, conversation)
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
@@ -588,6 +590,7 @@ export async function createInteractiveChat(
         streamPresentation: DEFAULT_STREAM_PRESENTATION,
         initialMessages: runtime.agent.messages,
         ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
+        ...(failedTurns ? { failedTurns } : {}),
         ...(conversation?.configurationBaseline
           ? { initialConfigurationBaseline: conversation.configurationBaseline }
           : {}),

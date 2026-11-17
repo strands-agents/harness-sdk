@@ -208,6 +208,8 @@ Logs live under the selected project's `.strands/state/setup/`. Known credential
 In a dev chat, a failed turn opens the **Agent turn failed** panel. That panel and the **Agent reload failed** panel have the same key.
 The new tab uses the built-in agent, not a saved default agent.
 
+A turn that fails because the model credentials expired opens no panel. The failed turn tells you to refresh the credentials and restart.
+
 In tmux, dev opens a new tmux window. On macOS, dev opens an iTerm2 tab, a Ghostty tab (Ghostty 1.3 or later), or a Terminal window.
 In other terminals, dev copies a command and shows it. Run that command in a new tab.
 
@@ -868,6 +870,10 @@ the current agent's instructions and system prompt. Python agents follow the Pyt
 and startup with a saved session ID restore the saved system prompt along with the conversation,
 replacing the current prompt.
 Session files are trusted input: resume only sessions you created, not ones that came with a cloned repository.
+
+When a turn fails, the conversation stays as it was before the turn. The chat shows a command that resumes the session after a restart.
+The session also saves the failed message. A resumed chat shows that message again, so that you can send it again.
+When the model provider reports expired credentials, refresh the credentials. Then restart the CLI, because the CLI process can keep the expired credentials.
 
 Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
 authored agents (`--agent`) keep their own session configuration. Relative paths resolve against

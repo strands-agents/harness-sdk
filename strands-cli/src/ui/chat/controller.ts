@@ -49,6 +49,7 @@ import { agentLaunchCommand } from '../../project/import.js'
 import { exportDirectoryName, type AgentProjectOutput } from '../../project/export.js'
 import {
   type ChatSessionRuntime,
+  type FailedTurn,
   type SessionTarget,
   sessionResumeCommand,
   type ResumeSession,
@@ -59,7 +60,7 @@ import { mcpFailure } from '../mcp-diagnostics.js'
 import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
 import { modelControlErrorMessage, profileEffort } from '../../model/selection.js'
-import { isModelCredentialFailure } from '../../model/credential-failure.js'
+import { isExpiredModelCredential, isModelCredentialFailure } from '../../model/credential-failure.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import { canUseNativePicker, chooseDirectory } from '../../terminal/directory-picker.js'
@@ -75,7 +76,7 @@ import {
   readTaskValue,
   readyBackgroundGeneration,
 } from './state.js'
-import { TurnProjector, projectMessages } from './projector.js'
+import { TurnProjector, projectFailedTurns, projectMessages } from './projector.js'
 import {
   type ChatBackend,
   type ChatAttachment,
@@ -130,6 +131,15 @@ const EXPORT_SAVE_CUSTOM_PREFIX = 'export:save-custom:'
 
 type SessionList = Awaited<ReturnType<ChatSessionRuntime['list']>>
 
+type TurnFailure = 'expiredCredentials' | 'modelSetup' | 'credentials' | 'other'
+
+const TURN_FAILURE_GUIDANCE: Record<TurnFailure, string> = {
+  expiredCredentials: 'Refresh your credentials, then restart Strands so that it loads them.',
+  modelSetup: 'Press s to choose a model provider, then resend your message.',
+  credentials: 'Refresh your credentials, then resend your message.',
+  other: 'Check your connection and provider, then resend your message.',
+}
+
 interface PendingUserSubmission {
   kind: 'user'
   id: string
@@ -151,6 +161,7 @@ export class ChatController implements ChatControllerApi {
   readonly peerEndpointId: string | undefined
   private readonly _listeners = new Set<() => void>()
   private _completedTurns: ChatTurn[] = []
+  private _failedTurns: readonly FailedTurn[]
   private readonly _panelStack: ChatPanel[] = []
   private readonly _skillDetails = new Map<string, SkillInfo>()
   private readonly _sessions: ChatSessionRuntime | undefined
@@ -271,10 +282,14 @@ export class ChatController implements ChatControllerApi {
       tools: info?.tools ?? [],
       ...options.runtime,
     }
+    this._failedTurns = options.failedTurns ?? []
     if (options.initialTurns) {
       this._completedTurns = [...options.initialTurns]
-    } else if (options.initialMessages) {
-      this._completedTurns.push(...projectMessages(options.initialMessages, this.name))
+    } else {
+      this._completedTurns.push(
+        ...projectMessages(options.initialMessages ?? [], this.name),
+        ...projectFailedTurns(this._failedTurns, this.name)
+      )
     }
     this._nextTurn = this._completedTurns.length + 1
     this._context = { ...(backend.contextUsage?.() ?? {}) }
@@ -839,8 +854,9 @@ export class ChatController implements ChatControllerApi {
       if (steeringDrain) {
         await steeringDrain
       }
-      if (execution.phase === 'running') {
-        this._completedTurns.push(projector.snapshot())
+      const finished = execution.phase === 'running' ? projector.snapshot() : undefined
+      if (finished) {
+        this._completedTurns.push(finished)
       }
       if (this._execution === execution) {
         this._execution = undefined
@@ -848,6 +864,7 @@ export class ChatController implements ChatControllerApi {
       this._steeringDrain = undefined
       this._clearDeliveredBackgroundTaskNotices()
       this._emit()
+      if (finished && mode === 'model') await this._updateFailedTurns(finished)
       if (!this._closed) {
         await this._applyDeferredModelRestart()
         this._startBackgroundContinuation()
@@ -860,31 +877,44 @@ export class ChatController implements ChatControllerApi {
 
   private _offerDevFix(turn: ChatTurn): void {
     if (turn.status !== 'error' || !this._runtime.devWorkspace) return
-    if (this._offersModelSetup(turn.error ?? '')) {
+    const message = turn.error ?? ''
+    const failure = this._turnFailure(message)
+    if (failure === 'expiredCredentials') return
+    if (failure === 'modelSetup') {
       this._openPanel({
         kind: 'error',
         title: 'Model provider needs setup',
-        rows: [{ label: '', description: turn.error ?? '', tone: 'danger' }],
+        rows: [{ label: '', description: message, tone: 'danger' }],
         modelSetup: true,
       })
       return
     }
-    this._openError('Agent turn failed', '', turn.error ?? '', this._runtime.cwd)
+    this._openError('Agent turn failed', '', message, this._runtime.cwd)
   }
 
-  private _offersModelSetup(message: string): boolean {
-    return Boolean(this._runtime.devWorkspace && this._requestSetup) && isModelCredentialFailure(message)
+  private _turnFailure(message: string): TurnFailure {
+    if (!isModelCredentialFailure(message)) return 'other'
+    if (isExpiredModelCredential(message)) return 'expiredCredentials'
+    return this._runtime.devWorkspace && this._requestSetup ? 'modelSetup' : 'credentials'
   }
 
   private _failureRecoveryHint(error: unknown): string {
-    const message = errorMessage(error)
-    const guidance = this._offersModelSetup(message)
-      ? 'Press s to choose a model provider, then resend your message.'
-      : isModelCredentialFailure(message)
-        ? 'Refresh your credentials, then resend your message.'
-        : 'Check your connection and provider, then resend your message.'
+    const guidance = TURN_FAILURE_GUIDANCE[this._turnFailure(errorMessage(error))]
     const session = this.resumeSession
     return session ? `${guidance}\nTo resume after restarting: ${sessionResumeCommand(session)}` : guidance
+  }
+
+  private async _updateFailedTurns(turn: ChatTurn): Promise<void> {
+    if (turn.status === 'error' && turn.source) return
+    if (turn.status !== 'error' && this._failedTurns.length === 0) return
+    this._failedTurns =
+      turn.status === 'error' ? [...this._failedTurns, { prompt: turn.prompt, error: turn.error ?? '' }] : []
+    try {
+      await this._sessions?.saveFailedTurns?.(this._failedTurns)
+    } catch (error) {
+      this._addNotice('error', `The failed message could not be saved for a resume: ${errorMessage(error)}`)
+      this._emit()
+    }
   }
 
   private _watchTurnUsage(
@@ -2107,6 +2137,7 @@ export class ChatController implements ChatControllerApi {
       await this._backend.clear()
       this._stopWatchingUsage()
       this._completedTurns = []
+      this._failedTurns = []
       this._notices = []
       this._tasks = []
       this._context = {}
