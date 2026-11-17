@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL } from 'node:url'
@@ -426,6 +426,27 @@ console.log(JSON.stringify(names))
 
     expect(loaded.agents[0]!.name).toBe('Re-exported')
     expect(loaded.agents[1]!.name).toBe('Rebuilt')
+  })
+
+  it.each([
+    ['Folder', () => mkdir(join(root, '.config'))],
+    [
+      'LinkToAFolder',
+      async () => {
+        await mkdir(join(root, 'dotfiles'))
+        await symlink(join(root, 'dotfiles'), join(root, '.config'))
+      },
+    ],
+  ])('shouldLoadThePlainAgentWhenTheProjectHasAConfig%s', async (_kind, arrange) => {
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ ...${JSON.stringify(defaults)}, name: 'Beside config' })\n`
+    )
+    await arrange()
+
+    const loaded = await loadAgents([{}])
+
+    expect(loaded.agents[0]!.name).toBe('Beside config')
   })
 
   it('uses the host harness without changing source', async () => {

@@ -12,7 +12,7 @@ import { expandHome } from '../paths.js'
 import { initializeAgentDefinition } from '../session/agent-definition.js'
 import { prepareArchiveDependencies } from './archive.js'
 import type { ImportedAgentProject } from './import.js'
-import { readDevWorkspace } from '../dev/workspace.js'
+import { findDevWorkspace } from '../dev/workspace.js'
 
 /** @internal */
 export type AgentFactory = (
@@ -34,7 +34,7 @@ export async function loadTypescriptProject(
   configureEnvironment?.()
   const root = realpathSync(project.root)
   const sourcePath = realpathSync(project.entrypoint)
-  const workspace = await readDevWorkspace(root)
+  const workspace = await findDevWorkspace(root)
   const localHarness = workspace?.config.harness
     ? pathToFileURL(`${resolve(root, workspace.config.harness.path)}/`).href
     : undefined

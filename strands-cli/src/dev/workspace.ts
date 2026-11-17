@@ -58,7 +58,8 @@ export const entrypointWorkspaceFolder = ({ root, entrypoint }: DevWorkspace): s
   WORKSPACE_FOLDER_NAME.test(basename(root)) ? root : join(dirname(entrypoint), WORKSPACE_FOLDER)
 
 export async function findDevWorkspace(path: string): Promise<DevWorkspace | undefined> {
-  return (await optionalDetails(join(path, '.config')))?.isDirectory() ? undefined : readDevWorkspace(path)
+  const details = await optionalDetails(join(path, '.config'))
+  return details && !details.isFile() ? undefined : readDevWorkspace(path)
 }
 
 export const missingAgentPath = async (folder: string, failure: unknown): Promise<string | undefined> => {

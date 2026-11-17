@@ -522,6 +522,18 @@ describe('workspaceFolder', () => {
     expect(await findDevWorkspace(path)).toBeUndefined()
   })
 
+  it.each([
+    ['File', (target: string) => writeFile(target, '{}')],
+    ['Folder', (target: string) => mkdir(target)],
+  ])('shouldFindNoWorkspaceWhenTheConfigIsALinkToA%s', async (_kind, arrange) => {
+    const path = await temporaryDirectory()
+    const target = join(await temporaryDirectory(), 'shared-config')
+    await arrange(target)
+    await symlink(target, join(path, '.config'))
+
+    expect(await findDevWorkspace(path)).toBeUndefined()
+  })
+
   it.each(['strands-dev', 'strands-dev-3'])('shouldUseThePathAsItIsWhenItEndsIn%s', async (name) => {
     const path = join(await temporaryDirectory(), name)
 
