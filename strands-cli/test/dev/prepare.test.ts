@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { strToU8, zipSync } from 'fflate'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -8,7 +8,7 @@ import { containsPath, strandsUserPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { bindWorkspace, readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/binding.js'
 import { bindExistingAgent, createDevWorkspace } from '../../src/dev/create.js'
-import { DevFailure } from '../../src/dev/errors.js'
+import { DevFailure, WorkspaceFolderInUse } from '../../src/dev/errors.js'
 import { ensureInitialCandidate } from '../../src/dev/initialize.js'
 import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
@@ -1304,5 +1304,109 @@ describe('selection after the user goes back', () => {
     expect(vi.mocked(picker.chooseHarness).mock.calls[1]![0].warning).toBe(
       'Could not delete the folders of the failed setup: EBUSY: resource busy'
     )
+  })
+})
+
+describe('workspace with a missing agent', () => {
+  const missingAgentWorkspace = async (): Promise<{ root: string; folder: string; binding: string }> => {
+    const root = await fixture()
+    const folder = join(root, 'strands-dev')
+    await bindExistingAgent(folder, join(root, 'agent.ts'))
+    await rename(join(root, 'agent.ts'), join(root, 'main.ts'))
+    vi.spyOn(process, 'cwd').mockReturnValue(root)
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    return { root, folder, binding: await readFile(join(folder, '.config'), 'utf8') }
+  }
+  const terminalScreen = (): { signal: AbortSignal; show: () => void } => ({
+    signal: new AbortController().signal,
+    show: vi.fn(),
+  })
+
+  it.each<[string, string[], boolean]>([
+    ['DevInATerminal', ['dev'], true],
+    ['DevInitWithoutATerminal', ['dev', 'init'], false],
+    ['TheAgentFlag', ['dev', '--agent', 'main.ts'], false],
+    ['DevInitWithTheAgentFlag', ['dev', 'init', '--agent', 'main.ts'], true],
+  ])('shouldStopAndNameTheRebindCommandWhenTheRunIs%s', async (_case, argv, inTerminal) => {
+    const { folder, binding } = await missingAgentWorkspace()
+    const choose = vi.spyOn(picker, 'chooseHarness')
+
+    const failure: unknown = await prepareDevRun(parseArgs(argv), {
+      ...(inTerminal ? { screen: terminalScreen() } : {}),
+      deferPreparation: true,
+    }).catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(DevFailure)
+    expect(String(failure)).toContain('run strands dev init in a terminal and select another agent')
+    expect(String(failure)).not.toContain('strands dev --agent')
+    expect(choose).not.toHaveBeenCalled()
+    expect(await readFile(join(folder, '.config'), 'utf8')).toBe(binding)
+  })
+
+  it('shouldRefuseTheFolderWithoutReplacingItWhenCreateTargetsTheWorkspace', async () => {
+    const { root, folder, binding } = await missingAgentWorkspace()
+
+    const created = prepareDevRun(parseArgs(['dev', 'init', '--create', 'typescript', '--workspace', root]), {
+      deferPreparation: true,
+    })
+
+    await expect(created).rejects.toThrow(`It holds the workspace of a missing agent (${join(root, 'agent.ts')})`)
+    expect(await readFile(join(folder, '.config'), 'utf8')).toBe(binding)
+  })
+
+  it('shouldOfferTheBaseCliFolderForReplacementWhenItsAgentIsMissing', async () => {
+    const project = await fixture()
+    const folder = strandsUserPath('strands-dev')
+    await mkdir(folder, { recursive: true })
+    await bindWorkspace(folder, {
+      version: 1,
+      name: 'Saved CLI',
+      agent: { path: project, entrypoint: 'agent.ts', language: 'typescript' },
+      origin: { kind: 'cli' },
+    })
+    await rm(project, { recursive: true, force: true })
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) => {
+      await expect(open({ kind: 'cli' }, screen.signal)).rejects.toBeInstanceOf(WorkspaceFolderInUse)
+      return undefined
+    })
+
+    await prepareDevRun(parseArgs(['dev']), { screen: terminalScreen(), deferPreparation: true })
+
+    const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    expect(options.cli).toEqual({ name: 'Saved CLI', path: 'in-memory' })
+    expect(options.folderFor?.({ kind: 'cli' })).toEqual({
+      path: folder,
+      detected: false,
+      occupiedBy: `a missing agent (${project})`,
+    })
+    expect(JSON.parse(await readFile(join(folder, '.config'), 'utf8')).agent.path).toBe(project)
+  })
+
+  it('shouldReplaceTheWorkspaceOnlyAfterConfirmationWhenInitOpensThePicker', async () => {
+    const { root, folder, binding } = await missingAgentWorkspace()
+    const holder = `a missing agent (${join(root, 'agent.ts')})`
+    const main = { name: 'Main', entrypoint: join(root, 'main.ts'), root, language: 'typescript' as const }
+    const choice = { kind: 'discovered', harness: main } as const
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [main], warnings: [] })
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (options, screen, open) => {
+      await options.search?.(() => {}, screen.signal)
+      await expect(open(choice, screen.signal, root)).rejects.toBeInstanceOf(WorkspaceFolderInUse)
+      expect(await readFile(join(folder, '.config'), 'utf8')).toBe(binding)
+      return open(choice, screen.signal, root, true)
+    })
+
+    const prepared = await prepareDevRun(parseArgs(['dev', 'init']), {
+      screen: terminalScreen(),
+      deferPreparation: true,
+    })
+    await prepared!.keep()
+
+    const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
+    expect(options.warning).toBe(`${folder} holds the workspace of ${holder}. Select an agent to replace it.`)
+    expect(options.folderFor?.(choice)).toEqual({ path: folder, detected: false, occupiedBy: holder })
+    expect(prepared?.workspace.entrypoint).toBe(join(root, 'main.ts'))
+    expect(JSON.parse(await readFile(join(folder, '.config'), 'utf8')).agent.entrypoint).toBe('main.ts')
   })
 })

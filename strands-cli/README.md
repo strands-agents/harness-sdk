@@ -152,6 +152,10 @@ When `--agent` names another entrypoint of the project that the workspace binds,
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
 `strands dev init` prepares the workspace and exits without a model request.
 
+When `.config` names an agent that is missing, dev stops with an error that names the workspace and the agent.
+To bind the workspace to another agent, run `strands dev init` in a terminal and select the agent. Dev asks you to type DELETE before it replaces the workspace.
+Without the picker, dev never replaces the workspace.
+
 New agents use the same project exporter and dependency installer as exported agents.
 A new agent from the picker is in `strands-workspace/` in the launch directory, and its workspace is inside that project.
 With `--workspace`, or for a Base CLI that has only a saved profile, the new project is in `agent/` inside the workspace.

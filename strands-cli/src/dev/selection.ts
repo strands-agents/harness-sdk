@@ -7,7 +7,7 @@ import { expandHome, strandsUserPath } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { planProjectPreparation } from '../project/preparation-plan.js'
 import { discoverHarnesses, type DiscoveredHarness } from './search.js'
-import { readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
+import { missingAgentPath, readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
 
 export interface BaseHarnessSelection {
   name: string
@@ -41,7 +41,10 @@ export const baseHarnessSelection = async (
     return sameFile(entrypoint, source) || sameFile(origin, snapshot.agentProject)
   }
   const holds = (bound: DevWorkspace): boolean => bound.config.origin.kind === 'cli' && madeFromThisCli(bound)
-  const bound = await readDevWorkspace(workspace)
+  const bound = await readDevWorkspace(workspace).catch(async (failure: unknown) => {
+    if ((await missingAgentPath(workspace, failure)) === undefined) throw failure
+    return undefined
+  })
   const existing = bound && holds(bound) ? bound : undefined
   return {
     name: existing?.config.name ?? snapshot.profile.name,

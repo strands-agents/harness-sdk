@@ -61,6 +61,13 @@ export async function findDevWorkspace(path: string): Promise<DevWorkspace | und
   return (await optionalDetails(join(path, '.config')))?.isDirectory() ? undefined : readDevWorkspace(path)
 }
 
+export const missingAgentPath = async (folder: string, failure: unknown): Promise<string | undefined> => {
+  const { code, path } = (failure ?? {}) as Partial<NodeJS.ErrnoException>
+  if ((code !== 'ENOENT' && code !== 'ENOTDIR') || path === undefined) return undefined
+  const binding = await lstat(join(folder, '.config')).catch(() => undefined)
+  return binding?.isFile() ? path : undefined
+}
+
 export async function workspaceFolder(path: string): Promise<string> {
   if (WORKSPACE_FOLDER_NAME.test(basename(path)) || !(await isFolderOrMissing(path))) return path
   if ((await optionalDetails(join(path, '.config')))?.isFile()) return path
