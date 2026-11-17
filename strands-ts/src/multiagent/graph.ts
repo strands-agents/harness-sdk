@@ -785,11 +785,8 @@ export class Graph implements MultiAgent {
     const deps: ContentBlock[] = []
     for (const edge of this.edges.filter((e) => e.target.id === node.id)) {
       const ns = state.node(edge.source.id)!
-      // A user message cannot contain a toolUseBlock or toolResultBlock, so drop them. For an
-      // AgentNode, surface the validated NodeResult.structuredOutput once (the raw tool input
-      // can diverge via zod defaults/transforms, and a turn may contain repeated/invalid
-      // attempts). For a nested MultiAgentNode no validated value is propagated, so fall back
-      // to each toolUse block's input — multiple termini can each contribute one.
+      // User messages cannot carry tool blocks. Surface validated structuredOutput once;
+      // fall back to each toolUse input for nested MultiAgentNode (no validated value).
       const validated = ns.results[ns.results.length - 1]?.structuredOutput
       const content: ContentBlock[] = []
       let validatedEmitted = false
