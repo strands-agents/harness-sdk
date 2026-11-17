@@ -797,7 +797,10 @@ async def test_decisions_api_reads_the_enveloped_response_and_reports_the_reques
 
     assert result.answers == {"q": True}
     assert result.usage == {"inputTokens": 281, "outputTokens": 23, "totalTokens": 304}
+    assert result.metadata.provider_name == "decisions_api"
     assert result.metadata.model_id == "~typesafe/jev-latest"
+    assert result.metadata.probabilities == {"q": pytest.approx({"true": 0.99, "false": 0.01})}
+    assert result.metadata.confidence == {"q": pytest.approx(0.98)}
 
 
 def _envelope(result: Any) -> dict[str, Any]:
@@ -822,6 +825,15 @@ async def test_decisions_api_reports_the_model_named_by_an_enveloped_result():
     result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
     assert result.metadata.model_id == "served-model"
+
+
+@pytest.mark.asyncio
+async def test_typesafe_rejects_the_decisions_api_envelope():
+    payload = _envelope({"answers": {"q": {"type": "noul", "noul": 0.99}}})
+    decision = TypeSafeDecisionModel(api_key="test-key", http_client=_fake_client(payload))
+
+    with pytest.raises(StructuredOutputException, match="model must be a non-empty string"):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
 
 @pytest.mark.asyncio

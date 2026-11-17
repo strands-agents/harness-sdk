@@ -5,7 +5,12 @@ from typing import Any
 import httpx
 
 from ..types.exceptions import StructuredOutputException
-from ._system_one_http_adapter import _ask_system_one, _http_transport, _resolve_system_one_provider_config
+from ._system_one_http_adapter import (
+    _ask_system_one,
+    _http_transport,
+    _require_record,
+    _resolve_system_one_provider_config,
+)
 from .decision_model import DecisionModel
 from .types import DecisionInput, DecisionResult, Question
 
@@ -23,7 +28,8 @@ class DecisionsAPIDecisionModel(DecisionModel):
     exceeds the provider's size limit (HTTP 413), ``ValueError`` for
     request-level violations (more than eight questions, too many choices, binary content, state
     that is not JSON-serializable or contains NaN/infinity), ``httpx.HTTPStatusError`` for any other
-    non-2xx response, and ``StructuredOutputException`` for a malformed provider response.
+    non-2xx response, and ``StructuredOutputException`` for a malformed provider response
+    or an HTTP 200 body that carries a non-zero error ``code``.
     Transport errors from the HTTP client (e.g. ``httpx.TimeoutException``, ``httpx.ConnectError``)
     propagate unchanged.
 
@@ -96,11 +102,6 @@ class DecisionsAPIDecisionModel(DecisionModel):
             detail = f": {message}" if isinstance(message, str) else ""
             raise StructuredOutputException(f"decision provider returned error code {code}{detail}")
 
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            raise StructuredOutputException("decision provider data must be an object")
-        result = data.get("result")
-        if not isinstance(result, dict):
-            raise StructuredOutputException("decision provider result must be an object")
-
+        data = _require_record(payload.get("data"), "decision provider data")
+        result = _require_record(data.get("result"), "decision provider result")
         return {"model": self._provider_config.model_id, **result}

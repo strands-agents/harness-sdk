@@ -3,6 +3,8 @@ import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
   httpTransport,
+  isRecord,
+  requireRecord,
   resolveSystemOneProviderConfig,
   type SystemOneProviderConfig,
   type SystemOneTransport,
@@ -82,15 +84,8 @@ export class DecisionsAPIDecisionModel extends DecisionModel {
       throw new ModelError(`decision provider returned error code ${String(code)}${detail}`)
     }
 
-    const data = payload['data']
-    if (!isRecord(data)) throw new ModelError('decision provider data must be an object')
-    const result = data['result']
-    if (!isRecord(result)) throw new ModelError('decision provider result must be an object')
-
+    const data = requireRecord(payload['data'], 'decision provider data')
+    const result = requireRecord(data['result'], 'decision provider result')
     return { model: this._providerConfig.modelId, ...result }
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

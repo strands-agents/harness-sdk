@@ -523,9 +523,17 @@ describe('DecisionsAPIDecisionModel', () => {
 
       const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
 
-      expect(result.answers).toEqual({ q: true })
-      expect(result.usage).toEqual({ inputTokens: 281, outputTokens: 23, totalTokens: 304 })
-      expect(result.metadata.modelId).toBe('~typesafe/jev-latest')
+      expect(result).toEqual({
+        answers: { q: true },
+        usage: { inputTokens: 281, outputTokens: 23, totalTokens: 304 },
+        metadata: {
+          latencyMs: expect.any(Number),
+          providerName: 'decisionsApi',
+          modelId: '~typesafe/jev-latest',
+          probabilities: { q: { true: 0.99, false: expect.closeTo(0.01) } },
+          confidence: { q: expect.closeTo(0.98) },
+        },
+      })
     })
 
     it('reports a non-default requested model for an enveloped response', async () => {
@@ -550,6 +558,17 @@ describe('DecisionsAPIDecisionModel', () => {
       const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
 
       expect(result.metadata.modelId).toBe('served-model')
+    })
+
+    it('leaves TypeSafeDecisionModel rejecting the envelope', async () => {
+      const decision = new TypeSafeDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch(envelope({ answers: { q: { type: 'noul', noul: 0.99 } } })),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /model must be a non-empty string/
+      )
     })
 
     it.each([-1, false])('rejects an enveloped error body with code %s sent with HTTP 200', async (code) => {
