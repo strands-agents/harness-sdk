@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, realpath, rm } from 'node:fs/promises'
+import { lstat, mkdir, realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { devNull } from 'node:os'
 import { promisify } from 'node:util'
 
 import { HARNESS_VERSION } from '../package-version.js'
+import { ProcessLockBusy, withProcessLock, type LockBusyMessage } from '../process-lock.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { isRecord } from '../values.js'
 
@@ -82,6 +83,9 @@ const pipIndexSettings = (configList: string, environment: NodeJS.ProcessEnv): N
       .filter(([name]) => environment[name] === undefined)
   )
 }
+
+const pythonSetupBusy: LockBusyMessage = (holders) =>
+  `Another strands process (${holders.join(', ')}) is still preparing the Python environment of this project. Try again when it finishes.`
 
 export const pythonInstallEnvironment = (environment: NodeJS.ProcessEnv, pipConfigList = ''): NodeJS.ProcessEnv => ({
   ...Object.fromEntries(
@@ -198,17 +202,7 @@ export const preparePythonRuntime = async (
     const state = join(metadata, 'state')
     await privateDirectory(metadata)
     await privateDirectory(state)
-    const lock = join(state, 'python-runtime.lock')
-    try {
-      await mkdir(lock, { mode: 0o700 })
-    } catch (error) {
-      if (isRecord(error) && error.code === 'EEXIST')
-        throw new Error(`Python setup is already running. If no installer is active, remove ${lock} and retry.`, {
-          cause: error,
-        })
-      throw error
-    }
-    try {
+    const setUpEnvironment = async (): Promise<string> => {
       signal?.throwIfAborted()
       if (
         !options.validateEnvironment &&
@@ -265,11 +259,11 @@ export const preparePythonRuntime = async (
         throw new Error('The installed environment still cannot import strands_harness.')
       signal?.throwIfAborted()
       return python
-    } finally {
-      await rm(lock, { recursive: true, force: true })
     }
+    return await withProcessLock(join(state, 'python-runtime.lock'), setUpEnvironment, pythonSetupBusy)
   } catch (error) {
     if (signal?.aborted) throw signal.reason
+    if (error instanceof ProcessLockBusy) throw error
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(
       `Could not prepare the Python agent in ${resolve(root)}. Use Python 3.10 or newer and install this project's dependencies and strands-harness in .venv. ${sanitizeTerminalText(message)}`,

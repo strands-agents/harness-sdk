@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, realpath, rm } from 'node:fs/promises'
+import { lstat, mkdir, open, realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { ProcessLockBusy, withProcessLock, type LockBusyMessage } from '../process-lock.js'
 import { pythonInstallEnvironment, preparePythonRuntime } from './python-runtime.js'
 import {
   describePreparationCommand,
@@ -44,19 +45,33 @@ export const redactPreparationOutput = (text: string, environment: NodeJS.Proces
     .replace(/\b(?:sk-[\w-]{16,}|gh[pousr]_[\w]{20,}|AKIA[\w]{16})\b/gu, '[redacted]')
 }
 
+export interface PreparationOptions {
+  signal?: AbortSignal
+  progress?: (progress: PreparationProgress) => void
+  runtimeOnly?: boolean
+  force?: boolean
+}
+
+const preparationBusy: LockBusyMessage = (holders) =>
+  `Another strands process (${holders.join(', ')}) is still preparing this project.`
+
+const lockBusy = (error: unknown): boolean =>
+  error instanceof ProcessLockBusy || (error instanceof Error && lockBusy(error.cause))
+
 export const preparationFailure = (error: unknown, progress?: PreparationProgress): PreparationFailure => {
   const detail = redactPreparationOutput(error instanceof Error ? error.message : String(error))
   const stage = progress?.stage ?? 'entrypoint'
   let action = 'Fix the error in the selected project, then Retry. Choose Back if this is not the correct project root.'
   const missing = /(?:No module named|Cannot find (?:module|package))\s+["'‘]?([^"'’\s]+)/u.exec(detail)?.[1]
-  if (missing)
+  if (lockBusy(error)) action = 'Wait until the other strands process finishes, then Retry.'
+  else if (missing)
     action = `Check the selected project root and dependency manifest for ${missing}. For Python src-layout packages, install the project itself with an editable install. Do not infer a registry package name from this import.`
   else if (/ENOENT|not found|not recognized/iu.test(detail))
     action =
       'Install the named runtime or package manager, ensure it is on PATH, and restart strands dev. Or prepare the project manually and validate it.'
   else if (/version|requires-python|engines.node/iu.test(detail))
     action = 'Select a runtime version supported by the project manifest, then restart strands dev.'
-  else if (/lock|frozen/iu.test(detail))
+  else if (/lock ?file|package-lock|shrinkwrap|uv\.lock|--locked|frozen/iu.test(detail))
     action =
       'Fix the manifest and lockfile mismatch with the project package manager. Dev will not rewrite the lockfile. Then Retry.'
   else if (/401|403|authentication|credentials/iu.test(detail))
@@ -112,36 +127,33 @@ export const recordEntrypointFailure = async (
 
 export const executePreparation = async (
   plan: ProjectPreparationPlan,
-  options: {
-    signal?: AbortSignal
-    progress?: (progress: PreparationProgress) => void
-    runtimeOnly?: boolean
-    force?: boolean
-  } = {}
+  options: PreparationOptions = {}
 ): Promise<string> => {
-  const { signal } = options
-  signal?.throwIfAborted()
+  options.signal?.throwIfAborted()
   const current = await planProjectPreparation(plan.project)
   if (current.fingerprint !== plan.fingerprint)
     throw new ProjectPreparationError(
       new Error('Project manifests changed during preparation. Retry to use the latest project settings.')
     )
   const logPath = await privateLogs(plan.project.root)
-  const lock = join(dirname(logPath), 'prepare.lock')
   try {
-    await mkdir(lock, { mode: 0o700 })
-  } catch (error) {
-    throw new ProjectPreparationError(
-      new Error(
-        `Project preparation is already running, or its lock cannot be created: ${lock}. Stop any active installer before removing a stale lock.`,
-        { cause: error }
-      )
+    return await withProcessLock(
+      join(dirname(logPath), 'prepare.lock'),
+      () => runPreparation(plan, options, logPath),
+      preparationBusy
     )
+  } catch (error) {
+    throw error instanceof ProcessLockBusy ? new ProjectPreparationError(error) : error
   }
-  const log = await open(logPath, 'wx', 0o600).catch(async (error) => {
-    await rm(lock, { recursive: true, force: true })
-    throw error
-  })
+}
+
+const runPreparation = async (
+  plan: ProjectPreparationPlan,
+  options: PreparationOptions,
+  logPath: string
+): Promise<string> => {
+  const { signal } = options
+  const log = await open(logPath, 'wx', 0o600)
   const cachePath = join(dirname(logPath), 'prepared.json')
   let progress: PreparationProgress | undefined
   const record = async (message: string): Promise<void> => {
@@ -287,6 +299,5 @@ export const executePreparation = async (
     throw new ProjectPreparationError(error, progress)
   } finally {
     await log.close()
-    await rm(lock, { recursive: true, force: true })
   }
 }

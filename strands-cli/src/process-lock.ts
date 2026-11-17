@@ -12,6 +12,8 @@ const BUSY_CODES = new Set(['EEXIST', 'ENOTEMPTY', 'ENOTDIR', 'EPERM'])
 
 export type LockBusyMessage = (holders: readonly number[]) => string
 
+export class ProcessLockBusy extends Error {}
+
 const agentBusy: LockBusyMessage = (holders) =>
   `Another strands dev process (${holders.join(', ')}) is still changing this agent. Try again when it finishes.`
 
@@ -71,7 +73,7 @@ export const withProcessLock = async <T>(
     } catch (error) {
       if (!BUSY_CODES.has(errorCode(error) ?? '')) throw error
       const holders = await runningHolders(lock)
-      if (holders.length && Date.now() >= deadline) throw new Error(busy(holders), { cause: error })
+      if (holders.length && Date.now() >= deadline) throw new ProcessLockBusy(busy(holders), { cause: error })
       if (holders.length) await delay(LOCK_RETRY_MS)
     } finally {
       await rm(staged, { recursive: true, force: true })

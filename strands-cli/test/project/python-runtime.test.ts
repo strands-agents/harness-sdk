@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { devNull } from 'node:os'
@@ -18,6 +20,12 @@ const createEnvironment = async (root: string): Promise<string> => {
   await mkdir(dirname(python), { recursive: true })
   await writeFile(python, 'fixture interpreter')
   return python
+}
+
+const stoppedProcessId = async (): Promise<number> => {
+  const child = spawn(process.execPath, ['-e', ''])
+  await new Promise((resolve) => child.once('exit', resolve))
+  return child.pid!
 }
 
 const commands = (run: ReturnType<typeof vi.fn<(request: PythonRuntimeCommand) => Promise<void>>>): string[][] =>
@@ -187,6 +195,26 @@ describe('dev Python runtime preparation', () => {
 
     expect(await readFile(runtimePath(root), 'utf8')).toBe('fixture interpreter')
     expect(await readdir(join(root, '.strands/state'))).toEqual([])
+  })
+
+  it.each([
+    [
+      'AStoppedProcess',
+      async (lock: string) => {
+        await mkdir(lock, { recursive: true })
+        await writeFile(join(lock, `${await stoppedProcessId()}-${randomUUID()}`), '')
+      },
+    ],
+    ['AnOlderStrandsVersion', (lock: string) => mkdir(lock, { recursive: true })],
+  ])('shouldTakeOverThePythonSetupLockWhenItWasLeftBy%s', async (_case, leave) => {
+    const root = await temporaryDirectory()
+    const python = await createEnvironment(root)
+    await leave(join(root, '.strands', 'state', 'python-runtime.lock'))
+    const run = vi.fn(async (_request: PythonRuntimeCommand): Promise<void> => undefined)
+
+    expect(await preparePythonRuntime(root, { run, validateEnvironment: true })).toBe(python)
+
+    expect(await readdir(join(root, '.strands', 'state'))).toEqual([])
   })
 
   it('shouldStopBeforeInstallingWhenTheInterpreterIsTooOld', async () => {
