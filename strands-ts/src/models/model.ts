@@ -32,12 +32,7 @@ import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { summarizeWithStream, type SummarizeResult } from './summarize.js'
-import {
-  resolveCacheStrategy,
-  type CacheStrategy,
-  type CacheStrategyResolution,
-  type ResolvedCacheStrategy,
-} from './cache-strategy.js'
+import { resolveCacheStrategy, type CacheStrategy, type CacheStrategyResolution } from './cache-strategy.js'
 
 /**
  * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
@@ -100,11 +95,11 @@ class CitationAccumulator {
  */
 export interface CacheConfig {
   /**
-   * The caching mode to run in; `Model.resolvedCacheStrategy` reports the one in effect. `'auto'` picks the most
-   * capable mode the provider and model support. `'sdk'` places cache points (on Bedrock, also for a model id the
-   * SDK cannot inspect, such as an application inference profile ARN); `'implicit'` leaves caching to the provider's
-   * prefix cache; `'manual'` places none and sends the caller's cache points as written. A mode the provider or
-   * model cannot apply warns once and falls back to `'auto'`. `'anthropic'` is a deprecated alias of `'sdk'`.
+   * The caching mode to run in. `'auto'` picks the most capable mode the provider and model support. `'sdk'` places
+   * cache points (on Bedrock, also for a model id the SDK cannot inspect, such as an application inference profile
+   * ARN); `'implicit'` leaves caching to the provider's prefix cache; `'manual'` places none and sends the caller's
+   * cache points as written. A mode the provider or model cannot apply warns once and falls back to `'auto'`.
+   * `'anthropic'` is a deprecated alias of `'sdk'`.
    *
    * @defaultValue 'auto'
    */
@@ -451,18 +446,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
-   * The prompt-caching mode this model runs in, resolved on each read from `cacheConfig`, the provider and
-   * {@link modelInfo}: `'sdk'` when the SDK places cache points, `'implicit'` when the provider caches by prompt
-   * prefix on its own, `'manual'` when the SDK places no cache points and sends the caller's as written. With no
-   * `cacheConfig`, it reports what the provider does unasked. A provider that does not apply `cacheConfig` reports
-   * `'implicit'` for a model whose `modelInfo.capabilities.promptCaching` is `'auto'` and `'manual'` otherwise.
-   */
-  get resolvedCacheStrategy(): ResolvedCacheStrategy {
-    return this._cacheStrategy().strategy
-  }
-
-  /**
-   * Resolves the cache strategy, warning once when an explicit strategy falls back to `'auto'` or the provider
+   * Resolves the prompt-caching mode this model runs in from `cacheConfig`, the provider and {@link modelInfo},
+   * warning once when an explicit strategy falls back to `'auto'` or the provider
    * ignores `cacheConfig`.
    *
    * @internal

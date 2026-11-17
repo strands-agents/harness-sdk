@@ -1,5 +1,5 @@
 /**
- * The resolved cache strategy of every provider, read from `Model.resolvedCacheStrategy`, and what each mode sends.
+ * The cache strategy every provider resolves to, and what each mode sends.
  * `cache-strategy-baseline.test.ts` pins the wire behavior of `'auto'`, `'anthropic'` and an unset strategy.
  */
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
@@ -18,6 +18,10 @@ vi.mock('@aws-sdk/client-bedrock-runtime', async (importOriginal) =>
   (await import('./cache-bench-mocks.js')).mockBedrockRuntime(importOriginal)
 )
 vi.mock('../../logging/warn-once.js', async () => (await import('./cache-bench-mocks.js')).warnOnceWithoutDedupe())
+
+/** Reads the internal resolution a provider gates cache placement on. */
+const strategyOf = (model: Model): ResolvedCacheStrategy =>
+  (model as unknown as { _cacheStrategy(): { strategy: ResolvedCacheStrategy } })._cacheStrategy().strategy
 
 const CLAUDE_BEDROCK = 'global.anthropic.claude-sonnet-4-6'
 const NOT_AUTO = 'does not support automatic caching'
@@ -125,20 +129,20 @@ function cacheWarnings(warnSpy: WarnSpy): string[] {
   return warnSpy.mock.calls.map(([message]) => String(message)).filter((message) => /cach|strategy/i.test(message))
 }
 
-describe('Model.resolvedCacheStrategy', () => {
+describe('resolved cache strategy', () => {
   it.each(RESOLUTION.map((row) => [label(row), row] as const))('%s', (_label, row) => {
-    expect(buildModel(row).resolvedCacheStrategy).toBe(row.expected)
+    expect(strategyOf(buildModel(row))).toBe(row.expected)
   })
 
   it('reflects updateConfig', () => {
     const model = buildModel({ provider: 'bedrock', modelId: CLAUDE_BEDROCK })
-    expect(model.resolvedCacheStrategy).toBe('manual')
+    expect(strategyOf(model)).toBe('manual')
     model.updateConfig({ cacheConfig: {} })
-    expect(model.resolvedCacheStrategy).toBe('sdk')
+    expect(strategyOf(model)).toBe('sdk')
     model.updateConfig({ cacheConfig: { strategy: 'manual' } })
-    expect(model.resolvedCacheStrategy).toBe('manual')
+    expect(strategyOf(model)).toBe('manual')
     model.updateConfig({ cacheConfig: false })
-    expect(model.resolvedCacheStrategy).toBe('manual')
+    expect(strategyOf(model)).toBe('manual')
   })
 
   describe('a provider that does not apply cacheConfig', () => {
@@ -149,13 +153,13 @@ describe('Model.resolvedCacheStrategy', () => {
       [undefined, 'manual'],
     ] as const)('promptCaching=%s → %s', (promptCaching, expected) => {
       const info: ModelInfo = promptCaching ? { capabilities: { promptCaching } } : {}
-      expect(new StubModel(info).resolvedCacheStrategy).toBe(expected)
-      expect(new StubModel(info, { cacheConfig: { strategy: 'sdk' } }).resolvedCacheStrategy).toBe(expected)
+      expect(strategyOf(new StubModel(info))).toBe(expected)
+      expect(strategyOf(new StubModel(info, { cacheConfig: { strategy: 'sdk' } }))).toBe(expected)
     })
 
     it('resolves Google to implicit', () => {
       const model = new GoogleModel({ client: {} as GoogleGenAI, modelId: 'gemini-2.5-flash', cacheConfig: {} })
-      expect(model.resolvedCacheStrategy).toBe('implicit')
+      expect(strategyOf(model)).toBe('implicit')
     })
 
     it('resolves Google to manual under a modelInfo override that says the model does not cache', () => {
@@ -164,7 +168,7 @@ describe('Model.resolvedCacheStrategy', () => {
         modelId: 'gemini-2.5-flash',
         modelInfo: { capabilities: { promptCaching: 'unsupported' } },
       })
-      expect(model.resolvedCacheStrategy).toBe('manual')
+      expect(strategyOf(model)).toBe('manual')
     })
   })
 })
@@ -331,7 +335,7 @@ describe('cacheConfig on a provider that does not apply it', () => {
       modelId: 'gemini-2.5-flash',
       cacheConfig: { strategy: 'auto' },
     })
-    expect(model.resolvedCacheStrategy).toBe('implicit')
+    expect(strategyOf(model)).toBe('implicit')
     expect(cacheWarnings(warnSpy)).toStrictEqual([
       'provider=<GoogleModel>, model_id=<gemini-2.5-flash> | cacheConfig is not applied by this model provider, ignoring',
     ])
@@ -350,7 +354,7 @@ describe('cacheConfig on a provider that does not apply it', () => {
 
   it('logs nothing for Google with cacheConfig false', () => {
     const model = new GoogleModel({ client: {} as GoogleGenAI, modelId: 'gemini-2.5-flash', cacheConfig: false })
-    expect(model.resolvedCacheStrategy).toBe('implicit')
+    expect(strategyOf(model)).toBe('implicit')
     expect(cacheWarnings(warnSpy)).toStrictEqual([])
   })
 
@@ -359,7 +363,7 @@ describe('cacheConfig on a provider that does not apply it', () => {
     ['unset', {}],
   ] as const)('logs nothing for a custom provider with cacheConfig %s', async (_name, config) => {
     const model = new StubModel({}, config)
-    expect(model.resolvedCacheStrategy).toBe('manual')
+    expect(strategyOf(model)).toBe('manual')
     for await (const _event of model.streamAggregated([
       new Message({ role: 'user', content: [new TextBlock('hi')] }),
     ])) {
@@ -369,9 +373,7 @@ describe('cacheConfig on a provider that does not apply it', () => {
   })
 
   it('does not warn for a provider that applies it', () => {
-    expect(buildModel({ provider: 'bedrock', modelId: CLAUDE_BEDROCK, cacheConfig: {} }).resolvedCacheStrategy).toBe(
-      'sdk'
-    )
+    expect(strategyOf(buildModel({ provider: 'bedrock', modelId: CLAUDE_BEDROCK, cacheConfig: {} }))).toBe('sdk')
     expect(cacheWarnings(warnSpy)).toStrictEqual([])
   })
 })

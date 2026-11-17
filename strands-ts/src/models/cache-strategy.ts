@@ -9,7 +9,7 @@ import type { PromptCaching } from './model-info.js'
 /**
  * A prompt-caching strategy to ask for in `CacheConfig.strategy`.
  *
- * - `'auto'`: the most capable mode the provider and model support (see {@link ResolvedCacheStrategy})
+ * - `'auto'`: the most capable mode the provider and model support
  * - `'sdk'`, `'provider'`, `'implicit'`, `'manual'`: that mode; one the provider or model cannot apply warns once
  *   and falls back to `'auto'`
  * - `'anthropic'`: same as `'sdk'`
@@ -24,12 +24,14 @@ export type CacheStrategy =
   | 'anthropic'
 
 /**
- * The prompt-caching mode a model runs in, read from `Model.resolvedCacheStrategy`.
+ * The prompt-caching mode a model runs in.
  *
  * - `'sdk'`: the SDK places cache points
  * - `'provider'`: the provider's own explicit caching mechanism; no provider applies it yet
  * - `'implicit'`: the provider caches by prompt prefix with nothing sent by the SDK
  * - `'manual'`: the SDK places no cache points; cache points in the messages and system prompt are sent as written
+ *
+ * @internal
  */
 export type ResolvedCacheStrategy = 'sdk' | 'provider' | 'implicit' | 'manual'
 
