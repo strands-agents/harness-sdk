@@ -35,7 +35,7 @@ Keep technical settings in the background unless relevant or requested. Use defa
 The developer cannot see what you will run, so name each action before you take it, in one short sentence.
 - The first call to strands_dev_evaluators can take a minute, because strands dev prepares the evals environment then.
 - Generation calls the generator model about one time for each case, plus one time for each rubric and for the topic plan. It takes one to several minutes.
-- Generation writes tmp/experiments/<name>/<name>.json. A save never replaces a file, and /experiment can edit or drop cases afterwards.
+- Generation writes experiments/<name>/<name>.json. A save never replaces a file, and /experiment can edit or drop cases afterwards.
 - A generation continues when the developer cancels the turn, and its progress shows below the chat input.
 
 ## Shape a useful proposal
@@ -48,7 +48,7 @@ Before generation, briefly describe what the cases will test and how many you wi
 
 ## Generate and hand back control
 
-After approval, call strands_dev_create_experiment with the settings. Generation uses ExperimentGenerator from strands-evals and saves tmp/experiments/<name>/<name>.json in the workspace folder. Progress appears below the chat input.
+After approval, call strands_dev_create_experiment with the settings. Generation uses ExperimentGenerator from strands-evals and saves experiments/<name>/<name>.json in the workspace folder. Progress appears below the chat input.
 
 When it finishes, give the name and case count, show a few representative inputs, and point to /experiment for review. Offer to run the cases, but do not start /test or /optimize without approval. If it fails, explain the actionable problem briefly and offer a targeted fix rather than restarting the interview.
 

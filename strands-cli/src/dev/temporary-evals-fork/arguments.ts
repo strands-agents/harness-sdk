@@ -11,10 +11,10 @@ export interface TemporaryDevCommandArguments {
 
 const DESCRIPTIONS: Record<TemporaryDevCommandName, string> = {
   optimize:
-    'Experimental: tune the dev workspace agent against an experiment in strands-dev/tmp/experiments with the ' +
+    'Experimental: tune the dev workspace agent against an experiment in strands-dev/experiments with the ' +
     'strands-evals optimize command from the evals fork. Flags after -- go to strands-evals optimize.',
   test:
-    'Experimental: run the dev workspace agent on an experiment in strands-dev/tmp/experiments with strands-evals run ' +
+    'Experimental: run the dev workspace agent on an experiment in strands-dev/experiments with strands-evals run ' +
     "from the evals fork, and save the report in the experiment's runs folder. Flags after -- go to strands-evals run.",
 }
 
@@ -33,7 +33,7 @@ export const parseTemporaryDevCommandArguments = (
     .description(DESCRIPTIONS[name])
     .argument(
       '[experiment]',
-      'experiment name in strands-dev/tmp/experiments/<name>/, or the path of an Experiment JSON file'
+      'experiment name in strands-dev/experiments/<name>/, or the path of an Experiment JSON file'
     )
     .option('--workspace <path>', 'open this dev workspace instead of the one in the current folder')
     .allowExcessArguments(false)

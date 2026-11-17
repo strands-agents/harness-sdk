@@ -80,7 +80,7 @@ describe('TEMPORARY create-experiment flow', () => {
   it.each([
     ['the model calls of a generation', 'one time for each case'],
     ['how long a generation takes', 'one to several minutes'],
-    ['the file that it writes', 'tmp/experiments/<name>/<name>.json'],
+    ['the file that it writes', 'experiments/<name>/<name>.json'],
     ['that a save never replaces a file', 'A save never replaces a file'],
     ['that the run survives a cancelled turn', 'continues when the developer cancels the turn'],
     ['the wait on the first evaluator call', 'can take a minute'],

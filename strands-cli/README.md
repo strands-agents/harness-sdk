@@ -351,22 +351,25 @@ Generation, testing, and optimization call models and can incur charges. Review 
 Running jobs show progress below the chat input. Dev keeps each experiment and its history in one folder:
 
 ```text
-strands-dev/tmp/
+strands-dev/
   experiments/
+    .gitignore               keeps the history out of git
     <name>/
-      <name>.json            the experiment
+      <name>.json            the experiment, which you can commit
       <name>.report.json     the latest test report
       runs/<time>/           one test run, with report.json and run.log
       optimizations/<time>/  one optimization run, with optimizer/ and run.log
-  .state/                    drafts, downloaded skills, and the evals environment of the workspace
+  tmp/
+    .state/                  drafts, downloaded skills, and the evals environment of the workspace
 ```
 
+The `.gitignore` in `experiments/` ignores `runs/`, `optimizations/`, `.state/`, and the latest reports. Thus git keeps only the experiment files.
 Dev keeps the 20 newest test runs of each experiment. A rerun of the failed cases replaces only those cases in `<name>.report.json`.
-At startup, dev moves the files of the old `tmp/reports/` and `tmp/optimization/` folders into this layout.
+At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/`, and `tmp/optimization/` folders into this layout. It does not move an experiment while one of its runs is active.
 
 ### Evals UI
 
-When the chat starts, dev also starts the evals UI of strands-evals for `strands-dev/tmp/experiments/`.
+When the chat starts, dev also starts the evals UI of strands-evals for `strands-dev/experiments/`.
 The evals UI is a local web page with larger views of experiments, reports, and optimization runs.
 In `/experiment`, `/test`, and `/optimize`, push `o` to open the current item in a browser.
 

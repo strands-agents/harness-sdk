@@ -18,6 +18,11 @@ const workspace = async (): Promise<string> => join(await temporaryDirectory(), 
 
 const inTmp = (directory: string, path: string): string => join(directory, 'tmp', path)
 
+const inWorkspace = (directory: string, path: string): string => join(directory, path)
+
+const newPlace = (directory: string, path: string): string =>
+  path.startsWith('experiments/') ? inWorkspace(directory, path) : inTmp(directory, path)
+
 const writeAt = async (path: string, text: string): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, text)
@@ -107,7 +112,7 @@ describe('TEMPORARY workspace layout migration', () => {
     const migration = await temporaryWorkspaceReady(directory)
 
     expect(migration).toEqual({ moved, problems: [] })
-    expect(await Promise.all(to.map((path) => readFile(inTmp(directory, path), 'utf8')))).toEqual(from)
+    expect(await Promise.all(to.map((path) => readFile(newPlace(directory, path), 'utf8')))).toEqual(from)
     expect(from.filter((path) => existsSync(inTmp(directory, path)))).toEqual([])
   })
 
@@ -122,7 +127,7 @@ describe('TEMPORARY workspace layout migration', () => {
 
     const migration = await temporaryWorkspaceReady(directory)
 
-    const home = inTmp(directory, 'experiments/refunds')
+    const home = inWorkspace(directory, 'experiments/refunds')
     expect(migration).toEqual({ moved: 2, problems: [] })
     expect(await readFile(join(home, 'refunds.report.json'), 'utf8')).toBe('the report')
     expect(await readFile(join(home, 'runs', STAMP, 'report.json'), 'utf8')).toBe('the report')
@@ -145,11 +150,11 @@ describe('TEMPORARY workspace layout migration', () => {
 
     await temporaryWorkspaceReady(directory)
 
-    const run = inTmp(directory, `experiments/refunds/runs/${STAMP}`)
+    const run = inWorkspace(directory, `experiments/refunds/runs/${STAMP}`)
     expect(await readJson(join(run, '.state/record.json'))).toEqual({
       ...record,
-      experiment: inTmp(directory, 'experiments/refunds/refunds.json'),
-      cases: inTmp(directory, movedCases),
+      experiment: inWorkspace(directory, 'experiments/refunds/refunds.json'),
+      cases: newPlace(directory, movedCases),
       report: join(run, 'report.json'),
       log: join(run, 'run.log'),
       store: join(run, '.state/cases'),
@@ -166,10 +171,10 @@ describe('TEMPORARY workspace layout migration', () => {
 
     await temporaryWorkspaceReady(directory)
 
-    const run = inTmp(directory, `experiments/refunds/optimizations/${STAMP}`)
+    const run = inWorkspace(directory, `experiments/refunds/optimizations/${STAMP}`)
     expect(await readJson(join(run, '.state/record.json'))).toEqual({
       ...record,
-      experiment: inTmp(directory, 'experiments/refunds/refunds.json'),
+      experiment: inWorkspace(directory, 'experiments/refunds/refunds.json'),
       record: join(run, 'optimizer'),
       space: join(run, '.state/space.json'),
     })
@@ -195,11 +200,63 @@ describe('TEMPORARY workspace layout migration', () => {
 
     const migration = await temporaryWorkspaceReady(directory)
 
-    const run = inTmp(directory, `experiments/refunds/optimizations/${STAMP}`)
+    const run = inWorkspace(directory, `experiments/refunds/optimizations/${STAMP}`)
     expect(migration).toEqual({ moved: 3, problems: [] })
     expect(await readFile(join(run, 'run.log'), 'utf8')).toBe('setup failed')
     expect(await readFile(join(run, '.state/experiment.json'), 'utf8')).toBe('{"cases": []}')
     expect(existsSync(inTmp(directory, 'optimization'))).toBe(false)
+  })
+
+  it('shouldMoveAnExperimentFolderOutOfTmpAndRewriteTheRecordsOfItsUnfinishedRunsWhenNoRunIsActive', async () => {
+    const directory = await workspace()
+    const from = inTmp(directory, 'experiments/refunds')
+    const to = inWorkspace(directory, 'experiments/refunds')
+    const record = {
+      version: 1,
+      experiment: join(from, 'refunds.json'),
+      cases: join(from, `runs/${STAMP}/.state/experiment.json`),
+      rerun: false,
+      report: join(from, `runs/${STAMP}/report.json`),
+      log: join(from, `runs/${STAMP}/run.log`),
+      store: join(from, `runs/${STAMP}/.state/cases`),
+      startedAt: STARTED_AT,
+      pid: await endedProcess(),
+    }
+    await writeAt(join(from, 'refunds.json'), '{"cases": []}')
+    await writeAt(join(from, 'refunds.report.json'), 'latest')
+    await writeAt(join(from, `runs/${STAMP}/.state/record.json`), JSON.stringify(record))
+
+    await temporaryWorkspaceReady(directory)
+
+    expect(existsSync(from)).toBe(false)
+    expect(await readFile(join(to, 'refunds.report.json'), 'utf8')).toBe('latest')
+    expect(await readJson(join(to, `runs/${STAMP}/.state/record.json`))).toEqual({
+      ...record,
+      experiment: join(to, 'refunds.json'),
+      cases: join(to, `runs/${STAMP}/.state/experiment.json`),
+      report: join(to, `runs/${STAMP}/report.json`),
+      log: join(to, `runs/${STAMP}/run.log`),
+      store: join(to, `runs/${STAMP}/.state/cases`),
+    })
+  })
+
+  it('shouldKeepHistoryOutOfGitButNotTheExperimentWhenItMakesTheExperimentsFolder', async () => {
+    const directory = await workspace()
+
+    await temporaryWorkspaceReady(directory)
+
+    expect(await readFile(inWorkspace(directory, 'experiments/.gitignore'), 'utf8')).toBe(
+      '*/runs/\n*/optimizations/\n*/.state/\n*/*.report.json\n'
+    )
+  })
+
+  it('shouldKeepTheIgnoreFileOfTheDeveloperWhenTheExperimentsFolderHasOne', async () => {
+    const directory = await workspace()
+    await writeAt(inWorkspace(directory, 'experiments/.gitignore'), 'mine\n')
+
+    await temporaryWorkspaceReady(directory)
+
+    expect(await readFile(inWorkspace(directory, 'experiments/.gitignore'), 'utf8')).toBe('mine\n')
   })
 
   it('shouldRemoveTheOldFoldersWhenEverythingInThemMoved', async () => {
@@ -228,7 +285,8 @@ describe('TEMPORARY workspace layout migration', () => {
     const migration = await temporaryWorkspaceReady(directory)
 
     expect(migration.problems).toEqual([])
-    expect((await readdir(join(directory, 'tmp'))).sort()).toEqual(['.state', 'experiments'])
+    expect((await readdir(join(directory, 'tmp'))).sort()).toEqual(['.state'])
+    expect((await readdir(inWorkspace(directory, 'experiments'))).sort()).toEqual(['.gitignore', 'refunds'])
   })
 
   it('shouldMoveTheOldLayoutOnlyOnceWhenTheSameWorkspaceIsMadeReadyAgain', async () => {
@@ -245,7 +303,7 @@ describe('TEMPORARY workspace layout migration', () => {
     expect(again).toBe(first)
     expect(existsSync(inTmp(directory, 'experiments/billing.json'))).toBe(true)
     expect(elsewhere).toEqual({ moved: 1, problems: [] })
-    expect(await readFile(inTmp(other, 'experiments/billing/billing.json'), 'utf8')).toBe('billing')
+    expect(await readFile(inWorkspace(other, 'experiments/billing/billing.json'), 'utf8')).toBe('billing')
   })
 })
 
@@ -270,7 +328,23 @@ describe.skipIf(process.platform === 'win32')('TEMPORARY workspace layout migrat
     expect(migration).toEqual({ moved: 1, problems: [] })
     expect(await readFile(report, 'utf8')).toBe('partial report')
     expect(await readFile(inTmp(directory, `reports/running/${STAMP}-refunds.json`), 'utf8')).toBe(record)
-    expect(existsSync(inTmp(directory, `experiments/refunds/runs/${STAMP}`))).toBe(false)
+    expect(existsSync(inWorkspace(directory, `experiments/refunds/runs/${STAMP}`))).toBe(false)
+  })
+
+  it('shouldLeaveAnExperimentFolderInTmpWhenOneOfItsRunsStillRuns', async () => {
+    const directory = await workspace()
+    const from = inTmp(directory, 'experiments/refunds')
+    const report = join(from, `runs/${STAMP}/report.json`)
+    await writeAt(join(from, 'refunds.json'), '{"cases": []}')
+    await writeAt(
+      join(from, `runs/${STAMP}/.state/record.json`),
+      JSON.stringify({ version: 1, report, pid: await liveProcess(report) })
+    )
+
+    await temporaryWorkspaceReady(directory)
+
+    expect(await readFile(join(from, 'refunds.json'), 'utf8')).toBe('{"cases": []}')
+    expect(existsSync(inWorkspace(directory, 'experiments/refunds'))).toBe(false)
   })
 
   it('shouldKeepTheOldOptimizerEnvironmentWhenARunThatStillRunsUsesIt', async () => {
@@ -302,6 +376,6 @@ describe.skipIf(process.platform === 'win32')('TEMPORARY workspace layout migrat
     expect(migration).toEqual({ moved: 1, problems: [] })
     expect(await readFile(join(folder, 'candidates.jsonl'), 'utf8')).toBe('candidate')
     expect(await readFile(inTmp(directory, `optimization/running/${STAMP}-refunds.json`), 'utf8')).toBe(record)
-    expect(existsSync(inTmp(directory, `experiments/refunds/optimizations/${STAMP}`))).toBe(false)
+    expect(existsSync(inWorkspace(directory, `experiments/refunds/optimizations/${STAMP}`))).toBe(false)
   })
 })

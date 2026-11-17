@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs'
 import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative } from 'node:path'
+import { basename, dirname, join, relative, sep } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 import { isTemporaryProcessAlive } from './background-runs.js'
 import {
+  ensureTemporaryExperimentsFolder,
   temporaryDraftsFolder,
   temporaryExperimentFile,
   temporaryExperimentHome,
@@ -97,7 +98,7 @@ const stemOf = (name: string, suffixes: readonly string[]): string | undefined =
 }
 
 const oldExperiment = (directory: string, name: string): string =>
-  join(temporaryExperimentsFolder(directory), `${name}.json`)
+  join(oldFolder(directory, 'experiments'), `${name}.json`)
 
 const newExperiment = (directory: string, name: string, recorded?: unknown): string => {
   const moved = temporaryExperimentFile(directory, name)
@@ -135,13 +136,67 @@ const runningRecords = async (folder: string, target: 'report' | 'record'): Prom
 const isAlive = ({ record }: Running, target: 'report' | 'record'): Promise<boolean> =>
   isTemporaryProcessAlive(typeof record.pid === 'number' ? record.pid : undefined, String(record[target]))
 
+const RECORD_FOLDERS = ['runs', 'optimizations'] as const
+const RECORD_FILE = join('.state', 'record.json')
+const DRAFTS = 'drafts'
+
+const recordsIn = async (home: string): Promise<string[]> => {
+  const found: string[] = []
+  for (const kind of RECORD_FOLDERS)
+    for (const stamp of await entries(join(home, kind))) {
+      const record = join(kind, stamp, RECORD_FILE)
+      if (existsSync(join(home, record))) found.push(record)
+    }
+  return found
+}
+
+const isRecordAlive = async (path: string): Promise<boolean> => {
+  const record = await readJson(path)
+  const marker = record?.report ?? record?.record
+  return (
+    typeof marker === 'string' &&
+    isTemporaryProcessAlive(typeof record?.pid === 'number' ? record.pid : undefined, marker)
+  )
+}
+
+const movedPaths = (record: Json, from: string, to: string): Json =>
+  Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [
+      key,
+      typeof value === 'string' && (value === from || value.startsWith(`${from}${sep}`))
+        ? `${to}${value.slice(from.length)}`
+        : value,
+    ])
+  )
+
+const moveExperimentHome = async (work: Migration, from: string, to: string): Promise<void> => {
+  const records = await recordsIn(from)
+  for (const record of records) if (await isRecordAlive(join(from, record))) return
+  await work.move(from, to)
+  if (!existsSync(to) || existsSync(from)) return
+  for (const record of records)
+    await work.attempt(join(to, record), async () => {
+      const saved = await readJson(join(to, record))
+      if (saved) await writeJson(join(to, record), movedPaths(saved, from, to))
+    })
+}
+
+const moveExperimentHomes = async (work: Migration): Promise<void> => {
+  const folder = oldFolder(work.directory, 'experiments')
+  for (const name of await entries(folder)) {
+    const from = join(folder, name)
+    if (name === DRAFTS || name.startsWith('.') || !(await isFolder(from))) continue
+    await moveExperimentHome(work, from, join(temporaryExperimentsFolder(work.directory), name))
+  }
+}
+
 const moveExperiments = async (work: Migration): Promise<void> => {
-  const folder = temporaryExperimentsFolder(work.directory)
+  const folder = oldFolder(work.directory, 'experiments')
   for (const name of await entries(folder)) {
     if (name.endsWith('.json'))
       await work.move(join(folder, name), temporaryExperimentFile(work.directory, name.slice(0, -5)))
   }
-  await work.move(join(folder, 'drafts'), temporaryDraftsFolder(work.directory))
+  await work.move(join(folder, DRAFTS), temporaryDraftsFolder(work.directory))
 }
 
 const moveTestRecord = async (work: Migration, reports: string, { path, record, stem }: Running): Promise<void> => {
@@ -268,6 +323,7 @@ const removeEmpty = async (folders: readonly string[]): Promise<void> => {
 const migrate = async (directory: string): Promise<TemporaryMigration> => {
   const work = migration(directory)
   let liveRuns = 0
+  await work.attempt('experiment folders', () => moveExperimentHomes(work))
   await work.attempt('experiments', () => moveExperiments(work))
   await work.attempt('test reports', async () => {
     liveRuns += await moveTests(work)
@@ -285,7 +341,11 @@ const migrate = async (directory: string): Promise<TemporaryMigration> => {
     reports,
     join(optimization, RUNNING_FOLDER),
     optimization,
+    oldFolder(directory, 'experiments'),
   ])
+  await work.attempt(temporaryExperimentsFolder(directory), async () => {
+    await ensureTemporaryExperimentsFolder(directory)
+  })
   return work.result()
 }
 

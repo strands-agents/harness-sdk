@@ -52,10 +52,10 @@ const KNOB_NAMES = TEMPORARY_KNOB_NAMES.join(', ')
 const INSTRUCTIONS = `strands_dev_create_experiment, strands_dev_test, and strands_dev_optimize spend the developer's money the moment you call them. Two turns, never one: in the turn that asks for the work, name the experiments and case counts and stop; call the tool only in a later turn, after the developer answered. "Run my tests", "check my agent against my examples", and "make my agent better" ask for that first turn. A scope that looks obvious is still not approval, and neither is one saved experiment or one evident choice. Finish the turn with your question as the last thing you write.
 
 Experiments, tests, and optimization:
-- tmp/experiments/<name>/<name>.json: a saved experiment. "cases" holds the test cases (name, input, expected_output or expected_assertion, and optional expected_trajectory and metadata). "evaluators" says how each case is scored.
-- tmp/experiments/<name>/<name>.report.json: the report of the latest test run of that experiment.
-- tmp/experiments/<name>/runs/<time>/: one test run, with report.json and run.log.
-- tmp/experiments/<name>/optimizations/<time>/: one optimization run, with the optimizer record in optimizer/ and run.log.
+- experiments/<name>/<name>.json: a saved experiment, which the developer can commit. "cases" holds the test cases (name, input, expected_output or expected_assertion, and optional expected_trajectory and metadata). "evaluators" says how each case is scored.
+- experiments/<name>/<name>.report.json: the report of the latest test run of that experiment.
+- experiments/<name>/runs/<time>/: one test run, with report.json and run.log.
+- experiments/<name>/optimizations/<time>/: one optimization run, with the optimizer record in optimizer/ and run.log.
 - tmp/.state/drafts/: generated cases that wait for a review in /experiment.
 
 The developer can open a panel with /experiment, /test, or /optimize, or ask you in plain words. A plain-words request still belongs to a skill: activate manage-experiments, run-tests, or optimize-harness before you answer one, and use these tools:
@@ -446,7 +446,7 @@ const createTool = (sessions: Sessions): DevChatTool => ({
     'Start the paid generation run. This call starts the paid run itself and asks nothing first, so call it ' +
     'only after the developer answered yes, in an earlier turn, to the proposal you named. ' +
     'Being asked for test cases is not that answer, and a scope that looks obvious is not that answer. ' +
-    'Generates test cases with strands-evals ExperimentGenerator and saves tmp/experiments/<name>/<name>.json. ' +
+    'Generates test cases with strands-evals ExperimentGenerator and saves experiments/<name>/<name>.json. ' +
     'It takes minutes. Settings you leave out use the suggested values.',
   inputSchema: {
     type: 'object',

@@ -25,12 +25,12 @@ import { generationSettings } from '../panels/fixtures.js'
 
 const CAPITAL: ExperimentSummary = {
   name: 'capital',
-  path: '/w/strands-dev/tmp/experiments/capital.json',
+  path: '/w/strands-dev/experiments/capital.json',
   caseCount: 1,
 }
 const REFUNDS: ExperimentSummary = {
   name: 'refunds',
-  path: '/w/strands-dev/tmp/experiments/refunds.json',
+  path: '/w/strands-dev/experiments/refunds.json',
   caseCount: 2,
 }
 
@@ -130,7 +130,7 @@ const review = (): OptimizeReview => ({
 const fakeSessions = () => {
   const experiments = state<ExperimentsState>({
     loaded: true,
-    folder: 'strands-dev/tmp/experiments',
+    folder: 'strands-dev/experiments',
     saved: [REFUNDS],
     generations: [],
   })
@@ -147,7 +147,7 @@ const fakeSessions = () => {
       agentSummary: vi.fn(() => 'agent.py · 1 tool'),
       createExperiment: vi.fn(async (settings: GenerationSettings) => ({
         name: settings.name,
-        path: `/w/strands-dev/tmp/experiments/${settings.name}.json`,
+        path: `/w/strands-dev/experiments/${settings.name}.json`,
         caseCount: 2,
         failed: 0,
         cases: [
@@ -350,7 +350,7 @@ describe('TEMPORARY dev chat part', () => {
         agentContext: 'agent.py · 1 tool',
         generator: { provider: 'bedrock', defaultModel: 'evals Python SDK default (not the chat model)' },
       },
-      experimentsFolder: 'strands-dev/tmp/experiments',
+      experimentsFolder: 'strands-dev/experiments',
       experiments: [
         {
           name: 'refunds',
@@ -463,7 +463,7 @@ describe('TEMPORARY dev chat part', () => {
     })
     expect(created).toEqual({
       name: 'refunds-v2',
-      file: '/w/strands-dev/tmp/experiments/refunds-v2.json',
+      file: '/w/strands-dev/experiments/refunds-v2.json',
       cases: 2,
       failedCases: 0,
       inputs: [

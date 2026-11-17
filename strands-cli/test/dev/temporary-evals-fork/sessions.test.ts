@@ -173,7 +173,7 @@ const runLogOf = (record: string): string => join(dirname(record), 'run.log')
 const optimizationName = (record: string): string => `${basename(dirname(record))}-capital`
 
 const optimizationFiles = (workspace: DevWorkspace, stamp = '20261111-150405') => {
-  const folder = join(workspace.directory!, 'tmp/experiments/capital/optimizations', stamp)
+  const folder = join(workspace.directory!, 'experiments/capital/optimizations', stamp)
   return {
     record: join(folder, 'optimizer'),
     space: join(folder, '.state/space.json'),
@@ -216,7 +216,7 @@ const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> =
 }
 
 const experimentHome = (workspace: DevWorkspace, name = 'capital'): string =>
-  join(workspace.directory!, 'tmp/experiments', name)
+  join(workspace.directory!, 'experiments', name)
 
 const experimentFile = (workspace: DevWorkspace, name: string): string =>
   join(experimentHome(workspace, name), `${name}.json`)

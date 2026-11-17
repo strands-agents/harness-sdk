@@ -75,7 +75,7 @@ describe('TEMPORARY experiment files', () => {
   })
 
   it('shouldListNothingWhenTheFolderIsMissing', async () => {
-    const folder = join(await temporaryDirectory(), 'tmp', 'experiments')
+    const folder = join(await temporaryDirectory(), 'experiments')
 
     await expect(listTemporaryExperiments(folder)).resolves.toEqual([])
   })

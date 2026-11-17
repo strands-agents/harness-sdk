@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { relative, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
@@ -10,7 +9,8 @@ import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace, EvalsBrowserS
 import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions } from './environment.js'
 import { temporaryEvalsEnvironment, temporaryWorkspaceDirectory } from './evals-process.js'
 import { announce, type TemporaryHost } from './host.js'
-import { temporaryExperimentsFolder } from './layout.js'
+import { ensureTemporaryExperimentsFolder, temporaryExperimentsFolder } from './layout.js'
+import { temporaryWorkspaceReady } from './layout-migration.js'
 
 export interface TemporaryUiProcess {
   readonly stdin: Writable | null
@@ -183,8 +183,8 @@ export class TemporaryEvalsUi implements EvalsBrowser {
       const python = await (this.dependencies.prepare ?? prepareServerEnvironment)(host, {
         onProgress: (line) => this.set({ status: 'starting', detail: line }),
       })
-      const root = temporaryExperimentsFolder(temporaryWorkspaceDirectory(host.workspace))
-      await mkdir(root, { recursive: true })
+      await temporaryWorkspaceReady(temporaryWorkspaceDirectory(host.workspace))
+      const root = await ensureTemporaryExperimentsFolder(temporaryWorkspaceDirectory(host.workspace))
       this.set({ status: 'starting', detail: 'starting the page server' })
       const environment = {
         ...temporaryEvalsEnvironment(python, this.dependencies.environment ?? process.env),

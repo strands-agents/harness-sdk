@@ -99,7 +99,7 @@ describe('TEMPORARY evals UI server', () => {
     await started(setup)
 
     const { command, args, cwd, env } = setup.spawned[0]!
-    const folder = join(setup.workspace.directory!, 'tmp', 'experiments')
+    const folder = join(setup.workspace.directory!, 'experiments')
     expect(command).toBe('/envs/evals/bin/python')
     expect(args.slice(2)).toEqual(['ui', folder, '--depth', '6', '--no-browser'])
     expect(args).not.toContain('--host')
@@ -123,7 +123,7 @@ describe('TEMPORARY evals UI server', () => {
   it('shouldLinkToTheExperimentAndCaseByTheirPathUnderTheFolderWhenTheExperimentIsInside', async () => {
     const setup = await harness()
     await started(setup)
-    const experiment = join(setup.workspace.directory!, 'tmp', 'experiments', 'refunds', 'refunds.json')
+    const experiment = join(setup.workspace.directory!, 'experiments', 'refunds', 'refunds.json')
 
     const link = setup.ui.link({ view: 'report', experiment, case: 'late fee & refund' })
 

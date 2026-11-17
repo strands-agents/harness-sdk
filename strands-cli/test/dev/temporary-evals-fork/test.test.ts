@@ -17,8 +17,7 @@ const writeFileAt = async (path: string, text = EXPERIMENT): Promise<void> => {
   await writeFile(path, text)
 }
 
-const experimentFile = (directory: string, name: string): string =>
-  join(directory, 'tmp/experiments', name, `${name}.json`)
+const experimentFile = (directory: string, name: string): string => join(directory, 'experiments', name, `${name}.json`)
 
 const workspaceFixture = async (
   experiments: string[] = ['support'],
@@ -36,7 +35,7 @@ const workspaceFixture = async (
   }
 }
 
-const supportHome = (workspace: DevWorkspace): string => join(workspace.directory!, 'tmp/experiments/support')
+const supportHome = (workspace: DevWorkspace): string => join(workspace.directory!, 'experiments/support')
 
 const runFile = (workspace: DevWorkspace, file: string, stamp = STAMP): string =>
   join(supportHome(workspace), 'runs', stamp, file)

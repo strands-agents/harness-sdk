@@ -21,7 +21,7 @@ import {
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const WORKSPACE = resolve('/work/strands-dev')
-const HOME = join(WORKSPACE, 'tmp/experiments/refunds')
+const HOME = join(WORKSPACE, 'experiments/refunds')
 const OUTSIDE_HOME = join(WORKSPACE, 'tmp/.state/outside-experiments/refunds')
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
@@ -36,8 +36,8 @@ describe('TEMPORARY experiment homes', () => {
 
   it.each([
     { where: 'OutsideTheWorkspace', file: resolve('/elsewhere/refunds.json') },
-    { where: 'DirectlyInTheExperimentsFolder', file: join(WORKSPACE, 'tmp/experiments/refunds.json') },
-    { where: 'InTheFolderOfAnotherExperiment', file: join(WORKSPACE, 'tmp/experiments/billing/refunds.json') },
+    { where: 'DirectlyInTheExperimentsFolder', file: join(WORKSPACE, 'experiments/refunds.json') },
+    { where: 'InTheFolderOfAnotherExperiment', file: join(WORKSPACE, 'experiments/billing/refunds.json') },
   ])('shouldUseAnOutsideHomeWhenTheFileIs$where', ({ file }) => {
     expect(temporaryExperimentHome(WORKSPACE, file)).toBe(OUTSIDE_HOME)
   })
@@ -131,8 +131,8 @@ describe('TEMPORARY run lists', () => {
     { label: 'Optimizations', kind: 'optimizations', other: 'runs', list: listTemporaryOptimizations },
   ])('shouldListEveryHomeOldestFirstWhenTheWorkspaceHas$label', async ({ kind, other, list }) => {
     const directory = await temporaryDirectory()
-    const refunds = join(directory, 'tmp/experiments/refunds')
-    const billing = join(directory, 'tmp/experiments/billing')
+    const refunds = join(directory, 'experiments/refunds')
+    const billing = join(directory, 'experiments/billing')
     const outside = join(directory, 'tmp/.state/outside-experiments/legacy')
     await makeFolders([
       join(refunds, kind, `${STAMP}-10`),
@@ -177,7 +177,7 @@ describe('TEMPORARY test run pruning', () => {
     Array.from({ length: count }, (_, index) => stampAt(first + index))
 
   const homeWithRuns = async (count: number): Promise<string> => {
-    const home = join(await temporaryDirectory(), 'tmp/experiments/refunds')
+    const home = join(await temporaryDirectory(), 'experiments/refunds')
     await makeFolders(stampsFrom(0, count).map((stamp) => join(home, 'runs', stamp)))
     return home
   }

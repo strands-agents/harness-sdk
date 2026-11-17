@@ -58,8 +58,7 @@ const ROWS = [
   row({ name: 'c1', evaluator: 'judge', score: 0, passed: false, reason: 'An error occurred: boom' }),
 ]
 
-const experimentHome = async (): Promise<string> =>
-  join(await temporaryDirectory(), 'strands-dev/tmp/experiments/refunds')
+const experimentHome = async (): Promise<string> => join(await temporaryDirectory(), 'strands-dev/experiments/refunds')
 
 const writeRunReport = async (home: string, content: unknown, stamp = STAMP): Promise<string> => {
   const path = join(home, 'runs', stamp, 'report.json')

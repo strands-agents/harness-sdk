@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { readdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import { isRecord } from '../../values.js'
@@ -23,6 +23,7 @@ const CASE_STORE_FOLDER = 'cases'
 const CASES_COPY_FILE = 'experiment.json'
 const SPACE_FILE = 'space.json'
 const LATEST_FILE = 'latest.json'
+const EXPERIMENTS_IGNORE_FILE = '.gitignore'
 const STAMP = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-(\d+))?$/u
 
 export const TEMPORARY_KEPT_TEST_RUNS = 20
@@ -56,7 +57,25 @@ export interface TemporaryRunFolder {
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
 
 export const temporaryExperimentsFolder = (workspaceDirectory: string): string =>
-  join(workspaceDirectory, TEMPORARY_FOLDER, EXPERIMENTS_FOLDER)
+  join(workspaceDirectory, EXPERIMENTS_FOLDER)
+
+const EXPERIMENTS_IGNORED = [
+  `*/${RUNS_FOLDER}/`,
+  `*/${OPTIMIZATIONS_FOLDER}/`,
+  `*/${STATE_FOLDER}/`,
+  `*/*${LATEST_REPORT_SUFFIX}`,
+]
+
+export const ensureTemporaryExperimentsFolder = async (workspaceDirectory: string): Promise<string> => {
+  const folder = temporaryExperimentsFolder(workspaceDirectory)
+  await mkdir(folder, { recursive: true })
+  try {
+    await writeFile(join(folder, EXPERIMENTS_IGNORE_FILE), `${EXPERIMENTS_IGNORED.join('\n')}\n`, { flag: 'wx' })
+  } catch (error) {
+    if (!isRecord(error) || error.code !== 'EEXIST') throw error
+  }
+  return folder
+}
 
 export const temporaryStateFolder = (workspaceDirectory: string): string =>
   join(workspaceDirectory, TEMPORARY_FOLDER, STATE_FOLDER)

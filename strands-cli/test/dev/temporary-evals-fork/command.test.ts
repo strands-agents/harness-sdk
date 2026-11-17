@@ -51,10 +51,10 @@ describe('TEMPORARY dev commands', () => {
 
     const details = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
 
-    expect(details.map((text) => text.match(/strands-dev\/tmp\/[\w<>/.]*[\w>/]/u)?.[0])).toEqual([
-      'strands-dev/tmp/experiments/<name>/<name>.json',
-      'strands-dev/tmp/experiments/<name>/runs/',
-      'strands-dev/tmp/experiments/<name>/optimizations/',
+    expect(details.map((text) => text.match(/strands-dev\/experiments\/[\w<>/.]*[\w>/]/u)?.[0])).toEqual([
+      'strands-dev/experiments/<name>/<name>.json',
+      'strands-dev/experiments/<name>/runs/',
+      'strands-dev/experiments/<name>/optimizations/',
     ])
     expect(details[1]).toContain('the latest one as <name>.report.json')
     expect(details.every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
@@ -71,8 +71,8 @@ describe('TEMPORARY dev commands', () => {
 
   it('shouldShowATestThatFinishedWhileStrandsDevWasClosedWhenTheChatAttaches', async () => {
     const { workspace, project } = await fixture()
-    const experiment = join(workspace.directory!, 'tmp/experiments/capital/capital.json')
-    const run = join(workspace.directory!, 'tmp/experiments/capital/runs/20261116-090000')
+    const experiment = join(workspace.directory!, 'experiments/capital/capital.json')
+    const run = join(workspace.directory!, 'experiments/capital/runs/20261116-090000')
     const report = join(run, 'report.json')
     await mkdir(dirname(experiment), { recursive: true })
     await mkdir(run, { recursive: true })

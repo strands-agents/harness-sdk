@@ -17,7 +17,7 @@ import {
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const STAMP = '20261116-090000'
-const INSIDE_HOME = 'tmp/experiments/capital'
+const INSIDE_HOME = 'experiments/capital'
 const OUTSIDE_HOME = 'tmp/.state/outside-experiments/capital'
 
 interface RunPlace {

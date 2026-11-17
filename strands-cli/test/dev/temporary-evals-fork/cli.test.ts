@@ -20,7 +20,7 @@ const workspaceFixture = async (language: 'python' | 'typescript' = 'python'): P
   const root = await temporaryDirectory()
   const directory = join(root, 'strands-dev')
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await writeFileAt(join(directory, 'tmp/experiments/support/support.json'), JSON.stringify({ cases: [{ name: 'a' }] }))
+  await writeFileAt(join(directory, 'experiments/support/support.json'), JSON.stringify({ cases: [{ name: 'a' }] }))
   return {
     directory,
     root,
@@ -167,7 +167,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       }
     )
 
-    const home = join(workspace.directory!, 'tmp/experiments/support')
+    const home = join(workspace.directory!, 'experiments/support')
     const latest = JSON.parse(await readFile(join(home, '.state/latest.json'), 'utf8')) as {
       run: string
       seconds: number
@@ -196,6 +196,6 @@ describe('TEMPORARY strands dev optimize command', () => {
 
     expect(exit).toBe(0)
     expect(stderr.text()).toMatch(/warning: \/test cannot show this result: .+ is not a usable test report/u)
-    expect(existsSync(join(workspace.directory!, 'tmp/experiments/support/.state/latest.json'))).toBe(false)
+    expect(existsSync(join(workspace.directory!, 'experiments/support/.state/latest.json'))).toBe(false)
   })
 })

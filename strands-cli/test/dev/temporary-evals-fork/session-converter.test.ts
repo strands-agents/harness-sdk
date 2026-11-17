@@ -116,7 +116,7 @@ describe('TEMPORARY session-converter skill', () => {
     expect(guide).toContain(`${join(workspace.directory!, '.strands/state/sessions')} is their <directory>`)
     expect(guide).toContain('Skip 20261117t101500z-current, which is this chat.')
     expect(guide).toContain(`"${PYTHON}" -m strands_evals.cli validate <file>`)
-    expect(guide).toContain(join(workspace.directory!, 'tmp', 'experiments', '<name>', '<name>.json'))
+    expect(guide).toContain(join(workspace.directory!, 'experiments', '<name>', '<name>.json'))
     expect(guide).toContain('call strands_dev_evaluators before you write "evaluators"')
     expect(guide).toContain("ask the skill's questions one at a time")
     expect(guide).toContain('wait for a yes')
