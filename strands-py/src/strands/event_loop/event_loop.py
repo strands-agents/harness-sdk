@@ -291,12 +291,6 @@ async def event_loop_cycle(
                         yield model_event
 
                 stop_reason, message = stop_event.stop_reason, stop_event.message
-
-                # Nothing to execute; tool execution would append an empty message, corrupting the next request.
-                if stop_reason == "tool_use" and not any("toolUse" in block for block in message["content"]):
-                    logger.warning("stop_reason=<tool_use> | no toolUse blocks in response | ending the turn")
-                    stop_reason = "end_turn"
-
                 _record_forced_tool_use_failure(structured_output_context, stop_reason, message, invocation_context)
                 yield ModelMessageEvent(message=message)
         except Exception as e:
@@ -834,6 +828,18 @@ async def _handle_model_execution(
             # No retry requested, raise the exception
             yield ForceStopEvent(reason=e)
             raise e
+
+    # Raised outside the loop so the model call's except handler cannot fire a second AfterModelCallEvent.
+    if stop_reason == "tool_use" and not any("toolUse" in block for block in message["content"]):
+        agent.event_loop_metrics.update_usage(usage)
+        agent.event_loop_metrics.update_metrics(metrics)
+        no_tool_error = ValueError(
+            'Model returned stop_reason "tool_use" but the response contains no toolUse block. '
+            "The reply was discarded rather than reported as a completed turn. An AfterModelCallEvent "
+            "hook can set retry=True to re-ask the model."
+        )
+        yield ForceStopEvent(reason=no_tool_error)
+        raise no_tool_error
 
     try:
         # Add message in trace and mark the end of the stream messages trace

@@ -794,31 +794,73 @@ def test_agent__call__retry_with_overwritten_tool(mock_model, agent, tool, agene
 
 
 @pytest.mark.parametrize(
-    "content_events",
+    "glitch_delta",
     [
-        [{"contentBlockDelta": {"delta": {"text": "<thinking>let me look that up</parameter>"}}}],
-        [{"contentBlockDelta": {"delta": {"toolUse": {"input": '{"key": "val"}'}}}}],
+        pytest.param({"text": "<thinking>let me look that up</parameter>"}, id="text_only"),
+        pytest.param({"toolUse": {"input": '{"key": "val"}'}}, id="incomplete_tool_use"),
+        pytest.param({"reasoningContent": {"text": "let me look that up"}}, id="reasoning_only"),
     ],
-    ids=["text_only", "incomplete_tool_use"],
 )
-def test_agent__call__ends_turn_when_tool_use_carries_no_tool_uses(content_events, mock_model, agent, agenerator):
+def test_agent__call__raises_when_tool_use_names_no_tool(glitch_delta, mock_model, agent, agenerator):
     mock_model.mock_stream.side_effect = [
         agenerator(
             [
-                *content_events,
+                {"contentBlockDelta": {"delta": glitch_delta}},
                 {"contentBlockStop": {}},
                 {"messageStop": {"stopReason": "tool_use"}},
             ]
         ),
-        # Only reached if the turn wrongly continues into a second model call.
-        agenerator([{"contentBlockDelta": {"delta": {"text": "second call"}}}, {"contentBlockStop": {}}]),
     ]
 
-    result = agent("test message")
+    with pytest.raises(ValueError, match="no toolUse block"):
+        agent("test message")
 
-    assert result.stop_reason == "end_turn"
     assert mock_model.mock_stream.call_count == 1
-    assert [message["role"] for message in agent.messages] == ["user", "assistant"]
+    assert [message["role"] for message in agent.messages] == ["user"]
+
+
+@pytest.mark.parametrize(
+    "first_reply",
+    [
+        pytest.param(
+            [
+                {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "t1", "name": "tool_decorated"}}}},
+                {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"random_string": "abc"}'}}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+            ],
+            id="after_tool_round",
+        ),
+        pytest.param(
+            [
+                {"contentBlockDelta": {"delta": {"text": "plain text instead of structured output"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ],
+            id="on_forced_structured_output_pass",
+        ),
+    ],
+)
+def test_agent__call__tool_use_names_no_tool_in_a_later_cycle_raises_event_loop_exception(
+    first_reply, mock_model, agent, agenerator, user
+):
+    mock_model.mock_stream.side_effect = [
+        agenerator(first_reply),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "<thinking>let me look that up</parameter>"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+            ]
+        ),
+    ]
+
+    with pytest.raises(EventLoopException) as caught:
+        agent("test message", structured_output_model=type(user), limits={"structured_output_attempts": 3})
+
+    assert isinstance(caught.value.original_exception, ValueError)
+    assert mock_model.mock_stream.call_count == 2
+    assert [message["role"] for message in agent.messages] == ["user", "assistant", "user"]
 
 
 def test_agent__call__invalid_tool_use_event_loop_exception(mock_model, agent, tool, agenerator):

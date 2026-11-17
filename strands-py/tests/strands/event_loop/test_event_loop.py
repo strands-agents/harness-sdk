@@ -1211,6 +1211,33 @@ async def test_event_loop_cycle_exception_model_hooks(mock_sleep, agent, model, 
 
 
 @pytest.mark.asyncio
+async def test_event_loop_cycle_raises_when_tool_use_names_no_tool(
+    agent, model, messages, agenerator, alist, hook_provider
+):
+    model.stream.side_effect = [
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "<thinking>let me look that up</parameter>"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+            ]
+        )
+    ]
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    with pytest.raises(ValueError, match="no toolUse block"):
+        await alist(stream)
+
+    assert model.stream.call_count == 1
+    assert agent.messages == messages
+
+    _, events = hook_provider.get_events()
+    model_call_events = [event for event in events if isinstance(event, (BeforeModelCallEvent, AfterModelCallEvent))]
+    assert len(model_call_events) == 2
+    assert model_call_events[1].stop_response.stop_reason == "tool_use"
+
+
+@pytest.mark.asyncio
 async def test_event_loop_cycle_before_tools_payload_order_and_result(agent, model, tool_stream, agenerator, alist):
     callback_order = []
     before_tools_events = []
