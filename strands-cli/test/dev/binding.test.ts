@@ -8,6 +8,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -94,6 +95,44 @@ describe('workspace bindings', () => {
     expect(await readWorkspaceBinding(directory)).toEqual(result)
     expect(await readdir(external)).toEqual(['agent.py'])
     expect(await readFile(join(external, 'agent.py'), 'utf8')).toBe('agent = object()\n')
+  })
+
+  it.each([
+    ['the agent folder inside the workspace', () => agentRoot, 'agent.ts', 'agent'],
+    ['an agent folder next to the workspace', () => join(sandbox, 'external'), 'agent.ts', '../external'],
+    ['the workspace folder itself', () => directory, 'agent/agent.ts', '.'],
+  ])(
+    'shouldStoreTheAgentPathRelativeToTheWorkspaceWhenTheCallerGivesAnAbsolutePathTo%s',
+    async (_case, target, entrypoint, stored) => {
+      await mkdir(join(sandbox, 'external'))
+      await writeFile(join(sandbox, 'external', 'agent.ts'), 'export const agent = {}\n')
+      binding.agent = { ...binding.agent, path: target(), entrypoint }
+
+      const bound = await bindWorkspace(directory, binding)
+
+      expect(JSON.parse(await readFile(join(directory, '.config'), 'utf8')).agent.path).toBe(stored)
+      expect(bound.agentRoot).toBe(target())
+      expect(await readWorkspaceBinding(directory)).toEqual(bound)
+    }
+  )
+
+  it('shouldOpenTheBindingWhenTheWorkspaceMovesWithItsAgent', async () => {
+    await bindWorkspace(directory, { ...binding, agent: { ...binding.agent, path: agentRoot } })
+    const moved = join(sandbox, 'moved')
+
+    await rename(directory, moved)
+
+    expect(await readWorkspaceBinding(moved)).toMatchObject({
+      directory: moved,
+      agentRoot: join(moved, 'agent'),
+      entrypoint: join(moved, 'agent', 'agent.ts'),
+    })
+  })
+
+  it('shouldOpenAnOldBindingWhenItStoresAnAbsoluteAgentPath', async () => {
+    await store({ ...binding, agent: { ...binding.agent, path: agentRoot } })
+
+    expect(await readWorkspaceBinding(directory)).toMatchObject({ agentRoot, entrypoint: join(agentRoot, 'agent.ts') })
   })
 
   it.runIf(process.platform === 'win32')(

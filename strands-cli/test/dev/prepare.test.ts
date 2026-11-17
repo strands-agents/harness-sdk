@@ -69,7 +69,7 @@ describe('prepareDevRun', () => {
 
     const directory = join(source, 'strands-dev')
     const binding = JSON.parse(await readFile(join(directory, '.config'), 'utf8'))
-    expect(binding.agent).toMatchObject({ path: source, entrypoint: 'agent.ts' })
+    expect(binding.agent).toMatchObject({ path: '..', entrypoint: 'agent.ts' })
     expect(first?.workspace.directory).toBe(directory)
     expect(first?.args.agent).toBe(join(source, 'agent.ts'))
     expect(await readdir(join(directory, 'tmp'))).toEqual([])
@@ -108,7 +108,7 @@ describe('prepareDevRun', () => {
 
     expect(prepared?.workspace.root).toBe(root)
     expect(prepared?.workspace.directory).toBe(join(launch, 'strands-dev'))
-    expect(JSON.parse(await readFile(join(launch, 'strands-dev/.config'), 'utf8')).agent.path).toBe(root)
+    expect(JSON.parse(await readFile(join(launch, 'strands-dev/.config'), 'utf8')).agent.path).toBe('base-cli')
     expect(await readFile(join(root, 'src/agent.ts'), 'utf8')).toBe('export const agent = {}')
     expect(await readdir(join(launch, 'strands-dev/tmp'))).toEqual([])
   })

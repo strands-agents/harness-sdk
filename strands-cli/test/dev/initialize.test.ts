@@ -40,7 +40,7 @@ describe('workspace initialization', () => {
     expect(bound.entrypoint).toBe(workspace.entrypoint)
     expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source)
     const config = JSON.parse(await readFile(join(launch, 'strands-dev/.config'), 'utf8'))
-    expect(config.agent.path).toBe(workspace.root)
+    expect(config.agent.path).toBe('base-cli')
     expect(await readFile(join(initial, 'agent/src/agent.ts'), 'utf8')).toBe(source)
     expect(install).toHaveBeenCalledExactlyOnceWith(join(initial, 'agent'), 'typescript')
     expect((await readDevWorkspace(join(launch, 'strands-dev')))?.entrypoint).toBe(workspace.entrypoint)

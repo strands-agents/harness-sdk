@@ -1,7 +1,7 @@
 import { constants, type Stats } from 'node:fs'
 import { link, lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
-import { isAbsolute, join, parse, resolve, sep, win32 } from 'node:path'
+import { isAbsolute, join, parse, relative, resolve, sep, win32 } from 'node:path'
 
 import { canonicalParentPath, containsPath, expandHome } from '../paths.js'
 import { isRecord } from '../values.js'
@@ -50,11 +50,16 @@ export async function bindWorkspace(directory: string, binding: WorkspaceBinding
   const root = await canonicalParentPath(directory)
   const path = join(root, '.config')
   const requested = validateBinding(binding, path)
-  const contents = `${JSON.stringify(requested, null, 2)}\n`
-  if (Buffer.byteLength(contents) > MAX_CONFIG_BYTES) throw new Error(`Binding exceeds 65536 bytes: ${path}`)
   await assertDirectory(root)
   await validateTmp(root)
-  const workspace = await resolveBinding(root, requested)
+  const resolved = await resolveBinding(root, requested)
+  const stored: WorkspaceBinding = {
+    ...requested,
+    agent: { ...requested.agent, path: storedAgentPath(root, resolved.agentRoot) },
+  }
+  const workspace = { ...resolved, binding: stored }
+  const contents = `${JSON.stringify(stored, null, 2)}\n`
+  if (Buffer.byteLength(contents) > MAX_CONFIG_BYTES) throw new Error(`Binding exceeds 65536 bytes: ${path}`)
   const existing = await readWorkspaceBinding(root)
   if (existing) return matchingBinding(existing, workspace)
   const ignorePath = join(root, '.gitignore')
@@ -85,7 +90,7 @@ export async function bindWorkspace(directory: string, binding: WorkspaceBinding
     }
     await assertDirectory(root)
     await validateTmp(root)
-    await resolveBinding(root, requested)
+    await resolveBinding(root, stored)
     try {
       await link(stagedPath, path)
       published = await lstat(stagedPath)
@@ -113,6 +118,9 @@ export async function bindWorkspace(directory: string, binding: WorkspaceBinding
     if (!complete && createdTmp && !(await optionalDetails(path))) await rmdir(tmp).catch(() => undefined)
   }
 }
+
+const storedAgentPath = (directory: string, agentRoot: string): string =>
+  relative(directory, agentRoot).split(sep).join('/') || '.'
 
 function validateBinding(value: unknown, path: string): WorkspaceBinding {
   const invalid = (message: string): never => {

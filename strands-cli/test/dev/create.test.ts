@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
@@ -183,6 +183,24 @@ describe('createDevWorkspace', () => {
     expect(bound.root).toBe(cwd)
     expect(bound.entrypoint).toBe(join(cwd, 'agent.ts'))
     expect(await readFile(bound.entrypoint, 'utf8')).toBe('source')
+  })
+
+  it('shouldOpenTheBoundAgentWhenItsProjectFolderIsMovedWithTheWorkspace', async () => {
+    const parent = await temporaryDirectory()
+    const project = join(parent, 'project')
+    await mkdir(project)
+    await writeFile(join(project, 'package.json'), '{"type":"module"}')
+    await writeFile(join(project, 'agent.ts'), 'source')
+    await bindExistingAgent(join(project, 'strands-dev'), join(project, 'agent.ts'))
+    const moved = join(parent, 'moved')
+
+    await rename(project, moved)
+
+    expect(JSON.parse(await readFile(join(moved, 'strands-dev', '.config'), 'utf8')).agent.path).toBe('..')
+    expect(await readDevWorkspace(join(moved, 'strands-dev'))).toMatchObject({
+      root: moved,
+      entrypoint: join(moved, 'agent.ts'),
+    })
   })
 })
 

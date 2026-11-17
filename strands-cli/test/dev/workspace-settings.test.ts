@@ -1,7 +1,7 @@
 import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { parseArgs, type ParsedArgs } from '../../src/cli/arguments.js'
 import { CliConfigStore, type CliConfigSnapshot } from '../../src/config/store.js'
@@ -376,7 +376,7 @@ describe('agent import from workspace Settings', () => {
       join(files.launch, 'other')
     )
     expect(JSON.parse(await readFile(join(folder!.path, '.config'), 'utf8'))).toMatchObject({
-      agent: { path: join(files.launch, 'other') },
+      agent: { path: '..' },
       origin: { kind: 'discovered' },
     })
     expect(await readFile(join(files.directory, '.config'), 'utf8')).toBe(binding)
@@ -420,10 +420,10 @@ describe('agent import from workspace Settings', () => {
       expect.objectContaining({ agent: saved, dev: expect.objectContaining({ workspace: folder!.path }) }),
       join(files.launch, 'default')
     )
-    expect(JSON.parse(await readFile(join(folder!.path, '.config'), 'utf8'))).toMatchObject({
-      agent: { path: join(files.launch, 'default') },
-      origin: { kind: 'cli' },
-    })
+    const stored = JSON.parse(await readFile(join(folder!.path, '.config'), 'utf8'))
+    expect(stored.origin).toMatchObject({ kind: 'cli' })
+    expect(isAbsolute(stored.agent.path)).toBe(false)
+    expect(resolve(folder!.path, stored.agent.path)).toBe(join(files.launch, 'default'))
   })
 
   it('shouldRefuseToReplaceTheOpenWorkspace', async () => {
