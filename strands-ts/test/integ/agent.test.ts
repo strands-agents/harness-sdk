@@ -20,7 +20,7 @@ import { loadFixture } from './__fixtures__/test-helpers.js'
 import yellowMp4Url from './__resources__/yellow.mp4?url'
 import yellowPngUrl from './__resources__/yellow.png?url'
 import letterPdfUrl from './__resources__/letter.pdf?url'
-import { allProviders } from './__fixtures__/model-providers.js'
+import { allProviders, vercelBedrock } from './__fixtures__/model-providers.js'
 
 // Calculator tool using Zod schema
 const calculatorTool = tool({
@@ -570,11 +570,13 @@ describe.each(allProviders)('Agent with $name', ({ name, skip, createModel, mode
       )
       expect(toolUseMessage).toBeDefined()
 
-      // Verify reasoningSignature is present on tool use block
+      // Only some providers attach their thought signature to the tool use block itself
       const toolUseBlock = toolUseMessage!.content.find(
         (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === 'calculator'
       )
-      expect(toolUseBlock?.reasoningSignature).toBeDefined()
+      if (supports.toolUseSignature) {
+        expect(toolUseBlock?.reasoningSignature).toBeDefined()
+      }
 
       // Should contain the correct result (789 * 321 = 253269)
       expect(result.stopReason).toBe('endTurn')
@@ -604,5 +606,39 @@ describe.each(allProviders)('Agent with $name', ({ name, skip, createModel, mode
       // Validate multi-turn works after built-in tool use
       await collectGenerator(agent.stream('What was the result?'))
     })
+  })
+})
+
+describe('VercelModel (Bedrock) reasoning replay', () => {
+  it.skipIf(vercelBedrock.skip)('replays the captured signature on the next turn', async () => {
+    const requestBodies: Array<Record<string, unknown>> = []
+    const recordingFetch: typeof globalThis.fetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init)
+      if (init?.body) {
+        requestBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      }
+      return response
+    }
+
+    const agent = new Agent({
+      model: vercelBedrock.createModel(vercelBedrock.models.reasoning, recordingFetch),
+      printer: false,
+      systemPrompt: 'Use the calculator tool to solve math problems. Respond with only the numeric result.',
+      tools: [calculatorTool],
+    })
+
+    await collectGenerator(agent.stream('What is 789 * 321?'))
+    await collectGenerator(agent.stream('What was the result?'))
+
+    const replayRequest = requestBodies.at(-1) as { messages?: Array<{ role: string; content: unknown[] }> }
+    const replayedReasoning = replayRequest.messages
+      ?.filter((message) => message.role === 'assistant')
+      .flatMap((message) => message.content)
+      .find((block) => (block as { reasoningContent?: { reasoningText?: { signature?: string } } }).reasoningContent)
+    expect(replayedReasoning).toBeDefined()
+    expect(
+      (replayedReasoning as { reasoningContent: { reasoningText: { signature?: string } } }).reasoningContent
+        .reasoningText.signature
+    ).toBeDefined()
   })
 })

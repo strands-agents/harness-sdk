@@ -27,6 +27,7 @@ import type {
   SharedV3ProviderMetadata,
 } from '@ai-sdk/provider'
 import { APICallError } from '@ai-sdk/provider'
+import { isThinkingBindingError } from './thinking-binding.js'
 import type { SystemPrompt, StopReason } from '../types/messages.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import type { ModelStreamEvent, Usage } from './streaming.js'
@@ -159,7 +160,24 @@ export class VercelModel extends Model<VercelModelConfig> {
   }
 
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
-    const prompt = formatMessages(messages, options?.systemPrompt, reasoningOptionsKey(this._provider.provider))
+    yield* this._streamCore(messages, options, false)
+  }
+
+  /**
+   * Streams a response, optionally with replayed reasoning stripped from the prompt.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options
+   * @param dropReasoning - Omits replayed reasoning blocks; the binding-retry fallback
+   * @returns The model's stream events
+   */
+  private async *_streamCore(
+    messages: Message[],
+    options: StreamOptions | undefined,
+    dropReasoning: boolean
+  ): AsyncIterable<ModelStreamEvent> {
+    const reasoningKey = reasoningOptionsKey(this._provider)
+    const prompt = formatMessages(messages, options?.systemPrompt, reasoningKey, dropReasoning)
     const tools = options?.toolSpecs ? formatTools(options.toolSpecs) : undefined
     const toolChoice = options?.toolChoice ? formatToolChoice(options.toolChoice) : undefined
 
@@ -179,6 +197,15 @@ export class VercelModel extends Model<VercelModelConfig> {
     try {
       result = await this._provider.doStream(callOptions)
     } catch (error) {
+      // The adapters expose no drop_block passthrough, so the retry falls back to the
+      // pre-preservation behaviour: drop the stale reasoning instead of failing the turn.
+      if (!dropReasoning && isBindingError(error) && promptHasReasoning(prompt)) {
+        logger.warn(
+          `model_id=<${this._provider.modelId}> | history edit invalidated replayed thinking blocks, retrying without them`
+        )
+        yield* this._streamCore(messages, options, true)
+        return
+      }
       throw classifyError(error)
     }
 
@@ -217,7 +244,7 @@ export class VercelModel extends Model<VercelModelConfig> {
         if (value.type === 'tool-call' && value.providerExecuted !== true) {
           sawToolUse = true
         }
-        for (const event of mapStreamPart(value)) {
+        for (const event of mapStreamPart(value, reasoningKey)) {
           // Some community providers (e.g. ai-sdk-ollama) stream tool-call blocks but still report
           // finish_reason "stop", which maps to endTurn and would leave the agent skipping tool
           // execution. Decide from the streamed content, not just the provider's finish label: if any
@@ -541,7 +568,7 @@ function classifyError(error: unknown): Error {
 /**
  * Maps a single LanguageModelV3 stream part to zero or more Strands ModelStreamEvents.
  */
-function* mapStreamPart(part: LanguageModelV3StreamPart): Generator<ModelStreamEvent> {
+function* mapStreamPart(part: LanguageModelV3StreamPart, reasoningKey?: string): Generator<ModelStreamEvent> {
   switch (part.type) {
     case 'stream-start':
       yield new ModelMessageStartEvent({ type: 'modelMessageStartEvent', role: 'assistant' })
@@ -562,14 +589,22 @@ function* mapStreamPart(part: LanguageModelV3StreamPart): Generator<ModelStreamE
       yield new ModelContentBlockStopEvent({ type: 'modelContentBlockStopEvent' })
       break
 
-    case 'reasoning-start':
+    case 'reasoning-start': {
       yield new ModelContentBlockStartEvent({ type: 'modelContentBlockStartEvent' })
+      // The Anthropic adapter delivers redacted reasoning here rather than on a delta.
+      const { redactedData } = reasoningMetadata(part.providerMetadata, reasoningKey)
+      if (redactedData) {
+        yield new ModelContentBlockDeltaEvent({
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'reasoningContentDelta', redactedContent: decodeBase64(redactedData) },
+        })
+      }
       break
+    }
 
     case 'reasoning-delta': {
-      // The AI SDK delivers a reasoning signature (and Bedrock redacted reasoning) as an
-      // empty-text delta carrying provider metadata; forward it so the assembled block keeps it.
-      const { signature, redactedData } = reasoningMetadata(part.providerMetadata)
+      // Signatures (and Bedrock redacted reasoning) arrive on an empty-text delta via providerMetadata.
+      const { signature, redactedData } = reasoningMetadata(part.providerMetadata, reasoningKey)
       if (part.delta || signature || redactedData) {
         yield new ModelContentBlockDeltaEvent({
           type: 'modelContentBlockDeltaEvent',
@@ -689,33 +724,58 @@ function mapUsage(usage: LanguageModelV3Usage): Usage {
 }
 
 /**
- * Extracts the reasoning signature and redacted reasoning a provider attached to a
- * stream part as provider metadata, keyed by the provider's own name.
+ * Extracts the reasoning signature and redacted reasoning a provider attached to a stream
+ * part, reading only the `providerOptions` key the same provider reads on replay.
  */
-function reasoningMetadata(providerMetadata: SharedV3ProviderMetadata | undefined): {
+function reasoningMetadata(
+  providerMetadata: SharedV3ProviderMetadata | undefined,
+  key?: string
+): {
   signature?: string
   redactedData?: string
 } {
-  for (const options of Object.values(providerMetadata ?? {})) {
-    if (!options || typeof options !== 'object') continue
-    const { signature, redactedData } = options as { signature?: unknown; redactedData?: unknown }
-    return {
-      ...(typeof signature === 'string' && { signature }),
-      ...(typeof redactedData === 'string' && { redactedData }),
-    }
+  const options = key ? providerMetadata?.[key] : undefined
+  if (!options || typeof options !== 'object') return {}
+  const { signature, redactedData } = options as { signature?: unknown; redactedData?: unknown }
+  return {
+    ...(typeof signature === 'string' && { signature }),
+    ...(typeof redactedData === 'string' && { redactedData }),
   }
-  return {}
 }
 
 /**
- * Maps the Vercel provider name to the `providerOptions` key its adapter reads reasoning
- * metadata from. Providers whose adapters drop reasoning without metadata (everything but
- * these two today) get no key, so nothing is attached for them.
+ * Maps the provider and model to the `providerOptions` key its adapter exchanges reasoning
+ * metadata under. Bedrock accepts reasoning only from Claude models; other models reject
+ * signed reasoning outright, so they get no key.
  */
-function reasoningOptionsKey(providerName: string): string | undefined {
-  if (providerName === 'amazon-bedrock') return 'bedrock'
-  if (providerName === 'anthropic') return 'anthropic'
-  return undefined
+function reasoningOptionsKey(model: LanguageModelV3): string | undefined {
+  const modelId = model.modelId.toLowerCase()
+  switch (model.provider.split('.')[0]) {
+    case 'amazon-bedrock':
+      return modelId.includes('anthropic') || modelId.includes('claude') ? 'bedrock' : undefined
+    case 'anthropic':
+      return 'anthropic'
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Whether the provider rejected a replayed reasoning block because history before it changed.
+ * The native models retry with drop_block (#5171); the AI SDK adapters expose no such field,
+ * so VercelModel's retry drops the stale reasoning instead.
+ */
+function isBindingError(error: unknown): boolean {
+  return APICallError.isInstance(error) && error.statusCode === 400 && isThinkingBindingError(error)
+}
+
+/**
+ * Whether a formatted prompt carries any reasoning part to drop on the binding retry.
+ */
+function promptHasReasoning(prompt: LanguageModelV3Prompt): boolean {
+  return prompt.some(
+    (message) => message.role === 'assistant' && message.content.some((part) => part.type === 'reasoning')
+  )
 }
 
 /**
@@ -736,7 +796,8 @@ function reasoningProviderOptions(block: ReasoningBlock, key?: string): SharedV3
 function formatMessages(
   messages: Message[],
   systemPrompt?: SystemPrompt,
-  reasoningKey?: string
+  reasoningKey?: string,
+  dropReasoning = false
 ): LanguageModelV3Prompt {
   const prompt: LanguageModelV3Prompt = []
 
@@ -787,7 +848,7 @@ function formatMessages(
     if (message.role === 'user') {
       formatUserMessage(message, prompt, toolNameMap)
     } else if (message.role === 'assistant') {
-      formatAssistantMessage(message, prompt, reasoningKey)
+      formatAssistantMessage(message, prompt, reasoningKey, dropReasoning)
     }
   }
 
@@ -848,7 +909,12 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
  * @param message - The assistant message to format
  * @param prompt - The prompt array to push formatted messages into
  */
-function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt, reasoningKey?: string): void {
+function formatAssistantMessage(
+  message: Message,
+  prompt: LanguageModelV3Prompt,
+  reasoningKey?: string,
+  dropReasoning = false
+): void {
   const content: Array<
     LanguageModelV3TextPart | LanguageModelV3FilePart | LanguageModelV3ReasoningPart | LanguageModelV3ToolCallPart
   > = []
@@ -859,10 +925,10 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt,
         content.push({ type: 'text', text: block.text })
         break
       case 'reasoningBlock': {
-        // The AI SDK forwards a reasoning part to the provider only when it carries a signature
-        // or redacted data; text-only reasoning is silently dropped. Attach the stored signature
-        // under the current provider's key. Cross-provider history replay is not guarded here
-        // (#4779 tracks provenance); a provider switch replays under the new provider's key.
+        if (dropReasoning) break
+        // The AI SDK drops reasoning parts without a signature or redacted data. Attach the
+        // stored signature under the current provider's key; cross-provider replay stays
+        // unguarded until #4779's provenance tracking.
         const reasoningOptions = reasoningProviderOptions(block, reasoningKey)
         if (block.text || reasoningOptions) {
           content.push({

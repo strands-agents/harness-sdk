@@ -21,6 +21,7 @@ export interface ProviderFeatures {
   reasoning: boolean
   tools: boolean
   toolThinking: boolean
+  toolUseSignature: boolean
   builtInTools: boolean
   images: boolean
   documents: boolean
@@ -34,6 +35,7 @@ export const bedrock = {
     reasoning: true,
     tools: true,
     toolThinking: false,
+    toolUseSignature: false,
     builtInTools: false,
     images: true,
     documents: true,
@@ -69,6 +71,7 @@ export const openai = {
     reasoning: false,
     tools: true,
     toolThinking: false,
+    toolUseSignature: false,
     builtInTools: false,
     images: true,
     documents: true,
@@ -103,6 +106,7 @@ export const openaiResponses = {
     reasoning: true,
     tools: true,
     toolThinking: false,
+    toolUseSignature: false,
     builtInTools: true,
     images: true,
     documents: true,
@@ -139,6 +143,7 @@ export const anthropic = {
     reasoning: true,
     tools: true,
     toolThinking: false,
+    toolUseSignature: false,
     builtInTools: false,
     images: true,
     documents: true,
@@ -179,6 +184,7 @@ export const gemini = {
     reasoning: true,
     tools: true,
     toolThinking: true,
+    toolUseSignature: true,
     builtInTools: true,
     images: true,
     documents: true,
@@ -228,6 +234,7 @@ export const vercelBedrock = {
     reasoning: true,
     tools: true,
     toolThinking: true,
+    toolUseSignature: false,
     builtInTools: false,
     images: true,
     documents: true,
@@ -246,7 +253,7 @@ export const vercelBedrock = {
   get skip() {
     return inject('provider-bedrock').shouldSkip
   },
-  createModel: (config: Partial<VercelModelConfig> = {}): VercelModel => {
+  createModel: (config: Partial<VercelModelConfig> = {}, fetchOverride?: typeof globalThis.fetch): VercelModel => {
     const credentials = inject('provider-bedrock')?.credentials
     if (!credentials) {
       throw new Error('No Bedrock credentials provided')
@@ -254,6 +261,7 @@ export const vercelBedrock = {
     const provider = createAmazonBedrock({
       ...(!credentials.expiration && { region: 'us-west-2' }),
       credentialProvider: () => Promise.resolve(credentials),
+      ...(fetchOverride && { fetch: fetchOverride }),
     })
     const { providerOptions, ...rest } = config as Partial<VercelModelConfig> & {
       providerOptions?: Record<string, unknown>
@@ -272,6 +280,7 @@ export const vercelOpenAI = {
     reasoning: false,
     tools: true,
     toolThinking: false,
+    toolUseSignature: false,
     builtInTools: false,
     images: true,
     documents: true,

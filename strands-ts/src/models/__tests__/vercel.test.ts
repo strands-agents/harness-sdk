@@ -189,19 +189,24 @@ describe('VercelModel', () => {
       })
 
       it('forwards reasoning signature metadata delivered on an empty delta', async () => {
-        const { model } = setupCaptureTest([
-          { type: 'stream-start', warnings: [] },
-          { type: 'reasoning-start', id: 'r1' },
-          { type: 'reasoning-delta', id: 'r1', delta: 'Let me think...' },
-          {
-            type: 'reasoning-delta',
-            id: 'r1',
-            delta: '',
-            providerMetadata: { bedrock: { signature: 'sig-1' } },
-          },
-          { type: 'reasoning-end', id: 'r1' },
-          { type: 'finish', usage: testUsage, finishReason: stopFinish },
-        ])
+        const { model } = setupCaptureTest(
+          [
+            { type: 'stream-start', warnings: [] },
+            { type: 'reasoning-start', id: 'r1' },
+            { type: 'reasoning-delta', id: 'r1', delta: 'Let me think...' },
+            {
+              type: 'reasoning-delta',
+              id: 'r1',
+              delta: '',
+              providerMetadata: { bedrock: { signature: 'sig-1' } },
+            },
+            { type: 'reasoning-end', id: 'r1' },
+            { type: 'finish', usage: testUsage, finishReason: stopFinish },
+          ],
+          undefined,
+          'amazon-bedrock',
+          'us.anthropic.claude-sonnet-4-6'
+        )
 
         const events = await collectIterator(model.stream([]))
 
@@ -217,18 +222,53 @@ describe('VercelModel', () => {
       })
 
       it('forwards redacted reasoning metadata as decoded bytes', async () => {
-        const { model } = setupCaptureTest([
-          { type: 'stream-start', warnings: [] },
-          { type: 'reasoning-start', id: 'r1' },
-          {
-            type: 'reasoning-delta',
-            id: 'r1',
-            delta: '',
-            providerMetadata: { bedrock: { redactedData: 'AQI=' } },
-          },
-          { type: 'reasoning-end', id: 'r1' },
-          { type: 'finish', usage: testUsage, finishReason: stopFinish },
-        ])
+        const { model } = setupCaptureTest(
+          [
+            { type: 'stream-start', warnings: [] },
+            { type: 'reasoning-start', id: 'r1' },
+            {
+              type: 'reasoning-delta',
+              id: 'r1',
+              delta: '',
+              providerMetadata: { bedrock: { redactedData: 'AQI=' } },
+            },
+            { type: 'reasoning-end', id: 'r1' },
+            { type: 'finish', usage: testUsage, finishReason: stopFinish },
+          ],
+          undefined,
+          'amazon-bedrock',
+          'us.anthropic.claude-sonnet-4-6'
+        )
+
+        const events = await collectIterator(model.stream([]))
+
+        const redactedDelta = events.find(
+          (e) =>
+            e.type === 'modelContentBlockDeltaEvent' &&
+            e.delta.type === 'reasoningContentDelta' &&
+            'redactedContent' in e.delta
+        )
+        expect(redactedDelta).toMatchObject({
+          delta: { type: 'reasoningContentDelta', redactedContent: new Uint8Array([1, 2]) },
+        })
+      })
+
+      it('captures redacted reasoning the anthropic adapter delivers on reasoning-start', async () => {
+        const { model } = setupCaptureTest(
+          [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'reasoning-start',
+              id: 'r1',
+              providerMetadata: { anthropic: { redactedData: 'AQI=' } },
+            },
+            { type: 'reasoning-end', id: 'r1' },
+            { type: 'finish', usage: testUsage, finishReason: stopFinish },
+          ],
+          undefined,
+          'anthropic.messages',
+          'claude-sonnet-4-6'
+        )
 
         const events = await collectIterator(model.stream([]))
 
@@ -523,6 +563,52 @@ describe('VercelModel', () => {
         )
 
         await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
+      })
+
+      it('retries once without replayed reasoning when a binding error invalidated it', async () => {
+        const { mock, model } = setupCaptureTest(
+          minimalParts,
+          undefined,
+          'amazon-bedrock',
+          'us.anthropic.claude-sonnet-4-6'
+        )
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+          new APICallError({
+            message: 'thinking block bound to a different conversation',
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            statusCode: 400,
+          })
+        )
+
+        const events = await collectIterator(
+          model.stream([
+            new Message({
+              role: 'assistant',
+              content: [new ReasoningBlock({ text: 'thinking...', signature: 'sig-1' }), new TextBlock('answer')],
+            }),
+          ])
+        )
+
+        expect(mock.doStream).toHaveBeenCalledTimes(2)
+        const retryPrompt = ((mock.doStream as ReturnType<typeof vi.fn>).mock.calls[1] ?? [])[0]?.prompt as any[]
+        expect(retryPrompt[0].content).toEqual([{ type: 'text', text: 'answer' }])
+        expect(events.some((event) => event.type === 'modelMessageStopEvent')).toBe(true)
+      })
+
+      it('does not retry a binding error when the prompt carries no reasoning', async () => {
+        const { mock, model } = setupCaptureTest()
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new APICallError({
+            message: 'thinking block bound to a different conversation',
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            statusCode: 400,
+          })
+        )
+
+        await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelError)
+        expect(mock.doStream).toHaveBeenCalledTimes(1)
       })
 
       it('throws ContextWindowOverflowError for APICallError with context overflow in responseBody', async () => {
@@ -850,10 +936,35 @@ describe('VercelModel', () => {
       })
 
       it.each([
-        { provider: 'amazon-bedrock', expectedKey: 'bedrock' },
-        { provider: 'anthropic', expectedKey: 'anthropic' },
-      ])('replays a signed reasoning block under the $provider options key', async ({ provider, expectedKey }) => {
-        const { collect, callArgs } = setupCaptureTest(minimalParts, undefined, provider)
+        { provider: 'amazon-bedrock', modelId: 'us.anthropic.claude-sonnet-4-6', expectedKey: 'bedrock' },
+        { provider: 'anthropic.messages', modelId: 'claude-sonnet-4-6', expectedKey: 'anthropic' },
+      ])(
+        'replays a signed reasoning block under the $expectedKey options key',
+        async ({ provider, modelId, expectedKey }) => {
+          const { collect, callArgs } = setupCaptureTest(minimalParts, undefined, provider, modelId)
+          await collect([
+            new Message({
+              role: 'assistant',
+              content: [new ReasoningBlock({ text: 'thinking...', signature: 'sig-1' })],
+            }),
+          ])
+
+          const assistantMsg = callArgs().prompt[0] as any
+          expect(assistantMsg.content[0]).toEqual({
+            type: 'reasoning',
+            text: 'thinking...',
+            providerOptions: { [expectedKey]: { signature: 'sig-1' } },
+          })
+        }
+      )
+
+      it('attaches no signature for non-Claude Bedrock models that reject reasoning content', async () => {
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          undefined,
+          'amazon-bedrock',
+          'us.amazon.nova-pro-v1:0'
+        )
         await collect([
           new Message({
             role: 'assistant',
@@ -862,15 +973,16 @@ describe('VercelModel', () => {
         ])
 
         const assistantMsg = callArgs().prompt[0] as any
-        expect(assistantMsg.content[0]).toEqual({
-          type: 'reasoning',
-          text: 'thinking...',
-          providerOptions: { [expectedKey]: { signature: 'sig-1' } },
-        })
+        expect(assistantMsg.content[0]).toEqual({ type: 'reasoning', text: 'thinking...' })
       })
 
       it('replays redacted reasoning under the bedrock key', async () => {
-        const { collect, callArgs } = setupCaptureTest(minimalParts, undefined, 'amazon-bedrock')
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          undefined,
+          'amazon-bedrock',
+          'us.anthropic.claude-sonnet-4-6'
+        )
         await collect([
           new Message({
             role: 'assistant',
