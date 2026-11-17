@@ -800,13 +800,83 @@ async def test_decisions_api_reads_the_enveloped_response_and_reports_the_reques
     assert result.metadata.model_id == "~typesafe/jev-latest"
 
 
+def _envelope(result: Any) -> dict[str, Any]:
+    return {"code": 0, "message": "ok", "data": {"result": result, "creditsUsed": 1}}
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_reports_a_non_default_requested_model_for_an_enveloped_response():
+    payload = _envelope({"answers": {"q": {"type": "noul", "noul": 0.99}}})
+    decision = DecisionsAPIDecisionModel(api_key="test-key", model_id="pinned-model", http_client=_fake_client(payload))
+
+    result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert result.metadata.model_id == "pinned-model"
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_reports_the_model_named_by_an_enveloped_result():
+    payload = _envelope({"model": "served-model", "answers": {"q": {"type": "noul", "noul": 0.99}}})
+    decision = DecisionsAPIDecisionModel(api_key="test-key", model_id="pinned-model", http_client=_fake_client(payload))
+
+    result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert result.metadata.model_id == "served-model"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", [-1, False], ids=["negative", "bool"])
 async def test_decisions_api_rejects_an_enveloped_error_body_sent_with_http_200(code: Any):
-    payload = {"code": code, "message": "Invalid API key."}
+    payload = {"code": code, "message": "request rejected"}
     decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload))
 
-    with pytest.raises(StructuredOutputException, match=rf"error code {code}: Invalid API key\."):
+    with pytest.raises(StructuredOutputException, match=rf"error code {code}: request rejected"):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"code": 0}, "data must be an object"),
+        ({"code": 0, "data": {"result": []}}, "result must be an object"),
+    ],
+    ids=["missing-data", "non-object-result"],
+)
+async def test_decisions_api_rejects_a_malformed_envelope(payload: dict[str, Any], message: str):
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload))
+
+    with pytest.raises(StructuredOutputException, match=message):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_maps_an_enveloped_http_401_to_http_status_error():
+    payload = {"code": -1, "message": "Invalid API key."}
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload, status=401))
+
+    with pytest.raises(httpx.HTTPStatusError, match=r"HTTP 401: Invalid API key\.") as caught:
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert caught.value.response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [429, 503, 529])
+async def test_decisions_api_maps_an_enveloped_throttling_status_to_model_throttled(status: int):
+    payload = {"code": -1, "message": "retry later"}
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload, status=status))
+
+    with pytest.raises(ModelThrottledException):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_maps_an_enveloped_http_413_to_context_window_overflow():
+    payload = {"code": -1, "message": "request too large"}
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload, status=413))
+
+    with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large"):
         await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
 
