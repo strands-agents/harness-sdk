@@ -94,7 +94,7 @@ def test__init__auto_populates_context_window_limit(mistral_client):
 
     model = MistralModel(model_id="mistral-large-latest", max_tokens=1)
 
-    assert model.get_config().get("context_window_limit") == 262_144
+    assert model.get_config().get("context_window_limit") == 1_048_576
 
 
 def test__init__explicit_context_window_limit_not_overridden(mistral_client):
@@ -437,6 +437,48 @@ def test_format_request_with_tool_result(model, model_id):
     }
 
     assert actual_request == exp_request
+
+
+def test_format_request_messages_keeps_reasoning_before_text(model):
+    messages = [
+        {"role": "user", "content": [{"text": "What time is it?"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "Check the clock."}}},
+                {"text": "It is noon."},
+            ],
+        },
+    ]
+
+    tru_messages = model._format_request_messages(messages)
+    exp_messages = [
+        {"role": "user", "content": "What time is it?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": [{"type": "text", "text": "Check the clock."}]},
+                {"type": "text", "text": "It is noon."},
+            ],
+        },
+    ]
+
+    assert tru_messages == exp_messages
+
+
+def test_format_request_messages_keeps_reasoning_only_assistant_message(model):
+    messages = [
+        {"role": "user", "content": [{"text": "Think first."}]},
+        {"role": "assistant", "content": [{"reasoningContent": {"reasoningText": {"text": "Thinking."}}}]},
+    ]
+
+    tru_messages = model._format_request_messages(messages)
+    exp_messages = [
+        {"role": "user", "content": "Think first."},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": [{"type": "text", "text": "Thinking."}]}]},
+    ]
+
+    assert tru_messages == exp_messages
 
 
 @pytest.mark.parametrize("text_position", [None, "before", "after"])
@@ -796,6 +838,50 @@ async def test_stream_no_usage(mistral_client, model, agenerator, alist):
 
 
 @pytest.mark.asyncio
+async def test_stream_with_tool_calls(mistral_client, model, agenerator, alist):
+    from mistralai.client.models import FunctionCall, ToolCall
+
+    def event(tool_calls, finish_reason=None):
+        return unittest.mock.Mock(
+            data=unittest.mock.Mock(
+                choices=[
+                    unittest.mock.Mock(
+                        delta=unittest.mock.Mock(content=None, tool_calls=tool_calls), finish_reason=finish_reason
+                    )
+                ],
+                usage=None,
+            ),
+        )
+
+    events = [
+        event([ToolCall(id="calc_1", function=FunctionCall(name="calculator", arguments='{"expression": '))]),
+        event(
+            [
+                ToolCall(id="calc_1", function=FunctionCall(name="calculator", arguments='"2+2"}')),
+                ToolCall(id="time_1", function=FunctionCall(name="current_time", arguments="{}")),
+            ],
+            finish_reason="tool_calls",
+        ),
+    ]
+    mistral_client.chat.stream_async = unittest.mock.AsyncMock(return_value=agenerator(events))
+
+    tru_chunks = await alist(model.stream([{"role": "user", "content": [{"text": "Calculate 2+2"}]}]))
+
+    exp_chunks = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"name": "calculator", "toolUseId": "calc_1"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"expression": '}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '"2+2"}'}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {"toolUse": {"name": "current_time", "toolUseId": "time_1"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+    assert tru_chunks == exp_chunks
+
+
+@pytest.mark.asyncio
 async def test_tool_choice_not_supported_warns(mistral_client, model, agenerator, alist, captured_warnings):
     tool_choice = {"auto": {}}
 
@@ -1041,3 +1127,88 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     assert len(messages_logged) == 2
     assert "count=<3> | Location sources are not supported by Mistral" in messages_logged[0]
     assert "count=<3> | cachePoint content block is not supported by Mistral" in messages_logged[1]
+
+
+def test_format_chunk_content_delta_reasoning(model):
+    event = {"chunk_type": "content_delta", "data_type": "reasoning_content", "data": "Thinking"}
+
+    tru_chunk = model.format_chunk(event)
+    exp_chunk = {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Thinking"}}}}
+
+    assert tru_chunk == exp_chunk
+
+
+@pytest.mark.asyncio
+async def test_stream_splits_list_content_into_reasoning_and_text(mistral_client, model, agenerator, alist):
+    """Reasoning models stream content as a list of ThinkChunk/TextChunk (#5032)."""
+    from mistralai.client.models import TextChunk, ThinkChunk
+
+    def event(content, finish_reason=None):
+        return unittest.mock.Mock(
+            data=unittest.mock.Mock(
+                choices=[
+                    unittest.mock.Mock(
+                        delta=unittest.mock.Mock(content=content, tool_calls=None), finish_reason=finish_reason
+                    )
+                ],
+                usage=None,
+            ),
+        )
+
+    events = [
+        event([ThinkChunk(thinking=[TextChunk(text="Check the "), TextChunk(text="time.")])]),
+        event([ThinkChunk(thinking=[TextChunk(text=" Then answer.")])]),
+        event([TextChunk(text="It is ")]),
+        event("12:00", finish_reason="stop"),
+    ]
+    mistral_client.chat.stream_async = unittest.mock.AsyncMock(return_value=agenerator(events))
+
+    tru_chunks = await alist(model.stream([{"role": "user", "content": [{"text": "time?"}]}]))
+
+    exp_chunks = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Check the time."}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": " Then answer."}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "It is "}}},
+        {"contentBlockDelta": {"delta": {"text": "12:00"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    assert tru_chunks == exp_chunks
+
+
+@pytest.mark.asyncio
+async def test_stream_non_streaming_splits_list_content_into_reasoning_and_text(
+    mistral_client, model_id, max_tokens, alist
+):
+    """The non-streaming path receives the same list content on message.content (#5032)."""
+    from mistralai.client.models import ReferenceChunk, TextChunk, ThinkChunk
+
+    model = MistralModel(model_id=model_id, max_tokens=max_tokens, stream=False)
+    message = unittest.mock.Mock(
+        content=[
+            ThinkChunk(thinking=[TextChunk(text="Reasoning.")]),
+            ReferenceChunk(reference_ids=[1]),
+            TextChunk(text="Answer."),
+        ],
+        tool_calls=None,
+    )
+    response = unittest.mock.Mock(choices=[unittest.mock.Mock(message=message, finish_reason="stop")], usage=None)
+    mistral_client.chat.complete_async = unittest.mock.AsyncMock(return_value=response)
+
+    tru_chunks = await alist(model.stream([{"role": "user", "content": [{"text": "q"}]}]))
+
+    exp_chunks = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Reasoning."}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "Answer."}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    assert tru_chunks == exp_chunks

@@ -8,9 +8,9 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { withDefaultLocale } from '../../__fixtures__/locale-helpers.js'
 
 function createMockModel(contextWindowLimit?: number): Model {
-  return {
-    getConfig: () => ({ contextWindowLimit }),
-  } as unknown as Model
+  const model = new MockMessageModel()
+  if (contextWindowLimit !== undefined) model.updateConfig({ contextWindowLimit })
+  return model
 }
 
 function createContext(overrides: Partial<InvokeModelContext> = {}): InvokeModelContext {

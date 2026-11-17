@@ -11,7 +11,7 @@ const TIMEOUT_MS = 120_000
 const SYNC_SCRIPT = "const { sync } = await import('astro'); await sync({ cacheDir: './.astro' })"
 
 // Everything the content-layer snapshot is derived from.
-const CONTENT_SOURCES = ['src/content', 'src/content.config.ts']
+const CONTENT_SOURCES = ['src/content', 'src/content.config.ts', '.build/samples/pages']
 
 // Follows symlinks (docs `_generated` dirs point into .build/api-docs); `visited` breaks cycles.
 // Directory mtimes are included so a deleted file, which bumps only its parent dir, registers.

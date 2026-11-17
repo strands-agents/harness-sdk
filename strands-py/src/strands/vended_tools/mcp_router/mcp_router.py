@@ -6,7 +6,8 @@ The tool exposes five commands — ``connect``, ``list_connections``, ``list_too
 ``call_tool``, ``disconnect`` — letting an agent open named connections to MCP servers,
 inspect active connections, discover their tools, invoke them, and close the connections.
 Each server is configured with a :class:`~strands.tools.mcp.MCPServerConfig`; all fields
-are forwarded to :class:`~strands.tools.mcp.MCPClient`. Connections are isolated per agent.
+are forwarded to :class:`~strands.tools.mcp.MCPClient`. A server's ``tool_filters`` limit both
+``list_tools`` and ``call_tool``. Connections are isolated per agent.
 """
 
 from __future__ import annotations
@@ -55,7 +56,8 @@ def make_mcp_router(
         description: Tool description shown to the model. Defaults to a description
             that includes the permitted server names.
         servers: Allowlisted servers keyed by name. The model identifies servers to connect to by name;
-            the config is forwarded to :class:`~strands.tools.mcp.MCPClient`. Must not be empty.
+            the config is forwarded to :class:`~strands.tools.mcp.MCPClient`. A server's ``tool_filters``
+            decide which tools ``list_tools`` returns and ``call_tool`` accepts. Must not be empty.
         max_connections: Maximum simultaneous open connections per agent. Defaults to ``10``.
 
     Returns:
@@ -75,6 +77,8 @@ def make_mcp_router(
 
     # Per-agent connections with WeakKeyDictionary so agents can be garbage collected.
     connections_map: weakref.WeakKeyDictionary[Any, dict[str, MCPClient]] = weakref.WeakKeyDictionary()
+    # Tool names each client's filtered listing returned. Filters are fixed per client, so a cached name stays callable.
+    listed_names: weakref.WeakKeyDictionary[MCPClient, set[str]] = weakref.WeakKeyDictionary()
 
     @tool(name=name, description=description, context="tool_context")
     async def mcp_router_tool(
@@ -101,7 +105,8 @@ def make_mcp_router(
         Raises:
             MCPRouterToolError: If a required argument is missing, the server is not on
                 the allowlist, the connection cap is reached, no matching connection exists,
-                or the connection fails to start.
+                the connection fails to start, or ``call_tool`` names a tool that the
+                connection's ``list_tools`` does not return.
         """
         agent = tool_context.agent
 
@@ -122,11 +127,12 @@ def make_mcp_router(
             raise MCPRouterToolError(f"No active connection for id {connection_id!r}")
 
         if command == "list_tools":
-            return await asyncio.to_thread(_handle_list_tools, client)
+            return await _list_and_cache(client, listed_names)
 
         if command == "call_tool":
             if not tool_name:
                 raise MCPRouterToolError("`tool_name` is required for command='call_tool'")
+            await _ensure_tool_listed(client, listed_names, connection_id, tool_name)
             return await client.call_tool_async(
                 tool_use_id=str(uuid4()),
                 name=tool_name,
@@ -232,6 +238,31 @@ def _handle_list_tools(client: MCPClient) -> list[ToolSpec]:
             break
     # Get mcp_tool.name instead of tool_name (may be prefixed) so call_tool works verbatim.
     return [{**t.tool_spec, "name": t.mcp_tool.name} for t in all_tools]
+
+
+async def _list_and_cache(
+    client: MCPClient, listed_names: weakref.WeakKeyDictionary[MCPClient, set[str]]
+) -> list[ToolSpec]:
+    specs = await asyncio.to_thread(_handle_list_tools, client)
+    listed_names[client] = {spec["name"] for spec in specs}
+    return specs
+
+
+async def _ensure_tool_listed(
+    client: MCPClient,
+    listed_names: weakref.WeakKeyDictionary[MCPClient, set[str]],
+    connection_id: str,
+    tool_name: str,
+) -> None:
+    # MCPClient applies tool_filters only when listing, so a call is checked against the filtered listing.
+    if tool_name in listed_names.get(client, set()):
+        return
+    await _list_and_cache(client, listed_names)
+    if tool_name not in listed_names[client]:
+        raise MCPRouterToolError(
+            f"Tool {tool_name!r} is not available on connection {connection_id!r}. "
+            f"Call list_tools to see the tools you can call."
+        )
 
 
 async def _handle_disconnect(connections: dict[str, MCPClient], connection_id: str) -> str:

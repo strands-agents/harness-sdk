@@ -81,6 +81,7 @@ from ..middleware.types import (
     MiddlewareStage,
     MiddlewareWrapPhase,
 )
+from ..models._model_proxy import ModelProxy
 from ..models.bedrock import BedrockModel
 from ..models.model import Model, _ModelPlugin
 from ..models.routing import ModelRouter
@@ -292,7 +293,7 @@ class Agent(AgentBase, LocalAgent):
 
                 - String tool names (e.g., "retrieve")
                 - File paths (e.g., "/path/to/tool.py")
-                - Imported Python modules (e.g., from strands_tools import current_time)
+                - Imported Python modules (e.g., import my_tools)
                 - Dictionaries with name/path keys (e.g., {"name": "tool_name", "path": "/path/to/tool.py"})
                 - ToolProvider instances for managed tool collections
                 - Functions decorated with `@strands.tool` decorator
@@ -845,8 +846,8 @@ class Agent(AgentBase, LocalAgent):
 
         Example:
             ```
-            agent = Agent(tools=[calculator])
-            agent.tool.calculator(...)
+            agent = Agent(tools=[square_root])
+            agent.tool.square_root(number=1764)
             ```
         """
         return self.tool_caller
@@ -954,10 +955,11 @@ class Agent(AgentBase, LocalAgent):
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
             limits: Limits for the whole request this call starts (turns / output_tokens /
-                total_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached,
-                the loop stops at the next turn boundary with a corresponding ``stop_reason``
-                (e.g. ``"limit_turns"``); no exception is raised. Token limits are soft — a single
-                oversized model response can overshoot them, since checks run at turn boundaries.
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it
@@ -1054,10 +1056,11 @@ class Agent(AgentBase, LocalAgent):
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
             limits: Limits for the whole request this call starts (turns / output_tokens /
-                total_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached,
-                the loop stops at the next turn boundary with a corresponding ``stop_reason``
-                (e.g. ``"limit_turns"``); no exception is raised. Token limits are soft — a single
-                oversized model response can overshoot them, since checks run at turn boundaries.
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it
@@ -1165,6 +1168,14 @@ class Agent(AgentBase, LocalAgent):
             category=DeprecationWarning,
             stacklevel=2,
         )
+        # Model.structured_output only takes the flattened system prompt string, so non-text blocks are lost.
+        if dropped := sorted({key for block in self._system_prompt_content or [] for key in block} - {"text"}):
+            warnings.warn(
+                f"System prompt blocks {dropped} are dropped by Agent.structured_output_async."
+                " Pass `structured_output_model` into the agent invocation instead to keep them.",
+                category=UserWarning,
+                stacklevel=2,
+            )
         await self.hooks.invoke_callbacks_async(BeforeInvocationEvent(agent=self, invocation_state={}))
         with self.tracer.tracer.start_as_current_span(
             "execute_structured_output", kind=trace_api.SpanKind.CLIENT
@@ -1193,7 +1204,9 @@ class Agent(AgentBase, LocalAgent):
                         f"gen_ai.{message['role']}.message",
                         attributes={"role": message["role"], "content": serialize(message["content"])},
                     )
-                events = self.model.structured_output(output_model, temp_messages, system_prompt=self.system_prompt)
+                events = ModelProxy(self.model).structured_output(
+                    output_model, temp_messages, system_prompt=self.system_prompt
+                )
                 async for event in events:
                     if isinstance(event, TypedEvent):
                         event.prepare(invocation_state={})
@@ -1469,10 +1482,11 @@ class Agent(AgentBase, LocalAgent):
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
             limits: Limits for the whole request this call starts (turns / output_tokens /
-                total_tokens). See :class:`~strands.types.agent.Limits`. When a limit is reached,
-                the loop stops at the next turn boundary with a corresponding ``stop_reason``
-                (e.g. ``"limit_turns"``); no exception is raised. Token limits are soft — a single
-                oversized model response can overshoot them, since checks run at turn boundaries.
+                total_tokens / structured_output_attempts). See :class:`~strands.types.agent.Limits`.
+                When a limit is reached, the loop stops at the next turn boundary with a corresponding
+                ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token limits are
+                soft — a single oversized model response can overshoot them, since checks run at turn
+                boundaries.
             cancel_signal: Caller-owned event that cancels this invocation. Use it when cancellation is
                 driven from outside the agent — a client disconnect, a request lifecycle, a timeout. The
                 agent observes both this event and ``cancel()``, so either cancels independently, and it

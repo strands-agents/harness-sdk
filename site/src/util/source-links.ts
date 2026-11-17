@@ -52,6 +52,11 @@ export function languageLabel(language: string): string {
   return LANGUAGE_LABELS[language.toLowerCase()] ?? language.charAt(0).toUpperCase() + language.slice(1)
 }
 
+/** Canonical language code for a known display label. */
+export function languageCodeForLabel(label: string): string | undefined {
+  return Object.entries(LANGUAGE_LABELS).find(([, knownLabel]) => knownLabel === label)?.[0]
+}
+
 /** Full GitHub blob URL for a source link. */
 export function sourceLinkUrl(link: SourceLink): string {
   return `https://github.com/strands-agents/${link.repo}/blob/main/${link.path}`

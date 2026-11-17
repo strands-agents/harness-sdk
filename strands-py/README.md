@@ -29,8 +29,15 @@
   <p>
     <a href="https://strandsagents.com/">Documentation</a>
     ◆ <a href="https://github.com/strands-agents/samples">Samples</a>
-    ◆ <a href="https://github.com/strands-agents/tools">Tools</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-cli">CLI</a>
     ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-mcp">MCP Server</a>
+    <br>
+    Harness (<a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">TypeScript</a>)
+    ◆ SDK (<a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-ts">TypeScript</a>)
+    ◆ <a href="https://github.com/strands-agents/box">Box</a>
+    ◆ <a href="https://github.com/strands-agents/shell">Shell</a>
+    ◆ <a href="https://github.com/strands-agents/evals">Evals</a>
+    ◆ <a href="https://github.com/strands-labs">Labs</a>
   </p>
 </div>
 
@@ -47,14 +54,15 @@ Strands Agents is a simple yet powerful SDK that takes a model-driven approach t
 
 ```bash
 # Install Strands Agents
-pip install strands-agents strands-agents-tools
+pip install strands-agents
 ```
 
 ```python
 from strands import Agent
-from strands_tools import calculator
-agent = Agent(tools=[calculator])
-agent("What is the square root of 1764")
+from strands.vended_tools import http_request
+
+agent = Agent(tools=[http_request])
+agent("Tell me about the Strands harness features: https://strandsagents.com/docs/user-guide/harness/index.md")
 ```
 
 > **Note**: For the default Amazon Bedrock model provider, you'll need AWS credentials configured and model access enabled for Claude 4 Sonnet in the us-west-2 region. See the [Quickstart Guide](https://strandsagents.com/) for details on configuring other model providers.
@@ -68,8 +76,8 @@ Ensure you have Python 3.10+ installed, then:
 python -m venv .venv
 source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 
-# Install Strands and tools
-pip install strands-agents strands-agents-tools
+# Install Strands
+pip install strands-agents
 ```
 
 ## Features at a Glance
@@ -189,18 +197,35 @@ Built-in providers:
 
 Custom providers can be implemented using [Custom Providers](https://strandsagents.com/docs/user-guide/concepts/model-providers/custom_model_provider/)
 
-### Example tools
+### Vended tools
 
-Strands offers an optional strands-agents-tools package with pre-built tools for quick experimentation:
+The SDK ships pre-built tools for common agent tasks. Import them from `strands.vended_tools`:
 
 ```python
 from strands import Agent
-from strands_tools import calculator
-agent = Agent(tools=[calculator])
-agent("What is the square root of 1764")
+from strands.vended_tools import file_editor, http_request, shell
+
+agent = Agent(tools=[file_editor, http_request, shell])
+agent("Fetch https://strandsagents.com and save a one-paragraph summary to /tmp/summary.md")
 ```
 
-It's also available on GitHub via [strands-agents/tools](https://github.com/strands-agents/tools).
+| Tool | Exports | Description |
+| --- | --- | --- |
+| Shell | `shell`, `make_shell` | Run shell commands |
+| File editor | `file_editor`, `make_file_editor` | View, create, and edit files |
+| HTTP request | `http_request`, `make_http_request` | Make HTTP requests to external APIs |
+| Web fetch | `web_fetch`, `make_web_fetch` | Fetch a web page for the model to read. Requires the `web-fetch` extra |
+| Notebook | `notebook`, `make_notebook` | Keep persistent text notes |
+| Python REPL | `python_repl`, `make_python_repl` | Run Python code |
+| Sleep | `sleep`, `make_sleep` | Pause for a bounded, cancellable duration |
+| Handoff to user | `handoff_to_user`, `make_handoff_to_user` | Pause the agent loop and ask the user for input |
+| Stop | `stop`, `make_stop` | End the agent loop when the task is done |
+| Subagent | `subagent`, `make_subagent` | Delegate a self-contained task to a child agent |
+| Swarm | `swarm`, `make_swarm` | Run a team of agents that hand off work to each other |
+| MCP router | `make_mcp_router` | Connect to MCP servers on an allowlist you set |
+| A2A client | `make_a2a_client` | Discover and message remote A2A agents. Requires the `a2a` extra |
+
+Use the `make_*` factories to customize a tool, for example to bind a sandbox or change its name. `shell`, `file_editor`, and `python_repl` run on the host unless you pass a `sandbox` to `Agent`. See [Vended tools](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/) for details on each tool.
 
 ### Bidirectional Streaming
 

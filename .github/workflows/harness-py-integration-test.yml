@@ -112,7 +112,7 @@ jobs:
           allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
