@@ -249,7 +249,7 @@ function removeEmptyInstallLock(path: string): void {
   try {
     rmdirSync(path)
   } catch (error) {
-    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
   }
 }
 
