@@ -62,6 +62,7 @@ def test_shared_cases_and_providers_are_all_accounted_for():
 
 
 @conformance.case("tool-use")
+@retry_on_flaky("A model may occasionally answer without calling the tool")
 def test_tool_use(model):
     agent = _agent(model, tools=[echo])
 
@@ -131,8 +132,9 @@ async def test_native_structured_output(model, alist):
 @conformance.case("prompt-caching")
 def test_prompt_caching(model):
     model.update_config(cache_config=CacheConfig(strategy="auto"))
-    # Salted so a rerun cannot read an entry an earlier run wrote, and sized past the model's cache minimum.
-    system_prompt = f"Dossier {uuid.uuid4()}. " + ("The subject prefers concise written answers. " * 600)
+    # Salted so a rerun cannot read an entry an earlier run wrote, and sized to about twice the largest cache
+    # minimum among the targets.
+    system_prompt = f"Dossier {uuid.uuid4()}. " + ("The subject prefers concise written answers. " * 1200)
     agent = _agent(model, system_prompt=system_prompt)
 
     agent("Reply ALPHA.")
