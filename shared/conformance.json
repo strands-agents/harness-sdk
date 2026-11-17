@@ -17,7 +17,12 @@
     "forced-tool-choice": {
       "requires": "capabilities.forcedToolChoice",
       "equals": true,
-      "passes": "A model call with a tool choice that forces a tool stops with a tool use."
+      "passes": "A model call with a tool choice that forces a tool returns a tool use."
+    },
+    "forced-tool-choice-refused": {
+      "requires": "capabilities.forcedToolChoice",
+      "equals": false,
+      "passes": "A model call with a tool choice that forces a tool is refused by the provider, with an error the SDK recognizes as forced tool choice not being supported."
     },
     "native-structured-output": {
       "requires": "capabilities.nativeStructuredOutput",
@@ -74,6 +79,8 @@
     { "provider": "mistral", "model": "codestral-2508" }
   ],
   "knownFailures": [
-    { "provider": "anthropic", "model": "claude-haiku-5-5", "case": "temporary-messages", "issue": 6227 }
+    { "provider": "anthropic", "model": "claude-haiku-5-5", "case": "temporary-messages", "issue": 6227 },
+    { "provider": "anthropic", "model": "claude-haiku-5-5", "case": "forced-tool-choice-refused", "issue": 6236 },
+    { "provider": "bedrock", "model": "us.anthropic.claude-haiku-5-5", "case": "forced-tool-choice-refused", "issue": 6236 }
   ]
 }

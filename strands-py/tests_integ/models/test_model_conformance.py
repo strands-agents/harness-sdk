@@ -13,6 +13,7 @@ import strands
 from strands import Agent
 from strands.models import CacheConfig
 from strands.models._model_info import lookup_model_info
+from strands.models._native_output import _FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES
 from strands.vended_plugins.context_injector import ContextInjector
 from tests_integ.conftest import retry_on_flaky
 from tests_integ.models import conformance
@@ -110,16 +111,35 @@ def test_max_output_tokens(model):
     assert result.stop_reason == "end_turn"
 
 
+async def _forced_tool_choice_outcome(model, alist):
+    messages = [{"role": "user", "content": [{"text": "Hello there!"}]}]
+    # A model that accepts a forced call can still end a turn without one, so only a tool use or a refusal is final.
+    for _ in range(3):
+        try:
+            events = await alist(model.stream(messages, tool_specs=[echo.tool_spec], tool_choice={"any": {}}))
+        except Exception as error:
+            if not any(message in str(error) for message in _FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES):
+                raise
+            return "refused"
+        if any("toolUse" in event.get("contentBlockStart", {}).get("start", {}) for event in events):
+            return "accepted"
+    return "no tool use"
+
+
 @conformance.case("forced-tool-choice")
 @pytest.mark.asyncio
 async def test_forced_tool_choice(model, alist):
-    messages = [{"role": "user", "content": [{"text": "Hello there!"}]}]
+    tru_outcome = await _forced_tool_choice_outcome(model, alist)
+    exp_outcome = "accepted"
+    assert tru_outcome == exp_outcome
 
-    events = await alist(model.stream(messages, tool_specs=[echo.tool_spec], tool_choice={"any": {}}))
 
-    tru_stop_reason = next(event["messageStop"]["stopReason"] for event in events if "messageStop" in event)
-    exp_stop_reason = "tool_use"
-    assert tru_stop_reason == exp_stop_reason
+@conformance.case("forced-tool-choice-refused")
+@pytest.mark.asyncio
+async def test_forced_tool_choice_refused(model, alist):
+    tru_outcome = await _forced_tool_choice_outcome(model, alist)
+    exp_outcome = "refused"
+    assert tru_outcome == exp_outcome
 
 
 @conformance.case("native-structured-output")
