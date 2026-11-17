@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach } from 'vitest'
@@ -11,7 +11,7 @@ afterEach(async () => {
 
 /** A temp directory removed automatically after each test in the importing file. */
 export async function temporaryDirectory(prefix = 'strands-cli-test-'): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), prefix))
+  const directory = await realpath(await mkdtemp(join(tmpdir(), prefix)))
   temporaryDirectories.push(directory)
   return directory
 }

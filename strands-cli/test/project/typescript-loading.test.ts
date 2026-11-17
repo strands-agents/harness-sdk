@@ -37,7 +37,7 @@ const defaults = {
 let root: string
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'strands-source-reload-'))
+  root = await realpath(await mkdtemp(join(tmpdir(), 'strands-source-reload-')))
   await writeFile(join(root, 'package.json'), '{"type":"module"}')
 })
 
