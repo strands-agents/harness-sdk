@@ -1,3 +1,4 @@
+import { ModelError } from '../errors.js'
 import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
@@ -106,6 +107,12 @@ function toGeminiInput(state: DecisionInput): string {
 function toSystemOneResponse(payload: unknown, modelId: string): unknown {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return payload
   const response = payload as Record<string, unknown>
+  // A prompt blocked by Gemini's input policy can come back as a success with empty `answers`.
+  const feedback = response['prompt_feedback'] as Record<string, unknown> | undefined
+  if (typeof feedback === 'object' && feedback !== null && feedback['block_reason'] !== undefined) {
+    const detail = typeof feedback['block_reason_message'] === 'string' ? `: ${feedback['block_reason_message']}` : ''
+    throw new ModelError(`gemini decision prompt was blocked (${String(feedback['block_reason'])})${detail}`)
+  }
   const usage = response['usage'] as Record<string, unknown> | undefined
   return {
     ...response,

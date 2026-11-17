@@ -623,6 +623,18 @@ describe('GeminiDecisionModel', () => {
     await expect(malformed.ask('I was charged twice.', question)).rejects.toThrow(/must sum to 1/)
   })
 
+  it('reports a prompt blocked through prompt_feedback with its reason', async () => {
+    const fetch = fakeFetch({
+      answers: {},
+      prompt_feedback: { block_reason: 'safety', block_reason_message: 'Harmful content' },
+    })
+    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+
+    await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+      new ModelError('gemini decision prompt was blocked (safety): Harmful content')
+    )
+  })
+
   it('rejects a Noul answer without the Gemini confidence', async () => {
     const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.9 } } })
     const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
