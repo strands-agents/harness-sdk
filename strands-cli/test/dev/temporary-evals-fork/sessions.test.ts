@@ -5,7 +5,10 @@ import { mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import { CliConfigStore } from '../../../src/config/store.js'
+import { createDevWorkspace } from '../../../src/dev/create.js'
 import type { ExperimentSummary } from '../../../src/dev/panels/model.js'
+import * as installer from '../../../src/project/archive.js'
 import {
   readTemporaryRunRecords,
   saveTemporaryRunRecord,
@@ -429,6 +432,49 @@ describe('TEMPORARY dev sessions', () => {
     expect(space.variables).toEqual([
       expect.objectContaining({ key: 'instructions', kind: 'text', option: 'instructions' }),
     ])
+  })
+
+  it('shouldWriteTheWinningInstructionsIntoCliTomlWhenTheWorkspaceIsTheBaseCliProfile', async () => {
+    const home = await temporaryDirectory()
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+    const config = join(home, '.strands', 'cli.toml')
+    await writeFileAt(
+      config,
+      `[profile]\nname = "Base"\ninstructions = "${BASELINE}"\nskills = false\nsession = false\nmemory = false\n`
+    )
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+    const workspace = await createDevWorkspace({
+      cwd: home,
+      destination: join(home, '.strands', 'strands-dev'),
+      kind: 'cli',
+      snapshot: (await CliConfigStore.load(config, { persist: false })).snapshot(),
+    })
+    const { context } = chat()
+    const sessions = temporaryDevSessions({
+      workspace,
+      agent: () => ({ description: 'Answers capital city questions', tools: [] }),
+      context,
+      dependencies: { run: environmentRunner(workspace), spawnOptimizer: optimizingProcess() },
+    })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    const state = sessions.optimize.snapshot()
+    if (state.step !== 'review') throw new Error('expected the review')
+
+    sessions.optimize.apply()
+
+    await vi.waitFor(async () =>
+      expect((await CliConfigStore.load(config, { persist: false })).snapshot().profile.instructions).toBe(WINNER)
+    )
+    expect(state.review.edits).toEqual([
+      expect.objectContaining({ knob: 'instructions', target: config, accepted: true, after: WINNER }),
+    ])
+    expect(await readFile(workspace.entrypoint, 'utf8')).toContain('Name the capital city.')
+    vi.unstubAllEnvs()
   })
 
   it('shouldKeepARecordWhileTheRunIsActiveAndDropItWhenTheRunEnds', async () => {

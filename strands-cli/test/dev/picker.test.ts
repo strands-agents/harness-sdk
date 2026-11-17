@@ -37,7 +37,7 @@ describe('HarnessPicker', () => {
       ),
       { stdin: input, stdout: output }
     )
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Save to Base CLI'))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Changes here also change plain strands.'))
     const positions = (): number[] =>
       ['Select a harness', 'Global Harness', 'Project harness', 'New Harness', '↑↓ select'].map((text) =>
         frame().findIndex((line) => line.includes(text))
@@ -51,7 +51,7 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Start a separate project'))
     expect(positions()).toEqual(initial)
     input.write('\u001b[B')
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Save to Base CLI'))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Changes here also change plain strands.'))
     expect(positions()).toEqual(initial)
   })
 
@@ -97,8 +97,8 @@ describe('HarnessPicker', () => {
     const text = frame().join('\n')
     expect(text.indexOf('Base CLI')).toBeLessThan(text.indexOf('Project harness'))
     expect(text).toContain('Source: /home/test/.strands/cli.toml')
-    expect(text).toContain('Save to Base CLI in /settings applies these changes')
-    expect(text).toContain('development changes stay in this local workspace')
+    expect(text).toContain('Changes here also change plain strands.')
+    expect(text).toContain('They save into ~/.strands/cli.toml, or into the agent file that it uses.')
     expect(text).toContain('Global Harness')
     expect(text).toContain('Discovered Harnesses (1)')
     input.write('\r')
@@ -1018,7 +1018,7 @@ describe('HarnessPicker', () => {
     const frame = renderWithRows(rows)
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc cancel'))
 
-    expect(frame().join('\n').includes('Save to Base CLI in /settings')).toBe(notesVisible)
+    expect(frame().join('\n').includes('Changes here also change plain strands.')).toBe(notesVisible)
   })
 
   it.each([

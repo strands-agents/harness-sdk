@@ -30,6 +30,7 @@ export type WorkspaceAction = 'edit' | 'import'
 
 export type SetupChange = {
   reloadedFiles?: readonly string[]
+  profileSaved?: true
   conversationId?: string
   onFailure?: (message: string) => Promise<void>
 } & (

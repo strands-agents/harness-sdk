@@ -3,7 +3,6 @@ import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
 import { createDevProject, createDevWorkspace, bindExistingAgent, folderClaims } from '../../src/dev/create.js'
-import { baseCliFingerprint } from '../../src/dev/base-cli.js'
 import { readDevWorkspace } from '../../src/dev/workspace.js'
 import { devFailure } from '../../src/dev/errors.js'
 import * as installer from '../../src/project/archive.js'
@@ -48,19 +47,6 @@ describe('createDevWorkspace', () => {
       })
     }
   )
-
-  it.each([
-    ['cli', true],
-    ['typescript', false],
-  ] as const)('shouldRecordTheProfileFingerprintOnlyForTheBaseCliCopyWhenCreating%s', async (kind, recorded) => {
-    const cwd = await temporaryDirectory()
-    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
-    const saved = snapshot()
-
-    const workspace = await createDevWorkspace({ cwd, destination: 'workspace', kind, snapshot: saved })
-
-    expect(workspace.config.origin.version).toBe(recorded ? baseCliFingerprint(saved) : undefined)
-  })
 
   it('shouldCopyLocalModelSourcesWithoutMutatingTheSavedProfile', async () => {
     const cwd = await temporaryDirectory()

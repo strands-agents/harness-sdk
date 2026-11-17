@@ -427,6 +427,72 @@ describe('runInkChat', () => {
     }
   })
 
+  it.each<[string, string, Partial<SetupChange>, number]>([
+    ['SaveTheProfile', 'AProfileChangeArrives', {}, 1],
+    ['KeepCliTomlAsItIs', 'CliTomlIsReloaded', { reloadedFiles: ['cli.toml'], profileSaved: true }, 0],
+  ])('should%sWhen%s', async (_outcome, _event, reload, saves) => {
+    const config = CliConfigStore.memory()
+    const saveProfile = vi.spyOn(config, 'saveProfile').mockResolvedValue()
+    const unusedFork = async (): Promise<ChatController> => {
+      throw new Error('Unused')
+    }
+    const snapshot: ChatConversation['snapshot'] = {
+      scope: 'agent',
+      schemaVersion: '1.0',
+      createdAt: new Date().toISOString(),
+      data: {},
+      appData: {},
+    }
+    const conversation = (): ChatController =>
+      new ChatController({ ...idleBackend(), captureConversation: async () => snapshot })
+    const previous = new ConversationManager(conversation(), { fork: unusedFork })
+    const disposed = vi.spyOn(previous, 'dispose')
+    let requestSetup: RequestSetup | undefined
+    const source = async (
+      _signal: AbortSignal,
+      setup: RequestSetup,
+      conversations?: ChatConversations
+    ): Promise<ChatControllerApi> => {
+      requestSetup = setup
+      return conversations ? new ConversationManager(conversation(), { fork: unusedFork }) : previous
+    }
+    const output = Object.assign(new PassThrough(), {
+      isTTY: true,
+      columns: 100,
+      rows: 30,
+    }) as unknown as NodeJS.WriteStream
+    output.resume()
+    let instance!: Instance
+    const running = runInkChat(source, {
+      config,
+      intro: false,
+      alternateScreen: false,
+      input: Object.assign(new PassThrough(), {
+        isTTY: true,
+        setRawMode: vi.fn(),
+        ref: vi.fn(),
+        unref: vi.fn(),
+      }) as unknown as NodeJS.ReadStream,
+      output,
+      errorOutput: output,
+      renderApp: (element, options) => {
+        instance = render(element, { ...options, interactive: true, patchConsole: false })
+        return instance
+      },
+    })
+    try {
+      await vi.waitFor(() => expect(requestSetup).toBeDefined())
+
+      requestSetup!({ profile: config.snapshot().profile, ...reload } as SetupChange)
+
+      await vi.waitFor(() => expect(disposed).toHaveBeenCalled())
+      expect(saveProfile).toHaveBeenCalledTimes(saves)
+    } finally {
+      instance.unmount()
+      await running
+    }
+  })
+
   it('shouldReopenTheDevPanelWhenAFileChangeReloadsTheAgent', async () => {
     const snapshot: ChatConversation['snapshot'] = {
       scope: 'agent',

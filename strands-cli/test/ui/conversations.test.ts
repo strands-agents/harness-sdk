@@ -9,6 +9,7 @@ import { type ChatBackend, type ChatEvent, type ChatRunResult, type ChatTask } f
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
 import type { McpServerInfo } from '../../src/agent/mcp.js'
+import * as configWatch from '../../src/config/watch.js'
 import * as projectWatch from '../../src/project/watch.js'
 import type { VoiceInput, VoiceSessionSnapshot, VoiceSupervisorRequest } from '../../src/agent/voice.js'
 
@@ -49,6 +50,71 @@ describe('ConversationManager', () => {
       expect(manager.getSnapshot().runtime.reloadStatus).toBeUndefined()
       manager.markReloaded(['agent.ts'])
       expect(manager.getSnapshot().runtime.reloadStatus).toBe('↻ agent.ts reloaded · session kept')
+    } finally {
+      await manager.dispose()
+      watcher.mockRestore()
+    }
+  })
+
+  it.each([
+    ['the profile changed', true, [['agent-1', ['cli.toml']]]],
+    ['the profile is unchanged', false, []],
+  ])('shouldReloadTheChatOnlyWhenACliTomlChangeMeans%s', async (_name, profileChanged, reloads) => {
+    let changed: () => void = () => undefined
+    const watcher = vi.spyOn(configWatch, 'watchConfigFile').mockImplementation((_path, onChange) => {
+      changed = onChange
+      return () => undefined
+    })
+    const primary = new ChatController(backend('primary', emptyRun))
+    const reloadProject = vi.fn()
+    const profileReloaded = vi.fn(async () => profileChanged)
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      reloadProject,
+      configWatch: { path: '/home/.strands/cli.toml', changed: profileReloaded },
+    })
+    try {
+      changed()
+
+      await vi.waitFor(() => expect(profileReloaded).toHaveBeenCalledOnce())
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(reloadProject.mock.calls).toEqual(reloads)
+      expect(watcher).toHaveBeenCalledWith('/home/.strands/cli.toml', expect.any(Function))
+    } finally {
+      await manager.dispose()
+      watcher.mockRestore()
+    }
+  })
+
+  it('shouldShowTheReasonAndKeepTheChatWhenACliTomlChangeCannotBeRead', async () => {
+    let changed: () => void = () => undefined
+    const watcher = vi.spyOn(configWatch, 'watchConfigFile').mockImplementation((_path, onChange) => {
+      changed = onChange
+      return () => undefined
+    })
+    const primary = new ChatController(backend('primary', emptyRun))
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      reloadProject,
+      configWatch: {
+        path: '/home/.strands/cli.toml',
+        changed: async () => {
+          throw new Error('invalid TOML on line 3')
+        },
+      },
+    })
+    try {
+      changed()
+
+      await vi.waitFor(() =>
+        expect(manager.getSnapshot().panel).toMatchObject({
+          kind: 'error',
+          title: 'live reload failed',
+          rows: [{ label: '/home/.strands/cli.toml', description: 'invalid TOML on line 3' }],
+        })
+      )
+      expect(reloadProject).not.toHaveBeenCalled()
     } finally {
       await manager.dispose()
       watcher.mockRestore()

@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { parseArgs, type ParsedArgs } from '../../src/cli/arguments.js'
 import { CliConfigStore, type CliConfigSnapshot } from '../../src/config/store.js'
 import { bindWorkspace } from '../../src/dev/binding.js'
-import type { BaseCliState } from '../../src/dev/base-cli.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import * as initial from '../../src/dev/initialize.js'
 import { prepareWorkspaceChange } from '../../src/dev/manage.js'
@@ -122,115 +121,6 @@ describe('workspace Settings', () => {
     } finally {
       await dev.dispose()
       await normal.dispose()
-    }
-  })
-
-  const CLI_TOML = '/home/test/.strands/cli.toml'
-  const baseCliInfo = { ...info, origin: 'cli' }
-  const baseCli = (state: BaseCliState) => ({ state: vi.fn(async () => state), save: vi.fn(async () => CLI_TOML) })
-  const openWorkspaceSettings = async (controller: ChatController): Promise<void> => {
-    await controller.submit('/settings')
-    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })
-  }
-  const saveRow = (controller: ChatController) =>
-    controller.getSnapshot().panel?.rows.find(({ value }) => value === 'workspace:save')
-
-  it('shouldShowSaveToBaseCliOnlyWhenTheWorkspaceIsTheBaseCli', async () => {
-    const base = new ChatController(idleBackend(), {
-      runtime: { devWorkspace: baseCliInfo },
-      workspaceAction: vi.fn(),
-      baseCli: baseCli({ kind: 'current' }),
-    })
-    const discovered = new ChatController(idleBackend(), { runtime: { devWorkspace: info }, workspaceAction: vi.fn() })
-    try {
-      await openWorkspaceSettings(base)
-      await openWorkspaceSettings(discovered)
-
-      expect(saveRow(base)).toMatchObject({ label: 'Save to Base CLI' })
-      expect(saveRow(discovered)).toBeUndefined()
-      expect(await discovered.activatePanelRow({ label: '', description: '', value: 'workspace:save' })).toBe(false)
-    } finally {
-      await base.dispose()
-      await discovered.dispose()
-    }
-  })
-
-  it.each<[string, BaseCliState, string, string]>([
-    ['Changed', { kind: 'changed' }, 'Changed after strands dev made this copy. Save replaces it.', 'warning'],
-    ['Unknown', { kind: 'unknown' }, 'strands dev cannot tell if it changed after this copy.', 'warning'],
-    ['Other', { kind: 'other', agent: '/agents/other/agent.ts' }, 'Uses /agents/other/agent.ts.', 'warning'],
-    ['Current', { kind: 'current' }, 'Not changed since strands dev made this copy', 'normal'],
-  ])('shouldDescribeTheSaveBeforeItWritesWhenTheBaseCliStateIs%s', async (_name, state, text, tone) => {
-    const actions = baseCli(state)
-    const controller = new ChatController(idleBackend(), {
-      runtime: { devWorkspace: baseCliInfo },
-      workspaceAction: vi.fn(),
-      baseCli: actions,
-    })
-    try {
-      await openWorkspaceSettings(controller)
-
-      await controller.activatePanelRow({ label: '', description: '', value: 'workspace:save' })
-
-      await vi.waitFor(() => expect(controller.getSnapshot().panel?.title).toBe('Save to Base CLI'))
-      const rows = controller.getSnapshot().panel?.rows ?? []
-      expect(rows.find(({ label }) => label === 'Base CLI')).toMatchObject({ tone })
-      expect(rows.find(({ label }) => label === 'Base CLI')?.description).toContain(text)
-      expect(rows).toContainEqual(expect.objectContaining({ label: 'Agent', description: info.entrypoint }))
-      expect(rows.at(-1)).toMatchObject({ label: 'Save', value: 'workspace:save-confirm' })
-      expect(actions.save).not.toHaveBeenCalled()
-    } finally {
-      await controller.dispose()
-    }
-  })
-
-  it('shouldSaveAndTellHowToUseTheProfileAgainWhenTheSaveIsConfirmed', async () => {
-    const actions = baseCli({ kind: 'current' })
-    const controller = new ChatController(idleBackend(), {
-      runtime: { devWorkspace: baseCliInfo },
-      workspaceAction: vi.fn(),
-      baseCli: actions,
-    })
-    try {
-      await openWorkspaceSettings(controller)
-      await controller.activatePanelRow({ label: '', description: '', value: 'workspace:save' })
-      await vi.waitFor(() => expect(controller.getSnapshot().panel?.title).toBe('Save to Base CLI'))
-
-      await controller.activatePanelRow({ label: '', description: '', value: 'workspace:save-confirm' })
-
-      await vi.waitFor(() => expect(actions.save).toHaveBeenCalledOnce())
-      await vi.waitFor(() =>
-        expect(controller.getSnapshot().notices.map(({ text }) => text)).toContain(
-          `Plain strands now uses this agent. To use your saved profile again, remove agentProject from ${CLI_TOML}.`
-        )
-      )
-      expect(controller.getSnapshot().panel?.title).not.toBe('Save to Base CLI')
-    } finally {
-      await controller.dispose()
-    }
-  })
-
-  it('shouldSayThatPlainStrandsAlreadyUsesTheAgentWhenItWasSaved', async () => {
-    const actions = baseCli({ kind: 'saved' })
-    const controller = new ChatController(idleBackend(), {
-      runtime: { devWorkspace: baseCliInfo },
-      workspaceAction: vi.fn(),
-      baseCli: actions,
-    })
-    try {
-      await openWorkspaceSettings(controller)
-
-      await controller.activatePanelRow({ label: '', description: '', value: 'workspace:save' })
-
-      await vi.waitFor(() =>
-        expect(controller.getSnapshot().notices.map(({ text }) => text)).toContain(
-          'Plain strands already uses this agent.'
-        )
-      )
-      expect(controller.getSnapshot().panel?.title).not.toBe('Save to Base CLI')
-      expect(actions.save).not.toHaveBeenCalled()
-    } finally {
-      await controller.dispose()
     }
   })
 

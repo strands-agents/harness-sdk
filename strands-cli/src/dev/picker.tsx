@@ -382,8 +382,8 @@ export const HarnessPicker = ({
   const lineCount = (text: string): number => wrapLines(text, detailWidth).length
   const notice = warning ? sanitizeTerminalText(warning) : undefined
   const selected = rows[selection]!
-  const globalNotice = 'Save to Base CLI in /settings applies these changes to plain strands.'
-  const localNotice = 'Until then, development changes stay in this local workspace.'
+  const globalNotice = 'Changes here also change plain strands.'
+  const localNotice = 'They save into ~/.strands/cli.toml, or into the agent file that it uses.'
   const projectNotice = 'Local project only. Your CLI default stays unchanged.'
   const detailNoteRows = cli ? lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice)
   const step = placing ? 'folder' : creating ? 'name' : 'list'

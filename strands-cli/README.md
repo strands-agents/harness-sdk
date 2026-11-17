@@ -91,7 +91,7 @@ strands dev init --create python --workspace ./new-agent
 
 The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
 The selector separates CLI Default, Local Projects, and New Project choices. Source details appear below the selected choice.
-Base CLI shows its source path and explains that **Save to Base CLI** applies the dev changes to plain `strands`.
+Base CLI shows its source path and explains that changes in dev also change plain `strands`.
 Discovery omits the current CLI source and the base workspace already represented by that choice. Distinct projects with matching names remain separate.
 Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
@@ -155,7 +155,8 @@ New agents use the same project exporter and dependency installer as exported ag
 A new agent from the picker is in `strands-workspace/` in the launch directory, and its workspace is inside that project.
 With `--workspace`, or for a Base CLI that has only a saved profile, the new project is in `agent/` inside the workspace.
 Selecting an existing agent records its project path without copying or regenerating its source.
-Base CLI uses the saved source project when one exists. Otherwise, dev installs a persistent project from the saved profile.
+Base CLI uses the saved source project when one exists. Otherwise, the agent is the saved profile in `~/.strands/cli.toml`.
+For a profile, the agent file in `strands-dev/agent/` is only a view of the profile. Dev writes it again at each start and after each change to `cli.toml`.
 Local model modules and static imports are packaged without changing the saved profile. Credentials remain external.
 
 ### Prepare and validate the selected project
@@ -275,11 +276,6 @@ In a dev session, `/settings` includes **Strands dev workspace**. This section s
 
 - **Edit workspace configuration** opens `.config` in your configured editor. Binding changes apply on the next launch.
 - **Import a different agent** opens the startup agent selector. The selector scans the same folders and hides the current agent.
-- **Save to Base CLI** appears in a Base CLI workspace. It makes plain `strands` use the agent file of this workspace. Then dev and plain `strands` share one agent, and each one reloads the file when it changes.
-
-Before **Save to Base CLI** writes `agentProject` into `~/.strands/cli.toml`, it tells you if your Base CLI changed after dev made its copy.
-Your saved profile stays in `cli.toml`. To use the profile again, remove `agentProject` from `cli.toml`.
-After the save, plain `strands` writes `/model` and `/effort` into that agent file, as dev does.
 
 In the selector, you can select the Base CLI, a local project, or **Create a new harness** for a new TypeScript or Python project.
 When the current workspace is the Base CLI workspace, the selector does not show the Base CLI.
@@ -295,9 +291,11 @@ Press Esc in the selector to keep the current chat. These actions do not change 
 
 ### Changes in a dev session
 
-Dev saves each change that you make in the CLI during a dev session. It changes `~/.strands/cli.toml` only when you select **Save to Base CLI**.
+Dev saves each change that you make in the CLI during a dev session.
 
 - `/model` and `/effort` write `model` and `effort` into the `createHarness` or `create_harness` call of the agent file. Dev uses the same code writer as `/export`.
+- For a Base CLI that is a saved profile, `/model`, `/effort`, and the Apply step of `/optimize` write the profile in `~/.strands/cli.toml`. Then dev writes the view again, and plain `strands` reloads the agent.
+- When plain `strands` runs the saved agent project of the Base CLI, it writes `/model` and `/effort` into that agent file, as dev does.
 - The harness ignores `effort` when the agent passes a model object, for example `new BedrockModel({...})`. For a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object, `/effort` writes the reasoning fields into the object instead. These are the same fields that the harness sends for that model id at that effort, in `additionalRequestFields` or `params`. Fields for other purposes do not change.
 - `/settings`, `/permissions`, `/mcp`, and the AWS profile go into the `cli` section of `strands-dev/.config`. This section has the same shape as `cli.toml`, and dev loads it at each start.
 - Dev never saves provider credentials.
@@ -336,7 +334,6 @@ The experiment skill, workspace instructions, and `strands_dev_*` tools are inje
 [`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/e7bfdad0ea30c5e183294412ad466969a9c4d743)
 in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
 
-**Save to Base CLI** in `/settings` selects the persistent agent as the default for plain `strands`.
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
 
 ## Using it
@@ -469,6 +466,7 @@ Run `strands` or `/setup` to configure:
 
 Configuration is stored in `~/.strands/cli.toml`. Explicit CLI flags override the saved
 profile. Applying `/setup` changes reloads the agent while preserving the conversation.
+When another process or editor changes the saved profile in `cli.toml`, the chat also reloads the agent and keeps the conversation.
 
 ### Web search and Exa
 

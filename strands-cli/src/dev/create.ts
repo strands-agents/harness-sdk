@@ -11,7 +11,6 @@ import { importAgentProject, type AgentProjectLanguage } from '../project/import
 import { installAgentProject, installProjectDependencies, type ProjectInstallation } from '../project/install.js'
 import { moduleLanguage } from '../project/portability.js'
 import { withDevModuleFiles } from './module-files.js'
-import { baseCliFingerprint } from './base-cli.js'
 import { bindWorkspace } from './binding.js'
 import { boundDevWorkspace, readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
 
@@ -85,7 +84,7 @@ const presentSkillSources = async (paths: readonly string[]): Promise<string[]> 
   return paths.filter((_, index) => !absent[index])
 }
 
-const profileProject = async (
+export const profileProject = async (
   snapshot: CliConfigSnapshot,
   cwd: string,
   language: AgentProjectLanguage
@@ -306,7 +305,7 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
         version: 1,
         name: options.snapshot.profile.name,
         agent: { path: 'agent', entrypoint: portableEntrypoint(project.root, project.entrypoint), language },
-        origin: options.kind === 'cli' ? { ...origin, version: baseCliFingerprint(options.snapshot) } : origin,
+        origin,
       })
     }
     options.signal?.throwIfAborted()

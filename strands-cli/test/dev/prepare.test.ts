@@ -7,7 +7,7 @@ import { parseArgs } from '../../src/cli/arguments.js'
 import { containsPath, strandsUserPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { bindWorkspace, readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/binding.js'
-import { bindExistingAgent } from '../../src/dev/create.js'
+import { bindExistingAgent, createDevWorkspace } from '../../src/dev/create.js'
 import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
@@ -111,6 +111,29 @@ describe('prepareDevRun', () => {
     expect(JSON.parse(await readFile(join(launch, 'strands-dev/.config'), 'utf8')).agent.path).toBe(root)
     expect(await readFile(join(root, 'src/agent.ts'), 'utf8')).toBe('export const agent = {}')
     expect(await readdir(join(launch, 'strands-dev/tmp'))).toHaveLength(2)
+  })
+
+  it('shouldWriteTheBaseCliViewFromCliTomlWhenTheWorkspaceOpens', async () => {
+    const path = strandsUserPath('cli.toml')
+    const profile = (instructions: string): string =>
+      `[profile]\nname = "Base"\ninstructions = "${instructions}"\nskills = false\nsession = false\nmemory = false\n`
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, profile('Answer briefly.'))
+    const created = await createDevWorkspace({
+      cwd: process.cwd(),
+      destination: strandsUserPath('strands-dev'),
+      kind: 'cli',
+      snapshot: (await CliConfigStore.load(path, { persist: false })).snapshot(),
+    })
+    await writeFile(path, profile('Answer in full sentences.'))
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    const prepared = await prepareDevRun(parseArgs(['dev', '--workspace', dirname(path)]), {
+      deferPreparation: true,
+    })
+
+    expect(prepared?.workspace.entrypoint).toBe(created.entrypoint)
+    expect(await readFile(created.entrypoint, 'utf8')).toContain("instructions: 'Answer in full sentences.'")
   })
 
   it('shouldOpenAnExplicitHarnessWithoutScanningWhenAgentIsProvided', async () => {

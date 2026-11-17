@@ -357,7 +357,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       startupAbort.signal.throwIfAborted()
       if (launch?.configuration) {
         await config!.saveSetup(launch.configuration, { agentProject: launch.agentProject })
-      } else if (launch?.profile) {
+      } else if (launch?.profile && !launch.profileSaved) {
         if (!config) throw new Error('Configuration is unavailable.')
         await config.saveProfile(launch.profile)
       }

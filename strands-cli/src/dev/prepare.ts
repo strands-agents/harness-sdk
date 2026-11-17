@@ -2,6 +2,7 @@ import { lstat, readFile, readdir, rmdir } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { type ParsedArgs } from '../cli/arguments.js'
 import { CliConfigStore, type CliConfigSnapshot, type ConfigLayer } from '../config/store.js'
+import { isProfileBaseCli, refreshBaseCliView } from './base-cli.js'
 import { containsPath, expandHome, strandsUserPath } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
@@ -488,6 +489,7 @@ export const prepareDevRun = async (
             entrypoint: selected.entrypoint,
             config: { ...main.config, language: selected.config.language, entrypoint: selected.config.entrypoint },
           }
+    if (await isProfileBaseCli(workspace)) await refreshBaseCliView(workspace, config.snapshot())
     let initial: string | undefined
     if (!options.deferPreparation) {
       if (screen) screen.show(undefined, 'Installing initial agent copy…')

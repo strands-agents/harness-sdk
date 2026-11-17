@@ -25,6 +25,7 @@ import {
 } from '../model/environment.js'
 import { isMissingPathError, strandsUserPath } from '../paths.js'
 import { errorMessage, isControlCharacter } from '../terminal/text.js'
+import { withProcessLock, type LockBusyMessage } from '../process-lock.js'
 import { isRecord } from '../values.js'
 import { DEFAULT_CHAT_SETTINGS, parseSettings, type ChatSettings } from './settings.js'
 
@@ -112,6 +113,51 @@ export function userConfigPath(): string {
   return strandsUserPath('cli.toml')
 }
 
+const configBusy: LockBusyMessage = (holders) =>
+  `Another strands process (${holders.join(', ')}) is still saving the CLI config. Try again when it finishes.`
+
+const mergeField = (mine: unknown, base: unknown, disk: unknown): unknown =>
+  isDeepStrictEqual(mine, base) ? disk : mine
+
+const mergeKeys = (
+  mine: ConfigDocument,
+  base: ConfigDocument,
+  disk: ConfigDocument,
+  merge: (mine: unknown, base: unknown, disk: unknown) => unknown
+): ConfigDocument => {
+  const merged: ConfigDocument = {}
+  for (const key of new Set([...Object.keys(mine), ...Object.keys(base), ...Object.keys(disk)])) {
+    const value = merge(mine[key], base[key], disk[key])
+    if (value !== undefined) merged[key] = value
+  }
+  return merged
+}
+
+const mergeSection = (mine: unknown, base: unknown, disk: unknown): unknown => {
+  if (isDeepStrictEqual(mine, base)) return disk
+  if (!isRecord(mine) || !isRecord(base) || !isRecord(disk)) return mine
+  return mergeKeys(mine, base, disk, mergeField)
+}
+
+const mergeConfigDocuments = (mine: ConfigDocument, base: ConfigDocument, disk: ConfigDocument): ConfigDocument =>
+  mergeKeys(mine, base, disk, mergeSection)
+
+const changedProfileFields = (
+  raw: Record<string, unknown>,
+  before: HarnessAgentConfig,
+  after: HarnessAgentConfig
+): Record<string, unknown> => {
+  const next = { ...raw }
+  const previous = before as unknown as Record<string, unknown>
+  const updated = after as unknown as Record<string, unknown>
+  for (const key of new Set([...Object.keys(previous), ...Object.keys(updated)])) {
+    if (isDeepStrictEqual(previous[key], updated[key])) continue
+    if (updated[key] === undefined) delete next[key]
+    else next[key] = globalThis.structuredClone(updated[key])
+  }
+  return next
+}
+
 export const savedAgentProject = async (path = userConfigPath()): Promise<string | undefined> => {
   const { agentProject } = (await readConfigDocument(path)).document
   return typeof agentProject === 'string' ? agentProject : undefined
@@ -136,7 +182,7 @@ export class CliConfigStore {
   private _sessionProviderEnvironment: ProviderEnvironment = {}
   private _writeQueue = Promise.resolve()
   private _layer: { target: ConfigLayer; base: LayeredValues } | undefined
-  private _diskAgentProject: unknown
+  private _diskDocument: ConfigDocument
 
   private constructor(
     private readonly _path: string,
@@ -149,7 +195,7 @@ export class CliConfigStore {
     private _settings: ChatSettings,
     private readonly _persistent = true
   ) {
-    this._diskAgentProject = _document.agentProject
+    this._diskDocument = _document
     this._profileBaseDir =
       _document.profileBaseDir === undefined
         ? undefined
@@ -254,11 +300,27 @@ export class CliConfigStore {
     })
   }
 
-  setAgentProject(entrypoint: string | undefined): Promise<void> {
+  async reload(): Promise<boolean> {
+    if (this._layer) throw new Error('A CLI config with a workspace layer cannot reload from disk.')
+    let changed = false
+    await this._enqueueWrite(async () => {
+      const before = this._profile
+      this._adopt(withoutProviderCredentials((await readConfigDocument(this._path)).document))
+      changed = !isDeepStrictEqual(before, this._profile)
+    })
+    return changed
+  }
+
+  updateProfile(update: (profile: HarnessAgentConfig) => HarnessAgentConfig): Promise<void> {
+    if (!this._persistent || this._layer) throw new Error('Only a saved CLI config can update its profile.')
     return this._enqueueWrite(async () => {
-      const document = { ...this._document, agentProject: entrypoint }
-      await this._save(document)
-      this._document = document
+      const saved = await this._writeLocked((disk) => {
+        const before = parseProfile(disk.profile, this._path)
+        const after = normalizeHarnessAgentConfig(update(before))
+        const priorProfile = isRecord(disk.profile) ? disk.profile : {}
+        return { ...disk, profile: changedProfileFields(priorProfile, before, after) }
+      })
+      this._adopt(saved)
     })
   }
 
@@ -476,19 +538,40 @@ export class CliConfigStore {
       return
     }
     if (!this._persistent) return
-    if (document.agentProject === this._diskAgentProject) await this._keepAgentProjectOnDisk(document)
-    await writeConfigDocument(this._path, document)
-    this._diskAgentProject = document.agentProject
+    const base = this._diskDocument
+    const saved = await this._writeLocked((disk) => mergeConfigDocuments(document, base, disk))
+    for (const key of Object.keys(document)) delete document[key]
+    Object.assign(document, saved)
   }
 
-  private async _keepAgentProjectOnDisk(document: ConfigDocument): Promise<void> {
-    const onDisk = await readConfigDocument(this._path).then(
-      ({ document: saved }) => saved.agentProject,
-      () => document.agentProject
+  private async _writeLocked(produce: (disk: ConfigDocument) => ConfigDocument): Promise<ConfigDocument> {
+    await mkdir(dirname(this._path), { recursive: true, mode: 0o700 })
+    return withProcessLock(
+      `${this._path}.lock`,
+      async () => {
+        const disk = withoutProviderCredentials((await readConfigDocument(this._path)).document)
+        const next = produce(disk)
+        await writeConfigDocument(this._path, next)
+        this._diskDocument = next
+        return next
+      },
+      configBusy
     )
-    if (onDisk === document.agentProject) return
-    if (typeof onDisk === 'string') document.agentProject = onDisk
-    else delete document.agentProject
+  }
+
+  private _adopt(document: ConfigDocument): void {
+    this._document = document
+    this._diskDocument = document
+    this._onboardingVersion = parseOnboardingVersion(document.onboarding, this._path)
+    this._providers = parseProviders(document.providers, this._path)
+    this._providerEnvironment = parseProviderEnvironment(document.providers, this._path)
+    this._profile = parseProfile(document.profile, this._path)
+    this._permissions = parsePermissions(document.permissions, this._path)
+    this._settings = parseSettings(document.settings)
+    this._profileBaseDir =
+      document.profileBaseDir === undefined
+        ? undefined
+        : requiredPath(document.profileBaseDir, `Invalid CLI config at ${this._path}: profileBaseDir`)
   }
 
   private _enqueueWrite(write: () => Promise<void>): Promise<void> {

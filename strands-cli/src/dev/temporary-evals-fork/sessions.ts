@@ -7,6 +7,9 @@ import type { DevChatJob } from '../../ui/chat/types.js'
 import { resolveModelTarget } from '../../model/selection.js'
 import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
+import { baseCliEditProblem, editBaseCliProfile, isProfileBaseCli } from '../base-cli.js'
+import type { DevWorkspace } from '../workspace.js'
+import { userConfigPath } from '../../config/store.js'
 import {
   formatObjective,
   measuredVersions,
@@ -250,6 +253,24 @@ const optimizationRecords = async (folder: string): Promise<PastRun[]> => {
       return parts ? [{ record: join(folder, entry.name), ...parts, summary: '', opens: false }] : []
     })
     .sort((left, right) => right.record.localeCompare(left.record))
+}
+
+const locateBaseCliEdit = (
+  workspace: DevWorkspace,
+  change: TemporaryKnobChange
+): { target: string; write: (after: string) => Promise<void> } | { unavailable: string } => {
+  const edit =
+    change.knob.key === 'instructions'
+      ? { option: 'instructions', value: change.after, expected: change.before }
+      : (change.edit ?? { option: change.knob.option, value: change.after, expected: change.before })
+  const problem = baseCliEditProblem(edit)
+  if (problem) return { unavailable: problem }
+  return {
+    target: userConfigPath(),
+    write: async (): Promise<void> => {
+      await editBaseCliProfile(workspace, [edit])
+    },
+  }
 }
 
 export class TemporaryTest extends Store<TestState> implements TestSession {
@@ -1129,6 +1150,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     change: TemporaryKnobChange
   ): Promise<{ target: string; write: (after: string) => Promise<void> } | { unavailable: string }> {
     const { workspace } = this.host()
+    if (await isProfileBaseCli(workspace)) return locateBaseCliEdit(workspace, change)
     if (change.knob.key === 'instructions')
       return locateTemporaryEdit({
         root: workspace.root,

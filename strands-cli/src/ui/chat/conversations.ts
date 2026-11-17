@@ -1,3 +1,5 @@
+import { basename } from 'node:path'
+
 import { ConversationVoice } from './voice.js'
 import { makePanel } from './panel-state.js'
 import {
@@ -19,6 +21,7 @@ import { isUnresolvedBackgroundTask, conversationStatus, conversationTitle, read
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import type { AgentMessaging } from '../../agent/messaging.js'
 import type { ImportedAgentProject } from '../../project/import.js'
+import { watchConfigFile } from '../../config/watch.js'
 import { watchAgentProject } from '../../project/watch.js'
 import { sessionWorkspaceLabel, type SessionTarget } from '../../session/sessions.js'
 import type { VoiceInput } from '../../agent/voice.js'
@@ -38,7 +41,7 @@ export interface InitialConversations {
   entries: readonly (Omit<ConversationRecord, 'unsubscribe'> & { title: string })[]
 }
 
-interface ConversationManagerOptions {
+export interface ConversationManagerOptions {
   fork(source: ChatController): Promise<ChatController>
   resume?(source: ChatController, target: SessionTarget): Promise<ChatController>
   dispose?(): void | Promise<void>
@@ -47,6 +50,7 @@ interface ConversationManagerOptions {
   project?: ImportedAgentProject
   projectPrivatePaths?: readonly string[] | null
   reloadProject?(conversationId: string, paths: readonly string[]): void
+  configWatch?: { path: string; changed(): Promise<boolean> }
 }
 
 export class ConversationManager implements ChatControllerApi {
@@ -61,6 +65,7 @@ export class ConversationManager implements ChatControllerApi {
   private readonly _voice: ConversationVoice
   private readonly _reloadProject: ConversationManagerOptions['reloadProject']
   private readonly _stopProjectWatch: (() => void) | undefined
+  private readonly _stopConfigWatch: (() => void) | undefined
   private _activeId: string
   private _panel: ChatPanel | undefined
   private _taskOwnerId: string | undefined
@@ -136,6 +141,10 @@ export class ConversationManager implements ChatControllerApi {
             options.projectPrivatePaths
           )
         : undefined
+    const configWatch = options.configWatch
+    this._stopConfigWatch = configWatch
+      ? watchConfigFile(configWatch.path, () => void this._configChanged(configWatch))
+      : undefined
     if (project && options.reloadProject && options.projectPrivatePaths === null) {
       this._openError(
         'live reload unavailable',
@@ -346,6 +355,7 @@ export class ConversationManager implements ChatControllerApi {
     this._voice.disconnect()
     this._stopAgentMessaging?.()
     this._stopProjectWatch?.()
+    this._stopConfigWatch?.()
     await Promise.allSettled([
       ...[...this._conversations.values()].map((conversation) => conversation.controller.dispose()),
       this._voice.dispose(),
@@ -673,6 +683,18 @@ export class ConversationManager implements ChatControllerApi {
       this._openError('agent rename failed', name, errorMessage(error))
       return false
     }
+  }
+
+  private async _configChanged({ path, changed }: { path: string; changed(): Promise<boolean> }): Promise<void> {
+    try {
+      if (!(await changed())) return
+    } catch (error) {
+      this._openError('live reload failed', path, errorMessage(error))
+      return
+    }
+    this._changedPaths.add(basename(path))
+    this._projectReloadPending = true
+    this._reloadProjectIfReady()
   }
 
   private _reloadProjectIfReady(): void {
