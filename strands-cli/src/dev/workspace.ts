@@ -355,6 +355,19 @@ async function readIgnore(root: string): Promise<IgnoreSnapshot> {
   return { path, contents, details }
 }
 
+const restoreLength = async (file: FileHandle, path: string, length: number): Promise<void> => {
+  if (process.platform !== 'win32') return file.truncate(length)
+  const writable = await open(path, constants.O_RDWR)
+  try {
+    if (!sameFile(await file.stat(), await writable.stat())) {
+      throw new Error(`The .gitignore changed during workspace initialization: ${path}`)
+    }
+    await writable.truncate(length)
+  } finally {
+    await writable.close()
+  }
+}
+
 async function appendIgnores(snapshot: IgnoreSnapshot): Promise<void> {
   const text = snapshot.contents.toString('utf8')
   const missing = IGNORED_PATHS.filter((path) => !text.split(/\r?\n/u).includes(path))
@@ -391,7 +404,7 @@ async function appendIgnores(snapshot: IgnoreSnapshot): Promise<void> {
         contents.subarray(0, snapshot.contents.length).equals(snapshot.contents) &&
         addition.subarray(0, appended.length).equals(appended)
       ) {
-        await file.truncate(snapshot.contents.length)
+        await restoreLength(file, snapshot.path, snapshot.contents.length)
         if (!snapshot.details && sameFile(await file.stat(), await optionalDetails(snapshot.path))) {
           await unlink(snapshot.path)
         }

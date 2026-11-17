@@ -43,6 +43,7 @@ async function manifest(root: string, document: unknown) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.mocked(link).mockReset()
   vi.mocked(open).mockReset()
 })
@@ -319,6 +320,30 @@ describe('initializeDevWorkspace', () => {
       if (existing) expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('custom-ü')
     }
   )
+
+  it('shouldRollBackTheIgnoreAppendWhenTheAppendHandleCannotTruncateAsOnWindows', async () => {
+    const root = await project()
+    await writeFile(join(root, '.gitignore'), 'custom')
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    vi.mocked(open).mockImplementation(async (...args) => {
+      const file = await actualFs.open(...args)
+      if (String(args[0]).endsWith('.gitignore') && typeof args[1] === 'number' && args[1] & constants.O_APPEND) {
+        const write = file.writeFile.bind(file)
+        vi.spyOn(file, 'writeFile').mockImplementationOnce(async (contents) => {
+          await write(String(contents).slice(0, 8))
+          throw new Error('append failed')
+        })
+        vi.spyOn(file, 'truncate').mockRejectedValue(
+          Object.assign(new Error('EPERM: operation not permitted, ftruncate'), { code: 'EPERM' })
+        )
+      }
+      return file
+    })
+
+    await expect(initializeDevWorkspace(root, config())).rejects.toThrow('append failed')
+
+    expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('custom')
+  })
 
   it.each([false, true])('should preserve raw ignore bytes When appending fails=%s', async (fails) => {
     const root = await project()
