@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -6,6 +6,7 @@ import { Agent } from '../../agent/agent.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
 import { AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
 import { Interrupt } from '../../interrupt.js'
+import { logger } from '../../logging/logger.js'
 import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
@@ -32,6 +33,7 @@ describe('BackgroundTasks', () => {
   it.each(['manage_background_task', 'strands_manage_background_task'])(
     'runs %s calls in the foreground',
     async (name) => {
+      using warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       const model = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name, toolUseId: 'manage-use', input: { mode: 'list' } })
         .addTurn({ type: 'textBlock', text: 'Listed.' })
@@ -47,6 +49,11 @@ describe('BackgroundTasks', () => {
       })
       expect(agent.toolRegistry.get('strands_manage_background_task')?.description).toContain(
         'Use manage_background_task instead.'
+      )
+      expect(warn.mock.calls).toEqual(
+        name === 'strands_manage_background_task'
+          ? [[expect.stringContaining('replacement=<manage_background_task> | tool name is deprecated')]]
+          : []
       )
     }
   )

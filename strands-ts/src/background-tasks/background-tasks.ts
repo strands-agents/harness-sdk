@@ -7,6 +7,7 @@ import { AfterInvocationEvent, BeforeModelCallEvent, InitializedEvent } from '..
 import { HookOrder } from '../hooks/types.js'
 import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
+import { warnOnce } from '../logging/warn-once.js'
 import { InvokeModelStage, type ExecuteToolContext } from '../middleware/index.js'
 import type { Plugin } from '../plugins/plugin.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
@@ -55,7 +56,6 @@ export class BackgroundTasks implements Plugin {
   private readonly _executeTool
   private readonly _policy: ReturnType<typeof resolvePolicy>
   private readonly _manageTool
-  /** @deprecated Use manage_background_task instead. Removal is reserved for a future major release. */
   private readonly _legacyManageTool: Tool
   private readonly _tasks = new Map<string, BackgroundTask>()
   private _agent!: Agent
@@ -104,7 +104,13 @@ export class BackgroundTasks implements Plugin {
       description:
         'strands_manage_background_task is deprecated and will be removed in a future major release. Use manage_background_task instead.',
       inputSchema,
-      callback: (input, context) => this._manageTool.invoke(input, context),
+      callback: (input, context) => {
+        warnOnce(
+          logger,
+          `tool=<${LEGACY_MANAGE_TOOL_NAME}>, replacement=<${MANAGE_TOOL_NAME}> | tool name is deprecated and will be removed in a future major release`
+        )
+        return this._manageTool.invoke(input, context)
+      },
     })
   }
 
