@@ -344,7 +344,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
         tool_use_name = current_tool_use.get("name", "")
 
         if not tool_use_id or not tool_use_name:
-            # Skip, don't raise: an empty tool_uses list still appends a valid toolResult, so the loop continues.
+            # Skip, don't raise: the event loop re-asks, then fails, a tool_use stop with no complete tool use block.
             logger.warning(
                 "tool_use_id=<%s>, tool_name=<%s> | incomplete tool use block, skipping content block "
                 "(model may be using a non-standard streaming format)",
