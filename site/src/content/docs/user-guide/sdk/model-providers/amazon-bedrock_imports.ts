@@ -37,3 +37,22 @@ import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 import { Agent } from '@strands-agents/sdk'
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 // --8<-- [end:mantle_config_imports]
+
+// --8<-- [start:anthropic_bedrock_imports]
+import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk'
+import { Agent } from '@strands-agents/sdk'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+// --8<-- [end:anthropic_bedrock_imports]
+
+// --8<-- [start:anthropic_bedrock_mantle_imports]
+import { AnthropicBedrockMantle } from '@anthropic-ai/bedrock-sdk/mantle-client'
+import { Agent } from '@strands-agents/sdk'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+// --8<-- [end:anthropic_bedrock_mantle_imports]
+
+// --8<-- [start:openai_bedrock_client_imports]
+import { getTokenProvider } from '@aws/bedrock-token-generator'
+import OpenAI from 'openai'
+import { Agent } from '@strands-agents/sdk'
+import { OpenAIModel } from '@strands-agents/sdk/models/openai'
+// --8<-- [end:openai_bedrock_client_imports]

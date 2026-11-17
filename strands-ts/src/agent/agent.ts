@@ -26,14 +26,16 @@ import {
 import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
+import type { McpTool } from '../tools/mcp-tool.js'
 import { isValidToolName, type Tool } from '../tools/tool.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
 import { Model } from '../models/model.js'
-import { ModelProxy } from '../models/model-proxy.js'
+import { countRequestTokens, ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
+import type { AgentMetadata } from './agent-metadata.js'
 import { ModelPlugin } from '../plugins/model-plugin.js'
 import { totalPromptTokens, isModelStreamEvent } from '../models/streaming.js'
 import { InvocationContextImpl, reachedLimit, resolveInvocationContext } from './invocation-context.js'
@@ -531,6 +533,15 @@ export class Agent implements LocalAgent, InvokableAgent {
     return this._sessionId
   }
 
+  /**
+   * Metadata the agent passes to its model on `stream()`; the session id only when a session manager is attached.
+   *
+   * @internal
+   */
+  get agentMetadata(): AgentMetadata | undefined {
+    return this.sessionManager ? { sessionId: this.sessionId } : undefined
+  }
+
   private readonly _hooksRegistry: HookRegistryImplementation
   private readonly _middlewareRegistry: MiddlewareRegistry
   private readonly _pluginRegistry: PluginRegistry
@@ -870,11 +881,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize MCP clients and register their tools
     await Promise.all(
       this._mcpClients.map(async (client) => {
-        const tools = await client.listTools()
-        this._toolRegistry.add(tools)
-        client.onToolsChanged = (oldTools, newTools): void => {
-          oldTools.forEach((name) => this._toolRegistry.remove(name))
-          this._toolRegistry.addOrReplace(newTools)
+        let registered = await client.listTools()
+        this._toolRegistry.add(registered)
+        // The client's own list of old names includes tools this agent skipped, so track what was registered.
+        client.onToolsChanged = (_oldTools, newTools): void => {
+          registered = this._replaceMcpTools(client, registered, newTools)
         }
       })
     )
@@ -905,6 +916,27 @@ export class Agent implements LocalAgent, InvokableAgent {
     await this._hooksRegistry.invokeCallbacks(new InitializedEvent({ agent: this }))
 
     this._initialized = true
+  }
+
+  /**
+   * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
+   * name of a tool from another source such as `retrieve_context`, is skipped with a warning; the rest of the refresh
+   * applies. A skipped tool comes back only on this client's next refresh, even if the other source drops the name first.
+   *
+   * @param client - The MCP client whose tools changed
+   * @param current - The tools the client has registered
+   * @param refreshed - The client's refreshed tools
+   * @returns The tools the client has registered afterwards
+   */
+  private _replaceMcpTools(client: McpClient, current: McpTool[], refreshed: McpTool[]): McpTool[] {
+    const skipped = this._toolRegistry.swap(current, refreshed)
+    for (const { tool, error } of skipped) {
+      logger.warn(
+        `client=<${client.clientName}>, tool_name=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
+      )
+    }
+    const skippedTools = new Set(skipped.map(({ tool }) => tool))
+    return refreshed.filter((tool) => !skippedTools.has(tool))
   }
 
   /**
@@ -2384,15 +2416,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolChoice?: ToolChoice,
     structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
-    const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
-    if (this.systemPrompt !== undefined) {
-      streamOptions.systemPrompt = this.systemPrompt
-    }
-    if (toolChoice) {
-      streamOptions.toolChoice = toolChoice
-    }
-
     let attemptCount = 1
     while (true) {
       // An abort during retry backoff must stop before another model attempt begins.
@@ -2401,7 +2424,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       let projectedInputTokens: number | undefined
       try {
         // Context management continues to size against the agent's default model.
-        projectedInputTokens = await this._estimateInputTokens(streamOptions)
+        projectedInputTokens = await this._estimateInputTokens()
       } catch (error) {
         logger.debug(`error=<${error}> | token estimation failed, proceeding without estimate`)
       }
@@ -2461,7 +2484,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       if (modelContinuation !== undefined) {
         try {
-          projectedInputTokens = await this._estimateInputTokens(streamOptions)
+          projectedInputTokens = await this._estimateInputTokens()
         } catch (error) {
           projectedInputTokens = undefined
           logger.debug(
@@ -2629,7 +2652,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.toolChoice && { toolChoice: ctx.toolChoice }),
             // Omitted when zero, so an ordinary call's options are unchanged.
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
-            ...(self.sessionManager ? { agentMetadata: { sessionId: self.sessionId } } : {}),
+            ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
           }
           const gen = self._streamFromModel(
@@ -2911,10 +2934,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * estimates only new messages added after it. Falls back to full estimation when no metadata is
    * available (cold start or first call).
    *
-   * @param streamOptions - The stream options containing system prompt and tool specs
    * @returns Estimated input token count
    */
-  private async _estimateInputTokens(streamOptions: StreamOptions): Promise<number> {
+  private async _estimateInputTokens(): Promise<number> {
     // Find the last assistant message with usage metadata
     let lastAssistantIdx = -1
     for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -2933,13 +2955,10 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline
       } else {
         // System prompt and tool spec tokens are already included in the baseline from the prior model call
-        estimate = knownBaseline + (await this.model.countTokens(newMessages))
+        estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await this.model.countTokens(this.messages, {
-        ...(streamOptions.systemPrompt !== undefined && { systemPrompt: streamOptions.systemPrompt }),
-        ...(streamOptions.toolSpecs !== undefined && { toolSpecs: streamOptions.toolSpecs }),
-      })
+      estimate = await countRequestTokens(this, this.messages)
     }
 
     return estimate

@@ -242,6 +242,39 @@ async def test_stream_preserves_choice_local_usage(sagemaker_client, model, mess
     assert metadata == {"inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "stop_reason"),
+    [
+        ("stop", "tool_use"),
+        ("", "tool_use"),
+        ("tool_calls", "tool_use"),
+        ("length", "max_tokens"),
+        ("content_filter", "content_filtered"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_reports_tool_use_for_tool_call_with_stop(
+    sagemaker_client, model, messages, alist, finish_reason, stop_reason
+):
+    """A streamed tool call stops with tool_use even when the endpoint reports stop or nothing."""
+    tool_call = {
+        "index": 0,
+        "id": "tool123",
+        "type": "function",
+        "function": {"name": "get_weather", "arguments": '{"location": "Paris"}'},
+    }
+    events = [
+        {"choices": [{"delta": {"tool_calls": [tool_call]}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": finish_reason}]},
+    ]
+    payload = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+    sagemaker_client.invoke_endpoint_with_response_stream.return_value = {"Body": _payload_parts(payload)}
+
+    response = await alist(model.stream(messages))
+
+    assert response[-1] == {"messageStop": {"stopReason": stop_reason}}
+
+
 class TestSageMakerAIModel:
     """Test suite for SageMakerAIModel."""
 
@@ -397,6 +430,56 @@ class TestSageMakerAIModel:
     #     payload = json.loads(request["Body"])
     #     assert "tools" in payload
     #     assert payload["tools"] == []
+
+    @pytest.mark.parametrize(
+        ("tool_results_as_user_messages", "expected_message"),
+        [
+            (
+                True,
+                {"role": "user", "content": "Tool call ID 'tool-call-1' returned: 72F"},
+            ),
+            (
+                False,
+                {"role": "tool", "tool_call_id": "tool-call-1", "content": "72F"},
+            ),
+        ],
+    )
+    def test_format_request_tool_results_as_user_messages(
+        self,
+        boto_session,
+        endpoint_config,
+        payload_config,
+        tool_results_as_user_messages,
+        expected_message,
+    ):
+        """Test optionally converting tool results to user messages."""
+        model = SageMakerAIModel(
+            endpoint_config=endpoint_config,
+            payload_config={
+                **payload_config,
+                "tool_results_as_user_messages": tool_results_as_user_messages,
+            },
+            boto_session=boto_session,
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tool-call-1",
+                            "status": "success",
+                            "content": [{"text": "72F"}],
+                        }
+                    }
+                ],
+            }
+        ]
+
+        payload = json.loads(model.format_request(messages)["Body"])
+
+        assert payload["messages"] == [expected_message]
+        assert "tool_results_as_user_messages" not in payload
 
     def test_format_request_with_additional_args(self, boto_session, endpoint_config, messages, payload_config):
         """Test formatting a request's `additional_args` where provided"""

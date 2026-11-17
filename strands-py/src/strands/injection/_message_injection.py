@@ -186,6 +186,8 @@ def _fold_into_last_user_message(messages: Messages, text: str) -> tuple[Message
     folded: Message = {"role": target["role"], "content": content}
     if "metadata" in target:
         folded["metadata"] = target["metadata"]
+    if "tracking_id" in target:
+        folded["tracking_id"] = target["tracking_id"]
 
     result = list(messages)
     result[target_index] = folded

@@ -7,7 +7,7 @@ import pytest
 
 import strands
 from strands.models.llamaapi import LlamaAPIModel
-from strands.types.exceptions import ContextWindowOverflowException
+from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 
 @pytest.fixture
@@ -584,6 +584,16 @@ async def test_stream_non_overflow_bad_request_propagates(model, messages, alist
     with unittest.mock.patch.object(model.client.chat.completions, "create", side_effect=error):
         with pytest.raises(llama_api_client.BadRequestError, match="invalid 'model' parameter"):
             await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_rate_limit_as_throttle(model, messages, alist):
+    error = llama_api_client.RateLimitError("Rate limit exceeded", response=unittest.mock.Mock(), body=None)
+    with unittest.mock.patch.object(model.client.chat.completions, "create", side_effect=error):
+        with pytest.raises(ModelThrottledException, match="Rate limit exceeded") as exc_info:
+            await alist(model.stream(messages))
+
+    assert exc_info.value.__cause__ == error
 
 
 def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):

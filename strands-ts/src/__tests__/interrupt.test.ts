@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   Interrupt,
   InterruptError,
@@ -7,7 +7,8 @@ import {
   type PendingToolExecution,
 } from '../interrupt.js'
 import { InterruptResponseContent } from '../types/interrupt.js'
-import { ToolResultBlock } from '../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock, UnknownBlock } from '../types/messages.js'
+import { logger } from '../logging/logger.js'
 import { SessionError } from '../errors.js'
 import { anyTrackingId } from '../__fixtures__/message-helpers.js'
 
@@ -260,6 +261,54 @@ describe('InterruptState', () => {
           'int-1': { id: 'int-1', name: 'test', reason: 'reason', response: 'yes' },
         },
         resumeResponses: [{ interruptResponse: { interruptId: 'int-1', response: 'yes' } }],
+      })
+    })
+
+    it('restores a pending tool execution a newer SDK saved with content block types this version does not know', () => {
+      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const saved: PendingToolExecution = {
+        assistantMessageData: {
+          role: 'assistant',
+          content: [
+            { futureBlock: { value: 1 } } as never,
+            { toolUse: { name: 'load_tools', toolUseId: 't-0', input: {} } },
+            { toolUse: { name: 'tool', toolUseId: 't-1', input: {} } },
+          ],
+        },
+        completedToolResults: {
+          't-0': {
+            toolResult: {
+              toolUseId: 't-0',
+              status: 'success',
+              content: [{ text: 'loaded' }, { toolReference: { name: 'shell' } } as never],
+            },
+          },
+        },
+      }
+
+      const state = InterruptState.fromJSON({ interrupts: {}, activated: true, pendingToolExecution: saved })
+
+      expect(state.toJSON().pendingToolExecution).toStrictEqual(saved)
+      expect(state.getPendingExecution()).toEqual({
+        assistantMessage: new Message({
+          role: 'assistant',
+          content: [
+            new UnknownBlock({ futureBlock: { value: 1 } }),
+            new ToolUseBlock({ name: 'load_tools', toolUseId: 't-0', input: {} }),
+            new ToolUseBlock({ name: 'tool', toolUseId: 't-1', input: {} }),
+          ],
+          trackingId: anyTrackingId,
+        }),
+        completedToolResults: new Map([
+          [
+            't-0',
+            new ToolResultBlock({
+              toolUseId: 't-0',
+              status: 'success',
+              content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+            }),
+          ],
+        ]),
       })
     })
 

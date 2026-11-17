@@ -154,9 +154,6 @@ function assertManifestCompatibleWithConfig(
   if (manifest.product.id !== config.id) {
     throw new Error(`${label}: product id "${manifest.product.id}" does not match configured id "${config.id}"`)
   }
-  if (config.publicationStatus === 'stable' && manifest.product.status !== 'stable') {
-    throw new Error(`${label}: publication status "stable" requires upstream product status "stable"`)
-  }
 }
 
 function readSourcePath(sourceRoot: string, relativePath: string): string {

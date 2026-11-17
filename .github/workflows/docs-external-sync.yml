@@ -1,8 +1,6 @@
 name: 'Docs: Sync external lock'
 
 on:
-  schedule:
-    - cron: '47 */2 * * *'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +25,7 @@ jobs:
       - name: Checkout samples
         uses: actions/checkout@v7
         with:
-          # Keep this revision in sync with docs-ci.yml for deterministic validation.
+          # Keep this revision in sync with the locked production baseline.
           repository: strands-agents/samples
           ref: 6226307ed8f6de1face333d3daec638593aeedf3
           path: samples-source

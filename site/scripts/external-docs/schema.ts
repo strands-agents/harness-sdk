@@ -7,7 +7,8 @@ export interface ExternalDocsManifest {
   product: {
     id: string
     name: string
-    status: ExternalDocsStatus
+    /** @deprecated Site publication is controlled by external-docs.config.json. */
+    status?: ExternalDocsStatus
   }
   pages: ExternalDocsManifestPage[]
 }
@@ -112,12 +113,12 @@ export function validateConfigAndLock(config: ExternalDocsConfig, lock: External
 
 function parseProduct(input: unknown, label: string): ExternalDocsManifest['product'] {
   const product = asObject(input, label)
-  assertKeys(product, ['id', 'name', 'status'], label)
+  assertKeys(product, product.status === undefined ? ['id', 'name'] : ['id', 'name', 'status'], label)
 
   const id = safeComponent(product.id, `${label}.id`)
   const name = nonEmptyString(product.name, `${label}.name`)
-  const status = externalDocsStatus(product.status, `${label}.status`)
-  return { id, name, status }
+  if (product.status === undefined) return { id, name }
+  return { id, name, status: externalDocsStatus(product.status, `${label}.status`) }
 }
 
 function parsePage(input: unknown, label: string): ExternalDocsManifestPage {
@@ -180,7 +181,7 @@ function parseLockProduct(input: unknown, label: string): ExternalDocsProductLoc
 
 function sourcePath(input: unknown, label: string): string {
   const source = repositoryPath(input, label, '.md')
-  if (!source.startsWith('docs/user/')) fail(`${label} must be under docs/user/`)
+  if (!source.startsWith('docs/')) fail(`${label} must be under docs/`)
   return source
 }
 

@@ -8,7 +8,16 @@
       "manifest": "docs/site-manifest.json",
       "routePrefix": "docs/user-guide/box",
       "navLabel": "Box",
-      "publicationStatus": "preview"
+      "publicationStatus": "stable"
+    },
+    {
+      "id": "strands-decider",
+      "repository": "https://github.com/strands-labs/strands-decider",
+      "ref": "main",
+      "manifest": "docs/site-manifest.json",
+      "routePrefix": "docs/labs/strands-decider",
+      "navLabel": "Strands Decider",
+      "publicationStatus": "stable"
     }
   ]
 }

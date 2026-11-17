@@ -7,6 +7,13 @@ on:
         description: 'Deploy even if a published release has no changelog entry yet'
         type: boolean
         default: false
+      content_snapshot:
+        description: 'Upstream content: latest refs or CI-pinned baselines'
+        type: choice
+        options:
+          - latest
+          - locked
+        default: latest
 
 permissions:
   contents: write
@@ -25,11 +32,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout samples
+      - name: Checkout samples snapshot
         uses: actions/checkout@v7
         with:
-          # Intentionally unpinned: each site build imports the latest samples default branch.
+          # Locked mode uses a reviewed Samples baseline; latest mode follows main.
           repository: strands-agents/samples
+          ref: ${{ inputs.content_snapshot == 'locked' && '6226307ed8f6de1face333d3daec638593aeedf3' || 'main' }}
           path: samples-source
           persist-credentials: false
 
@@ -49,7 +57,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           missing=0 unverified=0
-          for repo in strands-agents/harness-sdk strands-agents/evals strands-agents/box; do
+          for repo in strands-agents/harness-sdk strands-agents/evals strands-agents/box strands-agents/shell; do
             code=0
             npm run -s changelog:sync -- --check --source-repo "$repo" || code=$?
             if [ "$code" = 1 ]; then missing=1; elif [ "$code" != 0 ]; then unverified=1; fi
@@ -61,6 +69,32 @@ jobs:
             echo "::error::Could not list releases from GitHub; re-run the deploy, or check skip_changelog_check if the API is down."
           fi
           [ "$missing" = 0 ] && [ "$unverified" = 0 ]
+
+      - name: Resolve latest external documentation
+        if: ${{ inputs.content_snapshot != 'locked' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run external-docs:update-lock
+
+      - name: Resolve samples revision
+        id: samples_snapshot
+        run: |
+          samples_revision="$(git -C "$GITHUB_WORKSPACE/samples-source" rev-parse HEAD)"
+          echo "revision=$samples_revision" >> "$GITHUB_OUTPUT"
+
+      - name: Record documentation inputs snapshot
+        id: content_snapshot
+        env:
+          SAMPLES_REVISION: ${{ steps.samples_snapshot.outputs.revision }}
+        run: |
+          content_snapshot="$(node -e '
+            const { products } = require("./external-docs.lock.json")
+            const revisions = products.map(({ id, revision }) => `${id}@${revision}`)
+            revisions.push(`samples@${process.env.SAMPLES_REVISION}`)
+            process.stdout.write(revisions.join(", "))
+          ')"
+          echo "snapshot=$content_snapshot" >> "$GITHUB_OUTPUT"
+          printf 'Documentation snapshot: `%s`\n' "$content_snapshot" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build CMS
         run: npm run cms:build
@@ -77,6 +111,9 @@ jobs:
 
       - name: Deploy to gh-pages branch
         working-directory: .
+        env:
+          CONTENT_SNAPSHOT: ${{ steps.content_snapshot.outputs.snapshot }}
+          SITE_REVISION: ${{ github.sha }}
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
@@ -85,5 +122,5 @@ jobs:
           rsync -a --delete --exclude='.git' --exclude='CNAME' site/dist/ gh-pages-deploy/
           cd gh-pages-deploy
           git add -A
-          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from ${{ github.sha }}"
+          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from $SITE_REVISION ($CONTENT_SNAPSHOT)"
           git push origin HEAD:gh-pages

@@ -30,6 +30,11 @@ Plugins change the typical behavior of an agent. They let you introduce concepts
     description="Fold real-time text into the model input before each call, without persisting it to history."
   />
   <LinkCard
+    title="Todos"
+    href="todos/"
+    description="Give the agent a task list it maintains itself and keeps in view across a multi-step run."
+  />
+  <LinkCard
     title="GoalLoop"
     href="goal-loop/"
     description="Validate responses against a goal and loop with feedback until they satisfy it."
@@ -78,6 +83,6 @@ From here you attach the plugins your application needs, or build your own.
 
 ## Where to go next
 
-New to plugins? Attach a built-in one from the grid above—[Skills](skills.md), [Context Offloader](context-offloader.md), [Context Injector](context-injector.md), or [GoalLoop](goal-loop.md)—and see it change the agent's behavior.
+New to plugins? Attach a built-in one from the grid above—[Skills](skills.md), [Context Offloader](context-offloader.md), [Context Injector](context-injector.md), [Todos](todos.md), or [GoalLoop](goal-loop.md)—and see it change the agent's behavior.
 
 Ready to write your own? [Build a custom plugin](custom-plugins.md) walks through registering hooks and tools, managing state, and async initialization. [Hooks](../agents/hooks.md) covers how the hook system works, and [Hook events](../agents/hooks-events.md) is the reference for every lifecycle event a plugin can react to.

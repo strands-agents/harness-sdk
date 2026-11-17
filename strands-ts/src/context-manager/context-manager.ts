@@ -14,22 +14,45 @@ import { InMemoryStorage } from '../storage/in-memory-storage.js'
 import { EPHEMERAL } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
+import { countRequestTokens } from '../models/model-proxy.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
-import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.js'
+import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
+import { ToolUseBlock, type Message } from '../types/messages.js'
 
-const AUTO_TRUNCATE_THRESHOLD = 1_500
-const AGENTIC_TRUNCATE_THRESHOLD = 8_000
+/**
+ * The retrieval tool calls answered by the message at `index`. Their results are copies of
+ * stashed content, so the stash leaves them out. A tool result follows the message that called it.
+ */
+function retrievalCallsBefore(messages: readonly Message[], index: number): Set<string> {
+  const ids = new Set<string>()
+  for (const block of messages[index - 1]?.content ?? []) {
+    if (block instanceof ToolUseBlock && block.name === RETRIEVAL_TOOL_NAME) ids.add(block.toolUseId)
+  }
+  return ids
+}
+
 const TRUNCATE_PREVIEW_TOKENS = 750
-const AUTO_SUMMARIZE_UTILIZATION = 0.85
 
 /** @internal */
 export const CONTEXT_MANAGER_PRESETS = ['auto', 'agentic'] as const
 
 /** @internal */
 export type ContextManagerPreset = (typeof CONTEXT_MANAGER_PRESETS)[number]
+
+/** The strategy pipeline of each preset. `auto` is also the default for a config that names none. */
+const PRESET_STRATEGIES: Record<ContextManagerPreset, () => ContextStrategy[]> = {
+  auto: () => [
+    Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({ blockThreshold: 1_500 }),
+    Offload.summarize('*').when({ contextUtilization: '85%', preserveRecent: 4 }),
+  ],
+  agentic: () => [
+    Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({ blockThreshold: 8_000 }),
+    Offload.summarize('*').when({ contextUtilization: '100%', preserveRecent: 4 }),
+  ],
+}
 
 /**
  * Supported values for the `contextManager` parameter.
@@ -47,8 +70,8 @@ export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig
  * Manages context reduction for an agent's conversation.
  *
  * On context overflow, runs the strategy pipeline (offload, summarize, emergency truncate).
- * The emergency truncation is always appended as the final strategy — it recomputes
- * utilization and only fires if the window is still overflowing after user strategies.
+ * The emergency truncation is always appended as the final strategy — it fires only if the
+ * window is still overflowing after the user strategies have run.
  *
  * Configured through the Agent's `contextManager` parameter — pass a preset
  * string (`'auto'`, `'agentic'`), a `ContextManagerConfig`, or a `ContextManager`
@@ -63,20 +86,12 @@ export class ContextManager implements Plugin {
   private readonly _strategies: ContextStrategy[]
   private readonly _stashStorage: Storage | false | undefined
   private readonly _enableRetrievalTool: boolean
-  private readonly _retrievalToolUseIds = new Set<string>()
   private _stash: Stash | undefined
   private _stashIsDurable = false
   private _retrievalTool: Tool | undefined
 
   constructor(config?: ContextManagerConfig) {
-    const userStrategies = config?.strategies
-      ? resolveStrategies(config.strategies)
-      : [
-          Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
-            threshold: AUTO_TRUNCATE_THRESHOLD,
-          }),
-          Offload.summarize('*').when({ utilization: AUTO_SUMMARIZE_UTILIZATION, preserveRecent: 4 }),
-        ]
+    const userStrategies = config?.strategies ? resolveStrategies(config.strategies) : PRESET_STRATEGIES.auto()
     this._strategies = [...userStrategies, new EmergencyTruncateStrategy()]
     const stashConfig = config?.stash
     const stashObj = typeof stashConfig === 'object' ? stashConfig : undefined
@@ -93,23 +108,13 @@ export class ContextManager implements Plugin {
   static from(strategy: ContextManagerStrategy | undefined): ContextManager | undefined {
     if (strategy === false || strategy === undefined) return undefined
     if (strategy instanceof ContextManager) return strategy
-    if (strategy === 'auto') {
-      return new ContextManager()
-    }
-    if (strategy === 'agentic') {
-      return new ContextManager({
-        strategies: [
-          Offload.truncate('toolResults', { previewTokens: TRUNCATE_PREVIEW_TOKENS }).when({
-            threshold: AGENTIC_TRUNCATE_THRESHOLD,
-          }),
-          Offload.summarize('*').when({ utilization: 1, preserveRecent: 4 }),
-        ],
-      })
-    }
     if (typeof strategy === 'string') {
-      throw new Error(
-        `Unknown contextManager preset: "${strategy}". Valid presets: ${CONTEXT_MANAGER_PRESETS.map((s) => `"${s}"`).join(', ')}`
-      )
+      if (!(CONTEXT_MANAGER_PRESETS as readonly string[]).includes(strategy)) {
+        throw new Error(
+          `Unknown contextManager preset: "${strategy}". Valid presets: ${CONTEXT_MANAGER_PRESETS.map((s) => `"${s}"`).join(', ')}`
+        )
+      }
+      return new ContextManager({ strategies: PRESET_STRATEGIES[strategy]() })
     }
     return new ContextManager(strategy)
   }
@@ -136,16 +141,14 @@ export class ContextManager implements Plugin {
 
     if (this._stash) {
       const stash = this._stash
-      const skipSet = this._retrievalToolUseIds
-
-      for (const message of agent.messages) {
-        trackRetrievalToolUseIds(message, skipSet)
-        await stash.storeMessage(message, skipSet)
+      const storedKeys = new Set(await stash.list())
+      for (const [index, message] of agent.messages.entries()) {
+        await stash.storeMessage(message, retrievalCallsBefore(agent.messages, index), storedKeys)
       }
-
       agent.addHook(MessageAddedEvent, async (event) => {
-        trackRetrievalToolUseIds(event.message, skipSet)
-        await stash.storeMessage(event.message, skipSet)
+        const messages = event.agent.messages
+        const index = messages.indexOf(event.message)
+        await stash.storeMessage(event.message, retrievalCallsBefore(messages, index === -1 ? messages.length : index))
       })
     }
 
@@ -208,7 +211,7 @@ export class ContextManager implements Plugin {
     invocationContext?: InvocationContext
   ): Promise<boolean> {
     const messages = agent.messages
-    const inputTokens = precomputedInputTokens ?? (await agent.model.countTokens(messages))
+    const inputTokens = precomputedInputTokens ?? (await countRequestTokens(agent, messages))
     const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
 
     const strategyContext: ContextState = {
@@ -227,7 +230,7 @@ export class ContextManager implements Plugin {
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(await agent.model.countTokens(messages))
+          strategyContext.utilization = agent.model.estimateUtilization(await countRequestTokens(agent, messages))
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {

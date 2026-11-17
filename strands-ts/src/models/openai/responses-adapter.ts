@@ -299,6 +299,8 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
           break
         }
 
+        case 'unknownBlock':
+          break
         default: {
           logger.warn(
             `block_type=<${block.type}> | unsupported content type in responses api message formatting | skipping`
@@ -398,6 +400,8 @@ function formatToolResultOutput(resultBlock: ToolResultBlock): string | Response
         }
         break
       }
+      case 'unknownBlock':
+        break
       default:
         logger.warn(`block_type=<${c.type}> | unsupported tool result content type for responses api`)
     }

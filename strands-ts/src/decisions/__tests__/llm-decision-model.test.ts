@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
+import { BedrockModel } from '../../models/bedrock.js'
 import { Model } from '../../models/model.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
-import { Message, TextBlock } from '../../types/messages.js'
+import { InjectedBlock, Message, TextBlock } from '../../types/messages.js'
 import { LLMDecisionModel } from '../llm-decision-model.js'
 import { Uncertain } from '../types.js'
 import type { StreamOptions } from '../../models/model.js'
@@ -226,6 +227,27 @@ describe('LLMDecisionModel', () => {
       expect(model.requests[0]).toBe(history)
     })
 
+    it('sends injected blocks in a message history the way the agent does', async () => {
+      const model = toolUseModel({ q: 'true' })
+      const history = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('earlier'), new InjectedBlock({ text: 'cwd: /repo', source: 'env' })],
+          trackingId: 'msg-1',
+        }),
+      ]
+
+      await new LLMDecisionModel({ model }).ask(history, { q: { question: 'in a repo?', choices: 'boolean' } })
+
+      expect(model.requests[0]).toEqual([
+        new Message({
+          role: 'user',
+          content: [new TextBlock('earlier'), new TextBlock('\n\ncwd: /repo')],
+          trackingId: 'msg-1',
+        }),
+      ])
+    })
+
     it('includes the untrusted-state defense in the system prompt', async () => {
       const model = toolUseModel({ q: 'true' })
       const decision = new LLMDecisionModel({ model })
@@ -335,6 +357,12 @@ describe('LLMDecisionModel', () => {
   describe('construction', () => {
     it('rejects a non-Model argument', () => {
       expect(() => new LLMDecisionModel({ model: {} as unknown as Model })).toThrow(TypeError)
+    })
+
+    it('defaults to a strict BedrockModel', () => {
+      const model = (new LLMDecisionModel() as unknown as { _model: BedrockModel })._model
+      expect(model).toBeInstanceOf(BedrockModel)
+      expect(model.getConfig().strictTools).toBe(true)
     })
   })
 })

@@ -4,7 +4,13 @@ from typing import Any
 
 import httpx
 
-from ._system_one_http_adapter import _ask_system_one, _resolve_system_one_provider_config
+from ..types.exceptions import StructuredOutputException
+from ._system_one_http_adapter import (
+    _ask_system_one,
+    _http_transport,
+    _require_record,
+    _resolve_system_one_provider_config,
+)
 from .decision_model import DecisionModel
 from .types import DecisionInput, DecisionResult, Question
 
@@ -12,7 +18,6 @@ _DECISIONS_API_ENDPOINT = "https://decisionapi.net/v1/systemone"
 _DECISIONS_API_DEFAULT_MODEL_ID = "~typesafe/jev-latest"
 _DECISIONS_API_DEFAULT_MIN_CONFIDENCE = 0.5
 _DECISIONS_API_MAX_QUESTIONS = 8
-_DECISIONS_API_MAX_BODY_BYTES = 32 * 1024
 
 
 class DecisionsAPIDecisionModel(DecisionModel):
@@ -20,10 +25,11 @@ class DecisionsAPIDecisionModel(DecisionModel):
 
     ``ask`` raises ``ModelThrottledException`` on provider throttling (HTTP 429/503/529, with the
     ``httpx.HTTPStatusError`` as ``__cause__``), ``ContextWindowOverflowException`` when the request
-    exceeds the provider's size limit (HTTP 413 or the pre-send body-byte check), ``ValueError`` for
+    exceeds the provider's size limit (HTTP 413), ``ValueError`` for
     request-level violations (more than eight questions, too many choices, binary content, state
     that is not JSON-serializable or contains NaN/infinity), ``httpx.HTTPStatusError`` for any other
-    non-2xx response, and ``StructuredOutputException`` for a malformed provider response.
+    non-2xx response, and ``StructuredOutputException`` for a malformed provider response
+    or an HTTP 200 body that carries a non-zero error ``code``.
     Transport errors from the HTTP client (e.g. ``httpx.TimeoutException``, ``httpx.ConnectError``)
     propagate unchanged.
 
@@ -66,7 +72,6 @@ class DecisionsAPIDecisionModel(DecisionModel):
             provider_name="decisions_api",
             endpoint=_DECISIONS_API_ENDPOINT,
             api_key_environment_variable="JEV_API_KEY",
-            max_body_bytes=_DECISIONS_API_MAX_BODY_BYTES,
             max_questions=_DECISIONS_API_MAX_QUESTIONS,
             api_key=api_key,
             model_id=model_id,
@@ -75,4 +80,28 @@ class DecisionsAPIDecisionModel(DecisionModel):
         )
 
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
-        return await _ask_system_one(self._provider_config, state, questions)
+        transport = _http_transport(self._provider_config)
+
+        async def unwrapping_transport(body: str) -> Any:
+            return self._unwrap_envelope(await transport(body))
+
+        return await _ask_system_one(self._provider_config, unwrapping_transport, state, questions)
+
+    def _unwrap_envelope(self, payload: Any) -> Any:
+        """Return the System One result from decisionapi.net's ``{code, message, data: {result}}`` envelope.
+
+        The envelope does not carry the model, so the result reports the requested one unless it
+        names its own. A payload that is not enveloped is returned unchanged.
+        """
+        if not isinstance(payload, dict) or ("code" not in payload and "data" not in payload):
+            return payload
+
+        code = payload.get("code")
+        if isinstance(code, bool) or code != 0:
+            message = payload.get("message")
+            detail = f": {message}" if isinstance(message, str) else ""
+            raise StructuredOutputException(f"decision provider returned error code {code}{detail}")
+
+        data = _require_record(payload.get("data"), "decision provider data")
+        result = _require_record(data.get("result"), "decision provider result")
+        return {"model": self._provider_config.model_id, **result}

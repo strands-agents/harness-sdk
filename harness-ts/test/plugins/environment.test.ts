@@ -5,6 +5,7 @@ import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { createHarness } from '../../src/agent.js'
+import { SHELL_PROBE } from '../../src/sandbox.js'
 import {
   EnvironmentContext,
   type EnvironmentMemo,
@@ -47,8 +48,34 @@ class FakeSandbox {
     if (this.cwd === null) {
       throw new Error('no shell')
     }
+    if (command === SHELL_PROBE) {
+      return { type: 'executionResult', exitCode: 0, stdout: '\n', stderr: '', outputFiles: [] }
+    }
     const out = command.startsWith('uname') ? 'Linux' : this.cwd
     return { type: 'executionResult', exitCode: 0, stdout: `${out}\n`, stderr: '', outputFiles: [] }
+  }
+}
+
+/** The SDK's local sandbox on Windows: commands run in PowerShell, which has no `uname`. */
+class PowerShellSandbox extends FakeSandbox {
+  platform = 'Windows'
+  override async execute(command: string): Promise<ExecutionResult> {
+    if (command === SHELL_PROBE) {
+      return { type: 'executionResult', exitCode: 0, stdout: 'Desktop\r\n', stderr: '', outputFiles: [] }
+    }
+    if (command.startsWith('if ($IsLinux')) {
+      return { type: 'executionResult', exitCode: 0, stdout: `${this.platform}\r\n`, stderr: '', outputFiles: [] }
+    }
+    if (command.startsWith('uname')) {
+      return {
+        type: 'executionResult',
+        exitCode: 1,
+        stdout: '',
+        stderr: "The term 'uname' is not recognized",
+        outputFiles: [],
+      }
+    }
+    return { type: 'executionResult', exitCode: 0, stdout: `${this.cwd}\r\n`, stderr: '', outputFiles: [] }
   }
 }
 
@@ -90,9 +117,10 @@ describe('EnvironmentContext', () => {
     expect(out).not.toContain('.git')
   })
 
-  it('reports the real working directory from the local sandbox shell', async () => {
+  it('reports the real working directory from the local sandbox shell', { timeout: 30_000 }, async () => {
     // PowerShell's `pwd` prints a Path/---- table; the probe must yield the directory itself in every
-    // shell the local sandbox may run (sh, Git Bash, PowerShell), whose path spellings differ.
+    // shell the local sandbox may run (sh, Git Bash, PowerShell), whose path spellings differ. Each probe is
+    // a fresh process, which on Windows can outlast the default 5 s on a busy CI runner.
     const cwd = process.cwd()
     const dir = mkdtempSync(join(tmpdir(), 'harness-env-cwd-'))
     process.chdir(dir)
@@ -102,6 +130,13 @@ describe('EnvironmentContext', () => {
       expect(line, out).toBeDefined()
       const name = basename(dir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       expect(line, out).toMatch(new RegExp(`[\\\\/]${name}$`))
+      // On Windows the shell depends on the installed SDK: PowerShell from 1.22, Git Bash (MINGW64_NT) before it.
+      const platform = /^Platform: (.+)$/m.exec(out)?.[1]
+      if (process.platform === 'win32') {
+        expect(platform).toMatch(out.includes('Shell: PowerShell') ? /^Windows$/ : /^(MINGW|MSYS|CYGWIN)/)
+      } else {
+        expect(platform).toBe(process.platform === 'darwin' ? 'Darwin' : 'Linux')
+      }
     } finally {
       process.chdir(cwd)
       rmSync(dir, { recursive: true, force: true })
@@ -127,6 +162,28 @@ describe('EnvironmentContext', () => {
     const out = await renderEnvironment(fakeAgent(sandbox), {})
     expect(out).toContain('truncated')
     expect(out.length).toBeLessThan(big.length)
+  })
+
+  it('reports Windows and the PowerShell shell when the sandbox runs PowerShell', async () => {
+    const sandbox = new PowerShellSandbox({ 'AGENTS.md': 'x' }, { '.': [file('AGENTS.md')] }, 'C:\\Users\\me\\proj')
+    const out = await renderEnvironment(fakeAgent(sandbox), {})
+    expect(out).toContain('Platform: Windows')
+    expect(out).toContain('Shell: PowerShell')
+    expect(out).toContain('Working directory: C:\\Users\\me\\proj')
+  })
+
+  it('asks a pwsh sandbox for its platform instead of assuming Windows', async () => {
+    const sandbox = new PowerShellSandbox({}, { '.': [] }, '/work')
+    sandbox.platform = 'Linux'
+    const out = await renderEnvironment(fakeAgent(sandbox), {})
+    expect(out).toContain('Platform: Linux')
+    expect(out).toContain('Shell: PowerShell')
+  })
+
+  it('adds no shell line for an sh sandbox', async () => {
+    const out = await renderEnvironment(fakeAgent(new FakeSandbox({}, { '.': [] })), {})
+    expect(out).toContain('Platform: Linux')
+    expect(out).not.toContain('Shell:')
   })
 
   it('omits platform and working directory when the probes fail', async () => {

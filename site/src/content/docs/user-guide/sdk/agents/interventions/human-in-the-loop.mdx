@@ -9,6 +9,10 @@ sourceLinks:
   - path: strands-ts/src/vended-interventions/hitl/classifier.ts
   - path: strands-py/src/strands/decisions/llm_decision_model.py
   - path: strands-ts/src/decisions/llm-decision-model.ts
+  - path: strands-py/src/strands/decisions/typesafe_decision_model.py
+  - path: strands-ts/src/decisions/typesafe-decision-model.ts
+  - path: strands-py/src/strands/decisions/decisions_api_decision_model.py
+  - path: strands-ts/src/decisions/decisions-api-decision-model.ts
 addedDate: 2026-06-03
 ---
 
@@ -98,6 +102,71 @@ For web UIs, Slack bots, or other custom interfaces, pass a function to `ask`. T
 </Tab>
 </Tabs>
 
+### Auto Mode
+
+Pass <Syntax py='"auto"' ts="'auto'" /> to let the SDK decide which tool calls need a
+human, using the approval strategy it currently considers the best available. Today that
+is the built-in [risk classifier](#risk-classifier): low-risk calls run on their own and
+risky ones are escalated.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop.py:auto_mode"
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop_imports.ts:auto_mode_imports"
+
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop.ts:auto_mode"
+```
+</Tab>
+</Tabs>
+
+Two options compose with it, since neither decides the strategy: `ask` for how the human
+is reached, and <Syntax py="allowed_tools" ts="allowedTools" /> for calls that skip the
+decision entirely. Like plain <Syntax py="HumanInTheLoop()" ts="new HumanInTheLoop()" />,
+auto mode uses interrupt/resume unless you pass `ask`.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop.py:auto_mode_options"
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop_imports.ts:auto_mode_options_imports"
+
+--8<-- "user-guide/sdk/agents/interventions/human-in-the-loop.ts:auto_mode_options"
+```
+</Tab>
+</Tabs>
+
+The options that *do* decide the strategy — `classifier`, trust, and `evaluate` — are
+rejected alongside <Syntax py='"auto"' ts="'auto'" />: pick either the SDK's judgment or
+your own, never both. To configure the strategy yourself, omit the mode and use the
+options below.
+
+:::caution
+What <Syntax py='"auto"' ts="'auto'" /> resolves to can change in a minor release as
+better approaches become available, and a change can move calls in either direction:
+some that used to run on their own may start asking, and some that used to ask may stop.
+Every change is named in that version's release notes.
+
+To fix the mechanism, configure the strategy explicitly:
+<Syntax py="classifier=True" ts="classifier: true" /> always means the built-in LLM
+classifier. Note that this pins the mechanism, not its verdicts — the default risk prompt
+is SDK-owned and can change, and the classifier runs on <Syntax py="agent.aux_model" ts="agent.auxModel" />.
+To fix the criteria as well, pass your own prompt and model
+(<Syntax py="LLMClassifierConfig" ts="LlmClassifierConfig" />) or your own `DecisionModel`.
+:::
+
 ### Risk Classifier
 
 Use the `classifier` option to let an LLM decide per-call
@@ -125,10 +194,11 @@ To classify with a System One model, pass it as the classifier. A System One mod
 a small decision model that picks between options instead of generating text, so it
 responds faster and costs less per tool call than the LLM judge. It answers one yes/no
 question per tool call, judged against the same risk criteria as the built-in
-classifier. An uncertain answer requires approval and shows its reason in the prompt.
-TypeScript ships `TypeSafeDecisionModel`, which calls TypeSafe's hosted Jev model. In
-Python, subclass `DecisionModel` to wrap one, such as a local
-[Strands Decider](https://github.com/strands-labs/strands-decider) server:
+classifier. An uncertain answer requires approval. `TypeSafeDecisionModel` calls
+TypeSafe's hosted Jev model, and `DecisionsAPIDecisionModel` calls decisionapi.net. To
+use another one, such as a local
+[Strands Decider](https://github.com/strands-labs/strands-decider) server, subclass
+`DecisionModel`.
 
 <Tabs>
 <Tab label="Python">
@@ -174,8 +244,9 @@ provide your own classification function:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `mode` | <Syntax py='"auto"' ts="'auto'" /> | <Syntax py="None" ts="undefined" /> | Positional. Lets the SDK pick the approval strategy; see [Auto Mode](#auto-mode). Only `ask` and <Syntax py="allowed_tools" ts="allowedTools" /> may be passed alongside it. |
 | <Syntax py="allowed_tools" ts="allowedTools" /> | <Syntax py="list[str]" ts="string[]" /> | <Syntax py="None" ts="undefined" /> | Tools that bypass approval. Supports `"*"` (all) and `"!tool_name"` (negation). |
-| `classifier` | <Syntax py="bool, LLMClassifierConfig, DecisionModel, or callable" ts="boolean, LlmClassifierConfig, DecisionModel, or function" /> | <Syntax py="None" ts="undefined" /> | Risk classifier. <Syntax py="True" ts="true" /> for built-in defaults, a config object for a custom prompt or model, a decision model, or a custom function. |
+| `classifier` | <Syntax py="bool, LLMClassifierConfig, DecisionModel, or callable" ts="boolean, LlmClassifierConfig, { decisionModel }, or function" /> | <Syntax py="None" ts="undefined" /> | Risk classifier. <Syntax py="True" ts="true" /> for built-in defaults, a config object for a custom prompt or model, a decision model, or a custom function. |
 | <Syntax py="enable_trust" ts="enableTrust" /> | <Syntax py="bool" ts="boolean" /> | <Syntax py="False" ts="false" /> | When enabled, trust responses are remembered for the session. |
 | <Syntax py="evaluate_trust" ts="evaluateTrust" /> | Function | Accepts `"t"` or `"trust"` | Custom validator for trust responses. Only evaluated when trust is enabled. |
 | `evaluate` | Function | Accepts <Syntax py='True, "y", or "yes"' ts="true, 'y', or 'yes'" /> | Custom validator for approval responses. |

@@ -67,6 +67,10 @@ export interface Product {
   accent?: string
   href: string
   description: string
+  /** Source repository URL, e.g. "https://github.com/strands-agents/shell". */
+  repository: string
+  /** Implementation languages, e.g. ["Rust"]. */
+  languages: string[]
   pages?: ProductLink[]
 }
 

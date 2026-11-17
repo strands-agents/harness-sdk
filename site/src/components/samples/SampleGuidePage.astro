@@ -2,6 +2,9 @@
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import { render } from 'astro:content'
 import { buildSampleGuideSidebar, type SampleGuideEntry } from '../../util/sample-guides'
+import { languageLabel } from '../../util/source-links'
+import { articleSchema } from '../../util/structured-data'
+import { CANONICAL_SAMPLES_REPOSITORY } from '../../config/samples'
 
 interface Props {
   guide: SampleGuideEntry
@@ -9,8 +12,29 @@ interface Props {
 }
 
 const { guide, guides } = Astro.props
-const sidebar = buildSampleGuideSidebar(guides, guide.data.language)
+const sidebar = buildSampleGuideSidebar(guides, guide)
 const { Content, headings } = await render(guide)
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+const pageUrl = siteUrl + Astro.url.pathname
+Astro.locals.structuredData = [
+  articleSchema(
+    {
+      type: 'TechArticle',
+      title: guide.data.title,
+      description: guide.data.description,
+      url: pageUrl,
+      sources: [
+        {
+          programmingLanguage: languageLabel(guide.data.language),
+          codeRepository: `https://github.com/${CANONICAL_SAMPLES_REPOSITORY}`,
+          url: guide.data.sourceUrl,
+        },
+      ],
+    },
+    siteUrl
+  ),
+]
 ---
 
 <StarlightPage
@@ -25,11 +49,25 @@ const { Content, headings } = await render(guide)
   <p class="sample-guide__source">
     <a href={guide.data.sourceUrl} target="_blank" rel="noopener">View the complete sample on GitHub</a>
   </p>
+  {
+    guide.data.docs.length > 0 && (
+      <p class="sample-guide__docs">
+        Related documentation:{' '}
+        {guide.data.docs.map((doc, index) => (
+          <>
+            {index > 0 && ', '}
+            <a href={doc.url}>{doc.label}</a>
+          </>
+        ))}
+      </p>
+    )
+  }
   <Content />
 </StarlightPage>
 
 <style>
-  .sample-guide__source {
+  .sample-guide__source,
+  .sample-guide__docs {
     color: var(--sl-color-gray-3);
     font-size: var(--sl-text-sm);
   }

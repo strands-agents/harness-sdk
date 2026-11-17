@@ -200,7 +200,7 @@ github:
     expect(loaded).toEqual(fixture.manifest)
   })
 
-  it('keeps upstream stable docs in preview until the site promotes them', () => {
+  it('uses preview site status when the deprecated upstream status is stable', () => {
     const fixture = createFixture()
     const manifest = {
       ...fixture.manifest,
@@ -210,14 +210,10 @@ github:
     expect(buildExternalDocsProduct({ ...fixture, manifest })).toEqual(buildExternalDocsProduct(fixture))
   })
 
-  it('publishes stable docs only when upstream is stable', () => {
+  it('uses stable site status when the deprecated upstream status is preview', () => {
     const fixture = createFixture()
-    const manifest = {
-      ...fixture.manifest,
-      product: { ...fixture.manifest.product, status: 'stable' as const },
-    }
     const config = { ...fixture.config, publicationStatus: 'stable' as const }
-    const built = buildExternalDocsProduct({ ...fixture, manifest, config })
+    const built = buildExternalDocsProduct({ ...fixture, config })
 
     expect(built.navigation).toEqual({
       schemaVersion: 1,
@@ -255,15 +251,6 @@ externalDocs:
 ---
 Read [Second](../second/).
 `)
-  })
-
-  it('rejects a site promotion before upstream is stable', () => {
-    const fixture = createFixture()
-    const config = { ...fixture.config, publicationStatus: 'stable' as const }
-
-    expect(() => buildExternalDocsProduct({ ...fixture, config })).toThrow(
-      /publication status "stable" requires upstream product status "stable"/
-    )
   })
 })
 
