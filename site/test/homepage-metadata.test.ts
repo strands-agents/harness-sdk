@@ -189,8 +189,7 @@ describe('homepage machine-readable metadata', () => {
         relation: 'Built on',
         labelledBy: 'toolkit-sdk-relation toolkit-sdk-title',
         insideHarnessCard: true,
-        description:
-          'The Harness SDK is an agent framework for building agents from the ground up. Add tools, memory, and context management to fit your use case.',
+        description: null,
         action: {
           text: 'Explore the SDK',
           href: configuredPathWithBase('/docs/user-guide/sdk/'),

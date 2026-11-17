@@ -72,8 +72,6 @@ const cards: ToolkitCard[] = [
   {
     slug: '/harness-sdk',
     color: 'var(--card-accent-teal)',
-    description:
-      'The Harness SDK is an agent framework for building agents from the ground up. Add tools, memory, and context management to fit your use case.',
     actionLabel: 'Explore the SDK',
     actionAriaLabel: 'Explore the Harness SDK',
     expanded: {
@@ -230,10 +228,7 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
                 data-toolkit-product="harness-sdk"
                 aria-labelledby="toolkit-sdk-relation toolkit-sdk-title"
               >
-                <div class="toolkit__build-sdk-copy">
-                  <h3 class="toolkit__build-sdk-slug" id="toolkit-sdk-title">{sdkCard.slug}</h3>
-                  <p class="toolkit__build-sdk-description">{sdkCard.description}</p>
-                </div>
+                <h3 class="toolkit__build-sdk-slug" id="toolkit-sdk-title">{sdkCard.slug}</h3>
                 <a
                   href={sdkCard.expanded.viewMoreHref}
                   class="toolkit__build-sdk-action"
@@ -544,33 +539,19 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 36px;
-    align-items: end;
+    align-items: center;
     padding: 22px 34px;
-  }
-
-  .toolkit__build-sdk-copy {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    min-width: 0;
   }
 
   .toolkit__build-sdk-slug {
     font-size: 24px;
     line-height: 1.2;
+    white-space: nowrap;
   }
 
   .toolkit__build-sdk-action {
     justify-self: end;
     white-space: nowrap;
-  }
-
-  .toolkit__build-sdk-description {
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, sans-serif;
-    font-size: 14px;
-    line-height: 1.45;
-    color: var(--fg);
   }
 
   .toolkit__section-cards {
@@ -720,6 +701,10 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     bottom: 12px;
     left: auto;
     right: 24px;
+  }
+
+  .toolkit__build-action {
+    right: 34px;
   }
 
   .toolkit__card-read:hover {
@@ -911,9 +896,17 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     }
 
     .toolkit__build-sdk {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 16px;
-      padding: 20px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: 20px 16px;
+    }
+
+    .toolkit__build-sdk-slug {
+      font-size: clamp(18px, 5.4vw, 24px);
+    }
+
+    .toolkit__build-sdk-action {
+      font-size: clamp(12px, 3.6vw, 15px);
     }
 
     .toolkit__section--tools,
@@ -953,6 +946,21 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     .toolkit__card.is-open {
       gap: 16px;
       padding: 16px 16px 44px;
+    }
+  }
+
+  @media (max-width: 359px) {
+    .toolkit__build-sdk {
+      gap: 4px;
+      padding-inline: 12px;
+    }
+
+    .toolkit__build-sdk-slug {
+      font-size: 17px;
+    }
+
+    .toolkit__build-action {
+      right: 12px;
     }
   }
 </style>
