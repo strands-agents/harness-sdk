@@ -129,7 +129,6 @@ class SummarizeStrategy(BaseOffloadStrategy):
         A server-side summary stands in for the conversation's start as a single block, so it is tried once over
         every removable message before the per-run pass, which is client-side only.
         """
-        # apply returns early without a model.
         model = self._resolve_model(context.agent)
         if model is None or context.agent._cancel_signal.is_set():
             return False

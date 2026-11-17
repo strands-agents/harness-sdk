@@ -90,7 +90,6 @@ class BaseOffloadStrategy(ABC):
         self._target = target
         self._matcher = OffloadTargetMatcher(target)
         self._conditions = ResolvedConditions(conditions)
-        # Whether the eager hook processes each message as it arrives.
         self._runs_eagerly = target != "*" and not self._conditions.defers_arrival
         # Conditions that were set, even to nothing, are the caller's to fix now rather than at init.
         if conditions is not None:

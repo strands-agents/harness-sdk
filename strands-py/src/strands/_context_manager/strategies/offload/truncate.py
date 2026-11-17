@@ -53,8 +53,8 @@ class TruncateStrategy(BaseOffloadStrategy):
         self._truncate_config: TruncateConfig = config or {}
         self._preview_tokens = _resolve_preview_tokens(self._truncate_config)
 
-        # Every message over a threshold is larger than preview_tokens, so middle-out would elide them all, as drop
-        # does.
+        # Every message over a threshold is larger than preview_tokens, so middle-out would elide them all, as
+        # drop does.
         if target == "*" and self._conditions.block_threshold:
             raise ValueError(
                 'Offload.truncate("*") doesn\'t take a block_threshold; use Offload.drop("*") to remove large'
