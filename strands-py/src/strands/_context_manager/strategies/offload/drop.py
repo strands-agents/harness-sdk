@@ -9,7 +9,7 @@ from ....types.content import ContentBlock, Message
 from ...message_trimming import placeholder_for, remove_messages
 from ...placeholder import format_dropped, format_dropped_messages, placeholder_result
 from ...types import ContextState, is_tool_result_block
-from .base import BaseOffloadStrategy
+from .base import BaseOffloadStrategy, StashRef
 from .conditions import OffloadConditions
 from .target import OffloadTarget, media_kind
 
@@ -38,7 +38,7 @@ class DropStrategy(BaseOffloadStrategy):
     async def _apply_per_message(self, context: ContextState) -> bool:
         text_for = placeholder_for(context.agent.model, format_dropped_messages)
         removable = await self._removable_messages(context)
-        return await remove_messages(context.messages, removable, text_for, "drop", self._stash)
+        return await remove_messages(context.messages, removable, text_for, "drop", context.stash)
 
     async def _replace_block(
         self,
@@ -46,12 +46,12 @@ class DropStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_ref: str | None,
+        stash_ref: StashRef,
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
         logger.debug("tracking_id=<%s> | dropped block from context window", message.get("tracking_id"))
-        placeholder = self._placeholder(format_dropped(tokens, media_kind(block)), stash_ref, tokens)
+        placeholder = await self._placeholder(format_dropped(tokens, media_kind(block)), stash_ref, tokens)
         if is_tool_result_block(block):
             return placeholder_result(block["toolResult"], [placeholder])
         return placeholder

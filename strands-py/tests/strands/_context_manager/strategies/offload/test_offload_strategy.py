@@ -322,6 +322,37 @@ class TestMessageLevelWithRoleAlternation:
 
         assert messages[0]["role"] == "user"
 
+    @pytest.mark.asyncio
+    async def test_repairs_alternation_when_the_pass_fails_after_editing_the_history(self):
+        messages = _conversation(2)
+        strategy = Offload.drop("*").when(context_utilization="50%")
+
+        async def remove_then_fail(context):
+            del context.messages[1]
+            raise RuntimeError("pass failed")
+
+        strategy._apply_per_message = remove_then_fail
+
+        with pytest.raises(RuntimeError, match="pass failed"):
+            await strategy.apply(_context(messages, 0.9))
+
+        assert _texts_of(messages) == [["q1", "q2"], ["a2"]]
+
+    @pytest.mark.asyncio
+    async def test_leaves_consecutive_messages_it_did_not_remove_unmerged(self):
+        messages = [_text("user", "q1"), _text("user", "q2"), _text("assistant", "a1")]
+        strategy = Offload.drop("*").when(context_utilization="50%")
+
+        async def fail(context):
+            raise RuntimeError("pass failed")
+
+        strategy._apply_per_message = fail
+
+        with pytest.raises(RuntimeError, match="pass failed"):
+            await strategy.apply(_context(messages, 0.9))
+
+        assert _texts_of(messages) == [["q1"], ["q2"], ["a1"]]
+
 
 class TestWildcardWithABlockThreshold:
     """Tests for ``Offload.<method>("*")`` with a block threshold, which acts on messages larger than it."""
@@ -930,6 +961,18 @@ class TestConditionResolution:
 
         assert _result_texts(messages) == ["x" * 400, "[Dropped: ~101 tokens]"]
 
+    @pytest.mark.parametrize(
+        ("block_threshold", "context_window_limit", "tokens"),
+        [("1.1%", 200_000, 2200), ("7%", 100_000, 7000), ("12.5%", 200_000, 25_000), ("0.3%", 30_000, 90)],
+    )
+    def test_resolves_a_percent_block_threshold_to_an_exact_token_count(
+        self, block_threshold, context_window_limit, tokens
+    ):
+        # A percent is inexact as a binary float, so a share that divides exactly must not round up.
+        conditions = ResolvedConditions({"block_threshold": block_threshold})
+
+        assert conditions.threshold_tokens(_context([], context_window_limit=context_window_limit).agent) == tokens
+
 
 _BLOCK_METHODS = {
     "drop": lambda: Offload.drop("tool_results"),
@@ -971,6 +1014,23 @@ class TestToolResultsThatAlreadyHoldAPlaceholder:
         assert await strategy.apply(_context(messages, 0.9)) is False
 
         assert _result_methods(messages) == ["drop", "drop"]
+        _SUMMARIZE.assert_not_called()
+
+
+class TestToolResultWithoutItems:
+    """Tests that a result holding nothing is left alone, since a placeholder for it would reference nothing."""
+
+    @pytest.mark.parametrize(("method", "build"), list(_BLOCK_METHODS.items()), ids=list(_BLOCK_METHODS))
+    @pytest.mark.parametrize("content", [[], None], ids=["empty", "absent"])
+    @pytest.mark.asyncio
+    async def test_leaves_it_alone(self, method, build, content):
+        tool_result = ToolResult(toolUseId="tu-1", status="success", content=content)
+        messages = [_text("user", "task"), Message(role="user", content=[ContentBlock(toolResult=tool_result)])]
+        _SUMMARIZE.reset_mock()
+
+        assert await build().apply(_context(messages)) is False
+
+        assert messages[1]["content"] == [ContentBlock(toolResult=tool_result)]
         _SUMMARIZE.assert_not_called()
 
 

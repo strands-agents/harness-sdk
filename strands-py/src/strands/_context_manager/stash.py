@@ -124,8 +124,8 @@ class Stash:
         """Store messages removed from the context window as one entry.
 
         The reference is fresh for every removal rather than derived from the messages, because two removals can
-        begin at the same message: a run that starts with a marker message, which carries no tracking id, and a
-        server-side summary, which always stands for the messages after message 0. Deriving it would have the second
+        begin at the same message: a later pass removes the message an earlier marker was folded into, and a
+        server-side summary always stands for the messages after message 0. Deriving it would have the second
         removal overwrite the first, leaving the earlier content unretrievable.
 
         Args:

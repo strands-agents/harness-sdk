@@ -7,6 +7,7 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from typing_extensions import TypedDict
@@ -24,8 +25,8 @@ class OffloadConditions(TypedDict, total=False):
     """Conditions that determine when and how an offload strategy fires.
 
     - ``context_utilization`` sets when the strategy fires. ``"80%"`` fires at 80% of the context window; a whole
-      number of 1,000 or more fires at that many conversation tokens, and raises if it exceeds the model's context
-      window.
+      number of 1,000 or more fires at that many input tokens, and raises if it exceeds the model's context window.
+      Both measure what the next request carries: the messages, plus the system prompt and tool specs.
     - ``block_threshold`` sets how large each block, or each message for target ``"*"``, must be to act on. A whole
       number selects content larger than that many tokens; ``"5%"`` selects content larger than 5% of the context
       window (10,000 tokens of a 200,000-token window).
@@ -45,7 +46,7 @@ class OffloadConditions(TypedDict, total=False):
 
     Attributes:
         context_utilization: Context usage at or above which the strategy fires: ``"80%"`` of the context window, or a
-            whole number of 1,000 or more for conversation tokens, at most the model's context window.
+            whole number of 1,000 or more input tokens, at most the model's context window.
         block_threshold: Size above which a message (target ``"*"``) or block is offloaded: a whole number of tokens
             above 0, or ``"5%"`` of the context window. Unset, there is no size check. Media the token count measures
             as 0, alone or in a tool result, always passes, except in a strategy acting on arrival, which leaves it
@@ -73,9 +74,11 @@ class ParsedCondition:
 
     def of(self, whole: int) -> int:
         """Return the count this condition stands for out of ``whole``, rounded up."""
-        # Multiplies before dividing: `percent / 100` is inexact for most percents, and the product of that and
-        # `whole` lands just above the answer, so "7%" of 100 would round up to 8.
-        return math.ceil(self.value * whole / 100) if self.is_share else int(self.value)
+        if not self.is_share:
+            return int(self.value)
+        # Exact decimal arithmetic: a percent is inexact as a binary float, and the product lands just above the
+        # answer often enough to matter, so "1.1%" of 200,000 would round up to 2,201.
+        return math.ceil(Fraction(str(self.value)) * whole / 100)
 
     @property
     def share(self) -> float:

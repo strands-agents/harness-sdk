@@ -10,6 +10,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from ..models._model_proxy import ModelProxy
 from ..types.content import ContentBlock, Message, MessageMetadata, Messages, Role, _ensure_tracking_id
 from ..types.offload import OffloadMethod
 from .placeholder import carried_tokens, offload_placeholder
@@ -41,9 +42,12 @@ async def removed_tokens(run: Messages, model: Model) -> int:
 
     Its current content plus what any marker it carries already stood for, so re-removing a marker's carrier
     reports the whole size rather than the marker's own few tokens.
+
+    Counted through :class:`ModelProxy`, so the run is measured as the model receives it rather than with the
+    offload bookkeeping a provider's own counting endpoint would reject.
     """
     carried = carried_tokens([block for message in run for block in message["content"]])
-    return await model.count_tokens(run) + carried
+    return await ModelProxy(model).count_tokens(run) + carried
 
 
 def placeholder_for(model: Model, format_marker: Callable[[int], str]) -> PlaceholderText:
@@ -197,11 +201,13 @@ async def _remove_run(
     if placeholder is None:
         return False
 
+    stash_ref = await stash_removed(stash, run, method)
     start = _index_of(messages, run[0])
     if start is None:
         return False
+    # Stashed before the splice and the marker inserted without an await between: a cancellation here would
+    # otherwise leave the run neither in the history nor retrievable.
     del messages[start : start + len(run)]
-    stash_ref = await stash_removed(stash, run, method)
     insert_marker(messages, start, offload_placeholder(method, placeholder.text, stash_ref, placeholder.tokens))
     return True
 

@@ -1,5 +1,6 @@
 """Integration tests for the stash: what an offload strategy leaves behind, and what it retrieves."""
 
+import asyncio
 import unittest.mock
 
 import pytest
@@ -9,7 +10,10 @@ from strands._context_manager.context_manager import ContextManager
 from strands._context_manager.message_trimming import repair_alternation
 from strands._context_manager.placeholder import is_offloaded, offload_placeholder
 from strands._context_manager.retrieval_tool import RETRIEVAL_TOOL_NAME, _create_retrieval_tool
+from strands._context_manager.stash import Stash
 from strands._context_manager.strategies.offload import Offload
+from strands.hooks.events import MessageAddedEvent
+from strands.hooks.registry import HookRegistry
 from strands.models._summarize import SummarizeResult
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
@@ -382,6 +386,77 @@ class TestBinaryContentStashing:
             "tool-mixed_0": {"text": "description of image"},
             "tool-mixed_1": {"image": {"format": "jpeg", "source": {"bytes": "/9g="}}},
         }
+
+
+class TestWhatAStrategyWritesToTheStash:
+    """Tests that a block reaches the stash exactly when it is replaced, and in the stash of its own agent."""
+
+    @staticmethod
+    def _attach(strategy, storage, agent_id: str):
+        """An agent of its own with one oversized tool result, with ``strategy`` attached to its own stash."""
+        stash = Stash(storage, "test-session", agent_id)
+        agent = make_agent([make_tool_result_message("x" * 20000, f"tu-{agent_id}")])
+        agent.hooks = HookRegistry()
+        strategy.init(agent, stash)
+        return agent, stash
+
+    @staticmethod
+    async def _fire(agent) -> None:
+        callback = agent.hooks._registered_callbacks[MessageAddedEvent][0].callback
+        await callback(MessageAddedEvent(agent=agent, message=agent.messages[0]))
+
+    @pytest.mark.asyncio
+    async def test_the_eager_hook_writes_to_the_stash_of_the_agent_it_fired_for(self, storage):
+        # The agent attached first, so the one a strategy holding a single stash would no longer be writing to.
+        strategy = Offload.drop("tool_results").when(block_threshold=100)
+        first, first_stash = self._attach(strategy, storage, "first")
+        _, second_stash = self._attach(strategy, storage, "second")
+
+        await self._fire(first)
+
+        assert await first_stash.take_snapshot() == {"tu-first_0": {"text": "x" * 20000}}
+        assert await second_stash.take_snapshot() == {}
+
+    @pytest.mark.asyncio
+    async def test_a_pass_for_another_agent_does_not_move_where_the_eager_hook_writes(self, storage):
+        strategy = Offload.drop("tool_results").when(block_threshold=100)
+        first, first_stash = self._attach(strategy, storage, "first")
+        other_stash = Stash(storage, "test-session", "other")
+        other_messages = [make_tool_result_message("y" * 20000, "tu-other")]
+        await strategy.apply(make_context(other_messages, stash=other_stash))
+
+        await self._fire(first)
+
+        assert await first_stash.take_snapshot() == {"tu-first_0": {"text": "x" * 20000}}
+        assert await other_stash.list() == ["tu-other_0"]
+
+    @pytest.mark.asyncio
+    async def test_never_writes_a_block_the_strategy_leaves_in_place(self, stash):
+        messages = [make_tool_result_message("already short")]
+
+        acted = await Offload.truncate("tool_results", {"preview_tokens": 1000}).apply(
+            make_context(messages, stash=stash)
+        )
+
+        assert acted is False
+        assert await stash.list() == []
+
+    @pytest.mark.asyncio
+    async def test_keeps_a_run_in_the_history_when_the_stash_write_is_cancelled(self, stash):
+        stash.store_removed = unittest.mock.AsyncMock(side_effect=asyncio.CancelledError)
+        messages = [
+            _text_message("user" if index % 2 == 0 else "assistant", f"m{index}", f"m{index}") for index in range(6)
+        ]
+        original = list(messages)
+
+        with pytest.raises(asyncio.CancelledError):
+            await (
+                Offload.drop("*")
+                .when(context_utilization="50%")
+                .apply(make_context(messages, stash=stash, utilization=0.9))
+            )
+
+        assert messages == original
 
 
 class TestRetrievalLoopPrevention:

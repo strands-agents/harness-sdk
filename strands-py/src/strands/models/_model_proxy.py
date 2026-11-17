@@ -191,14 +191,16 @@ def _marks_offload(block: ContentBlock) -> bool:
     """Whether a block, or an item of a tool result, carries the ``offloaded`` key."""
     if "offloaded" in block:
         return True
-    return any("offloaded" in item for item in block.get("toolResult", {}).get("content", []))
+    # A tool result's content is optional on the wire, so None stands in for no items.
+    return any("offloaded" in item for item in block.get("toolResult", {}).get("content") or [])
 
 
 def _without_offload_mark(block: ContentBlock) -> ContentBlock:
     """``block`` without the ``offloaded`` key, in the block itself and in its tool result's items."""
     stripped: dict[str, Any] = {key: value for key, value in block.items() if key != "offloaded"}
     tool_result = stripped.get("toolResult")
-    if tool_result is not None:
+    # A result without items is passed through as it is, so an absent ``content`` is not turned into an empty list.
+    if tool_result is not None and tool_result.get("content"):
         items = [{key: value for key, value in item.items() if key != "offloaded"} for item in tool_result["content"]]
         stripped["toolResult"] = {**tool_result, "content": items}
     return cast("ContentBlock", stripped)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message
 from ...message_trimming import placeholder_for, remove_messages, with_pairs
 from ...methods.truncate import (
@@ -16,7 +17,7 @@ from ...methods.truncate import (
 )
 from ...placeholder import format_elided, format_offloaded, is_offloaded, placeholder_result
 from ...types import ContextState, is_text_block, is_tool_result_block
-from .base import BaseOffloadStrategy
+from .base import BaseOffloadStrategy, StashRef
 from .conditions import OffloadConditions
 from .target import OffloadTarget, media_kind
 
@@ -106,7 +107,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         if all(is_offloaded(block) for message in middle for block in message["content"]):
             return False
         text_for = placeholder_for(context.agent.model, format_elided)
-        return await remove_messages(messages, middle, text_for, "truncate", self._stash)
+        return await remove_messages(messages, middle, text_for, "truncate", context.stash)
 
     async def _select_middle(self, eligible: list[Message], agent: Agent) -> list[Message]:
         """The eligible messages between the head and the tail kept within the preview token budget."""
@@ -122,7 +123,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_ref: str | None,
+        stash_ref: StashRef,
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
@@ -132,7 +133,7 @@ class TruncateStrategy(BaseOffloadStrategy):
             if truncated is None:
                 return None
             logger.debug("tool_use_id=<%s>, tokens=<%s> | truncated tool result", tool_result["toolUseId"], tokens)
-            placeholder = self._placeholder(truncated.preview, stash_ref, tokens)
+            placeholder = await self._placeholder(truncated.preview, stash_ref, tokens)
             return placeholder_result(tool_result, [placeholder, *truncated.kept])
 
         if is_text_block(block):
@@ -140,18 +141,19 @@ class TruncateStrategy(BaseOffloadStrategy):
             if preview is None:
                 return None
             logger.debug("tracking_id=<%s>, tokens=<%s> | truncated text block", message.get("tracking_id"), tokens)
-            return self._placeholder(preview, stash_ref, tokens)
+            return await self._placeholder(preview, stash_ref, tokens)
 
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return self._placeholder(format_offloaded(tokens, media_kind(block)), stash_ref, tokens)
+        return await self._placeholder(format_offloaded(tokens, media_kind(block)), stash_ref, tokens)
 
 
 async def _count_within_budget(messages: list[Message], budget: float, agent: Agent) -> int:
     """How many leading messages fit within ``budget`` tokens."""
+    proxy = ModelProxy(agent.model)
     total = 0
     count = 0
     for message in messages:
-        total += await agent.model.count_tokens([message])
+        total += await proxy.count_tokens([message])
         if total > budget:
             break
         count += 1

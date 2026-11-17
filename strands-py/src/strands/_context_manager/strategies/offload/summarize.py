@@ -27,9 +27,15 @@ from ...message_trimming import (
     stash_removed,
     with_pairs,
 )
-from ...placeholder import REMOVED_MESSAGES, format_offloaded, format_summarized, placeholder_result
+from ...placeholder import (
+    REMOVED_MESSAGES,
+    format_offloaded,
+    format_summarized,
+    offload_placeholder,
+    placeholder_result,
+)
 from ...types import ContextState, is_text_block, is_tool_result_block
-from .base import BaseOffloadStrategy
+from .base import BaseOffloadStrategy, StashRef
 from .conditions import OffloadConditions
 from .target import OffloadTarget, media_kind
 
@@ -38,6 +44,7 @@ if TYPE_CHECKING:
     from ....agent.invocation_context import InvocationContext
     from ....models._summarize import SummarizeResult
     from ....models.model import Model
+    from ...stash import Stash
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +144,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         async def summarize(run: Messages) -> RemovalPlaceholder | None:
             return await self._summarize_run(context, model, run)
 
-        return await remove_messages(context.messages, removable, summarize, "summarize", self._stash)
+        return await remove_messages(context.messages, removable, summarize, "summarize", context.stash)
 
     async def _summarize_run(self, context: ContextState, model: Model, run: Messages) -> RemovalPlaceholder | None:
         """The summary marker for a run and the tokens it stands for; a failure is logged and keeps the run."""
@@ -232,23 +239,23 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         # Message 0 stays in the history, but a provider sending the summary as a compaction block stops sending
         # anything before it, so the summary stands for message 0 too and a retrieval has to be able to return it.
-        reference = await self._removed_reference(messages[:end], model)
+        reference = await self._removed_reference(messages[:end], model, context.stash)
         messages[1:end] = [_summary_message(summary, reference)]
         logger.debug("summarized=<%s> | summarized opening messages server-side", replaced)
         return True
 
-    async def _removed_reference(self, removed: Messages, model: Model) -> ContentBlock | None:
+    async def _removed_reference(self, removed: Messages, model: Model, stash: Stash | None) -> ContentBlock | None:
         """The placeholder the messages a server-side summary stands for are retrievable under.
 
         None when they were not stashed — the summary then stands alone rather than carrying a reference that
         resolves to nothing. The tokens it reports cover every message the summary stands for, so a provider that
         keeps sending message 0 as text is over-reported by that message rather than under-reported by it.
         """
-        stash_ref = await stash_removed(self._stash, removed, self._method)
+        stash_ref = await stash_removed(stash, removed, self._method)
         if stash_ref is None:
             return None
         tokens = await removed_tokens(removed, model)
-        return self._placeholder(format_summarized(REMOVED_MESSAGES, tokens), stash_ref, tokens)
+        return offload_placeholder(self._method, format_summarized(REMOVED_MESSAGES, tokens), stash_ref, tokens)
 
     async def _place_text_summary(self, context: ContextState, model: Model, end: int, summary: str) -> bool:
         """Place the client-side summary a server-side-capable model fell back to.
@@ -268,7 +275,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         )
         text_for = placeholder_for(model, lambda tokens: format_summarized(REMOVED_MESSAGES, tokens, summary))
         return await remove_messages(
-            context.messages, list(context.messages[1:end]), text_for, "summarize", self._stash
+            context.messages, list(context.messages[1:end]), text_for, "summarize", context.stash
         )
 
     async def _replace_block(
@@ -277,7 +284,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_ref: str | None,
+        stash_ref: StashRef,
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
@@ -295,7 +302,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         )
         if request is not None and summary:
             logger.debug("%s, tokens=<%s> | summarized %s", log_fields, tokens, request.description)
-            placeholder = self._placeholder(format_summarized(request.description, tokens, summary), stash_ref, tokens)
+            placeholder = await self._placeholder(
+                format_summarized(request.description, tokens, summary), stash_ref, tokens
+            )
             if is_tool_result_block(block):
                 return placeholder_result(block["toolResult"], [placeholder])
             return placeholder
@@ -304,7 +313,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if is_tool_result_block(block) or is_text_block(block):
             return None
         logger.debug("%s, tokens=<%s> | offloaded media block", log_fields, tokens)
-        return self._placeholder(format_offloaded(tokens, media_kind(block)), stash_ref, tokens)
+        return await self._placeholder(format_offloaded(tokens, media_kind(block)), stash_ref, tokens)
 
     async def _try_summarize(
         self,
