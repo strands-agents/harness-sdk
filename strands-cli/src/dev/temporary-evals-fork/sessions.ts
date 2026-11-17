@@ -9,10 +9,12 @@ import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
 import {
   sameCaseSplit,
+  sameObjective,
   type CaseSplit,
   type ExperimentRun,
   type ExperimentSummary,
   type KnobKey,
+  type OptimizeObjective,
   type OptimizePlan,
   type OptimizeProgress,
   type OptimizeReview,
@@ -76,6 +78,8 @@ import {
   TEMPORARY_ITERATION_CHOICES,
   TEMPORARY_OPTIMIZE_DEFAULTS,
   temporaryCaseSplit,
+  temporaryObjectiveArguments,
+  temporaryObjectiveChoices,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
   temporarySplitChoices,
@@ -105,7 +109,9 @@ const WIDTH = 4
 const REPETITIONS = 1
 const MILLISECONDS = 1000
 
-type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width' | 'split'>
+type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width' | 'split'> & {
+  readonly objective?: OptimizeObjective
+}
 
 const MEASURED_ON: Record<TemporaryMeasurement, string> = {
   search: 'training cases',
@@ -522,6 +528,13 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     })
   }
 
+  setObjective(objective: OptimizeObjective): void {
+    this.updatePlan((plan) => {
+      const chosen = plan.objectiveChoices.find((choice) => sameObjective(choice, objective))
+      return chosen ? { ...plan, objective: chosen } : plan
+    })
+  }
+
   start(): void {
     const state = this.snapshot()
     if (state.step !== 'setup') return
@@ -661,6 +674,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       const caseCount = experiment.cases.length
       const split = temporaryCaseSplit(caseCount)
       const splitChoices = temporarySplitChoices(caseCount)
+      const objectiveChoices = temporaryObjectiveChoices(experiment.evaluators)
       const warning = temporaryOptimizeWarning(caseCount)
       this.evaluators = Math.max(1, experiment.evaluators.length)
       this.set({
@@ -669,6 +683,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
           experiment: { ...summary, caseCount },
           knobs: this.catalog,
           ...(typeof model?.current === 'string' ? { models: { current: model.current, picked: [] } } : {}),
+          objective: objectiveChoices[0],
+          objectiveChoices,
           split,
           splitChoices,
           repetitions: REPETITIONS,
@@ -739,6 +755,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       iterations: saved.iterations,
       width: WIDTH,
       split: temporaryCaseSplit(caseCount, saved.split ?? TEMPORARY_OPTIMIZE_DEFAULTS.split),
+      ...(saved.objective ? { objective: saved.objective } : {}),
     }
   }
 
@@ -854,6 +871,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
             '--iterations',
             String(plan.iterations),
             ...(shares ? ['--split', shares.join(',')] : []),
+            ...(plan.objective ? temporaryObjectiveArguments(plan.objective) : []),
           ],
           now: () => now,
           background: true,
@@ -872,6 +890,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
               space,
               iterations: plan.iterations,
               ...(shares ? { split: shares } : {}),
+              ...(plan.objective ? { objective: plan.objective } : {}),
               startedAt,
             })
             reader = temporaryStudyReader({ run: basename(path), record: path, startedAt, labels })

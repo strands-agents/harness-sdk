@@ -75,6 +75,15 @@ const RESULT = 'result.json'
 const SUMMARY_LIMIT = 80
 const LINE_BREAK = /\r?\n/u
 const OBJECTIVE = /^(?:Maximize|Minimize)\((.+)\)$/u
+const MEAN_OBJECTIVE = /^WeightedSum\(((?:Maximize\([^(),]+\)(?:, )?)+)\)$/u
+const MAXIMIZED = /Maximize\(([^(),]+)\)/gu
+
+const objectiveName = (objective: string): string => {
+  const single = OBJECTIVE.exec(objective)?.[1]
+  if (single) return single
+  const terms = MEAN_OBJECTIVE.exec(objective)?.[1]
+  return terms ? `mean of ${[...terms.matchAll(MAXIMIZED)].map(([, metric]) => metric).join(', ')}` : objective
+}
 const FAILED_STOPS = new Set(['setup', 'proposer_error'])
 const TEST_INTERVAL_CONFIDENCE = 0.9
 const SPLIT_MEASUREMENT: Record<Split, TemporaryMeasurement> = {
@@ -241,7 +250,7 @@ class RunState {
   private readConfig({ config }: Event): void {
     if (!isRecord(config)) return
     const objective = text(config.objective)
-    this.metric = (objective ? OBJECTIVE.exec(objective)?.[1] : undefined) ?? objective ?? ''
+    this.metric = objective ? objectiveName(objective) : ''
     this.textKeys = new Set(
       (Array.isArray(config.space) ? config.space : [])
         .filter(isRecord)

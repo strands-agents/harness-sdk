@@ -211,9 +211,20 @@ export interface CaseSplit {
 export const sameCaseSplit = (left: CaseSplit, right: CaseSplit): boolean =>
   left.train === right.train && left.validation === right.validation && left.test === right.test
 
+export type OptimizeObjective =
+  | { readonly kind: 'evaluators'; readonly evaluators: readonly string[] }
+  | { readonly kind: 'evaluator'; readonly evaluator: string }
+
+export const sameObjective = (left: OptimizeObjective, right: OptimizeObjective): boolean =>
+  left.kind === 'evaluator'
+    ? right.kind === 'evaluator' && left.evaluator === right.evaluator
+    : right.kind === left.kind
+
 export interface OptimizePlan {
   readonly experiment: ExperimentSummary
   readonly knobs: readonly Knob[]
+  readonly objective: OptimizeObjective
+  readonly objectiveChoices: readonly OptimizeObjective[]
   readonly split: CaseSplit
   readonly splitChoices: readonly CaseSplit[]
   readonly repetitions: number
@@ -314,6 +325,7 @@ export interface OptimizeSession {
   pickModel(id: string, picked: boolean): void
   setIterations(iterations: number): void
   setSplit(split: CaseSplit): void
+  setObjective(objective: OptimizeObjective): void
   openPastRun(record: string): void
   start(): void
   stop(): void

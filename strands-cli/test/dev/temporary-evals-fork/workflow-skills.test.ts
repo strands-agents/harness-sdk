@@ -168,12 +168,17 @@ describe('optimize-harness guidance', () => {
 
   it('shouldLimitTuningToSupportedKnobsAndExplainCostsWithoutPromisingImprovement', () => {
     expect(instructions).toContain(
-      "strands_dev_optimize with {experiment, tune?: ('instructions' | 'effort')[], iterations?}"
+      "strands_dev_optimize with {experiment, tune?: ('instructions' | 'effort')[], iterations?, objective?}"
     )
     expect(instructions).toContain('not arbitrary tools, models, or configuration')
     expect(instructions).toContain('default tune of instructions and default iteration count')
     expect(instructions).toContain('iteration budget, repeated model calls and scoring costs')
     expect(instructions).toContain('Do not promise an improvement')
+  })
+
+  it('shouldMaximizeTheMeanOfEveryEvaluatorUnlessTheDeveloperNamesOne', () => {
+    expect(instructions).toContain('maximizes the mean of every evaluator score by default')
+    expect(instructions).toContain('only when the developer wants to optimize that evaluator alone')
   })
 
   it('shouldPreservePendingReviewsAndOnlyStopOrDiscardOnExplicitIntent', () => {

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -34,6 +35,31 @@ describe('TEMPORARY optimize run records', () => {
 
     await dropTemporaryOptimizeRecord(older)
     expect(await readTemporaryOptimizeRecords(folder)).toEqual([newer])
+  })
+
+  it('shouldKeepTheObjectiveOfARecordSoThatTheRunResumesWithIt', async () => {
+    const folder = await temporaryDirectory()
+    const record = {
+      ...recordIn(folder, '20261111-150405-refunds', 1),
+      objective: { kind: 'evaluator' as const, evaluator: 'Equals' },
+    }
+
+    await saveTemporaryOptimizeRecord(record)
+
+    expect(await readTemporaryOptimizeRecords(folder)).toEqual([record])
+  })
+
+  it.each([
+    ['AnEvaluatorObjectiveWithoutAName', { kind: 'evaluator' }],
+    ['AnUnknownObjectiveKind', { kind: 'cheapest', metric: 'tokens' }],
+    ['AMeanWithoutItsEvaluators', { kind: 'evaluators' }],
+  ])('shouldSkipARecordWith%s', async (_case, objective) => {
+    const folder = await temporaryDirectory()
+    const record = recordIn(folder, '20261111-150405-refunds', 1)
+    await mkdir(join(folder, 'running'), { recursive: true })
+    await writeFile(join(folder, 'running', '20261111-150405-refunds.json'), JSON.stringify({ ...record, objective }))
+
+    expect(await readTemporaryOptimizeRecords(folder)).toEqual([])
   })
 
   it.skipIf(process.platform === 'win32')(

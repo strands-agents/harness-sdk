@@ -57,6 +57,20 @@ const readerOf = (lines: readonly string[], labels: Record<string, string> = {})
 }
 
 describe('TEMPORARY optimization run', () => {
+  it.each([
+    ['OneEvaluator', 'Maximize(OutputEvaluator)', 'OutputEvaluator'],
+    ['TheMeanOfEveryEvaluator', 'WeightedSum(Maximize(Contains), Maximize(Equals))', 'mean of Contains, Equals'],
+    [
+      'AnUnknownObjective',
+      'Pareto(Maximize(Contains), Minimize(tokens, scale=1000))',
+      'Pareto(Maximize(Contains), Minimize(tokens, scale=1000))',
+    ],
+  ])('shouldNameTheObjectiveWhenTheRunOptimizes%s', (_case, objective, metric) => {
+    const progress = readerOf([optimizerConfig({ objective })]).progress()
+
+    expect(progress.metric).toBe(metric)
+  })
+
   it('shouldListTheScoredCandidatesAfterTheBaselineWhenTheSearchRuns', () => {
     const progress = readerOf(searchLines(), { caching: 'prompt caching' }).progress()
 

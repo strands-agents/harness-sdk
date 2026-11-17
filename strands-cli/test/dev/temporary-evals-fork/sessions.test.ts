@@ -73,7 +73,7 @@ const environmentRunner = (workspace: DevWorkspace) =>
     return ''
   })
 
-const experimentDocument = (names: readonly string[]) => ({
+const experimentDocument = (names: readonly string[], evaluators: readonly string[] = ['OutputEvaluator']) => ({
   cases: names.map((name) => ({
     name,
     session_id: `session-${name}`,
@@ -81,7 +81,7 @@ const experimentDocument = (names: readonly string[]) => ({
     expected_output: `answer ${name}`,
     metadata: null,
   })),
-  evaluators: [{ evaluator_type: 'OutputEvaluator' }],
+  evaluators: evaluators.map((evaluator_type) => ({ evaluator_type })),
 })
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
@@ -174,10 +174,11 @@ const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> =
 const savedExperiment = async (
   workspace: DevWorkspace,
   names: readonly string[],
-  name = 'capital'
+  name = 'capital',
+  evaluators?: readonly string[]
 ): Promise<ExperimentSummary> => {
   const path = join(workspace.directory!, `tmp/experiments/${name}.json`)
-  await writeFileAt(path, JSON.stringify(experimentDocument(names)))
+  await writeFileAt(path, JSON.stringify(experimentDocument(names, evaluators)))
   return { name, path, caseCount: names.length }
 }
 
@@ -593,6 +594,130 @@ describe('TEMPORARY dev sessions', () => {
 
     await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
     expect(flagValue(optimizing.mock.calls[0]![0].args, '--split')).toBe('0.7,0.15,0.15')
+  })
+
+  it('shouldOfferTheMeanAndEachEvaluatorAsTheObjectiveWhenTheExperimentHasSeveralEvaluators', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
+
+    sessions.optimize.plan(experiment)
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    expect(sessions.optimize.snapshot()).toMatchObject({
+      plan: {
+        objective: { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
+        objectiveChoices: [
+          { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
+          { kind: 'evaluator', evaluator: 'Contains' },
+          { kind: 'evaluator', evaluator: 'Equals' },
+        ],
+      },
+    })
+  })
+
+  it('shouldChangeTheObjectiveOnlyToOneOfItsChoices', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.setObjective({ kind: 'evaluator', evaluator: 'Equals' })
+    const chosen = sessions.optimize.snapshot()
+    sessions.optimize.setObjective({ kind: 'evaluator', evaluator: 'Helpfulness' })
+
+    expect(chosen).toMatchObject({ plan: { objective: { kind: 'evaluator', evaluator: 'Equals' } } })
+    expect(sessions.optimize.snapshot()).toEqual(chosen)
+  })
+
+  it.each<[string, { kind: 'evaluator'; evaluator: string } | undefined, readonly string[]]>([
+    ['MaximizeTheChosenEvaluator', { kind: 'evaluator', evaluator: 'Equals' }, ['--maximize', 'Equals']],
+    ['NoObjectiveFlagForTheMeanOfEveryEvaluator', undefined, []],
+  ])('shouldGiveTheOptimizer%sWhenTheRunStarts', async (_case, objective, flags) => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    if (objective) sessions.optimize.setObjective(objective)
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
+    const args = optimizing.mock.calls[0]![0].args
+    const at = args.indexOf('--maximize')
+    expect(at >= 0 ? args.slice(at, at + 2) : []).toEqual(flags)
+  })
+
+  it('shouldRecordTheObjectiveWhenARunStartsSoThatItCanResumeWithIt', async () => {
+    let recorded: unknown
+    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+      process.onSpawn?.(4242)
+      await vi.waitFor(async () => {
+        const [name] = await readdir(join(flagValue(process.args, '--record'), '..', 'running'))
+        recorded = JSON.parse(await readFile(join(flagValue(process.args, '--record'), '..', 'running', name!), 'utf8'))
+        expect(recorded).toMatchObject({ pid: 4242 })
+      })
+      await writeOptimizerRun(flagValue(process.args, '--record'), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.setObjective({ kind: 'evaluator', evaluator: 'Contains' })
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    expect(recorded).toMatchObject({ objective: { kind: 'evaluator', evaluator: 'Contains' } })
+  })
+
+  it.each<[string, unknown, readonly string[]]>([
+    ['TheObjectiveOfTheFirstRun', { kind: 'evaluator', evaluator: 'Equals' }, ['--maximize', 'Equals']],
+    ['NoObjectiveFlagWhenTheRecordIsFromBeforeTheObjective', undefined, []],
+  ])('shouldResumeAStoppedRunWith%s', async (_case, objective, flags) => {
+    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(flagValue(args, '--resume'), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
+    const folder = join(workspace.directory!, 'tmp/optimization')
+    const record = join(folder, '20261111-150405-capital')
+    const space = join(folder, '20261111-150405-capital.space.json')
+    await writeFileAt(
+      space,
+      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
+    )
+    await writeOptimizerRun(record, studyLines(0.6))
+    await writeFileAt(
+      join(folder, 'running', '20261111-150405-capital.json'),
+      JSON.stringify({
+        version: 1,
+        experiment: experiment.path,
+        record,
+        space,
+        iterations: 4,
+        ...(objective ? { objective } : {}),
+        startedAt: 1,
+        pid: 999999,
+      })
+    )
+
+    await sessions.optimize.resume()
+
+    await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
+    const args = continuing.mock.calls[0]![0].args
+    const at = args.indexOf('--maximize')
+    expect(at >= 0 ? args.slice(at, at + 2) : []).toEqual(flags)
   })
 
   it('shouldShowTheTestCheckWithItsConfidenceRangeWhenTheRunReportsOne', async () => {

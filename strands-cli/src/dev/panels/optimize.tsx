@@ -10,11 +10,13 @@ import { useDevPanelClicks } from '../../ui/panels/dev.js'
 import { ExperimentPicker, type PickerSection } from './picker.js'
 import {
   sameCaseSplit,
+  sameObjective,
   type CandidateResult,
   type CaseSplit,
   type ExperimentSummary,
   type Knob,
   type ModelChoices,
+  type OptimizeObjective,
   type OptimizePlan,
   type OptimizeProgress,
   type OptimizeReview,
@@ -53,7 +55,7 @@ export interface OptimizePanelProps extends DevChatPanelProps {
 
 const COMMAND = 'optimize'
 const SLIDER_WIDTH = 21
-const SLIDER_LABEL_WIDTH = 8
+const SLIDER_LABEL_WIDTH = 11
 const DIFF_CONTEXT_LINES = 2
 const FULL_SETUP_ROWS = 12
 const DIFF_INDENT = 2
@@ -203,7 +205,30 @@ const splitText = ({ train, validation, test }: CaseSplit): string =>
 const splitPosition = ({ split, splitChoices }: OptimizePlan): number =>
   splitChoices.findIndex((choice) => sameCaseSplit(choice, split))
 
+const objectivePosition = ({ objective, objectiveChoices }: OptimizePlan): number =>
+  objectiveChoices.findIndex((choice) => sameObjective(choice, objective))
+
+const objectiveText = (objective: OptimizeObjective): string => {
+  if (objective.kind === 'evaluator') return `maximize ${objective.evaluator} only`
+  const [only, ...others] = objective.evaluators
+  if (only && others.length === 0) return `maximize ${only}`
+  return `maximize the mean of ${objective.evaluators.length > 0 ? objective.evaluators.join(', ') : 'every evaluator'}`
+}
+
 const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () => OptimizePlan): SetupSlider[] => [
+  {
+    key: 'objective',
+    label: 'objective',
+    count: plan.objectiveChoices.length,
+    position: Math.max(0, objectivePosition(plan)),
+    detail: objectiveText(plan.objective),
+    hint: plan.objectiveChoices.length > 1 ? '←→ objective' : 'the only evaluator',
+    move: (step): void => {
+      const current = latest()
+      const next = current.objectiveChoices[objectivePosition(current) + step]
+      if (next) session.setObjective(next)
+    },
+  },
   {
     key: 'cases',
     label: 'cases',
@@ -447,7 +472,7 @@ const SetupView = ({
       ))}
       {compact ? null : (
         <Line tone="muted">
-          {'          Train cases guide the search. Validation picks the winner. Test checks it.'}
+          {`${' '.repeat(SLIDER_LABEL_WIDTH + 2)}Train cases guide the search. Validation picks the winner. Test checks it.`}
         </Line>
       )}
       {plan.warning ? <Line tone="warning">{`  ${plan.warning}`}</Line> : compact ? null : <Gap />}

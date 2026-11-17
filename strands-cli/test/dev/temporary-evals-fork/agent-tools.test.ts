@@ -84,6 +84,8 @@ const KNOBS: readonly Knob[] = [
 const plan = (): OptimizePlan => ({
   experiment: REFUNDS,
   knobs: KNOBS,
+  objective: { kind: 'evaluators', evaluators: ['OutputEvaluator'] },
+  objectiveChoices: [{ kind: 'evaluators', evaluators: ['OutputEvaluator'] }],
   split: { train: 1, validation: 1, test: 0 },
   splitChoices: [{ train: 1, validation: 1, test: 0 }],
   repetitions: 1,
@@ -168,6 +170,7 @@ const fakeSessions = () => {
       plan: vi.fn(() => setTimeout(() => optimize.set({ step: 'setup', plan: plan() }), 0)),
       toggleKnob: vi.fn(),
       setIterations: vi.fn(),
+      setObjective: vi.fn(),
       start: vi.fn(() => optimize.set({ step: 'running', progress: progress() })),
       accept: vi.fn(),
       apply: vi.fn(() => {
@@ -618,6 +621,63 @@ describe('TEMPORARY dev chat part', () => {
     await expect(tool('strands_dev_optimize').run(input)).rejects.toThrow(message)
     expect(sessions.optimize.reset).not.toHaveBeenCalled()
     expect(optimize.snapshot().step).toBe('review')
+  })
+
+  it.each([
+    ['ByItsName', 'Helpfulness', 'Helpfulness'],
+    ['InAnotherCase', 'Helpfulness', 'helpfulness'],
+    ['WithoutTheEvaluatorSuffix', 'HelpfulnessEvaluator', 'Helpfulness'],
+  ])('shouldMaximizeTheNamedEvaluatorWhenTheDeveloperNamesIt%s', async (_case, evaluator, objective) => {
+    const { tool, optimize, sessions, experiments } = setup()
+    const folder = await mkdtemp(join(tmpdir(), 'dev-optimize-objective-'))
+    try {
+      const path = join(folder, 'refunds.json')
+      await writeFile(
+        path,
+        JSON.stringify({
+          evaluators: [{ evaluator_type: 'OutputEvaluator' }, { evaluator_type: evaluator }],
+          cases: [{ name: 'first', input: 'First request' }],
+        })
+      )
+      experiments.set({ loaded: true, folder, saved: [{ ...REFUNDS, path }], generations: [] })
+
+      const running = tool('strands_dev_optimize').run({ experiment: 'refunds', objective })
+      await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
+      optimize.set({ step: 'review', review: review() })
+      await running
+
+      expect(sessions.optimize.setObjective).toHaveBeenCalledWith({ kind: 'evaluator', evaluator })
+      expect(sessions.optimize.setObjective.mock.invocationCallOrder[0]).toBeLessThan(
+        sessions.optimize.start.mock.invocationCallOrder[0]!
+      )
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
+
+  it('shouldKeepTheLastReviewAndRefuseToOptimizeWhenTheObjectiveIsNotAnEvaluatorOfTheExperiment', async () => {
+    const { tool, optimize, sessions, experiments } = setup()
+    const folder = await mkdtemp(join(tmpdir(), 'dev-optimize-objective-'))
+    try {
+      const path = join(folder, 'refunds.json')
+      await writeFile(
+        path,
+        JSON.stringify({
+          evaluators: [{ evaluator_type: 'OutputEvaluator' }],
+          cases: [{ name: 'first', input: 'First request' }],
+        })
+      )
+      experiments.set({ loaded: true, folder, saved: [{ ...REFUNDS, path }], generations: [] })
+      optimize.set({ step: 'review', review: review() })
+
+      await expect(
+        tool('strands_dev_optimize').run({ experiment: 'refunds', objective: 'Helpfulness' })
+      ).rejects.toThrow('Helpfulness is not an evaluator of refunds. Its evaluators: OutputEvaluator.')
+      expect(sessions.optimize.reset).not.toHaveBeenCalled()
+      expect(optimize.snapshot().step).toBe('review')
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
   })
 
   it('shouldRefuseToStartASecondOptimizationWhenOneIsRunning', async () => {

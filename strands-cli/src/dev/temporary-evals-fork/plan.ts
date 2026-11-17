@@ -1,4 +1,4 @@
-import { sameCaseSplit, type CaseSplit } from '../panels/model.js'
+import { sameCaseSplit, type CaseSplit, type OptimizeObjective } from '../panels/model.js'
 
 export type TemporarySplitShares = readonly [train: number, validation: number, test: number]
 
@@ -56,6 +56,19 @@ export const temporarySplitChoices = (caseCount: number): CaseSplit[] =>
   TEMPORARY_TRAIN_SHARES.map((train) => temporaryCaseSplit(caseCount, [train, (1 - train) / 2, (1 - train) / 2]))
     .filter(({ train, validation }) => train > 0 && validation > 0)
     .filter((split, index, choices) => choices.findIndex((choice) => sameCaseSplit(choice, split)) === index)
+
+export const temporaryObjectiveChoices = (
+  evaluators: readonly string[]
+): readonly [OptimizeObjective, ...OptimizeObjective[]] => {
+  const names = [...new Set(evaluators)]
+  return [
+    { kind: 'evaluators', evaluators: names },
+    ...(names.length > 1 ? names.map((evaluator) => ({ kind: 'evaluator' as const, evaluator })) : []),
+  ]
+}
+
+export const temporaryObjectiveArguments = (objective: OptimizeObjective): string[] =>
+  objective.kind === 'evaluator' ? ['--maximize', objective.evaluator] : []
 
 export const temporarySplitShares = (split: CaseSplit): TemporarySplitShares => {
   const total = split.train + split.validation + split.test

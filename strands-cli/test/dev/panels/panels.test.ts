@@ -422,6 +422,7 @@ const optimizeSession = (initial: OptimizeState) => {
       pickModel: vi.fn(),
       setIterations: vi.fn(),
       setSplit: vi.fn(),
+      setObjective: vi.fn(),
       openPastRun: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
@@ -455,6 +456,12 @@ const setup: OptimizeState = {
         enabled: false,
         unavailable: 'strands-evals optimize cannot tune tools yet',
       },
+    ],
+    objective: { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
+    objectiveChoices: [
+      { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
+      { kind: 'evaluator', evaluator: 'Contains' },
+      { kind: 'evaluator', evaluator: 'Equals' },
     ],
     split: { train: 10, validation: 5, test: 5 },
     splitChoices: [
@@ -550,7 +557,8 @@ const PAST_RUNS: readonly PastRun[] = [
   },
 ]
 
-const CASES_ROW = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
+const OBJECTIVE_ROW = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
+const CASES_ROW = [...OBJECTIVE_ROW, DOWN_KEY]
 const BUDGET_ROW = [...CASES_ROW, DOWN_KEY]
 const START_BUTTON = [...BUDGET_ROW, DOWN_KEY]
 const CANCEL_BUTTON = [...START_BUTTON, DOWN_KEY]
@@ -600,6 +608,12 @@ describe('OptimizePanel', () => {
     ['LeftOnTheBudget', [...BUDGET_ROW, LEFT_KEY], 'setIterations', [2]],
     ['RightOnTheCases', [...CASES_ROW, RIGHT_KEY], 'setSplit', [{ train: 12, validation: 4, test: 4 }]],
     ['LeftOnTheCases', [...CASES_ROW, LEFT_KEY], 'setSplit', [{ train: 8, validation: 6, test: 6 }]],
+    [
+      'RightOnTheObjective',
+      [...OBJECTIVE_ROW, RIGHT_KEY],
+      'setObjective',
+      [{ kind: 'evaluator', evaluator: 'Contains' }],
+    ],
     ['EnterOnStart', [...START_BUTTON, '\r'], 'start', []],
   ])('shouldCallTheSessionWhenTheUserPresses%sInTheSetup', async (_key, keys, action, args) => {
     const { session } = optimizeSession(setup)
@@ -721,9 +735,11 @@ describe('OptimizePanel', () => {
 
     expect(session.setIterations).not.toHaveBeenCalled()
     expect(session.setSplit).not.toHaveBeenCalled()
+    expect(session.setObjective).not.toHaveBeenCalled()
   })
 
   it.each([
+    ['Objective', OBJECTIVE_ROW, /› objective\s+█─*\s+maximize the mean of Contains, Equals/u, '←→ objective'],
     ['Cases', CASES_ROW, /› cases\s+─*█─*\s+10 train \/ 5 validation \/ 5 test/u, '←→ split'],
     ['Budget', BUDGET_ROW, /› budget\s+─*█─*\s+4 steps × 4 candidates/u, '←→ budget'],
   ])('shouldSelectThe%sSliderWhenTheUserMovesDownToIt', async (_row, keys, row, hint) => {
@@ -735,6 +751,32 @@ describe('OptimizePanel', () => {
     expect(text()).toMatch(row)
     expect(text()).toContain(`↑↓ · ${hint} · Esc cancel`)
     expect(text()).not.toMatch(/› [☑☐]/u)
+  })
+
+  it.each([
+    ['ContainsAlone', { kind: 'evaluator' as const, evaluator: 'Contains' }, 'maximize Contains only'],
+    ['EqualsAlone', { kind: 'evaluator' as const, evaluator: 'Equals' }, 'maximize Equals only'],
+  ])('shouldShowTheChosenObjectiveWhenItIs%s', async (_case, objective, detail) => {
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, objective } })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    expect(text()).toMatch(new RegExp(`objective\\s+─*█─*\\s+${detail}`, 'u'))
+  })
+
+  it('shouldNameTheOnlyEvaluatorAndKeepTheObjectiveWhenTheExperimentHasOneEvaluator', async () => {
+    const only = { kind: 'evaluators' as const, evaluators: ['OutputEvaluator'] }
+    const { session } = optimizeSession({
+      ...setup,
+      plan: { ...setup.plan, objective: only, objectiveChoices: [only] },
+    })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    for (const key of [...OBJECTIVE_ROW, RIGHT_KEY]) await press(key)
+
+    expect(text()).toMatch(/› objective\s+█─*\s+maximize OutputEvaluator/u)
+    expect(text()).toContain('↑↓ · the only evaluator · Esc cancel')
+    expect(session.setObjective).not.toHaveBeenCalled()
   })
 
   it('shouldScrollTheDiffWithTheArrowKeysWhenAnEditIsLongerThanThePanel', async () => {

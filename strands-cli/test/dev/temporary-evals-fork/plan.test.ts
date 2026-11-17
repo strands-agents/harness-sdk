@@ -4,6 +4,8 @@ import {
   TEMPORARY_ITERATION_CHOICES,
   TEMPORARY_OPTIMIZE_DEFAULTS,
   temporaryCaseSplit,
+  temporaryObjectiveArguments,
+  temporaryObjectiveChoices,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
   temporarySplitChoices,
@@ -127,5 +129,40 @@ describe('TEMPORARY optimize plan', () => {
 
   it('shouldGiveTheDefaultSharesWhenTheSplitHasNoCases', () => {
     expect(temporarySplitShares({ train: 0, validation: 0, test: 0 })).toEqual(DEFAULT_SPLIT)
+  })
+
+  it.each([
+    [
+      'OnlyTheMeanWhenThereIsOneEvaluator',
+      ['OutputEvaluator'],
+      [{ kind: 'evaluators', evaluators: ['OutputEvaluator'] }],
+    ],
+    [
+      'TheMeanThenEachEvaluatorWhenThereAreSeveral',
+      ['Contains', 'Equals'],
+      [
+        { kind: 'evaluators', evaluators: ['Contains', 'Equals'] },
+        { kind: 'evaluator', evaluator: 'Contains' },
+        { kind: 'evaluator', evaluator: 'Equals' },
+      ],
+    ],
+    [
+      'EachEvaluatorOnceWhenTheExperimentNamesOneTwice',
+      ['Equals', 'Equals', 'Contains'],
+      [
+        { kind: 'evaluators', evaluators: ['Equals', 'Contains'] },
+        { kind: 'evaluator', evaluator: 'Equals' },
+        { kind: 'evaluator', evaluator: 'Contains' },
+      ],
+    ],
+  ])('shouldOffer%s', (_case, evaluators, choices) => {
+    expect(temporaryObjectiveChoices(evaluators)).toEqual(choices)
+  })
+
+  it.each([
+    ['NoFlagForTheMeanOfEveryEvaluator', { kind: 'evaluators' as const, evaluators: ['Contains', 'Equals'] }, []],
+    ['MaximizeForOneEvaluator', { kind: 'evaluator' as const, evaluator: 'Equals' }, ['--maximize', 'Equals']],
+  ])('shouldPass%s', (_case, objective, flags) => {
+    expect(temporaryObjectiveArguments(objective)).toEqual(flags)
   })
 })

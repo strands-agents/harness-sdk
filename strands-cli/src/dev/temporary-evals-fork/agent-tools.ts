@@ -10,6 +10,7 @@ import type {
   GenerationSettings,
   Knob,
   KnobKey,
+  OptimizeObjective,
   OptimizeReview,
   OptimizeState,
   TestResults,
@@ -534,6 +535,26 @@ const tunedKnobs = (knobs: readonly Knob[], tune: readonly KnobKey[]): void => {
   throw new Error(`This agent cannot tune ${unknown.join(', ')}. It can tune ${available.join(', ')}.`)
 }
 
+const SHORT_EVALUATOR_SUFFIX = 'evaluator'
+
+const objectiveFor = async (
+  experiment: ExperimentSummary,
+  name: string | undefined
+): Promise<OptimizeObjective | undefined> => {
+  if (name === undefined) return undefined
+  const { experiment: loaded } = await readTemporaryExperimentFile(experiment.path)
+  const wanted = name.toLowerCase()
+  const evaluator =
+    loaded.evaluators.find((candidate) => candidate === name) ??
+    loaded.evaluators.find((candidate) => candidate.toLowerCase() === wanted) ??
+    loaded.evaluators.find((candidate) => candidate.toLowerCase() === `${wanted}${SHORT_EVALUATOR_SUFFIX}`)
+  if (!evaluator)
+    throw new Error(
+      `${name} is not an evaluator of ${experiment.name}. Its evaluators: ${loaded.evaluators.join(', ') || 'none'}.`
+    )
+  return { kind: 'evaluator', evaluator }
+}
+
 const optimizeTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_optimize',
   description:
@@ -562,6 +583,10 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
         enum: [...TEMPORARY_ITERATION_CHOICES],
         description: 'How many optimizer steps to run. Default: 4.',
       },
+      objective: {
+        type: 'string',
+        description: 'One evaluator of the experiment to maximize, by name. Default: the mean of every evaluator.',
+      },
     },
     required: ['experiment'],
     additionalProperties: false,
@@ -581,6 +606,7 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     if (iterations !== undefined && !TEMPORARY_ITERATION_CHOICES.includes(iterations))
       throw new Error(`iterations must be one of ${TEMPORARY_ITERATION_CHOICES.join(', ')}.`)
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
+    const objective = await objectiveFor(experiment, text(input, 'objective') || undefined)
     if (
       current.step === 'review' &&
       current.review.edits.some((edit) => !edit.unavailable) &&
@@ -602,6 +628,7 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
       if (!knob.unavailable && knob.kind !== 'models' && knob.enabled !== tune.includes(knob.key))
         optimize.toggleKnob(knob.key)
     if (iterations !== undefined) optimize.setIterations(iterations)
+    if (objective) optimize.setObjective(objective)
     optimize.start()
     if (optimize.snapshot().step !== 'running') throw new Error('The optimization did not start.')
     const finished = await until(optimize, (state) =>

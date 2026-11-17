@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import type { OptimizeObjective } from '../panels/model.js'
 import { isRecord } from '../../values.js'
 import { isTemporaryProcessAlive } from './background-runs.js'
 import { stopTemporaryProcessGroup } from './evals-process.js'
@@ -18,6 +19,7 @@ export interface TemporaryOptimizeRecord {
   readonly space: string
   readonly iterations: number
   readonly split?: TemporarySplitShares
+  readonly objective?: OptimizeObjective
   readonly startedAt: number
   readonly pid?: number
 }
@@ -26,6 +28,13 @@ const missing = (error: unknown): boolean => isRecord(error) && error.code === '
 
 const recordPath = ({ record }: Pick<TemporaryOptimizeRecord, 'record'>): string =>
   join(dirname(record), RUNS_FOLDER, `${basename(record)}.json`)
+
+const isObjective = (value: unknown): value is OptimizeObjective =>
+  isRecord(value) &&
+  ((value.kind === 'evaluator' && typeof value.evaluator === 'string') ||
+    (value.kind === 'evaluators' &&
+      Array.isArray(value.evaluators) &&
+      value.evaluators.every((name) => typeof name === 'string')))
 
 const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
   isRecord(value) &&
@@ -36,6 +45,7 @@ const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
     (Array.isArray(value.split) &&
       value.split.length === 3 &&
       value.split.every((share) => typeof share === 'number'))) &&
+  (value.objective === undefined || isObjective(value.objective)) &&
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid))
 
