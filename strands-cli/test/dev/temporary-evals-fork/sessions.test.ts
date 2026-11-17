@@ -1059,6 +1059,32 @@ describe('TEMPORARY dev sessions', () => {
     })
   })
 
+  it('shouldComeBackToTheOpenExperimentWhenTheDeveloperLeavesItsSetup', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.openExperiment(experiment)
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.reset()
+
+    expect(sessions.optimize.snapshot()).toMatchObject({ step: 'pick', experiment })
+  })
+
+  it.each([
+    ['TheDeveloperGoesBackToTheExperiments', (optimize: TemporaryOptimize) => optimize.openExperiment(undefined)],
+    ['ThePanelOpensAgain', (optimize: TemporaryOptimize) => optimize.show()],
+  ])('shouldListTheExperimentsAgainWhen%s', async (_case, leave) => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.openExperiment(experiment)
+
+    leave(sessions.optimize)
+
+    expect(sessions.optimize.snapshot()).toMatchObject({ step: 'pick' })
+    expect(sessions.optimize.snapshot()).not.toHaveProperty('experiment')
+  })
+
   it('shouldMakeTheInitialCopyBeforeTheOptimizerStartsWhenARunStarts', async () => {
     const order: string[] = []
     const initialCopy = vi.fn(async (): Promise<string> => {

@@ -39,7 +39,9 @@ import {
   type OptimizeSession,
   type EvalsBrowser,
   type OptimizeState,
+  type PastRun,
   type PastRuns,
+  type ExperimentsState,
   type ProposedEdit,
   type RunAgent,
   type TestCheck,
@@ -104,10 +106,12 @@ const MAX_EDIT_ROWS = 3
 const MAX_NOTICE_ROWS = 3
 const NOTICE_INDENT = 4
 const RUNNING_CHROME_ROWS = 5
+const RUNS_CHROME_ROWS = 4
 
 export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
   const { session } = props
   const state = useSyncExternalStore(session.subscribe, session.snapshot)
+  const saved = useSyncExternalStore(session.experiments.subscribe, session.experiments.snapshot)
   const use = useCallback((experiment: ExperimentSummary) => session.plan(experiment), [session])
   const browser = useBrowserNotice(props.browser)
   useInput((input, key) => {
@@ -125,17 +129,31 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
       />
     )
   switch (state.step) {
-    case 'pick':
+    case 'pick': {
+      const runs = state.runs ?? []
+      if (state.experiment)
+        return (
+          <ExperimentRunsView
+            {...props}
+            experiment={state.experiment}
+            runs={runs}
+            pastRuns={state.pastRuns}
+            onNew={use}
+          />
+        )
+      const others = saved.loaded ? otherRunsSection(saved, runs, state.pastRuns, session) : undefined
       return (
         <ExperimentPicker
           {...props}
           experiments={session.experiments}
           command={COMMAND}
-          onUse={use}
-          section={runsSection(state.runs ?? [], state.pastRuns, session)}
+          onUse={(experiment) => session.openExperiment(experiment)}
+          describe={(experiment) => runCounts(experiment.name, runs, state.pastRuns)}
+          {...(others ? { section: others } : {})}
           extraHints={browserHints(props.browser)}
         />
       )
+    }
     case 'setup':
       return <SetupView {...props} plan={state.plan} />
     case 'running':
@@ -219,13 +237,176 @@ const runsNote = (
   return { note: pastRuns?.loading ? 'reading past runs…' : 'none yet · each run shows here' }
 }
 
+const pastRunsOf = (runs: readonly OptimizeRun[], pastRuns: PastRuns | undefined): readonly PastRun[] => {
+  const current = new Set(runs.flatMap(({ record }) => (record ? [record] : [])))
+  return (pastRuns?.runs ?? []).filter(({ record }) => !current.has(record))
+}
+
+const runCounts = (
+  experiment: string,
+  runs: readonly OptimizeRun[],
+  pastRuns: PastRuns | undefined
+): string | undefined => {
+  const own = runs.filter((run) => run.experiment === experiment)
+  const count = own.length + pastRunsOf(runs, pastRuns).filter((run) => run.experiment === experiment).length
+  const running = own.filter(({ state }) => state.step === 'running').length
+  if (count === 0) return undefined
+  return [plural(count, 'run'), ...(running > 0 ? [`${running} running`] : [])].join(' · ')
+}
+
+const otherRunsSection = (
+  { saved }: ExperimentsState,
+  runs: readonly OptimizeRun[],
+  pastRuns: PastRuns | undefined,
+  session: OptimizeSession
+): PickerSection | undefined => {
+  const known = new Set(saved.map(({ name }) => name))
+  const others = runs.filter(({ experiment }) => !known.has(experiment))
+  const past = (pastRuns?.runs ?? []).filter(({ experiment }) => !known.has(experiment))
+  if (others.length + past.length === 0) return undefined
+  return {
+    ...runsSection(others, pastRuns && { ...pastRuns, runs: past }, session),
+    title: 'runs of other experiments',
+  }
+}
+
+type RunsRow =
+  | { readonly kind: 'new' }
+  | { readonly kind: 'heading'; readonly title: string }
+  | { readonly kind: 'note'; readonly text: string; readonly tone?: Tone }
+  | { readonly kind: 'run'; readonly item: ListItem; readonly open?: () => void }
+
+const startedLabel = (startedAt: number | undefined): string =>
+  startedAt === undefined ? 'unknown time' : startedText(startedAt).slice(0, -' · '.length)
+
+const experimentRunsRows = (
+  experiment: string,
+  runs: readonly OptimizeRun[],
+  pastRuns: PastRuns | undefined,
+  session: OptimizeSession
+): RunsRow[] => {
+  const own = runs.filter((run) => run.experiment === experiment)
+  const past = pastRunsOf(runs, pastRuns).filter((run) => run.experiment === experiment)
+  const { note, noteTone } = runsNote(own, pastRuns && { ...pastRuns, runs: past })
+  const count = own.length + past.length
+  return [
+    { kind: 'new' },
+    { kind: 'heading', title: count > 0 ? `runs (${count})` : 'runs' },
+    ...(note ? [{ kind: 'note' as const, text: note, ...(noteTone ? { tone: noteTone } : {}) }] : []),
+    ...own.map(({ id, startedAt, state }): RunsRow => {
+      const { text, tone } = runSummary(state)
+      const item = { key: id, label: startedLabel(startedAt), detail: text, ...(tone ? { tone } : {}) }
+      return { kind: 'run', item, open: () => session.openRun(id) }
+    }),
+    ...past.map((run): RunsRow => ({
+      kind: 'run',
+      item: {
+        key: run.record,
+        label: startedLabel(run.startedAt),
+        detail: run.summary,
+        ...(run.opens ? {} : { tone: 'muted' as const }),
+      },
+      ...(run.opens ? { open: () => session.openPastRun(run.record) } : {}),
+    })),
+  ]
+}
+
+const runsRowItem = (row: RunsRow): ListItem => {
+  switch (row.kind) {
+    case 'new':
+      return { key: 'new', label: '+ New optimization run', detail: 'choose what to tune, then start' }
+    case 'heading':
+      return { key: `heading:${row.title}`, label: row.title, tone: 'muted' }
+    case 'note':
+      return { key: `note:${row.text}`, label: '', detail: row.text, tone: row.tone ?? 'muted' }
+    case 'run':
+      return row.item
+  }
+}
+
+const opensRow = (row: RunsRow | undefined): boolean =>
+  row?.kind === 'new' || (row?.kind === 'run' && row.open !== undefined)
+
+const ExperimentRunsView = ({
+  session,
+  browser,
+  experiment,
+  runs,
+  pastRuns,
+  onNew,
+  width,
+  height,
+}: OptimizePanelProps & {
+  experiment: ExperimentSummary
+  runs: readonly OptimizeRun[]
+  pastRuns: PastRuns | undefined
+  onNew: (experiment: ExperimentSummary) => void
+}): ReactElement => {
+  const experiments = useSyncExternalStore(session.experiments.subscribe, session.experiments.snapshot)
+  const shown = experiments.saved.find(({ path }) => path === experiment.path) ?? experiment
+  const rows = experimentRunsRows(shown.name, runs, pastRuns, session)
+  const cursor = useCursor(rows.length)
+  const index = opensRow(rows[cursor.index]) ? cursor.index : 0
+  const step = (direction: 1 | -1): void => {
+    for (let at = cursor.current() + direction; at >= 0 && at < rows.length; at += direction) {
+      if (opensRow(rows[at])) {
+        cursor.set(at)
+        return
+      }
+    }
+  }
+  const activate = (row: RunsRow | undefined): void => {
+    if (row?.kind === 'new') onNew(shown)
+    else if (row?.kind === 'run') row.open?.()
+  }
+  useInput((_input, key) => {
+    if (key.escape) session.openExperiment(undefined)
+    else if (key.upArrow) step(-1)
+    else if (key.downArrow) step(1)
+    else if (key.return) activate(rows[cursor.current()])
+  })
+  const running = runs.filter((run) => run.experiment === shown.name && run.state.step === 'running').length
+  const items = rows.map(runsRowItem)
+  return (
+    <>
+      <PanelTitle
+        name={COMMAND}
+        parts={[shown.name, plural(shown.caseCount, 'case'), ...(running > 0 ? [`${running} running`] : [])]}
+      />
+      <Gap />
+      <ItemList
+        items={items}
+        selected={index}
+        capacity={Math.max(1, height - RUNS_CHROME_ROWS)}
+        labelWidth={labelWidthFor(
+          items.map(({ label }) => label),
+          width
+        )}
+        onClick={(at) => {
+          if (!opensRow(rows[at])) return
+          cursor.set(at)
+          activate(rows[at])
+        }}
+      />
+      <Fill />
+      <KeyHints
+        hints={[
+          '↑↓',
+          rows[index]?.kind === 'new' ? 'Enter set up a run' : 'Enter open the run',
+          ...browserHints(browser),
+          'Esc back to the experiments',
+        ]}
+      />
+    </>
+  )
+}
+
 const runsSection = (
   runs: readonly OptimizeRun[],
   pastRuns: PastRuns | undefined,
   session: OptimizeSession
 ): PickerSection => {
-  const current = new Set(runs.flatMap(({ record }) => (record ? [record] : [])))
-  const past = (pastRuns?.runs ?? []).filter(({ record }) => !current.has(record))
+  const past = pastRunsOf(runs, pastRuns)
   const running = runs.filter(({ state }) => state.step === 'running').length
   const count = runs.length + past.length
   return {

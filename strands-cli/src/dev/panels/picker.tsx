@@ -42,6 +42,7 @@ export interface ExperimentPickerProps extends DevChatPanelProps {
   readonly onUse: (experiment: ExperimentSummary) => void
   readonly section?: PickerSection
   readonly extraHints?: readonly string[]
+  readonly describe?: (experiment: ExperimentSummary) => string | undefined
 }
 
 type PickerRow =
@@ -82,10 +83,14 @@ const waitingDetail = (generation: Generation): string =>
       : 'generating · preparing'
     : 'waiting for review in /experiment'
 
-const rowItem = (row: PickerRow): ListItem => {
+const rowItem = (row: PickerRow, describe?: ExperimentPickerProps['describe']): ListItem => {
   switch (row.kind) {
     case 'ready':
-      return { key: row.experiment.path, label: row.experiment.name, detail: plural(row.experiment.caseCount, 'case') }
+      return {
+        key: row.experiment.path,
+        label: row.experiment.name,
+        detail: [plural(row.experiment.caseCount, 'case'), describe?.(row.experiment)].filter(Boolean).join(' · '),
+      }
     case 'waiting':
       return {
         key: row.generation.id,
@@ -123,6 +128,7 @@ export const ExperimentPicker = ({
   onUse,
   section,
   extraHints = [],
+  describe,
   openCommand,
   close,
   width,
@@ -171,7 +177,7 @@ export const ExperimentPicker = ({
       {state.error ? <Line tone="error">{`  ${state.error}`}</Line> : <Gap />}
       {empty ? <Line>{'  No experiment is ready to run yet.'}</Line> : null}
       <ItemList
-        items={rows.map(rowItem)}
+        items={rows.map((row) => rowItem(row, describe))}
         selected={index}
         capacity={Math.max(1, height - CHROME_ROWS - Number(empty) - Number(waiting))}
         labelWidth={labelWidthFor(

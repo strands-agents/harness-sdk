@@ -415,7 +415,7 @@ export interface OptimizeRun {
 }
 
 export type OptimizePage =
-  | { readonly step: 'pick'; readonly pastRuns?: PastRuns }
+  | { readonly step: 'pick'; readonly pastRuns?: PastRuns; readonly experiment?: ExperimentSummary }
   | { readonly step: 'setup'; readonly plan: OptimizePlan }
   | OptimizeRunState
 
@@ -432,6 +432,7 @@ export interface OptimizeSession {
   setIterations(iterations: number): void
   setSplit(split: CaseSplit): void
   setObjective(objective: OptimizeObjective): void
+  openExperiment(experiment?: ExperimentSummary): void
   openPastRun(record: string): void
   openRun(id: string): void
   start(): string | undefined

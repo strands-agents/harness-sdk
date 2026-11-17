@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   CaseResult,
   ExperimentsState,
+  ExperimentSummary,
   OptimizePlan,
   OptimizeReview,
   OptimizeStep,
@@ -513,9 +514,15 @@ const openFailedCase = async ({ reason, actual }: { reason: string; actual: stri
 
 type OptimizeAction = Exclude<keyof OptimizeSession, 'agent'>
 
-const optimizeSession = (initial: OptimizeState) => {
+const REFUNDS: ExperimentSummary = {
+  name: 'refunds',
+  path: '/w/strands-dev/experiments/refunds/refunds.json',
+  caseCount: 4,
+}
+
+const optimizeSession = (initial: OptimizeState, experimentsState: Partial<ExperimentsState> = {}) => {
   const states = store(initial)
-  const { session: experiments } = experimentsSession()
+  const { session: experiments } = experimentsSession(experimentsState)
   return {
     states,
     session: {
@@ -529,6 +536,7 @@ const optimizeSession = (initial: OptimizeState) => {
       setIterations: vi.fn(),
       setSplit: vi.fn(),
       setObjective: vi.fn(),
+      openExperiment: vi.fn(),
       openPastRun: vi.fn(),
       openRun: vi.fn(),
       start: vi.fn(),
@@ -1407,41 +1415,71 @@ describe('OptimizePanel', () => {
     expect(hints).toContain(hint)
   })
 
-  it('shouldListARunThatIsStillGoingAndOpenItWhenTheUserPressesEnterOnIt', async () => {
+  it('shouldListEachExperimentWithItsRunsAndOpenItWhenTheUserPressesEnter', async () => {
     const running = runningState()
     if (running.step !== 'running') throw new Error('expected a running state')
-    const { session } = optimizeSession({
-      step: 'pick',
-      runs: [{ id: 'run-1', experiment: 'refunds', startedAt: Date.UTC(2026, 10, 17, 14, 25), state: running }],
-      pastRuns: { loading: false, runs: PAST_RUNS },
-    })
+    const { session } = optimizeSession(
+      {
+        step: 'pick',
+        runs: [{ id: 'run-1', experiment: 'refunds', startedAt: Date.UTC(2026, 10, 17, 14, 25), state: running }],
+        pastRuns: { loading: false, runs: PAST_RUNS },
+      },
+      { saved: [REFUNDS] }
+    )
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    await press(DOWN_KEY)
     const list = text()
     await press('\r')
 
-    expect(list).toContain('optimize · 0 experiments · 1 running')
-    expect(list).toContain('runs (3)')
-    expect(list).toMatch(/› refunds\s+.*running · 3\/17 candidates · best 0\.82/u)
+    expect(list).toMatch(/› refunds\s+4 cases · 3 runs · 1 running/u)
+    expect(list).not.toContain('runs (3)')
+    expect(session.openExperiment).toHaveBeenCalledWith(REFUNDS)
+  })
+
+  it('shouldListTheRunsOfTheOpenExperimentAndOpenARunThatIsStillGoing', async () => {
+    const running = runningState()
+    if (running.step !== 'running') throw new Error('expected a running state')
+    const { session } = optimizeSession(
+      {
+        step: 'pick',
+        experiment: REFUNDS,
+        runs: [{ id: 'run-1', experiment: 'refunds', startedAt: Date.UTC(2026, 10, 17, 14, 25), state: running }],
+        pastRuns: { loading: false, runs: PAST_RUNS },
+      },
+      { saved: [REFUNDS] }
+    )
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    const page = text()
+    await press('\r')
+
+    expect(page).toContain('optimize · refunds · 4 cases · 1 running')
+    expect(page).toContain('+ New optimization run')
+    expect(page).toContain('runs (3)')
+    expect(page).toMatch(/› 2026-11-17 \d\d:25\s+running · 3\/17 candidates · best 0\.82/u)
+    expect(page).toContain('Enter open the run')
     expect(session.openRun).toHaveBeenCalledWith('run-1')
-    expect(session.openPastRun).not.toHaveBeenCalled()
   })
 
   it('shouldListARunOnceWhenItAlsoHasARecordOnDisk', async () => {
-    const { session } = optimizeSession({
-      step: 'pick',
-      runs: [
-        {
-          id: 'run-1',
-          experiment: 'refunds',
-          startedAt: 0,
-          record: PAST_RUNS[0]!.record,
-          state: { step: 'cancelled', experiment: 'refunds' },
-        },
-      ],
-      pastRuns: { loading: false, runs: PAST_RUNS },
-    })
+    const { session } = optimizeSession(
+      {
+        step: 'pick',
+        experiment: REFUNDS,
+        runs: [
+          {
+            id: 'run-1',
+            experiment: 'refunds',
+            startedAt: 0,
+            record: PAST_RUNS[0]!.record,
+            state: { step: 'cancelled', experiment: 'refunds' },
+          },
+        ],
+        pastRuns: { loading: false, runs: PAST_RUNS },
+      },
+      { saved: [REFUNDS] }
+    )
 
     const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
@@ -1450,32 +1488,33 @@ describe('OptimizePanel', () => {
     expect(text()).not.toContain('0.00 → 1.00 on test cases · 3 edits')
   })
 
-  it('shouldListThePastRunsAndOpenOneWhenTheUserPressesEnterOnIt', async () => {
-    const { session } = optimizeSession({ step: 'pick', pastRuns: { loading: false, runs: PAST_RUNS } })
+  it('shouldOpenAPastRunOfTheOpenExperimentWhenTheUserPressesEnterOnIt', async () => {
+    const { session } = optimizeSession(
+      { step: 'pick', experiment: REFUNDS, pastRuns: { loading: false, runs: PAST_RUNS } },
+      { saved: [REFUNDS] }
+    )
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
     await press(DOWN_KEY)
-    const list = text()
+    const page = text()
     await press('\r')
 
-    expect(list).toContain('runs (2)')
-    expect(list).toMatch(/› refunds\s+.*0\.00 → 1\.00 on test cases · 3 edits/u)
-    expect(list).toContain('no better candidate · 0.50 on test cases')
-    expect(list).toContain('Enter open the report')
+    expect(page).toMatch(/› 2026-11-1[67] \d\d:\d\d\s+0\.00 → 1\.00 on test cases · 3 edits/u)
+    expect(page).toContain('no better candidate · 0.50 on test cases')
     expect(session.openPastRun).toHaveBeenCalledWith(PAST_RUNS[0]!.record)
   })
 
   it('shouldSkipAPastRunThatCannotBeOpenedWhenTheUserMovesDown', async () => {
     const unreadable: PastRun = {
-      record: '/w/strands-dev/tmp/optimization/20261113-224053-refunds',
+      record: '/w/strands-dev/experiments/refunds/optimizations/20261113-224053/optimizer',
       experiment: 'refunds',
       summary: 'made by the older optimizer, so it cannot be opened',
       opens: false,
     }
-    const { session } = optimizeSession({
-      step: 'pick',
-      pastRuns: { loading: false, runs: [unreadable, ...PAST_RUNS] },
-    })
+    const { session } = optimizeSession(
+      { step: 'pick', experiment: REFUNDS, pastRuns: { loading: false, runs: [unreadable, ...PAST_RUNS] } },
+      { saved: [REFUNDS] }
+    )
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
     await press(DOWN_KEY)
@@ -1490,12 +1529,60 @@ describe('OptimizePanel', () => {
     ['Empty', { loading: false, runs: [] }, 'none yet · each run shows here'],
     ['Unreadable', { loading: false, runs: [], error: 'Past runs cannot be read: EACCES' }, 'EACCES'],
   ])('shouldSayWhyNoPastRunIsListedWhenThePastRunsAre%s', async (_case, pastRuns, note) => {
-    const { session } = optimizeSession({ step: 'pick', pastRuns })
+    const { session } = optimizeSession({ step: 'pick', experiment: REFUNDS, pastRuns }, { saved: [REFUNDS] })
 
     const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
     expect(text()).toContain('runs')
     expect(text()).toContain(note)
+  })
+
+  it('shouldSetUpANewRunOfTheOpenExperimentWhenTheUserPressesEnterOnNew', async () => {
+    const { session } = optimizeSession(
+      { step: 'pick', experiment: REFUNDS, pastRuns: { loading: false, runs: [] } },
+      { saved: [REFUNDS] }
+    )
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    const page = text()
+    await press('\r')
+
+    expect(page).toContain('Enter set up a run')
+    expect(session.plan).toHaveBeenCalledWith(REFUNDS)
+  })
+
+  it('shouldGoBackToTheExperimentsWhenTheUserPressesEscOnTheExperimentPage', async () => {
+    const { session } = optimizeSession(
+      { step: 'pick', experiment: REFUNDS, pastRuns: { loading: false, runs: [] } },
+      { saved: [REFUNDS] }
+    )
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    const page = text()
+    await press('\u001b')
+
+    expect(page).toContain('Esc back to the experiments')
+    await vi.waitFor(() => expect(session.openExperiment).toHaveBeenCalledWith(undefined))
+  })
+
+  it('shouldListTheRunsOfAnExperimentThatIsGoneUnderOtherExperiments', async () => {
+    const retired: PastRun = {
+      record: '/w/strands-dev/tmp/.state/outside-experiments/retired/optimizations/20261110-101010/optimizer',
+      experiment: 'retired',
+      summary: '0.20 → 0.40 on test cases · 1 edit',
+      opens: true,
+    }
+    const { session } = optimizeSession(
+      { step: 'pick', pastRuns: { loading: false, runs: [...PAST_RUNS, retired] } },
+      { saved: [REFUNDS] }
+    )
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toMatch(/refunds\s+4 cases · 2 runs/u)
+    expect(text()).toContain('runs of other experiments')
+    expect(text()).toMatch(/retired\s+.*0\.20 → 0\.40 on test cases · 1 edit/u)
+    expect(text()).not.toContain('0.00 → 1.00 on test cases · 3 edits')
   })
 
   it.each<[string, string, OptimizeAction, unknown[], string[]]>([

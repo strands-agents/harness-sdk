@@ -574,6 +574,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private resumed: Promise<void> | undefined
   private catalog: readonly TemporaryKnob[] = []
   private page: OptimizePage = { step: 'pick' }
+  private opened: ExperimentSummary | undefined
   private shown: string | undefined
   private readonly entries = new Map<string, RunEntry>()
   private runCount = 0
@@ -597,13 +598,27 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   show(): void {
+    this.opened = undefined
+    this.reset()
+  }
+
+  openExperiment(experiment?: ExperimentSummary): void {
+    this.opened = experiment
     this.reset()
   }
 
   reset(): void {
-    this.showPage({ step: 'pick', ...(this.pastRuns ? { pastRuns: this.pastRuns } : {}) })
+    this.showPage(this.listPage())
     this.experiments.refresh()
     void this.loadPastRuns()
+  }
+
+  private listPage(): OptimizePage {
+    return {
+      step: 'pick',
+      ...(this.pastRuns ? { pastRuns: this.pastRuns } : {}),
+      ...(this.opened ? { experiment: this.opened } : {}),
+    }
   }
 
   openRun(id: string): void {
@@ -793,7 +808,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private showPastRuns(pastRuns: PastRuns): void {
     this.pastRuns = pastRuns
     if (this.page.step !== 'pick') return
-    this.page = { step: 'pick', pastRuns }
+    this.page = this.listPage()
     this.publish()
   }
 
