@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
 import { chmod, link, lstat, mkdir, open, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -15,7 +15,7 @@ import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
-  return { ...fs, link: vi.fn(fs.link), open: vi.fn(fs.open) }
+  return { ...fs, link: vi.fn(fs.link), lstat: vi.fn(fs.lstat), open: vi.fn(fs.open) }
 })
 
 const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
@@ -45,6 +45,7 @@ async function manifest(root: string, document: unknown) {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.mocked(link).mockReset()
+  vi.mocked(lstat).mockReset()
   vi.mocked(open).mockReset()
 })
 
@@ -536,6 +537,17 @@ describe('workspaceFolder', () => {
   it('shouldReturnThePathAsItIsWhenAFileSitsAboveIt', async () => {
     const file = join(await temporaryDirectory(), 'notes.txt')
     await writeFile(file, 'notes')
+
+    expect(await workspaceFolder(join(file, 'child'))).toBe(join(file, 'child'))
+  })
+
+  it('shouldReturnThePathAsItIsWhenAFileSitsAboveItAndTheSystemReportsTheChildAsMissing', async () => {
+    const file = join(await temporaryDirectory(), 'notes.txt')
+    await writeFile(file, 'notes')
+    vi.mocked(lstat).mockImplementation(async (path) => {
+      if (String(path).startsWith(`${file}${sep}`)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      return actualFs.lstat(path)
+    })
 
     expect(await workspaceFolder(join(file, 'child'))).toBe(join(file, 'child'))
   })

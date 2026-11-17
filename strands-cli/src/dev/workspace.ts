@@ -79,7 +79,7 @@ async function isFolderOrMissing(path: string): Promise<boolean> {
   try {
     return (await lstat(path)).isDirectory()
   } catch (error) {
-    if (hasCode(error, 'ENOENT')) return true
+    if (hasCode(error, 'ENOENT')) return dirname(path) === path || isFolderOrMissing(dirname(path))
     if (hasCode(error, 'ENOTDIR')) return false
     throw error
   }
