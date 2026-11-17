@@ -2,10 +2,11 @@ import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
   httpTransport,
+  isRecord,
   RefusedAnswer,
   resolveSystemOneProviderConfig,
   toWireQuestions,
-  toWireState,
+  toWireStateText,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
@@ -68,7 +69,7 @@ export class OpenAIDecisionModel extends DecisionModel {
       ...providerConfig,
       buildRequestBody: (state, questions): Record<string, unknown> => ({
         model: providerConfig.modelId,
-        input: toOpenAIInput(state),
+        input: toWireStateText(state),
         questions: toOpenAIQuestions(questions),
       }),
     }
@@ -89,10 +90,6 @@ export class OpenAIDecisionModel extends DecisionModel {
       options.cancelSignal
     )
   }
-}
-
-function toOpenAIInput(state: DecisionInput): string {
-  return typeof state === 'string' ? state : JSON.stringify(toWireState(state))
 }
 
 /** OpenAI takes an ordered question array, named by question id, with `predicate` in place of `noul`. */
@@ -133,8 +130,4 @@ function toSystemOneAnswer(answer: Record<string, unknown>): unknown {
       answer['probabilities'].filter(isRecord).map((entry) => [String(entry['value']), entry['probability']])
     ),
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
