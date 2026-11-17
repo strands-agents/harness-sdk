@@ -513,7 +513,7 @@ describe('default workspace placement', () => {
     await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
-    const harnesses = (await options.search?.(() => {}, new AbortController().signal)) ?? []
+    const harnesses = (await options.search?.(() => {}, new AbortController().signal))?.harnesses ?? []
     const folders = Object.fromEntries(
       harnesses.map((harness) => [harness.entrypoint, options.folderFor?.({ kind: 'discovered', harness })?.path])
     )
@@ -997,7 +997,7 @@ describe('workspace folder selection', () => {
     })
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
-    const listed = (await options.search?.(() => {}, new AbortController().signal)) ?? []
+    const listed = (await options.search?.(() => {}, new AbortController().signal))?.harnesses ?? []
     expect(listed.map(({ entrypoint }) => entrypoint)).toEqual([join(other, 'agent.ts')])
     expect(options.cli?.name).toBe('Saved CLI')
   })
@@ -1083,7 +1083,7 @@ describe('selection after the user goes back', () => {
     const rejected = (await prepareDevRun(args, options))!
     const prepared = await prepareDevRun(args, { ...options, rejected })
     const picked = vi.mocked(picker.chooseHarness).mock.calls[1]![0]
-    const listed = (await picked.search?.(() => {}, new AbortController().signal)) ?? []
+    const listed = (await picked.search?.(() => {}, new AbortController().signal))?.harnesses ?? []
     return { rejected, prepared, picked, listed: listed.map(({ entrypoint }) => entrypoint) }
   }
 

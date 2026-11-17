@@ -1,4 +1,5 @@
 import chalk from 'chalk'
+import { join } from 'node:path'
 import { createElement } from 'react'
 import { Box } from 'ink'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1092,6 +1093,70 @@ describe('HarnessPicker', () => {
     expect(frame().join('\n')).toContain('Discovered Harnesses')
   })
 
+  const skippedSource = (path: string) => ({
+    entrypoint: join(process.cwd(), path),
+    expected: 'export const agent = await createHarness(...)',
+  })
+
+  it('shouldShowTheExpectedShapeWhenTheSearchSkipsASource', async () => {
+    const output = ttyOutput(120, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        skipped: [skippedSource('support/agent.ts')],
+        discovery: 'done',
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() =>
+      expect(frame().join('\n')).toContain(
+        'Skipped support/agent.ts. Expected export const agent = await createHarness(...)'
+      )
+    )
+    expect(frame().join('\n')).not.toContain('No local harnesses found.')
+  })
+
+  it('shouldCountTheOtherSkippedSourcesWhenTheSearchAlsoFindsHarnesses', async () => {
+    const output = ttyOutput(120, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        skipped: ['a/agent.ts', 'b/agent.ts', 'c/agent.ts'].map(skippedSource),
+        discovery: 'done',
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Skipped a/agent.ts and 2 more. Expected'))
+    expect(frame().join('\n')).toContain('Project harness')
+    expect(frame().join('\n')).toContain('1 / 3')
+  })
+
+  it('shouldShowTheFullPathWhenTheSkippedSourceIsOutsideTheLaunchFolder', async () => {
+    const output = ttyOutput(120, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        harnesses: [],
+        skipped: [{ entrypoint: '/elsewhere/agent.py', expected: 'agent = create_harness(...)' }],
+        discovery: 'done',
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() =>
+      expect(frame().join('\n')).toContain('Skipped /elsewhere/agent.py. Expected agent = create_harness(...)')
+    )
+  })
+
   it('shouldKeepTheSelectedRowWhenAHarnessArrivesAboveIt', async () => {
     const input = ttyInput()
     const output = ttyOutput(100, 36)
@@ -1130,7 +1195,7 @@ describe('HarnessPicker', () => {
           report = found
           searchSignal = signal
           return new Promise((resolve) => {
-            finish = () => resolve([])
+            finish = () => resolve({ harnesses: [], skipped: [] })
           })
         },
       },
@@ -1149,6 +1214,25 @@ describe('HarnessPicker', () => {
 
     expect(await running).toBeUndefined()
     expect(searchSignal?.aborted).toBe(true)
+  })
+
+  it('shouldPassTheSkippedSourcesToThePickerWhenTheSearchEnds', async () => {
+    const show = vi.fn()
+    const skipped = [skippedSource('support/agent.ts')]
+    const running = chooseHarness(
+      {
+        cli: { name: 'Saved profile' },
+        harnesses: [],
+        search: async () => ({ harnesses: [harness], skipped }),
+      },
+      { signal: new AbortController().signal, show },
+      vi.fn()
+    )
+
+    await vi.waitFor(() => expect(shownPickers(show).at(-1)).toMatchObject({ discovery: 'done', skipped }))
+    expect(shownPickers(show).at(-1)?.harnesses).toEqual([harness])
+    await shownPickers(show).at(-1)!.onSelect(undefined)
+    expect(await running).toBeUndefined()
   })
 
   it('shouldShowWhyTheSearchStoppedWhenItFails', async () => {

@@ -97,6 +97,10 @@ Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
 It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example the copies in `strands-dev/tmp/`.
+Discovery lists a source file only in a shape that strands dev can load.
+In TypeScript, a top-level `agent` must come from one `createHarness(...)` call or from a call to a local function.
+In Python, `agent` must come from `create_harness(...)`. Or, the file must define `create_agent` and set `agent` from a local function.
+If a file calls `createHarness` or `create_harness` in a different shape, the picker shows that file and the expected shape.
 
 When the launch directory has no workspace, select an existing harness in the picker.
 When the suggested folder already holds the workspace of that harness, dev opens it. Dev does not ask for a folder.

@@ -946,6 +946,23 @@ agent = create_agent()`
     expect(backend.name).toBe('Generated')
   })
 
+  it.each([
+    ['from strands_harness import create_harness as make_harness', 'make_harness'],
+    ['import strands_harness as harness', 'harness.create_harness'],
+    ['import strands_harness', 'strands_harness.create_harness'],
+  ])('shouldReconstructTheAgentWhenTheDirectCallUses %s', async (binding, callee) => {
+    const authored = baseSource
+      .replace('from strands_harness import create_harness', binding)
+      .replace('def build(**overrides):', 'def build_options():')
+      .replace('    options.update(overrides)\n    return create_harness(**options)', '    return options')
+      .replace('agent = build()', `agent = ${callee}(**build_options())`)
+    const backend = await open(authored, { overrides: { name: 'Generated', session: false } })
+
+    expect(backend.reconstructable()).toBe(true)
+    await backend.clear()
+    expect(backend.name).toBe('Generated')
+  })
+
   it.each(['bom-crlf', 'latin1-cookie'])('loads non-ASCII %s source without changing its bytes', async (encoding) => {
     const text = `${baseSource}\nagent.name = "café"\n`
     const authored =

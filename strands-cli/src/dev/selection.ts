@@ -6,7 +6,7 @@ import type { CliConfigSnapshot } from '../config/store.js'
 import { expandHome, strandsUserPath } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { planProjectPreparation } from '../project/preparation-plan.js'
-import { discoverHarnesses, type DiscoveredHarness } from './search.js'
+import { discoverHarnesses, type DiscoveredHarness, type SkippedHarness } from './search.js'
 import { missingAgentPath, readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
 
 export interface BaseHarnessSelection {
@@ -104,6 +104,11 @@ export interface LocalHarnessSearch {
   found?(harness: DiscoveredHarness): void | Promise<void>
 }
 
+export interface LocalHarnessDiscovery {
+  harnesses: DiscoveredHarness[]
+  skipped: SkippedHarness[]
+}
+
 const byEntrypoint = (left: DiscoveredHarness, right: DiscoveredHarness): number =>
   left.entrypoint < right.entrypoint ? -1 : left.entrypoint > right.entrypoint ? 1 : 0
 
@@ -112,9 +117,10 @@ export const discoverLocalHarnesses = async (
   searchRoots: readonly string[],
   excludedEntrypoints: readonly string[],
   search: LocalHarnessSearch = {}
-): Promise<DiscoveredHarness[]> => {
+): Promise<LocalHarnessDiscovery> => {
   const excluded = new Set(await Promise.all(excludedEntrypoints.map(canonicalPath)))
   const kept = new Map<string, DiscoveredHarness>()
+  const skipped: SkippedHarness[] = []
   let reported = Promise.resolve()
   const report = (harness: DiscoveredHarness): void => {
     reported = reported.then(async () => {
@@ -129,8 +135,9 @@ export const discoverLocalHarnesses = async (
   const discovery = await discoverHarnesses([cwd, ...searchRoots.map((path) => resolve(cwd, expandHome(path)))], {
     ...(search.signal ? { signal: search.signal } : {}),
     found: report,
+    skipped: (source) => skipped.push(source),
   })
   discovery.harnesses.forEach(report)
   await reported
-  return [...kept.values()].sort(byEntrypoint)
+  return { harnesses: [...kept.values()].sort(byEntrypoint), skipped }
 }

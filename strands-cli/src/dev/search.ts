@@ -20,6 +20,11 @@ export interface DiscoveredHarness {
   preparationStatus?: 'Needs setup' | 'Manual setup' | 'Check setup'
 }
 
+export interface SkippedHarness {
+  entrypoint: string
+  expected: string
+}
+
 export interface HarnessDiscovery {
   harnesses: DiscoveredHarness[]
   warnings: string[]
@@ -28,6 +33,7 @@ export interface HarnessDiscovery {
 export interface HarnessSearch {
   signal?: AbortSignal
   found?(harness: DiscoveredHarness): void
+  skipped?(source: SkippedHarness): void
 }
 
 const SOURCE_EXTENSION = /\.(?:ts|mts|js|mjs|py)$/u
@@ -42,6 +48,11 @@ const IGNORED_DIRECTORIES = new Set([
   'build',
   '.strands',
 ])
+const EXPECTED_SHAPE = {
+  typescript: 'export const agent = await createHarness(...)',
+  python: 'agent = create_harness(...)',
+} as const
+const PYTHON_FACTORY = 'create_agent'
 
 interface DiscoveryState {
   harnesses: Map<string, DiscoveredHarness>
@@ -138,12 +149,13 @@ async function scanSource(path: string, details: Stats, state: DiscoveryState): 
   if (state.harnesses.has(path)) return
   const source = await readSource(path, details)
   const language = path.endsWith('.py') ? 'python' : 'typescript'
-  const harness = language === 'python' ? pythonHarness(source) : typescriptHarness(path, source)
-  if (!harness) return
+  const inspection = language === 'python' ? pythonInspection(source) : typescriptInspection(path, source)
+  if (inspection.kind === 'unloadable') state.search.skipped?.({ entrypoint: path, expected: EXPECTED_SHAPE[language] })
+  if (inspection.kind !== 'harness') return
   await guardProjectMetadata(path)
   const { root } = importAgentProject(path)
   if (!containsPath(root, path)) throw new Error('Imported project root must contain its harness entrypoint.')
-  record(state, { name: harness.name ?? basename(path), entrypoint: path, root, language })
+  record(state, { name: inspection.name ?? basename(path), entrypoint: path, root, language })
 }
 
 function comparePaths(left: string, right: string): number {
@@ -215,14 +227,24 @@ async function readSource(path: string, expected: Stats): Promise<string> {
   }
 }
 
-interface StaticHarness {
-  name: string | undefined
-}
+type SourceInspection = { kind: 'harness'; name: string | undefined } | { kind: 'unloadable' } | { kind: 'unrelated' }
 
-function typescriptHarness(path: string, source: string): StaticHarness | undefined {
+type ConstructorTest = (callee: ts.Expression) => boolean
+
+const typescriptInspection = (path: string, source: string): SourceInspection => {
   const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
   const diagnostics = (file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics
   if (diagnostics.length) throw new Error(ts.flattenDiagnosticMessageText(diagnostics[0]!.messageText, '\n'))
+  const constructs = typescriptConstructor(file)
+  if (!constructs || !callsTypescriptConstructor(file, constructs)) return { kind: 'unrelated' }
+  const call = typescriptAgentCall(file)
+  if (call && (constructs(call.expression) || callsLocalFunction(file, call.expression))) {
+    return { kind: 'harness', name: typescriptName(call.arguments[0]) }
+  }
+  return { kind: 'unloadable' }
+}
+
+const typescriptConstructor = (file: ts.SourceFile): ConstructorTest | undefined => {
   const constructors = new Set<string>()
   const namespaces = new Set<string>()
   for (const statement of file.statements) {
@@ -243,24 +265,45 @@ function typescriptHarness(path: string, source: string): StaticHarness | undefi
       }
     }
   }
-  for (const statement of file.statements) {
-    if (!ts.isVariableStatement(statement) || statement.declarationList.declarations.length !== 1) continue
-    const declaration = statement.declarationList.declarations[0]!
-    if (!ts.isIdentifier(declaration.name) || declaration.name.text !== 'agent' || !declaration.initializer) continue
-    const expression = declaration.initializer
-    const call = ts.isAwaitExpression(expression) ? expression.expression : expression
-    if (!ts.isCallExpression(call) || call.arguments.length > 1) continue
-    const factory = call.expression
-    const imported =
-      (ts.isIdentifier(factory) && constructors.has(factory.text)) ||
-      (ts.isPropertyAccessExpression(factory) &&
-        ts.isIdentifier(factory.expression) &&
-        namespaces.has(factory.expression.text) &&
-        factory.name.text === 'createHarness')
-    if (imported) return { name: typescriptName(call.arguments[0]) }
-  }
-  return undefined
+  if (!constructors.size && !namespaces.size) return undefined
+  return (callee) =>
+    (ts.isIdentifier(callee) && constructors.has(callee.text)) ||
+    (ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      namespaces.has(callee.expression.text) &&
+      callee.name.text === 'createHarness')
 }
+
+const callsTypescriptConstructor = (node: ts.Node, constructs: ConstructorTest): boolean =>
+  (ts.isCallExpression(node) && constructs(node.expression)) ||
+  (ts.forEachChild(node, (child) => callsTypescriptConstructor(child, constructs) || undefined) ?? false)
+
+const typescriptAgentCall = (file: ts.SourceFile): ts.CallExpression | undefined => {
+  const statement = file.statements.find(
+    (node): node is ts.VariableStatement =>
+      ts.isVariableStatement(node) &&
+      node.declarationList.declarations.some(({ name }) => ts.isIdentifier(name) && name.text === 'agent')
+  )
+  const declarations = statement?.declarationList.declarations ?? []
+  const initializer = declarations.length === 1 ? declarations[0]!.initializer : undefined
+  const call = initializer && ts.isAwaitExpression(initializer) ? initializer.expression : initializer
+  return call && ts.isCallExpression(call) && call.arguments.length <= 1 ? call : undefined
+}
+
+const callsLocalFunction = (file: ts.SourceFile, callee: ts.Expression): boolean =>
+  ts.isIdentifier(callee) &&
+  file.statements.some((statement) =>
+    ts.isFunctionDeclaration(statement)
+      ? statement.name?.text === callee.text
+      : ts.isVariableStatement(statement) &&
+        statement.declarationList.declarations.some(
+          ({ name, initializer }) =>
+            ts.isIdentifier(name) &&
+            name.text === callee.text &&
+            initializer !== undefined &&
+            (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))
+        )
+  )
 
 function typescriptName(options: ts.Expression | undefined): string | undefined {
   if (!options || !ts.isObjectLiteralExpression(options)) return undefined
@@ -291,28 +334,62 @@ interface PythonStatement {
   tokens: PythonToken[]
 }
 
-function pythonHarness(source: string): StaticHarness | undefined {
-  const statements = pythonStatements(source).filter((statement) => statement.indent === 0)
+interface PythonCall {
+  callee: string[]
+  argumentsList: PythonToken[]
+}
+
+const pythonInspection = (source: string): SourceInspection => {
+  const statements = pythonStatements(source)
+  const topLevel = statements.filter((statement) => statement.indent === 0)
   const constructors = new Set<string>()
   const namespaces = new Set<string>()
-  for (const { tokens } of statements) pythonImports(tokens, constructors, namespaces)
-  for (const { tokens } of statements) {
-    if (tokens[0]?.kind !== 'word' || tokens[0].value !== 'agent') continue
-    const assignment = tokens.findIndex((token) => token.value === '=')
-    if (assignment < 0 || (assignment !== 1 && tokens[1]?.value !== ':')) continue
-    const expression = tokens.slice(assignment + 1)
-    const factory = expression[0]
-    if (factory?.kind !== 'word') continue
-    const namespaced =
-      namespaces.has(factory.value) && expression[1]?.value === '.' && expression[2]?.value === 'create_harness'
-    const opening = namespaced ? 3 : 1
-    if (!namespaced && !constructors.has(factory.value)) continue
-    if (expression[opening]?.value !== '(' || expression.at(-1)?.value !== ')') continue
-    const argumentsList = expression.slice(opening + 1, -1)
-    if (!balancedArguments(argumentsList)) continue
-    return { name: pythonName(argumentsList) }
+  for (const { tokens } of topLevel) pythonImports(tokens, constructors, namespaces)
+  const constructs = (callee: readonly string[]): boolean =>
+    callee.length === 1 ? constructors.has(callee[0]!) : namespaces.has(callee[0]!) && callee[2] === 'create_harness'
+  const callsConstructor = ({ tokens }: PythonStatement): boolean =>
+    tokens.some((_token, index) => {
+      const callee = pythonCalleeAt(tokens, index)
+      return callee !== undefined && constructs(callee)
+    })
+  if (!statements.some(callsConstructor)) return { kind: 'unrelated' }
+  const functions = topLevel.flatMap(pythonFunction)
+  const definesFactory = functions.some(({ name }) => name === PYTHON_FACTORY)
+  const callsFactory = (callee: readonly string[]): boolean =>
+    definesFactory && callee.length === 1 && functions.some(({ name, coroutine }) => !coroutine && name === callee[0])
+  for (const { tokens } of topLevel) {
+    const call = pythonAgentCall(tokens)
+    if (call && (constructs(call.callee) || callsFactory(call.callee))) {
+      return { kind: 'harness', name: pythonName(call.argumentsList) }
+    }
   }
-  return undefined
+  return { kind: 'unloadable' }
+}
+
+const pythonAgentCall = (tokens: readonly PythonToken[]): PythonCall | undefined => {
+  if (tokens[0]?.kind !== 'word' || tokens[0].value !== 'agent') return undefined
+  const assignment = tokens.findIndex((token) => token.value === '=')
+  if (assignment < 0 || (assignment !== 1 && tokens[1]?.value !== ':')) return undefined
+  const expression = tokens.slice(assignment + 1)
+  const callee = pythonCalleeAt(expression, 0)
+  if (!callee || expression.at(-1)?.value !== ')') return undefined
+  const argumentsList = expression.slice(callee.length + 1, -1)
+  return balancedArguments(argumentsList) ? { callee, argumentsList } : undefined
+}
+
+const pythonCalleeAt = (tokens: readonly PythonToken[], index: number): string[] | undefined => {
+  const first = tokens[index]
+  if (first?.kind !== 'word' || ['.', 'def'].includes(tokens[index - 1]?.value ?? '')) return undefined
+  const callee =
+    tokens[index + 1]?.value === '.' && tokens[index + 2]?.kind === 'word' ? tokens.slice(index, index + 3) : [first]
+  return tokens[index + callee.length]?.value === '(' ? callee.map(({ value }) => value) : undefined
+}
+
+const pythonFunction = ({ tokens }: PythonStatement): { name: string; coroutine: boolean }[] => {
+  const coroutine = tokens[0]?.value === 'async'
+  const keyword = coroutine ? 1 : 0
+  const name = tokens[keyword + 1]
+  return tokens[keyword]?.value === 'def' && name?.kind === 'word' ? [{ name: name.value, coroutine }] : []
 }
 
 function pythonImports(tokens: PythonToken[], constructors: Set<string>, namespaces: Set<string>): void {
@@ -321,6 +398,7 @@ function pythonImports(tokens: PythonToken[], constructors: Set<string>, namespa
     tokens[0].value === 'from' && tokens[1]?.value === 'strands_harness' && tokens[2]?.value === 'import'
   if (!fromHarness && tokens[0].value !== 'import') return
   const bindings = tokens.slice(fromHarness ? 3 : 1).filter((token) => !['(', ')'].includes(token.value))
+  if (fromHarness && bindings.length === 1 && bindings[0]?.value === '*') constructors.add('create_harness')
   for (let index = 0; index < bindings.length; index++) {
     const token = bindings[index]
     const expected = fromHarness ? 'create_harness' : 'strands_harness'

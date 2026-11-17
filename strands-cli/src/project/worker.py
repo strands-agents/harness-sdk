@@ -1021,6 +1021,24 @@ class ProjectImports(importlib.abc.MetaPathFinder):
 def direct_harness_assignment(entrypoint):
     with tokenize.open(entrypoint) as source:
         tree = ast.parse(source.read(), filename=str(entrypoint))
+    constructors = {"create_harness"}
+    namespaces = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "strands_harness" and not node.level:
+            constructors.update(alias.asname or alias.name for alias in node.names if alias.name == "create_harness")
+        elif isinstance(node, ast.Import):
+            namespaces.update(alias.asname or alias.name for alias in node.names if alias.name == "strands_harness")
+
+    def constructs(function):
+        if isinstance(function, ast.Name):
+            return function.id in constructors
+        return (
+            isinstance(function, ast.Attribute)
+            and function.attr == "create_harness"
+            and isinstance(function.value, ast.Name)
+            and function.value.id in namespaces
+        )
+
     return any(
         isinstance(node, (ast.Assign, ast.AnnAssign))
         and (
@@ -1029,8 +1047,7 @@ def direct_harness_assignment(entrypoint):
             else isinstance(node.target, ast.Name) and node.target.id == "agent"
         )
         and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Name)
-        and node.value.func.id == "create_harness"
+        and constructs(node.value.func)
         for node in tree.body
     )
 
