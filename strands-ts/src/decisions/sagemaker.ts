@@ -127,7 +127,8 @@ export class SageMakerDecisionModel extends DecisionModel {
       throw translateSageMakerError(error)
     }
 
-    const text = new TextDecoder().decode(responseBody)
+    // The AWS SDK returns a null Body for an empty payload, which TextDecoder rejects.
+    const text = responseBody ? new TextDecoder().decode(responseBody) : ''
     if (text.length === 0) return undefined
     try {
       return JSON.parse(text) as unknown
