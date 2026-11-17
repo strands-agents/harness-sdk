@@ -762,6 +762,19 @@ describe('OpenAIDecisionModel', () => {
     ).rejects.toThrow(/question id=<q> \| decision provider declined to answer/)
   })
 
+  it.each([
+    { name: 'a non-object response', payload: null },
+    { name: 'a non-object answer', payload: { answers: [null] } },
+    {
+      name: 'a non-object choice probability',
+      payload: { answers: [{ type: 'choice', name: 'q', choice: 'a', probabilities: [null], confidence: 1 }] },
+    },
+  ])('rejects $name with ModelError', async ({ payload }) => {
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch: fakeFetch(payload) })
+
+    await expect(decision.ask('state', { q: { question: 'Which?', choices: ['a', 'b'] } })).rejects.toThrow(ModelError)
+  })
+
   it('sends message state as JSON text input', async () => {
     const captured: CapturedRequest[] = []
     const fetch = fakeFetch({ answers: [{ type: 'predicate', name: 'q', probability: 0.99 }] }, { captured })
