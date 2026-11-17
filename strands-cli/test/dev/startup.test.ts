@@ -308,7 +308,8 @@ describe('dev startup screen', () => {
       expect(text).toContain('Workspace: /work/strands-dev')
       expect(text).toContain('Source:')
       expect(text).toContain('Create a new harness')
-      expect(text).toContain('←→ scroll')
+      expect(text).toMatch(/Discovered Harnesses \(12\) · 1–\d+ of 12/u)
+      expect(text).not.toContain('←→')
       expect(text).toMatch(STRANDS_WORDMARK)
       expect(frame().filter((line) => line.trim()).length).toBeLessThanOrEqual(rows)
     } finally {

@@ -91,17 +91,32 @@ const choiceLabel = (choice: HarnessChoice, cli?: BaseCliOption): string =>
     : choice.kind === 'discovered'
       ? `${choice.harness.name} (${choice.harness.entrypoint})`
       : `New ${choice.language} harness ${choice.name}`
-const MAX_VISIBLE_ROWS = 7
 const SELECTED_AGENT_HEIGHT = 3
+
+interface Browsing {
+  readonly selected: string
+  readonly offset: number
+}
+
+const firstShownProject = (
+  projectKeys: readonly string[],
+  { selected, offset }: Browsing,
+  capacity: number
+): number => {
+  const index = projectKeys.indexOf(selected)
+  const kept = index < 0 ? offset : Math.min(Math.max(offset, index - capacity + 1), index)
+  return Math.min(Math.max(0, kept), Math.max(0, projectKeys.length - capacity))
+}
 
 // The three sections stay visible; only the discovered harnesses scroll.
 const pickerWindow = (
   rows: readonly PickerRow[],
-  shownProject: string | undefined,
+  browsing: Browsing,
   listRows: number
 ): {
   visible: PickerRow[]
   height: number
+  capacity: number
   chromeSavings: number
   sectionGap: number
   projectRange: string | undefined
@@ -109,39 +124,28 @@ const pickerWindow = (
   const projects = rows.filter((row) => row.choice?.kind === 'discovered')
   const pinned = rows.length - projects.length
   const groups = new Set(rows.map(({ group }) => group)).size
-  const minimum = pinned + Math.min(1, projects.length) + 2 * groups - 1
+  const fullHeight = pinned + projects.length + 2 * groups - 1
   // Reclaim decorative gaps before sacrificing space between the sections.
-  const chromeSavings = Math.min(3, Math.max(0, minimum - listRows))
+  const chromeSavings = Math.min(3, Math.max(0, fullHeight - listRows))
   const budget = listRows + chromeSavings
-  const sectionGap = minimum <= budget ? 1 : 0
+  const sectionGap = fullHeight <= budget ? 1 : 0
   const overhead = groups + sectionGap * (groups - 1)
-  const capacity = Math.min(
-    projects.length,
-    Math.max(1, MAX_VISIBLE_ROWS - pinned),
-    Math.max(1, budget - pinned - overhead)
+  const capacity = Math.min(projects.length, Math.max(1, budget - pinned - overhead))
+  const start = firstShownProject(
+    projects.map(({ key }) => key),
+    browsing,
+    capacity
   )
-  const projectSelection = Math.max(
-    0,
-    projects.findIndex(({ key }) => key === shownProject)
-  )
-  const start = Math.min(Math.max(0, projectSelection - capacity + 1), Math.max(0, projects.length - capacity))
   const visibleProjects = projects.slice(start, start + capacity)
   const visible = rows.filter((row) => row.choice?.kind !== 'discovered' || visibleProjects.includes(row))
   return {
     visible,
+    capacity,
     chromeSavings,
     sectionGap,
     height: visible.length + overhead,
     projectRange: projects.length > capacity ? `${start + 1}–${start + capacity} of ${projects.length}` : undefined,
   }
-}
-
-const harnessHint = (range: string | undefined, count: number): string =>
-  range ? ` · ${range} · ←→ scroll` : count > 1 ? ' · ←→ choose' : ''
-
-interface Browsing {
-  readonly selected: string
-  readonly viewed?: string
 }
 
 type FormField = 'name' | 'language'
@@ -152,7 +156,6 @@ const otherLanguage = (current: 'typescript' | 'python'): 'typescript' | 'python
 const CLI_ROW = 'cli'
 const CREATE_ROW = 'create'
 const DISCOVERY_ROW = 'discovery'
-const DISCOVERED_SECTION = 'discovered'
 const harnessRow = (harness: DiscoveredHarness): string => `harness:${harness.entrypoint}`
 
 const SearchStatus = ({ count }: { count: number }): ReactElement => {
@@ -216,6 +219,7 @@ export const HarnessPicker = ({
 }: PickerProps): ReactElement => {
   const [browsing, setBrowsing] = useState<Browsing>(() => ({
     selected: cli ? CLI_ROW : harnesses[0] ? harnessRow(harnesses[0]) : CREATE_ROW,
+    offset: 0,
   }))
   const selectedRow = browsing.selected
   const [creating, setCreating] = useState(false)
@@ -359,31 +363,19 @@ export const HarnessPicker = ({
     })
   }
   const harnessRows = harnesses.map(harnessRow)
-  const viewedOf = ({ selected, viewed }: Browsing): string | undefined =>
-    harnessRows.includes(selected) ? selected : (harnessRows.find((key) => key === viewed) ?? harnessRows[0])
-  const shownHarness = viewedOf(browsing)
-  const sectionOf = (key: string): string => (harnessRows.includes(key) ? DISCOVERED_SECTION : key)
   const choices = rows.filter(({ selectable }) => selectable !== false)
-  const sections = [...new Set(choices.map(({ key }) => sectionOf(key)))]
-  const moveSection = (step: number): void =>
+  const move = (step: number): void =>
     setBrowsing((current) => {
-      const index = Math.max(0, sections.indexOf(sectionOf(current.selected)))
-      const next = sections[(index + step + sections.length) % sections.length]!
-      const viewed = viewedOf(current)
-      return { selected: next === DISCOVERED_SECTION && viewed ? viewed : next, ...(viewed ? { viewed } : {}) }
-    })
-  const moveHarness = (step: number): void =>
-    setBrowsing((current) => {
-      const index = harnessRows.indexOf(current.selected)
-      if (index < 0) return current
-      const next = harnessRows[(index + step + harnessRows.length) % harnessRows.length]!
-      return { selected: next, viewed: next }
+      const index = Math.max(
+        0,
+        choices.findIndex(({ key }) => key === current.selected)
+      )
+      const selected = choices[(index + step + choices.length) % choices.length]!.key
+      return { selected, offset: firstShownProject(harnessRows, { ...current, selected }, capacity) }
     })
   const browse = (key: Key): void => {
-    if (key.upArrow) moveSection(-1)
-    if (key.downArrow) moveSection(1)
-    if (key.leftArrow) moveHarness(-1)
-    if (key.rightArrow) moveHarness(1)
+    if (key.upArrow) return move(-1)
+    if (key.downArrow) return move(1)
     if (!key.return) return
     const choice = rows[selection]?.choice
     if (choice) return choose(choice)
@@ -467,11 +459,12 @@ export const HarnessPicker = ({
       : undefined
   const {
     visible,
+    capacity,
     chromeSavings,
     sectionGap,
     height: listHeight,
     projectRange,
-  } = pickerWindow(rows, shownHarness, listRows)
+  } = pickerWindow(rows, browsing, listRows)
   const detailNotes = visible.length === rows.length && listRows - listHeight >= detailNoteRows
   const detailSource = selected.choice
     ? selected.detail
@@ -568,7 +561,7 @@ export const HarnessPicker = ({
                   <Box>
                     <Text bold wrap="truncate-end">
                       {row.group}
-                      {row.group === discoveredGroup ? harnessHint(projectRange, harnesses.length) : ''}
+                      {row.group === discoveredGroup && projectRange ? ` · ${projectRange}` : ''}
                     </Text>
                   </Box>
                 ) : null}
