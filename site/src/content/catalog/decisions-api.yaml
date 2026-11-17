@@ -3,7 +3,8 @@ description: Answer closed questions for Strands agents with decision models hos
 integrationType: decision-model
 maintainedBy: strands
 languages:
+  python: {}
   typescript: {}
-github: https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts
-addedDate: 2026-10-26
-# TODO: add docsPage once the decision models guide page exists
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decisions_api_decision_model.py
+docsPage: docs/user-guide/sdk/decision-models/models
+addedDate: 2026-10-30
