@@ -381,7 +381,7 @@ class HookRegistry:
             The event dispatched to registered callbacks and any interrupts raised by the user.
 
         Raises:
-            RuntimeError: If at least one callback is async.
+            RuntimeError: If at least one callback is async, or a synchronous callback returns a coroutine.
             ValueError: If interrupt name is used more than once.
 
         Example:
@@ -399,10 +399,13 @@ class HookRegistry:
         for callback in callbacks:
             try:
                 result = callback(event)
-                if inspect.isawaitable(result):
-                    if inspect.iscoroutine(result):
-                        result.close()
-                    raise RuntimeError(f"event=<{event}> | use invoke_callbacks_async to invoke async callback")
+                # A coroutine cannot run without being awaited, unlike an already-scheduled awaitable.
+                if inspect.iscoroutine(result):
+                    result.close()
+                    raise RuntimeError(
+                        f"event=<{event}> | callback returned a coroutine but this event requires a "
+                        "synchronous callback"
+                    )
             except InterruptException as exception:
                 interrupt = exception.interrupt
                 if interrupt.name in interrupts:

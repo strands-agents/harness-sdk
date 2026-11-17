@@ -1,3 +1,4 @@
+import asyncio
 import gc
 import unittest.mock
 import warnings
@@ -57,23 +58,33 @@ def test_hook_registry_add_callback_agent_init_async_callable_object(registry):
 
 
 @pytest.mark.asyncio
-async def test_hook_registry_invoke_callbacks_async_sync_and_async_callbacks(registry, agent):
-    """Preserve ordinary synchronous and asynchronous callback behavior."""
+async def test_hook_registry_invoke_callbacks_async_awaitable_result(registry, agent):
+    """Await any awaitable returned by a synchronous callback, in registration order."""
 
     calls = []
+
+    async def deferred():
+        calls.append("deferred")
+
+    async def scheduled():
+        calls.append("scheduled")
 
     def sync_callback(event):
         calls.append("sync")
 
-    async def async_callback(event):
-        calls.append("async")
+    def coroutine_wrapper(event):
+        return deferred()
+
+    def future_wrapper(event):
+        return asyncio.ensure_future(scheduled())
 
     registry.add_callback(BeforeInvocationEvent, sync_callback)
-    registry.add_callback(BeforeInvocationEvent, async_callback)
+    registry.add_callback(BeforeInvocationEvent, coroutine_wrapper)
+    registry.add_callback(BeforeInvocationEvent, future_wrapper)
 
     await registry.invoke_callbacks_async(BeforeInvocationEvent(agent=agent))
 
-    assert calls == ["sync", "async"]
+    assert calls == ["sync", "deferred", "scheduled"]
 
 
 @pytest.mark.asyncio
@@ -98,7 +109,7 @@ async def test_hook_registry_invoke_callbacks_async_callable_object(registry, ag
     assert callback.called
 
 
-def test_hook_registry_invoke_callbacks_awaitable_result_raises_without_warning(registry, agent):
+def test_hook_registry_invoke_callbacks_coroutine_result_raises_without_warning(registry, agent):
     """Close unexpected coroutines on the synchronous path.
 
     Regression for https://github.com/strands-agents/harness-sdk/issues/4337.
@@ -114,11 +125,31 @@ def test_hook_registry_invoke_callbacks_awaitable_result_raises_without_warning(
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", RuntimeWarning)
-        with pytest.raises(RuntimeError, match=r"use invoke_callbacks_async to invoke async callback"):
+        with pytest.raises(RuntimeError, match=r"callback returned a coroutine"):
             registry.invoke_callbacks(BeforeInvocationEvent(agent=agent))
         gc.collect()
 
     assert not [warning for warning in caught if issubclass(warning.category, RuntimeWarning)]
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_invoke_callbacks_scheduled_awaitable_result(registry, agent):
+    """Leave an already-scheduled awaitable returned by a synchronous callback to run on its own."""
+
+    calls = []
+
+    async def scheduled():
+        calls.append("scheduled")
+
+    def callback(event):
+        return asyncio.ensure_future(scheduled())
+
+    registry.add_callback(BeforeInvocationEvent, callback)
+
+    registry.invoke_callbacks(BeforeInvocationEvent(agent=agent))
+    await asyncio.sleep(0)
+
+    assert calls == ["scheduled"]
 
 
 @pytest.mark.asyncio
