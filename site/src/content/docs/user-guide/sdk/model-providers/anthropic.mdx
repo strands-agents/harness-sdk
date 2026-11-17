@@ -405,9 +405,7 @@ to `false` to leave that part uncached). The shape and the per-field behavior ar
 on [Amazon Bedrock](./amazon-bedrock-prompt-caching#tool-caching), so a configuration survives
 a provider switch unchanged.
 
-`strategy` takes `'auto'` or `'sdk'`, which place cache points, or `'manual'`, which sends only the cache points
-you place; any other mode falls back to `'auto'` with a warning. See
-[caching modes](./amazon-bedrock-prompt-caching#caching-modes).
+`strategy` is ignored by this provider.
 </Tab>
 </Tabs>
 

@@ -280,7 +280,7 @@ Common configuration parameters include:
 - `temperature` - Controls randomness (higher = more random)
 - `maxTokens` - Maximum number of tokens to generate; defaults to the model's known output limit (`getConfig()` shows the value). Bedrock reserves `input + maxTokens` against your tokens-per-minute quota when a request starts, so set it explicitly for high-concurrency workloads
 - `stream` - Enable/disable streaming mode
-- `cacheConfig` - Enable prompt caching with `{ strategy: 'auto' }`, or `{ messagesTTL: false }` to cache the tool definitions and system prompt only; `strategy` picks the [caching mode](./amazon-bedrock-prompt-caching#caching-modes)
+- `cacheConfig` - Enable prompt caching with `{ strategy: 'auto' }`, or `{ messagesTTL: false }` to cache the tool definitions and system prompt only
 - `region` - AWS region to use
 - `apiKey` - Bedrock API key for bearer token authentication (alternative to SigV4 signing)
 - `clientConfig` - AWS SDK client configuration
@@ -1069,7 +1069,7 @@ If you're using an ARN-based application inference profile as your `model_id` (e
 
 The `strategy="auto"` detection checks the model ID string for `"claude"` or `"anthropic"` substrings. Cross-region inference profile IDs like `us.anthropic.claude-sonnet-5-5` contain `"anthropic"` and are detected correctly, but application inference profiles use opaque resource IDs (`application-inference-profile/abc123`) that carry no model name information, so detection returns `None`, caching is skipped, and Strands logs a warning: `model_id=<your-arn> | cache_config is enabled but this model does not support automatic caching`.
 
-Use <Syntax py='strategy="anthropic"' ts="strategy: 'sdk'" /> explicitly to fix this:
+Use `strategy="anthropic"` explicitly to fix this:
 
 <Tabs>
 <Tab label="Python">
@@ -1094,7 +1094,7 @@ import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 const bedrockModel = new BedrockModel({
   modelId: 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123',
-  cacheConfig: { strategy: 'sdk' },
+  cacheConfig: { strategy: 'anthropic' },
 })
 
 const agent = new Agent({ model: bedrockModel })
@@ -1102,7 +1102,7 @@ const agent = new Agent({ model: bedrockModel })
 </Tab>
 </Tabs>
 
-<Syntax py='strategy="anthropic"' ts="strategy: 'sdk'" /> has identical performance to <Syntax py='strategy="auto"' ts="strategy: 'auto'" /> and requires no additional API calls or IAM permissions.
+`strategy="anthropic"` has identical performance to `strategy="auto"` and requires no additional API calls or IAM permissions.
 
 ### Thinking block is bound to a different conversation
 

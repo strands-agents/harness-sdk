@@ -190,22 +190,3 @@ async function cacheMetrics() {
   }
   // --8<-- [end:cache_metrics]
 }
-
-// Caching modes
-async function cachingModes() {
-  // --8<-- [start:caching_modes]
-  const claude = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5',
-    cacheConfig: {},
-  })
-  console.log(claude.resolvedCacheStrategy) // 'sdk'
-
-  // Send only the cache points you place in the system prompt and messages
-  claude.updateConfig({ cacheConfig: { strategy: 'manual' } })
-  console.log(claude.resolvedCacheStrategy) // 'manual'
-
-  // Converse caches OpenAI GPT models by prompt prefix, with nothing for Strands to place
-  const gpt = new BedrockModel({ modelId: 'us.openai.gpt-6-luna', cacheConfig: {} })
-  console.log(gpt.resolvedCacheStrategy) // 'implicit'
-  // --8<-- [end:caching_modes]
-}

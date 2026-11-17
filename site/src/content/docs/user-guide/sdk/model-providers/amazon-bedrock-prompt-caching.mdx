@@ -14,51 +14,11 @@ Prompt caching is supported for Anthropic Claude and Amazon Nova models on Bedro
 
 For complete details on supported models, token requirements, and cache field support, see the [Amazon Bedrock prompt caching documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-models).
 
-## Caching modes
-
-<Tabs>
-<Tab label="Python">
-
-`CacheConfig(strategy="auto")`, the default, places cache points on models that take them and skips the rest with a warning. `strategy="anthropic"` places them without checking the model, for model IDs Strands cannot inspect (see [ARN-based inference profiles](./amazon-bedrock#cacheconfig-with-arn-based-inference-profiles)).
-</Tab>
-<Tab label="TypeScript">
-
-`cacheConfig.strategy` picks how a model caches, and the read-only `model.resolvedCacheStrategy` reports the mode it runs in:
-
-| Mode | What Strands sends |
-|------|--------------------|
-| `sdk` | Cache points where the provider takes them (on Bedrock and Anthropic: after the tool definitions, the system prompt, and the last user message, with none on the tool definitions for Nova; on OpenAI Responses: on the messages) |
-| `implicit` | Nothing: the provider caches the prompt prefix on its own |
-| `manual` | No cache points of its own; cache points you place are sent as written. Bedrock still drops the oldest extras past its four-point limit |
-| `provider` | The provider's own caching mechanism. No provider applies it yet, so it falls back to `auto` |
-
-`auto`, the default, picks the most capable mode the provider and model support. A mode the provider or model cannot apply logs a warning containing `falling back to auto` and resolves as `auto`. `cacheConfig: false`, like leaving `cacheConfig` unset, turns caching off, and the model reports what the provider does unasked. `'anthropic'` is a deprecated alias of `'sdk'`.
-
-| Provider | Modes you can choose | `auto` resolves to | Without `cacheConfig` |
-|----------|----------------------|--------------------|-----------------------|
-| `BedrockModel` | `sdk` on any model ID; `implicit` on a model Converse caches implicitly; `manual` | `sdk` for a model that takes cache points (Claude, Nova, or an unlisted ID naming Claude); `implicit` for a model Converse caches implicitly (OpenAI GPT, xAI); otherwise `manual` with a warning | `implicit` where Converse caches implicitly, otherwise `manual` |
-| `AnthropicModel` | `sdk`, `manual` | `sdk` | `manual` |
-| `OpenAIModel`, Responses API | `sdk` on a model that takes cache points; `implicit`; `manual` | `sdk` on a model that takes cache points, otherwise `implicit` | `implicit` |
-| `OpenAIModel`, Chat Completions | `implicit`, `manual` | `implicit` | `implicit` |
-| `VercelModel` | As the wrapped Anthropic, Amazon Bedrock, or OpenAI provider; the OpenAI routes resolve like Chat Completions | As the wrapped provider; `manual` for any other provider | As the wrapped provider |
-| `GoogleModel` | None: `cacheConfig` is ignored with a warning | `implicit` | `implicit` |
-| Any other model provider | None: `cacheConfig` is ignored with a warning | `implicit` when `modelInfo.capabilities.promptCaching` is `'auto'`, otherwise `manual` | Same |
-
-On OpenAI, `manual` still sends `cacheKey` (or the key derived from the session) and the retention `ttl`.
-
-```typescript
---8<-- "user-guide/sdk/model-providers/amazon-bedrock-prompt-caching_imports.ts:caching_modes_imports"
-
---8<-- "user-guide/sdk/model-providers/amazon-bedrock-prompt-caching.ts:caching_modes"
-```
-</Tab>
-</Tabs>
-
 ## System Prompt Caching
 
 Cache system prompts that remain static across multiple requests. This is useful when your system prompt contains no variables, timestamps, or dynamic content, exceeds the minimum cacheable token threshold for your model, and you make multiple requests with the same system prompt.
 
-With <Syntax py="cache_config" ts="cacheConfig" /> set to the `auto` (or <Syntax py="anthropic" ts="sdk" />) strategy, Strands caches the system prompt **by default**: it appends a cache point at the end of the system prompt on every request, so repeated calls with the same static system prefix (including fresh agents that share a system prompt) read it from cache. A system prompt that changes on every request never produces a cache read, so the added cache write is a small extra cost with no offsetting saving; opt out by setting <Syntax py="system_prompt_ttl=False" ts="systemPromptTTL: false" /> when the system prompt is dynamic. This disables only the auto-injected system point, and tool and message caching are unaffected. A cache point you place by hand anywhere in the system prompt is honored as-is, and no second point is added.
+With <Syntax py="cache_config" ts="cacheConfig" /> set to the `auto` (or `anthropic`) strategy, Strands caches the system prompt **by default**: it appends a cache point at the end of the system prompt on every request, so repeated calls with the same static system prefix (including fresh agents that share a system prompt) read it from cache. A system prompt that changes on every request never produces a cache read, so the added cache write is a small extra cost with no offsetting saving; opt out by setting <Syntax py="system_prompt_ttl=False" ts="systemPromptTTL: false" /> when the system prompt is dynamic. This disables only the auto-injected system point, and tool and message caching are unaffected. A cache point you place by hand anywhere in the system prompt is honored as-is, and no second point is added.
 
 The auto-injected system cache point inherits the TTL you configured, so setting one `ttl` gives every cache point in the request the same duration. Bedrock requires TTLs to be non-increasing across the tool definitions, the system prompt, and the messages, and rejects a request where a longer TTL follows a shorter one.
 
