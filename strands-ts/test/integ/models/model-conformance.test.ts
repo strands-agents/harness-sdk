@@ -1,0 +1,198 @@
+import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import { Agent, Message, TextBlock } from '@strands-agents/sdk'
+import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
+import { ContextInjector } from '$/sdk/vended-plugins/context-injector/index.js'
+
+import {
+  cases,
+  notApplicableReason,
+  omittedCases,
+  omittedProviders,
+  providers,
+  recordResult,
+  targets,
+} from '../__fixtures__/conformance.js'
+import { echoTool, hasToolUse, isInBrowser } from '../__fixtures__/test-helpers.js'
+import type { Model } from '@strands-agents/sdk'
+import type { ConformanceConfig } from '../__fixtures__/conformance.js'
+
+/**
+ * Model conformance: every case in shared/conformance.json runs on every target it lists. A case whose `requires`
+ * does not hold for the model's resolved model info is skipped as not applicable.
+ */
+
+interface CaseContext {
+  model: Model
+  create: (config?: ConformanceConfig) => Model
+}
+
+const profileSchema = z.object({ name: z.string(), age: z.number(), occupation: z.string() })
+const profilePrompt = 'Create a profile for John, a 25 year old dentist.'
+const expectedProfile = { name: 'John', age: 25, occupation: expect.stringMatching(/dentist/i) }
+
+const userMessage = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
+
+const implementations: Record<string, (context: CaseContext) => Promise<void>> = {
+  'tool-use': async ({ model }) => {
+    const agent = new Agent({ model, tools: [echoTool], printer: false })
+
+    const result = await agent.invoke("Use the echo tool to echo the value 'pineapple'.")
+
+    expect(result.stopReason).toBe('endTurn')
+    expect(hasToolUse(agent.messages, echoTool.name)).toBe(true)
+  },
+
+  'context-window': async ({ model }) => {
+    const contextWindow = model.modelInfo.limits?.contextWindow
+
+    expect(contextWindow).toBeDefined()
+    expect(model.getConfig().contextWindowLimit).toBe(contextWindow)
+  },
+
+  'structured-output': async ({ model }) => {
+    const agent = new Agent({ model, printer: false, structuredOutputSchema: profileSchema })
+
+    const result = await agent.invoke(profilePrompt)
+
+    expect(result.structuredOutput).toMatchObject(expectedProfile)
+  },
+
+  'max-output-tokens': async ({ model }) => {
+    const agent = new Agent({ model, printer: false })
+
+    const result = await agent.invoke('Reply with the single word OK.')
+
+    expect(result.stopReason).toBe('endTurn')
+  },
+
+  'forced-tool-choice': async ({ model }) => {
+    const events = await collectIterator(
+      model.stream([userMessage('Hello there!')], { toolSpecs: [echoTool.toolSpec], toolChoice: { any: {} } })
+    )
+
+    expect(events.find((event) => event.type === 'modelMessageStopEvent')?.stopReason).toBe('toolUse')
+  },
+
+  'native-structured-output': async ({ model }) => {
+    const events = await collectIterator(
+      model.stream([userMessage(profilePrompt)], { structuredOutputSchema: profileSchema })
+    )
+
+    const text = events
+      .map((event) =>
+        event.type === 'modelContentBlockDeltaEvent' && event.delta.type === 'textDelta' ? event.delta.text : ''
+      )
+      .join('')
+    expect(profileSchema.parse(JSON.parse(text))).toMatchObject(expectedProfile)
+  },
+
+  'prompt-caching': async ({ create }) => {
+    // Salted so a rerun cannot read an entry an earlier run wrote, and sized past the model's cache minimum.
+    const systemPrompt = `Dossier ${globalThis.crypto.randomUUID()}. ${'The subject prefers concise written answers. '.repeat(600)}`
+    const agent = new Agent({ model: create({ cacheConfig: { strategy: 'auto' } }), systemPrompt, printer: false })
+
+    await agent.invoke('Reply ALPHA.')
+    // An entry can take a moment to become readable, so the read may land a turn late.
+    let readTokens = 0
+    for (const reply of ['BETA', 'GAMMA', 'DELTA']) {
+      await agent.invoke(`Reply ${reply}.`)
+      const usage = agent.messages.filter((message) => message.role === 'assistant').at(-1)?.metadata?.usage
+      readTokens = usage?.cacheReadInputTokens ?? 0
+      if (readTokens > 0) break
+    }
+
+    expect(readTokens).toBeGreaterThan(0)
+  },
+
+  'server-side-summary': async ({ model }) => {
+    const systemPrompt = 'You are helpful.'
+    const messages = [
+      userMessage('My name is Ada and I live in Lisbon. Remember that.'),
+      new Message({ role: 'assistant', content: [new TextBlock('Got it, Ada from Lisbon.')] }),
+      userMessage('My favourite colour is teal.'),
+      new Message({ role: 'assistant', content: [new TextBlock('Noted: teal.')] }),
+    ]
+
+    const summary = (await model.summarize(messages, { systemPrompt })).content[0]
+
+    expect(summary).toMatchObject({ type: 'summaryBlock', provider: expect.any(String) })
+
+    // Mirrors how the summarize strategy splices the summary into history.
+    const agent = new Agent({
+      model,
+      systemPrompt,
+      printer: false,
+      messages: [messages[0]!, new Message({ role: 'assistant', content: [summary!] })],
+    })
+    const answer = String(await agent.invoke('What is my name and which city do I live in?')).toLowerCase()
+
+    expect(answer).toContain('ada')
+    expect(answer).toContain('lisbon')
+  },
+
+  'temporary-messages': async ({ model }) => {
+    const orderNumber = globalThis.crypto.randomUUID().slice(0, 8)
+    const agent = new Agent({
+      model,
+      printer: false,
+      plugins: [new ContextInjector({ renderContent: async () => `The user's order number is ${orderNumber}.` })],
+    })
+
+    const result = await agent.invoke('What is my order number? Reply with only the number.')
+
+    expect(String(result)).toContain(orderNumber)
+  },
+}
+
+describe('Model conformance coverage', () => {
+  it('implements or leaves out every shared case', () => {
+    expect([...Object.keys(implementations), ...Object.keys(omittedCases)].sort()).toStrictEqual(
+      Object.keys(cases).sort()
+    )
+  })
+
+  it('maps or leaves out every shared provider', () => {
+    const known = new Set([...Object.keys(providers), ...Object.keys(omittedProviders)])
+
+    expect(targets.filter((target) => !known.has(target.provider))).toStrictEqual([])
+  })
+})
+
+describe.each(targets)('Model conformance: $provider $model', (target) => {
+  const provider = providers[target.provider]
+
+  // Why no case can run on this target, as a result status and reason.
+  const unavailable = (): ['skipped' | 'not-applicable', string] | undefined => {
+    if (!provider) return ['not-applicable', omittedProviders[target.provider] ?? 'provider is not mapped']
+    if (provider.skip) return ['skipped', 'credentials are not available']
+    if (provider.nodeOnly && isInBrowser()) return ['skipped', 'provider runs in node only']
+    return undefined
+  }
+
+  for (const caseId of Object.keys(cases)) {
+    it(caseId, async (ctx) => {
+      const [status, reason] = unavailable() ?? []
+      if (status) {
+        await recordResult(target, caseId, status, reason)
+        return ctx.skip(reason)
+      }
+
+      const run = implementations[caseId]
+      const model = provider!.create(target.model)
+      const notApplicable = run ? notApplicableReason(cases[caseId]!, model.modelInfo) : omittedCases[caseId]
+      if (!run || notApplicable) {
+        await recordResult(target, caseId, 'not-applicable', notApplicable)
+        return ctx.skip(notApplicable)
+      }
+
+      try {
+        await run({ model, create: (config) => provider!.create(target.model, config) })
+      } catch (error) {
+        await recordResult(target, caseId, 'failed')
+        throw error
+      }
+      await recordResult(target, caseId, 'passed')
+    })
+  }
+})
