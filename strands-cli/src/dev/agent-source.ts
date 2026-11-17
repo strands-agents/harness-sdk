@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -76,10 +76,16 @@ export const projectPython = (root: string): string => {
 export const readPythonSource = <T>(script: string, source: string, interpreter: string): Promise<T> =>
   new Promise((resolvePromise, reject) => {
     const fail = (reason: string): void => reject(new PythonReadFailure(reason))
-    const child = spawn(interpreter, ['-I', '-c', script], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: PYTHON_TIMEOUT_MS,
-    })
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = spawn(interpreter, ['-I', '-c', script], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: PYTHON_TIMEOUT_MS,
+      })
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error))
+      return
+    }
     let output = ''
     let errors = ''
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))

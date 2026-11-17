@@ -1,7 +1,5 @@
-import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { relative } from 'node:path'
 
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import type { Node, ObjectLiteralExpression, PropertyName, SourceFile } from 'typescript'
@@ -9,6 +7,7 @@ import type { Node, ObjectLiteralExpression, PropertyName, SourceFile } from 'ty
 import type { ProfileEffort } from '../config/store.js'
 import { profileEffort, resolveModelTarget } from '../model/selection.js'
 import { sourceString } from '../project/source.js'
+import { projectPython, PythonReadFailure, readPythonSource } from './agent-source.js'
 import { editFile } from './file-edits.js'
 import type { DevWorkspace } from './workspace.js'
 
@@ -67,7 +66,6 @@ interface OptionCall {
 }
 
 const OPTION_KEYS: readonly OptionKey[] = ['model', 'effort']
-const PYTHON_TIMEOUT_MS = 10_000
 
 const modelIdentity = (model: string): string => {
   try {
@@ -301,39 +299,16 @@ const pythonShape = (source: string, value: PythonValue, literal: string | null)
   return scalarShape(value, literal ?? undefined)
 }
 
-const pythonInterpreter = (root: string): string => {
-  const environment = join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
-  return existsSync(environment)
-    ? environment
-    : (process.env.PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3'))
+const locatePython = async (source: string, interpreter: string): Promise<PythonLocation> => {
+  try {
+    return await readPythonSource<PythonLocation>(PYTHON_LOCATOR, source, interpreter)
+  } catch (error) {
+    if (!(error instanceof PythonReadFailure)) throw error
+    throw new AgentOptionsNotEditable(
+      `Python 3.8 or newer could not read the agent source (${interpreter}): ${error.message}`
+    )
+  }
 }
-
-const locatePython = (source: string, interpreter: string): Promise<PythonLocation> =>
-  new Promise((resolvePromise, reject) => {
-    const fail = (reason: string): void =>
-      reject(
-        new AgentOptionsNotEditable(`Python 3.8 or newer could not read the agent source (${interpreter}): ${reason}`)
-      )
-    const child = spawn(interpreter, ['-I', '-c', PYTHON_LOCATOR], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: PYTHON_TIMEOUT_MS,
-    })
-    let output = ''
-    let errors = ''
-    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
-    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (errors += chunk))
-    child.stdin.once('error', () => undefined)
-    child.once('error', (error) => fail(error.message))
-    child.once('close', (code) => {
-      if (code !== 0) return fail(errors.trim().split('\n').at(-1) || `exit code ${code}`)
-      try {
-        resolvePromise(JSON.parse(output) as PythonLocation)
-      } catch {
-        fail('it returned no result')
-      }
-    })
-    child.stdin.end(source)
-  })
 
 const pythonCall = async (source: string, entry: string, interpreter: string): Promise<OptionCall> => {
   const location = await locatePython(source, interpreter)
@@ -418,7 +393,7 @@ export const readAgentModel = async (
   try {
     const call =
       workspace.config.language === 'python'
-        ? await pythonCall(source, entry, pythonInterpreter(workspace.root))
+        ? await pythonCall(source, entry, projectPython(workspace.root))
         : await typescriptCall(source, entry)
     const model = call.values.get('model')
     if (!model) return modelIdentity(DEFAULT_HARNESS_AGENT_CONFIG.model)
@@ -439,7 +414,7 @@ export const saveAgentOptions = async (
   return editFile(workspace.root, workspace.entrypoint, async (source) =>
     setOptions(
       source,
-      python ? await pythonCall(source, entry, pythonInterpreter(workspace.root)) : await typescriptCall(source, entry),
+      python ? await pythonCall(source, entry, projectPython(workspace.root)) : await typescriptCall(source, entry),
       { entry, python, change, expected }
     )
   )
@@ -450,7 +425,7 @@ type AgentWorkspace = Pick<DevWorkspace, 'root' | 'entrypoint'> & { config: Pick
 const optionCall = async (workspace: AgentWorkspace, source: string): Promise<OptionCall> => {
   const entry = relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
   return workspace.config.language === 'python'
-    ? pythonCall(source, entry, pythonInterpreter(workspace.root))
+    ? pythonCall(source, entry, projectPython(workspace.root))
     : typescriptCall(source, entry)
 }
 

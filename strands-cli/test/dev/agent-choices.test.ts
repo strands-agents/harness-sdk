@@ -145,6 +145,17 @@ agent = create_harness(
 )
 `
 
+describe('saving effort into a Python agent without a usable interpreter', () => {
+  it('shouldReportThatTheEffortCannotBeSavedWhenThePythonPathCannotStartAProcess', async () => {
+    const file = join(await temporaryDirectory(), 'notes.txt')
+    await writeFile(file, '')
+    vi.stubEnv('PYTHON', join(file, 'python'))
+    const workspace = await agent('python', pythonAgent(`model=BedrockModel(model_id="${SONNET}")`))
+
+    await expect(saveAgentChoices(workspace, { effort: 'low' })).rejects.toThrow(AgentOptionsNotEditable)
+  })
+})
+
 describe.skipIf(!existsSync(pythonExecutable))('saving effort into a Python agent', () => {
   beforeEach(() => {
     vi.stubEnv('PYTHON', pythonExecutable)

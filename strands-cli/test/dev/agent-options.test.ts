@@ -159,6 +159,16 @@ describe('reading Python source without an interpreter', () => {
 
     expect(await readFile(workspace.entrypoint, 'utf8')).toBe(GENERATED_PYTHON)
   })
+
+  it('shouldReportThatTheSourceCannotBeReadWhenThePythonPathCannotStartAProcess', async () => {
+    const file = join(await temporaryDirectory(), 'notes.txt')
+    await writeFile(file, '')
+    vi.stubEnv('PYTHON', join(file, 'python'))
+    const workspace = await agent('python', GENERATED_PYTHON)
+
+    expect(await readAgentOptions(workspace)).toBeUndefined()
+    await expect(saveAgentOptions(workspace, { effort: 'high' })).rejects.toThrow(AgentOptionsNotEditable)
+  })
 })
 
 describe.skipIf(!existsSync(pythonExecutable))('saving agent options into Python source', () => {
