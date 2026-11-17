@@ -115,7 +115,6 @@ class _Interruptible(Protocol):
 
         Args:
             name: User defined name for the interrupt.
-            reason: User provided reason for the interrupt.
 
         Returns:
             Interrupt id.
