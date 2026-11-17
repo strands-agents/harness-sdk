@@ -2383,7 +2383,7 @@ export class ChatController implements ChatControllerApi {
       rows: [
         {
           label: 'Default folder',
-          description: `~/.strands/harnesses/${name}`,
+          description: strandsUserPath('harnesses', name),
           value: `${EXPORT_SAVE_DEFAULT_PREFIX}${language}:${encodedName}`,
         },
         {

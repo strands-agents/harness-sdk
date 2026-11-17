@@ -26,6 +26,7 @@ describe('Bedrock token region validation', () => {
       profiles: ['default', 'legacy name', 'work name'],
       regions: ['ap-northeast-1', 'eu-west-1', 'us-east-1', 'us-west-2'],
       profileRegions: { default: 'us-west-2', 'legacy name': 'eu-west-1', 'work name': 'ap-northeast-1' },
+      credentialProfiles: ['work name'],
     })
   })
 

@@ -17,6 +17,7 @@ import {
 } from '../session/agent-definition.js'
 import { upgradeDesktopAgentProfileMessages } from '../session/desktop-profile.js'
 import { DEFAULT_SESSION_DIR, hasSavedSession, sessionDir, sessionSettings, withSession } from '../session/sessions.js'
+import { runtimeOptions, type RuntimeOverrides } from './runtime-options.js'
 import { latestRootModelUsage, RunUsage } from '../usage.js'
 import {
   backgroundTaskUpdate,
@@ -43,6 +44,8 @@ export class AcpService {
   private readonly _agentOptions: HarnessAgentOptions
   private readonly _buildAgent: AgentBuilder
   private readonly _sharedMcpClients: readonly McpClient[]
+  private readonly _runtimeOverrides: RuntimeOverrides | undefined
+  private readonly _initialWorkspace = process.cwd()
   private readonly _sessions = new Map<string, AcpSession>()
   private readonly _openingSessions = new Set<string>()
 
@@ -54,11 +57,13 @@ export class AcpService {
     options: {
       buildAgent?: AgentBuilder
       sharedMcpClients?: readonly McpClient[]
+      runtimeOverrides?: RuntimeOverrides
     } = {}
   ) {
     this._agentOptions = { ...agentOptions, printer: false }
     this._buildAgent = options.buildAgent ?? createHarness
     this._sharedMcpClients = options.sharedMcpClients ?? []
+    this._runtimeOverrides = options.runtimeOverrides
   }
 
   initialize(params: acp.InitializeRequest): acp.InitializeResponse {
@@ -104,7 +109,7 @@ export class AcpService {
     }
     this._setWorkspace(params.cwd)
     const sessionId = validateSessionId(params.sessionId)
-    const sessionDirectory = resolve(sessionDir(this._agentOptions) ?? DEFAULT_SESSION_DIR)
+    const sessionDirectory = resolve(sessionDir(this._workspaceOptions()) ?? DEFAULT_SESSION_DIR)
     if (!(await hasSavedSession(sessionDirectory, sessionId))) {
       throw acp.RequestError.resourceNotFound(sessionId)
     }
@@ -226,7 +231,7 @@ export class AcpService {
       mcpClients = await loadAcpMcpClients(mcpServers)
       this._assertOpen()
       const agentOptions = {
-        ...withSession(this._agentOptions, { id: sessionId }),
+        ...withSession(this._workspaceOptions(), { id: sessionId }),
         ...sessionAgentDefinition,
         tools: [...(this._agentOptions.tools ?? []), ...this._sharedMcpClients, ...mcpClients],
         printer: false,
@@ -254,6 +259,17 @@ export class AcpService {
     } finally {
       this._openingSessions.delete(sessionId)
     }
+  }
+
+  private _workspaceOptions(): HarnessAgentOptions {
+    return this._runtimeOverrides
+      ? runtimeOptions(
+          this._agentOptions,
+          this._workspace ?? this._initialWorkspace,
+          this._runtimeOverrides,
+          this._initialWorkspace
+        )
+      : this._agentOptions
   }
 
   private _watchBackgroundTasks(sessionId: string, session: AcpSession, client: acp.AgentContext): void {
@@ -340,6 +356,7 @@ export async function runAcpServer(
   agentOptions: HarnessAgentOptions = {},
   options: {
     buildAgent?: AgentBuilder
+    runtimeOverrides?: RuntimeOverrides
     mcpPaths?: readonly string[]
     mcpStrictPaths?: readonly string[]
     mcpDigests?: Readonly<Record<string, string>>
@@ -355,6 +372,7 @@ export async function runAcpServer(
   const service = new AcpService(agentOptions, {
     sharedMcpClients: sharedMcp?.clients ?? [],
     ...(options.buildAgent ? { buildAgent: options.buildAgent } : {}),
+    ...(options.runtimeOverrides ? { runtimeOverrides: options.runtimeOverrides } : {}),
   })
   try {
     const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))

@@ -19,6 +19,9 @@
  */
 
 import { Model, ModelRouter, type JSONValue } from '@strands-agents/sdk'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
+import { Agent as HttpAgent } from 'node:http'
+import { Agent as HttpsAgent } from 'node:https'
 import { DEFAULT_MODEL } from './defaults.js'
 import { warnOnce } from './logging.js'
 import type { Effort } from './types/agent.js'
@@ -241,12 +244,30 @@ async function bedrock(modelId: string, effort: string | null, _webSearch: boole
   const thinking = bedrockThinking(modelId, effort)
   const maxTokens = claudeMaxTokens(modelId)
   const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION
+  const requestHandler = bedrockProxyHandler()
   return new BedrockModel({
     modelId,
     ...(region ? { region } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(cacheConfig ? { cacheConfig } : {}),
     ...(thinking ? { additionalRequestFields: thinking } : {}),
+    ...(requestHandler ? { clientConfig: { requestHandler } } : {}),
+  })
+}
+
+function bedrockProxyHandler(): NodeHttpHandler | undefined {
+  const httpsProxy = process.env.https_proxy ?? process.env.HTTPS_PROXY
+  const httpProxy = process.env.http_proxy ?? process.env.HTTP_PROXY
+  if (!httpsProxy && !httpProxy) {
+    return undefined
+  }
+  const [major = 0, minor = 0] = process.versions.node.split('.').map(Number)
+  if (!(major > 24 || (major === 24 && minor >= 5) || (major === 22 && minor >= 21))) {
+    throw new Error(`Bedrock proxy support requires Node ^22.21.0 || >=24.5.0; running ${process.versions.node}.`)
+  }
+  return new NodeHttpHandler({
+    httpAgent: new HttpAgent({ keepAlive: true, proxyEnv: process.env }),
+    httpsAgent: new HttpsAgent({ keepAlive: true, proxyEnv: process.env }),
   })
 }
 

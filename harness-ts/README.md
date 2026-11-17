@@ -105,6 +105,10 @@ npm install @anthropic-ai/sdk   # for anthropic/*
 npm install @google/genai       # for google/*
 ```
 
+Bedrock honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` through Node's native proxy support,
+including their lowercase forms. Proxy use requires Node `^22.21.0 || >=24.5.0` and uses HTTP/1.1.
+Without a proxy, the harness retains its existing Node support and transport.
+
 ## What you get by default
 
 Out of the box, `createHarness()` gives you an agent that:

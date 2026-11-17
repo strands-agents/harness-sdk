@@ -91,7 +91,7 @@ async function installedFixture(legacy: boolean): Promise<string> {
   for (const path of ['bin/strands.js', 'dist/src/terminal/ink.js']) {
     await copyFile(join(packageRoot, path), join(directory, path))
   }
-  for (const name of ['widest-line', 'wrap-ansi', 'cli-truncate']) {
+  for (const name of ['widest-line', 'wrap-ansi', 'cli-truncate', 'semver']) {
     // Resolve each dep rather than assuming a hoisted layout: the CLI installs standalone, so these
     // transitive deps live under strands-cli/node_modules, not a shared ../node_modules.
     const packageDirectory = dirname(fileURLToPath(import.meta.resolve(name)))

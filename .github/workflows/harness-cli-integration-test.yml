@@ -20,6 +20,16 @@ on:
     types: [checks_requested]
   workflow_call:
     inputs:
+      sdk_version:
+        description: Exact published SDK version containing the Mantle bearer-token fix
+        required: false
+        type: string
+        default: ''
+      harness_version:
+        description: Exact published harness version to test and package for a CLI release
+        required: false
+        type: string
+        default: ''
       release-sha:
         description: Full release commit SHA from origin/main history
         required: true
@@ -132,6 +142,20 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Select released SDK and harness
+        if: inputs.harness_version != '' || inputs.sdk_version != ''
+        shell: bash
+        env:
+          HARNESS_VERSION: ${{ inputs.harness_version }}
+          SDK_VERSION: ${{ inputs.sdk_version }}
+        run: |
+          if ! [[ "$HARNESS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+             ! [[ "$SDK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::harness_version and sdk_version must be exact published release versions."
+            exit 1
+          fi
+          npm install --save-exact --ignore-scripts --no-audit --no-fund "@strands-agents/harness@$HARNESS_VERSION" "@strands-agents/sdk@$SDK_VERSION"
 
       - name: Build
         # The CLI e2e drives the built `strands` binary.

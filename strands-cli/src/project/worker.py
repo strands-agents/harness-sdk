@@ -15,6 +15,7 @@ import re
 import sys
 import threading
 import tokenize
+import weakref
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -24,6 +25,7 @@ from strands import Agent, tool
 from strands.hooks import HookOrder
 from strands.hooks.events import BeforeModelCallEvent, BeforeToolCallEvent
 from strands.models import Model
+from strands.middleware import InvokeModelStage
 from strands.session import FileSessionManager, S3SessionManager, SnapshotSessionManager
 from strands.storage import InMemoryStorage, LocalFileStorage, S3Storage
 from strands.storage import storage as storage_types
@@ -359,21 +361,52 @@ def agent_private_paths(agent):
     return list(dict.fromkeys(paths))
 
 
+def runtime_options(authored, command):
+    partial = command.get("overrides", {})
+    options = overrides_from_config(partial, authored, command.get("assignments", []))
+    flags = command.get("configFlags", {})
+    for key in ("session", "memory"):
+        if flags.get(key) == "off":
+            options[key] = False
+        elif flags.get(key) == "on":
+            value = options.get(key, authored.get(key))
+            options[key] = True if value is None or value is False else value
+        elif flags.get(key) is not None:
+            raise ValueError(f"--{key} must be 'on' or 'off'.")
+    directory = command.get("stateDirectory")
+    if directory:
+        for key in ("session", "memory"):
+            value = options.get(key, authored.get(key, True))
+            manager = options.get(f"{key}_manager", authored.get(f"{key}_manager"))
+            custom = (
+                manager is not None
+                or (value is not None and not isinstance(value, (bool, dict)))
+                or (key == "memory" and isinstance(value, dict) and bool(value.get("stores")))
+            )
+            if custom:
+                if command.get("relocateState"):
+                    raise ValueError(f"--state-dir cannot relocate a custom {key} store.")
+                continue
+            if value is False or value is None:
+                continue
+            if key == "session" and command.get("relocateState") and options.get("storage", authored.get("storage")) is not None:
+                raise ValueError("--state-dir cannot relocate custom agent storage.")
+            configured = value if isinstance(value, dict) else {}
+            if command.get("relocateState") or "dir" not in configured:
+                options[key] = {
+                    **configured, "dir": str(Path(directory) / ("sessions" if key == "session" else "memory"))
+                }
+    return options
+
+
 class Runtime:
     def __init__(self, module, command):
         self.module = module
-        partial = command.get("overrides", {})
         authored = getattr(module, "_strands_options", {})
-        self.options = overrides_from_config(partial, authored, command.get("assignments", []))
+        self.options = runtime_options(authored, command)
+        self.append_instructions = command.get("appendInstructions")
+        self.instruction_agents = weakref.WeakSet()
         flags = command.get("configFlags", {})
-        for key in ("session", "memory"):
-            if flags.get(key) == "off":
-                self.options[key] = False
-            elif flags.get(key) == "on":
-                value = self.options.get(key, authored.get(key))
-                self.options[key] = True if value is None or value is False else value
-            elif flags.get(key) is not None:
-                raise ValueError(f"--{key} must be 'on' or 'off'.")
         session = self.options.get("session", authored.get("session", True))
         if flags.get("sessionId") is not None and (session is True or isinstance(session, dict)):
             self.options["session"] = {**(session if isinstance(session, dict) else {}), "id": flags["sessionId"]}
@@ -425,6 +458,10 @@ class Runtime:
                 **({"dir": str(Path(command["sessionDir"]).parent)} if "sessionDir" in command else {}),
             }
             self.explicit_option_keys.add("session")
+        if command.get("relocateState") and isinstance(self.options.get("session"), dict):
+            expected = Path(command["stateDirectory"]) / "sessions"
+            if Path(self.options["session"]["dir"]).resolve() != expected.resolve():
+                raise ValueError("This session is outside --state-dir. Resume a session stored in the selected directory.")
         self.agent: Agent
         self.initial_agent = module.agent
         self.factory = getattr(module, "create_agent", None)
@@ -476,6 +513,16 @@ class Runtime:
             await self.cleanup(previous)
 
     async def augment(self, agent):
+        if self.append_instructions and agent not in self.instruction_agents:
+            self.instruction_agents.add(agent)
+            async def append_instructions(context):
+                prompt = context.system_prompt
+                text = self.append_instructions
+                return context.replace(system_prompt=(
+                    [*prompt, {"text": text}] if isinstance(prompt, list)
+                    else "\n\n".join(part for part in (prompt, text) if part)
+                ))
+            agent.add_middleware(InvokeModelStage.Input, append_instructions)
         if self.interactive:
             agent.hooks.add_callback(BeforeToolCallEvent, authorize_tool, order=HookOrder.INTERVENTION_INPUT)
             if not any(spec["name"] == "strands_config" for spec in agent.tool_registry.get_all_tool_specs()):
@@ -979,7 +1026,7 @@ def direct_harness_assignment(entrypoint):
     )
 
 
-def load_project(entrypoint, root):
+def load_project(entrypoint, root, command):
     sys.meta_path.insert(0, ProjectImports(root))
     sys.path[:0] = [str(root), str(entrypoint.parent)]
     relative = entrypoint.relative_to(root)
@@ -993,7 +1040,9 @@ def load_project(entrypoint, root):
     original_create_harness = strands_harness.create_harness
 
     def capture_create_harness(*args, **options):
-        agent = original_create_harness(*args, **options)
+        state = {key: command[key] for key in ("stateDirectory", "relocateState") if key in command}
+        configured = {**options, **runtime_options(options, state)} if captured is not None else options
+        agent = original_create_harness(*args, **configured)
         if captured is not None:
             captured.append((agent, args, options))
         return agent
@@ -1030,8 +1079,8 @@ def load_project(entrypoint, root):
 
 
 async def main():
-    module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
     command = json.loads(await asyncio.to_thread(commands.readline))
+    module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), command)
     runtime = Runtime(module, command)
     await runtime.build(runtime.options, resume=command.get("resume", False))
     send({"type": "ready", "state": runtime.state()})

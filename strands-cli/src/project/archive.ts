@@ -19,8 +19,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { Unzip, UnzipInflate, unzipSync } from 'fflate'
 
-import { userDirectory } from '../config/store.js'
-import { containsPath } from '../paths.js'
+import { containsPath, strandsUserPath } from '../paths.js'
 import { npmInvocation } from '../terminal/npm.js'
 import type { AgentProjectLanguage } from './import.js'
 import { assertPortablePathComponent, MAX_PROJECT_BYTES, MAX_PROJECT_ENTRIES } from './packaging.js'
@@ -34,7 +33,7 @@ export const AGENT_ENTRYPOINT_FILE = '.strands-entrypoint'
 export const SOURCE_EXTENSION = /\.(?:ts|mts|js|mjs|py)$/u
 
 function archiveCache(): string {
-  return userDirectory('cache', 'agents')
+  return strandsUserPath('cache', 'agents')
 }
 
 export function extractAgentArchive(path: string): string {

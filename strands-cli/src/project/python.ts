@@ -29,6 +29,7 @@ import type {
   ChatRunResult,
 } from '../agent/types.js'
 import { CliConfigStore } from '../config/store.js'
+import { workspaceStateDirectory } from '../cli/runtime-options.js'
 import { discoverProviderModels } from '../model/discovery.js'
 import {
   effortDisplayLabel,
@@ -83,6 +84,9 @@ type WorkerMessage =
   | { type: 'error'; message: string }
 
 export interface PythonOptions {
+  stateDirectory?: string
+  relocateState?: boolean
+  appendInstructions?: string
   sourceSelection?: ChatConversation['sourceSelection']
   restoreSession?: { identity: NonNullable<ChatConversation['session']>; preserve: boolean }
   overrides?: Partial<HarnessAgentConfig>
@@ -185,7 +189,13 @@ export class PythonBackend implements ChatBackend {
     const timeout = setTimeout(() => backend._fail(new Error('Python agent loading timed out.')), 60_000)
     try {
       signal?.throwIfAborted()
-      await backend._request({ type: 'init', ...options })
+      await backend._request({
+        type: 'init',
+        ...options,
+        ...(options.stateDirectory
+          ? { stateDirectory: workspaceStateDirectory(cwd, dirname(options.stateDirectory)) }
+          : {}),
+      })
       return backend
     } catch (error) {
       await backend.dispose()

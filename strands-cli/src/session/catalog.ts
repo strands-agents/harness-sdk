@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
-import { userDirectory } from '../config/store.js'
 import { strandsUserPath } from '../paths.js'
 import { isRecord } from '../values.js'
 
@@ -22,7 +21,7 @@ interface WorkspaceDocument {
 }
 
 function sessionRootDirectory(): string {
-  return strandsUserPath('sessions')
+  return strandsUserPath('state', 'sessions')
 }
 
 /**
@@ -40,12 +39,7 @@ export class SessionRootCatalog {
 
   static async load(root = sessionRootDirectory(), previousRoot?: string): Promise<SessionRootCatalog> {
     const normalizedRoot = resolve(root)
-    const normalizedPreviousRoot =
-      previousRoot === undefined && normalizedRoot === resolve(sessionRootDirectory())
-        ? resolve(userDirectory('sessions'))
-        : previousRoot === undefined
-          ? undefined
-          : resolve(previousRoot)
+    const normalizedPreviousRoot = previousRoot === undefined ? undefined : resolve(previousRoot)
     const catalog = new SessionRootCatalog(normalizedRoot, normalizedPreviousRoot)
     await catalog.refresh()
     return catalog

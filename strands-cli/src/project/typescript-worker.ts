@@ -197,6 +197,7 @@ async function initialize(
     managedSession = sessionManager !== undefined
     owner = await createInteractiveRuntime({
       agentOptions: invocation.options,
+      runtimeOverrides: input.args,
       ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
       project: input.project,
       cwd: input.initialWorkspace,

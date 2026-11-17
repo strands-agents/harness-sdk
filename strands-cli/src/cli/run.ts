@@ -1,17 +1,21 @@
-import { createHarness, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
+import { createHarness } from '@strands-agents/harness'
 import { CommanderError } from 'commander'
+import { resolve } from 'node:path'
 import { stdin, stdout } from 'node:process'
 
 import { confirmWorkspaceMcp, resolveMcpConfig } from '../config/trust.js'
 import { initLogging } from '../logging.js'
 import { rethrowWithProviderHint } from '../model/packages.js'
+import { providerIsConfigured } from '../model/configured.js'
+import { expandHome, strandsUserPath } from '../paths.js'
 import { importAgentProject } from '../project/import.js'
 import { initializeAgentDefinition } from '../session/agent-definition.js'
 import { errorMessage } from '../terminal/text.js'
-import { parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
+import { agentConfig, parseArgs, shouldPersistModelChanges, type CliRunMode, type ParsedArgs } from './arguments.js'
 import { runPlainChat, runTurn } from './console.js'
 import { invocationAgentForRun, pythonInvocationOptions, withDiscoveredSkills } from './invocation.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telemetry.js'
+import { profileOptions, runtimeAgentFactory, runtimeOptions } from './runtime-options.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
@@ -20,6 +24,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   let args: ParsedArgs
   try {
     args = parseArgs(argv)
+    if (process.env.STRANDS_CLI_HOME) process.env.STRANDS_CLI_HOME = strandsUserPath()
+    if (args.stateDir !== undefined) {
+      if (!args.stateDir) throw new Error('--state-dir must not be empty.')
+      args.stateDir = resolve(expandHome(args.stateDir))
+    }
   } catch (err) {
     // commander has already printed help / version / the parse error; honor its exit code.
     if (err instanceof CommanderError) {
@@ -96,11 +105,12 @@ async function runAcp(args: ParsedArgs): Promise<void> {
     const { runAcpServer } = await import('./acp.js')
     const { CliConfigStore } = await import('../config/store.js')
     const config = await CliConfigStore.load()
+    if (args.bypassPermissions) config.usePermissionMode('bypassPermissions')
     config.useEnvironmentFiles(args.envFiles)
     const { settings } = config.snapshot()
     const mcp = await resolveMcpConfig(args.mcpConfig, { discovery: settings.mcpDiscovery })
     const projectPath = args.agent ?? config.snapshot().agentProject
-    const project = projectPath ? importAgentProject(projectPath) : undefined
+    const project = projectPath && !projectPath.endsWith('.toml') ? importAgentProject(projectPath) : undefined
     if (project?.language === 'python') {
       const { runPythonAcpServer } = await import('./acp-python.js')
       await runPythonAcpServer(project, config, await pythonInvocationOptions(args, process.cwd(), settings, mcp))
@@ -109,6 +119,7 @@ async function runAcp(args: ParsedArgs): Promise<void> {
     const invocation = await invocationAgentForRun(args, config)
     await runAcpServer(await withDiscoveredSkills(invocation.options, settings.skillDiscovery), {
       ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
+      runtimeOverrides: args,
       mcpPaths: mcp.paths,
       mcpStrictPaths: mcp.strictPaths,
       ...(mcp.expectedDigests ? { mcpDigests: mcp.expectedDigests } : {}),
@@ -128,9 +139,10 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
       import('../config/store.js'),
     ])
     const config = await CliConfigStore.load()
+    if (args.bypassPermissions) config.usePermissionMode('bypassPermissions')
     config.useEnvironmentFiles(args.envFiles)
     const projectPath = args.agent ?? config.snapshot().agentProject
-    const project = projectPath ? importAgentProject(projectPath) : undefined
+    const project = projectPath && !projectPath.endsWith('.toml') ? importAgentProject(projectPath) : undefined
     if (project?.language === 'python') {
       const { runPythonConsole } = await import('./console.js')
       const settings = config.snapshot().settings
@@ -202,6 +214,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       import('../config/store.js'),
     ])
     const config = await CliConfigStore.load()
+    if (args.bypassPermissions) config.usePermissionMode('bypassPermissions')
     config.useEnvironmentFiles(args.envFiles)
     const initialWorkspace = process.cwd()
     let pinged = false
@@ -218,7 +231,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
         const profile = launch?.profile ?? launch?.configuration?.profile
         const projectPath =
           launch?.agentProject ?? (profile ? undefined : (args.agent ?? config.snapshot().agentProject))
-        const project = projectPath ? importAgentProject(projectPath) : undefined
+        const project = projectPath && !projectPath.endsWith('.toml') ? importAgentProject(projectPath) : undefined
         if (project?.language === 'python') {
           const { createPythonChat } = await import('../ui/chat/runtime.js')
           return createPythonChat(
@@ -257,16 +270,19 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
           profile && !launch?.agentProject
             ? {
                 profile,
-                options: await harnessAgentOptionsFromConfig(
-                  profile,
-                  config.snapshot().profileBaseDir ?? initialWorkspace
+                options: runtimeOptions(
+                  await profileOptions(profile, config.snapshot().profileBaseDir ?? initialWorkspace, initialWorkspace),
+                  initialWorkspace,
+                  args
                 ),
+                buildAgent: runtimeAgentFactory(args),
               }
             : await invocationAgentForRun(launch?.agentProject ? { ...args, agent: launch.agentProject } : args, config)
         signal.throwIfAborted()
         const chat = await createInteractiveChat(
           {
             agentOptions: invocation.options,
+            runtimeOverrides: args,
             ...(invocation.profile ? { agentProfile: invocation.profile } : {}),
             ...(invocation.buildAgent ? { buildAgent: invocation.buildAgent } : {}),
             ...(invocation.project ? { project: invocation.project } : {}),
@@ -295,7 +311,12 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       {
         ...(request ? { firstRequest: request } : {}),
         intro: config.snapshot().settings.animations,
-        setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
+        setup:
+          args.setup ||
+          (!args.agent &&
+            !config.snapshot().agentProject &&
+            config.needsSetup() &&
+            !providerIsConfigured(agentConfig(args, config.snapshot().profile), config.providerEnvironment())),
         config,
         onUpdateRequested: () => {
           updateRequested = true

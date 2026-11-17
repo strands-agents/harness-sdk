@@ -176,7 +176,7 @@ it('removes the extraction directory when the ZIP contains no agent', async () =
   await writeFile(archive, zipSync({ 'README.md': strToU8('No entrypoint') }))
 
   expect(() => importAgentProject(archive)).toThrow('The ZIP must contain a project with agent.ts, agent.py')
-  expect(await readdir(join(temporary, '.strands', 'cli', 'cache', 'agents'))).toEqual([])
+  expect(await readdir(join(temporary, '.strands', 'cache', 'agents'))).toEqual([])
 })
 
 it('rejects Windows-reserved paths', async () => {
@@ -205,7 +205,7 @@ it.each(['missing.py', '../outside.py', 'notes.txt'] as const)(
       )
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => importAgentProject(archive)).toThrow('Invalid .strands-entrypoint')
-        expect(await readdir(join(temporary, '.strands', 'cli', 'cache', 'agents'))).toEqual([])
+        expect(await readdir(join(temporary, '.strands', 'cache', 'agents'))).toEqual([])
       }
     }
   }

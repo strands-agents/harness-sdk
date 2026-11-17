@@ -9,6 +9,7 @@ import { unzipSync } from 'fflate'
 import type { ChatEvent, ChatPermissionRequest, ChatRunResult } from '../../src/agent/types.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { parseArgs } from '../../src/cli/arguments.js'
+import { workspaceStateDirectory } from '../../src/cli/runtime-options.js'
 import { pythonInvocationOptions } from '../../src/cli/invocation.js'
 import { PythonBackend, type PythonOptions } from '../../src/project/python.js'
 import { createPythonChat } from '../../src/ui/chat/runtime.js'
@@ -308,17 +309,38 @@ def build(**overrides):`
           'agent = build()',
           'def create_agent(**overrides):\n    return build(**overrides)\n\nagent = create_agent()'
         )
-      const previous = await open(source, { sessionId: 'saved-session' })
+      const checked = source
+        .replace(
+          'def build(**overrides):',
+          `class CheckingModel(SourceReloadModel):
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        assert system_prompt == "Custom prompt\\nRun-only suffix", repr(system_prompt)
+        async for event in super().stream(messages, tool_specs, system_prompt, **kwargs):
+            yield event
+
+def build(**overrides):`
+        )
+        .replace('"model": SourceReloadModel()', '"model": CheckingModel(), "system_prompt": "Custom prompt"')
+      const options = {
+        sessionId: 'saved-session',
+        stateDirectory: workspaceStateDirectory(root, join(root, 'private')),
+        relocateState: true,
+        appendInstructions: 'Run-only suffix',
+      }
+      const previous = await open(checked, options)
       await runTurn(previous)
       const history = previous.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))
       await previous.dispose()
 
-      const restored = await open(source, { sessionId: 'saved-session', resume: true })
+      const restored = await open(checked, { ...options, resume: true })
 
       expect(restored.messages.map((message) => ({ role: message.role, content: message.toJSON().content }))).toEqual(
         history
       )
       expect(restored.sessionIdentity?.sessionId).toBe('saved-session')
+      expect(restored.sessionIdentity?.sessionDirectory).toBe(join(options.stateDirectory, 'sessions', 'session'))
+      expect(existsSync(join(root, '.agent'))).toBe(false)
+      expect(existsSync(join(root, 'custom-sessions'))).toBe(false)
       expect((await runTurn(restored)).stopReason).toBe('end_turn')
     }
   )

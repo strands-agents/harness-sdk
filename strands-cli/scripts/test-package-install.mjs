@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
@@ -40,6 +41,20 @@ const server = createServer((_request, response) => {
 
 try {
   await run([npm, 'init', '--yes'], installRoot)
+  const localHarness = process.env.STRANDS_CLI_HARNESS_TARBALL
+  const localSdk = process.env.STRANDS_CLI_SDK_TARBALL
+  if (localHarness || localSdk) {
+    await writeFile(
+      join(installRoot, 'package.json'),
+      JSON.stringify({
+        private: true,
+        overrides: {
+          ...(localHarness ? { '@strands-agents/harness': `file:${resolve(localHarness)}` } : {}),
+          ...(localSdk ? { '@strands-agents/sdk': `file:${resolve(localSdk)}` } : {}),
+        },
+      })
+    )
+  }
   await run([npm, 'install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], installRoot)
 
   const bin = join(installRoot, 'node_modules', '@strands-agents', 'cli', 'bin', 'strands.js')
@@ -49,6 +64,55 @@ try {
   }
 
   const installedRoot = join(installRoot, 'node_modules', '@strands-agents', 'cli')
+  const releaseHarness = process.env.STRANDS_CLI_RELEASE_HARNESS
+  const releaseSdk = process.env.STRANDS_CLI_RELEASE_SDK
+  if (releaseHarness || releaseSdk) {
+    const manifest = JSON.parse(await readFile(join(installedRoot, 'package.json'), 'utf8'))
+    if (releaseHarness) assert.equal(manifest.dependencies['@strands-agents/harness'], releaseHarness)
+    if (releaseSdk) assert.equal(manifest.dependencies['@strands-agents/sdk'], releaseSdk)
+  }
+  if (releaseSdk || localSdk) {
+    await run(
+      [
+        '--input-type=module',
+        '--eval',
+        `import assert from 'node:assert/strict'
+         import { OpenAIModel } from '@strands-agents/sdk/models/openai'
+         const model = new OpenAIModel({modelId: 'openai.gpt-5', bedrockMantleConfig: {region: 'us-west-2'}})
+         const token = await Reflect.get(model, '_client')._options.apiKey()
+         assert.equal(token, 'package-check')`,
+      ],
+      installRoot,
+      {
+        HOME: installRoot,
+        USERPROFILE: installRoot,
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        AWS_CONFIG_FILE: join(installRoot, 'no-aws-config'),
+        AWS_SHARED_CREDENTIALS_FILE: join(installRoot, 'no-aws-credentials'),
+        AWS_EC2_METADATA_DISABLED: 'true',
+        AWS_BEARER_TOKEN_BEDROCK: 'package-check',
+      }
+    )
+  }
+  if (releaseHarness || localHarness) {
+    const require = createRequire(join(installedRoot, 'package.json'))
+    const { resolveModel } = await import(pathToFileURL(require.resolve('@strands-agents/harness/internal')).href)
+    const previous = process.env.https_proxy
+    try {
+      process.env.https_proxy = 'http://127.0.0.1:1'
+      const model = await resolveModel('bedrock/test')
+      const handler = Reflect.get(model, '_client').config.requestHandler
+      assert.equal(
+        handler.metadata?.handlerProtocol,
+        'http/1.1',
+        'the installed harness must support the configured proxy'
+      )
+      handler.destroy()
+    } finally {
+      if (previous === undefined) delete process.env.https_proxy
+      else process.env.https_proxy = previous
+    }
+  }
   const { resolveVoiceSidecarPath } = await import(
     pathToFileURL(join(installedRoot, 'dist', 'src', 'agent', 'voice.js')).href
   )
@@ -70,7 +134,7 @@ try {
     join(packageRoot, 'test/fixtures/platform-integration-model.ts'),
     join(workspace, 'platform-integration-model.ts')
   )
-  const config = await CliConfigStore.load(join(home, '.strands', 'cli.toml'))
+  const config = await CliConfigStore.load(join(home, '.strands', 'settings.toml'))
   await config.saveSetup({
     providers: ['bedrock'],
     profile: {

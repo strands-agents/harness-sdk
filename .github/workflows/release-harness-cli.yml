@@ -19,6 +19,14 @@ name: "Harness CLI: Release"
 on:
   workflow_dispatch:
     inputs:
+      sdk_version:
+        description: 'Exact published SDK version containing the Mantle bearer-token fix.'
+        required: true
+        type: string
+      harness_version:
+        description: 'Exact published harness version containing the CLI transport fixes.'
+        required: true
+        type: string
       version:
         description: 'Explicit version, e.g. 1.4.0 (no leading v, no prefix).'
         required: true
@@ -169,6 +177,8 @@ jobs:
       contents: read
     with:
       release-sha: ${{ needs.scan-commits.outputs.release_sha }}
+      harness_version: ${{ inputs.harness_version }}
+      sdk_version: ${{ inputs.sdk_version }}
 
   tui-integration:
     name: Harness CLI TUI integration tests
@@ -178,6 +188,8 @@ jobs:
       contents: read
     with:
       release-sha: ${{ needs.scan-commits.outputs.release_sha }}
+      harness_version: ${{ inputs.harness_version }}
+      sdk_version: ${{ inputs.sdk_version }}
 
   # ── Integration tests ──────────────────────────────────────────────────
   integ:
@@ -192,6 +204,8 @@ jobs:
     secrets: inherit
     with:
       release-sha: ${{ needs.scan-commits.outputs.release_sha }}
+      harness_version: ${{ inputs.harness_version }}
+      sdk_version: ${{ inputs.sdk_version }}
 
   # ── Security audit (informational) ─────────────────────────────────────
   security-audit:
@@ -202,6 +216,8 @@ jobs:
       contents: read
     with:
       release-sha: ${{ needs.scan-commits.outputs.release_sha }}
+      harness_version: ${{ inputs.harness_version }}
+      sdk_version: ${{ inputs.sdk_version }}
 
   # ── Pack + install smoke test (uploads harness-cli-npm-build-output) ───
   package-pack:
@@ -212,6 +228,8 @@ jobs:
       contents: read
     with:
       release-sha: ${{ needs.scan-commits.outputs.release_sha }}
+      harness_version: ${{ inputs.harness_version }}
+      sdk_version: ${{ inputs.sdk_version }}
       version: ${{ inputs.version }}
 
   # ── Inspect the packed tarball ─────────────────────────────────────────

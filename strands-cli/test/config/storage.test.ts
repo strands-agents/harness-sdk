@@ -165,18 +165,18 @@ describe('CliConfigStore', () => {
   })
 
   it('persists the selected model and effort while preserving the rest of the profile', async () => {
-    const path = join(await temporaryDirectory(), 'cli.toml')
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'settings.toml')
+    const agentPath = join(directory, 'agent.toml')
     const modelModule = { kind: 'model', module: './model.mjs', export: 'model' }
+    await writeFile(path, stringify({ theme: 'custom' }))
     await writeFile(
-      path,
+      agentPath,
       stringify({
-        theme: 'custom',
-        profile: {
-          name: 'Custom Strands harness',
-          model: 'bedrock/anthropic.claude-old',
-          effort: 'medium',
-          modelModule,
-        },
+        name: 'Custom Strands harness',
+        model: 'bedrock/anthropic.claude-old',
+        effort: 'medium',
+        modelModule,
       })
     )
     const config = await CliConfigStore.load(path)
@@ -193,10 +193,12 @@ describe('CliConfigStore', () => {
       effort: 'high',
     })
     expect((await CliConfigStore.load(path)).snapshot().profile).toEqual(config.snapshot().profile)
-    expect(parse(await readFile(path, 'utf8'))).toEqual({
-      __strands_null_paths: [['profile', 'modelModule']],
-      theme: 'custom',
-      profile: { name: 'Custom Strands harness', model: 'anthropic/claude-opus-4-8', effort: 'high' },
+    expect(parse(await readFile(path, 'utf8'))).toEqual({ theme: 'custom' })
+    expect(parse(await readFile(agentPath, 'utf8'))).toEqual({
+      __strands_null_paths: [['modelModule']],
+      name: 'Custom Strands harness',
+      model: 'anthropic/claude-opus-4-8',
+      effort: 'high',
     })
   })
 
@@ -234,8 +236,10 @@ describe('CliConfigStore', () => {
   })
 
   it('loads defaults for an obsolete settings container without losing the saved profile', async () => {
-    const path = join(await temporaryDirectory(), 'cli.toml')
-    await writeFile(path, stringify({ profile: { name: 'My agent' }, settings: 'obsolete' }))
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'settings.toml')
+    await writeFile(path, stringify({ settings: 'obsolete' }))
+    await writeFile(join(directory, 'agent.toml'), stringify({ name: 'My agent' }))
 
     const config = await CliConfigStore.load(path)
 
@@ -248,8 +252,10 @@ describe('CliConfigStore', () => {
   })
 
   it('persists setup while preserving unrelated settings', async () => {
-    const path = join(await temporaryDirectory(), 'cli.toml')
-    await writeFile(path, stringify({ theme: 'custom', profile: { futureSetting: true } }))
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'settings.toml')
+    await writeFile(path, stringify({ theme: 'custom' }))
+    await writeFile(join(directory, 'agent.toml'), stringify({ futureSetting: true }))
     const config = await CliConfigStore.load(path)
     const profile = {
       ...DEFAULT_HARNESS_AGENT_CONFIG,
@@ -291,7 +297,11 @@ describe('CliConfigStore', () => {
     expect(parse(await readFile(path, 'utf8'))).toMatchObject({
       theme: 'custom',
       providers: { environment: { LITELLM_BASE_URL: 'http://localhost:4000' } },
-      profile: { futureSetting: true, name: 'Reviewer', model: 'openai/gpt-5.6-sol' },
+    })
+    expect(parse(await readFile(join(directory, 'agent.toml'), 'utf8'))).toMatchObject({
+      futureSetting: true,
+      name: 'Reviewer',
+      model: 'openai/gpt-5.6-sol',
     })
     expect(await readFile(path, 'utf8')).not.toContain('credential-')
     expect((await CliConfigStore.load(path)).snapshot().settings).toMatchObject({
@@ -397,9 +407,10 @@ describe('CliConfigStore', () => {
     expect(await readFile(path, 'utf8')).not.toMatch(/project-key|local-key|process-key/u)
   })
 
-  it('imports cli/config.json into cli.toml while preserving the original', async () => {
+  it('ignores legacy TOML and JSON without changing them or creating configuration', async () => {
     const directory = await temporaryDirectory()
-    const path = join(directory, 'cli.toml')
+    const path = join(directory, 'settings.toml')
+    const legacyToml = join(directory, 'cli.toml')
     const legacyPath = join(directory, 'cli', 'config.json')
     await mkdir(join(directory, 'cli'))
     const original = JSON.stringify({
@@ -408,31 +419,32 @@ describe('CliConfigStore', () => {
       settings: { toolOutput: 'hidden' },
     })
     await writeFile(legacyPath, original)
+    await writeFile(legacyToml, 'invalid legacy TOML [')
 
     const config = await CliConfigStore.load(path)
 
     expect(config.snapshot()).toMatchObject({
       path,
-      permissions: { allow: ['shell'] },
-      profile: { effort: 'high', modelModule: null, sandbox: null },
-      settings: { toolOutput: 'hidden' },
+      permissions: { allow: [] },
+      profile: { effort: DEFAULT_HARNESS_AGENT_CONFIG.effort, modelModule: null, sandbox: null },
+      settings: { toolOutput: 'compact' },
     })
     expect(await readFile(legacyPath, 'utf8')).toBe(original)
+    expect(await readFile(legacyToml, 'utf8')).toBe('invalid legacy TOML [')
+    await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(join(directory, 'agent.toml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await CliConfigStore.load(path)).snapshot()).toEqual(config.snapshot())
   })
 
-  it('preserves explicit nulls in profile fields and nested JSON through migration and later saves', async () => {
+  it('preserves explicit nulls in agent fields and nested JSON through saves', async () => {
     const directory = await temporaryDirectory()
-    const path = join(directory, 'cli.toml')
-    const legacyPath = join(directory, 'cli', 'config.json')
-    await mkdir(join(directory, 'cli'))
+    const path = join(directory, 'settings.toml')
     const profile = {
       builtinTools: { programmatic_tool_caller: { timeout: null } },
       agentConfig: { state: { empty: null, values: [null, {}, { nested: [1, null] }] } },
     }
-    await writeFile(legacyPath, JSON.stringify({ profile }))
-
     const config = await CliConfigStore.load(path)
+    await config.saveProfile({ ...DEFAULT_HARNESS_AGENT_CONFIG, ...profile })
     expect(config.snapshot().profile).toMatchObject(profile)
     expect((await CliConfigStore.load(path)).snapshot()).toEqual(config.snapshot())
     await config.setSettings({ animations: false })
@@ -440,19 +452,22 @@ describe('CliConfigStore', () => {
   })
 
   it('lets direct TOML edits replace values previously saved as null', async () => {
-    const path = join(await temporaryDirectory(), 'cli.toml')
+    const directory = await temporaryDirectory()
+    const path = join(directory, 'settings.toml')
+    const agentPath = join(directory, 'agent.toml')
     await writeFile(
-      path,
+      agentPath,
       stringify({
-        __strands_null_paths: [['profile', 'builtinTools', 'programmatic_tool_caller', 'timeout']],
-        profile: { builtinTools: { programmatic_tool_caller: { timeout: 60 } } },
+        __strands_null_paths: [['builtinTools', 'programmatic_tool_caller', 'timeout']],
+        builtinTools: { programmatic_tool_caller: { timeout: 60 } },
       })
     )
 
     const config = await CliConfigStore.load(path)
     expect(config.snapshot().profile.builtinTools).toEqual({ programmatic_tool_caller: { timeout: 60 } })
+    const original = await readFile(agentPath, 'utf8')
     await config.setSettings({ animations: false })
-    expect(parse(await readFile(path, 'utf8'))).not.toHaveProperty('__strands_null_paths')
+    expect(await readFile(agentPath, 'utf8')).toBe(original)
   })
 
   it.each(
@@ -472,23 +487,23 @@ describe('CliConfigStore', () => {
   })
 
   it.each(['{ invalid json', 'null', '[]'])(
-    'reports an unreadable JSON config without replacing it: %s',
+    'ignores an unreadable legacy JSON config without replacing it: %s',
     async (text) => {
       const directory = await temporaryDirectory()
-      const path = join(directory, 'cli.toml')
+      const path = join(directory, 'settings.toml')
       const legacyPath = join(directory, 'cli', 'config.json')
       await mkdir(join(directory, 'cli'))
       await writeFile(legacyPath, text)
 
-      await expect(CliConfigStore.load(path)).rejects.toThrow(`Invalid CLI config at ${legacyPath}`)
+      expect((await CliConfigStore.load(path)).needsSetup()).toBe(true)
       expect(await readFile(legacyPath, 'utf8')).toBe(text)
       await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     }
   )
 
-  it('ignores cli/config.json once cli.toml exists', async () => {
+  it('loads preferences independently of legacy JSON', async () => {
     const directory = await temporaryDirectory()
-    const path = join(directory, 'cli.toml')
+    const path = join(directory, 'settings.toml')
     const legacyPath = join(directory, 'cli', 'config.json')
     await mkdir(join(directory, 'cli'))
     await writeFile(legacyPath, JSON.stringify({ settings: { animations: false } }))
@@ -521,8 +536,8 @@ describe('CliConfigStore', () => {
     expect((await CliConfigStore.load(path)).snapshot()).not.toHaveProperty('profileBaseDir')
   })
 
-  it('removes credentials already stored in the CLI config', async () => {
-    const path = join(await temporaryDirectory(), 'cli.toml')
+  it('rejects credentials in preferences without disclosing or rewriting them', async () => {
+    const path = join(await temporaryDirectory(), 'settings.toml')
     await writeFile(
       path,
       stringify({
@@ -537,15 +552,9 @@ describe('CliConfigStore', () => {
       })
     )
 
-    const config = await CliConfigStore.load(path)
-
-    expect(config.configuredProviderEnvironment()).toEqual({ AWS_PROFILE: 'development' })
-    expect(parse(await readFile(path, 'utf8'))).toMatchObject({
-      providers: {
-        environment: { AWS_PROFILE: 'development' },
-      },
-    })
-    expect(await readFile(path, 'utf8')).not.toMatch(/legacy-(?:key|token)/u)
+    const original = await readFile(path, 'utf8')
+    await expect(CliConfigStore.load(path)).rejects.toThrow('through the environment, not settings')
+    expect(await readFile(path, 'utf8')).toBe(original)
   })
 
   it('detects allowlisted provider settings without expanding dotenv content', async () => {
@@ -827,4 +836,26 @@ describe('CliConfigStore', () => {
     expect(Object.hasOwn(process.env, '__proto__')).toBe(false)
     expect(() => config.useEnvironmentFiles([join(directory, 'missing')])).toThrow('Cannot load environment file')
   })
+})
+
+it('keeps concurrent settings saves and a run-only permission override out of the agent definition', async () => {
+  const directory = await temporaryDirectory()
+  const path = join(directory, 'settings.toml')
+  const agentPath = join(directory, 'agent.toml')
+  await writeFile(agentPath, 'model = "openai/saved"\ninstructions = "Saved instructions"\n')
+  const original = await readFile(agentPath, 'utf8')
+  const first = await CliConfigStore.load(path)
+  const second = await CliConfigStore.load(path)
+  first.usePermissionMode('bypassPermissions')
+  await Promise.all([
+    first.setSettings({ animations: false }),
+    second.setSettings({ toolOutput: 'full' }),
+    first.allowTool('read'),
+  ])
+  expect(first.snapshot().permissions.mode).toBe('bypassPermissions')
+  const saved = (await CliConfigStore.load(path)).snapshot()
+  expect(saved.settings).toMatchObject({ animations: false, toolOutput: 'full' })
+  expect(saved.permissions).toEqual({ mode: 'default', allow: ['read'], deny: [] })
+  expect(await readFile(agentPath, 'utf8')).toBe(original)
+  await expect(readFile(join(directory, 'state', 'onboarding.toml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
 })

@@ -3,9 +3,8 @@
  * OpenAI-compatible "Mantle" endpoint.
  *
  * Converts a {@link BedrockMantleConfig} into the `baseURL` and `apiKey` the
- * OpenAI SDK consumes. Tokens are minted on demand via
- * `@aws/bedrock-token-generator` so long-running agents survive the bearer
- * token's maximum lifetime.
+ * OpenAI SDK consumes. Without an environment bearer token, tokens are minted
+ * on demand via `@aws/bedrock-token-generator`.
  */
 
 import type { AwsCredentialIdentity, AwsCredentialIdentityProvider } from '@smithy/types'
@@ -68,8 +67,8 @@ export interface BedrockMantleConfig {
    * AWS credentials forwarded to the bearer token generator. Accepts either a
    * static credential identity or a credential provider function (e.g. the
    * result of `fromNodeProviderChain()` from `@aws-sdk/credential-providers`).
-   * When omitted, the token generator resolves credentials from the standard
-   * AWS credential chain.
+   * When omitted, `AWS_BEARER_TOKEN_BEDROCK` is used if set; otherwise the token
+   * generator resolves credentials from the standard AWS credential chain.
    */
   credentials?: AwsCredentialIdentity | AwsCredentialIdentityProvider
 
@@ -145,7 +144,7 @@ export function bedrockMantleBaseUrl(region: string, modelId: string): string {
 
 /**
  * Builds an async `apiKey` setter (matching the OpenAI SDK's `ApiKeySetter`
- * signature) that mints a fresh bearer token on every request.
+ * signature) that reads the environment token or mints a bearer token on each request.
  *
  * The `@aws/bedrock-token-generator` package is loaded lazily on first use so
  * applications that never touch the Mantle pathway don't need it installed.
@@ -165,6 +164,8 @@ export function createMantleApiKeySetter(config: BedrockMantleConfig, region: st
   }
 
   return async (): Promise<string> => {
+    const token = config.credentials === undefined ? globalThis?.process?.env?.AWS_BEARER_TOKEN_BEDROCK : undefined
+    if (token) return token
     if (tokenProviderPromise === null) {
       tokenProviderPromise = initProvider()
     }

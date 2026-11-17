@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { constants } from 'node:fs'
+import { lstat, mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { setTimeout } from 'node:timers/promises'
+import { isDeepStrictEqual } from 'node:util'
 
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
@@ -101,20 +104,21 @@ type ConfigDocument = Record<string, unknown>
 type ConfigNullPath = (string | number)[]
 const NULL_PATHS_KEY = '__strands_null_paths'
 
-/** Resolves a path under `~/.strands/cli`, the CLI's internal state and cache directory. */
+/** Resolves a path under the CLI's internal state directory. */
 export function userDirectory(...segments: string[]): string {
-  return strandsUserPath('cli', ...segments)
+  return strandsUserPath('state', ...segments)
 }
 
-/** The user-editable CLI config file, `~/.strands/cli.toml`. */
+/** The user-editable CLI preferences file. */
 export function userConfigPath(): string {
-  return strandsUserPath('cli.toml')
+  return strandsUserPath('settings.toml')
 }
 
 export class CliConfigStore {
   private _profileBaseDir: string | undefined
   private _environmentFiles: readonly string[] = []
   private _sessionProviderEnvironment: ProviderEnvironment = {}
+  private _permissionOverride: PermissionMode | undefined
   private _writeQueue = Promise.resolve()
 
   private constructor(
@@ -135,9 +139,8 @@ export class CliConfigStore {
   }
 
   static async load(path = userConfigPath()): Promise<CliConfigStore> {
-    const { document: loadedDocument, legacyPath } = await readConfigDocument(path)
-    const document = withoutProviderCredentials(loadedDocument)
-    const store = new CliConfigStore(
+    const document = await readConfigDocument(path)
+    return new CliConfigStore(
       path,
       document,
       parseOnboardingVersion(document.onboarding, path),
@@ -147,10 +150,6 @@ export class CliConfigStore {
       parsePermissions(document.permissions, path),
       parseSettings(document.settings)
     )
-    if (document !== loadedDocument || legacyPath) {
-      await writeConfigDocument(path, document)
-    }
-    return store
   }
 
   static memory(
@@ -203,7 +202,7 @@ export class CliConfigStore {
       ...(this._profileBaseDir ? { profileBaseDir: this._profileBaseDir } : {}),
       ...(typeof this._document.agentProject === 'string' ? { agentProject: this._document.agentProject } : {}),
       permissions: {
-        mode: this._permissions.mode,
+        mode: this._permissionOverride ?? this._permissions.mode,
         allow: [...this._permissions.allow],
         deny: [...this._permissions.deny],
       },
@@ -213,6 +212,10 @@ export class CliConfigStore {
 
   needsSetup(): boolean {
     return this._onboardingVersion < SETUP_VERSION
+  }
+
+  usePermissionMode(mode: PermissionMode): void {
+    this._permissionOverride = mode
   }
 
   async useAgentProject(entrypoint: string, settings: Partial<ChatSettings> = {}): Promise<void> {
@@ -225,7 +228,7 @@ export class CliConfigStore {
         settings: { ...(isRecord(this._document.settings) ? this._document.settings : {}), ...nextSettings },
       }
       if (this._persistent) {
-        await writeConfigDocument(this._path, document)
+        await this._write(document)
       }
       this._document = document
       this._onboardingVersion = SETUP_VERSION
@@ -290,11 +293,15 @@ export class CliConfigStore {
         ? undefined
         : requiredPath(configuration.profileBaseDir, 'profileBaseDir')
     const providerEnvironment = normalizeStoredProviderEnvironment(configuration.providerEnvironment)
-    const allowedTools =
-      configuration.allowedTools === undefined
-        ? this._permissions.allow
-        : uniqueSorted(configuration.allowedTools.map(normalizeToolName))
     return this._enqueueWrite(async () => {
+      const allowedTools =
+        configuration.allowedTools === undefined
+          ? this._permissions.allow
+          : uniqueSorted(configuration.allowedTools.map(normalizeToolName))
+      const permissionMode =
+        configuration.permissionMode === this._permissionOverride
+          ? this._permissions.mode
+          : configuration.permissionMode
       const priorOnboarding = isRecord(this._document.onboarding) ? this._document.onboarding : {}
       const priorProviders = isRecord(this._document.providers) ? this._document.providers : {}
       const priorProfile = isRecord(this._document.profile) ? this._document.profile : {}
@@ -307,11 +314,11 @@ export class CliConfigStore {
         providers: { ...priorProviders, enabled: [...providers], environment: providerEnvironment },
         profile: { ...priorProfile, ...globalThis.structuredClone(profile) },
         profileBaseDir: configuration.profileBaseDir === undefined ? this._profileBaseDir : profileBaseDir,
-        permissions: { ...priorPermissions, mode: configuration.permissionMode, allow: [...allowedTools] },
+        permissions: { ...priorPermissions, mode: permissionMode, allow: [...allowedTools] },
         settings: { ...(isRecord(this._document.settings) ? this._document.settings : {}), ...settings },
       }
       if (this._persistent && options.persist !== false) {
-        await writeConfigDocument(this._path, document)
+        await this._write(document)
       }
       this._document = document
       this._onboardingVersion = onboardingVersion
@@ -319,7 +326,7 @@ export class CliConfigStore {
       this._providerEnvironment = providerEnvironment
       this._profile = profile
       this._profileBaseDir = document.profileBaseDir
-      this._permissions = { ...this._permissions, mode: configuration.permissionMode, allow: allowedTools }
+      this._permissions = { ...this._permissions, mode: permissionMode, allow: allowedTools }
       this._settings = settings
     })
   }
@@ -334,7 +341,7 @@ export class CliConfigStore {
         profile: { ...priorProfile, ...globalThis.structuredClone(profile) },
       }
       if (this._persistent) {
-        await writeConfigDocument(this._path, document)
+        await this._write(document)
       }
       this._document = document
       this._profile = profile
@@ -392,7 +399,7 @@ export class CliConfigStore {
         },
       }
       if (this._persistent) {
-        await writeConfigDocument(this._path, document)
+        await this._write(document)
       }
       this._document = document
       this._profile = profile
@@ -412,7 +419,7 @@ export class CliConfigStore {
         },
       }
       if (this._persistent) {
-        await writeConfigDocument(this._path, document)
+        await this._write(document)
       }
       this._document = document
       this._settings = next
@@ -420,9 +427,38 @@ export class CliConfigStore {
   }
 
   private _enqueueWrite(write: () => Promise<void>): Promise<void> {
-    const operation = this._writeQueue.then(write)
+    const operation = this._writeQueue.then(async () => {
+      if (!this._persistent) return write()
+      const unlock = await lockConfig(this._path)
+      try {
+        const latest = await CliConfigStore.load(this._path)
+        this._document = latest._document
+        this._onboardingVersion = latest._onboardingVersion
+        this._providers = latest._providers
+        this._providerEnvironment = latest._providerEnvironment
+        this._profile = latest._profile
+        this._profileBaseDir = latest._profileBaseDir
+        this._permissions = latest._permissions
+        this._settings = latest._settings
+        await write()
+      } finally {
+        await unlock()
+      }
+    })
     this._writeQueue = operation.catch(() => {})
     return operation
+  }
+
+  private async _write(document: ConfigDocument): Promise<void> {
+    const { profile, onboarding, ...settings } = document
+    const { profile: previousProfile, onboarding: previousOnboarding, ...previousSettings } = this._document
+    if (!isDeepStrictEqual(settings, previousSettings)) await writeConfigDocument(this._path, settings)
+    if (!isDeepStrictEqual(profile, previousProfile)) {
+      await writeConfigDocument(join(dirname(this._path), 'agent.toml'), profile as ConfigDocument)
+    }
+    if (!isDeepStrictEqual(onboarding, previousOnboarding)) {
+      await writeConfigDocument(join(dirname(this._path), 'state', 'onboarding.toml'), { onboarding })
+    }
   }
 
   private _updatePermissions(update: (permissions: PermissionConfig) => PermissionConfig): Promise<void> {
@@ -439,7 +475,7 @@ export class CliConfigStore {
         },
       }
       if (this._persistent) {
-        await writeConfigDocument(this._path, document)
+        await this._write(document)
       }
       this._document = document
       this._permissions = next
@@ -447,26 +483,47 @@ export class CliConfigStore {
   }
 }
 
-/** Imports a readable JSON config when TOML is absent, retaining the original file. */
-async function readConfigDocument(path: string): Promise<{ document: ConfigDocument; legacyPath?: string }> {
+async function readTomlDocument(path: string): Promise<ConfigDocument> {
   const text = await readOptionalFile(path)
-  if (text !== undefined) {
-    return { document: parseConfigText(path, () => restoreConfigNulls(parseToml(text))) }
+  return text === undefined ? {} : parseConfigText(path, () => restoreConfigNulls(parseToml(text)))
+}
+
+export async function readAgentDefinition(path: string): Promise<HarnessAgentConfig> {
+  const text = await readOptionalFile(path)
+  if (text === undefined) throw new Error(`Agent definition does not exist: ${path}`)
+  return parseProfile(
+    parseConfigText(path, () => restoreConfigNulls(parseToml(text))),
+    path
+  )
+}
+
+async function readConfigDocument(path: string): Promise<ConfigDocument> {
+  const [settings, profile, state] = await Promise.all([
+    readTomlDocument(path),
+    readTomlDocument(join(dirname(path), 'agent.toml')),
+    readTomlDocument(join(dirname(path), 'state', 'onboarding.toml')),
+  ])
+  if (isRecord(settings.providers) && isRecord(settings.providers.environment)) {
+    for (const key of PROVIDER_CREDENTIAL_KEYS) {
+      if (Object.hasOwn(settings.providers.environment, key)) {
+        throw new Error(`Invalid CLI config at ${path}: provide ${key} through the environment, not settings.`)
+      }
+    }
   }
-  if (basename(path) !== 'cli.toml') {
-    return { document: {} }
-  }
-  const legacyPath = join(dirname(path), 'cli', 'config.json')
-  const legacyText = await readOptionalFile(legacyPath)
-  if (legacyText === undefined) {
-    return { document: {} }
-  }
-  return { document: parseConfigText(legacyPath, () => JSON.parse(legacyText) as unknown), legacyPath }
+  return { ...settings, profile, onboarding: state.onboarding }
 }
 
 async function readOptionalFile(path: string): Promise<string | undefined> {
   try {
-    return await readFile(path, 'utf8')
+    if (!(await lstat(path)).isFile()) throw new Error(`Expected a regular config file: ${path}`)
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    try {
+      const stats = await file.stat()
+      if (!stats.isFile() || stats.size > 1_048_576) throw new Error(`Expected a regular config file: ${path}`)
+      return await file.readFile('utf8')
+    } finally {
+      await file.close()
+    }
   } catch (error) {
     if (isMissingPathError(error)) {
       return undefined
@@ -570,12 +627,40 @@ function parsePermissions(value: unknown, path: string): PermissionConfig {
 
 async function writeConfigDocument(path: string, document: ConfigDocument): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  const existing = await lstat(path).catch((error: unknown) => {
+    if (!isMissingPathError(error)) throw error
+    return undefined
+  })
+  if (existing && !existing.isFile()) throw new Error(`Expected a regular config file: ${path}`)
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
   try {
     await writeFile(temporary, stringifyToml(encodeConfigNulls(withoutProviderCredentials(document))), { mode: 0o600 })
     await rename(temporary, path)
   } finally {
     await rm(temporary, { force: true })
+  }
+}
+
+async function lockConfig(path: string): Promise<() => Promise<void>> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  const lockPath = `${path}.lock`
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    try {
+      const file = await open(lockPath, 'wx', 0o600)
+      return async (): Promise<void> => {
+        await file.close()
+        await rm(lockPath)
+      }
+    } catch (error) {
+      if (!isRecord(error) || error.code !== 'EEXIST') throw error
+      if (Date.now() >= deadline) {
+        throw new Error(`Configuration is locked. If no CLI is saving settings, remove ${lockPath} and retry.`, {
+          cause: error,
+        })
+      }
+      await setTimeout(25)
+    }
   }
 }
 

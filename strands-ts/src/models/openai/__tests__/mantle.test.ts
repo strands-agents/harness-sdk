@@ -39,6 +39,7 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       // Mantle pathway shouldn't look at OPENAI_API_KEY — guard against
       // accidental env leakage by clearing it for the suite.
       vi.stubEnv('OPENAI_API_KEY', '')
+      vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', '')
       vi.stubEnv('AWS_REGION', '')
       vi.stubEnv('AWS_DEFAULT_REGION', '')
     }
@@ -54,6 +55,26 @@ describe('OpenAIModel bedrockMantleConfig', () => {
   })
 
   describe('constructor wiring', () => {
+    it.skipIf(!isNode)('uses the current environment bearer token without minting credentials', async () => {
+      vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'first-token')
+      new OpenAIModel({ modelId: TEST_MODEL_ID, bedrockMantleConfig: { region: 'us-east-1' } })
+      const apiKey = lastApiKeySetter()
+      expect(await apiKey()).toBe('first-token')
+      vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'rotated-token')
+      expect(await apiKey()).toBe('rotated-token')
+      expect(getTokenProviderMock).not.toHaveBeenCalled()
+      vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', '')
+      expect(await apiKey()).toBe(TEST_TOKEN)
+    })
+
+    it.skipIf(!isNode)('keeps explicit AWS credentials ahead of an environment bearer token', async () => {
+      vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'environment-token')
+      const credentials = vi.fn()
+      new OpenAIModel({ modelId: TEST_MODEL_ID, bedrockMantleConfig: { region: 'us-east-1', credentials } })
+      expect(await lastApiKeySetter()()).toBe(TEST_TOKEN)
+      expect(getTokenProviderMock).toHaveBeenCalledWith({ region: 'us-east-1', credentials })
+    })
+
     it('sets baseURL and installs async apiKey setter that mints a bearer token', async () => {
       new OpenAIModel({
         modelId: TEST_MODEL_ID,
