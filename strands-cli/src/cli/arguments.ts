@@ -50,6 +50,8 @@ export type CliRunMode = 'acp' | 'ink' | 'plain' | 'print'
 
 type ChatCommandName = 'strands' | 'strands dev' | 'strands dev init'
 
+type DevSubcommandName = 'init' | TemporaryDevCommandName
+
 type CommandSummary = readonly [usage: string, summary: string]
 
 const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'interventions'] as const
@@ -83,16 +85,30 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (argv[0] === 'update') {
     return parseUpdateArgs(argv.slice(1))
   }
-  if (argv[0] === 'dev' && isTemporaryDevCommand(argv[1])) {
-    const { workspace, ...temporaryCommand } = parseTemporaryDevCommandArguments(argv[1], argv.slice(2))
-    const parsed = parseChatArgs(workspace ? ['--workspace', workspace] : [], 'strands dev')
-    return { ...parsed, dev: { ...parsed.dev!, temporaryCommand } }
-  }
   if (argv[0] === 'dev') {
-    const init = argv[1] === 'init'
-    return parseChatArgs(argv.slice(init ? 2 : 1), init ? 'strands dev init' : 'strands dev')
+    return parseDevArgs(argv.slice(1))
   }
   return parseChatArgs(argv, 'strands')
+}
+
+const parseDevArgs = (argv: string[]): ParsedArgs => {
+  const subcommand = findDevSubcommand(argv)
+  if (subcommand === undefined) return parseChatArgs(argv, 'strands dev')
+  if (subcommand.name === 'init') return parseChatArgs(subcommand.argv, 'strands dev init')
+  const { workspace, ...temporaryCommand } = parseTemporaryDevCommandArguments(subcommand.name, subcommand.argv)
+  const parsed = parseChatArgs(workspace ? ['--workspace', workspace] : [], 'strands dev')
+  return { ...parsed, dev: { ...parsed.dev!, temporaryCommand } }
+}
+
+const isDevSubcommand = (token: string | undefined): token is DevSubcommandName =>
+  token === 'init' || isTemporaryDevCommand(token)
+
+const findDevSubcommand = (argv: string[]): { name: DevSubcommandName; argv: string[] } | undefined => {
+  const { operands: fromFirstArgument } = chatProgram('strands dev').passThroughOptions().parseOptions(argv)
+  const position = argv.length - fromFirstArgument.length
+  const [name] = fromFirstArgument
+  if (!isDevSubcommand(name) || argv.slice(0, position).includes('--')) return undefined
+  return { name, argv: [...argv.slice(0, position), ...argv.slice(position + 1)] }
 }
 
 const commandsHelp = (commands: readonly CommandSummary[]): string =>

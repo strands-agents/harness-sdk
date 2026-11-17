@@ -84,6 +84,44 @@ describe('dev arguments', () => {
     expect(parseArgs(['dev', 'init', '--create', language]).dev).toMatchObject({ init: true, create: language })
   })
 
+  it.each<[string, string[], Record<string, unknown>]>([
+    [
+      'Test',
+      ['dev', '--workspace', 'desk', 'test', 'refunds'],
+      { workspace: 'desk', temporaryCommand: { name: 'test', experiment: 'refunds', forkArguments: [] } },
+    ],
+    [
+      'Optimize',
+      ['dev', '--workspace=desk', 'optimize', 'support', '--', '--tune', 'effort'],
+      {
+        workspace: 'desk',
+        temporaryCommand: { name: 'optimize', experiment: 'support', forkArguments: ['--tune', 'effort'] },
+      },
+    ],
+    [
+      'Init',
+      ['dev', '--workspace', 'desk', 'init', '--create', 'cli'],
+      { init: true, workspace: 'desk', create: 'cli' },
+    ],
+  ])('shouldRunThe%sSubcommandWhenOptionsComeBeforeIt', (_case, argv, expected) => {
+    expect(parseArgs(argv).dev).toMatchObject(expected)
+  })
+
+  it.each<[string, string[], Record<string, unknown>]>([
+    ['AnOptionValue', ['dev', '--prompt', 'test'], { request: 'test', dev: { init: false, workspace: undefined } }],
+    [
+      'TheWorkspaceName',
+      ['dev', '--workspace', 'init'],
+      { request: undefined, dev: { init: false, workspace: 'init' } },
+    ],
+    ['AfterTheSeparator', ['dev', '--', 'optimize'], { request: 'optimize', dev: { init: false } }],
+  ])('shouldKeepASubcommandNameAsTextWhenItIs%s', (_case, argv, expected) => {
+    const args = parseArgs(argv)
+
+    expect(args).toMatchObject(expected)
+    expect(args.dev?.temporaryCommand).toBeUndefined()
+  })
+
   it.each([
     ['dev', '--create', 'ruby'],
     ['dev', '--create', 'cli', '--agent', 'agent.ts'],
