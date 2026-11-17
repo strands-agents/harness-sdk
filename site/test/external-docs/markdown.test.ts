@@ -111,6 +111,57 @@ Text.
     expect(transformExternalMarkdown(source, context)).toContain('<a id="stable-anchor"></a>')
   })
 
+  it('expands a <YouTube/> shortcode to a static nocookie iframe', () => {
+    const source = `# Source title
+
+<YouTube id="j6zR0sPeMko" title="Episode 1" />
+`
+    expect(transformExternalMarkdown(source, context)).toBe(
+      '<iframe src="https://www.youtube-nocookie.com/embed/j6zR0sPeMko"' +
+        ' title="Episode 1" loading="lazy"' +
+        ' style="width:100%;aspect-ratio:16/9;border:0"' +
+        ' allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"' +
+        ' referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>\n'
+    )
+  })
+
+  it('expands a <YouTube/> shortcode without a title', () => {
+    expect(transformExternalMarkdown('# Source title\n\n<YouTube id="j6zR0sPeMko" />\n', context)).toBe(
+      '<iframe src="https://www.youtube-nocookie.com/embed/j6zR0sPeMko" loading="lazy"' +
+        ' style="width:100%;aspect-ratio:16/9;border:0"' +
+        ' allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"' +
+        ' referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>\n'
+    )
+  })
+
+  it.each([
+    ['extra attribute', '<YouTube id="j6zR0sPeMko" onLoad="x" />'],
+    ['expression attribute', '<YouTube id={x} />'],
+  ])('rejects <YouTube/> with %s', (_label, construct) => {
+    expect(() => transformExternalMarkdown(`# Source title\n\n${construct}\n`, context)).toThrow(/unsafe HTML or MDX/)
+  })
+
+  it('leaves trailing content on the same line alone after expanding <YouTube/>', () => {
+    expect(transformExternalMarkdown('# Source title\n\n<YouTube id="j6zR0sPeMko" />tail text\n', context)).toBe(
+      '<iframe src="https://www.youtube-nocookie.com/embed/j6zR0sPeMko" loading="lazy"' +
+        ' style="width:100%;aspect-ratio:16/9;border:0"' +
+        ' allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"' +
+        ' referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>tail text\n'
+    )
+  })
+
+  it('does not expand <YouTube/> inside a fenced code block', () => {
+    const source = `# Source title
+
+\`\`\`md
+<YouTube id="j6zR0sPeMko" title="Example" />
+\`\`\`
+`
+    const output = transformExternalMarkdown(source, context)
+    expect(output).toContain('<YouTube id="j6zR0sPeMko" title="Example" />')
+    expect(output).not.toContain('youtube-nocookie.com')
+  })
+
   it('preserves braces and import-like paragraphs as plain Markdown prose', () => {
     const source = `# Source title
 

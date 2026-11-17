@@ -184,6 +184,58 @@ github:
     ])
   })
 
+  it('nests navigation when manifest entries declare a group path', () => {
+    const sourceRoot = temporaryDirectory()
+    fs.mkdirSync(path.join(sourceRoot, 'docs/user'), { recursive: true })
+    fs.writeFileSync(path.join(sourceRoot, 'docs/user/overview.md'), '# Overview\n\nOverview.\n')
+    fs.writeFileSync(path.join(sourceRoot, 'docs/user/qwen.md'), '# Qwen\n\nQwen.\n')
+    fs.writeFileSync(path.join(sourceRoot, 'docs/user/gemma.md'), '# Gemma\n\nGemma.\n')
+
+    const manifest = parseExternalDocsManifest({
+      schemaVersion: 1,
+      product: { id: 'example', name: 'Example' },
+      pages: [
+        page('overview', 'docs/user/overview.md', 'models', 'Models', 'Models', 1),
+        page('qwen', 'docs/user/qwen.md', 'models/qwen', 'Qwen', ['Models', 'Checkpoints'], 2),
+        page('gemma', 'docs/user/gemma.md', 'models/gemma', 'Gemma', ['Models', 'Checkpoints'], 3),
+      ],
+    })
+    fs.writeFileSync(path.join(sourceRoot, 'docs/site-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const config = parseExternalDocsConfig({
+      schemaVersion: 1,
+      products: [
+        {
+          id: 'example',
+          repository: 'https://github.com/example/docs',
+          ref: 'main',
+          manifest: 'docs/site-manifest.json',
+          routePrefix: 'docs/labs/example',
+          navLabel: 'Example',
+          publicationStatus: 'preview',
+        },
+      ],
+    }).products[0]!
+
+    const built = buildExternalDocsProduct({ sourceRoot, config, manifest, revision, editRef: 'main' })
+
+    expect(built.navigation.groups).toEqual([
+      {
+        label: 'Models',
+        items: [
+          { label: 'Models', slug: 'docs/labs/example/models' },
+          {
+            label: 'Checkpoints',
+            items: [
+              { label: 'Qwen', slug: 'docs/labs/example/models/qwen' },
+              { label: 'Gemma', slug: 'docs/labs/example/models/gemma' },
+            ],
+          },
+        ],
+      },
+    ])
+  })
+
   it('rejects source symlinks even when they point to a regular file', () => {
     const fixture = createFixture()
     const outside = path.join(temporaryDirectory(), 'outside.md')
@@ -293,7 +345,7 @@ function createFixture() {
   return { sourceRoot, config, manifest, revision, editRef: 'main' }
 }
 
-function page(id: string, source: string, slug: string, title: string, group: string, order: number) {
+function page(id: string, source: string, slug: string, title: string, group: string | string[], order: number) {
   return {
     id,
     source,

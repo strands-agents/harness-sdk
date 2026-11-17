@@ -23,8 +23,13 @@ type UrlNode = Link | Image | Definition
 
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/
 const MKDOCS_SNIPPET_DIRECTIVE = /^-+8<-+\s*"[^"]+"$/
-const SAFE_RAW_HTML =
-  /^(?:(?:<\/?details>)|(?:<summary>[^<]*<\/summary>)|(?:<a id="[a-z0-9][a-z0-9-]*">)|(?:<\/a>)|\s)+$/
+// YouTube shortcode: only the two attributes we expand, both as plain string
+// literals. `id` matches YouTube's documented video-id charset; `title`
+// forbids angle brackets and quotes so the expansion cannot inject attributes.
+const YOUTUBE_TAG = /<YouTube\s+id="([A-Za-z0-9_-]{6,20})"(?:\s+title="([^"<>]*)")?\s*\/>/g
+const SAFE_RAW_HTML = new RegExp(
+  `^(?:(?:<\\/?details>)|(?:<summary>[^<]*<\\/summary>)|(?:<a id="[a-z0-9][a-z0-9-]*">)|(?:<\\/a>)|(?:${YOUTUBE_TAG.source})|\\s)+$`
+)
 
 export function transformExternalMarkdown(markdown: string, context: MarkdownContext): string {
   if (/^---\r?\n/.test(markdown)) {
@@ -57,7 +62,38 @@ export function transformExternalMarkdown(markdown: string, context: MarkdownCon
     edits.push(urlEdit(preparedMarkdown, node, rewritten, context.sourcePath))
   })
 
+  // Expand `<YouTube ... />` shortcodes inside html nodes to static iframe
+  // markup. Validation above has already restricted html nodes to the safe
+  // allowlist, and we only touch spans that remark parsed as html — so a
+  // `<YouTube>` typed inside a fenced code block stays literal.
+  visit(tree, 'html', (node) => {
+    const nodeStart = requiredOffset(node.position?.start.offset, context.sourcePath)
+    YOUTUBE_TAG.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = YOUTUBE_TAG.exec(node.value)) !== null) {
+      edits.push({
+        start: nodeStart + match.index,
+        end: nodeStart + match.index + match[0].length,
+        value: renderYouTubeEmbed(match[1], match[2]),
+      })
+    }
+  })
+
   return applyEdits(preparedMarkdown, edits)
+}
+
+function renderYouTubeEmbed(id: string, title: string | undefined): string {
+  // Starlight's markdown.css forces `height: auto` on iframes, which collapses
+  // a fixed-height embed to 150px tall. Give the iframe an explicit
+  // aspect-ratio and a percentage width so it fills the column at 16:9.
+  const titleAttr = title === undefined ? '' : ` title="${title}"`
+  return (
+    `<iframe src="https://www.youtube-nocookie.com/embed/${id}"${titleAttr}` +
+    ` loading="lazy"` +
+    ` style="width:100%;aspect-ratio:16/9;border:0"` +
+    ` allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"` +
+    ` referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`
+  )
 }
 
 function rewriteSameRepositoryUrls(markdown: string, context: MarkdownContext): string {

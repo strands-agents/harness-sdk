@@ -121,11 +121,59 @@ function buildNavigation(
   config: ExternalDocsProductConfig,
   revision: string
 ): GeneratedExternalDocsNavigation {
-  const grouped = new Map<string, ExternalDocsManifestPage[]>()
+  interface MutableNode {
+    label: string
+    children: Map<string, MutableNode>
+    leaves: Array<{ label: string; slug: string; order: number }>
+    firstOrder: number
+  }
+
+  const root: MutableNode = { label: '', children: new Map(), leaves: [], firstOrder: Number.POSITIVE_INFINITY }
   for (const page of manifest.pages) {
-    const pages = grouped.get(page.nav.group) ?? []
-    pages.push(page)
-    grouped.set(page.nav.group, pages)
+    let node = root
+    for (const segment of page.nav.group) {
+      let child = node.children.get(segment)
+      if (child === undefined) {
+        child = { label: segment, children: new Map(), leaves: [], firstOrder: Number.POSITIVE_INFINITY }
+        node.children.set(segment, child)
+      }
+      child.firstOrder = Math.min(child.firstOrder, page.nav.order)
+      node = child
+    }
+    node.leaves.push({
+      label: page.title,
+      slug: `${config.routePrefix}/${page.slug}`,
+      order: page.nav.order,
+    })
+  }
+
+  function toGroups(node: MutableNode): GeneratedExternalDocsNavigation['groups'] {
+    const groups: GeneratedExternalDocsNavigation['groups'] = []
+    const entries: Array<{ order: number; group: GeneratedExternalDocsNavigation['groups'][number] }> = []
+    for (const child of node.children.values()) {
+      entries.push({
+        order: child.firstOrder,
+        group: { label: child.label, items: toItems(child) },
+      })
+    }
+    entries.sort((left, right) => left.order - right.order)
+    for (const entry of entries) groups.push(entry.group)
+    return groups
+  }
+
+  function toItems(node: MutableNode): GeneratedExternalDocsNavigation['groups'][number]['items'] {
+    const items: Array<{ order: number; item: GeneratedExternalDocsNavigation['groups'][number]['items'][number] }> = []
+    for (const child of node.children.values()) {
+      items.push({
+        order: child.firstOrder,
+        item: { label: child.label, items: toItems(child) },
+      })
+    }
+    for (const leaf of node.leaves) {
+      items.push({ order: leaf.order, item: { label: leaf.label, slug: leaf.slug } })
+    }
+    items.sort((left, right) => left.order - right.order)
+    return items.map((entry) => entry.item)
   }
 
   return {
@@ -134,15 +182,7 @@ function buildNavigation(
     revision,
     routePrefix: config.routePrefix,
     label: config.navLabel,
-    groups: [...grouped].map(([label, pages]) => ({
-      label,
-      items: [...pages]
-        .sort((left, right) => left.nav.order - right.nav.order)
-        .map((page) => ({
-          label: page.title,
-          slug: `${config.routePrefix}/${page.slug}`,
-        })),
-    })),
+    groups: toGroups(root),
   }
 }
 

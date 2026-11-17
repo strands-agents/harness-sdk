@@ -155,7 +155,22 @@ an ordered page list. Each page declares a unique lowercase kebab-case ID, a uni
 Markdown source under `docs/`, a unique route suffix composed of lowercase kebab-case path
 components, title, description, and `nav: { group: string, order: positive integer }`.
 Group/order pairs must also be unique. The files are not evaluated as MDX, so braces and
-import/export-like prose remain literal text.
+import/export-like prose remain literal text. The generator writes `.md`, not `.mdx`, so a
+future upstream commit that adds a `{expr}` or `import` line cannot execute JavaScript at
+build time.
+
+`nav.group` accepts either a non-empty string (a flat top-level group) or an array of
+non-empty strings (a path of nested sidebar groups, outermost first). Uniqueness still
+holds: no two pages may share the same `(group-path, order)` tuple. A nested group's
+sidebar position comes from the minimum `order` of its descendants, so the first entry in
+a subgroup also fixes where the subgroup sits in its parent.
+
+The transformer recognises one shortcode, `<YouTube id="..." title="..." />`, and expands
+it to a static `youtube-nocookie.com` iframe before the file is written. The shortcode
+pattern is literal-only (id matches YouTube's video-id charset, title forbids angle
+brackets and quotes), so an upstream page cannot inject arbitrary attributes. All other
+JSX-like tags are rejected by the same raw-HTML allowlist that gates `<details>`,
+`<summary>`, and anchor tags.
 
 Schema version 1 accepts source files anywhere under `docs/`. This broadens the `docs/user/`
 restriction without invalidating existing manifests. Within `docs/`, the manifest's explicit
@@ -220,6 +235,8 @@ The generator:
 - rewrites other relative links and same-repository `blob`, `tree`, and raw `main` URLs to the
   pinned commit while keeping GitHub edit URLs on the configured editable ref;
 - treats unsupported `dw` and `cedar` code fences as plain text;
+- expands `<YouTube id="..." title="..." />` shortcodes to static `youtube-nocookie.com`
+  iframes (literal-string attributes only; nothing else matches the allowed pattern);
 - rejects unsafe paths, source symlinks, frontmatter, MDX-style components, executable
   snippet includes, and unsafe raw HTML.
 
