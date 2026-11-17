@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative } from 'node:path'
 
@@ -133,6 +133,7 @@ export interface TemporaryDevSessions {
 }
 
 const DEFAULT_ITERATIONS = 4
+const SOURCE_SETTLE_MS = 300
 const WIDTH = 4
 const REPETITIONS = 1
 const MILLISECONDS = 1000
@@ -201,6 +202,8 @@ interface RunEntry {
   abort: AbortController | undefined
   stopping: boolean
   writers: Map<number, EditWriter>
+  changes: readonly TemporaryKnobChange[]
+  sources: FSWatcher | undefined
 }
 
 const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress => ({
@@ -605,7 +608,9 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   openRun(id: string): void {
     const entry = this.entries.get(id)
-    if (entry) this.showPage(entry.state, entry.id)
+    if (!entry) return
+    this.showPage(entry.state, entry.id)
+    void this.recheck(entry, false)
   }
 
   openPastRun(record: string): void {
@@ -616,6 +621,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   discard(id: string): void {
     if (this.entries.get(id)?.state.step !== 'review') return
+    this.entries.get(id)?.sources?.close()
     this.entries.delete(id)
     if (this.shown === id) this.reset()
     else this.publish()
@@ -706,7 +712,12 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   accept(index: number, accepted: boolean): void {
     const entry = this.shownEntry()
-    if (entry?.state.step !== 'review' || !entry.writers.has(index)) return
+    if (entry?.state.step !== 'review') return
+    if (entry.state.review.edits[index]?.unavailable) {
+      if (accepted) void this.recheck(entry, true, index)
+      return
+    }
+    if (!entry.writers.has(index)) return
     const { review } = entry.state
     this.updateRun(entry, {
       step: 'review',
@@ -746,6 +757,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       abort: undefined,
       stopping: false,
       writers: new Map(),
+      changes: [],
+      sources: undefined,
     }
     this.entries.set(entry.id, entry)
     return entry
@@ -820,15 +833,63 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     try {
       const outcome = await readTemporaryStudy(record)
       const knobs = tunedIn(await readTemporaryKnobs(this.host().workspace), outcome.baseline.params)
-      const { review, writers } = await this.review(outcome, record, knobs)
+      const { review, writers, changes } = await this.review(outcome, record, knobs)
       const label = temporaryOptimizationLabel(record)
       const entry = this.addRun(label.experiment, label.startedAt ?? Date.now(), { step: 'review', review }, false)
       entry.record = record
       entry.writers = writers
+      entry.changes = changes
+      this.watchSources(entry)
       if (this.page.step === 'pick') this.showPage(entry.state, entry.id)
     } catch (error) {
       if (this.page.step === 'pick') this.showPage({ step: 'failed', message: errorMessage(error), record })
     }
+  }
+
+  private watchSources(entry: RunEntry): void {
+    if (entry.sources || entry.state.step !== 'review' || !entry.state.review.edits.some((edit) => edit.unavailable))
+      return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      entry.sources = watch(dirname(this.host().workspace.entrypoint), { persistent: false }, () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => void this.recheck(entry, false), SOURCE_SETTLE_MS)
+      })
+      entry.sources.on('error', () => entry.sources?.close())
+    } catch {
+      entry.sources = undefined
+    }
+  }
+
+  private async recheck(entry: RunEntry, accept: boolean, only?: number): Promise<void> {
+    if (entry.state.step !== 'review' || entry.state.review.applied) return
+    const indexes = entry.state.review.edits.flatMap((edit, index) =>
+      edit.unavailable && (only === undefined || only === index) ? [index] : []
+    )
+    const located = await Promise.all(
+      indexes.map(async (index) => {
+        const change = entry.changes[index]
+        const location = change
+          ? await this.locate(change).catch((error: unknown) => ({ unavailable: errorMessage(error) }))
+          : undefined
+        return { index, location }
+      })
+    )
+    if (entry.state.step !== 'review') return
+    const { review } = entry.state
+    const edits = review.edits.map((edit, index): ProposedEdit => {
+      const location = located.find((found) => found.index === index)?.location
+      if (!location || !edit.unavailable) return edit
+      if (!('write' in location)) return { ...edit, unavailable: location.unavailable }
+      entry.writers.set(index, location.write)
+      const { unavailable: _stale, ...rest } = edit
+      return { ...rest, target: location.target, accepted: accept }
+    })
+    if (!edits.some((edit) => edit.unavailable)) {
+      entry.sources?.close()
+      entry.sources = undefined
+    }
+    this.updateRun(entry, { step: 'review', review: { ...review, edits } })
   }
 
   private updatePlan(change: (plan: OptimizePlan) => OptimizePlan): void {
@@ -1180,9 +1241,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       return
     }
     try {
-      const { review, writers } = await this.review(outcome, record, knobs)
+      const { review, writers, changes } = await this.review(outcome, record, knobs)
       entry.writers = writers
+      entry.changes = changes
       this.updateRun(entry, { step: 'review', review })
+      this.watchSources(entry)
       announce(this.host(), 'success', `optimize · run ${review.run} finished · open it in /optimize`)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
@@ -1226,10 +1289,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     outcome: TemporaryStudyOutcome,
     record: string,
     knobs: readonly TemporaryKnob[]
-  ): Promise<{ review: OptimizeReview; writers: Map<number, EditWriter> }> {
+  ): Promise<{ review: OptimizeReview; writers: Map<number, EditWriter>; changes: TemporaryKnobChange[] }> {
     const writers = new Map<number, EditWriter>()
     const edits: ProposedEdit[] = []
-    for (const change of temporaryKnobChanges(knobs, outcome.baseline.params, outcome.best?.params ?? {})) {
+    const changes = temporaryKnobChanges(knobs, outcome.baseline.params, outcome.best?.params ?? {})
+    for (const change of changes) {
       const located = await this.locate(change)
       const writable = 'write' in located
       if (writable) writers.set(edits.length, located.write)
@@ -1255,7 +1319,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       edits,
       ...(check ? { testCheck: check } : {}),
     }
-    return { review, writers }
+    return { review, writers, changes }
   }
 
   private async applyAccepted(entry: RunEntry): Promise<void> {

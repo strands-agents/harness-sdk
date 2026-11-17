@@ -544,6 +544,65 @@ describe('TEMPORARY dev sessions', () => {
     ])
   })
 
+  const reviewWithMovedInstructions = async () => {
+    let root = ''
+    const finished = optimizingProcess()
+    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+      await writeFileAt(join(root, 'instructions.md'), 'Answer in many words.\n')
+      return finished(process)
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    root = workspace.root
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    return { workspace, sessions }
+  }
+
+  const firstEdit = (sessions: ReturnType<typeof temporaryDevSessions>) => {
+    const state = sessions.optimize.snapshot()
+    return state.step === 'review' ? state.review.edits[0] : undefined
+  }
+
+  it('shouldAcceptAnEditThatCouldNotBeAppliedWhenTheFileIsFixedAndTheUserPressesA', async () => {
+    const { workspace, sessions } = await reviewWithMovedInstructions()
+    expect(firstEdit(sessions)).toMatchObject({
+      accepted: false,
+      unavailable: expect.stringContaining('the old text is not a plain string there'),
+    })
+    await writeFileAt(join(workspace.root, 'instructions.md'), `${BASELINE}\n`)
+
+    sessions.optimize.accept(0, true)
+
+    await vi.waitFor(() =>
+      expect(firstEdit(sessions)).toEqual(
+        expect.objectContaining({ accepted: true, target: 'instructions.md', after: WINNER })
+      )
+    )
+    expect(firstEdit(sessions)?.unavailable).toBeUndefined()
+  })
+
+  it('shouldCheckAnEditAgainWhenTheAgentFilesChangeWhileTheReviewIsOpen', async () => {
+    const { workspace, sessions } = await reviewWithMovedInstructions()
+
+    await writeFileAt(join(workspace.root, 'instructions.md'), `${BASELINE}\n`)
+
+    await vi.waitFor(() => expect(firstEdit(sessions)?.unavailable).toBeUndefined(), { timeout: 5000 })
+    expect(firstEdit(sessions)).toMatchObject({ accepted: false, target: 'instructions.md' })
+  })
+
+  it('shouldKeepTheNewReasonWhenTheUserPressesAAndTheFileStillCannotTakeTheEdit', async () => {
+    const { workspace, sessions } = await reviewWithMovedInstructions()
+    await writeFileAt(join(workspace.root, 'instructions.md'), 'Answer in other words.\n')
+
+    sessions.optimize.accept(0, true)
+
+    await vi.waitFor(() => expect(firstEdit(sessions)?.unavailable).toContain('not a plain string there'))
+    expect(firstEdit(sessions)?.accepted).toBe(false)
+  })
+
   it('shouldWriteTheWinningInstructionsIntoCliTomlWhenTheWorkspaceIsTheBaseCliProfile', async () => {
     const home = await temporaryDirectory()
     vi.stubEnv('HOME', home)
