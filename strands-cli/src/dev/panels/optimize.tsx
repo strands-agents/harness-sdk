@@ -48,7 +48,9 @@ import {
   KeyHints,
   labelWidthFor,
   Line,
+  listed,
   oneLine,
+  PaidRunView,
   PanelTitle,
   plural,
   ProgressBar,
@@ -58,12 +60,14 @@ import {
   StoppedView,
   useCursor,
   useElapsed,
+  usePaidRunConfirm,
   useSyncedState,
   editText,
   pasteText,
   TextField,
   textValue,
   type ListItem,
+  type PaidRun,
   type TextValue,
   type Tone,
 } from './ui.js'
@@ -532,6 +536,46 @@ const ModelChooser = ({
   )
 }
 
+const PROPOSER_RISK =
+  'The commands get your environment, your credentials, and your network. This is not a sandbox, and text in the ' +
+  'cases can carry prompt injection. To protect your credentials, run strands dev in a container or VM that has ' +
+  'only the credentials that the run needs.'
+
+const AGENT_FILE_MODEL = 'the model that the agent file sets'
+
+const tunedKnobs = ({ knobs }: OptimizePlan): Knob[] => knobs.filter((knob) => knob.enabled && !knob.unavailable)
+
+const proposerWarnings = (knobs: readonly Knob[]): string[] => {
+  const texts = knobs.filter(({ kind }) => kind === 'text').map(({ label }) => label)
+  return texts.length === 0
+    ? []
+    : [
+        `To rewrite the ${listed(texts)}, a proposer agent writes shell commands and runs them on this machine. ${PROPOSER_RISK}`,
+      ]
+}
+
+const triedModels = (plan: OptimizePlan, knobs: readonly Knob[]): string => {
+  const current = plan.models?.current ?? AGENT_FILE_MODEL
+  const others = knobs.some(({ kind }) => kind === 'models') ? (plan.models?.picked.length ?? 0) : 0
+  return others > 0 ? `${current} and ${plural(others, 'other model')}` : current
+}
+
+const paidOptimization = (plan: OptimizePlan, start: () => void): PaidRun => {
+  const knobs = tunedKnobs(plan)
+  const { train, validation, test } = plan.split
+  return {
+    title: [plan.experiment.name],
+    facts: [
+      `The optimizer tunes the ${listed(knobs.map(({ label }) => label))} of your agent on ${train} train, ` +
+        `${validation} validation, and ${plural(test, 'test case')} of ${plan.experiment.name}.`,
+      `It tries ${plural(plan.iterations, 'step')} of ${plural(plan.width, 'candidate')}: about ${plan.rollouts} ` +
+        `rollouts of your agent with ${triedModels(plan, knobs)}, and about ${plan.judgeCalls} judge calls.`,
+    ],
+    warnings: proposerWarnings(knobs),
+    start,
+  }
+}
+
 const objectiveNotice = (plan: OptimizePlan): { readonly tone: Tone; readonly text: string } | undefined => {
   if (plan.objectiveProblem) return { tone: 'error', text: plan.objectiveProblem }
   if (plan.objectiveWarning) return { tone: 'warning', text: plan.objectiveWarning }
@@ -560,6 +604,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
   const cursor = useCursor(rows.length)
   const editing = useSyncedState<ObjectiveEditor | undefined>(undefined)
   const [choosingModels, setChoosingModels] = useState(false)
+  const confirm = usePaidRunConfirm()
   const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable) && !plan.objectiveProblem
   const compact = height < FULL_SETUP_ROWS
   const focused = rows[cursor.index]
@@ -574,7 +619,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
   const activate = (row: SetupRow | undefined): void => {
     if (row?.kind === 'button') {
       if (row.button === 'cancel') cancel()
-      else if (ready) session.start()
+      else if (ready) confirm.ask(paidOptimization(latest(), () => session.start()))
     } else if (row?.kind === 'slider' && row.slider.editable) edit('expression')
     else if (row?.kind === 'limits') edit('limits')
     else if (row?.kind === 'knob' && !row.knob.unavailable) {
@@ -589,6 +634,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
   }
   useInput(
     (input, key) => {
+      if (confirm.asking()) return
       const open = editing.current()
       if (open) {
         if (key.escape) editing.set(undefined)
@@ -607,6 +653,17 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
     { isActive: !choosingModels }
   )
   usePaste((text) => editing.set((current) => current && { ...current, value: pasteText(current.value, text) }))
+  if (confirm.pending)
+    return (
+      <PaidRunView
+        command={COMMAND}
+        run={confirm.pending}
+        width={width}
+        height={height}
+        backHint="Esc back to the setup"
+        onAnswer={confirm.answer}
+      />
+    )
   if (choosingModels && plan.models)
     return (
       <ModelChooser

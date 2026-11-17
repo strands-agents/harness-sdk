@@ -19,7 +19,7 @@ import type {
 import { OptimizePanel } from '../../../src/dev/panels/optimize.js'
 import { TestPanel } from '../../../src/dev/panels/test.js'
 import { listWindow } from '../../../src/dev/panels/ui.js'
-import type { DevChatPanelProps } from '../../../src/ui/chat/types.js'
+import type { DevChatPanelProps, DevChatPanelView } from '../../../src/ui/chat/types.js'
 import { DevPanelClicks, DevPanelFrame } from '../../../src/ui/panels/dev.js'
 import { experimentsSession, generation, panelProps as freshProps, show, store } from './fixtures.js'
 
@@ -90,29 +90,35 @@ const withStoppedRun = (): TestState['runs'] => [
   { experiment: cities, run: { status: 'failed', message: 'All case names must be unique.' } },
 ]
 
-const showInFrame = async (session: TestSession, clicks: DevPanelClicks) => {
+const showViewInFrame = async (command: string, view: DevChatPanelView, clicks: DevPanelClicks, width = 100) => {
   const props = freshProps()
   const panel = {
     id: 'panel-1',
     kind: 'dev' as const,
-    command: 'test',
-    title: '/test',
+    command,
+    title: `/${command}`,
     rows: [],
-    view: (viewProps: DevChatPanelProps) => createElement(TestPanel, { ...viewProps, session }),
+    view,
     close: props.close,
     openCommand: props.openCommand,
   }
-  const shown = await show(createElement(DevPanelFrame, { panel, width: 100, height: 22, clicks }), 24)
+  const shown = await show(createElement(DevPanelFrame, { panel, width, height: 22, clicks }), 24)
   const click = async (target: string): Promise<void> => {
+    await vi.waitFor(() => expect(shown.text(), `Visible target: ${target}`).toContain(target))
     const lines = shown.text().split('\n')
     const row = lines.findIndex((line) => line.includes(target))
-    expect(row, `Visible target: ${target}`).toBeGreaterThanOrEqual(0)
     const column = stringWidth(lines[row]!.slice(0, lines[row]!.indexOf(target))) + 1
     clicks.at({ button: 0, action: 'release', column, row: row + 1 })?.()
     await shown.instance.waitUntilRenderFlush()
   }
   return { ...shown, click }
 }
+
+const showInFrame = (session: TestSession, clicks: DevPanelClicks) =>
+  showViewInFrame('test', (viewProps) => createElement(TestPanel, { ...viewProps, session }), clicks)
+
+const showOptimizeInFrame = (session: OptimizeSession, clicks: DevPanelClicks) =>
+  showViewInFrame('optimize', (viewProps) => createElement(OptimizePanel, { ...viewProps, session }), clicks, 120)
 
 describe('TestPanel', () => {
   it('shouldListEveryExperimentWithItsLastResultWhenItOpens', async () => {
@@ -684,7 +690,7 @@ describe('OptimizePanel', () => {
       'setObjective',
       [{ expression: 'Maximize(Contains)', limits: '' }],
     ],
-    ['EnterOnStart', [...START_BUTTON, '\r'], 'start', []],
+    ['EnterOnStartAndEnterOnTheConfirm', [...START_BUTTON, '\r', '\r'], 'start', []],
   ])('shouldCallTheSessionWhenTheUserPresses%sInTheSetup', async (_key, keys, action, args) => {
     const { session } = optimizeSession(setup)
     const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
@@ -748,32 +754,90 @@ describe('OptimizePanel', () => {
     expect(session.start).not.toHaveBeenCalled()
   })
 
-  it.each<[string, string, keyof OptimizeSession, unknown[]]>([
-    ['AKnob', 'effort', 'toggleKnob', ['effort']],
-    ['Start', '[ Start ]', 'start', []],
-  ])('shouldActWhenTheUserClicks%sInTheSetup', async (_target, label, action, args) => {
+  it.each<[string, string[], keyof OptimizeSession, unknown[]]>([
+    ['AKnob', ['effort'], 'toggleKnob', ['effort']],
+    ['StartAndThenStartTheRun', ['[ Start ]', '[ Start the run ]'], 'start', []],
+  ])('shouldActWhenTheUserClicks%sInTheSetup', async (_target, labels, action, args) => {
     const { session } = optimizeSession(setup)
-    const clicks = new DevPanelClicks()
-    const props = freshProps()
-    const panel = {
-      id: 'panel-1',
-      kind: 'dev' as const,
-      command: 'optimize',
-      title: '/optimize',
-      rows: [],
-      view: (viewProps: DevChatPanelProps) => createElement(OptimizePanel, { ...viewProps, session }),
-      close: props.close,
-      openCommand: props.openCommand,
-    }
-    const shown = await show(createElement(DevPanelFrame, { panel, width: 120, height: 22, clicks }), 24)
-    const lines = shown.text().split('\n')
-    const row = lines.findIndex((line) => line.includes(label))
-    const column = stringWidth(lines[row]!.slice(0, lines[row]!.indexOf(label))) + 1
+    const { click } = await showOptimizeInFrame(session, new DevPanelClicks())
 
-    clicks.at({ button: 0, action: 'release', column, row: row + 1 })?.()
-    await shown.instance.waitUntilRenderFlush()
+    for (const label of labels) await click(label)
 
     expect(session[action]).toHaveBeenCalledWith(...args)
+  })
+
+  it('shouldAskBeforeItStartsWhenTheUserClicksStartInTheSetup', async () => {
+    const { session } = optimizeSession(setup)
+    const { click, text } = await showOptimizeInFrame(session, new DevPanelClicks())
+
+    await click('[ Start ]')
+
+    await vi.waitFor(() => expect(text()).toContain('optimize · refunds · start a paid run?'))
+    expect(session.start).not.toHaveBeenCalled()
+  })
+
+  it('shouldShowWhatTheRunTunesAndCostsAndTheShellWarningWhenTheUserPressesEnterOnStart', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 30)
+
+    for (const key of [...START_BUTTON, '\r']) await press(key)
+
+    const flat = text().replace(/\s+/gu, ' ')
+    expect(flat).toContain(
+      'The optimizer tunes the instructions of your agent on 10 train, 5 validation, and 5 test cases of refunds.'
+    )
+    expect(flat).toContain('It tries 4 steps of 4 candidates: about 230 rollouts of your agent with')
+    expect(flat).toContain(
+      '⚠ To rewrite the instructions, a proposer agent writes shell commands and runs them on this machine.'
+    )
+    expect(flat).toContain('This is not a sandbox')
+    expect(flat).toContain('run strands dev in a container or VM')
+    expect(text()).toContain('Enter start the run · Esc back to the setup')
+    expect(session.start).not.toHaveBeenCalled()
+  })
+
+  it('shouldNotWarnAboutShellCommandsWhenTheRunTunesNoText', async () => {
+    const knobs = setup.plan.knobs.map((knob) => ({ ...knob, enabled: knob.key === 'effort' }))
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, knobs } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 30)
+
+    for (const key of [...START_BUTTON, '\r']) await press(key)
+
+    expect(text()).toContain('The optimizer tunes the effort of your agent')
+    expect(text()).not.toContain('shell commands')
+  })
+
+  it('shouldGoBackToTheSetupAndNotStartWhenTheUserPressesEscOnTheConfirm', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    for (const key of [...START_BUTTON, '\r', '\u001b']) await press(key)
+
+    await vi.waitFor(() => expect(text()).toContain('↑↓ · Enter start · Esc cancel'))
+    expect(session.start).not.toHaveBeenCalled()
+    expect(session.reset).not.toHaveBeenCalled()
+  })
+
+  it('shouldStartOnceAndIgnoreTheSetupKeysWhileTheConfirmIsOpen', async () => {
+    const { session } = optimizeSession(setup)
+    const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    for (const key of [...START_BUTTON, '\r', DOWN_KEY, '\r']) await press(key)
+
+    expect(session.start).toHaveBeenCalledTimes(1)
+    expect(session.reset).not.toHaveBeenCalled()
+  })
+
+  it('shouldNotStartWhenTheKeysAfterEnterOnStartArriveInTheSameBurst', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    for (const key of START_BUTTON) await press(key)
+    await press(`\r${DOWN_KEY}\r`)
+
+    expect(text()).toContain('start a paid run?')
+    expect(session.start).not.toHaveBeenCalled()
+    expect(session.reset).not.toHaveBeenCalled()
   })
 
   it.each<[string, OptimizeStep, string]>([
@@ -1244,10 +1308,10 @@ describe('OptimizePanel', () => {
     expect(text()).toContain(note)
   })
 
-  it.each<[string, string, keyof OptimizeSession, unknown[]]>([
-    ['AKnob', 'effort', 'toggleKnob', ['effort']],
-    ['Start', '[ Start ]', 'start', []],
-  ])('shouldActOn%sUnderThePointerWhenTheUserPointsAtItAndPressesEnter', async (_target, label, action, args) => {
+  it.each<[string, string, keyof OptimizeSession, unknown[], string[]]>([
+    ['AKnob', 'effort', 'toggleKnob', ['effort'], ['\r']],
+    ['StartAndConfirms', '[ Start ]', 'start', [], ['\r', '\r']],
+  ])('shouldActOn%sUnderThePointerWhenTheUserPointsAtItAndPressesEnter', async (_target, label, action, args, keys) => {
     const { session } = optimizeSession(setup)
     const clicks = new DevPanelClicks()
     const props = freshProps()
@@ -1269,7 +1333,7 @@ describe('OptimizePanel', () => {
 
     clicks.hoverAt({ button: 35, action: 'move', column, row: row + 1 })?.()
     await shown.instance.waitUntilRenderFlush()
-    await shown.press('\r')
+    for (const key of keys) await shown.press(key)
 
     expect(session[action]).toHaveBeenCalledWith(...args)
     expect(session[action === 'start' ? 'toggleKnob' : 'start']).not.toHaveBeenCalled()

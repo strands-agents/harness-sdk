@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactElement, type React
 import { useInput, type Key } from 'ink'
 
 import { emptyEditor, reduceInputSequence, type EditorState } from '../../terminal/composer.js'
-import { graphemes, sanitizeTerminalText } from '../../terminal/text.js'
+import { graphemes, sanitizeTerminalText, wrapWords } from '../../terminal/text.js'
 import { EditableText } from '../../ui/text-input.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
@@ -31,6 +31,9 @@ export const quoted = (text: string): string => `"${oneLine(text)}"`
 export const shortcut = (input: string, key: Key): string => (key.ctrl || key.meta ? '' : input)
 
 export const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`
+
+export const listed = (words: readonly string[]): string =>
+  words.length < 3 ? words.join(' and ') : `${words.slice(0, -1).join(', ')}, and ${words.at(-1)}`
 
 export const formatSeconds = (seconds: number): string => {
   const whole = Math.max(0, Math.round(seconds))
@@ -378,4 +381,111 @@ export const useCursor = (count: number, initial = 0): Cursor => {
     move: (step) => state.set((index) => clamp(clamp(index) + step)),
     set: (index) => state.set(Math.max(0, index)),
   }
+}
+
+export interface PaidRun {
+  readonly title: readonly string[]
+  readonly facts: readonly string[]
+  readonly warnings?: readonly string[]
+  readonly start: () => void
+}
+
+export interface PaidRunConfirm {
+  readonly pending: PaidRun | undefined
+  readonly asking: () => boolean
+  readonly ask: (run: PaidRun) => void
+  readonly answer: (start: boolean) => void
+}
+
+export const usePaidRunConfirm = (): PaidRunConfirm => {
+  const pending = useSyncedState<PaidRun | undefined>(undefined)
+  return {
+    pending: pending.value,
+    asking: () => pending.current() !== undefined,
+    ask: (run) => pending.set(run),
+    answer: (start): void => {
+      const run = pending.current()
+      pending.set(undefined)
+      if (start) run?.start()
+    },
+  }
+}
+
+const PAID_RUN_CHROME_ROWS = 5
+const PAID_RUN_INDENT = '  '
+const WARNING_MARK = '⚠ '
+
+interface PaidRunRow {
+  readonly text: string
+  readonly warning: boolean
+}
+
+const paidRunRows = ({ facts, warnings = [] }: PaidRun, width: number, room: number): PaidRunRow[] => {
+  const textWidth = Math.max(1, width - PAID_RUN_INDENT.length)
+  const factRows = facts.flatMap((fact) => wrapWords(fact, textWidth).map((text) => ({ text, warning: false })))
+  const warningRows = warnings.flatMap((warning) =>
+    wrapWords(warning, textWidth - WARNING_MARK.length).map((text, index) => ({
+      text: `${index === 0 ? WARNING_MARK : ' '.repeat(WARNING_MARK.length)}${text}`,
+      warning: true,
+    }))
+  )
+  return [...factRows.slice(0, Math.max(0, room - warningRows.length)), ...warningRows]
+}
+
+const PaidRunButtons = ({ onAnswer }: { onAnswer: (start: boolean) => void }): ReactElement => {
+  const { accent, selection } = useTheme()
+  const clicks = useDevPanelClicks()
+  return (
+    <Box height={1} flexShrink={0}>
+      <Box
+        flexShrink={0}
+        marginRight={2}
+        backgroundColor={selection}
+        {...(clicks ? { ref: clicks.target(() => onAnswer(true)) } : {})}
+      >
+        <Text color={accent}>{'› '}</Text>
+        <Text color={accent} bold>
+          {'[ Start the run ]'}
+        </Text>
+      </Box>
+      <Box flexShrink={0} {...(clicks ? { ref: clicks.target(() => onAnswer(false)) } : {})}>
+        <Text>{'  Cancel'}</Text>
+      </Box>
+    </Box>
+  )
+}
+
+export const PaidRunView = ({
+  command,
+  run,
+  width,
+  height,
+  backHint,
+  onAnswer,
+}: {
+  command: string
+  run: PaidRun
+  width: number
+  height: number
+  backHint: string
+  onAnswer: (start: boolean) => void
+}): ReactElement => {
+  useInput((_input, key) => {
+    if (key.return) onAnswer(true)
+    else if (key.escape) onAnswer(false)
+  })
+  return (
+    <>
+      <PanelTitle name={command} parts={[...run.title, 'start a paid run?']} />
+      <Gap />
+      {paidRunRows(run, width, height - PAID_RUN_CHROME_ROWS).map(({ text, warning }, index) => (
+        <Line key={index} {...(warning ? { tone: 'warning' as const } : {})}>
+          {`${PAID_RUN_INDENT}${text}`}
+        </Line>
+      ))}
+      <Fill />
+      <PaidRunButtons onAnswer={onAnswer} />
+      <KeyHints hints={['Enter start the run', backHint]} />
+    </>
+  )
 }
