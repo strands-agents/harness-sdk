@@ -793,6 +793,34 @@ def test_agent__call__retry_with_overwritten_tool(mock_model, agent, tool, agene
     assert conversation_manager_spy.apply_management.call_count == 1
 
 
+@pytest.mark.parametrize(
+    "content_events",
+    [
+        [{"contentBlockDelta": {"delta": {"text": "<thinking>let me look that up</parameter>"}}}],
+        [{"contentBlockDelta": {"delta": {"toolUse": {"input": '{"key": "val"}'}}}}],
+    ],
+    ids=["text_only", "incomplete_tool_use"],
+)
+def test_agent__call__ends_turn_when_tool_use_carries_no_tool_uses(content_events, mock_model, agent, agenerator):
+    mock_model.mock_stream.side_effect = [
+        agenerator(
+            [
+                *content_events,
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+            ]
+        ),
+        # Only reached if the turn wrongly continues into a second model call.
+        agenerator([{"contentBlockDelta": {"delta": {"text": "second call"}}}, {"contentBlockStop": {}}]),
+    ]
+
+    result = agent("test message")
+
+    assert result.stop_reason == "end_turn"
+    assert mock_model.mock_stream.call_count == 1
+    assert [message["role"] for message in agent.messages] == ["user", "assistant"]
+
+
 def test_agent__call__invalid_tool_use_event_loop_exception(mock_model, agent, tool, agenerator):
     mock_model.mock_stream.side_effect = [
         agenerator(

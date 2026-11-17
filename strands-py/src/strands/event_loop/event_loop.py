@@ -291,6 +291,12 @@ async def event_loop_cycle(
                         yield model_event
 
                 stop_reason, message = stop_event.stop_reason, stop_event.message
+
+                # Nothing to execute; tool execution would append an empty message, corrupting the next request.
+                if stop_reason == "tool_use" and not any("toolUse" in block for block in message["content"]):
+                    logger.warning("stop_reason=<tool_use> | no toolUse blocks in response | ending the turn")
+                    stop_reason = "end_turn"
+
                 _record_forced_tool_use_failure(structured_output_context, stop_reason, message, invocation_context)
                 yield ModelMessageEvent(message=message)
         except Exception as e:
