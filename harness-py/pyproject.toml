@@ -28,10 +28,10 @@ classifiers = [
 # configured), so the exporter must always be importable, not an optional extra.
 # SDK 1.64.0 places OpenAI Responses cache points on GPT-5.6+, which the harness's caching relies on.
 # pydantic-monty is the sandbox programmatic_tool_caller runs model-authored code in; it is a hard
-# dependency because the tool is on by default. Pinned exactly while Monty is pre-1.0 and its API moves.
+# dependency because the tool is on by default.
 dependencies = [
     "strands-agents[otel]>=1.64.0,<2.0.0",
-    "pydantic-monty==0.0.23",
+    "pydantic-monty>=1.4.0,<2.0.0",
     "pydantic>=2.5,<3",
 ]
 
