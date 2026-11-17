@@ -964,6 +964,28 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     assert "count=<3> | Location sources are not supported by Ollama" in messages_logged[0]
 
 
+def test_format_request_skips_reasoning_content(model, caplog):
+    """Reasoning blocks in history are skipped with one log per request instead of raising TypeError (#5804)."""
+    caplog.set_level(logging.WARNING, logger="strands.models.ollama")
+    reasoning_turn = {
+        "role": "assistant",
+        "content": [{"reasoningContent": {"reasoningText": {"text": "7 x 13", "signature": "sig"}}}, {"text": "No"}],
+    }
+    messages = [{"role": "user", "content": [{"text": "Is 91 prime?"}]}, reasoning_turn, reasoning_turn]
+
+    tru_messages = model.format_request(messages)["messages"]
+    exp_messages = [
+        {"role": "user", "content": "Is 91 prime?"},
+        {"role": "assistant", "content": "No"},
+        {"role": "assistant", "content": "No"},
+    ]
+    assert tru_messages == exp_messages
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<2> | reasoningContent is not supported" in messages_logged[0]
+
+
 def test_format_chunk_content_block_delta_thinking_delta(model):
     event = {"chunk_type": "content_delta", "data_type": "reasoning_content", "data": "t1"}
 

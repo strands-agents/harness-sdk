@@ -146,9 +146,6 @@ class OllamaModel(Model):
         if "image" in content:
             return [{"role": role, "images": [content["image"]["source"]["bytes"]]}]
 
-        if "reasoningContent" in content:
-            return []
-
         if "toolUse" in content:
             return [
                 {
@@ -196,6 +193,9 @@ class OllamaModel(Model):
         skipped: Counter[str] = Counter()
         for message in messages:
             for content in message["content"]:
+                if "reasoningContent" in content:
+                    skipped["reasoningContent is not supported in multi-turn conversations by Ollama | skipping"] += 1
+                    continue
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
                     skipped["Location sources are not supported by Ollama | skipping content block"] += 1
