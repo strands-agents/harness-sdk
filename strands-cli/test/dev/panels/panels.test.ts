@@ -943,7 +943,7 @@ describe('OptimizePanel', () => {
     expect(text()).toMatch(new RegExp(`objective\\s+─*█─*\\s+${detail}`, 'u'))
   })
 
-  it('shouldNameTheOnlyEvaluatorAndKeepTheObjectiveWhenTheExperimentHasOneEvaluator', async () => {
+  it('shouldShowTheOnlyEvaluatorAsTextAndSkipItWhenTheExperimentHasOneEvaluator', async () => {
     const only = { kind: 'evaluators' as const, evaluators: ['OutputEvaluator'] }
     const { session } = optimizeSession({
       ...setup,
@@ -953,9 +953,11 @@ describe('OptimizePanel', () => {
 
     for (const key of [...OBJECTIVE_ROW, RIGHT_KEY]) await press(key)
 
-    expect(text()).toMatch(/› objective\s+█─*\s+maximize OutputEvaluator/u)
-    expect(text()).toContain('↑↓ · the only evaluator · Esc cancel')
+    expect(text()).toMatch(/ {2}objective {2}maximize OutputEvaluator/u)
+    expect(text()).not.toMatch(/objective\s+[─█]/u)
+    expect(text()).toMatch(/› cases\s+─*█─*/u)
     expect(session.setObjective).not.toHaveBeenCalled()
+    expect(session.setSplit).toHaveBeenCalled()
   })
 
   it('shouldScrollTheDiffWithTheArrowKeysWhenAnEditIsLongerThanThePanel', async () => {

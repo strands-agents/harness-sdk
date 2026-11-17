@@ -278,7 +278,7 @@ const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () =
     count: plan.objectiveChoices.length,
     position: Math.max(0, objectivePosition(plan)),
     detail: objectiveText(plan.objective),
-    hint: plan.objectiveChoices.length > 1 ? '←→ objective' : 'the only evaluator',
+    hint: '←→ objective',
     move: (step): void => {
       const current = latest()
       const next = current.objectiveChoices[objectivePosition(current) + step]
@@ -328,6 +328,8 @@ const setupHints = (focused: SetupRow | undefined, ready: boolean): string[] => 
   return ['↑↓', action, 'Esc cancel']
 }
 
+const hasChoice = ({ count }: SetupSlider): boolean => count > 1
+
 const SliderRow = ({
   slider,
   active,
@@ -335,7 +337,7 @@ const SliderRow = ({
 }: {
   slider: SetupSlider
   active: boolean
-  onPoint: () => void
+  onPoint?: () => void
 }): ReactElement => {
   const { accent, selection } = useTheme()
   const clicks = useDevPanelClicks()
@@ -346,7 +348,7 @@ const SliderRow = ({
       justifyContent="space-between"
       overflow="hidden"
       {...(active ? { backgroundColor: selection } : {})}
-      {...(clicks ? { ref: clicks.target(onPoint, onPoint) } : {})}
+      {...(clicks && onPoint ? { ref: clicks.target(onPoint, onPoint) } : {})}
     >
       <Box flexShrink={1} overflow="hidden">
         <Text wrap="truncate-end">
@@ -354,8 +356,14 @@ const SliderRow = ({
           <Text bold={active} dimColor={!active}>
             {slider.label.padEnd(SLIDER_LABEL_WIDTH)}
           </Text>
-          <ChoiceSlider count={slider.count} position={slider.position} />
-          <Text>{`  ${slider.detail}`}</Text>
+          {hasChoice(slider) ? (
+            <>
+              <ChoiceSlider count={slider.count} position={slider.position} />
+              <Text>{`  ${slider.detail}`}</Text>
+            </>
+          ) : (
+            <Text>{slider.detail}</Text>
+          )}
         </Text>
       </Box>
       {slider.right ? (
@@ -444,13 +452,14 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
     return state.step === 'setup' ? state.plan : plan
   }
   const sliders = setupSliders(plan, session, latest)
+  const choices = sliders.filter(hasChoice)
   const rows: SetupRow[] = [
     ...plan.knobs.map((knob) => ({ kind: 'knob' as const, knob })),
-    ...sliders.map((slider) => ({ kind: 'slider' as const, slider })),
+    ...choices.map((slider) => ({ kind: 'slider' as const, slider })),
     ...SETUP_BUTTONS.map((button) => ({ kind: 'button' as const, button })),
   ]
   const firstSlider = plan.knobs.length
-  const firstButton = firstSlider + sliders.length
+  const firstButton = firstSlider + choices.length
   const cursor = useCursor(rows.length)
   const [choosingModels, setChoosingModels] = useState(false)
   const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable)
@@ -509,14 +518,14 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
         onHover={cursor.set}
       />
       {compact ? null : <Gap />}
-      {sliders.map((slider, index) => (
-        <SliderRow
-          key={slider.key}
-          slider={slider}
-          active={cursor.index === firstSlider + index}
-          onPoint={() => cursor.set(firstSlider + index)}
-        />
-      ))}
+      {sliders.map((slider) => {
+        const row = firstSlider + choices.indexOf(slider)
+        return hasChoice(slider) ? (
+          <SliderRow key={slider.key} slider={slider} active={cursor.index === row} onPoint={() => cursor.set(row)} />
+        ) : (
+          <SliderRow key={slider.key} slider={slider} active={false} />
+        )
+      })}
       {compact ? null : (
         <Line tone="muted">
           {`${' '.repeat(SLIDER_LABEL_WIDTH + 2)}Train cases guide the search. Validation picks the winner. Test checks it.`}
