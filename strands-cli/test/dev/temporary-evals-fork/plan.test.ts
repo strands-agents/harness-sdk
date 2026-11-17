@@ -59,6 +59,36 @@ describe('TEMPORARY optimize plan', () => {
     }
   )
 
+  it('shouldScaleTheTokensAndTheTimeOfEachEarlierRunWhenAProfileIsGiven', () => {
+    const split = { train: 4, validation: 2, test: 2 }
+    const profile = {
+      experiment: 'refunds',
+      runs: [
+        { rollouts: 40, tokens: 400_000, seconds: 200 },
+        { rollouts: 20, tokens: 300_000, seconds: 80 },
+      ],
+    }
+
+    const estimate = temporaryRolloutEstimate({
+      split,
+      repetitions: 1,
+      iterations: 4,
+      width: 4,
+      evaluators: 0,
+      profile,
+    })
+
+    expect(estimate).toEqual({
+      rollouts: 80,
+      judgeCalls: 0,
+      usage: {
+        tokens: { low: 800_000, high: 1_200_000 },
+        seconds: { low: 320, high: 400 },
+        basedOn: { experiment: 'refunds', runs: 2 },
+      },
+    })
+  })
+
   it.each([
     { cases: 0, split: DEFAULT_SPLIT, warning: 'The experiment has no cases, so the optimizer refuses to run. Add 7' },
     {

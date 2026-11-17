@@ -1,4 +1,5 @@
-import { sameCaseSplit, type CaseSplit } from '../panels/model.js'
+import { sameCaseSplit, type CaseSplit, type UsageEstimate, type UsageRange } from '../panels/model.js'
+import type { TemporaryUsageProfile } from './study.js'
 
 export type TemporarySplitShares = readonly [train: number, validation: number, test: number]
 
@@ -15,11 +16,13 @@ export interface TemporaryRolloutPlan {
   readonly iterations: number
   readonly width: number
   readonly evaluators: number
+  readonly profile?: TemporaryUsageProfile
 }
 
 export interface TemporaryRolloutEstimate {
   readonly rollouts: number
   readonly judgeCalls: number
+  readonly usage?: UsageEstimate
 }
 
 export const TEMPORARY_OPTIMIZE_DEFAULTS: TemporaryOptimizeSettings = {
@@ -63,16 +66,29 @@ export const temporarySplitShares = (split: CaseSplit): TemporarySplitShares => 
   return [split.train / total, split.validation / total, split.test / total]
 }
 
+const rangeOf = (values: readonly number[]): UsageRange => ({ low: Math.min(...values), high: Math.max(...values) })
+
+const usageEstimate = (rollouts: number, { experiment, runs }: TemporaryUsageProfile): UsageEstimate => ({
+  tokens: rangeOf(runs.map((run) => (run.tokens / run.rollouts) * rollouts)),
+  seconds: rangeOf(runs.map((run) => (run.seconds / run.rollouts) * rollouts)),
+  basedOn: { experiment, runs: runs.length },
+})
+
 export const temporaryRolloutEstimate = ({
   split: { train, validation, test },
   repetitions,
   iterations,
   width,
   evaluators,
+  profile,
 }: TemporaryRolloutPlan): TemporaryRolloutEstimate => {
   const rollouts =
     repetitions * (train + iterations * width * train + VALIDATED_CANDIDATES * validation + TESTED_CANDIDATES * test)
-  return { rollouts, judgeCalls: rollouts * evaluators }
+  return {
+    rollouts,
+    judgeCalls: rollouts * evaluators,
+    ...(profile && profile.runs.length > 0 ? { usage: usageEstimate(rollouts, profile) } : {}),
+  }
 }
 
 const sharesProblem = ([train, validation, test]: TemporarySplitShares): string | undefined => {

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatObjective, formatObjectiveChange, type ObjectiveMeasure } from '../../../src/dev/panels/model.js'
+import {
+  formatObjective,
+  formatObjectiveChange,
+  smallSplitWarning,
+  type CaseSplit,
+  type ObjectiveMeasure,
+} from '../../../src/dev/panels/model.js'
 
 const FEWER_TOKENS: ObjectiveMeasure = { kind: 'metric', metric: 'tokens', usage: true, lower: true }
 const LESS_TIME: ObjectiveMeasure = { kind: 'metric', metric: 'seconds', usage: true, lower: true }
@@ -26,5 +32,29 @@ describe('optimize objective numbers', () => {
     ['ALowerScore', 0.1, LOWER_SCORE, '-0.10'],
   ])('shouldDescribeTheChangeFor%s', (_case, delta, measure, shown) => {
     expect(formatObjectiveChange(delta, measure)).toBe(shown)
+  })
+})
+
+describe('optimize split warnings', () => {
+  it.each<[string, CaseSplit, string | undefined]>([
+    [
+      'TwoTestCases',
+      { train: 4, validation: 2, test: 2 },
+      'The split leaves 2 test cases, so the range of the test check will be wide.',
+    ],
+    [
+      'OneTestCase',
+      { train: 3, validation: 2, test: 1 },
+      'The split leaves 1 test case, so the range of the test check will be wide.',
+    ],
+    [
+      'OneTrainCase',
+      { train: 1, validation: 2, test: 2 },
+      'The split leaves 1 train case, so the measured effects are less certain.',
+    ],
+    ['FiveTestCases', { train: 10, validation: 5, test: 5 }, undefined],
+    ['NoTestCase', { train: 3, validation: 2, test: 0 }, undefined],
+  ])('shouldWarnLikeTheEvalsSplitWhenTheSplitHas%s', (_case, split, warning) => {
+    expect(smallSplitWarning(split)).toBe(warning)
   })
 })

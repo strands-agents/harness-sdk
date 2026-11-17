@@ -14,6 +14,7 @@ import type {
   TrialProgress,
 } from '../panels/model.js'
 import { tailTemporaryLines, type TemporaryTail } from './jobs.js'
+import { listTemporaryOptimizations, temporaryOptimizationFiles } from './layout.js'
 import { TEMPORARY_USAGE_METRICS } from './objective.js'
 
 export type TemporaryStudyParams = Readonly<Record<string, unknown>>
@@ -649,4 +650,72 @@ export const readTemporaryStudy = async (record: string): Promise<TemporaryStudy
   const result = await readJson(join(folder, RESULT))
   if (isRecord(result)) state.absorbResult(result)
   return state.outcome()
+}
+
+export interface TemporaryRunUsage {
+  readonly rollouts: number
+  readonly tokens: number
+  readonly seconds: number
+}
+
+export interface TemporaryUsageProfile {
+  readonly experiment: string
+  readonly runs: readonly TemporaryRunUsage[]
+}
+
+const USAGE_RUNS = 3
+const MILLISECONDS_PER_SECOND = 1000
+
+const usedTokens = (usage: unknown): number => (isRecord(usage) ? (finite(usage.tokens) ?? 0) : 0)
+
+const eventTokens = ({ event, usage, record }: Event): number => {
+  if (event === 'proposer_usage') return usedTokens(usage)
+  if (event !== 'trial' || !isRecord(record)) return 0
+  const judges = isRecord(record.judge_usage) ? Object.values(record.judge_usage) : []
+  return judges.reduce<number>((sum, judge) => sum + usedTokens(judge), usedTokens(record.usage))
+}
+
+const eventTime = ({ time }: Event): number[] => {
+  const at = typeof time === 'string' ? Date.parse(time) : Number.NaN
+  return Number.isFinite(at) ? [at] : []
+}
+
+const runUsage = (events: readonly Event[]): TemporaryRunUsage | undefined => {
+  const rollouts = events.filter(({ event, record }) => event === 'trial' && isRecord(record)).length
+  const times = events.flatMap(eventTime)
+  if (rollouts === 0 || times.length < 2) return undefined
+  return {
+    rollouts,
+    tokens: events.reduce((sum, event) => sum + eventTokens(event), 0),
+    seconds: (times.at(-1)! - times[0]!) / MILLISECONDS_PER_SECOND,
+  }
+}
+
+const readRunUsage = async (record: string): Promise<TemporaryRunUsage | undefined> => {
+  const folder = await temporaryRunFolder(record).catch(() => undefined)
+  if (!folder) return undefined
+  const lines = (await readFile(join(folder, EVENTS), 'utf8').catch(() => '')).split(LINE_BREAK)
+  return runUsage(lines.map(parseEvent).filter((event) => event !== undefined))
+}
+
+const newestRecords = async (
+  workspaceDirectory: string
+): Promise<{ readonly record: string; readonly experiment: string }[]> =>
+  (await listTemporaryOptimizations(workspaceDirectory).catch(() => []))
+    .map(({ home, name, stamp }) => ({ record: temporaryOptimizationFiles(home, stamp).record, experiment: name }))
+    .reverse()
+
+export const readTemporaryUsageProfile = async (
+  workspaceDirectory: string,
+  experiment: string
+): Promise<TemporaryUsageProfile | undefined> => {
+  const records = await newestRecords(workspaceDirectory)
+  const same = records.filter((run) => run.experiment === experiment).slice(0, USAGE_RUNS)
+  const runs = (await Promise.all(same.map(({ record }) => readRunUsage(record)))).filter((run) => run !== undefined)
+  if (runs.length > 0) return { experiment, runs }
+  for (const other of records.filter((run) => run.experiment !== experiment)) {
+    const usage = await readRunUsage(other.record)
+    if (usage) return { experiment: other.experiment, runs: [usage] }
+  }
+  return undefined
 }

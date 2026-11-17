@@ -117,6 +117,21 @@ export const readTemporaryEvaluators = async (
   return catalogOf(exit.stdout, workspace.config.language)
 }
 
+const CHECK_EVALUATORS: ReadonlySet<string> = new Set([
+  'Equals',
+  'Contains',
+  'StartsWith',
+  'ToolCalled',
+  'SkillInvoked',
+  'StructuredOutputSimilarity',
+  'StateEquals',
+])
+
+export const temporaryJudgeEvaluatorCount = (evaluators: unknown): number =>
+  (Array.isArray(evaluators) ? evaluators : [])
+    .filter(isRecord)
+    .filter(({ evaluator_type: type }) => typeof type !== 'string' || !CHECK_EVALUATORS.has(type)).length
+
 export const temporaryEvaluatorArguments = (choices: readonly EvaluatorChoice[]): string[] =>
   choices.flatMap(({ name, settings }) => [
     '--evaluator',

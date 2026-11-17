@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { measuredVersions, type EvalCase } from '../../../src/dev/panels/model.js'
 import {
   readTemporaryStudy,
+  readTemporaryUsageProfile,
   tailTemporaryRun,
   temporaryStudyReader,
 } from '../../../src/dev/temporary-evals-fork/study.js'
@@ -21,6 +22,7 @@ import {
   optimizerTrial,
   writeOptimizerRun,
 } from '../../fixtures/optimizer-run.js'
+import { temporaryExperimentsFolder, temporaryOptimizationFiles } from '../../../src/dev/temporary-evals-fork/layout.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const BASELINE = 'Answer refund questions.'
@@ -536,5 +538,91 @@ describe('TEMPORARY optimization run', () => {
 
     await vi.waitFor(() => expect(lines).toEqual([optimizerConfig()]), { timeout: 5000 })
     await tail.stop()
+  })
+})
+
+const RUN_START = Date.UTC(2026, 10, 16, 22, 0, 0)
+
+const at = (seconds: number): string => new Date(RUN_START + seconds * 1000).toISOString()
+
+const usageLines = ({ trials, proposer, seconds }: { trials: number[]; proposer?: number; seconds: number }) => [
+  optimizerConfig(),
+  ...trials.map((tokens, index) =>
+    JSON.stringify({
+      event: 'trial',
+      iteration: 0,
+      record: { usage: { tokens }, judge_usage: { OutputEvaluator: { tokens: 50 }, Equals: { tokens: 0 } } },
+      time: at(index),
+    })
+  ),
+  ...(proposer === undefined
+    ? []
+    : [JSON.stringify({ event: 'proposer_usage', iteration: 1, usage: { tokens: proposer }, time: at(1) })]),
+  JSON.stringify({ event: 'stop', iteration: 1, reason: 'iterations', message: 'done', time: at(seconds) }),
+]
+
+const writeUsageRun = async (workspace: string, run: string, lines: readonly string[]): Promise<void> => {
+  const [, stamp = '', experiment = ''] = /^(\d{8}-\d{6})-(.+)$/u.exec(run) ?? []
+  const home = join(temporaryExperimentsFolder(workspace), experiment)
+  await writeOptimizerRun(temporaryOptimizationFiles(home, stamp).record, lines)
+}
+
+describe('TEMPORARY usage of earlier optimization runs', () => {
+  it('shouldSumTheAgentJudgeAndProposerTokensOfTheNewestRunsOfTheExperiment', async () => {
+    const folder = await temporaryDirectory()
+    await writeUsageRun(
+      folder,
+      '20261116-220000-refunds',
+      usageLines({ trials: [100, 300], proposer: 1000, seconds: 100 })
+    )
+    await writeUsageRun(folder, '20261116-210000-refunds', usageLines({ trials: [150], seconds: 10 }))
+    await writeUsageRun(folder, '20261116-230000-capital', usageLines({ trials: [999], seconds: 5 }))
+
+    const profile = await readTemporaryUsageProfile(folder, 'refunds')
+
+    expect(profile).toEqual({
+      experiment: 'refunds',
+      runs: [
+        { rollouts: 2, tokens: 1500, seconds: 100 },
+        { rollouts: 1, tokens: 200, seconds: 10 },
+      ],
+    })
+  })
+
+  it('shouldUseOnlyTheThreeNewestRunsOfTheExperiment', async () => {
+    const folder = await temporaryDirectory()
+    for (const hour of ['18', '19', '20', '21'])
+      await writeUsageRun(folder, `20261116-${hour}0000-refunds`, usageLines({ trials: [Number(hour)], seconds: 10 }))
+
+    const profile = await readTemporaryUsageProfile(folder, 'refunds')
+
+    expect(profile?.runs.map(({ tokens }) => tokens - 50)).toEqual([21, 20, 19])
+  })
+
+  it('shouldUseTheNewestRunOfAnotherExperimentWhenTheExperimentHasNoRunWithTrials', async () => {
+    const folder = await temporaryDirectory()
+    await writeUsageRun(folder, '20261116-230000-refunds', usageLines({ trials: [], seconds: 10 }))
+    await writeUsageRun(folder, '20261116-220000-capital', usageLines({ trials: [100], seconds: 30 }))
+    await writeUsageRun(folder, '20261116-210000-billing', usageLines({ trials: [500], seconds: 60 }))
+
+    const profile = await readTemporaryUsageProfile(folder, 'refunds')
+
+    expect(profile).toEqual({ experiment: 'capital', runs: [{ rollouts: 1, tokens: 150, seconds: 30 }] })
+  })
+
+  it.each([
+    ['NoRunHasTrials', [['20261116-230000-refunds', usageLines({ trials: [], seconds: 10 })]] as const],
+    ['TheFolderIsEmpty', [] as const],
+  ])('shouldGiveNoProfileWhen%s', async (_case, runs) => {
+    const folder = await temporaryDirectory()
+    for (const [name, lines] of runs) await writeUsageRun(folder, name, lines)
+
+    expect(await readTemporaryUsageProfile(folder, 'refunds')).toBeUndefined()
+  })
+
+  it('shouldGiveNoProfileWhenTheWorkspaceFolderIsMissing', async () => {
+    const folder = await temporaryDirectory()
+
+    expect(await readTemporaryUsageProfile(join(folder, 'missing'), 'refunds')).toBeUndefined()
   })
 })

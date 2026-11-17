@@ -17,6 +17,7 @@ import {
   formatObjectiveChange,
   measuredVersions,
   sameObjective,
+  smallSplitWarning,
   type ObjectiveMeasure,
   type CandidateResult,
   type CaseSplit,
@@ -29,6 +30,8 @@ import {
   type OptimizeStep,
   type ScoringProgress,
   type TrialProgress,
+  type UsageEstimate,
+  type UsageRange,
   type OptimizeReview,
   type OptimizeRun,
   type OptimizeRunState,
@@ -354,7 +357,7 @@ const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () =
     count: plan.iterationChoices.length,
     position: Math.max(0, plan.iterationChoices.indexOf(plan.iterations)),
     detail: `${plural(plan.iterations, 'step')} × ${plan.width} candidates`,
-    right: `~${plan.rollouts} rollouts · ~${plan.judgeCalls} judge calls`,
+    right: `~${plan.rollouts} rollouts · ${judgeCallsText(plan.judgeCalls, '~')}`,
     hint: '←→ budget',
     move: (step): void => {
       const current = latest()
@@ -536,6 +539,49 @@ const ModelChooser = ({
   )
 }
 
+const THOUSAND = 1_000
+const MILLION = 1_000_000
+const SECONDS_PER_MINUTE = 60
+const MINUTES_PER_HOUR = 60
+const MINUTES_SHOWN_AS_HOURS = 120
+const PRICE_UNKNOWN = 'price unknown'
+
+const spanText = (low: string, high: string): string => (low === high ? low : `${low}–${high}`)
+
+const countText = (count: number): string =>
+  count >= MILLION
+    ? `${(count / MILLION).toFixed(1)}M`
+    : count >= THOUSAND
+      ? `${Math.round(count / THOUSAND)}k`
+      : String(Math.round(count))
+
+const tokensText = ({ low, high }: UsageRange): string => `${spanText(countText(low), countText(high))} tokens`
+
+const durationText = ({ low, high }: UsageRange): string => {
+  const minutes = (seconds: number): number => Math.max(1, Math.round(seconds / SECONDS_PER_MINUTE))
+  if (minutes(high) < MINUTES_SHOWN_AS_HOURS) return `${spanText(String(minutes(low)), String(minutes(high)))} min`
+  const hours = (seconds: number): string => (seconds / SECONDS_PER_MINUTE / MINUTES_PER_HOUR).toFixed(1)
+  return `${spanText(hours(low), hours(high))} h`
+}
+
+const usageShort = (usage: UsageEstimate | undefined): string =>
+  usage
+    ? `~${tokensText(usage.tokens)} · ~${durationText(usage.seconds)} · ${PRICE_UNKNOWN}`
+    : `no token or time estimate yet · ${PRICE_UNKNOWN}`
+
+const usageSentence = (usage: UsageEstimate | undefined): string => {
+  if (!usage) return 'strands dev cannot estimate the tokens and the time yet, and it has no model prices.'
+  const { experiment, runs } = usage.basedOn
+  const basis = `${runs === 1 ? 'the last run' : `the last ${runs} runs`} of ${experiment}`
+  return (
+    `About ${tokensText(usage.tokens)} and ${durationText(usage.seconds)}, from ${basis}. ` +
+    'The price is unknown, because strands dev has no model prices.'
+  )
+}
+
+const judgeCallsText = (calls: number, about: string): string =>
+  calls === 0 ? 'no judge calls' : `${about}${calls} judge calls`
+
 const PROPOSER_RISK =
   'The commands get your environment, your credentials, and your network. This is not a sandbox, and text in the ' +
   'cases can carry prompt injection. To protect your credentials, run strands dev in a container or VM that has ' +
@@ -569,7 +615,8 @@ const paidOptimization = (plan: OptimizePlan, start: () => void): PaidRun => {
       `The optimizer tunes the ${listed(knobs.map(({ label }) => label))} of your agent on ${train} train, ` +
         `${validation} validation, and ${plural(test, 'test case')} of ${plan.experiment.name}.`,
       `It tries ${plural(plan.iterations, 'step')} of ${plural(plan.width, 'candidate')}: about ${plan.rollouts} ` +
-        `rollouts of your agent with ${triedModels(plan, knobs)}, and about ${plan.judgeCalls} judge calls.`,
+        `rollouts of your agent with ${triedModels(plan, knobs)}, and ${judgeCallsText(plan.judgeCalls, 'about ')}.`,
+      usageSentence(plan.usage),
     ],
     warnings: proposerWarnings(knobs),
     start,
@@ -579,7 +626,8 @@ const paidOptimization = (plan: OptimizePlan, start: () => void): PaidRun => {
 const objectiveNotice = (plan: OptimizePlan): { readonly tone: Tone; readonly text: string } | undefined => {
   if (plan.objectiveProblem) return { tone: 'error', text: plan.objectiveProblem }
   if (plan.objectiveWarning) return { tone: 'warning', text: plan.objectiveWarning }
-  return plan.warning ? { tone: 'warning', text: plan.warning } : undefined
+  const warning = plan.warning ?? smallSplitWarning(plan.split)
+  return warning ? { tone: 'warning', text: warning } : undefined
 }
 
 const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan: OptimizePlan }): ReactElement => {
@@ -738,6 +786,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
       {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : compact ? null : <Gap />}
       <SetupButtons
         ready={ready}
+        estimate={usageShort(plan.usage)}
         focused={focused?.kind === 'button' ? focused.button : undefined}
         onChoose={(button) => choose(firstButton + SETUP_BUTTONS.indexOf(button))}
         onHover={(button) => cursor.set(firstButton + SETUP_BUTTONS.indexOf(button))}
@@ -750,11 +799,13 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
 
 const SetupButtons = ({
   ready,
+  estimate,
   focused,
   onChoose,
   onHover,
 }: {
   ready: boolean
+  estimate: string
   focused: SetupButton | undefined
   onChoose: (button: SetupButton) => void
   onHover: (button: SetupButton) => void
@@ -781,9 +832,14 @@ const SetupButtons = ({
     </Box>
   )
   return (
-    <Box height={1} flexShrink={0}>
+    <Box height={1} flexShrink={0} overflow="hidden">
       {button('start', <Text {...(ready ? { color: accent, bold: true } : { dimColor: true })}>{'[ Start ]'}</Text>)}
       {button('cancel', <Text bold={focused === 'cancel'}>Cancel</Text>)}
+      <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" overflow="hidden">
+        <Text dimColor wrap="truncate-end">
+          {estimate}
+        </Text>
+      </Box>
     </Box>
   )
 }

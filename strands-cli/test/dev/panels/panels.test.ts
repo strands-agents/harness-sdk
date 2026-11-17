@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   CaseResult,
   ExperimentsState,
+  OptimizePlan,
   OptimizeReview,
   OptimizeStep,
   OptimizeSession,
@@ -15,6 +16,7 @@ import type {
   TestResults,
   TestSession,
   TestState,
+  UsageEstimate,
 } from '../../../src/dev/panels/model.js'
 import { OptimizePanel } from '../../../src/dev/panels/optimize.js'
 import { TestPanel } from '../../../src/dev/panels/test.js'
@@ -494,6 +496,12 @@ const setup: OptimizeState = {
   },
 }
 
+const ESTIMATE: UsageEstimate = {
+  tokens: { low: 800_000, high: 1_200_000 },
+  seconds: { low: 320, high: 400 },
+  basedOn: { experiment: 'refunds', runs: 2 },
+}
+
 const trial = (name: string, passed: boolean, reason: string, actual = 'an answer'): CaseResult => ({
   name,
   input: `question ${name}`,
@@ -794,6 +802,72 @@ describe('OptimizePanel', () => {
     expect(flat).toContain('run strands dev in a container or VM')
     expect(text()).toContain('Enter start the run · Esc back to the setup')
     expect(session.start).not.toHaveBeenCalled()
+  })
+
+  it.each<[string, OptimizePlan, string, string]>([
+    [
+      'AnEstimateFromEarlierRuns',
+      { ...setup.plan, judgeCalls: 0, usage: ESTIMATE },
+      '~230 rollouts · no judge calls',
+      '~800k–1.2M tokens · ~5–7 min · price unknown',
+    ],
+    ['NoEstimate', setup.plan, '~230 rollouts · ~230 judge calls', 'no token or time estimate yet · price unknown'],
+  ])('shouldShowTheCallsTokensTimeAndPriceNextToStartWhenThePlanHas%s', async (_case, plan, calls, usage) => {
+    const { session } = optimizeSession({ step: 'setup', plan })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    expect(text()).toContain(calls)
+    expect(
+      text()
+        .split('\n')
+        .find((line) => line.includes('[ Start ]'))
+    ).toContain(usage)
+  })
+
+  it.each<[string, OptimizePlan, string]>([
+    [
+      'AnEstimateFromEarlierRuns',
+      { ...setup.plan, judgeCalls: 0, usage: ESTIMATE },
+      'and no judge calls. About 800k–1.2M tokens and 5–7 min, from the last 2 runs of refunds. ' +
+        'The price is unknown, because strands dev has no model prices.',
+    ],
+    [
+      'NoEstimate',
+      setup.plan,
+      'and about 230 judge calls. strands dev cannot estimate the tokens and the time yet, and it has no model prices.',
+    ],
+  ])('shouldShowTheEstimateAndThePriceInTheConfirmWhenThePlanHas%s', async (_case, plan, sentence) => {
+    const { session } = optimizeSession({ step: 'setup', plan })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 30)
+
+    for (const key of [...START_BUTTON, '\r']) await press(key)
+
+    expect(text().replace(/\s+/gu, ' ')).toContain(sentence)
+  })
+
+  it.each<[string, Partial<OptimizePlan>, string]>([
+    [
+      'FewTestCases',
+      { split: { train: 4, validation: 2, test: 2 } },
+      'The split leaves 2 test cases, so the range of the test check will be wide.',
+    ],
+    [
+      'FewHeldOutCasesAndAPlanWarning',
+      { split: { train: 4, validation: 1, test: 1 }, warning: 'The split leaves 1 validation case and 1 test case.' },
+      'The split leaves 1 validation case and 1 test case.',
+    ],
+  ])('shouldShowTheSplitWarningNextToStartWhenTheSetupHas%s', async (_case, change, warning) => {
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, ...change } })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    expect(text()).toContain(warning)
+    expect(
+      text()
+        .split('\n')
+        .filter((line) => line.includes('The split leaves'))
+    ).toHaveLength(1)
   })
 
   it('shouldNotWarnAboutShellCommandsWhenTheRunTunesNoText', async () => {

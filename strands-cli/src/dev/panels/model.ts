@@ -211,6 +211,14 @@ export interface CaseSplit {
 export const sameCaseSplit = (left: CaseSplit, right: CaseSplit): boolean =>
   left.train === right.train && left.validation === right.validation && left.test === right.test
 
+const NARROW_TEST_CASES = 5
+
+export const smallSplitWarning = ({ train, test }: CaseSplit): string | undefined => {
+  if (train === 1) return 'The split leaves 1 train case, so the measured effects are less certain.'
+  if (test === 0 || test >= NARROW_TEST_CASES) return undefined
+  return `The split leaves ${test} test ${test === 1 ? 'case' : 'cases'}, so the range of the test check will be wide.`
+}
+
 export interface OptimizeObjective {
   readonly expression: string
   readonly limits: string
@@ -225,6 +233,17 @@ const compact = (text: string): string => text.replace(/\s+/gu, '')
 
 export const sameObjective = (left: OptimizeObjective, right: OptimizeObjective): boolean =>
   compact(left.expression) === compact(right.expression) && compact(left.limits) === compact(right.limits)
+
+export interface UsageRange {
+  readonly low: number
+  readonly high: number
+}
+
+export interface UsageEstimate {
+  readonly tokens: UsageRange
+  readonly seconds: UsageRange
+  readonly basedOn: { readonly experiment: string; readonly runs: number }
+}
 
 export interface OptimizePlan {
   readonly experiment: ExperimentSummary
@@ -242,6 +261,7 @@ export interface OptimizePlan {
   readonly iterationChoices: readonly number[]
   readonly rollouts: number
   readonly judgeCalls: number
+  readonly usage?: UsageEstimate
   readonly warning?: string
   readonly models?: ModelChoices
 }
