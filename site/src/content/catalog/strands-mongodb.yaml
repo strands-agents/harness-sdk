@@ -1,0 +1,11 @@
+name: strands-mongodb
+description: MongoDB storage and memory backends for Strands agents, covering sessions, context offloading, and semantic recall over Atlas Vector Search from one deployment.
+integrationType: storage
+maintainedBy: partner
+languages:
+  python:
+    package: strands-mongodb[all]
+github: https://github.com/mongodb/strands-mongodb
+docsUrl: https://www.mongodb.com/docs/atlas/ai-integrations/strands/
+featured: true
+addedDate: 2026-11-18
