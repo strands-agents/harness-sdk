@@ -5866,7 +5866,38 @@ describe('BedrockModel', () => {
     })
 
     describe('redaction event generation', () => {
-      it('emits input redaction with default message', async () => {
+      const defaultInputEvent = {
+        type: 'modelRedactionEvent',
+        inputRedaction: { replaceContent: '[User input redacted.]' },
+      }
+      const defaultOutputEvent = {
+        type: 'modelRedactionEvent',
+        outputRedaction: { replaceContent: '[Assistant output redacted.]' },
+      }
+
+      it.each([
+        ['emits input redaction with default message', undefined, [defaultInputEvent]],
+        [
+          'emits input redaction with custom message',
+          { inputMessage: '[Custom input message]' },
+          [{ type: 'modelRedactionEvent', inputRedaction: { replaceContent: '[Custom input message]' } }],
+        ],
+        ['does not emit input redaction when redactInput is false', { input: false }, []],
+        ['emits output redaction when redactOutput is true', { output: true }, [defaultInputEvent, defaultOutputEvent]],
+        [
+          'emits output redaction with custom message',
+          { output: true, outputMessage: '[Custom output message]' },
+          [
+            defaultInputEvent,
+            { type: 'modelRedactionEvent', outputRedaction: { replaceContent: '[Custom output message]' } },
+          ],
+        ],
+        [
+          'emits both input and output redaction when both are enabled',
+          { input: true, output: true },
+          [defaultInputEvent, defaultOutputEvent],
+        ],
+      ])('%s', async (_, redaction, expected) => {
         setupMockSend(async function* () {
           yield { messageStart: { role: 'assistant' } }
           yield { messageStop: { stopReason: 'guardrail_intervened' } }
@@ -5886,195 +5917,14 @@ describe('BedrockModel', () => {
           guardrailConfig: {
             guardrailIdentifier: 'id',
             guardrailVersion: '1',
+            ...(redaction && { redaction }),
           },
         })
         const events = await collectIterator(
           provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })])
         )
 
-        expect(events).toContainEqual({
-          type: 'modelRedactionEvent',
-          inputRedaction: { replaceContent: '[User input redacted.]' },
-        })
-      })
-
-      it('emits input redaction with custom message', async () => {
-        setupMockSend(async function* () {
-          yield { messageStart: { role: 'assistant' } }
-          yield { messageStop: { stopReason: 'guardrail_intervened' } }
-          yield {
-            metadata: {
-              usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-              trace: {
-                guardrail: {
-                  inputAssessment: { '1': { topicPolicy: { topics: [{ action: 'BLOCKED', detected: true }] } } },
-                },
-              },
-            },
-          }
-        })
-
-        const provider = new BedrockModel({
-          guardrailConfig: {
-            guardrailIdentifier: 'id',
-            guardrailVersion: '1',
-            redaction: {
-              inputMessage: '[Custom input message]',
-            },
-          },
-        })
-        const events = await collectIterator(
-          provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })])
-        )
-
-        expect(events).toContainEqual({
-          type: 'modelRedactionEvent',
-          inputRedaction: { replaceContent: '[Custom input message]' },
-        })
-      })
-
-      it('does not emit input redaction when redactInput is false', async () => {
-        setupMockSend(async function* () {
-          yield { messageStart: { role: 'assistant' } }
-          yield { messageStop: { stopReason: 'guardrail_intervened' } }
-          yield {
-            metadata: {
-              usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-              trace: {
-                guardrail: {
-                  inputAssessment: { '1': { topicPolicy: { topics: [{ action: 'BLOCKED', detected: true }] } } },
-                },
-              },
-            },
-          }
-        })
-
-        const provider = new BedrockModel({
-          guardrailConfig: {
-            guardrailIdentifier: 'id',
-            guardrailVersion: '1',
-            redaction: {
-              input: false,
-            },
-          },
-        })
-        const events = await collectIterator(
-          provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })])
-        )
-
-        const inputRedactEvent = events.find((e) => e.type === 'modelRedactionEvent' && 'inputRedaction' in e)
-        expect(inputRedactEvent).toBeUndefined()
-      })
-
-      it('emits output redaction when redactOutput is true', async () => {
-        setupMockSend(async function* () {
-          yield { messageStart: { role: 'assistant' } }
-          yield { messageStop: { stopReason: 'guardrail_intervened' } }
-          yield {
-            metadata: {
-              usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-              trace: {
-                guardrail: {
-                  inputAssessment: { '1': { topicPolicy: { topics: [{ action: 'BLOCKED', detected: true }] } } },
-                },
-              },
-            },
-          }
-        })
-
-        const provider = new BedrockModel({
-          guardrailConfig: {
-            guardrailIdentifier: 'id',
-            guardrailVersion: '1',
-            redaction: {
-              output: true,
-            },
-          },
-        })
-        const events = await collectIterator(
-          provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })])
-        )
-
-        expect(events).toContainEqual({
-          type: 'modelRedactionEvent',
-          outputRedaction: { replaceContent: '[Assistant output redacted.]' },
-        })
-      })
-
-      it('emits output redaction with custom message', async () => {
-        setupMockSend(async function* () {
-          yield { messageStart: { role: 'assistant' } }
-          yield { messageStop: { stopReason: 'guardrail_intervened' } }
-          yield {
-            metadata: {
-              usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-              trace: {
-                guardrail: {
-                  inputAssessment: { '1': { topicPolicy: { topics: [{ action: 'BLOCKED', detected: true }] } } },
-                },
-              },
-            },
-          }
-        })
-
-        const provider = new BedrockModel({
-          guardrailConfig: {
-            guardrailIdentifier: 'id',
-            guardrailVersion: '1',
-            redaction: {
-              output: true,
-              outputMessage: '[Custom output message]',
-            },
-          },
-        })
-        const events = await collectIterator(
-          provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })])
-        )
-
-        expect(events).toContainEqual({
-          type: 'modelRedactionEvent',
-          outputRedaction: { replaceContent: '[Custom output message]' },
-        })
-      })
-
-      it('emits both input and output redaction when both are enabled', async () => {
-        setupMockSend(async function* () {
-          yield { messageStart: { role: 'assistant' } }
-          yield { messageStop: { stopReason: 'guardrail_intervened' } }
-          yield {
-            metadata: {
-              usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-              trace: {
-                guardrail: {
-                  inputAssessment: { '1': { topicPolicy: { topics: [{ action: 'BLOCKED', detected: true }] } } },
-                },
-              },
-            },
-          }
-        })
-
-        const provider = new BedrockModel({
-          guardrailConfig: {
-            guardrailIdentifier: 'id',
-            guardrailVersion: '1',
-            redaction: {
-              input: true,
-              output: true,
-            },
-          },
-        })
-        const events = await collectIterator(
-          provider.stream([new Message({ role: 'user', content: [new TextBlock('Hello')] })])
-        )
-
-        expect(events).toContainEqual({
-          type: 'modelRedactionEvent',
-          inputRedaction: { replaceContent: '[User input redacted.]' },
-        })
-        expect(events).toContainEqual({
-          type: 'modelRedactionEvent',
-          outputRedaction: { replaceContent: '[Assistant output redacted.]' },
-        })
+        expect(events.filter((e) => e.type === 'modelRedactionEvent')).toEqual(expected)
       })
 
       it('includes redactedContent from modelOutput when available', async () => {
