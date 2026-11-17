@@ -12,6 +12,7 @@ import type {
   Knob,
   OptimizePlan,
   OptimizeReview,
+  OptimizeRunState,
   OptimizeState,
   TestResults,
   TestState,
@@ -133,6 +134,8 @@ const fakeSessions = () => {
   })
   const test = state<TestState>({ runs: [] })
   const optimize = state<OptimizeState>({ step: 'pick' })
+  const finishRun = (run: OptimizeRunState): void =>
+    optimize.set({ ...run, runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: run }] })
   const sessions = {
     experiments: {
       ...experiments,
@@ -165,22 +168,29 @@ const fakeSessions = () => {
     },
     optimize: {
       ...optimize,
-      reset: vi.fn(() => optimize.set({ step: 'pick' })),
+      reset: vi.fn(() => optimize.set({ step: 'pick', runs: optimize.snapshot().runs ?? [] })),
+      discard: vi.fn((id: string) =>
+        optimize.set({ step: 'pick', runs: (optimize.snapshot().runs ?? []).filter((run) => run.id !== id) })
+      ),
+      openRun: vi.fn(),
       stop: vi.fn(),
       plan: vi.fn(() => setTimeout(() => optimize.set({ step: 'setup', plan: plan() }), 0)),
       toggleKnob: vi.fn(),
       setIterations: vi.fn(),
       setObjective: vi.fn(),
-      start: vi.fn(() => optimize.set({ step: 'running', progress: progress() })),
+      start: vi.fn((): string => {
+        finishRun({ step: 'running', progress: progress() })
+        return 'run-1'
+      }),
       accept: vi.fn(),
       apply: vi.fn(() => {
         const current = optimize.snapshot()
         if (current.step === 'review')
-          setTimeout(() => optimize.set({ step: 'review', review: { ...current.review, applied: ['agent.py'] } }), 0)
+          setTimeout(() => finishRun({ step: 'review', review: { ...current.review, applied: ['agent.py'] } }), 0)
       }),
     },
   }
-  return { sessions, experiments, test, optimize }
+  return { sessions, experiments, test, optimize, finishRun }
 }
 
 const progress = () => ({
@@ -487,22 +497,21 @@ describe('TEMPORARY dev chat part', () => {
   })
 
   it('shouldNotTreatANoChangeOptimizationAsPendingEdits', async () => {
-    const { call, optimize, sessions } = setup()
+    const { call, optimize, sessions, finishRun } = setup()
     optimize.set({ step: 'review', review: { ...review(), edits: [] } })
     const run = call('strands_dev_optimize', { experiment: 'refunds' })
     await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalledOnce())
-    optimize.set({ step: 'review', review: { ...review(), edits: [] } })
+    finishRun({ step: 'review', review: { ...review(), edits: [] } })
     expect(await run).toMatchObject({ edits: [] })
   })
 
   it('shouldTellTheAgentTheRunWasCancelledInsteadOfFailingWhenTheDeveloperStopsIt', async () => {
-    const { call, optimize, sessions } = setup()
+    const { call, sessions, finishRun } = setup()
     const run = call('strands_dev_optimize', { experiment: 'refunds' })
     await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalledOnce())
-    optimize.set({ step: 'running', progress: progress() })
     expect(await call('strands_dev_cancel_optimization')).toEqual({ status: 'stopping' })
 
-    optimize.set({ step: 'cancelled', experiment: 'refunds' })
+    finishRun({ step: 'cancelled', experiment: 'refunds' })
 
     expect(await run).toMatchObject({ status: 'cancelled', experiment: 'refunds' })
     expect(JSON.stringify(await run)).not.toContain('study.jsonl')
@@ -584,12 +593,26 @@ describe('TEMPORARY dev chat part', () => {
     expect(sessions.test.run).not.toHaveBeenCalled()
   })
 
-  it('shouldTuneTheChosenSettingsAndReportTheProposedEditsWhenItOptimizes', async () => {
+  it('shouldWaitForItsOwnRunWhenTheDeveloperGoesBackToTheOptimizeList', async () => {
     const { tool, optimize, sessions } = setup()
+
+    const running = tool('strands_dev_optimize').run({ experiment: 'refunds' })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
+    optimize.set({ step: 'pick', runs: optimize.snapshot().runs ?? [] })
+    optimize.set({
+      step: 'pick',
+      runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: { step: 'review', review: review() } }],
+    })
+
+    expect(JSON.parse(await running)).toMatchObject({ run: '20261112-130000-refunds' })
+  })
+
+  it('shouldTuneTheChosenSettingsAndReportTheProposedEditsWhenItOptimizes', async () => {
+    const { tool, sessions, finishRun } = setup()
 
     const running = tool('strands_dev_optimize').run({ experiment: 'refunds', tune: ['effort'], iterations: 8 })
     await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
-    optimize.set({ step: 'review', review: review() })
+    finishRun({ step: 'review', review: review() })
     const result = JSON.parse(await running)
 
     expect(sessions.optimize.plan).toHaveBeenCalledWith(REFUNDS)
@@ -628,7 +651,7 @@ describe('TEMPORARY dev chat part', () => {
     ['InAnotherCase', 'Helpfulness', 'helpfulness'],
     ['WithoutTheEvaluatorSuffix', 'HelpfulnessEvaluator', 'Helpfulness'],
   ])('shouldMaximizeTheNamedEvaluatorWhenTheDeveloperNamesIt%s', async (_case, evaluator, objective) => {
-    const { tool, optimize, sessions, experiments } = setup()
+    const { tool, sessions, experiments, finishRun } = setup()
     const folder = await mkdtemp(join(tmpdir(), 'dev-optimize-objective-'))
     try {
       const path = join(folder, 'refunds.json')
@@ -643,7 +666,7 @@ describe('TEMPORARY dev chat part', () => {
 
       const running = tool('strands_dev_optimize').run({ experiment: 'refunds', objective })
       await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
-      optimize.set({ step: 'review', review: review() })
+      finishRun({ step: 'review', review: review() })
       await running
 
       expect(sessions.optimize.setObjective).toHaveBeenCalledWith({ kind: 'evaluator', evaluator })

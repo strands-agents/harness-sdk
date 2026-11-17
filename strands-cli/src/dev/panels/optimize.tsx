@@ -20,6 +20,8 @@ import {
   type OptimizePlan,
   type OptimizeProgress,
   type OptimizeReview,
+  type OptimizeRun,
+  type OptimizeRunState,
   type OptimizeSession,
   type PastRuns,
   type ProposedEdit,
@@ -47,6 +49,7 @@ import {
   useElapsed,
   useSyncedState,
   type ListItem,
+  type Tone,
 } from './ui.js'
 
 export interface OptimizePanelProps extends DevChatPanelProps {
@@ -54,6 +57,7 @@ export interface OptimizePanelProps extends DevChatPanelProps {
 }
 
 const COMMAND = 'optimize'
+const BACK_HINT = 'Esc back to the list'
 const SLIDER_WIDTH = 21
 const SLIDER_LABEL_WIDTH = 11
 const DIFF_CONTEXT_LINES = 2
@@ -74,7 +78,7 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
           experiments={session.experiments}
           command={COMMAND}
           onUse={use}
-          {...pastRunsSection(state.pastRuns, (record) => session.openPastRun(record))}
+          section={runsSection(state.runs ?? [], state.pastRuns, session)}
         />
       )
     case 'setup':
@@ -90,13 +94,15 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
           command={COMMAND}
           outcome="cancelled"
           tone="muted"
-          retryHint="Enter start again"
+          retryHint="Enter back to the list"
           message={[
             `You cancelled the optimization of ${state.experiment}.`,
             'The agent source is unchanged.',
             ...(state.run ? [`Run: ${state.run}`] : []),
           ].join('\n')}
           retry={() => session.reset()}
+          close={() => session.reset()}
+          closeHint={BACK_HINT}
         />
       )
     case 'failed':
@@ -105,7 +111,10 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
           {...props}
           command={COMMAND}
           message={state.record ? `${state.message}\nRecord: ${state.record}` : state.message}
+          retryHint="Enter back to the list"
           retry={() => session.reset()}
+          close={() => session.reset()}
+          closeHint={BACK_HINT}
         />
       )
   }
@@ -119,34 +128,75 @@ const startedText = (startedAt: number | undefined): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())} · `
 }
 
-const pastRunsNote = ({ loading, runs, error }: PastRuns): Pick<PickerSection, 'note' | 'noteTone'> => {
-  if (error) return { note: error, noteTone: 'error' }
-  if (runs.length > 0) return {}
-  return { note: loading ? 'reading past runs…' : 'none yet · each finished run shows here' }
+const reviewSummary = ({ baseline, best, measuredOn, edits, applied }: OptimizeReview): string =>
+  edits.length === 0
+    ? `no better candidate · ${baseline.toFixed(2)} on ${measuredOn}`
+    : `${baseline.toFixed(2)} → ${best.toFixed(2)} on ${measuredOn} · ${plural(edits.length, 'edit')}${applied?.length ? ' · applied' : ''}`
+
+const runSummary = (state: OptimizeRunState): { readonly text: string; readonly tone?: Tone } => {
+  switch (state.step) {
+    case 'running': {
+      const { progress } = state
+      const finished = progress.candidates.length + (progress.baseline === undefined ? 0 : 1)
+      const best = progress.best ? ` · best ${progress.best.score.toFixed(2)}` : ''
+      const status = progress.stopping
+        ? 'stopping'
+        : progress.baseline === undefined
+          ? 'running · measuring the baseline'
+          : 'running'
+      return { text: `${status} · ${finished}/${progress.planned} candidates${best}`, tone: 'warning' }
+    }
+    case 'review':
+      return { text: reviewSummary(state.review) }
+    case 'cancelled':
+      return { text: 'cancelled · the agent source is unchanged', tone: 'muted' }
+    case 'failed':
+      return { text: `stopped: ${state.message}`, tone: 'error' }
+  }
 }
 
-const pastRunsSection = (
+const runsNote = (
+  runs: readonly OptimizeRun[],
+  pastRuns: PastRuns | undefined
+): Pick<PickerSection, 'note' | 'noteTone'> => {
+  if (pastRuns?.error) return { note: pastRuns.error, noteTone: 'error' }
+  if (runs.length > 0 || (pastRuns?.runs.length ?? 0) > 0) return {}
+  return { note: pastRuns?.loading ? 'reading past runs…' : 'none yet · each run shows here' }
+}
+
+const runsSection = (
+  runs: readonly OptimizeRun[],
   pastRuns: PastRuns | undefined,
-  open: (record: string) => void
-): { section?: PickerSection } =>
-  pastRuns
-    ? {
-        section: {
-          title: pastRuns.runs.length > 0 ? `past runs (${pastRuns.runs.length})` : 'past runs',
-          items: pastRuns.runs.map((run) => ({
-            key: run.record,
-            label: run.experiment,
-            detail: `${startedText(run.startedAt)}${run.summary}`,
-            disabled: !run.opens,
-          })),
-          ...pastRunsNote(pastRuns),
-          onChoose: (index): void => {
-            const run = pastRuns.runs[index]
-            if (run?.opens) open(run.record)
-          },
-        },
-      }
-    : {}
+  session: OptimizeSession
+): PickerSection => {
+  const current = new Set(runs.flatMap(({ record }) => (record ? [record] : [])))
+  const past = (pastRuns?.runs ?? []).filter(({ record }) => !current.has(record))
+  const running = runs.filter(({ state }) => state.step === 'running').length
+  const count = runs.length + past.length
+  return {
+    title: count > 0 ? `runs (${count})` : 'runs',
+    ...(running > 0 ? { status: `${running} running` } : {}),
+    items: [
+      ...runs.map(({ id, experiment, startedAt, state }) => {
+        const { text, tone } = runSummary(state)
+        return { key: id, label: experiment, detail: `${startedText(startedAt)}${text}`, ...(tone ? { tone } : {}) }
+      }),
+      ...past.map((run) => ({
+        key: run.record,
+        label: run.experiment,
+        detail: `${startedText(run.startedAt)}${run.summary}`,
+        disabled: !run.opens,
+      })),
+    ],
+    ...runsNote(runs, pastRuns),
+    onChoose: (index): void => {
+      const run = runs[index]
+      if (run) return session.openRun(run.id)
+      const pastRun = past[index - runs.length]
+      if (pastRun?.opens) session.openPastRun(pastRun.record)
+    },
+  }
+}
 
 const knobItem = (knob: OptimizePlan['knobs'][number]): ListItem => {
   if (knob.unavailable)
@@ -382,13 +432,7 @@ const ModelChooser = ({
   )
 }
 
-const SetupView = ({
-  close,
-  session,
-  width,
-  height,
-  plan,
-}: OptimizePanelProps & { plan: OptimizePlan }): ReactElement => {
+const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan: OptimizePlan }): ReactElement => {
   const latest = (): OptimizePlan => {
     const state = session.snapshot()
     return state.step === 'setup' ? state.plan : plan
@@ -406,10 +450,7 @@ const SetupView = ({
   const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable)
   const compact = height < FULL_SETUP_ROWS
   const focused = rows[cursor.index]
-  const cancel = (): void => {
-    session.reset()
-    close()
-  }
+  const cancel = (): void => session.reset()
   const activate = (row: SetupRow | undefined): void => {
     if (row?.kind === 'button') {
       if (row.button === 'cancel') cancel()
@@ -556,7 +597,6 @@ const scoreText = ({ score, delta }: CandidateResult, trainCases: number | undef
 }
 
 const RunningView = ({
-  close,
   session,
   width,
   height,
@@ -569,7 +609,7 @@ const RunningView = ({
   const current = candidates[index]
   const finished = progress.candidates.length + (progress.baseline === undefined ? 0 : 1)
   useInput((input, key) => {
-    if (key.escape) close()
+    if (key.escape) session.reset()
     else if (key.upArrow) setSelected(Math.max(0, index - 1))
     else if (key.downArrow) setSelected(Math.min(candidates.length - 1, index + 1))
     else if (shortcut(input, key) === 'x' && !progress.stopping) session.stop()
@@ -625,7 +665,7 @@ const RunningView = ({
         hints={[
           '↑↓',
           progress.stopping ? 'stopping, the best so far is kept' : 'x stop and keep best',
-          'Esc run in background',
+          'Esc back to the list, the run goes on',
         ]}
       />
     </>
@@ -769,7 +809,6 @@ const TestCheckLines = ({ review }: { review: OptimizeReview }): ReactElement =>
 }
 
 const ReviewView = ({
-  close,
   session,
   width,
   height,
@@ -783,7 +822,6 @@ const ReviewView = ({
   const scroll = useSyncedState(0)
   const index = cursor.index
   const accepted = review.edits.filter((edit) => edit.accepted && !edit.unavailable).length
-  const writable = review.edits.some((edit) => !edit.unavailable)
   const applied = review.applied !== undefined
   const listRows = Math.min(review.edits.length, MAX_EDIT_ROWS)
   const checkRows = review.testCheck ? 2 : 1
@@ -802,11 +840,7 @@ const ReviewView = ({
   }
   const scrollBy = (step: number): void =>
     scroll.set((offset: number) => Math.max(0, Math.min(lastOffset, Math.min(offset, lastOffset) + step)))
-  const leave = (): void => {
-    if (review.past) return session.reset()
-    if (applied || !writable) session.reset()
-    close()
-  }
+  const leave = (): void => session.reset()
   const acceptedNow = (): number => {
     const state = session.snapshot()
     return state.step === 'review' ? state.review.edits.filter((edit) => edit.accepted && !edit.unavailable).length : 0
@@ -815,7 +849,6 @@ const ReviewView = ({
     const typed = shortcut(input, key)
     if (key.escape) leave()
     else if (applied) return
-    else if (typed === 'n') session.reset()
     else if (key.leftArrow) choose(-1)
     else if (key.rightArrow) choose(1)
     else if (key.upArrow) scrollBy(-1)
@@ -844,7 +877,6 @@ const ReviewView = ({
       right={review.edits.length > 0 ? <Text dimColor>{`${index + 1}/${review.edits.length}`}</Text> : undefined}
     />
   )
-  const leaveHint = review.past ? 'Esc back to past runs' : 'Esc close'
   if (review.edits.length === 0)
     return (
       <>
@@ -853,7 +885,7 @@ const ReviewView = ({
         <Line>{'  No candidate beat your current agent, so there is nothing to change.'}</Line>
         <Line tone="muted">{`  Record: ${review.record}`}</Line>
         <Fill />
-        <KeyHints hints={[leaveHint]} />
+        <KeyHints hints={[BACK_HINT]} />
       </>
     )
   if (applied) {
@@ -870,7 +902,7 @@ const ReviewView = ({
           <Line>{'  Your agent reloads when its files change. Run /test to check the new version.'}</Line>
         ) : null}
         <Fill />
-        <KeyHints hints={[leaveHint]} />
+        <KeyHints hints={[BACK_HINT]} />
       </>
     )
   }
@@ -899,8 +931,7 @@ const ReviewView = ({
           'a accept',
           'x reject',
           accepted > 0 ? 'Enter apply accepted' : 'accept an edit to apply',
-          'n new run',
-          review.past ? 'Esc back to past runs' : 'Esc later',
+          BACK_HINT,
         ]}
       />
     </>

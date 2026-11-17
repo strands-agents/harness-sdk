@@ -15,10 +15,12 @@ import {
   type ExperimentSummary,
   type KnobKey,
   type OptimizeObjective,
+  type OptimizePage,
   type OptimizePlan,
   type OptimizeProgress,
   type OptimizeReview,
   type OptimizeSession,
+  type OptimizeRunState,
   type OptimizeState,
   type PastRun,
   type PastRuns,
@@ -124,17 +126,47 @@ export const temporaryTestJobs = ({ runs }: TestState): DevChatJob[] =>
     run.status === 'running' ? [{ id: experiment.path, label: experiment.name, done: run.done, total: run.cases }] : []
   )
 
-export const temporaryOptimizeJobs = (state: OptimizeState): DevChatJob[] =>
-  state.step === 'running'
-    ? [
-        {
-          id: 'optimize',
-          label: state.progress.run,
-          done: state.progress.candidates.length + (state.progress.baseline === undefined ? 0 : 1),
-          total: state.progress.planned,
-        },
-      ]
-    : []
+export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[] =>
+  runs.flatMap(({ id, state }) =>
+    state.step === 'running'
+      ? [
+          {
+            id,
+            label: state.progress.run,
+            done: state.progress.candidates.length + (state.progress.baseline === undefined ? 0 : 1),
+            total: state.progress.planned,
+          },
+        ]
+      : []
+  )
+
+type EditWriter = (after: string) => Promise<void>
+
+interface RunEntry {
+  readonly id: string
+  readonly experiment: string
+  readonly startedAt: number
+  readonly listed: boolean
+  state: OptimizeRunState
+  record?: string
+  abort: AbortController | undefined
+  stopping: boolean
+  writers: Map<number, EditWriter>
+}
+
+const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress => ({
+  run: 'starting',
+  record: '',
+  metric: '',
+  iterations: plan.iterations,
+  planned: 1 + plan.iterations * plan.width,
+  trainCases: plan.split.train,
+  candidates: [],
+  startedAt,
+  stopping: false,
+})
+
+const sentence = (text: string): string => (/[.!?]$/u.test(text.trim()) ? text.trim() : `${text.trim()}.`)
 
 const STOPPED_BY_USER = 'You stopped the run.'
 const OLDER_OPTIMIZER_RECORD = 'study.jsonl'
@@ -450,9 +482,10 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private evaluators = 1
   private resumed: Promise<void> | undefined
   private catalog: readonly TemporaryKnob[] = []
-  private abort: AbortController | undefined
-  private stopping = false
-  private readonly writers = new Map<number, (after: string) => Promise<void>>()
+  private page: OptimizePage = { step: 'pick' }
+  private shown: string | undefined
+  private readonly entries = new Map<string, RunEntry>()
+  private runCount = 0
   private pastRuns: PastRuns | undefined
   private pastRunsLoad = 0
 
@@ -460,7 +493,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     private readonly host: TemporaryHost,
     readonly experiments: TemporaryExperiments
   ) {
-    super({ step: 'pick' })
+    super({ step: 'pick', runs: [] })
   }
 
   plan(experiment: ExperimentSummary): void {
@@ -468,12 +501,31 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   show(): void {
+    this.reset()
+  }
+
+  reset(): void {
+    this.showPage({ step: 'pick', ...(this.pastRuns ? { pastRuns: this.pastRuns } : {}) })
     this.experiments.refresh()
     void this.loadPastRuns()
   }
 
+  openRun(id: string): void {
+    const entry = this.entries.get(id)
+    if (entry) this.showPage(entry.state, entry.id)
+  }
+
   openPastRun(record: string): void {
-    void this.openRecord(record)
+    const entry = [...this.entries.values()].find((candidate) => candidate.record === record)
+    if (entry) this.openRun(entry.id)
+    else void this.openRecord(record)
+  }
+
+  discard(id: string): void {
+    if (this.entries.get(id)?.state.step !== 'review') return
+    this.entries.delete(id)
+    if (this.shown === id) this.reset()
+    else this.publish()
   }
 
   toggleKnob(key: KnobKey): void {
@@ -535,50 +587,107 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     })
   }
 
-  start(): void {
-    const state = this.snapshot()
-    if (state.step !== 'setup') return
+  start(): string | undefined {
+    const page = this.page
+    if (page.step !== 'setup') return undefined
     const knobs = this.catalog.map((knob) => ({
       ...knob,
-      enabled: state.plan.knobs.find(({ key }) => key === knob.key)?.enabled ?? false,
+      enabled: page.plan.knobs.find(({ key }) => key === knob.key)?.enabled ?? false,
     }))
-    const variables = temporarySpaceVariables(knobs, state.plan.models?.picked ?? [])
-    if (variables.length > 0) void this.run(state.plan, knobs, variables)
+    const variables = temporarySpaceVariables(knobs, page.plan.models?.picked ?? [])
+    if (variables.length === 0) return undefined
+    const startedAt = Date.now()
+    const entry = this.addRun(page.plan.experiment.name, startedAt, {
+      step: 'running',
+      progress: startingProgress(page.plan, startedAt),
+    })
+    this.showPage(entry.state, entry.id)
+    void this.run(entry, page.plan, knobs, variables)
+    return entry.id
   }
 
-  stop(): void {
-    const state = this.snapshot()
-    if (state.step !== 'running' || !this.abort || this.stopping) return
-    this.stopping = true
-    this.set({ step: 'running', progress: { ...state.progress, stopping: true } })
-    this.abort.abort()
+  stop(id?: string): void {
+    const entry = this.entries.get(id ?? this.shown ?? '')
+    if (entry?.state.step !== 'running' || !entry.abort || entry.stopping) return
+    entry.stopping = true
+    this.updateRun(entry, { step: 'running', progress: { ...entry.state.progress, stopping: true } })
+    entry.abort.abort()
   }
 
   accept(index: number, accepted: boolean): void {
-    const state = this.snapshot()
-    if (state.step !== 'review' || !this.writers.has(index)) return
-    this.set({
+    const entry = this.shownEntry()
+    if (entry?.state.step !== 'review' || !entry.writers.has(index)) return
+    const { review } = entry.state
+    this.updateRun(entry, {
       step: 'review',
       review: {
-        ...state.review,
-        edits: state.review.edits.map((edit, position) => (position === index ? { ...edit, accepted } : edit)),
+        ...review,
+        edits: review.edits.map((edit, position) => (position === index ? { ...edit, accepted } : edit)),
       },
     })
   }
 
   apply(): void {
-    void this.applyAccepted()
+    const entry = this.shownEntry()
+    if (entry) void this.applyAccepted(entry)
   }
 
-  reset(): void {
-    if (this.snapshot().step === 'running') return
-    this.set({ step: 'pick', ...(this.pastRuns ? { pastRuns: this.pastRuns } : {}) })
-    this.show()
+  resume(): Promise<void> {
+    this.resumed ??= this.resumeRecords()
+    return this.resumed
+  }
+
+  private shownEntry(): RunEntry | undefined {
+    return this.shown === undefined ? undefined : this.entries.get(this.shown)
+  }
+
+  private addRun(experiment: string, startedAt: number, state: OptimizeRunState, listed = true): RunEntry {
+    this.runCount += 1
+    const entry: RunEntry = {
+      id: `run-${this.runCount}`,
+      experiment,
+      startedAt,
+      listed,
+      state,
+      abort: undefined,
+      stopping: false,
+      writers: new Map(),
+    }
+    this.entries.set(entry.id, entry)
+    return entry
+  }
+
+  private showPage(page: OptimizePage, shown?: string): void {
+    this.page = page
+    this.shown = shown
+    this.publish()
+  }
+
+  private updateRun(entry: RunEntry, state: OptimizeRunState): void {
+    entry.state = state
+    if (this.shown === entry.id) this.page = state
+    this.publish()
+  }
+
+  private publish(): void {
+    const runs = [...this.entries.values()]
+      .filter(({ listed }) => listed)
+      .sort((left, right) => right.startedAt - left.startedAt)
+      .map(({ id, experiment, startedAt, record, state }) => ({
+        id,
+        experiment,
+        startedAt,
+        ...(record ? { record } : {}),
+        state,
+      }))
+    this.set({ ...this.page, runs })
   }
 
   private showPastRuns(pastRuns: PastRuns): void {
     this.pastRuns = pastRuns
-    if (this.snapshot().step === 'pick') this.set({ step: 'pick', pastRuns })
+    if (this.page.step !== 'pick') return
+    this.page = { step: 'pick', pastRuns }
+    this.publish()
   }
 
   private async loadPastRuns(): Promise<void> {
@@ -589,7 +698,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     latest({ loading: true, runs: this.pastRuns?.runs ?? [] })
     try {
       const { workspace } = this.host()
-      const records = await optimizationRecords(temporaryOptimizationFolder(temporaryWorkspaceDirectory(workspace)))
+      const records = await optimizationRecords(this.optimizationFolder())
       const catalog = records.length > 0 ? await readTemporaryKnobs(workspace) : []
       latest({ loading: false, runs: await Promise.all(records.map((run) => this.summarize(run, catalog))) })
     } catch (error) {
@@ -614,21 +723,27 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   private async openRecord(record: string): Promise<void> {
-    if (this.snapshot().step === 'running') return
     try {
       const outcome = await readTemporaryStudy(record)
       const knobs = tunedIn(await readTemporaryKnobs(this.host().workspace), outcome.baseline.params)
-      const review = await this.review(outcome, record, knobs)
-      if (this.snapshot().step === 'running') return
-      this.set({ step: 'review', review: { ...review, past: true } })
+      const { review, writers } = await this.review(outcome, record, knobs)
+      const parts = temporaryRunNameParts(basename(record))
+      const entry = this.addRun(
+        parts?.experiment ?? basename(record),
+        parts?.startedAt ?? Date.now(),
+        { step: 'review', review },
+        false
+      )
+      entry.record = record
+      entry.writers = writers
+      if (this.page.step === 'pick') this.showPage(entry.state, entry.id)
     } catch (error) {
-      this.set({ step: 'failed', message: errorMessage(error), record })
+      if (this.page.step === 'pick') this.showPage({ step: 'failed', message: errorMessage(error), record })
     }
   }
 
   private updatePlan(change: (plan: OptimizePlan) => OptimizePlan): void {
-    const state = this.snapshot()
-    if (state.step === 'setup') this.set({ step: 'setup', plan: change(state.plan) })
+    if (this.page.step === 'setup') this.showPage({ step: 'setup', plan: change(this.page.plan) })
   }
 
   private estimate(plan: OptimizePlan): OptimizePlan {
@@ -643,8 +758,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   private async loadModelOptions(): Promise<void> {
-    const state = this.snapshot()
-    const models = state.step === 'setup' ? state.plan.models : undefined
+    const models = this.page.step === 'setup' ? this.page.plan.models : undefined
     if (!models || models.options || models.loading) return
     this.updatePlan((plan) => (plan.models ? { ...plan, models: { ...plan.models, loading: true } } : plan))
     const discover = this.host().dependencies?.discoverModels ?? discoverTemporaryModels
@@ -677,7 +791,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       const objectiveChoices = temporaryObjectiveChoices(experiment.evaluators)
       const warning = temporaryOptimizeWarning(caseCount)
       this.evaluators = Math.max(1, experiment.evaluators.length)
-      this.set({
+      this.showPage({
         step: 'setup',
         plan: this.estimate({
           experiment: { ...summary, caseCount },
@@ -697,13 +811,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         }),
       })
     } catch (error) {
-      this.set({ step: 'failed', message: errorMessage(error) })
+      this.showPage({ step: 'failed', message: errorMessage(error) })
     }
-  }
-
-  resume(): Promise<void> {
-    this.resumed ??= this.resumeRecords()
-    return this.resumed
   }
 
   private optimizationFolder(): string {
@@ -718,17 +827,24 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       announce(this.host(), 'error', `optimize · /optimize cannot read its unfinished run: ${errorMessage(error)}`)
       return
     }
-    const latest = records.at(-1)
-    if (latest && !this.abort && this.snapshot().step !== 'running') await this.continueRun(latest)
+    const known = new Set([...this.entries.values()].map(({ record }) => record))
+    await Promise.all(records.filter(({ record }) => !known.has(record)).map((saved) => this.continueRun(saved)))
   }
 
   private async continueRun(saved: TemporaryOptimizeRecord): Promise<void> {
+    let entry: RunEntry | undefined
     try {
       const plan = await this.recordedPlan(saved)
       const knobs = await this.recordedKnobs(saved)
-      if (await isTemporaryOptimizeAlive(saved)) return await this.follow(plan, knobs, saved)
+      entry = this.addRun(plan.experiment.name, saved.startedAt, {
+        step: 'running',
+        progress: startingProgress(plan, saved.startedAt),
+      })
+      entry.record = saved.record
+      this.publish()
+      if (await isTemporaryOptimizeAlive(saved)) return await this.follow(entry, plan, knobs, saved)
       if (await this.hasResult(saved.record)) {
-        await this.finish(saved.record, plan, knobs, false)
+        await this.finish(entry, saved.record, plan, knobs, false)
         return await dropTemporaryOptimizeRecord(saved)
       }
       announce(
@@ -736,9 +852,12 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         'success',
         `optimize · ${plan.experiment.name} · resumed the run that stopped when strands dev closed`
       )
-      await this.run(plan, knobs, [], saved)
+      await this.run(entry, plan, knobs, [], saved)
     } catch (error) {
-      this.set({ step: 'failed', message: errorMessage(error), record: saved.record })
+      const failed: OptimizeRunState = { step: 'failed', message: errorMessage(error), record: saved.record }
+      entry ??= this.addRun(basename(saved.experiment, '.json'), saved.startedAt, failed)
+      entry.record = saved.record
+      this.updateRun(entry, failed)
       announce(
         this.host(),
         'error',
@@ -772,10 +891,15 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     return folder !== undefined && existsSync(join(folder, 'result.json'))
   }
 
-  private async follow(plan: RunPlan, knobs: readonly TemporaryKnob[], saved: TemporaryOptimizeRecord): Promise<void> {
+  private async follow(
+    entry: RunEntry,
+    plan: RunPlan,
+    knobs: readonly TemporaryKnob[],
+    saved: TemporaryOptimizeRecord
+  ): Promise<void> {
     const abort = new AbortController()
-    this.abort = abort
-    this.stopping = false
+    entry.abort = abort
+    entry.stopping = false
     const reader = temporaryStudyReader({
       run: basename(saved.record),
       record: saved.record,
@@ -783,13 +907,13 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       labels: temporaryKnobLabels(knobs),
     })
     const show = (): void =>
-      this.set({
+      this.updateRun(entry, {
         step: 'running',
         progress: {
           ...reader.progress(),
           planned: 1 + plan.iterations * plan.width,
           trainCases: plan.split.train,
-          stopping: this.stopping,
+          stopping: entry.stopping,
         },
       })
     const tail = tailTemporaryRun(saved.record, (line) => {
@@ -801,25 +925,26 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       await waitForTemporaryOptimize(saved, abort.signal)
     } finally {
       await tail.stop()
-      this.abort = undefined
+      entry.abort = undefined
     }
-    await this.finish(saved.record, plan, knobs, abort.signal.aborted)
+    await this.finish(entry, saved.record, plan, knobs, abort.signal.aborted)
     await dropTemporaryOptimizeRecord(saved)
   }
 
   private async run(
+    entry: RunEntry,
     plan: RunPlan,
     knobs: readonly TemporaryKnob[],
     variables: readonly TemporarySpaceVariable[],
     continuing?: TemporaryOptimizeRecord
   ): Promise<void> {
     const abort = new AbortController()
-    const startedAt = continuing?.startedAt ?? Date.now()
+    const startedAt = continuing?.startedAt ?? entry.startedAt
     const now = new Date(startedAt)
     const labels = temporaryKnobLabels(knobs)
     const shares = continuing ? continuing.split : temporarySplitShares(plan.split)
-    this.abort = abort
-    this.stopping = false
+    entry.abort = abort
+    entry.stopping = false
     let record: string | undefined
     let cancelled = false
     let saving: Promise<void> = Promise.resolve()
@@ -844,21 +969,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
             ...reader.progress(),
             planned: 1 + plan.iterations * plan.width,
             trainCases: plan.split.train,
-            stopping: this.stopping,
+            stopping: entry.stopping,
           }
-        : {
-            run: 'starting',
-            record: '',
-            metric: '',
-            iterations: plan.iterations,
-            planned: 1 + plan.iterations * plan.width,
-            trainCases: plan.split.train,
-            candidates: [],
-            startedAt,
-            stopping: this.stopping,
-          }
-    const show = (): void => this.set({ step: 'running', progress: progress() })
-    this.set({ step: 'running', progress: progress() })
+        : { ...startingProgress(plan, startedAt), stopping: entry.stopping }
+    const show = (): void => this.updateRun(entry, { step: 'running', progress: progress() })
+    show()
     try {
       const space = continuing?.space ?? (await this.writeSpace(plan, now, variables))
       await runTemporaryOptimization(
@@ -883,6 +998,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
           },
           onStart: (path) => {
             record = path
+            entry.record = path
             remember({
               version: 1,
               experiment: plan.experiment.path,
@@ -906,19 +1022,19 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       await tail?.stop()
     } catch (error) {
       await tail?.stop()
-      if (!this.stopping) {
-        this.set({ step: 'failed', message: errorMessage(error), ...(record ? { record } : {}) })
+      if (!entry.stopping) {
+        this.updateRun(entry, { step: 'failed', message: errorMessage(error), ...(record ? { record } : {}) })
         announce(this.host(), 'error', `optimize · ${plan.experiment.name} stopped · /optimize shows why`)
         return
       }
       cancelled = true
     } finally {
-      this.abort = undefined
+      entry.abort = undefined
     }
     await saving
     if (record) await dropTemporaryOptimizeRecord({ record })
-    if (cancelled && !record) return this.reportCancelled(plan)
-    await this.finish(record!, plan, knobs, cancelled)
+    if (cancelled && !record) return this.reportCancelled(entry, plan)
+    await this.finish(entry, record!, plan, knobs, cancelled)
   }
 
   private async writeSpace(plan: RunPlan, now: Date, variables: readonly TemporarySpaceVariable[]): Promise<string> {
@@ -930,6 +1046,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   private async finish(
+    entry: RunEntry,
     record: string,
     plan: RunPlan,
     knobs: readonly TemporaryKnob[],
@@ -938,19 +1055,20 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     try {
       const outcome = await readTemporaryStudy(record)
       if (outcome.ended === 'stopped' && outcome.error && !cancelled)
-        throw new Error(`${outcome.error} The full optimizer output is in ${record}.log.`)
-      const review = await this.review(outcome, record, knobs)
-      this.set({ step: 'review', review })
-      announce(this.host(), 'success', `optimize · run ${review.run} finished · /optimize opens the review`)
+        throw new Error(`${sentence(outcome.error)} The full optimizer output is in ${record}.log.`)
+      const { review, writers } = await this.review(outcome, record, knobs)
+      entry.writers = writers
+      this.updateRun(entry, { step: 'review', review })
+      announce(this.host(), 'success', `optimize · run ${review.run} finished · open it in /optimize`)
     } catch (error) {
-      if (cancelled) return this.reportCancelled(plan, record)
-      this.set({ step: 'failed', message: errorMessage(error), record })
+      if (cancelled) return this.reportCancelled(entry, plan, record)
+      this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
       announce(this.host(), 'error', `optimize · run ${basename(record)} could not be read · /optimize shows why`)
     }
   }
 
-  private reportCancelled(plan: RunPlan, record?: string): void {
-    this.set({
+  private reportCancelled(entry: RunEntry, plan: RunPlan, record?: string): void {
+    this.updateRun(entry, {
       step: 'cancelled',
       experiment: plan.experiment.name,
       ...(record ? { run: basename(record) } : {}),
@@ -983,13 +1101,13 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     outcome: TemporaryStudyOutcome,
     record: string,
     knobs: readonly TemporaryKnob[]
-  ): Promise<OptimizeReview> {
-    this.writers.clear()
+  ): Promise<{ review: OptimizeReview; writers: Map<number, EditWriter> }> {
+    const writers = new Map<number, EditWriter>()
     const edits: ProposedEdit[] = []
     for (const change of temporaryKnobChanges(knobs, outcome.baseline.params, outcome.best?.params ?? {})) {
       const located = await this.locate(change)
       const writable = 'write' in located
-      if (writable) this.writers.set(edits.length, located.write)
+      if (writable) writers.set(edits.length, located.write)
       edits.push({
         knob: change.knob.key,
         kind: change.kind,
@@ -1002,7 +1120,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     }
     const baseline = outcome.baseline.score ?? 0
     const check = testCheck(outcome.test)
-    return {
+    const review: OptimizeReview = {
       run: basename(record),
       record,
       baseline,
@@ -1011,15 +1129,16 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       edits,
       ...(check ? { testCheck: check } : {}),
     }
+    return { review, writers }
   }
 
-  private async applyAccepted(): Promise<void> {
-    const state = this.snapshot()
-    if (state.step !== 'review') return
+  private async applyAccepted(entry: RunEntry): Promise<void> {
+    if (entry.state.step !== 'review') return
+    const { review } = entry.state
     const applied: string[] = []
     let applyError: string | undefined
-    for (const [index, edit] of state.review.edits.entries()) {
-      const write = this.writers.get(index)
+    for (const [index, edit] of review.edits.entries()) {
+      const write = entry.writers.get(index)
       if (!edit.accepted || !write) continue
       const target = edit.target ?? edit.label
       try {
@@ -1030,7 +1149,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         break
       }
     }
-    this.set({ step: 'review', review: { ...state.review, applied, ...(applyError ? { applyError } : {}) } })
+    this.updateRun(entry, { step: 'review', review: { ...review, applied, ...(applyError ? { applyError } : {}) } })
     const changed = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
     announce(
       this.host(),

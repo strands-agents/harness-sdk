@@ -11,7 +11,9 @@ import type {
   Knob,
   KnobKey,
   OptimizeObjective,
+  OptimizeProgress,
   OptimizeReview,
+  OptimizeRunState,
   OptimizeState,
   TestResults,
   TestRun,
@@ -301,7 +303,42 @@ const reviewReport = ({ run, baseline, best, measuredOn, edits, applied, applyEr
     applyError,
   })
 
-const optimizationStatus = (state: OptimizeState): object => {
+const hasPendingEdits = ({ edits, applied }: OptimizeReview): boolean =>
+  edits.some((edit) => !edit.unavailable) && !applied?.length
+
+interface ChosenReview {
+  readonly id?: string
+  readonly review: OptimizeReview
+}
+
+const listedReviews = ({ runs = [] }: OptimizeState): ChosenReview[] =>
+  runs.flatMap(({ id, state }) => (state.step === 'review' ? [{ id, review: state.review }] : []))
+
+const latestReview = (state: OptimizeState): ChosenReview | undefined =>
+  listedReviews(state)[0] ?? (state.step === 'review' ? { review: state.review } : undefined)
+
+const pendingReview = (state: OptimizeState): ChosenReview | undefined =>
+  [...listedReviews(state), ...(state.step === 'review' ? [{ review: state.review }] : [])].find(({ review }) =>
+    hasPendingEdits(review)
+  )
+
+const runningProgress = (state: OptimizeState): OptimizeProgress | undefined =>
+  [state, ...(state.runs ?? []).map((run) => run.state)].flatMap((entry) =>
+    entry.step === 'running' ? [entry.progress] : []
+  )[0]
+
+const runState = ({ runs = [] }: OptimizeState, id: string): OptimizeRunState | undefined =>
+  runs.find((run) => run.id === id)?.state
+
+const optimizationStatus = (state: OptimizeState): object =>
+  defined({
+    ...pageStatus(state),
+    runs: state.runs?.length
+      ? state.runs.map(({ experiment, state: run }) => ({ experiment, ...pageStatus(run) }))
+      : undefined,
+  })
+
+const pageStatus = (state: OptimizeState): object => {
   switch (state.step) {
     case 'pick':
       return { step: 'idle' }
@@ -594,10 +631,9 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
   run: async (input): Promise<string> => {
     const { optimize } = sessions()
     const current = optimize.snapshot()
-    if (current.step === 'running')
-      throw new Error(
-        `The optimization ${current.progress.run} is still running. Wait for it, or stop it in /optimize.`
-      )
+    const running = runningProgress(current)
+    if (running)
+      throw new Error(`The optimization ${running.run} is still running. Wait for it, or stop it in /optimize.`)
     const tune = tuneFrom(input)
     const models = textList(input, 'models') ?? []
     if (tune.includes('model') && models.length === 0)
@@ -607,11 +643,7 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
       throw new Error(`iterations must be one of ${TEMPORARY_ITERATION_CHOICES.join(', ')}.`)
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
     const objective = await objectiveFor(experiment, text(input, 'objective') || undefined)
-    if (
-      current.step === 'review' &&
-      current.review.edits.some((edit) => !edit.unavailable) &&
-      !current.review.applied?.length
-    )
+    if (pendingReview(current))
       throw new Error(
         'There are pending optimization edits. Review and apply them, or explicitly discard them with strands_dev_reject_optimization, before starting another run.'
       )
@@ -629,11 +661,12 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
         optimize.toggleKnob(knob.key)
     if (iterations !== undefined) optimize.setIterations(iterations)
     if (objective) optimize.setObjective(objective)
-    optimize.start()
-    if (optimize.snapshot().step !== 'running') throw new Error('The optimization did not start.')
-    const finished = await until(optimize, (state) =>
-      state.step === 'review' || state.step === 'cancelled' || state.step === 'failed' ? state : undefined
-    )
+    const started = optimize.start()
+    if (started === undefined) throw new Error('The optimization did not start.')
+    const finished = await until(optimize, (state) => {
+      const run = runState(state, started)
+      return run && run.step !== 'running' ? run : undefined
+    })
     if (finished.step === 'failed') throw new Error(finished.message)
     if (finished.step === 'cancelled')
       return reply(
@@ -655,8 +688,10 @@ const cancelOptimizationTool = (sessions: Sessions): DevChatTool => ({
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   run: async (): Promise<string> => {
     const { optimize } = sessions()
-    if (optimize.snapshot().step !== 'running') throw new Error('No optimization is running.')
-    optimize.stop()
+    const state = optimize.snapshot()
+    const running = state.runs?.find((run) => run.state.step === 'running')
+    if (!running && state.step !== 'running') throw new Error('No optimization is running.')
+    optimize.stop(running?.id)
     return reply({ status: 'stopping' })
   },
 })
@@ -668,12 +703,13 @@ const rejectOptimizationTool = (sessions: Sessions): DevChatTool => ({
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   run: async (): Promise<string> => {
     const { optimize } = sessions()
-    const state = optimize.snapshot()
-    if (state.step !== 'review') throw new Error('There is no optimization proposal to discard.')
-    if (state.review.applied?.length)
+    const latest = latestReview(optimize.snapshot())
+    if (!latest) throw new Error('There is no optimization proposal to discard.')
+    if (latest.review.applied?.length)
       throw new Error('These edits were already applied. Discarding cannot undo source changes.')
-    optimize.reset()
-    return reply({ status: 'discarded', run: state.review.run })
+    if (latest.id) optimize.discard(latest.id)
+    else optimize.reset()
+    return reply({ status: 'discarded', run: latest.review.run })
   },
 })
 
@@ -692,20 +728,22 @@ const applyTool = (sessions: Sessions): DevChatTool => ({
   },
   run: async (input): Promise<string> => {
     const { optimize } = sessions()
-    const state = optimize.snapshot()
-    if (state.step !== 'review') throw new Error('There is no finished optimization to apply. Run one first.')
-    if (state.review.applied) throw new Error(`These edits were applied already: ${state.review.applied.join(', ')}.`)
+    const latest = latestReview(optimize.snapshot())
+    if (!latest) throw new Error('There is no finished optimization to apply. Run one first.')
+    if (latest.review.applied) throw new Error(`These edits were applied already: ${latest.review.applied.join(', ')}.`)
     const chosen = Array.isArray(input.edits) ? input.edits : []
-    const edits = state.review.edits
+    const edits = latest.review.edits
     for (const index of chosen) {
       if (typeof index !== 'number' || !edits[index]) throw new Error(`There is no edit ${String(index)}.`)
       if (edits[index].unavailable) throw new Error(`Edit ${index} cannot be written: ${edits[index].unavailable}`)
     }
+    if (latest.id) optimize.openRun(latest.id)
     edits.forEach((_edit, index) => optimize.accept(index, chosen.includes(index)))
     optimize.apply()
-    const review = await until(optimize, (next) =>
-      next.step === 'review' && next.review.applied ? next.review : undefined
-    )
+    const review = await until(optimize, (next) => {
+      const run = latest.id ? runState(next, latest.id) : next
+      return run?.step === 'review' && run.review.applied ? run.review : undefined
+    })
     if (review.applyError) throw new Error(review.applyError)
     return reply({ applied: review.applied, next: 'Run strands_dev_test on the experiment to check the change.' })
   },

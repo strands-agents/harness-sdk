@@ -424,6 +424,7 @@ const optimizeSession = (initial: OptimizeState) => {
       setSplit: vi.fn(),
       setObjective: vi.fn(),
       openPastRun: vi.fn(),
+      openRun: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
       accept: vi.fn(),
@@ -663,15 +664,18 @@ describe('OptimizePanel', () => {
     expect(text()).toContain('check a knob to start')
   })
 
-  it('shouldCancelTheSetupWhenTheUserPressesEnterOnCancel', async () => {
+  it.each([
+    ['EnterOnCancel', [...CANCEL_BUTTON, '\r']],
+    ['Esc', ['\u001b']],
+  ])('shouldGoBackToTheListAndKeepThePanelOpenWhenTheUserPresses%sInTheSetup', async (_key, keys) => {
     const { session } = optimizeSession(setup)
     const props = freshProps()
     const { press } = await show(createElement(OptimizePanel, { ...props, session }))
 
-    for (const key of [...CANCEL_BUTTON, '\r']) await press(key)
+    for (const key of keys) await press(key)
 
-    expect(session.reset).toHaveBeenCalledTimes(1)
-    expect(props.close).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(session.reset).toHaveBeenCalledTimes(1))
+    expect(props.close).not.toHaveBeenCalled()
     expect(session.start).not.toHaveBeenCalled()
   })
 
@@ -842,8 +846,13 @@ describe('OptimizePanel', () => {
     expect(text()).toContain('No test cases were left to check the winner on unseen cases.')
   })
 
-  it('shouldGoBackToThePastRunsAndKeepThePanelOpenWhenTheUserPressesEscOnAPastReport', async () => {
-    const { session } = optimizeSession(reviewWithEdits({ past: true }))
+  it.each<[string, OptimizeState, string]>([
+    ['AReport', reviewWithEdits(), 'Esc back to the list'],
+    ['ARunningRun', runningState(), 'Esc back to the list, the run goes on'],
+    ['ACancelledRun', { step: 'cancelled', experiment: 'refunds' }, 'Esc back to the list'],
+    ['AFailedRun', { step: 'failed', message: 'The optimizer stopped.' }, 'Esc back to the list'],
+  ])('shouldGoBackToTheListAndKeepThePanelOpenWhenTheUserPressesEscOn%s', async (_page, state, hint) => {
+    const { session } = optimizeSession(state)
     const props = freshProps()
     const { press, text } = await show(createElement(OptimizePanel, { ...props, session }), 20)
     const hints = text()
@@ -852,7 +861,51 @@ describe('OptimizePanel', () => {
 
     await vi.waitFor(() => expect(session.reset).toHaveBeenCalledTimes(1))
     expect(props.close).not.toHaveBeenCalled()
-    expect(hints).toContain('Esc back to past runs')
+    expect(session.stop).not.toHaveBeenCalled()
+    expect(hints).toContain(hint)
+  })
+
+  it('shouldListARunThatIsStillGoingAndOpenItWhenTheUserPressesEnterOnIt', async () => {
+    const running = runningState()
+    if (running.step !== 'running') throw new Error('expected a running state')
+    const { session } = optimizeSession({
+      step: 'pick',
+      runs: [{ id: 'run-1', experiment: 'refunds', startedAt: Date.UTC(2026, 10, 17, 14, 25), state: running }],
+      pastRuns: { loading: false, runs: PAST_RUNS },
+    })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    const list = text()
+    await press('\r')
+
+    expect(list).toContain('optimize · 0 experiments · 1 running')
+    expect(list).toContain('runs (3)')
+    expect(list).toMatch(/› refunds\s+.*running · 3\/17 candidates · best 0\.82/u)
+    expect(session.openRun).toHaveBeenCalledWith('run-1')
+    expect(session.openPastRun).not.toHaveBeenCalled()
+  })
+
+  it('shouldListARunOnceWhenItAlsoHasARecordOnDisk', async () => {
+    const { session } = optimizeSession({
+      step: 'pick',
+      runs: [
+        {
+          id: 'run-1',
+          experiment: 'refunds',
+          startedAt: 0,
+          record: PAST_RUNS[0]!.record,
+          state: { step: 'cancelled', experiment: 'refunds' },
+        },
+      ],
+      pastRuns: { loading: false, runs: PAST_RUNS },
+    })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toContain('runs (2)')
+    expect(text()).toContain('cancelled · the agent source is unchanged')
+    expect(text()).not.toContain('0.00 → 1.00 on test cases · 3 edits')
   })
 
   it('shouldListThePastRunsAndOpenOneWhenTheUserPressesEnterOnIt', async () => {
@@ -863,7 +916,7 @@ describe('OptimizePanel', () => {
     const list = text()
     await press('\r')
 
-    expect(list).toContain('past runs (2)')
+    expect(list).toContain('runs (2)')
     expect(list).toMatch(/› refunds\s+.*0\.00 → 1\.00 on test cases · 3 edits/u)
     expect(list).toContain('no better candidate · 0.50 on test cases')
     expect(list).toContain('Enter open the report')
@@ -892,14 +945,14 @@ describe('OptimizePanel', () => {
 
   it.each<[string, PastRuns, string]>([
     ['Loading', { loading: true, runs: [] }, 'reading past runs…'],
-    ['Empty', { loading: false, runs: [] }, 'none yet · each finished run shows here'],
+    ['Empty', { loading: false, runs: [] }, 'none yet · each run shows here'],
     ['Unreadable', { loading: false, runs: [], error: 'Past runs cannot be read: EACCES' }, 'EACCES'],
   ])('shouldSayWhyNoPastRunIsListedWhenThePastRunsAre%s', async (_case, pastRuns, note) => {
     const { session } = optimizeSession({ step: 'pick', pastRuns })
 
     const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    expect(text()).toContain('past runs')
+    expect(text()).toContain('runs')
     expect(text()).toContain(note)
   })
 
@@ -985,17 +1038,14 @@ describe('OptimizePanel', () => {
     expect(text()).not.toContain('The best candidate on the validation cases wins')
   })
 
-  it.each<[string, string]>([
-    ['Esc', '\u001b'],
-    ['n', 'n'],
-  ])('shouldStartOverWhenTheUserPresses%sOnAReviewWithNothingToApply', async (_key, key) => {
+  it('shouldGoBackToTheListWhenTheUserPressesEscOnAReviewWithNothingToApply', async () => {
     const { session } = optimizeSession({
       step: 'review',
       review: { run: 'r1', record: '/w/record', baseline: 0.5, best: 0.5, measuredOn: 'test cases', edits: [] },
     })
     const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
 
-    await press(key)
+    await press('\u001b')
 
     await vi.waitFor(() => expect(session.reset).toHaveBeenCalledTimes(1))
   })

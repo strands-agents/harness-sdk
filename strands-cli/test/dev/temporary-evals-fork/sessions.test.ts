@@ -20,6 +20,7 @@ import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork
 import {
   TemporaryTest,
   temporaryDevSessions,
+  temporaryOptimizeJobs,
   temporaryTestJobs,
 } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
@@ -87,6 +88,14 @@ const experimentDocument = (names: readonly string[], evaluators: readonly strin
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 
 const exit = { code: 0, stdout: '', stderrTail: [] }
+
+const held = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
 
 const testingProcess = () =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
@@ -451,7 +460,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it.each([
-    ['opens the review of a run that finished while strands dev was closed', true],
+    ['lists the review of a run that finished while strands dev was closed', true],
     ['continues a run that stopped when strands dev closed', false],
   ])('shouldResumeOnStartWhenItSees a record and %s', async (_, finished) => {
     const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
@@ -494,9 +503,15 @@ describe('TEMPORARY dev sessions', () => {
 
     await sessions.optimize.resume()
 
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().runs?.[0]?.state.step).toBe('review'))
     expect(sessions.optimize.snapshot()).toMatchObject({
-      review: { edits: [expect.objectContaining({ knob: 'instructions', after: WINNER })] },
+      step: 'pick',
+      runs: [
+        {
+          record,
+          state: { review: { edits: [expect.objectContaining({ knob: 'instructions', after: WINNER })] } },
+        },
+      ],
     })
     expect(continuing).toHaveBeenCalledTimes(finished ? 0 : 1)
     if (!finished)
@@ -720,6 +735,103 @@ describe('TEMPORARY dev sessions', () => {
     expect(at >= 0 ? args.slice(at, at + 2) : []).toEqual(flags)
   })
 
+  it('shouldKeepTheRunGoingAndListItWhenTheDeveloperGoesBackToTheList', async () => {
+    const gate = held()
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(flagValue(args, '--record'), studyLines(0.7))
+      await gate.promise
+      await writeOptimizerRun(flagValue(args, '--record'), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const started = sessions.optimize.start()
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
+
+    sessions.optimize.reset()
+    const listed = sessions.optimize.snapshot()
+    sessions.optimize.openRun(started!)
+    const reopened = sessions.optimize.snapshot()
+    sessions.optimize.show()
+    gate.resolve()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().runs?.[0]?.state.step).toBe('review'))
+    expect(listed).toMatchObject({
+      step: 'pick',
+      runs: [{ id: started, experiment: 'capital', state: { step: 'running' } }],
+    })
+    expect(reopened.step).toBe('running')
+    expect(sessions.optimize.snapshot().step).toBe('pick')
+  })
+
+  it('shouldListTheReasonAsASentenceWhenTheOptimizerStopsWithAnError', async () => {
+    const failing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(flagValue(args, '--record'), [
+        ...studyLines(0.6),
+        optimizerStop('proposer_error', 'a proposer raised; see the proposer_error event'),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: failing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
+    expect(sessions.optimize.snapshot()).toMatchObject({
+      message: expect.stringMatching(
+        /^a proposer raised; see the proposer_error event\. The full optimizer output is in /u
+      ),
+    })
+  })
+
+  it('shouldRunTwoOptimizationsAtOnceWhenTheDeveloperStartsAnotherFromTheList', async () => {
+    const gates = [held(), held()]
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      const gate = gates[optimizing.mock.calls.length - 1]!
+      await gate.promise
+      await writeOptimizerRun(flagValue(args, '--record'), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const capital = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const cities = await savedExperiment(workspace, ['d0', 'd1', 'd2', 'd3'], 'cities')
+    sessions.optimize.plan(capital)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const first = sessions.optimize.start()
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
+    sessions.optimize.reset()
+    sessions.optimize.plan(cities)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    const second = sessions.optimize.start()
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(2))
+    const both = sessions.optimize.snapshot()
+    gates.forEach((gate) => gate.resolve())
+
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot().runs?.map(({ state }) => state.step)).toEqual(['review', 'review'])
+    )
+    expect(second).not.toBe(first)
+    expect(both.runs?.map(({ id, experiment, state }) => [id, experiment, state.step])).toEqual([
+      [second, 'cities', 'running'],
+      [first, 'capital', 'running'],
+    ])
+    expect(temporaryOptimizeJobs(both).map(({ id }) => id)).toEqual([second, first])
+  })
+
   it('shouldShowTheTestCheckWithItsConfidenceRangeWhenTheRunReportsOne', async () => {
     const tested = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
       await writeOptimizerRun(flagValue(args, '--record'), [
@@ -770,7 +882,7 @@ describe('TEMPORARY dev sessions', () => {
     const listed = sessions.optimize.snapshot()
     if (listed.step !== 'pick') throw new Error('expected the list')
     sessions.optimize.openPastRun(finished.review.record)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot()).toMatchObject({ review: { past: true } }))
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
 
     expect(
       listed.pastRuns?.runs.map(({ record, experiment: name, summary, opens }) => [

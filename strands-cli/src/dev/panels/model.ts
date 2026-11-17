@@ -288,7 +288,6 @@ export interface OptimizeReview {
   readonly measuredOn: string
   readonly edits: readonly ProposedEdit[]
   readonly testCheck?: TestCheck
-  readonly past?: boolean
   readonly applied?: readonly string[]
   readonly applyError?: string
 }
@@ -307,13 +306,26 @@ export interface PastRuns {
   readonly error?: string
 }
 
-export type OptimizeState =
-  | { readonly step: 'pick'; readonly pastRuns?: PastRuns }
-  | { readonly step: 'setup'; readonly plan: OptimizePlan }
+export type OptimizeRunState =
   | { readonly step: 'running'; readonly progress: OptimizeProgress }
   | { readonly step: 'review'; readonly review: OptimizeReview }
   | { readonly step: 'cancelled'; readonly experiment: string; readonly run?: string }
   | { readonly step: 'failed'; readonly message: string; readonly record?: string }
+
+export interface OptimizeRun {
+  readonly id: string
+  readonly experiment: string
+  readonly startedAt: number
+  readonly record?: string
+  readonly state: OptimizeRunState
+}
+
+export type OptimizePage =
+  | { readonly step: 'pick'; readonly pastRuns?: PastRuns }
+  | { readonly step: 'setup'; readonly plan: OptimizePlan }
+  | OptimizeRunState
+
+export type OptimizeState = OptimizePage & { readonly runs?: readonly OptimizeRun[] }
 
 export interface OptimizeSession {
   readonly experiments: ExperimentSession
@@ -327,8 +339,9 @@ export interface OptimizeSession {
   setSplit(split: CaseSplit): void
   setObjective(objective: OptimizeObjective): void
   openPastRun(record: string): void
-  start(): void
-  stop(): void
+  openRun(id: string): void
+  start(): string | undefined
+  stop(id?: string): void
   accept(index: number, accepted: boolean): void
   apply(): void
   reset(): void

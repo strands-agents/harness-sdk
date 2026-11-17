@@ -318,6 +318,7 @@ export const StoppedView = ({
   outcome = 'stopped',
   tone = 'error',
   retryHint = 'Enter try again',
+  closeHint = 'Esc close',
 }: DevChatPanelProps & {
   command: string
   message: string
@@ -325,6 +326,7 @@ export const StoppedView = ({
   outcome?: string
   tone?: Tone
   retryHint?: string
+  closeHint?: string
 }): ReactElement => {
   useInput((_input, key) => {
     if (key.escape) close()
@@ -337,7 +339,7 @@ export const StoppedView = ({
         {message}
       </Paragraph>
       <Fill />
-      <KeyHints hints={[retryHint, 'Esc close']} />
+      <KeyHints hints={[retryHint, closeHint]} />
     </>
   )
 }

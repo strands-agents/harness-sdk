@@ -29,6 +29,7 @@ export interface PickerSectionItem extends ListItem {
 
 export interface PickerSection {
   readonly title: string
+  readonly status?: string
   readonly items: readonly PickerSectionItem[]
   readonly note?: string
   readonly noteTone?: Tone
@@ -156,7 +157,11 @@ export const ExperimentPicker = ({
   const waiting = rows.some((row) => row.kind === 'waiting')
   const empty = state.loaded && state.saved.length === 0
   const parts = state.loaded
-    ? [plural(state.saved.length, 'experiment'), ...(generating > 0 ? [`${generating} generating`] : [])]
+    ? [
+        plural(state.saved.length, 'experiment'),
+        ...(generating > 0 ? [`${generating} generating`] : []),
+        ...(section?.status ? [section.status] : []),
+      ]
     : ['reading experiments']
   return (
     <>
