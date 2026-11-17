@@ -16,6 +16,7 @@ from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
 from ..types.exceptions import ContextWindowOverflowException
+from .message_trimming import _index_of
 from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _retrieval_calls_before
 from .stash import Stash
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
     from ..agent.conversation_manager import ConversationManager
     from ..agent.invocation_context import InvocationContext
     from ..storage.storage import Storage
-    from ..types.content import Message, Messages
 
 logger = logging.getLogger(__name__)
 
@@ -46,17 +46,6 @@ ContextManagerStrategy = Literal["auto", "agentic"]
 - ``"agentic"``: Model-driven context management via injected tools, with a higher
   truncation threshold and summarization only on overflow.
 """
-
-
-def _index_of(messages: Messages, message: Message) -> int:
-    """The position of ``message`` in the history, or its length when it is not there.
-
-    By identity, since two messages can hold equal content without being the same message.
-    """
-    for index, candidate in enumerate(messages):
-        if candidate is message:
-            return index
-    return len(messages)
 
 
 class ContextManager(Plugin):

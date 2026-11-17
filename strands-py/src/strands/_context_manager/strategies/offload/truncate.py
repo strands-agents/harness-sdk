@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message
+from ....types.tools import ToolResultContent
 from ...message_trimming import placeholder_for, remove_messages, with_pairs
 from ...methods.truncate import (
     TruncateConfig,
@@ -15,9 +16,9 @@ from ...methods.truncate import (
     _truncate_text_block,
     _truncate_tool_result_block,
 )
-from ...placeholder import format_elided, format_offloaded, is_offloaded, placeholder_result
+from ...placeholder import format_elided, format_offloaded, is_offloaded
 from ...types import ContextState, is_text_block, is_tool_result_block
-from .base import BaseOffloadStrategy, StashRef
+from .base import BaseOffloadStrategy
 from .conditions import OffloadConditions
 from .target import OffloadTarget, media_kind
 
@@ -123,29 +124,26 @@ class TruncateStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_ref: StashRef,
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
-    ) -> ContentBlock | None:
+    ) -> tuple[str, list[ToolResultContent]] | None:
         if is_tool_result_block(block):
             tool_result = block["toolResult"]
             truncated = _truncate_tool_result_block(tool_result, self._truncate_config)
             if truncated is None:
                 return None
-            result_preview, kept = truncated
             logger.debug("tool_use_id=<%s>, tokens=<%s> | truncated tool result", tool_result["toolUseId"], tokens)
-            placeholder = await self._placeholder(result_preview, stash_ref, tokens)
-            return placeholder_result(tool_result, [placeholder, *kept])
+            return truncated
 
         if is_text_block(block):
             preview = _truncate_text_block(block, self._truncate_config)
             if preview is None:
                 return None
             logger.debug("tracking_id=<%s>, tokens=<%s> | truncated text block", message.get("tracking_id"), tokens)
-            return await self._placeholder(preview, stash_ref, tokens)
+            return preview, []
 
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return await self._placeholder(format_offloaded(tokens, media_kind(block)), stash_ref, tokens)
+        return format_offloaded(tokens, media_kind(block)), []
 
 
 async def _count_within_budget(messages: list[Message], budget: float, agent: Agent) -> int:

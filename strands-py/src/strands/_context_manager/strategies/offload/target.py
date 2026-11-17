@@ -107,18 +107,11 @@ class OffloadTargetMatcher:
         self._include = include
         self._exclude = exclude
 
-    @property
-    def matches_all(self) -> bool:
-        """Whether every kind of block is in scope."""
-        return self.target == "*"
-
     def matches_block(self, block: ContentBlock, message: Message, tool_name_map: dict[str, str]) -> bool:
         """Whether a block in ``message`` is one this target covers.
 
         A placeholder matches like the text block it is, so callers that must not re-offload one filter it out first.
         """
-        if self.matches_all:
-            return True
         if is_text_block(block):
             return self._matches_text(message)
         if is_tool_result_block(block):
@@ -127,7 +120,7 @@ class OffloadTargetMatcher:
 
     def matches_message(self, message: Message, tool_name_map: dict[str, str]) -> bool:
         """Whether a message holds anything this target covers."""
-        return self.matches_all or any(
+        return self.target == "*" or any(
             self.matches_block(block, message, tool_name_map) for block in message["content"]
         )
 

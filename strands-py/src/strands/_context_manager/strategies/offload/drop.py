@@ -6,10 +6,11 @@ import logging
 from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
+from ....types.tools import ToolResultContent
 from ...message_trimming import placeholder_for, remove_messages
-from ...placeholder import format_dropped, format_dropped_messages, placeholder_result
-from ...types import ContextState, is_tool_result_block
-from .base import BaseOffloadStrategy, StashRef
+from ...placeholder import format_dropped, format_dropped_messages
+from ...types import ContextState
+from .base import BaseOffloadStrategy
 from .conditions import OffloadConditions
 from .target import OffloadTarget, media_kind
 
@@ -46,12 +47,8 @@ class DropStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_ref: StashRef,
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
-    ) -> ContentBlock | None:
+    ) -> tuple[str, list[ToolResultContent]] | None:
         logger.debug("tracking_id=<%s> | dropped block from context window", message.get("tracking_id"))
-        placeholder = await self._placeholder(format_dropped(tokens, media_kind(block)), stash_ref, tokens)
-        if is_tool_result_block(block):
-            return placeholder_result(block["toolResult"], [placeholder])
-        return placeholder
+        return format_dropped(tokens, media_kind(block)), []

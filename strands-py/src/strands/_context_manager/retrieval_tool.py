@@ -252,16 +252,17 @@ def _error(tool_use_id: str, message: str) -> ToolResult:
     return ToolResult(toolUseId=tool_use_id, status="error", content=[ToolResultContent(text=f"Error: {message}")])
 
 
-def _retrieval_calls_before(messages: Messages, index: int) -> frozenset[str]:
-    """The retrieval tool calls the message at ``index`` answers.
+def _retrieval_calls_before(messages: Messages, index: int | None) -> frozenset[str]:
+    """The retrieval tool calls the message at ``index`` answers, or, with None, the ones the last message makes.
 
     Their results are copies of stashed content, so the stash leaves them out. A tool result follows the message
     that called it, so only that message is read.
     """
-    if not 0 < index <= len(messages):
+    position = len(messages) if index is None else index
+    if not 0 < position <= len(messages):
         return frozenset()
     return frozenset(
         block["toolUse"]["toolUseId"]
-        for block in messages[index - 1]["content"]
+        for block in messages[position - 1]["content"]
         if "toolUse" in block and block["toolUse"].get("name") == RETRIEVAL_TOOL_NAME
     )

@@ -11,6 +11,7 @@ from typing_extensions import TypedDict
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....event_loop.streaming import _record_usage
 from ....types.content import ContentBlock, Message, Messages, split_system_prompt
+from ....types.tools import ToolResultContent
 from ...content_rendering import format_tool_result_label, tool_result_to_content_blocks
 from ...message_trimming import (
     RemovalPlaceholder,
@@ -27,10 +28,9 @@ from ...placeholder import (
     format_offloaded,
     format_summarized,
     offload_placeholder,
-    placeholder_result,
 )
 from ...types import ContextState, is_text_block, is_tool_result_block
-from .base import BaseOffloadStrategy, StashRef
+from .base import BaseOffloadStrategy
 from .conditions import OffloadConditions
 from .target import OffloadTarget, media_kind
 
@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from ....agent.invocation_context import InvocationContext
     from ....models._summarize import SummarizeResult
     from ....models.model import Model
-    from ...stash import Stash
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +120,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         end = self._server_side_end(context, model, removable)
         if end is not None:
-            return await self._summarize_server_side(context, model, removable, end)
+            return await self._summarize_server_side(context, model, end)
 
         async def summarize(run: Messages) -> RemovalPlaceholder | None:
             return await self._summarize_run(context, model, run)
@@ -154,7 +153,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not _can_replay_server_side(model, context.agent.model):
             return None
         if self._conditions.block_threshold is not None:
-            self._warn_server_side_skip(context, model)
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                f"{type(model).__name__} summarizes server-side, which covers the conversation's start and so cannot"
+                f" honour block_threshold ({self._conditions.threshold_tokens(context.agent)}); summarizing"
+                " client-side instead",
+                stacklevel=1,
+            )
             return None
         removable_ids = {id(message) for message in with_pairs(messages, removable)}
         end = max((index + 1 for index, message in enumerate(messages) if id(message) in removable_ids), default=0)
@@ -174,35 +179,16 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return None
         return end
 
-    def _warn_server_side_skip(self, context: ContextState, model: Model) -> None:
-        """Warn that a ``block_threshold`` rules out the server-side summary."""
-        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
-        warnings.warn(
-            f"{type(model).__name__} summarizes server-side, which covers the conversation's start and so cannot"
-            f" honour block_threshold ({self._conditions.threshold_tokens(context.agent)}); summarizing client-side"
-            " instead",
-            stacklevel=1,
-        )
-
-    async def _summarize_server_side(
-        self, context: ContextState, model: Model, removable: list[Message], end: int
-    ) -> bool:
+    async def _summarize_server_side(self, context: ContextState, model: Model, end: int) -> bool:
         """Summarize messages 0 through ``end - 1`` server-side, replacing messages 1 through ``end - 1`` with it.
 
         A server-side summary can only stand in for the conversation's exact start, so every message before ``end``
-        is sent, even ones ``removable`` leaves out. The summary becomes an assistant message at index 1, followed by
-        the placeholder the messages it stands for are retrievable under. A summary without a ``provider``, which a
-        capable model returns when its own summary request failed, is placed as a client-side marker instead.
+        is sent. The summary becomes an assistant message at index 1, followed by the placeholder the messages it
+        stands for are retrievable under. A summary without a ``provider``, which a capable model returns when its
+        own summary request failed, is placed as a client-side marker instead.
         """
         messages = context.messages
         replaced = end - 1
-        if replaced > len(removable):
-            logger.warning(
-                "covered=<%d>, eligible=<%d> | a server-side summary covers the conversation's start"
-                " | summarizing messages that were not eligible too",
-                replaced,
-                len(removable),
-            )
         try:
             result = await model.summarize(messages[:end], **self._summarize_kwargs(context.agent, replay=True))
         except Exception as error:
@@ -216,21 +202,17 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         # Message 0 stays in the history, but a provider sending the summary as a compaction block stops sending
         # anything before it, so the summary stands for message 0 too and a retrieval has to be able to return it.
-        reference = await self._removed_reference(messages[:end], model, context.stash)
-        messages[1:end] = [_summary_message(summary, reference)]
+        content = [summary]
+        stash_ref = await stash_removed(context.stash, messages[:end], self._method)
+        if stash_ref is not None:
+            # The reference follows the summary because a compaction block drops the content before it, which is also
+            # why it is a block of its own: a provider's summary text is signed, so nothing can be written into it.
+            tokens = await removed_tokens(messages[:end], model)
+            marker = format_summarized(REMOVED_MESSAGES, tokens)
+            content.append(offload_placeholder(self._method, marker, stash_ref, tokens))
+        messages[1:end] = [new_message("assistant", content)]
         logger.debug("summarized=<%s> | summarized opening messages server-side", replaced)
         return True
-
-    async def _removed_reference(self, removed: Messages, model: Model, stash: Stash | None) -> ContentBlock | None:
-        """The placeholder the messages a server-side summary stands for are retrievable under.
-
-        None when they were not stashed, so the summary stands alone rather than carrying a dead reference.
-        """
-        stash_ref = await stash_removed(stash, removed, self._method)
-        if stash_ref is None:
-            return None
-        tokens = await removed_tokens(removed, model)
-        return offload_placeholder(self._method, format_summarized(REMOVED_MESSAGES, tokens), stash_ref, tokens)
 
     async def _place_text_summary(self, context: ContextState, model: Model, end: int, summary: str) -> bool:
         """Place the client-side summary a server-side-capable model fell back to.
@@ -256,10 +238,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_ref: StashRef,
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
-    ) -> ContentBlock | None:
+    ) -> tuple[str, list[ToolResultContent]] | None:
         model = self._resolve_model(agent)
         # A cancelled agent leaves the remaining blocks as they are rather than sending a request for each.
         if model is None or agent._cancel_signal.is_set():
@@ -272,18 +253,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
             summary = await self._try_summarize(summarized, model, agent, invocation_context, log_fields, replay=False)
             if summary:
                 logger.debug("%s, tokens=<%s> | summarized %s", log_fields, tokens, description)
-                placeholder = await self._placeholder(
-                    format_summarized(description, tokens, summary), stash_ref, tokens
-                )
-                if is_tool_result_block(block):
-                    return placeholder_result(block["toolResult"], [placeholder])
-                return placeholder
+                return format_summarized(description, tokens, summary), []
 
         # A tool result or text the summarizer failed on is kept for a later pass; media is offloaded instead.
         if is_tool_result_block(block) or is_text_block(block):
             return None
         logger.debug("%s, tokens=<%s> | offloaded media block", log_fields, tokens)
-        return await self._placeholder(format_offloaded(tokens, media_kind(block)), stash_ref, tokens)
+        return format_offloaded(tokens, media_kind(block)), []
 
     async def _try_summarize(
         self,
@@ -295,31 +271,19 @@ class SummarizeStrategy(BaseOffloadStrategy):
         *,
         replay: bool = True,
     ) -> str:
-        """Summarize ``request``, or log the failure and return "" so the pass continues and keeps the content."""
-        try:
-            return await self._summarize_text(request, model, agent, invocation_context, replay=replay)
-        except Exception as error:
-            logger.warning("%s, error=<%s> | summarization failed", log_fields, error)
-            return ""
-
-    async def _summarize_text(
-        self,
-        request: Messages,
-        model: Model,
-        agent: Agent,
-        invocation_context: InvocationContext | None,
-        *,
-        replay: bool,
-    ) -> str:
-        """The text of the model's summary of ``request``, or "" when the reply held no text.
+        """The text of the model's summary of ``request``, or "" so the pass continues and keeps the content.
 
         With ``replay``, ``request`` is the agent's own history and is sent with the agent's system prompt and tools;
         otherwise it is a self-contained request. Only the summary's text is used, since a summary with a
         ``provider`` can stand in only for the conversation's start.
         """
-        result = await model.summarize(request, **self._summarize_kwargs(agent, replay=replay))
-        _record_summary_usage(invocation_context, result)
-        text = _summary_text(result)
+        try:
+            result = await model.summarize(request, **self._summarize_kwargs(agent, replay=replay))
+            _record_summary_usage(invocation_context, result)
+            text = _summary_text(result)
+        except Exception as error:
+            logger.warning("%s, error=<%s> | summarization failed", log_fields, error)
+            return ""
         if not text:
             logger.warning("model=<%s> | summary held no text | leaving the content unsummarized", type(model).__name__)
         return text
@@ -396,16 +360,6 @@ def _without_reasoning(messages: Messages) -> Messages:
     return [message for message in stripped if message["content"]]
 
 
-def _summary_message(summary: ContentBlock, reference: ContentBlock | None) -> Message:
-    """The message a server-side summary becomes: the summary block, then the placeholder it replaced.
-
-    The placeholder follows the summary rather than preceding it because a provider that sends the summary as a
-    compaction block drops the content before it, which is the whole reason the reference is a block of its own: a
-    provider's summary text is signed, so the reference cannot be written into it.
-    """
-    return new_message("assistant", [summary, reference] if reference else [summary])
-
-
 def _summary_text(result: SummarizeResult) -> str:
     """The text of ``result``'s summary, or "" without one."""
     summary = _first_summary(result)
@@ -424,22 +378,15 @@ def _block_request(block: ContentBlock, tool_name: str | None) -> tuple[Messages
     The content is sent between delimiters in a user turn. A tool result is introduced by the name of the tool that
     produced it; the tool's input is left out, since it can be far larger than the result.
     """
-    summarized = _summary_input(block, tool_name)
-    if summarized is None:
-        return None
-    content, description = summarized
-    delimited = [ContentBlock(text="<content>"), *content, ContentBlock(text="</content>")]
-    return [Message(role="user", content=delimited)], description
-
-
-def _summary_input(block: ContentBlock, tool_name: str | None) -> tuple[list[ContentBlock], str] | None:
-    """What the summarizer reads for a block and how its marker describes it, or None when it can't summarize it."""
     if is_tool_result_block(block):
         tool_result = block["toolResult"]
         label = ContentBlock(text=format_tool_result_label(tool_result, tool_name))
-        return [label, *tool_result_to_content_blocks(tool_result["content"])], "tool result"
-    if is_text_block(block):
-        return [ContentBlock(text=block["text"])], "text block"
-    if "image" in block or "document" in block:
-        return [block], "media block"
-    return None
+        content, description = [label, *tool_result_to_content_blocks(tool_result["content"])], "tool result"
+    elif is_text_block(block):
+        content, description = [ContentBlock(text=block["text"])], "text block"
+    elif "image" in block or "document" in block:
+        content, description = [block], "media block"
+    else:
+        return None
+    delimited = [ContentBlock(text="<content>"), *content, ContentBlock(text="</content>")]
+    return [Message(role="user", content=delimited)], description

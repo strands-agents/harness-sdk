@@ -6,17 +6,21 @@ import json
 import logging
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
-from functools import partial
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message, Messages
 from ....types.offload import OffloadMethod
-from ....types.tools import ToolResult
+from ....types.tools import ToolResult, ToolResultContent
 from ...message_trimming import collect_removable_with_pair, placeholder_for, remove_messages, repair_alternation
-from ...placeholder import carried_tokens, format_elided, is_offloaded, offload_placeholder
+from ...placeholder import (
+    carried_tokens,
+    format_elided,
+    is_offloaded,
+    offload_placeholder,
+    placeholder_result,
+)
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
 from ...types import ContextState, ContextStrategy, is_text_block, is_tool_result_block
 from .conditions import OffloadConditions, ResolvedConditions, build_conditions
@@ -28,18 +32,6 @@ if TYPE_CHECKING:
     from ...stash import Stash
 
 logger = logging.getLogger(__name__)
-
-StashRef = Callable[[], Awaitable[str | None]]
-"""Writes a block to the stash, returning the reference the placeholder that replaces it carries.
-
-Awaited only once a strategy has decided to replace the block, rather than written up front: stashing a tool result
-lists the store, which would cost a request for every block a strategy turns out to leave alone.
-"""
-
-
-async def _no_stash_ref() -> str | None:
-    """The :data:`StashRef` of a strategy running without a stash: nothing to write, no reference to carry."""
-    return None
 
 
 @runtime_checkable
@@ -158,7 +150,14 @@ class BaseOffloadStrategy(ABC):
         self._conditions.check_fits(agent)
         if not self._runs_eagerly:
             return
-        self._warn_eager()
+        if self._conditions.is_empty:
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
+            warnings.warn(
+                f"Offload.{self._method}({json.dumps(self._target)}) has no conditions, so it acts on every matching"
+                " block as it arrives, before the model reads it; use .when() to set block_threshold,"
+                " context_utilization, or preserve_recent",
+                stacklevel=1,
+            )
 
         # The stash is this agent's, closed over rather than kept on the strategy: one strategy or config dict can
         # reach several agents, and whichever ran last would otherwise own every agent's writes.
@@ -174,18 +173,6 @@ class BaseOffloadStrategy(ABC):
                 logger.warning("strategy=<%s> | eager hook failed, continuing", self.name, exc_info=True)
 
         agent.hooks.add_callback(MessageAddedEvent, eager_hook)
-
-    def _warn_eager(self) -> None:
-        """Warn that a strategy without conditions acts on content the model has not read yet."""
-        if not self._conditions.is_empty:
-            return
-        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
-        warnings.warn(
-            f"Offload.{self._method}({json.dumps(self._target)}) has no conditions, so it acts on every matching"
-            " block as it arrives, before the model reads it; use .when() to set block_threshold,"
-            " context_utilization, or preserve_recent",
-            stacklevel=1,
-        )
 
     async def apply(self, context: ContextState) -> bool:
         """Offload content once the conditions are reached: whole messages for target ``"*"``, blocks otherwise.
@@ -246,21 +233,20 @@ class BaseOffloadStrategy(ABC):
         message removes its partner too.
         """
         messages = context.messages
-        unprotected = self._unprotected_matches(messages, build_tool_name_map(messages))
-        removable = _without_protected_pairs(messages, unprotected)
+        unprotected = {id(message) for message in self._unprotected_matches(messages, build_tool_name_map(messages))}
+        removable = [
+            message
+            for index, message in enumerate(messages)
+            if index > 0
+            and id(message) in unprotected
+            and all(id(partner) in unprotected for partner in collect_removable_with_pair(messages, index))
+        ]
         threshold = self._conditions.threshold_tokens(context.agent)
         if threshold is None:
             return removable
         proxy = ModelProxy(context.agent.model)
         sizes = [await proxy.count_tokens([message]) for message in removable]
         return [message for message, size in zip(removable, sizes, strict=True) if size > threshold]
-
-    async def _placeholder(self, preview: str, stash_ref: StashRef, tokens: int) -> ContentBlock:
-        """The placeholder this strategy leaves for a block it replaced, recording the tokens it stands for.
-
-        Awaiting the reference here is what writes the block to the stash, so only a block being replaced is stored.
-        """
-        return offload_placeholder(self._method, preview, await stash_ref(), tokens)
 
     def _is_offloadable(
         self, block: ContentBlock, message: Message, tool_name_map: dict[str, str], stash: Stash | None
@@ -306,38 +292,36 @@ class BaseOffloadStrategy(ABC):
         """Replace the eligible blocks of a message larger than ``threshold`` tokens, or every one when it is unset."""
         acted = False
         content = message["content"]
+        proxy = ModelProxy(agent.model)
         for block_index, block in enumerate(content):
             if not self._is_offloadable(block, message, tool_name_map, stash):
                 continue
-            tokens = await self._offload_tokens(block, message, threshold, agent)
-            if tokens is None:
+            # Counted through the proxy so the block is measured as the model receives it; the system prompt and tool
+            # specs are left out, which would otherwise inflate every block against the threshold.
+            measured = await proxy.count_tokens([Message(role=message["role"], content=[block])])
+            if threshold is not None and measured <= threshold and not self._exempt_from_threshold(block, measured):
+                continue
+            # The threshold measures what the block occupies now; the replacement stands for what is behind it as
+            # well, so a placeholder it holds adds what that already stood for.
+            tokens = measured + carried_tokens([block])
+
+            tool_name = tool_name_map.get(block["toolResult"]["toolUseId"]) if is_tool_result_block(block) else None
+            replaced = await self._replace_block(block, tokens, message, agent, tool_name, invocation_context)
+            if replaced is None:
                 continue
 
-            stash_ref = _no_stash_ref if stash is None else partial(stash.ensure_stashed, block, message, block_index)
-            tool_name = tool_name_map.get(block["toolResult"]["toolUseId"]) if is_tool_result_block(block) else None
-            replacement = await self._replace_block(
-                block, tokens, message, agent, stash_ref, tool_name, invocation_context
+            # Stashed only now the strategy has decided to replace the block: stashing a tool result lists the
+            # store, which would cost a request for every block a strategy turns out to leave alone.
+            preview, kept = replaced
+            stash_ref = await stash.ensure_stashed(block, message, block_index) if stash is not None else None
+            placeholder = offload_placeholder(self._method, preview, stash_ref, tokens)
+            content[block_index] = (
+                placeholder_result(block["toolResult"], [placeholder, *kept])
+                if is_tool_result_block(block)
+                else placeholder
             )
-            if replacement is not None and replacement is not block:
-                content[block_index] = replacement
-                acted = True
+            acted = True
         return acted
-
-    async def _offload_tokens(
-        self, block: ContentBlock, message: Message, threshold: int | None, agent: Agent
-    ) -> int | None:
-        """The size a replacement for ``block`` stands for, or None when the block is within ``threshold``.
-
-        The threshold measures what the block occupies now; the replacement stands for what is behind it as well, so
-        a placeholder it holds adds what that already stood for.
-
-        Counted through :class:`ModelProxy` so the block is measured as the model receives it; the system prompt and
-        tool specs are left out, which would otherwise inflate every block against the threshold.
-        """
-        measured = await ModelProxy(agent.model).count_tokens([Message(role=message["role"], content=[block])])
-        if threshold is not None and measured <= threshold and not self._exempt_from_threshold(block, measured):
-            return None
-        return measured + carried_tokens([block])
 
     def _exempt_from_threshold(self, block: ContentBlock, measured: int) -> bool:
         """Whether ``block`` is media a threshold cannot rule out, because the token count measures it as 0.
@@ -358,11 +342,10 @@ class BaseOffloadStrategy(ABC):
         tokens: int,
         message: Message,
         agent: Agent,
-        stash_ref: StashRef,
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
-    ) -> ContentBlock | None:
-        """Transform a block. Return the replacement, or None to skip."""
+    ) -> tuple[str, list[ToolResultContent]] | None:
+        """The text this block is replaced with and the tool result items kept beside it, or None to skip it."""
         ...
 
 
@@ -415,15 +398,3 @@ class EmergencyTruncateStrategy:
 def _pinned_ids(messages: Messages) -> set[int]:
     """The identities of the pinned messages, since equal messages are not the same message."""
     return {id(message) for index, message in enumerate(messages) if is_pinned(messages, index)}
-
-
-def _without_protected_pairs(messages: Messages, unprotected: list[Message]) -> list[Message]:
-    """``unprotected`` without message 0 and without the messages whose tool partner is protected."""
-    unprotected_ids = {id(message) for message in unprotected}
-    return [
-        message
-        for index, message in enumerate(messages)
-        if index > 0
-        and id(message) in unprotected_ids
-        and all(id(partner) in unprotected_ids for partner in collect_removable_with_pair(messages, index))
-    ]
