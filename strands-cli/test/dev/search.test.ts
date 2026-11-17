@@ -580,7 +580,7 @@ describe('discoverHarnesses', () => {
     vi.mocked(open).mockImplementationOnce(async (...args) => {
       const file = await actualFs.open(...args)
       const details = await file.stat()
-      vi.spyOn(file, 'stat').mockResolvedValue(Object.assign(details, { ino: details.ino + 1 }))
+      vi.spyOn(file, 'stat').mockResolvedValue(Object.assign(details, { ino: -1 }))
       return file
     })
 
