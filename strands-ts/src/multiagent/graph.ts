@@ -785,19 +785,26 @@ export class Graph implements MultiAgent {
     const deps: ContentBlock[] = []
     for (const edge of this.edges.filter((e) => e.target.id === node.id)) {
       const ns = state.node(edge.source.id)!
-      // A user message cannot contain a toolUseBlock or toolResultBlock, so drop them. Surface
-      // the structured output once as a JSON TextBlock, preferring the validated value — the raw
-      // tool input can diverge via zod defaults/transforms. Falls back to the block input only
-      // for nested MultiAgentNode dependencies, which don't propagate structuredOutput.
-      const lastResult = ns.results[ns.results.length - 1]
+      // A user message cannot contain a toolUseBlock or toolResultBlock, so drop them. For an
+      // AgentNode, surface the validated NodeResult.structuredOutput once (the raw tool input
+      // can diverge via zod defaults/transforms, and a turn may contain repeated/invalid
+      // attempts). For a nested MultiAgentNode no validated value is propagated, so fall back
+      // to each toolUse block's input — multiple termini can each contribute one.
+      const validated = ns.results[ns.results.length - 1]?.structuredOutput
       const content: ContentBlock[] = []
-      let structuredOutputEmitted = false
+      let validatedEmitted = false
       for (const block of ns.content) {
         if (block.type === 'reasoningBlock' || block.type === 'toolResultBlock') continue
         if (block.type === 'toolUseBlock') {
-          if (block.name === STRUCTURED_OUTPUT_TOOL_NAME && !structuredOutputEmitted) {
-            content.push(new TextBlock(JSON.stringify(lastResult?.structuredOutput ?? block.input)))
-            structuredOutputEmitted = true
+          if (block.name === STRUCTURED_OUTPUT_TOOL_NAME) {
+            if (validated !== undefined) {
+              if (!validatedEmitted) {
+                content.push(new TextBlock(JSON.stringify(validated)))
+                validatedEmitted = true
+              }
+            } else {
+              content.push(new TextBlock(JSON.stringify(block.input)))
+            }
           }
           continue
         }
