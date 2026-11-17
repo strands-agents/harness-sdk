@@ -6,7 +6,7 @@
 
 import type { DocumentBlock, ImageBlock } from '../../types/media.js'
 import { encodeBase64 } from '../../types/media.js'
-import { toMimeType } from '../../mime.js'
+import { DOCUMENT_FORMATS, toMimeType } from '../../mime.js'
 import { logger } from '../../logging/logger.js'
 
 /**
@@ -41,14 +41,16 @@ export function formatImageDataUrl(imageBlock: ImageBlock): string | undefined {
   return undefined
 }
 
+const DOCUMENT_EXTENSIONS: ReadonlySet<string> = new Set(DOCUMENT_FORMATS)
+
 /**
- * Returns the document's name, appending its format as the extension when the name has no known one.
+ * Returns the document's name, appending its format as the extension when the name has no document extension.
  * OpenAI-compatible endpoints such as Bedrock Mantle reject a `filename` that has no extension.
- * A name that already carries a known extension is kept as-is, even if it differs from `format`,
+ * A name that already carries a document extension is kept as-is, even if it differs from `format`,
  * because the endpoint treats the file by that extension.
  */
 export function formatDocumentFilename(docBlock: DocumentBlock): string {
   const dot = docBlock.name.lastIndexOf('.')
-  if (dot !== -1 && toMimeType(docBlock.name.slice(dot + 1))) return docBlock.name
+  if (dot !== -1 && DOCUMENT_EXTENSIONS.has(docBlock.name.slice(dot + 1).toLowerCase())) return docBlock.name
   return `${docBlock.name}.${docBlock.format}`
 }

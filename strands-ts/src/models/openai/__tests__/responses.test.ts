@@ -508,7 +508,9 @@ describe("OpenAIModel (api: 'responses')", () => {
       ]
       const req = await runOnce({}, messages)
       const out = req.input.find((i: any) => i.type === 'function_call_output')
-      expect(out.output).toEqual([expect.objectContaining({ type: 'input_file', filename: 'report.pdf' })])
+      expect(out.output).toEqual([
+        { type: 'input_file', file_data: 'data:application/pdf;base64,AQ==', filename: 'report.pdf' },
+      ])
     })
 
     it.each([
@@ -517,6 +519,7 @@ describe("OpenAIModel (api: 'responses')", () => {
       { name: 'REPORT.PDF', format: 'pdf', expected: 'REPORT.PDF' },
       { name: 'notes.v2', format: 'txt', expected: 'notes.v2.txt' },
       { name: 'report.pdf', format: 'txt', expected: 'report.pdf' },
+      { name: 'chart.png', format: 'pdf', expected: 'chart.png.pdf' },
     ] as const)('sends filename $expected for a user document named $name', async ({ name, format, expected }) => {
       const messages = [
         new Message({

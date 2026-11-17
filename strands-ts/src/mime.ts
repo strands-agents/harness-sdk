@@ -27,7 +27,21 @@ export type ImageFormat = (typeof IMAGE_FORMATS)[number]
 
 export type VideoFormat = 'mkv' | 'mov' | 'mp4' | 'webm' | 'flv' | 'mpeg' | 'mpg' | 'wmv' | '3gp'
 
-export type DocumentFormat = 'pdf' | 'csv' | 'doc' | 'docx' | 'xls' | 'xlsx' | 'html' | 'txt' | 'md' | 'json' | 'xml'
+export const DOCUMENT_FORMATS = [
+  'pdf',
+  'csv',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'html',
+  'txt',
+  'md',
+  'json',
+  'xml',
+] as const
+
+export type DocumentFormat = (typeof DOCUMENT_FORMATS)[number]
 
 export type MediaFormat = DocumentFormat | ImageFormat | VideoFormat
 
