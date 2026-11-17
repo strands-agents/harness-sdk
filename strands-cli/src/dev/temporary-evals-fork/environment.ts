@@ -281,7 +281,7 @@ const buildSharedPackages = async (build: Build, projectPython: string, tag: str
   const building = `${folder}.${process.pid}.tmp`
   const request = commandRequest(build, dirname(folder))
   const python = temporaryVenvPython(building)
-  build.onProgress(`Creating the shared TEMPORARY evals environment in ${folder}`)
+  build.onProgress(`Creating the shared evals environment in ${folder}`)
   await mkdir(dirname(folder), { recursive: true })
   await rm(building, { recursive: true, force: true })
   const cannotCreate = (detail: string): string =>
