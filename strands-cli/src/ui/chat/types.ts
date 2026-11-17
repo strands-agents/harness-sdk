@@ -22,6 +22,7 @@ import type {
 
 import type { BackgroundAgentActivity } from '../../agent/background.js'
 import type { WorkspaceAction } from '../../agent/configuration.js'
+import type { BaseCliActions } from '../../dev/base-cli.js'
 import type { LoadedMcp } from '../../agent/mcp.js'
 import type { PeerMessage } from '../../agent/messaging.js'
 import type { ChatSkillsRuntime } from '../../agent/skills.js'
@@ -217,6 +218,7 @@ export type NewChatPanel =
   | (ChatPanelBase & {
       kind: 'settings'
       settingsCategory?: SettingsCategory
+      focusRow?: number
     })
   | (ChatPanelBase & {
       kind: 'config'
@@ -335,6 +337,7 @@ export interface ChatControllerOptions {
   /** Reload this session from an exported project directory, keeping the conversation. */
   useExportedProject?: (path: string) => void
   saveAgentOptions?: (change: { model?: string; effort?: ProfileEffort }) => Promise<unknown>
+  baseCli?: BaseCliActions
   peerEndpointId?: string
 }
 

@@ -780,6 +780,10 @@ export function ChatApp({
       panelSelectionRef.current = snapshot.panel.selected
       setPanelSelection(snapshot.panel.selected)
     }
+    if (snapshot.panel?.kind === 'settings' && snapshot.panel.focusRow !== undefined) {
+      panelSelectionRef.current = snapshot.panel.focusRow
+      setPanelSelection(snapshot.panel.focusRow)
+    }
     setPanelQuery('')
     setModelProfileSelection(0)
     setPanelFilter(initialPanelFilter(snapshot.panel))
@@ -810,7 +814,9 @@ export function ChatApp({
     if (snapshot.panel?.kind !== 'help-detail' && snapshot.panel?.kind !== 'detail') {
       detailReturnRef.current = undefined
     }
-    setSettingsPanelFocus('categories')
+    setSettingsPanelFocus(
+      snapshot.panel?.kind === 'settings' && snapshot.panel.focusRow !== undefined ? 'settings' : 'categories'
+    )
     setPressedPanelFilter(undefined)
     setPressedPanelRow(undefined)
     setPressedPanelControl(undefined)

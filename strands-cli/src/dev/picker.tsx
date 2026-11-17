@@ -382,7 +382,7 @@ export const HarnessPicker = ({
   const lineCount = (text: string): number => wrapLines(text, detailWidth).length
   const notice = warning ? sanitizeTerminalText(warning) : undefined
   const selected = rows[selection]!
-  const globalNotice = 'Manual import applies these changes globally to plain strands.'
+  const globalNotice = 'Save to Base CLI in /settings applies these changes to plain strands.'
   const localNotice = 'Until then, development changes stay in this local workspace.'
   const projectNotice = 'Local project only. Your CLI default stays unchanged.'
   const detailNoteRows = cli ? lineCount(globalNotice) + lineCount(localNotice) : lineCount(projectNotice)

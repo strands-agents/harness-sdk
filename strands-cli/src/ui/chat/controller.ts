@@ -113,6 +113,7 @@ import {
   type DevPanelOpening,
   type NewChatPanel,
 } from './types.js'
+import type { BaseCliActions, BaseCliState } from '../../dev/base-cli.js'
 
 export * from './types.js'
 
@@ -127,6 +128,25 @@ const EXPORT_TYPESCRIPT = 'export:typescript'
 const EXPORT_NAME_PREFIX = 'export:name:'
 const EXPORT_SAVE_DEFAULT_PREFIX = 'export:save-default:'
 const EXPORT_SAVE_CUSTOM_PREFIX = 'export:save-custom:'
+
+const BASE_CLI_SAVE_CONFIRM = 'workspace:save-confirm'
+
+const BASE_CLI_STATE_TEXT: Record<Exclude<BaseCliState['kind'], 'saved' | 'other'>, string> = {
+  current: 'Not changed since strands dev made this copy',
+  changed: 'Changed after strands dev made this copy. Save replaces it.',
+  unknown: 'strands dev cannot tell if it changed after this copy. Save replaces it.',
+}
+
+const baseCliSaveRows = (state: Exclude<BaseCliState, { kind: 'saved' }>, entrypoint: string): ChatPanelRow[] => [
+  { label: 'Agent', description: entrypoint },
+  {
+    label: 'Base CLI',
+    description: state.kind === 'other' ? `Uses ${state.agent}. Save replaces it.` : BASE_CLI_STATE_TEXT[state.kind],
+    tone: state.kind === 'current' ? 'normal' : 'warning',
+  },
+  { label: 'Saved profile', description: 'Stays in cli.toml. Remove agentProject to use it again.' },
+  { label: 'Save', description: 'Make plain strands use this agent', value: BASE_CLI_SAVE_CONFIRM },
+]
 
 type SessionList = Awaited<ReturnType<ChatSessionRuntime['list']>>
 
@@ -173,6 +193,7 @@ export class ChatController implements ChatControllerApi {
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
   private readonly _requestSetup: ChatControllerOptions['requestSetup']
   private readonly _workspaceAction: ChatControllerOptions['workspaceAction']
+  private readonly _baseCli: ChatControllerOptions['baseCli']
   private readonly _devCommands: readonly DevChatCommand[]
   private readonly _devCommandAbort = new AbortController()
   private _stopWatchingDevJobs: readonly (() => void)[] = []
@@ -246,6 +267,7 @@ export class ChatController implements ChatControllerApi {
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
     this._workspaceAction = options.workspaceAction
+    this._baseCli = options.baseCli
     this._devCommands = options.devCommands ?? []
     this._awsProfile = options.awsProfile
     this._builtinTools = options.builtinTools
@@ -1222,6 +1244,7 @@ export class ChatController implements ChatControllerApi {
       case 'settings':
         if (row.value.startsWith('workspace:')) {
           const action = row.value.slice('workspace:'.length)
+          if (action === 'save' || action === 'save-confirm') return this._baseCliAction(action)
           if (!this._workspaceAction || !this._runtime.devWorkspace || (action !== 'edit' && action !== 'import'))
             return false
           if (this.busy || this._hasUnresolvedBackgroundTasks()) {
@@ -2682,6 +2705,15 @@ export class ChatController implements ChatControllerApi {
               description: 'Select or create another agent, then its workspace folder. This workspace stays.',
               value: 'workspace:import',
             },
+            ...(this._baseCli
+              ? [
+                  {
+                    label: 'Save to Base CLI',
+                    description: 'Make plain strands use this agent',
+                    value: 'workspace:save',
+                  },
+                ]
+              : []),
           ]
         : settingsRows(this._settings, category.id, this._requestSetup !== undefined)
     const panel = {
@@ -3188,6 +3220,50 @@ export class ChatController implements ChatControllerApi {
 
   private _makePanel(input: NewChatPanel): ChatPanel {
     return makePanel(`panel-${this._nextPanel++}`, input)
+  }
+
+  private _baseCliAction(action: 'save' | 'save-confirm'): boolean {
+    const baseCli = this._baseCli
+    const entrypoint = this._runtime.devWorkspace?.entrypoint
+    if (!baseCli || !entrypoint) return false
+    void (action === 'save' ? this._openBaseCliSave(baseCli, entrypoint) : this._saveToBaseCli(baseCli))
+    return true
+  }
+
+  private async _openBaseCliSave(baseCli: BaseCliActions, entrypoint: string): Promise<void> {
+    try {
+      const state = await baseCli.state()
+      if (state.kind === 'saved') {
+        this._addNotice('success', 'Plain strands already uses this agent.')
+        this._emit()
+        return
+      }
+      const rows = baseCliSaveRows(state, entrypoint)
+      this._pushPanel({
+        kind: 'settings',
+        title: 'Save to Base CLI',
+        rows,
+        filters: settingsCategoryFilters(true),
+        settingsCategory: 'Workspace',
+        focusRow: rows.findIndex(({ value }) => value === BASE_CLI_SAVE_CONFIRM),
+      })
+    } catch (error) {
+      this._openError('Save to Base CLI failed', entrypoint, errorMessage(error))
+    }
+  }
+
+  private async _saveToBaseCli(baseCli: BaseCliActions): Promise<void> {
+    try {
+      const path = await baseCli.save()
+      this.dismissPanel()
+      this._addNotice(
+        'success',
+        `Plain strands now uses this agent. To use your saved profile again, remove agentProject from ${path}.`
+      )
+      this._emit()
+    } catch (error) {
+      this._openError('Save to Base CLI failed', '', errorMessage(error))
+    }
   }
 
   private _openError(title: string, label: string, description: string, fixDirectory?: string): void {

@@ -91,7 +91,7 @@ strands dev init --create python --workspace ./new-agent
 
 The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
 The selector separates CLI Default, Local Projects, and New Project choices. Source details appear below the selected choice.
-Base CLI shows its source path and explains that only a later manual import applies changes globally.
+Base CLI shows its source path and explains that **Save to Base CLI** applies the dev changes to plain `strands`.
 Discovery omits the current CLI source and the base workspace already represented by that choice. Distinct projects with matching names remain separate.
 Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
@@ -275,6 +275,11 @@ In a dev session, `/settings` includes **Strands dev workspace**. This section s
 
 - **Edit workspace configuration** opens `.config` in your configured editor. Binding changes apply on the next launch.
 - **Import a different agent** opens the startup agent selector. The selector scans the same folders and hides the current agent.
+- **Save to Base CLI** appears in a Base CLI workspace. It makes plain `strands` use the agent file of this workspace. Then dev and plain `strands` share one agent, and each one reloads the file when it changes.
+
+Before **Save to Base CLI** writes `agentProject` into `~/.strands/cli.toml`, it tells you if your Base CLI changed after dev made its copy.
+Your saved profile stays in `cli.toml`. To use the profile again, remove `agentProject` from `cli.toml`.
+After the save, plain `strands` writes `/model` and `/effort` into that agent file, as dev does.
 
 In the selector, you can select the Base CLI, a local project, or **Create a new harness** for a new TypeScript or Python project.
 When the current workspace is the Base CLI workspace, the selector does not show the Base CLI.
@@ -283,13 +288,14 @@ The selection uses the same workspace folders as startup. The current workspace 
 When the selected agent already has its workspace, dev opens that workspace. Otherwise, dev asks for a folder under **Create a workspace**.
 When that folder holds the workspace of another agent, dev asks you to type DELETE first.
 Dev does not replace the open workspace. To replace it, restart strands dev and select the agent there.
+Dev also does not replace a folder that holds the agent of plain `strands`.
 
 A new chat starts in the selected workspace. If the new chat cannot start, dev returns to the previous workspace and chat.
 Press Esc in the selector to keep the current chat. These actions do not change the default agent for plain `strands`.
 
 ### Changes in a dev session
 
-Dev saves each change that you make in the CLI during a dev session. It never changes `~/.strands/cli.toml`.
+Dev saves each change that you make in the CLI during a dev session. It changes `~/.strands/cli.toml` only when you select **Save to Base CLI**.
 
 - `/model` and `/effort` write `model` and `effort` into the `createHarness` or `create_harness` call of the agent file. Dev uses the same code writer as `/export`.
 - The harness ignores `effort` when the agent passes a model object, for example `new BedrockModel({...})`. For a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object, `/effort` writes the reasoning fields into the object instead. These are the same fields that the harness sends for that model id at that effort, in `additionalRequestFields` or `params`. Fields for other purposes do not change.
@@ -330,7 +336,7 @@ The experiment skill, workspace instructions, and `strands_dev_*` tools are inje
 [`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/dd073cca0b43265840635430499efb5a1661afc1)
 in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
 
-Global import remains deferred. A future manual import can select the persistent agent as the default for plain `strands`.
+**Save to Base CLI** in `/settings` selects the persistent agent as the default for plain `strands`.
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
 
 ## Using it

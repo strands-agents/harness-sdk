@@ -27,7 +27,9 @@ afterEach(async () => {
   }
 })
 
-function createController(options: Pick<ChatControllerOptions, 'requestSetup' | 'awsProfile'> = {}) {
+function createController(
+  options: Pick<ChatControllerOptions, 'requestSetup' | 'awsProfile' | 'baseCli' | 'workspaceAction' | 'runtime'> = {}
+) {
   const switchModel = vi.fn(async (_model: string) => {})
   const backend: ChatBackend = {
     id: 'panel-resize-test',
@@ -338,6 +340,34 @@ describe('mounted panel resizing', () => {
     await view.click(view.pointOnRow('Providers & default agent', 'Open setup'))
 
     expect(requestSetup).toHaveBeenCalledOnce()
+  })
+
+  it('opens the Save to Base CLI step with Save selected so that Enter saves', async () => {
+    const save = vi.fn(async () => '/home/test/.strands/cli.toml')
+    const entrypoint = '/home/test/.strands/strands-dev/agent/agent/agent.ts'
+    const { controller } = createController({
+      runtime: {
+        model: 'model-00',
+        cwd: '/work',
+        devWorkspace: {
+          root: '/home/test/.strands/strands-dev',
+          entrypoint,
+          boundEntrypoint: entrypoint,
+          origin: 'cli',
+        },
+      },
+      workspaceAction: vi.fn(),
+      baseCli: { state: async () => ({ kind: 'current' }), save },
+    })
+    const view = await mount(controller)
+    await controller.submit('/settings')
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })
+    await controller.activatePanelRow({ label: '', description: '', value: 'workspace:save' })
+    await vi.waitFor(() => expect(view.screen()).toContain('Not changed since strands dev made this copy'))
+
+    await view.press('\r')
+
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
   })
 
   it('keeps the selected setting visible and preserves the composer draft', async () => {

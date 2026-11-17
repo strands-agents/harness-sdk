@@ -37,7 +37,7 @@ describe('HarnessPicker', () => {
       ),
       { stdin: input, stdout: output }
     )
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Manual import'))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Save to Base CLI'))
     const positions = (): number[] =>
       ['Select a harness', 'Global Harness', 'Project harness', 'New Harness', '↑↓ select'].map((text) =>
         frame().findIndex((line) => line.includes(text))
@@ -51,7 +51,7 @@ describe('HarnessPicker', () => {
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Start a separate project'))
     expect(positions()).toEqual(initial)
     input.write('\u001b[B')
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Manual import'))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Save to Base CLI'))
     expect(positions()).toEqual(initial)
   })
 
@@ -97,7 +97,7 @@ describe('HarnessPicker', () => {
     const text = frame().join('\n')
     expect(text.indexOf('Base CLI')).toBeLessThan(text.indexOf('Project harness'))
     expect(text).toContain('Source: /home/test/.strands/cli.toml')
-    expect(text).toContain('Manual import applies these changes globally')
+    expect(text).toContain('Save to Base CLI in /settings applies these changes')
     expect(text).toContain('development changes stay in this local workspace')
     expect(text).toContain('Global Harness')
     expect(text).toContain('Discovered Harnesses (1)')
@@ -1018,7 +1018,7 @@ describe('HarnessPicker', () => {
     const frame = renderWithRows(rows)
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc cancel'))
 
-    expect(frame().join('\n').includes('Manual import applies')).toBe(notesVisible)
+    expect(frame().join('\n').includes('Save to Base CLI in /settings')).toBe(notesVisible)
   })
 
   it.each([

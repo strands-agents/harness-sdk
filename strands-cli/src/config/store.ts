@@ -112,6 +112,11 @@ export function userConfigPath(): string {
   return strandsUserPath('cli.toml')
 }
 
+export const savedAgentProject = async (path = userConfigPath()): Promise<string | undefined> => {
+  const { agentProject } = (await readConfigDocument(path)).document
+  return typeof agentProject === 'string' ? agentProject : undefined
+}
+
 export interface ConfigLayer {
   readonly source: string
   read(): Promise<unknown>
@@ -131,6 +136,7 @@ export class CliConfigStore {
   private _sessionProviderEnvironment: ProviderEnvironment = {}
   private _writeQueue = Promise.resolve()
   private _layer: { target: ConfigLayer; base: LayeredValues } | undefined
+  private _diskAgentProject: unknown
 
   private constructor(
     private readonly _path: string,
@@ -143,6 +149,7 @@ export class CliConfigStore {
     private _settings: ChatSettings,
     private readonly _persistent = true
   ) {
+    this._diskAgentProject = _document.agentProject
     this._profileBaseDir =
       _document.profileBaseDir === undefined
         ? undefined
@@ -244,6 +251,14 @@ export class CliConfigStore {
       this._document = document
       this._onboardingVersion = SETUP_VERSION
       this._settings = nextSettings
+    })
+  }
+
+  setAgentProject(entrypoint: string | undefined): Promise<void> {
+    return this._enqueueWrite(async () => {
+      const document = { ...this._document, agentProject: entrypoint }
+      await this._save(document)
+      this._document = document
     })
   }
 
@@ -460,7 +475,20 @@ export class CliConfigStore {
       }
       return
     }
-    if (this._persistent) await writeConfigDocument(this._path, document)
+    if (!this._persistent) return
+    if (document.agentProject === this._diskAgentProject) await this._keepAgentProjectOnDisk(document)
+    await writeConfigDocument(this._path, document)
+    this._diskAgentProject = document.agentProject
+  }
+
+  private async _keepAgentProjectOnDisk(document: ConfigDocument): Promise<void> {
+    const onDisk = await readConfigDocument(this._path).then(
+      ({ document: saved }) => saved.agentProject,
+      () => document.agentProject
+    )
+    if (onDisk === document.agentProject) return
+    if (typeof onDisk === 'string') document.agentProject = onDisk
+    else delete document.agentProject
   }
 
   private _enqueueWrite(write: () => Promise<void>): Promise<void> {

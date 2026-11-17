@@ -4,13 +4,14 @@ import { lstat, mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 import { resolveSkillPaths } from '../agent/skills.js'
-import type { CliConfigSnapshot } from '../config/store.js'
+import { savedAgentProject, type CliConfigSnapshot } from '../config/store.js'
 import { containsPath } from '../paths.js'
 import { errorMessage } from '../terminal/text.js'
 import { importAgentProject, type AgentProjectLanguage } from '../project/import.js'
 import { installAgentProject, installProjectDependencies, type ProjectInstallation } from '../project/install.js'
 import { moduleLanguage } from '../project/portability.js'
 import { withDevModuleFiles } from './module-files.js'
+import { baseCliFingerprint } from './base-cli.js'
 import { bindWorkspace } from './binding.js'
 import { boundDevWorkspace, readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
 
@@ -207,6 +208,14 @@ const restoreBeforeExit = (replacements: Replacement[]): void => {
 
 const backupPath = (path: string, parent: string): string => join(parent, `.${basename(path)}-${randomUUID()}.replaced`)
 
+const refuseSavedAgentFolder = async (path: string): Promise<void> => {
+  const saved = await savedAgentProject()
+  if (saved && containsPath(path, resolve(saved)))
+    throw new Error(
+      `Plain strands uses the agent ${saved}, which is in ${path}. Choose another workspace folder, or point plain strands at another agent first.`
+    )
+}
+
 const setAside = async (path: string, outside: string | undefined): Promise<string> => {
   if (outside) {
     const backup = backupPath(path, outside)
@@ -235,6 +244,7 @@ export const folderClaims = (): FolderClaims => {
     },
     claimCreated: (path): void => record({ path, claim: 'created', missingParents: [] }),
     replace: async (path, outside): Promise<void> => {
+      await refuseSavedAgentFolder(path)
       const backup = await setAside(path, outside)
       if (!replacements.length) process.once('exit', restoreOnExit)
       replacements.push({ path, backup })
@@ -296,7 +306,7 @@ export const createDevWorkspace = async (options: CreateDevWorkspaceOptions): Pr
         version: 1,
         name: options.snapshot.profile.name,
         agent: { path: 'agent', entrypoint: portableEntrypoint(project.root, project.entrypoint), language },
-        origin,
+        origin: options.kind === 'cli' ? { ...origin, version: baseCliFingerprint(options.snapshot) } : origin,
       })
     }
     options.signal?.throwIfAborted()
