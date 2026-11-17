@@ -3,6 +3,7 @@ import halftone from '../assets/banner/halftone.svg?url';
 import arrow from '../assets/banner/arrow.svg?raw';
 import github from '../assets/nav/github.svg?raw';
 import { getStarCount } from '../util/github';
+import { pathWithBase } from '../util/links';
 
 const stars = await getStarCount();
 ---
@@ -17,14 +18,14 @@ const stars = await getStarCount();
       <div class="banner__text">
         <h1 class="banner__headline">
           The open source<br />
-          toolkit for building<br />
+          toolkit for<br />
           production agents.
         </h1>
       </div>
       <div class="banner__actions">
         <div class="banner__links">
           <a
-            href="#build-an-agent"
+            href={pathWithBase('/docs/user-guide/harness/quickstart/')}
             class="banner__link banner__link--primary"
           >
             Build an agent
@@ -102,21 +103,21 @@ const stars = await getStarCount();
   .banner__content {
     position: relative;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    justify-content: center;
-    gap: 24px;
+    justify-content: space-between;
+    gap: 32px;
     width: 100%;
     max-width: 1332px;
     margin: 0 auto;
     padding: 69px clamp(24px, 5vw, 96px) 48px;
-    text-align: center;
+    text-align: left;
   }
 
   .banner__text {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: 16px;
   }
 
@@ -124,11 +125,11 @@ const stars = await getStarCount();
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 500;
-    font-size: clamp(30px, 3.25vw, 52px);
+    font-size: clamp(30px, 4vw, 52px);
     letter-spacing: 0.1em;
     line-height: 1.2;
     color: var(--banner-headline);
-    text-align: center;
+    text-align: left;
     white-space: normal;
   }
 
@@ -136,7 +137,9 @@ const stars = await getStarCount();
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    width: min(405px, 100%);
+    flex: 0 0 clamp(340px, 30vw, 405px);
+    gap: 16px;
+    width: 405px;
     max-width: 100%;
   }
 
@@ -173,11 +176,6 @@ const stars = await getStarCount();
     color: var(--strands-black);
     background: var(--toggle-active-bg);
     border-color: var(--toggle-active-bg);
-  }
-
-  .banner__link--primary .banner__arrow {
-    transform: rotate(90deg);
-    transform-origin: center;
   }
 
   .banner__link--github {
@@ -218,11 +216,18 @@ const stars = await getStarCount();
   /* ---------- Tablet (768–1023px) ---------- */
   @media (max-width: 1023px) {
     .banner__content {
+      flex-direction: column;
+      gap: 24px;
       padding: 69px 33px 48px;
     }
 
     .banner__headline {
       font-size: clamp(30px, 3.6vw, 52px);
+      text-align: center;
+    }
+
+    .banner__actions {
+      flex: none;
     }
   }
 

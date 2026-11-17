@@ -46,7 +46,7 @@ const cards: ToolkitCard[] = [
     color: 'var(--card-accent-orange)',
     headline: 'Start with a complete agent.',
     description:
-      'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.',
+      'Strands harness gives you an agent with tools, memory, session management, and context management already configured. Replace individual components to fit your use case.',
     actionLabel: 'Build an agent',
     actionAriaLabel: 'Build an agent with Strands harness',
     install: {
@@ -72,8 +72,10 @@ const cards: ToolkitCard[] = [
   {
     slug: '/harness-sdk',
     color: 'var(--card-accent-teal)',
-    actionLabel: 'Build with primitives',
-    actionAriaLabel: 'Build with Strands Harness SDK primitives',
+    description:
+      'The Harness SDK is an agent framework for building agents from the ground up. Add tools, memory, and context management to fit your use case.',
+    actionLabel: 'Explore the SDK',
+    actionAriaLabel: 'Explore the Harness SDK',
     expanded: {
       viewMoreHref: pathWithBase('/docs/user-guide/sdk/'),
     },
@@ -81,11 +83,11 @@ const cards: ToolkitCard[] = [
   {
     slug: '/box',
     color: 'var(--card-accent-purple)',
-    roleLabel: 'Sandbox agent work',
+    roleLabel: 'Control agent actions',
     description:
-      'Run agent work in an OS-enforced sandbox with explicit filesystem, network, and policy controls.',
-    actionLabel: 'Run in a sandbox',
-    actionAriaLabel: 'Run an agent in a Strands Box sandbox',
+      'Run agents in an OS-enforced sandbox. Set which files, programs, and network destinations they can access.',
+    actionLabel: 'Try Strands Box',
+    actionAriaLabel: 'Try Strands Box',
     expanded: {
       viewMoreHref: pathWithBase('/docs/user-guide/box/'),
       code: {
@@ -141,8 +143,8 @@ const cards: ToolkitCard[] = [
     roleLabel: 'Make fast decisions',
     description:
       'Route, classify, or score known outcomes with a small decision model that reports confidence.',
-    actionLabel: 'Make a decision',
-    actionAriaLabel: 'Make a decision with Strands Decider',
+    actionLabel: 'Explore the models',
+    actionAriaLabel: 'Explore the Strands Decider models',
     expanded: {
       viewMoreHref: pathWithBase('/docs/labs/strands-decider/overview/'),
       code: {
@@ -182,6 +184,7 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
           id="build-an-agent"
           aria-labelledby="toolkit-harness-title"
         >
+          <p class="toolkit__build-headline">{harnessCard.headline}</p>
           <div class="toolkit__build-card">
             <article
               class="toolkit__build-primary"
@@ -189,10 +192,7 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
               data-toolkit-product="harness"
             >
               <div class="toolkit__build-copy">
-                <h2 class="toolkit__build-slug" id="toolkit-harness-title">
-                  {harnessCard.slug}
-                </h2>
-                <p class="toolkit__build-headline">{harnessCard.headline}</p>
+                <h2 class="toolkit__build-slug" id="toolkit-harness-title">{harnessCard.slug}</h2>
                 <p class="toolkit__build-description">{harnessCard.description}</p>
                 {harnessCard.install && (
                   <div class="toolkit__build-install">
@@ -205,7 +205,6 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
                   </div>
                 )}
               </div>
-
               <div class="toolkit__build-example">
                 <div class="toolkit__build-terminal">
                   <ToolkitTerminal
@@ -224,28 +223,28 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
                 </a>
               </div>
             </article>
-
-            <aside
-              class="toolkit__build-sdk"
-              style={`--accent: ${sdkCard.color};`}
-              data-toolkit-product="harness-sdk"
-              aria-labelledby="toolkit-sdk-title"
-            >
-              <div class="toolkit__build-sdk-copy">
-                <p class="toolkit__build-sdk-relation">Built on</p>
-                <h3 class="toolkit__build-sdk-slug" id="toolkit-sdk-title">
-                  {sdkCard.slug}
-                </h3>
-              </div>
-              <a
-                href={sdkCard.expanded.viewMoreHref}
-                class="toolkit__build-sdk-action"
-                aria-label={sdkCard.actionAriaLabel}
+            <div class="toolkit__sdk-option">
+              <p class="toolkit__build-sdk-relation">Built on</p>
+              <aside
+                class="toolkit__build-sdk"
+                style={`--accent: ${sdkCard.color};`}
+                data-toolkit-product="harness-sdk"
+                aria-labelledby="toolkit-sdk-title"
               >
-                {sdkCard.actionLabel}
-                <span class="toolkit__build-action-arrow" set:html={arrow} />
-              </a>
-            </aside>
+                <div class="toolkit__build-sdk-copy">
+                  <h3 class="toolkit__build-sdk-slug" id="toolkit-sdk-title">{sdkCard.slug}</h3>
+                  <p class="toolkit__build-sdk-description">{sdkCard.description}</p>
+                </div>
+                <a
+                  href={sdkCard.expanded.viewMoreHref}
+                  class="toolkit__build-sdk-action"
+                  aria-label={sdkCard.actionAriaLabel}
+                >
+                  {sdkCard.actionLabel}
+                  <span class="toolkit__build-action-arrow" set:html={arrow} />
+                </a>
+              </aside>
+            </div>
           </div>
         </section>
 
@@ -383,6 +382,7 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   }
 
   .toolkit__build-card {
+    box-sizing: border-box;
     width: 100%;
     background: var(--card-bg);
     border: 1.5px solid var(--card-border);
@@ -391,11 +391,12 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   }
 
   .toolkit__build-primary {
+    position: relative;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 36px;
     align-items: center;
-    padding: 34px;
+    padding: 34px 34px 48px;
   }
 
   .toolkit__build-copy {
@@ -415,18 +416,20 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   }
 
   .toolkit__build-slug {
-    font-size: 30px;
+    font-size: 24px;
     line-height: 1.15;
   }
 
-  .toolkit__build-headline {
+  .toolkit__build-headline,
+  .toolkit__supporting-role {
     max-width: none;
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 700;
-    font-size: clamp(28px, 2.2vw, 32px);
-    line-height: 1.08;
-    letter-spacing: -0.8px;
+    font-size: 20px;
+    line-height: 1.3;
+    letter-spacing: normal;
+    text-align: center;
     color: var(--fg);
   }
 
@@ -511,21 +514,9 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     width: 100%;
   }
 
-  .toolkit__build-sdk {
+  .toolkit__sdk-option {
     position: relative;
-    display: grid;
-    grid-template-columns: minmax(300px, 1fr) auto;
-    gap: 24px;
-    align-items: center;
-    padding: 22px 34px 18px;
     border-top: 1px solid var(--card-border);
-  }
-
-  .toolkit__build-sdk-copy {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    min-width: 0;
   }
 
   .toolkit__build-sdk-relation {
@@ -545,13 +536,37 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     color: var(--use-case-muted);
   }
 
+  .toolkit__build-sdk {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    align-items: center;
+    padding: 22px 34px 48px;
+  }
+
+  .toolkit__build-sdk-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+  }
+
   .toolkit__build-sdk-slug {
-    font-size: 19px;
+    font-size: 24px;
     line-height: 1.2;
   }
 
   .toolkit__build-sdk-action {
     white-space: nowrap;
+  }
+
+  .toolkit__build-sdk-description {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--fg);
   }
 
   .toolkit__section-cards {
@@ -633,18 +648,6 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     min-width: 0;
   }
 
-  .toolkit__supporting-role {
-    margin: 0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-weight: 700;
-    font-size: 12px;
-    line-height: 1.3;
-    letter-spacing: 1.2px;
-    text-transform: uppercase;
-    text-align: center;
-    color: var(--use-case-muted);
-  }
-
   .toolkit__section--tools:has(.toolkit__supporting-product:nth-child(1) .toolkit__card.is-open) {
     --toolkit-columns: 2fr 1fr 1fr;
     --connector-left: calc(25% - 10px);
@@ -707,6 +710,8 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     color: var(--fg);
   }
 
+  .toolkit__build-action,
+  .toolkit__build-sdk-action,
   .toolkit__card-read {
     position: absolute;
     bottom: 12px;
@@ -830,36 +835,18 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
       display: none;
     }
 
-    .toolkit__build-primary {
-      grid-template-columns: 1fr;
-      gap: 28px;
-      padding: 28px;
-    }
-
     .toolkit__build-copy {
       max-width: 680px;
-    }
-
-    .toolkit__build-headline {
-      max-width: none;
     }
 
     .toolkit__build-terminal {
       max-width: 760px;
     }
 
-    .toolkit__build-example {
-      max-width: 760px;
-    }
-
-    .toolkit__build-sdk {
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 16px 24px;
-      padding-inline: 28px;
-    }
-
-    .toolkit__build-sdk-action {
-      grid-column: 1 / -1;
+    .toolkit__build-primary {
+      grid-template-columns: 1fr;
+      gap: 28px;
+      padding: 28px 28px 48px;
     }
 
     .toolkit__section--tools {
@@ -886,6 +873,11 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
   }
 
   @media (max-width: 767px) {
+    .toolkit__build-headline,
+    .toolkit__supporting-role {
+      font-size: 18px;
+    }
+
     .toolkit {
       padding: 40px 19px;
     }
@@ -904,23 +896,11 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
 
     .toolkit__build-primary {
       gap: 24px;
-      padding: 20px;
+      padding: 20px 20px 44px;
     }
 
     .toolkit__build-copy {
       gap: 12px;
-    }
-
-    .toolkit__build-slug {
-      font-size: 24px;
-    }
-
-    .toolkit__build-headline {
-      width: 100%;
-      max-width: none;
-      font-size: clamp(15px, 4.7vw, 28px);
-      letter-spacing: -0.8px;
-      white-space: nowrap;
     }
 
     .toolkit__build-description {
@@ -928,23 +908,9 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     }
 
     .toolkit__build-sdk {
-      grid-template-columns: max-content minmax(0, 1fr);
-      gap: 8px;
-      padding: 22px 16px 18px;
-    }
-
-    .toolkit__build-sdk-slug {
-      font-size: clamp(17px, 5.3vw, 19px);
-    }
-
-    .toolkit__build-sdk-action {
-      grid-column: auto;
-      width: auto;
-      min-width: 0;
-      justify-self: end;
-      justify-content: flex-end;
-      text-align: right;
-      white-space: normal;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 16px;
+      padding: 20px 20px 44px;
     }
 
     .toolkit__section--tools,
@@ -959,16 +925,13 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
       grid-column: auto;
     }
 
-    .toolkit__supporting-role {
-      font-size: 11px;
-      letter-spacing: 1px;
-    }
-
     .toolkit__card {
       min-height: 0;
       padding: 16px 16px 40px;
     }
 
+    .toolkit__build-action,
+    .toolkit__build-sdk-action,
     .toolkit__card-read {
       right: 16px;
     }
@@ -979,10 +942,6 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
 
     .toolkit__card-compact {
       gap: 10px;
-    }
-
-    .toolkit__card-slug {
-      font-size: 21px;
     }
 
     .toolkit__card-desc {

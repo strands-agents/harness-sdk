@@ -33,7 +33,7 @@ describe('homepage machine-readable metadata', () => {
     expect(homepage.querySelector('.banner__halftone svg')).toBeNull()
   })
 
-  it('leads with a primary build CTA instead of an install row', () => {
+  it('offers a quickstart CTA and GitHub stars without duplicating the harness install command in the hero', () => {
     const banner = homepage.querySelector('.banner')
     const primaryCta = banner?.querySelector('.banner__link--primary')
     const githubCta = banner?.querySelector('.banner__link--github')
@@ -59,7 +59,7 @@ describe('homepage machine-readable metadata', () => {
     }).toEqual({
       primary: {
         text: 'Build an agent',
-        href: '#build-an-agent',
+        href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
       },
       github: {
         text: githubStars,
@@ -110,12 +110,12 @@ describe('homepage machine-readable metadata', () => {
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
   })
 
-  it('makes Harness the primary build path and nests the SDK inside it', () => {
+  it('keeps harness and the SDK in one split card with distinct starting points', () => {
     const toolkit = homepage.querySelector('.toolkit')
     const sections = toolkit?.querySelectorAll('.toolkit__section') ?? []
     const buildCard = sections[0]?.querySelector('.toolkit__build-card')
     const harness = buildCard?.querySelector('[data-toolkit-product="harness"]')
-    const sdk = buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')
+    const sdk = sections[0]?.querySelector('.toolkit__sdk-option [data-toolkit-product="harness-sdk"]')
 
     expect({
       label: toolkit?.getAttribute('aria-label'),
@@ -136,7 +136,7 @@ describe('homepage machine-readable metadata', () => {
           id: harness?.querySelector('h2')?.getAttribute('id'),
           text: harness?.querySelector('h2')?.text.trim(),
         },
-        headline: harness?.querySelector('.toolkit__build-headline')?.text.trim(),
+        headline: sections[0]?.querySelector(':scope > .toolkit__build-headline')?.text.trim(),
         description: harness?.querySelector('.toolkit__build-description')?.text.trim(),
         action: {
           text: harness?.querySelector('.toolkit__build-action')?.text.trim(),
@@ -146,7 +146,8 @@ describe('homepage machine-readable metadata', () => {
       },
       sdk: {
         heading: sdk?.querySelector('h3')?.text.trim(),
-        relation: sdk?.querySelector('.toolkit__build-sdk-relation')?.text.trim(),
+        relation: sections[0]?.querySelector('.toolkit__build-sdk-relation')?.text.trim(),
+        insideHarnessCard: Boolean(buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')),
         description: sdk?.querySelector('.toolkit__build-sdk-description')?.text.trim() ?? null,
         action: {
           text: sdk?.querySelector('.toolkit__build-sdk-action')?.text.trim(),
@@ -175,7 +176,7 @@ describe('homepage machine-readable metadata', () => {
         },
         headline: 'Start with a complete agent.',
         description:
-          'Harness gives you tuned defaults for tools, memory, session management, and context management. Replace individual components as your application grows.',
+          'Strands harness gives you an agent with tools, memory, session management, and context management already configured. Replace individual components to fit your use case.',
         action: {
           text: 'Build an agent',
           href: configuredPathWithBase('/docs/user-guide/harness/quickstart/'),
@@ -185,20 +186,22 @@ describe('homepage machine-readable metadata', () => {
       sdk: {
         heading: '/harness-sdk',
         relation: 'Built on',
-        description: null,
+        insideHarnessCard: true,
+        description:
+          'The Harness SDK is an agent framework for building agents from the ground up. Add tools, memory, and context management to fit your use case.',
         action: {
-          text: 'Build with primitives',
+          text: 'Explore the SDK',
           href: configuredPathWithBase('/docs/user-guide/sdk/'),
-          ariaLabel: 'Build with Strands Harness SDK primitives',
+          ariaLabel: 'Explore the Harness SDK',
         },
       },
     })
   })
 
-  it('gives Harness the visible example and only build install path', () => {
-    const buildCard = homepage.querySelector('.toolkit__build-card')
+  it('keeps the harness example and install in the upper card section', () => {
+    const buildCard = homepage.querySelector('.toolkit__section--build')
     const harness = buildCard?.querySelector('[data-toolkit-product="harness"]')
-    const sdk = buildCard?.querySelector('[data-toolkit-product="harness-sdk"]')
+    const sdk = homepage.querySelector('[data-toolkit-product="harness-sdk"]')
 
     expect({
       harnessTerminalCount: harness?.querySelectorAll('.toolkit__card-terminal').length,
@@ -253,10 +256,11 @@ describe('homepage machine-readable metadata', () => {
       }))
     ).toEqual([
       {
-        role: 'Sandbox agent work',
+        role: 'Control agent actions',
         slug: '/box',
-        description: 'Run agent work in an OS-enforced sandbox with explicit filesystem, network, and policy controls.',
-        action: 'Run in a sandbox',
+        description:
+          'Run agents in an OS-enforced sandbox. Set which files, programs, and network destinations they can access.',
+        action: 'Try Strands Box',
       },
       {
         role: 'Validate agent behavior',
@@ -268,7 +272,7 @@ describe('homepage machine-readable metadata', () => {
         role: 'Make fast decisions',
         slug: '/decider',
         description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
-        action: 'Make a decision',
+        action: 'Explore the models',
       },
     ])
     expect(cards).toHaveLength(3)
