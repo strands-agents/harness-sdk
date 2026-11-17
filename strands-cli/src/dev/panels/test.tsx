@@ -181,6 +181,12 @@ export const testRows = ({ saved, generations }: ExperimentsState, { runs }: Tes
   { kind: 'new' },
 ]
 
+const reportSummary = ({ seconds, overall, tokens, cases }: TestResults): string => {
+  const checks = cases.reduce((total, result) => total + result.verdicts.length, 0)
+  const used = tokens === undefined ? '' : ` · ${tokens.toLocaleString('en-US')} tokens`
+  return `${formatSeconds(seconds)} · ${plural(checks, 'check')} · score ${overall.toFixed(2)}${used}`
+}
+
 const failedCases = (run: TestRun): number =>
   run.status === 'done' ? run.results.cases.filter(({ passed }) => !passed).length : 0
 
@@ -419,14 +425,13 @@ const ResultsView = ({
   onRunAgain: () => void
 }): ReactElement => {
   const failed = results.cases.filter((result) => !result.passed).length
-  const checks = results.cases.reduce((total, result) => total + result.verdicts.length, 0)
   return (
     <CaseReport
       command={COMMAND}
       context={[results.experiment]}
       details={[plural(results.cases.length, 'case'), plural(results.evaluators.length, 'evaluator')]}
       cases={results.cases}
-      summary={`${formatSeconds(results.seconds)} · ${plural(checks, 'check')} · score ${results.overall.toFixed(2)}`}
+      summary={reportSummary(results)}
       keys={[
         ...(failed > 0 ? [{ key: 'r', hint: 'r rerun failed', run: onRerun }] : []),
         { key: 'a', hint: 'a rerun all', run: onRunAgain },

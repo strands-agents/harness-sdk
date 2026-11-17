@@ -396,6 +396,19 @@ describe('TestPanel', () => {
     expect(text()).toMatch(/OutputEvaluator\s+✓ 1\.00\s+Refunded correctly/u)
   })
 
+  it.each<[string, TestResults, string]>([
+    ['TheTokensOfTheRun', { ...finishedResults, tokens: 12_345 }, '41s · 2 checks · score 0.50 · 12,345 tokens'],
+    ['NoTokens', finishedResults, '41s · 2 checks · score 0.50'],
+  ])('shouldShowTheTimeChecksScoreAndTokensInTheReportWhenTheResultsHave%s', async (_case, results, summary) => {
+    const { session } = testSession([{ experiment: refunds, run: { status: 'done', results } }])
+    const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    await press('\r')
+
+    expect(text()).toMatch(new RegExp(`${summary}$`, 'mu'))
+  })
+
   it('shouldRunEveryCaseAgainWhenTheUserPressesAInTheReport', async () => {
     const { session } = testSession(withRuns())
     const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
