@@ -9,6 +9,7 @@ import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
 import { baseCliEditProblem, editBaseCliProfile, isProfileBaseCli } from '../base-cli.js'
 import type { DevWorkspace } from '../workspace.js'
+import { ensureInitialCopy } from '../initialize.js'
 import { userConfigPath } from '../../config/store.js'
 import {
   formatObjective,
@@ -24,6 +25,7 @@ import {
   type OptimizeProgress,
   type OptimizeReview,
   type OptimizeSession,
+  type RunAgent,
   type OptimizeRunState,
   type OptimizeState,
   type PastRun,
@@ -59,7 +61,8 @@ import { temporaryWorkspaceReady } from './layout-migration.js'
 import { TemporaryEvalsUi } from './evals-ui.js'
 import { readTemporaryExperimentFile, readTemporaryRunnableCases, temporaryCaseCount } from './experiment-files.js'
 import { TemporaryExperiments } from './experiments-session.js'
-import { announce, plural, type TemporaryHost, type TemporarySessionHost } from './host.js'
+import { announce, plural, temporaryRunAgent, type TemporaryHost, type TemporarySessionHost } from './host.js'
+import { temporaryJudgeEvaluatorCount } from './evaluators.js'
 import { Store, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
 import {
   discoverTemporaryModels,
@@ -98,9 +101,11 @@ import {
 import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import {
   readTemporaryStudy,
+  readTemporaryUsageProfile,
   tailTemporaryRun,
   temporaryRunFolder,
   temporaryStudyReader,
+  type TemporaryUsageProfile,
   type TemporaryMeasurement,
   type TemporaryStudyOutcome,
   type TemporaryStudyParams,
@@ -278,6 +283,10 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     readonly experiments: TemporaryExperiments
   ) {
     super({ runs: [] })
+  }
+
+  agent(): RunAgent {
+    return temporaryRunAgent(this.host())
   }
 
   show(): Promise<void> {
@@ -557,6 +566,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
 
 export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeSession {
   private evaluators = 1
+  private usageProfile: TemporaryUsageProfile | undefined
   private evaluatorNames: readonly string[] = []
   private resumed: Promise<void> | undefined
   private catalog: readonly TemporaryKnob[] = []
@@ -573,6 +583,10 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     readonly experiments: TemporaryExperiments
   ) {
     super({ step: 'pick', runs: [] })
+  }
+
+  agent(): RunAgent {
+    return temporaryRunAgent(this.host())
   }
 
   plan(experiment: ExperimentSummary): void {
@@ -821,15 +835,16 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     if (this.page.step === 'setup') this.showPage({ step: 'setup', plan: change(this.page.plan) })
   }
 
-  private estimate(plan: OptimizePlan): OptimizePlan {
-    const { rollouts, judgeCalls } = temporaryRolloutEstimate({
+  private estimate({ usage: _earlier, ...plan }: OptimizePlan): OptimizePlan {
+    const { rollouts, judgeCalls, usage } = temporaryRolloutEstimate({
       split: plan.split,
       repetitions: plan.repetitions,
       iterations: plan.iterations,
       width: plan.width,
       evaluators: this.evaluators,
+      ...(this.usageProfile ? { profile: this.usageProfile } : {}),
     })
-    return { ...plan, rollouts, judgeCalls }
+    return { ...plan, rollouts, judgeCalls, ...(usage ? { usage } : {}) }
   }
 
   private async loadModelOptions(): Promise<void> {
@@ -857,15 +872,18 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   private async planFor(summary: ExperimentSummary): Promise<void> {
     try {
-      const { experiment } = await readTemporaryExperimentFile(summary.path)
+      const { experiment, raw } = await readTemporaryExperimentFile(summary.path)
       this.catalog = await readTemporaryKnobs(this.host().workspace)
+      this.usageProfile = await readTemporaryUsageProfile(this.workspaceDirectory(), summary.name).catch(
+        () => undefined
+      )
       const model = this.catalog.find((knob) => knob.kind === 'models' && !knob.unavailable)
       const caseCount = experiment.cases.length
       const split = temporaryCaseSplit(caseCount)
       const splitChoices = temporarySplitChoices(caseCount)
       const objectivePresets = temporaryObjectivePresets(experiment.evaluators)
       const warning = temporaryOptimizeWarning(caseCount)
-      this.evaluators = Math.max(1, experiment.evaluators.length)
+      this.evaluators = temporaryJudgeEvaluatorCount(raw.evaluators)
       this.evaluatorNames = experiment.evaluators
       this.showPage({
         step: 'setup',
@@ -1054,6 +1072,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     const show = (): void => this.updateRun(entry, { step: 'running', progress: progress() })
     show()
     try {
+      await (this.host().dependencies?.initialCopy ?? ensureInitialCopy)(this.host().workspace, abort.signal)
       const space = continuing?.space ?? (await this.writeSpace(plan, now, variables))
       const cases = await readTemporaryRunnableCases(plan.experiment.path).catch(() => [])
       await runTemporaryOptimization(

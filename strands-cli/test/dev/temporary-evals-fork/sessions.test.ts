@@ -201,6 +201,8 @@ const chat = () => {
   return { context, notices }
 }
 
+const madeInitialCopy = async (): Promise<string> => 'initial-copy'
+
 const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> = {}) => {
   const workspace = await workspaceFixture()
   const { context, notices } = chat()
@@ -208,7 +210,7 @@ const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> =
     workspace,
     agent: () => ({ description: 'Answers capital city questions', tools: [] }),
     context,
-    dependencies: { run: environmentRunner(), ...dependencies },
+    dependencies: { run: environmentRunner(), initialCopy: madeInitialCopy, ...dependencies },
   })
   return { workspace, sessions, notices }
 }
@@ -243,7 +245,7 @@ const restartedHost =
   (workspace: DevWorkspace, dependencies?: Partial<TemporarySessionDependencies>) => (): TemporarySessionHost => ({
     workspace,
     agent: () => ({}),
-    ...(dependencies ? { dependencies } : {}),
+    ...(dependencies ? { dependencies: { initialCopy: madeInitialCopy, ...dependencies } } : {}),
   })
 
 const restartedTest = (
@@ -563,7 +565,7 @@ describe('TEMPORARY dev sessions', () => {
       workspace,
       agent: () => ({ description: 'Answers capital city questions', tools: [] }),
       context,
-      dependencies: { run: environmentRunner(), spawnOptimizer: optimizingProcess() },
+      dependencies: { run: environmentRunner(), initialCopy: madeInitialCopy, spawnOptimizer: optimizingProcess() },
     })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
@@ -996,6 +998,77 @@ describe('TEMPORARY dev sessions', () => {
         `then start the run again. The full optimizer output is in ${runLogOf(record)}.`,
       record,
     })
+  })
+
+  it('shouldMakeTheInitialCopyBeforeTheOptimizerStartsWhenARunStarts', async () => {
+    const order: string[] = []
+    const initialCopy = vi.fn(async (): Promise<string> => {
+      order.push('initial copy')
+      return 'initial-copy'
+    })
+    const optimizing = vi.fn(async (): Promise<TemporaryEvalsExit> => {
+      order.push('optimizer')
+      return { code: 1, stdout: '', stderrTail: ['stopped'] }
+    })
+    const { workspace, sessions } = await sessionsFor({ initialCopy, spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
+    expect(order).toEqual(['initial copy', 'optimizer'])
+    expect(initialCopy).toHaveBeenCalledWith(workspace, expect.any(AbortSignal))
+  })
+
+  it('shouldStopBeforeTheOptimizerAndSayWhyWhenTheInitialCopyCannotBeMade', async () => {
+    const optimizing = vi.fn()
+    const { workspace, sessions } = await sessionsFor({
+      initialCopy: async () => {
+        throw new Error('npm install failed in the initial copy')
+      },
+      spawnOptimizer: optimizing,
+    })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({
+        step: 'failed',
+        message: 'npm install failed in the initial copy',
+      })
+    )
+    expect(optimizing).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['AnEvaluatorThatAsksAModel', ['OutputEvaluator'], 1],
+    ['OnlyChecksThatAskNoModel', ['Equals', 'Contains'], 0],
+  ])('shouldCountTheJudgeCallsOfTheEvaluatorsWhenTheExperimentHas%s', async (_case, evaluators, perRollout) => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', evaluators)
+
+    sessions.optimize.plan(experiment)
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const state = sessions.optimize.snapshot()
+    if (state.step !== 'setup') throw new Error('the plan did not open')
+    expect(state.plan.judgeCalls).toBe(state.plan.rollouts * perRollout)
+  })
+
+  it.each([
+    ['TheAgentHasAShellTool', [{ name: 'shell', description: 'Runs commands' }], ['shell']],
+    ['TheAgentOnlyReads', [{ name: 'read', description: 'Reads files' }], []],
+  ])('shouldNameTheFileToolsOfTheAgentForTheRunConfirmWhen%s', async (_case, tools, fileTools) => {
+    const workspace = await workspaceFixture()
+    const sessions = temporaryDevSessions({ workspace, agent: () => ({ model: 'us.model', tools }) })
+
+    expect(sessions.test.agent()).toEqual({ model: 'us.model', folder: workspace.root, fileTools })
+    expect(sessions.optimize.agent()).toEqual({ model: 'us.model', folder: workspace.root, fileTools })
   })
 
   it('shouldDropTheRecordOfARunThatFailsSoThatTheNextStartDoesNotRunItAgain', async () => {
