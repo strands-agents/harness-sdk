@@ -8,6 +8,7 @@ import { resolveModelTarget } from '../../model/selection.js'
 import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
 import {
+  measuredVersions,
   sameCaseSplit,
   sameObjective,
   type CaseSplit,
@@ -50,6 +51,7 @@ import {
 } from './evals-process.js'
 import {
   readTemporaryExperimentFile,
+  readTemporaryRunnableCases,
   temporaryCaseCount,
   temporaryNamedExperiment,
   writeTemporaryExperimentFile,
@@ -145,7 +147,7 @@ export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[
           {
             id,
             label: state.progress.run,
-            done: state.progress.candidates.length + (state.progress.baseline === undefined ? 0 : 1),
+            done: measuredVersions(state.progress),
             total: state.progress.planned,
           },
         ]
@@ -922,6 +924,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       record: saved.record,
       startedAt: saved.startedAt,
       labels: temporaryKnobLabels(knobs),
+      cases: await readTemporaryRunnableCases(saved.experiment).catch(() => []),
     })
     const show = (): void =>
       this.updateRun(entry, {
@@ -993,6 +996,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     show()
     try {
       const space = continuing?.space ?? (await this.writeSpace(plan, now, variables))
+      const cases = await readTemporaryRunnableCases(plan.experiment.path).catch(() => [])
       await runTemporaryOptimization(
         {
           workspace: this.host().workspace,
@@ -1026,7 +1030,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
               ...(plan.objective ? { objective: plan.objective } : {}),
               startedAt,
             })
-            reader = temporaryStudyReader({ run: basename(path), record: path, startedAt, labels })
+            reader = temporaryStudyReader({ run: basename(path), record: path, startedAt, labels, cases })
             tail = tailTemporaryRun(path, (line) => {
               reader?.push(line)
               show()

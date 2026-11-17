@@ -15,6 +15,7 @@ export interface OptimizerCandidate {
   readonly validation?: number
   readonly test?: number
   readonly failed?: string
+  readonly rationale?: string
 }
 
 const score = (candidate: OptimizerCandidate, split: 'train' | 'validation' | 'test', value: number) =>
@@ -27,8 +28,21 @@ const score = (candidate: OptimizerCandidate, split: 'train' | 'validation' | 't
     statuses: { completed: 2 },
   })
 
+export interface OptimizerSplitCases {
+  readonly train: readonly string[]
+  readonly validation: readonly string[]
+  readonly test: readonly string[]
+}
+
 export const optimizerConfig = (
-  options: { objective?: string; iterations?: number; width?: number; textKeys?: readonly string[] } = {}
+  options: {
+    objective?: string
+    iterations?: number
+    width?: number
+    textKeys?: readonly string[]
+    cases?: OptimizerSplitCases
+    runs?: number
+  } = {}
 ): string =>
   JSON.stringify({
     event: 'config',
@@ -38,8 +52,65 @@ export const optimizerConfig = (
       space: (options.textKeys ?? ['instructions']).map((key) => ({ key, kind: 'text' })),
       proposals_per_iteration: options.width ?? 4,
       budget: { max_rollouts: 500, max_iterations: options.iterations ?? 1 },
+      ...(options.runs === undefined ? {} : { runs_per_candidate: options.runs }),
+      ...(options.cases ? { split: { train: 0.5, validation: 0.25, test: 0.25, cases: options.cases } } : {}),
     },
   })
+
+export interface OptimizerTrial {
+  readonly candidate: string
+  readonly caseName: string
+  readonly split?: 'train' | 'validation' | 'test'
+  readonly run?: number
+  readonly score?: number
+  readonly reason?: string
+  readonly output?: unknown
+  readonly status?: string
+  readonly error?: string
+  readonly evaluator?: string
+  readonly scores?: Readonly<Record<string, number>>
+}
+
+export const optimizerTrial = ({
+  candidate,
+  caseName,
+  split = 'train',
+  run = 0,
+  score: value = 1,
+  reason = 'Looks right',
+  output = 'the answer',
+  status = 'completed',
+  error,
+  evaluator = 'OutputEvaluator',
+  scores = { [evaluator]: value },
+}: OptimizerTrial): string =>
+  JSON.stringify({
+    event: 'trial',
+    iteration: 0,
+    record: {
+      candidate_id: candidate,
+      case_name: caseName,
+      run_index: run,
+      split,
+      status,
+      error_type: error ? 'AgentError' : null,
+      error: error ?? null,
+      output: status === 'completed' ? output : null,
+      evaluations:
+        status === 'completed'
+          ? Object.fromEntries(
+              Object.entries(scores).map(([name, score]) => [
+                name,
+                { score, test_pass: score >= 0.5, reason, label: null, metadata: null },
+              ])
+            )
+          : {},
+      usage: { tokens: 12, seconds: 0.5, model_calls: 1 },
+    },
+  })
+
+export const optimizerFinalists = (ids: readonly string[]): string =>
+  JSON.stringify({ event: 'finalists', iteration: 1, candidate_ids: ids })
 
 export const optimizerCandidate = (candidate: OptimizerCandidate): string[] => [
   JSON.stringify({
@@ -51,6 +122,7 @@ export const optimizerCandidate = (candidate: OptimizerCandidate): string[] => [
     origin: candidate.number === 0 ? ['baseline'] : ['text'],
     values: candidate.values,
     changed_keys: candidate.changed ?? [],
+    ...(candidate.rationale ? { rationale: candidate.rationale } : {}),
   }),
   ...(candidate.failed
     ? [

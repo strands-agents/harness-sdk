@@ -236,6 +236,11 @@ export const writeTemporaryExperimentFile = async (
   cases: readonly string[]
 ): Promise<void> => writeDocument(path, { ...raw, cases: pickCases(raw, cases) })
 
+export const readTemporaryRunnableCases = async (path: string): Promise<EvalCase[]> => {
+  const { raw } = await readTemporaryExperimentFile(path)
+  return temporaryNamedExperiment(raw).cases.map(evalCase)
+}
+
 export const temporaryRunnableExperiment = async (path: string, copy: string): Promise<string> => {
   const { raw } = await readTemporaryExperimentFile(path)
   const named = temporaryNamedExperiment(raw)

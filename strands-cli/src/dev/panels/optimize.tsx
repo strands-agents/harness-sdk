@@ -8,8 +8,10 @@ import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Box, Text, useTheme } from '../../ui/theme.js'
 import { useDevPanelClicks } from '../../ui/panels/dev.js'
 import { ExperimentPicker, type PickerSection } from './picker.js'
+import { CaseReport } from './report.js'
 import {
   sameCaseSplit,
+  measuredVersions,
   sameObjective,
   type CandidateResult,
   type CaseSplit,
@@ -19,6 +21,9 @@ import {
   type OptimizeObjective,
   type OptimizePlan,
   type OptimizeProgress,
+  type OptimizeStep,
+  type ScoringProgress,
+  type TrialProgress,
   type OptimizeReview,
   type OptimizeRun,
   type OptimizeRunState,
@@ -65,6 +70,7 @@ const FULL_SETUP_ROWS = 12
 const DIFF_INDENT = 2
 const REVIEW_CHROME_ROWS = 3
 const MAX_EDIT_ROWS = 3
+const RUNNING_CHROME_ROWS = 5
 
 export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
   const { session } = props
@@ -137,7 +143,7 @@ const runSummary = (state: OptimizeRunState): { readonly text: string; readonly 
   switch (state.step) {
     case 'running': {
       const { progress } = state
-      const finished = progress.candidates.length + (progress.baseline === undefined ? 0 : 1)
+      const finished = measuredVersions(progress)
       const best = progress.best ? ` · best ${progress.best.score.toFixed(2)}` : ''
       const status = progress.stopping
         ? 'stopping'
@@ -569,8 +575,31 @@ const SetupButtons = ({
   )
 }
 
+const candidateLabel = ({ number, step }: CandidateResult): string =>
+  number === 0 ? 'your agent' : `${step === undefined ? 'final' : `step ${step}`} · ${number}`
+
+const scoringText = ({ done, total, score }: ScoringProgress): string =>
+  `scoring ${done}/${total}${score === undefined ? '' : ` · ${score.toFixed(2)} so far`}`
+
 const candidateItem = (candidate: CandidateResult): ListItem => {
   const where = candidate.step === undefined ? 'final' : `step ${candidate.step}`
+  if (candidate.number === 0)
+    return {
+      key: 'baseline',
+      label: candidateLabel(candidate),
+      detail: candidate.scoring
+        ? scoringText(candidate.scoring)
+        : `baseline ${candidate.score === undefined ? 'not measured' : candidate.score.toFixed(2)}`,
+      mark: { text: '●', tone: 'muted' },
+      tone: 'muted',
+    }
+  if (candidate.scoring)
+    return {
+      key: String(candidate.number),
+      label: candidateLabel(candidate),
+      detail: `${scoringText(candidate.scoring)} · ${candidate.summary}`,
+      mark: { text: '◐', tone: 'warning' },
+    }
   if (candidate.failed)
     return {
       key: String(candidate.number),
@@ -589,7 +618,43 @@ const candidateItem = (candidate: CandidateResult): ListItem => {
   }
 }
 
-const scoreText = ({ score, delta }: CandidateResult, trainCases: number | undefined): string => {
+const trialsText = ({ done, total }: TrialProgress): string => `${done} of ${plural(total, 'trial')}`
+
+const trialsSummary = ({ scoring, score }: CandidateResult): string => {
+  if (scoring) return scoring.score === undefined ? 'no score yet' : `score ${scoring.score.toFixed(2)} so far`
+  return score === undefined ? 'not measured' : `score ${score.toFixed(2)}`
+}
+
+const finalistsText = (versions: number): string => {
+  const finalists = versions - 1
+  if (finalists === 0) return 'your agent'
+  return `${finalists === 1 ? 'the best candidate' : `the best ${finalists} candidates`} and your agent`
+}
+
+const stepText = (step: OptimizeStep, iterations: number): string => {
+  switch (step.kind) {
+    case 'baseline':
+      return `measuring your agent on the train cases · ${trialsText(step.trials)}`
+    case 'proposing':
+      return `step ${step.iteration} of ${iterations} · the proposer is writing new candidates from the scored conversations`
+    case 'scoring':
+      return `step ${step.iteration} of ${iterations} · scoring ${plural(step.versions, 'candidate')} on the train cases · ${trialsText(step.trials)}`
+    case 'validating':
+      return step.versions > 0
+        ? `measuring ${finalistsText(step.versions)} on the validation cases · ${trialsText(step.trials)}`
+        : 'picking the best candidates for the validation cases'
+    case 'testing':
+      return step.versions > 1
+        ? `checking the winner against your agent on the test cases · ${trialsText(step.trials)}`
+        : `no candidate beat your agent · checking your agent on the test cases · ${trialsText(step.trials)}`
+  }
+}
+
+const scoreText = ({ score, delta, scoring }: CandidateResult, trainCases: number | undefined): string => {
+  if (scoring)
+    return scoring.score === undefined
+      ? `0 of ${plural(scoring.total, 'training case')} finished so far`
+      : `${scoring.score.toFixed(2)} so far, on ${scoring.done} of ${scoring.total} training cases`
   if (score === undefined) return 'not measured'
   const cases = trainCases === undefined ? 'the training cases' : plural(trainCases, 'training case')
   const change = delta === undefined ? '' : ` · ${signed(delta)} vs your agent`
@@ -603,17 +668,40 @@ const RunningView = ({
   progress,
 }: OptimizePanelProps & { progress: OptimizeProgress }): ReactElement => {
   const [selected, setSelected] = useState(0)
+  const opened = useSyncedState<number | undefined>(undefined)
   const elapsed = useElapsed(progress.startedAt)
-  const candidates = [...progress.candidates].reverse()
+  const candidates = [
+    ...[...progress.candidates].reverse(),
+    ...(progress.baselineCandidate ? [progress.baselineCandidate] : []),
+  ]
   const index = Math.min(selected, Math.max(0, candidates.length - 1))
   const current = candidates[index]
-  const finished = progress.candidates.length + (progress.baseline === undefined ? 0 : 1)
+  const finished = measuredVersions(progress)
+  const open = candidates.find(({ number }) => number === opened.value)
+  const detailRows = 2 + Number(Boolean(current?.rationale))
   useInput((input, key) => {
+    if (opened.current() !== undefined && open) return
     if (key.escape) session.reset()
     else if (key.upArrow) setSelected(Math.max(0, index - 1))
     else if (key.downArrow) setSelected(Math.min(candidates.length - 1, index + 1))
+    else if ((key.return || key.rightArrow) && current) opened.set(current.number)
     else if (shortcut(input, key) === 'x' && !progress.stopping) session.stop()
   })
+  if (open)
+    return (
+      <CaseReport
+        command={COMMAND}
+        context={[`run ${progress.run}`, candidateLabel(open)]}
+        details={open.scoring ? [`${open.scoring.done}/${open.scoring.total} train cases`] : []}
+        cases={open.trials ?? []}
+        expected={Math.max(open.scoring?.total ?? 0, open.trials?.length ?? 0)}
+        summary={trialsSummary(open)}
+        backHint="Esc back to the run"
+        width={width}
+        height={height}
+        onBack={() => opened.set(undefined)}
+      />
+    )
   const best = progress.best
   const summary = [
     progress.baseline === undefined ? 'measuring the baseline' : `baseline ${progress.baseline.toFixed(2)}`,
@@ -638,23 +726,25 @@ const RunningView = ({
         left={<Text>{`  ${summary.join('   ')}`}</Text>}
         right={<Text dimColor>{formatSeconds(elapsed)}</Text>}
       />
+      {progress.step ? <Line tone="muted">{`  ${stepText(progress.step, progress.iterations)}`}</Line> : null}
       {candidates.length > 0 ? (
         <ItemList
           items={candidates.map(candidateItem)}
           selected={index}
-          capacity={Math.max(1, height - 7)}
+          capacity={Math.max(1, height - RUNNING_CHROME_ROWS - Number(Boolean(progress.step)) - detailRows)}
           labelWidth={labelWidthFor(
             candidates.map((candidate) => candidateItem(candidate).label),
             width
           )}
         />
       ) : (
-        <Line tone="muted">{'  The first candidates appear here when the baseline is measured.'}</Line>
+        <Line tone="muted">{'  Starting the optimizer. Your agent shows here when its first case runs.'}</Line>
       )}
       <Rule width={width} />
       {current ? (
         <>
           <Field label="  change" value={current.summary} labelWidth={10} />
+          {current.rationale ? <Field label="  why" value={current.rationale} labelWidth={10} /> : null}
           <Field label="  score" value={scoreText(current, progress.trainCases)} labelWidth={10} />
         </>
       ) : (
@@ -664,6 +754,7 @@ const RunningView = ({
       <KeyHints
         hints={[
           '↑↓',
+          ...(current ? ['Enter open trials'] : []),
           progress.stopping ? 'stopping, the best so far is kept' : 'x stop and keep best',
           'Esc back to the list, the run goes on',
         ]}

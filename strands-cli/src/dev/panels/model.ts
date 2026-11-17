@@ -237,6 +237,22 @@ export interface OptimizePlan {
   readonly models?: ModelChoices
 }
 
+export interface TrialProgress {
+  readonly done: number
+  readonly total: number
+}
+
+export interface ScoringProgress extends TrialProgress {
+  readonly score?: number
+}
+
+export type OptimizeStep =
+  | { readonly kind: 'baseline'; readonly trials: TrialProgress }
+  | { readonly kind: 'proposing'; readonly iteration: number }
+  | { readonly kind: 'scoring'; readonly iteration: number; readonly versions: number; readonly trials: TrialProgress }
+  | { readonly kind: 'validating'; readonly versions: number; readonly trials: TrialProgress }
+  | { readonly kind: 'testing'; readonly versions: number; readonly trials: TrialProgress }
+
 export interface CandidateResult {
   readonly number: number
   readonly step?: number
@@ -246,6 +262,9 @@ export interface CandidateResult {
   readonly delta?: number
   readonly kept: boolean
   readonly failed?: string
+  readonly rationale?: string
+  readonly trials?: readonly CaseResult[]
+  readonly scoring?: ScoringProgress
 }
 
 export interface OptimizeProgress {
@@ -258,9 +277,14 @@ export interface OptimizeProgress {
   readonly baseline?: number
   readonly best?: { readonly number: number; readonly score: number }
   readonly candidates: readonly CandidateResult[]
+  readonly baselineCandidate?: CandidateResult
+  readonly step?: OptimizeStep
   readonly startedAt: number
   readonly stopping: boolean
 }
+
+export const measuredVersions = ({ candidates, baseline }: OptimizeProgress): number =>
+  candidates.filter(({ scoring }) => scoring === undefined).length + (baseline === undefined ? 0 : 1)
 
 export interface ProposedEdit {
   readonly knob: KnobKey

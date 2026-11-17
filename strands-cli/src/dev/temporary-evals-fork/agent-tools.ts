@@ -352,7 +352,7 @@ const pageStatus = (state: OptimizeState): object => {
         run: state.progress.run,
         baseline: state.progress.baseline,
         best: state.progress.best?.score,
-        tried: state.progress.candidates.length,
+        tried: state.progress.candidates.filter(({ scoring }) => scoring === undefined).length,
         planned: state.progress.planned,
       })
     case 'review':

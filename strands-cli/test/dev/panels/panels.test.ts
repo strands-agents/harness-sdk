@@ -3,8 +3,10 @@ import stringWidth from 'string-width'
 import { describe, expect, it, vi } from 'vitest'
 
 import type {
+  CaseResult,
   ExperimentsState,
   OptimizeReview,
+  OptimizeStep,
   OptimizeSession,
   OptimizeState,
   PastRun,
@@ -479,6 +481,65 @@ const setup: OptimizeState = {
   },
 }
 
+const trial = (name: string, passed: boolean, reason: string, actual = 'an answer'): CaseResult => ({
+  name,
+  input: `question ${name}`,
+  expected: `answer ${name}`,
+  actual,
+  passed,
+  verdicts: [{ evaluator: 'OutputEvaluator', score: passed ? 1 : 0, passed, reason }],
+})
+
+const scoringState = (
+  step: OptimizeStep = { kind: 'scoring', iteration: 1, versions: 2, trials: { done: 3, total: 16 } }
+): OptimizeState => ({
+  step: 'running',
+  progress: {
+    run: '20261117-142504-starter',
+    record: '/w/record',
+    metric: 'OutputEvaluator',
+    iterations: 1,
+    planned: 5,
+    trainCases: 8,
+    baseline: 0.54,
+    startedAt: Date.now(),
+    stopping: false,
+    step,
+    baselineCandidate: {
+      number: 0,
+      changed: [],
+      summary: 'your agent as it is',
+      score: 0.54,
+      kept: true,
+      trials: [trial('a', true, 'Right'), trial('b', false, 'Wrong city')],
+    },
+    candidates: [
+      {
+        number: 1,
+        step: 1,
+        changed: ['instructions'],
+        summary: 'Check the order date first.',
+        kept: false,
+        rationale: 'The baseline refunded late orders.',
+        trials: [
+          trial('a', true, 'Refunded on time'),
+          trial('b', false, 'Skipped the receipt rule', 'Refund approved'),
+        ],
+        scoring: { done: 2, total: 8, score: 0.5 },
+      },
+      {
+        number: 2,
+        step: 1,
+        changed: ['effort'],
+        summary: 'effort → high',
+        kept: false,
+        trials: [],
+        scoring: { done: 0, total: 8 },
+      },
+    ],
+  },
+})
+
 const runningState = (): OptimizeState => ({
   step: 'running',
   progress: {
@@ -705,6 +766,120 @@ describe('OptimizePanel', () => {
     await shown.instance.waitUntilRenderFlush()
 
     expect(session[action]).toHaveBeenCalledWith(...args)
+  })
+
+  it.each<[string, OptimizeStep, string]>([
+    [
+      'TheBaseline',
+      { kind: 'baseline', trials: { done: 2, total: 8 } },
+      'measuring your agent on the train cases · 2 of 8 trials',
+    ],
+    [
+      'TheProposer',
+      { kind: 'proposing', iteration: 1 },
+      'step 1 of 1 · the proposer is writing new candidates from the scored conversations',
+    ],
+    [
+      'TheScoring',
+      { kind: 'scoring', iteration: 1, versions: 2, trials: { done: 3, total: 16 } },
+      'step 1 of 1 · scoring 2 candidates on the train cases · 3 of 16 trials',
+    ],
+    [
+      'TheValidation',
+      { kind: 'validating', versions: 2, trials: { done: 1, total: 8 } },
+      'measuring the best candidate and your agent on the validation cases · 1 of 8 trials',
+    ],
+    [
+      'TheValidationOfYourAgentAlone',
+      { kind: 'validating', versions: 1, trials: { done: 1, total: 2 } },
+      'measuring your agent on the validation cases · 1 of 2 trials',
+    ],
+    [
+      'TheTest',
+      { kind: 'testing', versions: 2, trials: { done: 1, total: 4 } },
+      'checking the winner against your agent on the test cases · 1 of 4 trials',
+    ],
+    [
+      'TheTestOfYourAgentAlone',
+      { kind: 'testing', versions: 1, trials: { done: 0, total: 2 } },
+      'no candidate beat your agent · checking your agent on the test cases · 0 of 2 trials',
+    ],
+  ])('shouldSayWhatTheRunDoesNowDuring%s', async (_step, step, line) => {
+    const { session } = optimizeSession(scoringState(step))
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toContain(line)
+  })
+
+  it('shouldListEachCandidateWithItsTrialsSoFarAndYourAgent', async () => {
+    const { session } = optimizeSession(scoringState())
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toMatch(/step 1 · 2\s+scoring 0\/8 · effort → high/u)
+    expect(text()).toMatch(/step 1 · 1\s+scoring 2\/8 · 0\.50 so far · Check the order date first\./u)
+    expect(text()).toMatch(/your agent\s+baseline 0\.54/u)
+    expect(text()).toContain('1/5 candidates')
+  })
+
+  it('shouldShowTheReasonAndTheScoreSoFarOfTheSelectedCandidate', async () => {
+    const { session } = optimizeSession(scoringState())
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+
+    expect(text()).toContain('why     The baseline refunded late orders.')
+    expect(text()).toContain('score   0.50 so far, on 2 of 8 training cases')
+  })
+
+  it('shouldOpenTheTrialsOfACandidateAndThenACaseWhenTheUserPressesEnter', async () => {
+    const { session } = optimizeSession(scoringState())
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+    await press(DOWN_KEY)
+
+    await press('\r')
+    const trials = text()
+    await press('\r')
+    const opened = text()
+    await press('\u001b')
+    await vi.waitFor(() => expect(text()).toContain('Esc back to the run'))
+    await press('\u001b')
+
+    expect(trials).toContain('optimize · run 20261117-142504-starter · step 1 · 1 · 2/8 train cases')
+    expect(trials).toMatch(/› ✗ b\s+Skipped the receipt rule/u)
+    expect(trials).toContain('score 0.50 so far')
+    expect(trials).toContain('↑↓ · Enter open case · Esc back to the run')
+    expect(opened).toContain('optimize · run 20261117-142504-starter · step 1 · 1 · b · failed')
+    expect(opened).toContain('Refund approved')
+    await vi.waitFor(() => expect(text()).toContain('x stop and keep best'))
+    expect(session.reset).not.toHaveBeenCalled()
+  })
+
+  it('shouldOpenTheTrialsOfYourAgentWhenTheUserPressesEnterOnItsRow', async () => {
+    const { session } = optimizeSession(scoringState())
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    await press(DOWN_KEY)
+    await press(DOWN_KEY)
+    await press('\r')
+
+    expect(text()).toContain('optimize · run 20261117-142504-starter · your agent')
+    expect(text()).toMatch(/✗ b\s+Wrong city/u)
+    expect(text()).toContain('score 0.54')
+  })
+
+  it('shouldCountOnlyMeasuredCandidatesInTheRunList', async () => {
+    const running = scoringState()
+    if (running.step !== 'running') throw new Error('expected a running state')
+    const { session } = optimizeSession({
+      step: 'pick',
+      runs: [{ id: 'run-1', experiment: 'starter', startedAt: Date.UTC(2026, 10, 17, 14, 25), state: running }],
+    })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toMatch(/starter\s+.*running · 1\/5 candidates/u)
   })
 
   it('shouldListTheCandidatesAndStopWhenTheUserPressesX', async () => {
