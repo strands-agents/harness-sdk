@@ -132,8 +132,6 @@ class TestTruncateToolResultBlock:
 
 
 class TestTruncateTextBlock:
-    """Tests for the preview a text block is shortened to."""
-
     def test_truncates_large_text_block(self):
         preview = _truncate_text_block(ContentBlock(text="z" * 50000), {"preview_tokens": 100})
 

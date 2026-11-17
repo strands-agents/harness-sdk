@@ -85,7 +85,6 @@ class BaseOffloadStrategy(ABC):
                 conditions are given that leave the strategy unable to run (see :meth:`init`).
         """
         self.name = f"offload:{method}"
-        """Stable identifier for logging and observability."""
         self._method = method
         self._target = target
         self._matcher = OffloadTargetMatcher(target)
