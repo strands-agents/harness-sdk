@@ -3,7 +3,7 @@ import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlin
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   bindWorkspace,
@@ -32,6 +32,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await rm(sandbox, { recursive: true, force: true })
 })
 
@@ -59,8 +60,10 @@ describe('workspace bindings', () => {
     expect(result).toEqual({ directory, agentRoot, entrypoint: join(agentRoot, 'agent.ts'), binding })
     expect(await readWorkspaceBinding(directory)).toEqual(result)
     expect(JSON.parse(await readFile(join(directory, '.config'), 'utf8'))).toEqual(binding)
-    expect((await stat(join(directory, '.config'))).mode & 0o777).toBe(0o600)
-    expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o700)
+    if (process.platform !== 'win32') {
+      expect((await stat(join(directory, '.config'))).mode & 0o777).toBe(0o600)
+      expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o700)
+    }
     expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe('/tmp/\n')
     expect(await readdir(directory)).toEqual(['.config', '.gitignore', 'agent', 'tmp'])
     expect(await readdir(agentRoot)).toEqual(['agent.ts'])
@@ -128,8 +131,22 @@ describe('workspace bindings', () => {
     await writeFile(join(directory, 'tmp', 'keep'), 'kept')
     await bindWorkspace(directory, binding)
     expect(await readFile(join(directory, 'tmp', 'keep'), 'utf8')).toBe('kept')
-    expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o700)
+    if (process.platform !== 'win32') expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o700)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'shouldBindWithoutChangingTheTemporaryFolderModeWhenThePlatformIsWindows',
+    async () => {
+      await mkdir(join(directory, 'tmp'))
+      await chmod(join(directory, 'tmp'), 0o755)
+      vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+
+      const bound = await bindWorkspace(directory, binding)
+
+      expect(bound.entrypoint).toBe(join(agentRoot, 'agent.ts'))
+      expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o755)
+    }
+  )
 
   it('returns the existing binding unchanged when the resolved target matches', async () => {
     await store(binding)
@@ -397,7 +414,7 @@ describe('workspace CLI settings', () => {
 
     const saved = await readWorkspaceBinding(directory)
     expect(saved?.binding).toEqual({ ...binding, cli: { settings: { frogTheme: 'merlin' } } })
-    expect((await stat(join(directory, '.config'))).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect((await stat(join(directory, '.config'))).mode & 0o777).toBe(0o600)
   })
 
   it('shouldRemoveTheCliSectionWhenNothingIsLeftToSave', async () => {

@@ -100,7 +100,7 @@ export async function bindWorkspace(directory: string, binding: WorkspaceBinding
       if (!sameFile(await temporaryDirectory.stat(), await lstat(tmp))) {
         throw new Error(`Workspace temporary directory changed: ${tmp}`)
       }
-      await temporaryDirectory.chmod(0o700)
+      if (process.platform !== 'win32') await temporaryDirectory.chmod(0o700)
     } finally {
       await temporaryDirectory.close()
     }
