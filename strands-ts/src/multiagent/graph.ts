@@ -15,7 +15,6 @@ import {
 } from './multiagent.js'
 import type { ContentBlock } from '../types/messages.js'
 import { TextBlock, contentBlockFromData } from '../types/messages.js'
-import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import type { InterruptResponseContent } from '../types/interrupt.js'
 import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
@@ -785,16 +784,19 @@ export class Graph implements MultiAgent {
     const deps: ContentBlock[] = []
     for (const edge of this.edges.filter((e) => e.target.id === node.id)) {
       const ns = state.node(edge.source.id)!
+      // No toolUseBlock or toolResultBlock is valid in a user message, so drop them all — this
+      // also catches a regular tool emitted in parallel with the structured-output tool. Reasoning
+      // blocks are dropped as before.
+      const hadToolUse = ns.content.some((block) => block.type === 'toolUseBlock')
       const content = ns.content.filter(
-        (block) =>
-          block.type !== 'reasoningBlock' &&
-          !(block.type === 'toolUseBlock' && block.name === STRUCTURED_OUTPUT_TOOL_NAME)
+        (block) => block.type !== 'reasoningBlock' && block.type !== 'toolUseBlock' && block.type !== 'toolResultBlock'
       )
-      // Surface a structured output as a JSON TextBlock so the downstream node's model sees it.
-      // The toolUseBlock that carried it is filtered above because a bare user-message toolUse
-      // is malformed; this mirrors what the Python SDK does via str(result).
+      // Surface a structured output as a JSON TextBlock so the downstream node's model sees it,
+      // mirroring the Python SDK's str(result). Only on the forced-tool path (the toolUseBlock we
+      // just stripped carried the value); on the forced-text path the JSON is already a TextBlock
+      // in content, and appending again would duplicate it.
       const lastResult = ns.results[ns.results.length - 1]
-      if (lastResult?.structuredOutput !== undefined) {
+      if (lastResult?.structuredOutput !== undefined && hadToolUse) {
         content.push(new TextBlock(JSON.stringify(lastResult.structuredOutput)))
       }
       if (content.length > 0) {

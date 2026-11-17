@@ -7,14 +7,9 @@ import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createCancellableAgent } from '../../__fixtures__/agent-helpers.js'
 import { AfterNodeCallEvent, BeforeNodeCallEvent, MultiAgentInitializedEvent } from '../events.js'
 import { z } from 'zod'
-import {
-  ReasoningBlock,
-  TextBlock,
-  ToolUseBlock,
-  type ContentBlock,
-  type ContentBlockData,
-} from '../../types/messages.js'
+import { ReasoningBlock, TextBlock, ToolUseBlock, type ContentBlockData } from '../../types/messages.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
+import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { Status, MultiAgentState } from '../state.js'
 import { AgentNode, MultiAgentNode } from '../nodes.js'
 import { Graph } from '../graph.js'
@@ -431,12 +426,66 @@ describe('Graph', () => {
 
       await graph.invoke('I was double charged')
 
-      expect(streamSpy).toHaveBeenCalled()
-      const forwarded = streamSpy.mock.calls[0]![0]
-      const blocks = (typeof forwarded === 'string' ? [new TextBlock(forwarded)] : forwarded) as ContentBlock[]
-      expect(blocks.some((b) => b.type === 'toolUseBlock')).toBe(false)
-      const texts = blocks.filter((b): b is TextBlock => b.type === 'textBlock').map((b) => b.text)
-      expect(texts).toStrictEqual(['I was double charged', '[node: classifier]', '{"category":"billing"}'])
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
+    })
+
+    it('strips a parallel regular toolUse emitted alongside the structured-output tool', async () => {
+      const search = createMockTool('search', () => 'ok')
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn([
+          new ToolUseBlock({ name: 'search', toolUseId: 's1', input: {} }),
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } }),
+        ]),
+        tools: [search],
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
+    })
+
+    it('does not duplicate the structured output when the forced retry returned it as text', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel()
+          .addTurn(new TextBlock('thinking out loud'))
+          .addTurn(new TextBlock('{"category":"billing"}')),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
     })
 
     it('converts ContentBlockData[] input to ContentBlock instances for downstream nodes', async () => {
