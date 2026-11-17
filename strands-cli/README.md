@@ -90,7 +90,7 @@ strands dev init --create python --workspace ./new-agent
 ```
 
 The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
-The selector separates CLI Default, Local Projects, and New Project choices. Source details appear below the selected choice.
+The selector separates Global Harness, Discovered Harnesses, and New Harness choices. Source details appear below the selected choice.
 Base CLI shows its source path and explains that changes in dev also change plain `strands`.
 Discovery omits the current CLI source and the base workspace already represented by that choice. Distinct projects with matching names remain separate.
 Creation errors stay in the picker so you can retry without restarting the CLI.
