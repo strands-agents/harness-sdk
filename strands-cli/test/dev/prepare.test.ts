@@ -57,7 +57,7 @@ afterEach(() => {
 })
 
 describe('prepareDevRun', () => {
-  it('shouldInitializeTheWorkspaceNextToTheAgentAndCopyTheAgentOnce', async () => {
+  it('shouldInitializeTheWorkspaceNextToTheAgentWithoutCopyingTheAgent', async () => {
     const launch = process.cwd()
     const source = await fixture()
     const saved = config()
@@ -72,16 +72,14 @@ describe('prepareDevRun', () => {
     expect(binding.agent).toMatchObject({ path: source, entrypoint: 'agent.ts' })
     expect(first?.workspace.directory).toBe(directory)
     expect(first?.args.agent).toBe(join(source, 'agent.ts'))
-    const marker = JSON.parse(await readFile(join(directory, 'tmp/initial.json'), 'utf8'))
-    expect(await readFile(join(directory, 'tmp', marker.id, 'agent/agent.ts'), 'utf8')).toBe(original)
-    expect(await readdir(join(directory, 'tmp', marker.id, 'agent'))).not.toContain('strands-dev')
+    expect(await readdir(join(directory, 'tmp'))).toEqual([])
     expect(await readdir(launch)).toEqual([])
 
     vi.mocked(process.cwd).mockReturnValue(source)
     const second = await prepareDevRun(parseArgs(['dev', 'init']))
 
     expect(second?.args.agent).toBe(first?.args.agent)
-    expect(await readdir(join(directory, 'tmp'))).toHaveLength(2)
+    expect(await readdir(join(directory, 'tmp'))).toEqual([])
     expect(await readFile(join(source, 'agent.ts'), 'utf8')).toBe(original)
   })
 
@@ -112,7 +110,7 @@ describe('prepareDevRun', () => {
     expect(prepared?.workspace.directory).toBe(join(launch, 'strands-dev'))
     expect(JSON.parse(await readFile(join(launch, 'strands-dev/.config'), 'utf8')).agent.path).toBe(root)
     expect(await readFile(join(root, 'src/agent.ts'), 'utf8')).toBe('export const agent = {}')
-    expect(await readdir(join(launch, 'strands-dev/tmp'))).toHaveLength(2)
+    expect(await readdir(join(launch, 'strands-dev/tmp'))).toEqual([])
   })
 
   it('shouldWriteTheBaseCliViewFromCliTomlWhenTheWorkspaceOpens', async () => {

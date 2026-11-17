@@ -31,7 +31,7 @@ import type { StartupScreen } from '../ui/run.js'
 import type { FolderSuggestion, HarnessChoice } from './picker.js'
 import type { DiscoveredHarness } from './search.js'
 import { baseHarnessSelection, discoverLocalHarnesses, harnessFolder, type BaseHarnessSelection } from './selection.js'
-import { ensureInitialCandidate, initializeWorkspaceBinding } from './initialize.js'
+import { initializeWorkspaceBinding } from './initialize.js'
 
 export interface PreparedDevRun {
   args: ParsedArgs
@@ -546,12 +546,6 @@ export const prepareDevRun = async (
             config: { ...main.config, language: selected.config.language, entrypoint: selected.config.entrypoint },
           }
     if (await isProfileBaseCli(workspace)) await refreshBaseCliView(workspace, config.snapshot())
-    let initial: string | undefined
-    if (!options.deferPreparation) {
-      if (screen) screen.show(undefined, 'Installing initial agent copy…')
-      else process.stderr.write('Installing initial agent copy...\n')
-      initial = await ensureInitialCandidate(main, screen?.signal)
-    }
     const directory = workspace.directory ?? workspace.root
     const state = join(directory, '.strands/state')
     const localArgs: ParsedArgs = {
@@ -570,7 +564,7 @@ export const prepareDevRun = async (
     const entrypoint = sanitizeTerminalText(workspace.entrypoint)
     if (!screen) {
       process.stderr.write(
-        `strands dev · ${label}\nWorkspace: ${sanitizeTerminalText(directory)}\nHarness: ${entrypoint} (${workspace.config.origin.kind})\nModel, tools, and instructions come from this workspace.\nInitial copy: ${sanitizeTerminalText(initial ?? 'Prepared after project setup')}\nState: ${sanitizeTerminalText(state)}\n`
+        `strands dev · ${label}\nWorkspace: ${sanitizeTerminalText(directory)}\nHarness: ${entrypoint} (${workspace.config.origin.kind})\nModel, tools, and instructions come from this workspace.\nState: ${sanitizeTerminalText(state)}\n`
       )
       if (args.dev?.init) process.stderr.write('Workspace ready. Run strands dev --workspace <path> to start it.\n')
     }

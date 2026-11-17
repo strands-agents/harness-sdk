@@ -1,10 +1,8 @@
 import type { ParsedArgs } from '../cli/arguments.js'
 import type { CliConfigSnapshot, CliConfigStore } from '../config/store.js'
 import type { StartupScreen } from '../ui/run.js'
-import { ensureInitialCandidate } from './initialize.js'
 import { prepareDevRun, type LeavingWorkspace, type PreparedDevRun } from './prepare.js'
 import type { ProjectSetupSession } from './project-setup.js'
-import type { DevWorkspace } from './workspace.js'
 
 export interface DevRunRequest {
   args: ParsedArgs
@@ -26,17 +24,6 @@ const pickerArgs = (args: ParsedArgs, keepWorkspace: boolean): ParsedArgs => {
   }
 }
 
-const initialCopy =
-  (workspace: DevWorkspace, screen: StartupScreen) =>
-  async (install: boolean): Promise<void> => {
-    screen.show(undefined, 'Initializing developer workspace…')
-    const { planProjectPreparation } = await import('../project/preparation-plan.js')
-    const { executePreparation } = await import('../project/preparation.js')
-    await ensureInitialCandidate(workspace, screen.signal, async (candidate): Promise<void> => {
-      if (install) await executePreparation(await planProjectPreparation(candidate), { signal: screen.signal })
-    })
-  }
-
 export const openDevRun = async (request: DevRunRequest): Promise<PreparedDevRun | undefined> => {
   const { args, savedConfig, launchDirectory, screen, setup, config, leaving } = request
   let rejected = request.rejected
@@ -56,11 +43,7 @@ export const openDevRun = async (request: DevRunRequest): Promise<PreparedDevRun
       return undefined
     }
     const { root, entrypoint, config: bound } = prepared.workspace
-    const result = await setup.prepare(
-      { root, entrypoint, language: bound.language },
-      screen,
-      initialCopy(prepared.workspace, screen)
-    )
+    const result = await setup.prepare({ root, entrypoint, language: bound.language }, screen)
     if (result === 'cancel') {
       await prepared.discard()
       return undefined

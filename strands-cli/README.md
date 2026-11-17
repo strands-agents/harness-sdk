@@ -152,11 +152,12 @@ With `--workspace`, the two flags use that folder.
 
 When that folder holds the workspace of another agent, the two flags stop with an error that names the folder and the agent. They do not replace it.
 
-Initialization records the persistent agent in `.config` and installs one independent copy under `tmp/`.
-An existing workspace reopens with its recorded initial copy instead of creating another one.
+Initialization records the persistent agent in `.config`. It does not copy the agent.
 When `--agent` names another entrypoint of the project that the workspace binds, that entrypoint runs for one launch. `.config` and the initial copy do not change.
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
 `strands dev init` prepares the workspace and exits without a model request.
+
+The first `/optimize` installs one independent copy of the bound agent under `tmp/`. Later runs of `/optimize` reuse that recorded initial copy.
 
 When `.config` names an agent that is missing, dev stops with an error that names the workspace and the agent.
 To bind the workspace to another agent, run `strands dev init` in a terminal and select the agent. Dev asks you to type DELETE before it replaces the workspace.
@@ -195,7 +196,7 @@ Installation stays in the project environment. Destination overrides cannot redi
 
 After preparation, the CLI loads the entrypoint in the same runtime used by chat. Validation makes no model request.
 Dependencies and resources loaded only during a later tool call can still fail at runtime.
-The initial candidate copy uses the same declared preparation path. After a failure, validation-only mode skips dependency installation.
+The first `/optimize` prepares the initial candidate copy with the same declared preparation path. After a failure, validation-only mode skips dependency installation.
 
 ### When setup fails
 
@@ -279,7 +280,7 @@ A binding cannot point into its own `tmp/`. Dev never changes the global CLI def
 The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
 Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
 Reload waits for active work to finish. A failed replacement keeps the previous agent and conversation active without showing a success message.
-Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding and initial copy without moving or rewriting their source.
+Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding without moving or rewriting their source.
 For the old `strands-dev/base-cli/` layout, select Base CLI and type the folder that contains `strands-dev/`.
 Dev then creates the control files in `strands-dev/` and binds the existing agent.
 

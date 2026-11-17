@@ -2,9 +2,10 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindExistingAgent } from '../../src/dev/create.js'
-import { ensureInitialCandidate, initializeWorkspaceBinding } from '../../src/dev/initialize.js'
+import { ensureInitialCandidate, ensureInitialCopy, initializeWorkspaceBinding } from '../../src/dev/initialize.js'
 import { initializeDevWorkspace, readDevWorkspace } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
+import * as preparation from '../../src/project/preparation.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 afterEach(() => vi.restoreAllMocks())
@@ -85,5 +86,36 @@ describe('workspace initialization', () => {
     await expect(ensureInitialCandidate(bound)).rejects.toThrow('install failed')
     expect(await readdir(join(bound.directory!, 'tmp'))).toEqual([])
     await expect(ensureInitialCandidate(bound)).resolves.toContain(join(bound.directory!, 'tmp'))
+  })
+
+  it('shouldInstallTheInitialCopyWithTheDeclaredPreparationWhenOptimizeStarts', async () => {
+    const { launch, workspace } = await legacy()
+    const source = await readFile(workspace.entrypoint, 'utf8')
+    const execute = vi.spyOn(preparation, 'executePreparation').mockResolvedValue(join(launch, 'setup.log'))
+    const install = vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+    const bound = await initializeWorkspaceBinding(workspace, join(launch, 'strands-dev'))
+
+    const initial = await ensureInitialCopy(bound)
+
+    expect(await readFile(join(initial, 'agent/src/agent.ts'), 'utf8')).toBe(source)
+    expect(execute).toHaveBeenCalledOnce()
+    expect(execute.mock.calls[0]?.[0].project.root).toBe(join(initial, 'agent'))
+    expect(install).not.toHaveBeenCalled()
+    expect(JSON.parse(await readFile(join(bound.directory!, 'tmp/initial.json'), 'utf8')).id).toBe(
+      JSON.parse(await readFile(join(initial, 'candidate.json'), 'utf8')).id
+    )
+  })
+
+  it('shouldReuseTheInitialCopyWhenOptimizeStartsAgain', async () => {
+    const { launch, workspace } = await legacy()
+    const execute = vi.spyOn(preparation, 'executePreparation').mockResolvedValue(join(launch, 'setup.log'))
+    const bound = await initializeWorkspaceBinding(workspace, join(launch, 'strands-dev'))
+    const initial = await ensureInitialCopy(bound)
+
+    const again = await ensureInitialCopy(bound)
+
+    expect(again).toBe(initial)
+    expect(execute).toHaveBeenCalledOnce()
+    expect(await readdir(join(bound.directory!, 'tmp'))).toHaveLength(2)
   })
 })

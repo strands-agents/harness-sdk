@@ -134,11 +134,7 @@ const ask = async (screen: StartupScreen, props: Omit<ProjectSetupPanelProps, 'o
 }
 
 export interface ProjectSetupSession {
-  prepare(
-    project: ImportedAgentProject,
-    screen: StartupScreen,
-    afterPreparation?: (install: boolean) => Promise<void>
-  ): Promise<'ready' | 'back' | 'cancel'>
+  prepare(project: ImportedAgentProject, screen: StartupScreen): Promise<'ready' | 'back' | 'cancel'>
   recover(error: unknown, screen: StartupScreen): Promise<'retry' | 'back' | 'exit'>
 }
 
@@ -164,7 +160,7 @@ export const projectSetupSession = (): ProjectSetupSession => {
     screen.show(undefined, 'Checking entrypoint in the selected runtime…')
   }
   return {
-    prepare: async (project, screen, afterPreparation): Promise<'ready' | 'back' | 'cancel'> => {
+    prepare: async (project, screen): Promise<'ready' | 'back' | 'cancel'> => {
       progress = undefined
       let force = false
       let validateOnly = false
@@ -173,8 +169,6 @@ export const projectSetupSession = (): ProjectSetupSession => {
           plan = await planProjectPreparation(project)
           if (!validateOnly) await run(screen, force)
           else screen.show(undefined, 'Checking entrypoint in the selected runtime…')
-          await afterPreparation?.(!validateOnly)
-          screen.show(undefined, 'Checking entrypoint in the selected runtime…')
           return 'ready'
         } catch (error) {
           if (screen.signal.aborted) return 'cancel'

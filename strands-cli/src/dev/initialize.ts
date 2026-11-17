@@ -111,3 +111,10 @@ export const ensureInitialCandidate = async (
     await rm(lock, { recursive: true, force: true })
   }
 }
+
+export const ensureInitialCopy = (workspace: DevWorkspace, signal?: AbortSignal): Promise<string> =>
+  ensureInitialCandidate(workspace, signal, async (candidate): Promise<void> => {
+    const { planProjectPreparation } = await import('../project/preparation-plan.js')
+    const { executePreparation } = await import('../project/preparation.js')
+    await executePreparation(await planProjectPreparation(candidate), signal ? { signal } : {})
+  })

@@ -66,10 +66,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
             `Project root: ${plan.project.root}\nRuntime: ${plan.runtime}\n${plan.commands.map((step) => redactPreparationOutput(describePreparationCommand(step))).join('\n')}\n${plan.guidance ?? ''}\n`
           )
           await executePreparation(plan)
-          const { ensureInitialCandidate } = await import('../dev/initialize.js')
-          await ensureInitialCandidate(prepared.workspace, undefined, async (candidate) => {
-            await executePreparation(await planProjectPreparation(candidate))
-          })
           await prepared.keep()
           prepared.args.dev = { ...prepared.args.dev!, prepared: true }
         }
