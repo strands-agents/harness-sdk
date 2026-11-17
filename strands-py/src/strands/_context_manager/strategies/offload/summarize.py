@@ -355,7 +355,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return text
 
     def _summarize_kwargs(self, agent: Agent, *, replay: bool) -> dict[str, Any]:
-        """The keyword arguments of a ``summarize()`` call, with the agent's own request around a replay."""
+        """Return the keyword arguments of a ``summarize()`` call, with the agent's own request around a replay."""
         instructions = self._config.get("system_prompt")
         kwargs: dict[str, Any] = {
             "instructions": instructions if replay else instructions or BLOCK_SUMMARY_INSTRUCTIONS,

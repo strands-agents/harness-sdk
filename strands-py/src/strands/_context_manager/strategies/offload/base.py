@@ -225,7 +225,7 @@ class BaseOffloadStrategy(ABC):
         ...
 
     async def _apply_per_block(self, context: ContextState) -> bool:
-        """Walk each matching message, replacing the individual blocks above the threshold."""
+        """Per-block execution: walk each message, transform individual blocks above threshold."""
         messages = context.messages
         tool_name_map = build_tool_name_map(messages)
         threshold = self._conditions.threshold_tokens(context.agent)
