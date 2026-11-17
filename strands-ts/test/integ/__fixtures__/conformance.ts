@@ -6,6 +6,7 @@ import conformance from '../../../../shared/conformance.json' with { type: 'json
 
 import { anthropic, bedrock, gemini, mantle, openai, openaiResponses } from './model-providers.js'
 import { isInBrowser } from './test-helpers.js'
+import { ModelThrottledError } from '@strands-agents/sdk'
 import type { CacheConfig, Model, ModelInfo } from '@strands-agents/sdk'
 
 export interface ConformanceCase {
@@ -29,7 +30,7 @@ export interface ConformanceProvider {
   create: (modelId: string, config?: ConformanceConfig) => Model
 }
 
-export type ConformanceStatus = 'passed' | 'failed' | 'skipped' | 'not-applicable'
+export type ConformanceStatus = 'passed' | 'failed' | 'error' | 'skipped' | 'not-applicable'
 
 export const cases: Record<string, ConformanceCase> = conformance.cases
 export const targets: ConformanceTarget[] = conformance.targets
@@ -112,6 +113,28 @@ export function notApplicableReason(conformanceCase: ConformanceCase, modelInfo:
   return undefined
 }
 
+// HTTP statuses that mean the provider could not serve the call, which says nothing about the case.
+const PROVIDER_ERROR_STATUSES = new Set([401, 403, 404, 408, 429])
+
+/**
+ * Why a failure is the provider's (throttling, credentials, an outage, a model that is not served), or undefined
+ * when the failure is a verdict on the case.
+ *
+ * @param error - What the case threw
+ * @returns The error name and HTTP status, when the error or one of its causes is a provider error
+ */
+export function providerErrorReason(error: unknown): string | undefined {
+  for (let current = error; current instanceof Error; current = current.cause) {
+    if (current instanceof ModelThrottledError) return current.name
+    const { status, $metadata } = current as { status?: unknown; $metadata?: { httpStatusCode?: unknown } }
+    const httpStatus = [status, $metadata?.httpStatusCode].find((value) => typeof value === 'number')
+    if (httpStatus !== undefined && (PROVIDER_ERROR_STATUSES.has(httpStatus) || httpStatus >= 500)) {
+      return `${current.name} (HTTP ${httpStatus})`
+    }
+  }
+  return undefined
+}
+
 /**
  * Appends a result record to the file named by STRANDS_CONFORMANCE_RESULTS. Does nothing in the browser or when
  * the variable is unset.
@@ -119,7 +142,7 @@ export function notApplicableReason(conformanceCase: ConformanceCase, modelInfo:
  * @param target - The provider and model the case ran on
  * @param caseId - The case id
  * @param status - The outcome
- * @param reason - Why the case was skipped or does not apply
+ * @param reason - Why the case errored, was skipped or does not apply
  */
 export async function recordResult(
   target: ConformanceTarget,

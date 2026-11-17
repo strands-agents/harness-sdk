@@ -9,6 +9,7 @@ import {
   notApplicableReason,
   omittedCases,
   omittedProviders,
+  providerErrorReason,
   providers,
   recordResult,
   targets,
@@ -88,8 +89,9 @@ const implementations: Record<string, (context: CaseContext) => Promise<void>> =
   },
 
   'prompt-caching': async ({ create }) => {
-    // Salted so a rerun cannot read an entry an earlier run wrote, and sized past the model's cache minimum.
-    const systemPrompt = `Dossier ${globalThis.crypto.randomUUID()}. ${'The subject prefers concise written answers. '.repeat(600)}`
+    // Salted so a rerun cannot read an entry an earlier run wrote, and sized to about twice the largest cache
+    // minimum among the targets.
+    const systemPrompt = `Dossier ${globalThis.crypto.randomUUID()}. ${'The subject prefers concise written answers. '.repeat(1200)}`
     const agent = new Agent({ model: create({ cacheConfig: { strategy: 'auto' } }), systemPrompt, printer: false })
 
     await agent.invoke('Reply ALPHA.')
@@ -189,7 +191,8 @@ describe.each(targets)('Model conformance: $provider $model', (target) => {
       try {
         await run({ model, create: (config) => provider!.create(target.model, config) })
       } catch (error) {
-        await recordResult(target, caseId, 'failed')
+        const reason = providerErrorReason(error)
+        await recordResult(target, caseId, reason ? 'error' : 'failed', reason)
         throw error
       }
       await recordResult(target, caseId, 'passed')
