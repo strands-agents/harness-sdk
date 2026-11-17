@@ -2285,7 +2285,7 @@ class TestEstimateInputTokens:
         agent = unittest.mock.AsyncMock()
         agent.messages = [{"role": "user", "content": [{"text": "Hi"}]}]
         agent.system_prompt = "You are helpful"
-        agent._system_prompt_content = None
+        agent.system_prompt_content = None
         agent.tool_registry = unittest.mock.MagicMock()
         agent.tool_registry.get_all_tool_specs.return_value = [{"name": "tool1"}]
         agent.model.count_tokens = AsyncMock(return_value=42)
