@@ -19,7 +19,7 @@ You have a robot, a folder of demonstration data on the [Hugging Face Hub](https
 
 [Strands Robots](https://github.com/strands-labs/robots) is an open source SDK from AWS ([Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)) that gives you a robot, its simulation, and the [LeRobot](https://github.com/huggingface/lerobot) stack behind agent tools that you hand to a single Strands agent. The integration is deliberately thin: LeRobot's own scripts handle hardware recording and calibration, and Strands Robots comes in for the parts an agent actually orchestrates. A robot in simulation records LeRobotDatasets with LeRobot's own writer, in the same format LeRobot writes on hardware. A [`Policy`](https://strands-labs.github.io/robots/lerobot/) loads LeRobot checkpoints in-process behind one interface, including ACT, SmolVLA, pi0, [GR00T](https://github.com/NVIDIA/Isaac-GR00T) and MolmoAct2. A peer mesh fans the agent out to remote robots. The dataset format stays exactly as LeRobot wrote it; the agent loop is the glue.
 
-This post walks you through five steps inside a single agent: build the agent over the robot's tools, record a demonstration as a LeRobotDataset in simulation, run a policy from the Hub on the same robot, deploy the same agent code to a physical [SO-101](https://github.com/TheRobotStudio/SO-ARM100) with one keyword argument change, and reach the robot over the [Zenoh](https://zenoh.io) mesh. At the end, you can clone the working sample from GitHub and run it on your laptop in simulation. No hardware, no GPU, no Hugging Face credentials needed for the default path. The runnable companion to this post is the notebook [`notebooks/11_hub_to_hardware.ipynb`](https://github.com/strands-labs/robots/blob/main/notebooks/11_hub_to_hardware.ipynb).
+This post walks you through five steps inside a single agent: build the agent over the robot's tools, record a demonstration as a LeRobotDataset in simulation, run a policy from the Hub on the same robot, deploy the same agent code to a physical [SO-101](https://github.com/TheRobotStudio/SO-ARM100) with one keyword argument change, and reach the robot over the [Zenoh](https://zenoh.io) mesh. At the end, you can clone the working sample from GitHub and run it on your laptop in simulation. No hardware, no GPU, no Hugging Face credentials needed for the default path. The runnable companion to this post is the notebook [`notebooks/11_hub_to_hardware.ipynb`](https://github.com/strands-labs/robots/blob/v0.6.0/notebooks/11_hub_to_hardware.ipynb).
 
 ## What you'll build
 
@@ -66,7 +66,7 @@ Install Strands Robots and get the example files:
 
 ```bash
 uv pip install "strands-robots[mujoco,lerobot,mesh,tools]>=0.6,<0.7"
-git clone https://github.com/strands-labs/robots.git
+git clone --branch v0.6.0 https://github.com/strands-labs/robots.git
 cd robots
 ```
 
@@ -195,7 +195,7 @@ from strands import Agent
 from strands_robots.mesh import Mesh
 
 bench = Mesh("zenoh://", tenant="lab")      # where the robot runs
-bench.mount(arm, labels={"role": "arm"})     # announces the robot with its manifest
+bench.mount(arm, labels={"role": "arm"})     # the simulated arm from Steps 2-3; a real arm needs mesh certificates (see below)
 
 me = Mesh("zenoh://", tenant="lab")          # where the agent runs, on any machine on the LAN
 agent = Agent(tools=[me.tool])
@@ -214,7 +214,7 @@ The full sample is on GitHub at [strands-labs/robots](https://github.com/strands
 
 ```bash
 uv pip install "strands-robots[mujoco,lerobot,mesh,tools]>=0.6,<0.7" jupyter
-git clone https://github.com/strands-labs/robots.git
+git clone --branch v0.6.0 https://github.com/strands-labs/robots.git
 cd robots
 
 jupyter notebook notebooks/11_hub_to_hardware.ipynb
@@ -265,7 +265,7 @@ Contributions are welcome under Apache 2.0. If you build something with this wor
 
 - **Strands Robots** (SDK, agent tools, `Robot`, `Simulation`, `Policy`): [github.com/strands-labs/robots](https://github.com/strands-labs/robots), Apache 2.0
 - **Strands Robots docs** (full documentation): [strands-labs.github.io/robots](https://strands-labs.github.io/robots/)
-- **The example:** [notebooks/11_hub_to_hardware.ipynb](https://github.com/strands-labs/robots/blob/main/notebooks/11_hub_to_hardware.ipynb) and [the script](https://github.com/strands-labs/robots/blob/main/notebooks/scripts/11_hub_to_hardware.py)
+- **The example:** [notebooks/11_hub_to_hardware.ipynb](https://github.com/strands-labs/robots/blob/v0.6.0/notebooks/11_hub_to_hardware.ipynb) and [the script](https://github.com/strands-labs/robots/blob/v0.6.0/notebooks/scripts/11_hub_to_hardware.py)
 - **How to Build Physical AI Agents: Natural Language for Real-World Robotics**: [Live Stream](https://www.youtube.com/watch?v=K5fVWNeaqiM) and [Blog](https://aws.amazon.com/blogs/opensource/building-intelligent-physical-ai-from-edge-to-cloud-with-strands-agents-bedrock-agentcore-claude-4-5-nvidia-gr00t-and-hugging-face-lerobot/)
 - **Diving Deep on Physical AI | S1E4 | Automate with NVIDIA NeMo Agent Toolkit and Bedrock AgentCore**: [Live Stream](https://www.youtube.com/watch?v=o4WJrv4jlCU)
 - **LeRobot**: [github.com/huggingface/lerobot](https://github.com/huggingface/lerobot) - datasets, policies, hardware drivers
