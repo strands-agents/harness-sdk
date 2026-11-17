@@ -462,6 +462,33 @@ describe('Graph', () => {
       ])
     })
 
+    it('forwards a nested MultiAgentNode terminus structured output through the outer graph', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
+        ),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const inner = new Graph({ id: 'inner', nodes: [classifier], edges: [] })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [inner, specialist],
+        edges: [['inner', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: inner]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
+    })
+
     it('does not duplicate the structured output when the forced retry returned it as text', async () => {
       const classifier = new Agent({
         model: new MockMessageModel()
