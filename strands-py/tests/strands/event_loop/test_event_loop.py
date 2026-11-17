@@ -1211,9 +1211,10 @@ async def test_event_loop_cycle_exception_model_hooks(mock_sleep, agent, model, 
 
 
 @pytest.mark.asyncio
-async def test_event_loop_cycle_raises_when_tool_use_names_no_tool(
+async def test_event_loop_cycle_raises_when_tool_use_names_no_tool_every_attempt(
     agent, model, messages, agenerator, alist, hook_provider
 ):
+    attempts = strands.event_loop.event_loop._MAX_EMPTY_TOOL_USE_RETRIES + 1
     model.stream.side_effect = [
         agenerator(
             [
@@ -1222,19 +1223,19 @@ async def test_event_loop_cycle_raises_when_tool_use_names_no_tool(
                 {"messageStop": {"stopReason": "tool_use"}},
             ]
         )
+        for _ in range(attempts)
     ]
 
     stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
     with pytest.raises(ValueError, match="no toolUse block"):
         await alist(stream)
 
-    assert model.stream.call_count == 1
+    assert model.stream.call_count == attempts
     assert agent.messages == messages
 
     _, events = hook_provider.get_events()
-    model_call_events = [event for event in events if isinstance(event, (BeforeModelCallEvent, AfterModelCallEvent))]
-    assert len(model_call_events) == 2
-    assert model_call_events[1].stop_response.stop_reason == "tool_use"
+    after_events = [event for event in events if isinstance(event, AfterModelCallEvent)]
+    assert [event.stop_response.stop_reason for event in after_events] == ["tool_use"] * attempts
 
 
 @pytest.mark.asyncio

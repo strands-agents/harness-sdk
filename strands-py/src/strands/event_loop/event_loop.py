@@ -71,6 +71,7 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 6
 INITIAL_DELAY = 4
 MAX_DELAY = 240  # 4 minutes
+_MAX_EMPTY_TOOL_USE_RETRIES = 2
 
 
 def _has_tool_use_in_latest_message(messages: "Messages") -> bool:
@@ -621,6 +622,8 @@ async def _handle_model_execution(
     stream_trace = Trace("stream_messages", parent_id=cycle_trace.id)
     cycle_trace.add_child(stream_trace)
 
+    empty_tool_use_attempts = 0
+
     # Retry loop - actual retry logic is handled by retry_strategy hook
     # Hooks control when to stop retrying via the event.retry flag
     while True:
@@ -793,6 +796,17 @@ async def _handle_model_execution(
                 )
                 continue  # Retry the model call
 
+            if stop_reason == "tool_use" and not any("toolUse" in block for block in message["content"]):
+                empty_tool_use_attempts += 1
+                if empty_tool_use_attempts <= _MAX_EMPTY_TOOL_USE_RETRIES:
+                    agent.event_loop_metrics.update_usage(usage)
+                    agent.event_loop_metrics.update_metrics(metrics)
+                    logger.warning(
+                        "attempt=<%s> | tool_use stop with no toolUse blocks | retrying the model call",
+                        empty_tool_use_attempts,
+                    )
+                    continue
+
             if stop_reason == "max_tokens":
                 message = recover_message_on_max_tokens_reached(message)
 
@@ -834,9 +848,8 @@ async def _handle_model_execution(
         agent.event_loop_metrics.update_usage(usage)
         agent.event_loop_metrics.update_metrics(metrics)
         no_tool_error = ValueError(
-            'Model returned stop_reason "tool_use" but the response contains no toolUse block. '
-            "The reply was discarded rather than reported as a completed turn. An AfterModelCallEvent "
-            "hook can set retry=True to re-ask the model."
+            f'Model returned stop_reason "tool_use" but the response contains no toolUse block in '
+            f"{empty_tool_use_attempts} attempts. The reply was discarded rather than reported as a completed turn."
         )
         yield ForceStopEvent(reason=no_tool_error)
         raise no_tool_error
