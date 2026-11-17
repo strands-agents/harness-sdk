@@ -23,7 +23,7 @@ export interface ProjectPreparationPlan {
   guidance?: string
 }
 
-const INPUTS = [
+export const PREPARATION_INPUTS: readonly string[] = [
   'package.json',
   'package-lock.json',
   'npm-shrinkwrap.json',
@@ -46,7 +46,7 @@ const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 
 const readInputs = async (root: string): Promise<Map<string, string>> => {
   const inputs = new Map<string, string>()
-  for (const name of INPUTS) {
+  for (const name of PREPARATION_INPUTS) {
     const path = join(root, name)
     try {
       const info = await lstat(path)

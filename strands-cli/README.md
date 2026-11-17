@@ -553,6 +553,10 @@ In interactive mode, each TypeScript conversation runs in its own process. Reloa
 rebuilding its agent evaluates the source again, so module globals reset and are not shared
 between conversations. Model changes and reloads keep the conversation; `/clear` starts fresh.
 
+The chat reloads an imported agent when one of its source files changes. Source files are code, instruction text (`.md` and `.txt`), configuration (`.yaml`, `.yml`, `.toml`), Cedar policies, skill files, MCP configuration, and dependency manifests.
+A change to another file, for example a log, a `.json` data file, or a `.jsonl` file, does not reload the agent.
+Files in `.agent/` and `.strands/` do not reload the agent, but skill files in their `skills/` folders do.
+
 Run `strands --agent ./agent.zip` directly: the CLI extracts the project into its cache and
 installs its declared dependencies on first launch.
 For an existing source folder, install its dependencies (`npm install`, or create `.venv`
