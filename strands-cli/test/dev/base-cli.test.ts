@@ -108,7 +108,7 @@ describe('refreshBaseCliView', () => {
     await mkdir(skill)
     await writeFile(join(skill, 'SKILL.md'), '---\nname: review\ndescription: Review code.\n---\nReview.\n')
     const { path, workspace } = await baseCli(
-      profileToml('Answer briefly.').replace('skills = false', `skills = ["${skill}"]`)
+      profileToml('Answer briefly.').replace('skills = false', `skills = [${JSON.stringify(skill)}]`)
     )
     await refreshBaseCliView(workspace, await snapshotOf(path))
     const packaged = join(workspace.root, 'agent', 'skills', 'review', 'SKILL.md')

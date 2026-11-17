@@ -949,7 +949,7 @@ describe('workspace folder selection', () => {
     await symlink(real, linked)
     await writeFile(
       join(real, 'cli.toml'),
-      `${project ? `agentProject = "${other}"\n` : ''}[profile]\nname = "Saved"\n`
+      `${project ? `agentProject = ${JSON.stringify(other)}\n` : ''}[profile]\nname = "Saved"\n`
     )
     await mkdir(strandsUserPath('strands-dev'), { recursive: true })
     await bindWorkspace(strandsUserPath('strands-dev'), {

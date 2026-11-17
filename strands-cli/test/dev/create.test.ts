@@ -454,7 +454,10 @@ describe('folderClaims replacement', () => {
     vi.stubEnv('USERPROFILE', home)
     const folder = join(home, '.strands', 'strands-dev')
     await mkdir(join(folder, 'agent'), { recursive: true })
-    await writeFile(join(home, '.strands', 'cli.toml'), `agentProject = "${join(folder, 'agent', 'agent.ts')}"\n`)
+    await writeFile(
+      join(home, '.strands', 'cli.toml'),
+      `agentProject = ${JSON.stringify(join(folder, 'agent', 'agent.ts'))}\n`
+    )
     const claims = folderClaims()
 
     await expect(claims.replace(folder)).rejects.toThrow(
