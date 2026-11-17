@@ -111,9 +111,7 @@ To try recalling those facts, start a new session with the same memory scope and
 
 ## Choosing how your agent searches memory
 
-In the example above, the agent searches for "test setup" and retrieves a fact about integration tests and a separate database. Vector Search makes that connection by meaning.
-
-You configure how the agent searches memory when you set up the store. The agent decides what to search for, while the store uses the search mode you’ve configured. This example uses Vector Search, which finds memories by meaning: a search for “test setup” retrieves the fact that integration tests use a separate database, even though they share no words. Full-text search matches exact keywords, such as “pytest” or `MONGODB_URI`. Hybrid search combines both, so a search for “pytest setup for integration tests” matches the exact term “pytest” and also surfaces the note about the test database.
+You configure how the agent searches memory when you set up the store. The agent decides what to search for, while the store uses the search mode you’ve configured. This example uses Vector Search, which finds memories by meaning: a search for “test setup” retrieves the fact that integration tests use a separate database, even though they share no words. Full-text search matches terms in stored text, such as “pytest.” Hybrid search combines both, so a search for “pytest setup for integration tests” matches the exact term “pytest” and also surfaces the note about the test database.
 
 To make that semantic search work, Atlas automated embedding turns stored memories and queries into numerical representations that can be compared by meaning. You don't need to write separate embedding code in your agent.
 
