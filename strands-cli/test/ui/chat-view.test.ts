@@ -351,6 +351,68 @@ describe('ChatView', () => {
     expect(plainOutput.indexOf('▄▟   ▙▄')).toBeLessThan(plainOutput.indexOf('Nothing to compact yet'))
   })
 
+  describe('a short transcript', () => {
+    const DEV_CARD =
+      'strands dev · Strands harness\nWorkspace: /w/strands-dev\nHarness: /w/agent.ts (cli)\n' +
+      'Model, tools, and instructions come from this workspace.'
+    const ARTWORK = /[█▀▄▟▙]/u
+    const lines = (overrides: Partial<ChatSnapshot>, input = ''): string[] =>
+      sanitizeTerminalText(
+        renderView(
+          { snapshot: snapshot(overrides), input, cursor: input.length, terminalWidth: 156, terminalHeight: 50 },
+          { columns: 156 }
+        )
+      ).split('\n')
+    const composerTop = (frame: readonly string[]): number =>
+      frame.findIndex((line) => line.trimStart().startsWith('┌'))
+    const rowOf = (frame: readonly string[], text: string): number => frame.findIndex((line) => line.includes(text))
+    const artworkRows = (frame: readonly string[]): number[] =>
+      frame.flatMap((line, row) => (ARTWORK.test(line) ? [row] : []))
+
+    it('shouldPutTheDevCardRightAboveTheComposerWhenNothingElseIsInTheTranscript', () => {
+      const frame = lines({ notices: [{ id: 'dev-workspace', status: 'success', text: DEV_CARD }] })
+
+      expect(composerTop(frame) - rowOf(frame, 'come from this workspace')).toBe(1)
+    })
+
+    it('shouldKeepTheLogoInItsRowsWhenTheDevCardMovesDown', () => {
+      const quiet = lines({})
+      const frame = lines({ notices: [{ id: 'dev-workspace', status: 'success', text: DEV_CARD }] })
+
+      expect(artworkRows(frame)).toEqual(artworkRows(quiet))
+      expect(artworkRows(frame).length).toBeGreaterThan(1)
+    })
+
+    it('shouldKeepTheDevCardAboveTheCommandPickerWhenTheUserTypesASlash', () => {
+      const frame = lines({ notices: [{ id: 'dev-workspace', status: 'success', text: DEV_CARD }] }, '/')
+
+      expect(DEV_CARD.split('\n').every((line) => rowOf(frame, line) >= 0)).toBe(true)
+      expect(composerTop(frame) - rowOf(frame, 'come from this workspace')).toBe(1)
+      expect(rowOf(frame, '/help')).toBeGreaterThan(composerTop(frame))
+    })
+
+    it('shouldPutTheLastTurnRightAboveTheComposerWhenTheConversationIsShort', () => {
+      const frame = lines({
+        notices: [{ id: 'dev-workspace', status: 'success', text: DEV_CARD }],
+        completedTurns: [
+          {
+            id: 'turn-1',
+            agentName: 'Agent',
+            prompt: 'hi',
+            entries: [
+              { id: 'user-1', type: 'user', text: 'hi' },
+              { id: 'assistant-1', type: 'assistant', text: 'Hello there' },
+            ],
+            status: 'complete',
+          },
+        ],
+      })
+
+      expect(rowOf(frame, 'come from this workspace')).toBeLessThan(rowOf(frame, 'Hello there'))
+      expect(composerTop(frame) - rowOf(frame, 'Hello there')).toBeLessThanOrEqual(2)
+    })
+  })
+
   it.each([80, 120])(
     'shows the self-configuration hint only when the empty composer is clear at %i columns',
     (width) => {

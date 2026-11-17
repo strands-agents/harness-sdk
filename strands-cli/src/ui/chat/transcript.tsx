@@ -109,6 +109,8 @@ interface TranscriptMeasurementCache {
  */
 const MAX_MEASUREMENT_RENDERS = 4
 
+const COVERED_ROWS_GROW = 1000
+
 function noticesKey(notices: readonly ChatNotice[]): string {
   return notices
     .map((notice) => [notice.id, notice.status, notice.text, notice.taskId ?? ''].join('\u001f'))
@@ -130,6 +132,7 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   settings,
   scrollOffset,
   layoutKey,
+  coveredBottomRows = 0,
   onMaxScrollChange,
   expandedToolGroups = EMPTY_TOOL_GROUPS,
   onToolGroupElement,
@@ -144,12 +147,14 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   settings: ChatSnapshot['settings']
   scrollOffset: number
   layoutKey: string
+  coveredBottomRows?: number
   onMaxScrollChange?: (maximum: number) => void
   expandedToolGroups?: ReadonlySet<string>
   onToolGroupElement?: (id: string, element: DOMElement | null) => void
 }): ReactElement {
   const viewportRef = useRef<DOMElement>(null)
   const contentRef = useRef<DOMElement>(null)
+  const headerRef = useRef<DOMElement>(null)
   const rootNoticesRef = useRef<DOMElement>(null)
   const activeTurnRef = useRef<DOMElement>(null)
   const completedTurnRefs = useRef(new Map<string, DOMElement>())
@@ -235,7 +240,10 @@ export const TranscriptViewport = memo(function TranscriptViewport({
         })
       }
     }
-    cache.rootHeight = rootNoticesRef.current ? measureElement(rootNoticesRef.current).height : 0
+    cache.rootHeight = [headerRef.current, rootNoticesRef.current].reduce(
+      (height, element) => height + (element ? measureElement(element).height : 0),
+      0
+    )
     cache.activeTurnId = activeTurn?.id
     cache.activeHeight = activeTurnRef.current ? measureElement(activeTurnRef.current).height : 0
     cache.viewportHeight = measureElement(viewportRef.current).height
@@ -267,8 +275,11 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   return (
     <Box ref={viewportRef} flexDirection="column" flexGrow={1} overflowY="hidden" justifyContent="flex-end">
       <Box ref={contentRef} flexDirection="column" flexShrink={0} minHeight="100%" marginBottom={-plan.scrollOffset}>
-        <Box ref={rootNoticesRef} flexDirection="column">
+        <Box ref={headerRef} flexDirection="column">
           {header}
+        </Box>
+        <Box flexGrow={1} />
+        <Box ref={rootNoticesRef} flexDirection="column">
           {rootNotices.map((notice) => (
             <NoticeView key={notice.id} notice={notice} />
           ))}
@@ -310,6 +321,7 @@ export const TranscriptViewport = memo(function TranscriptViewport({
             ))}
           </Box>
         ) : null}
+        <Box flexGrow={COVERED_ROWS_GROW} flexBasis={0} maxHeight={coveredBottomRows} />
       </Box>
     </Box>
   )
