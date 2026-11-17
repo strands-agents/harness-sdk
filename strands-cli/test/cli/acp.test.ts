@@ -37,6 +37,7 @@ import {
 } from '../fixtures/saved-system-prompt.js'
 
 import * as acpServer from '../../src/cli/acp.js'
+import type { ChatRunResult } from '../../src/agent/types.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { runPythonAcpServer } from '../../src/cli/acp-python.js'
 import { PythonBackend } from '../../src/project/python.js'
@@ -1042,6 +1043,78 @@ async function writeSavedSession(sessionDirectory: string, sessionId: string): P
 }
 
 describe('Python ACP session lifetime', () => {
+  // https://github.com/strands-agents/harness-sdk/issues/6224
+  it.each([
+    { context: { currentTokens: 8, projectedTokens: 10, contextWindow: 100 }, used: 10, completeUsage: true },
+    { context: { currentTokens: 0, contextWindow: 100 }, used: 0, completeUsage: true },
+    { context: { currentTokens: 8 }, used: undefined, completeUsage: true },
+    { context: undefined, used: undefined, completeUsage: false },
+  ])('reports available Python usage and context: %j', async ({ context, used, completeUsage }) => {
+    const closed = deferred()
+    let service!: Parameters<typeof createAcpApp>[0]
+    const result: ChatRunResult = {
+      stopReason: completeUsage ? 'end_turn' : 'cancelled',
+      ...(context ? { context } : {}),
+      ...(completeUsage
+        ? {
+            usage: {
+              inputTokens: 3,
+              outputTokens: 2,
+              totalTokens: 5,
+              cacheReadInputTokens: 1,
+              cacheWriteInputTokens: 2,
+            },
+          }
+        : {}),
+    }
+    const backend = {
+      async *stream() {
+        yield* []
+        return result
+      },
+      async dispose() {},
+    }
+    const app = vi.spyOn(acpServer, 'createAcpApp').mockImplementation((value) => {
+      service = value
+      return { connect: () => ({ closed: closed.promise }) } as unknown as acp.AgentApp
+    })
+    const open = vi.spyOn(PythonBackend, 'open').mockResolvedValue(backend as unknown as PythonBackend)
+    const running = runPythonAcpServer(
+      { root: process.cwd(), entrypoint: 'agent.py', language: 'python' },
+      CliConfigStore.memory(),
+      {}
+    )
+    const notify = vi.fn(async () => {})
+    try {
+      const { sessionId } = await service.newSession({ cwd: process.cwd(), mcpServers: [] })
+      expect(
+        await service.prompt({ sessionId, prompt: [{ type: 'text', text: 'hello' }] }, {
+          notify,
+        } as unknown as acp.AgentContext)
+      ).toEqual({
+        stopReason: completeUsage ? 'end_turn' : 'cancelled',
+        ...(completeUsage
+          ? { usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5, cachedReadTokens: 1, cachedWriteTokens: 2 } }
+          : {}),
+      })
+      if (used === undefined) {
+        expect(notify).not.toHaveBeenCalled()
+      } else {
+        expect(notify.mock.calls).toEqual([
+          [
+            acp.methods.client.session.update,
+            { sessionId, update: { sessionUpdate: 'usage_update', used, size: 100 } },
+          ],
+        ])
+      }
+    } finally {
+      closed.resolve()
+      await running
+      open.mockRestore()
+      app.mockRestore()
+    }
+  })
+
   it.each(['duplicate', 'replay failure', 'connection closure'])('cleans up after %s', async (scenario) => {
     const closed = deferred()
     const release = deferred()
