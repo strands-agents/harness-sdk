@@ -9,6 +9,7 @@ import { Offload } from '../../context-manager/strategies/offload/index.js'
 import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
 import { tool } from '../../tools/tool-factory.js'
 import { OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { ImageBlock } from '../../types/media.js'
 import type { ConversationManager } from '../../conversation-manager/conversation-manager.js'
 
 function internals(agent: Agent): any {
@@ -146,6 +147,37 @@ describe('Agent contextManager', () => {
   })
 
   describe('offloaded tool results', () => {
+    // A size-only threshold keeps unmeasured media until the model receives it (#6195).
+    it.each([
+      { name: 'all tools', target: 'toolResults' as const },
+      { name: 'a named tool', target: ['tool::readFile'] },
+    ])('sends the model a new tool image when targeting $name', async ({ target }) => {
+      const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array(4000) } })
+      const readFile = tool({
+        name: 'readFile',
+        description: 'reads an image',
+        inputSchema: z.object({}),
+        callback: () => image,
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'readFile', toolUseId: 'image-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      const sent = vi.spyOn(model, 'streamAggregated')
+      const agent = new Agent({
+        model,
+        tools: [readFile],
+        printer: false,
+        contextManager: { stash: false, strategies: [Offload.drop(target).when({ blockThreshold: 500 })] },
+      })
+
+      await agent.invoke('describe the image')
+
+      expect(sent).toHaveBeenCalledTimes(2)
+      expect(sent.mock.calls[1]![0][2]!.content).toEqual([
+        new ToolResultBlock({ toolUseId: 'image-1', status: 'success', content: [image] }),
+      ])
+    })
+
     it('stores an sends the model its text, and resolves the toolUseId to the original', async () => {
       const rows = tool({
         name: 'rows',
