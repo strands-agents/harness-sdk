@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
@@ -73,18 +73,6 @@ class SummarizeConfig(TypedDict, total=False):
 
     model: Model
     system_prompt: str
-
-
-class _SummaryRequest(NamedTuple):
-    """A block's summary request, and how the marker that replaces the block describes it.
-
-    Attributes:
-        messages: The request the summarizer is sent.
-        description: What was summarized, such as ``"tool result"``.
-    """
-
-    messages: Messages
-    description: str
 
 
 class SummarizeStrategy(BaseOffloadStrategy):
@@ -294,19 +282,17 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         request = _block_request(block, tool_name)
         log_fields = f"tracking_id=<{message.get('tracking_id')}>"
-        summary = (
-            await self._try_summarize(request.messages, model, agent, invocation_context, log_fields, replay=False)
-            if request is not None
-            else ""
-        )
-        if request is not None and summary:
-            logger.debug("%s, tokens=<%s> | summarized %s", log_fields, tokens, request.description)
-            placeholder = await self._placeholder(
-                format_summarized(request.description, tokens, summary), stash_ref, tokens
-            )
-            if is_tool_result_block(block):
-                return placeholder_result(block["toolResult"], [placeholder])
-            return placeholder
+        if request is not None:
+            summarized, description = request
+            summary = await self._try_summarize(summarized, model, agent, invocation_context, log_fields, replay=False)
+            if summary:
+                logger.debug("%s, tokens=<%s> | summarized %s", log_fields, tokens, description)
+                placeholder = await self._placeholder(
+                    format_summarized(description, tokens, summary), stash_ref, tokens
+                )
+                if is_tool_result_block(block):
+                    return placeholder_result(block["toolResult"], [placeholder])
+                return placeholder
 
         # A tool result or text the summarizer failed on is kept for a later pass; media is offloaded instead.
         if is_tool_result_block(block) or is_text_block(block):
@@ -459,8 +445,8 @@ def _first_summary(result: SummarizeResult) -> ContentBlock | None:
     return block if block is not None and "summary" in block else None
 
 
-def _block_request(block: ContentBlock, tool_name: str | None) -> _SummaryRequest | None:
-    """The summary request for one block, or None when the block can't be summarized.
+def _block_request(block: ContentBlock, tool_name: str | None) -> tuple[Messages, str] | None:
+    """The summary request for one block and how its marker describes it, or None when it can't be summarized.
 
     The content is sent between delimiters in a user turn. A tool result is introduced by the name of the tool that
     produced it; the tool's input is left out, since it can be far larger than the result.
@@ -470,7 +456,7 @@ def _block_request(block: ContentBlock, tool_name: str | None) -> _SummaryReques
         return None
     content, description = summarized
     delimited = [ContentBlock(text="<content>"), *content, ContentBlock(text="</content>")]
-    return _SummaryRequest([Message(role="user", content=delimited)], description)
+    return [Message(role="user", content=delimited)], description
 
 
 def _summary_input(block: ContentBlock, tool_name: str | None) -> tuple[list[ContentBlock], str] | None:
