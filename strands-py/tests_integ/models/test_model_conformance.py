@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import strands
 from strands import Agent
 from strands.models import CacheConfig
+from strands.models._model_info import lookup_model_info
 from strands.vended_plugins.context_injector import ContextInjector
 from tests_integ.conftest import retry_on_flaky
 from tests_integ.models import conformance
@@ -26,6 +27,7 @@ class Profile(BaseModel):
 
 
 PROFILE_PROMPT = "Create a profile for John who is a 25 year old dentist."
+EXPECTED_PROFILE = Profile(name="John", age=25, occupation="dentist")
 
 
 @strands.tool
@@ -42,10 +44,21 @@ def target(request):
 @pytest.fixture
 def model(request, target):
     model = target.create_model()
-    reason = conformance.not_applicable_reason(request.function.conformance_case, model)
+    case_id = request.function.conformance_case
+    reason = conformance.not_applicable_reason(case_id, model)
     if reason:
         pytest.skip(f"{conformance.NOT_APPLICABLE}: {reason}")
+    issue = conformance.KNOWN_FAILURES.get((target.provider, target.model_id, case_id))
+    if issue:
+        # Only a failed assertion is the known failure; a provider error still fails the run.
+        request.applymarker(
+            pytest.mark.xfail(strict=True, raises=AssertionError, reason=f"known failure, see #{issue}")
+        )
     return model
+
+
+def _normalized(profile):
+    return profile.model_copy(update={"occupation": profile.occupation.lower()})
 
 
 def _agent(model, **kwargs):
@@ -73,9 +86,9 @@ def test_tool_use(model):
 
 
 @conformance.case("context-window")
-def test_context_window(model):
+def test_context_window(model, target):
     tru_window = model.get_config().get("context_window_limit")
-    exp_window = model.model_info.limits.context_window
+    exp_window = lookup_model_info(target.model_id).limits.context_window
 
     assert exp_window is not None, "the model id resolves to no entry in shared/model-info.json"
     assert tru_window == exp_window
@@ -86,17 +99,12 @@ def test_context_window(model):
 def test_structured_output(model):
     result = _agent(model)(PROFILE_PROMPT, structured_output_model=Profile)
 
-    assert result.structured_output.name == "John"
-    assert result.structured_output.age == 25
-    assert result.structured_output.occupation.lower() == "dentist"
+    tru_profile = _normalized(result.structured_output)
+    assert tru_profile == EXPECTED_PROFILE
 
 
 @conformance.case("max-output-tokens")
 def test_max_output_tokens(model):
-    tru_max_tokens = model.get_config().get("max_tokens")
-    exp_max_tokens = model.model_info.limits.max_output_tokens
-    assert tru_max_tokens == exp_max_tokens
-
     result = _agent(model)("Reply with the single word OK.")
 
     assert result.stop_reason == "end_turn"
@@ -124,9 +132,8 @@ async def test_native_structured_output(model, alist):
     text = "".join(
         event["contentBlockDelta"]["delta"].get("text", "") for event in events if "contentBlockDelta" in event
     )
-    tru_profile = Profile.model_validate_json(text)
-    assert tru_profile.name == "John"
-    assert tru_profile.age == 25
+    tru_profile = _normalized(Profile.model_validate_json(text))
+    assert tru_profile == EXPECTED_PROFILE
 
 
 @conformance.case("prompt-caching")

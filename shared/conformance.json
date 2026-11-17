@@ -72,5 +72,8 @@
     { "provider": "mistral", "model": "ministral-14b-2512" },
     { "provider": "mistral", "model": "mistral-small-2603" },
     { "provider": "mistral", "model": "codestral-2508" }
+  ],
+  "knownFailures": [
+    { "provider": "anthropic", "model": "claude-haiku-5-5", "case": "temporary-messages", "issue": 6227 }
   ]
 }
