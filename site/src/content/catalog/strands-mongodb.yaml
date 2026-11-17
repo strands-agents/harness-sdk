@@ -1,10 +1,11 @@
-# Publication blocker: verify the repository and package after both are public.
 name: strands-mongodb
-description: MongoDB backends for persistent Strands sessions and searchable long-term memory.
-integrationType: integration
+description: MongoDB as a Strands Storage backend, persisting sessions, offloaded context, and conversation history in one MongoDB deployment.
+integrationType: storage
+maintainedBy: partner
 languages:
   python:
-    package: strands-mongodb[all]
+    package: strands-mongodb[storage]
 github: https://github.com/mongodb/strands-mongodb
-docsPage: docs/integrations/integrations/mongodb
-addedDate: 2026-11-04
+docsUrl: https://www.mongodb.com/docs/atlas/ai-integrations/strands/
+featured: true
+addedDate: 2026-11-18

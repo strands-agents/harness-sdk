@@ -15,7 +15,7 @@ const href = pathWithBase(`/blog/${post.id}/`)
 
 <a href={href} class="featured-post">
   <div class="featured-post-meta">
-    {date ? <time datetime={date.toISOString()}>{formatDate(date)}</time> : <span>Draft</span>}
+    <time datetime={date.toISOString()}>{formatDate(date)}</time>
   </div>
   <h2 class="featured-post-title">{title}</h2>
   <p class="featured-post-description">{description}</p>

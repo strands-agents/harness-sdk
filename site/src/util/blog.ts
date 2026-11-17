@@ -11,7 +11,7 @@ export async function getPublishedPosts(): Promise<BlogPost[]> {
   const posts = await getCollection('blog', ({ data }) => {
     return import.meta.env.PROD ? !data.draft : true
   })
-  return posts.sort((a, b) => (b.data.date?.getTime() ?? 0) - (a.data.date?.getTime() ?? 0))
+  return posts.sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
 }
 
 /**
@@ -76,8 +76,7 @@ export function slugToTag(slug: string, allTags: string[]): string | undefined {
 /**
  * Format a date for display.
  */
-export function formatDate(date: Date | undefined): string {
-  if (!date) return 'Draft'
+export function formatDate(date: Date): string {
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',

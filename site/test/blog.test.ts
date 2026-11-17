@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest'
-import { blogSchema } from '../src/content.config'
 import { tagToSlug, slugToTag, formatDate } from '../src/util/blog'
 
 describe('tagToSlug', () => {
@@ -50,25 +49,5 @@ describe('formatDate', () => {
     const result = formatDate(date)
     expect(result).toContain('December')
     expect(result).toContain('2025')
-  })
-})
-
-describe('draft publication dates', () => {
-  const post = { title: 'An unpublished post', description: 'Preview', authors: ['morgan-willis'] }
-
-  it('accepts an undated draft without inventing a publication date', () => {
-    const result = blogSchema.parse({ ...post, draft: true })
-    expect(result.date).toBeUndefined()
-    expect(formatDate(result.date)).toBe('Draft')
-  })
-
-  it('requires a date when publishing an undated draft', () => {
-    expect(blogSchema.safeParse({ ...post, draft: false }).success).toBe(false)
-    expect(blogSchema.safeParse(post).success).toBe(false)
-    expect(blogSchema.safeParse({ ...post, draft: false, date: '2026-11-16' }).success).toBe(true)
-  })
-
-  it('rejects invalid dates even on drafts', () => {
-    expect(blogSchema.safeParse({ ...post, draft: true, date: 'not-a-date' }).success).toBe(false)
   })
 })

@@ -31,7 +31,7 @@ export const GET: APIRoute = async ({ props }) => {
   const header = [
     '---',
     `title: "${entry.data.title}"`,
-    ...(entry.data.date ? [`date: ${entry.data.date.toISOString()}`] : []),
+    `date: ${entry.data.date.toISOString()}`,
     `description: "${entry.data.description}"`,
     `tags: [${entry.data.tags.map((t: string) => `"${t}"`).join(', ')}]`,
     '---',

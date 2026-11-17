@@ -51,12 +51,12 @@ export const GET: APIRoute = async () => {
 
   // Render blog posts
   const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
-  const sortedPosts = [...blogPosts].sort((a, b) => (b.data.date?.getTime() ?? 0) - (a.data.date?.getTime() ?? 0))
+  const sortedPosts = [...blogPosts].sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
 
   for (const post of sortedPosts) {
     lines.push(`## ${post.data.title}`)
     lines.push('')
-    if (post.data.date) lines.push(`Date: ${post.data.date.toISOString()}`)
+    lines.push(`Date: ${post.data.date.toISOString()}`)
     lines.push(`Tags: ${post.data.tags.join(', ')}`)
     lines.push('')
 

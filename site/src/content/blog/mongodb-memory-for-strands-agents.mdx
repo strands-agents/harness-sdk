@@ -1,5 +1,6 @@
 ---
 title: 'Introducing MongoDB memory for Strands Agents'
+date: 2026-11-18
 description: "Use MongoDB with Strands to resume agent sessions, retain useful facts across conversations, and retrieve long-term memories with semantic search."
 authors:
   - morgan-willis
@@ -41,7 +42,7 @@ You can use either backend on its own, or point both to the same MongoDB deploym
 
 This example uses MongoDB Atlas, MongoDB's managed cloud database service, to store sessions and search long-term memories.
 
-Follow the [MongoDB integration guide](/docs/integrations/integrations/mongodb/) to install the packages and configure Atlas and your model credentials. Once that's ready, save this example as `mongodb_memory.py`:
+Follow [MongoDB's get-started guide](https://www.mongodb.com/docs/atlas/ai-integrations/strands/get-started/) to install the packages and configure Atlas and your model credentials. Once that's ready, save this example as `mongodb_memory.py`:
 
 ```python
 """Persist Strands sessions and long-term memory in MongoDB."""
@@ -109,7 +110,7 @@ if __name__ == "__main__":
 
 When you run the example, `conversation-001` identifies the saved conversation and `project-123` groups the project's long-term memories. With `extraction=True`, Strands uses a model call to extract useful facts from the conversation and save them as memories. Leaving the `async with` block waits for that extraction work to finish before the connections close.
 
-To try recalling those facts, start a new session with the same memory scope and ask, "What test setup does this project require?" The agent should mention the separate database even though you haven't repeated that requirement in the new conversation. The integration guide includes the command to run this check.
+To try recalling those facts, start a new session with the same memory scope and ask, "What test setup does this project require?" The agent should mention the separate database even though you haven't repeated that requirement in the new conversation. [MongoDB's get-started guide](https://www.mongodb.com/docs/atlas/ai-integrations/strands/get-started/) includes the command to run this check.
 
 ## Choosing how your agent searches memory
 
@@ -131,4 +132,4 @@ As those conversations continue, you also need to manage what accumulates in eac
 
 Thanks to the MongoDB team for building the integration.
 
-Try the example with the [MongoDB integration guide](/docs/integrations/integrations/mongodb/), and join us in the [Strands Discord](https://discord.gg/strands) if you have questions or want to share what you're building.
+Try the example with [MongoDB's get-started guide](https://www.mongodb.com/docs/atlas/ai-integrations/strands/get-started/), and join us in the [Strands Discord](https://discord.gg/strands) if you have questions or want to share what you're building.

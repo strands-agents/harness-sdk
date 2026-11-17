@@ -17,7 +17,7 @@ const href = pathWithBase(`/blog/${post.id}/`)
   {coverImage && <img src={coverImage} alt="" class="blog-card-cover" />}
   <div class="blog-card-body">
     <div class="blog-card-meta">
-      {date ? <time datetime={date.toISOString()}>{formatDate(date)}</time> : <span>Draft</span>}
+      <time datetime={date.toISOString()}>{formatDate(date)}</time>
       {readingTime && <span class="blog-card-reading-time">{readingTime}</span>}
     </div>
     <h3 class="blog-card-title">{title}</h3>

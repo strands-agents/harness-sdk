@@ -135,7 +135,7 @@ function buildLlmsTxt(
 
   // Blog posts - sorted by date descending
   if (blogPosts.length > 0) {
-    const sorted = [...blogPosts].sort((a, b) => (b.data.date?.getTime() ?? 0) - (a.data.date?.getTime() ?? 0))
+    const sorted = [...blogPosts].sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
     lines.push(`## Blog`)
     lines.push('')
     for (const post of sorted) {
