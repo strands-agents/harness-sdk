@@ -3,8 +3,7 @@ description: Answer closed questions for Strands agents with a decision model de
 integrationType: decision-model
 maintainedBy: strands
 languages:
-  python: {}
   typescript: {}
-github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/sagemaker_decision_model.py
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/sagemaker.ts
 docsPage: docs/user-guide/sdk/decision-models/models
 addedDate: 2026-11-12
