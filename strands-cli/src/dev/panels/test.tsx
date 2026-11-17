@@ -1,15 +1,10 @@
-import { useMemo, useState, useSyncExternalStore, type ReactElement } from 'react'
+import { useState, useSyncExternalStore, type ReactElement } from 'react'
 import { useInput } from 'ink'
-import stringWidth from 'string-width'
 
-import { sanitizeTerminalText, wrapWords } from '../../terminal/text.js'
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { useSpinner } from '../../ui/animation.js'
-import { Box, Text, useTheme } from '../../ui/theme.js'
 import {
   isGenerating,
-  type CaseResult,
-  type EvaluatorVerdict,
   type ExperimentRun,
   type ExperimentsState,
   type ExperimentSummary,
@@ -20,7 +15,6 @@ import {
   type TestState,
 } from './model.js'
 import {
-  Field,
   formatSeconds,
   Fill,
   Gap,
@@ -32,9 +26,7 @@ import {
   PanelTitle,
   plural,
   ProgressBar,
-  Rule,
   shortcut,
-  SplitLine,
   StoppedView,
   useCursor,
   useElapsed,
@@ -42,18 +34,14 @@ import {
   type ListItem,
   type Tone,
 } from './ui.js'
+import { CaseReport } from './report.js'
 
 export interface TestPanelProps extends DevChatPanelProps {
   readonly session: TestSession
 }
 
 const COMMAND = 'test'
-const FIXED_ROWS = 4
-const SCORE_COLUMN = 6
 const LIST_CHROME_ROWS = 3
-const CASE_CHROME_ROWS = 2
-const CASE_INDENT = '  '
-const CASE_LABEL_GAP = 2
 
 type TestRow =
   | { readonly kind: 'experiment'; readonly experiment: ExperimentSummary; readonly run?: TestRun }
@@ -298,22 +286,6 @@ const RunningView = ({
   )
 }
 
-const caseLine = (result: CaseResult): ListItem => {
-  const failure = result.verdicts.find((verdict) => !verdict.passed)
-  return {
-    key: result.name,
-    label: result.name,
-    detail: failure?.reason ?? result.verdicts[0]?.reason ?? '',
-    mark: result.passed ? { text: '✓', tone: 'success' } : { text: '✗', tone: 'error' },
-    ...(result.passed ? { tone: 'muted' as const } : {}),
-  }
-}
-
-const failuresFirst = (results: TestResults): CaseResult[] => [
-  ...results.cases.filter((result) => !result.passed),
-  ...results.cases.filter((result) => result.passed),
-]
-
 const ResultsView = ({
   width,
   height,
@@ -327,202 +299,23 @@ const ResultsView = ({
   onRerun: () => void
   onRunAgain: () => void
 }): ReactElement => {
-  const ordered = failuresFirst(results)
-  const cursor = useCursor(ordered.length)
-  const reading = useSyncedState(false)
-  const index = cursor.index
-  const current = ordered[index]
-  const failed = ordered.filter((result) => !result.passed).length
+  const failed = results.cases.filter((result) => !result.passed).length
   const checks = results.cases.reduce((total, result) => total + result.verdicts.length, 0)
-  const verdictRows = current?.verdicts.length ?? 0
-  const capacity = Math.max(1, height - FIXED_ROWS - verdictRows - 1)
-  const read = (at: number): void => {
-    if (!ordered[at]) return
-    cursor.set(at)
-    reading.set(true)
-  }
-  useInput((input, key) => {
-    if (reading.current() && current) return
-    const typed = shortcut(input, key)
-    if (key.escape) onBack()
-    else if (key.upArrow) cursor.move(-1)
-    else if (key.downArrow) cursor.move(1)
-    else if (key.return || key.rightArrow) read(cursor.current())
-    else if (typed === 'r' && failed > 0) onRerun()
-    else if (typed === 'a') onRunAgain()
-  })
-  if (reading.value && current)
-    return (
-      <CaseView
-        width={width}
-        height={height}
-        experiment={results.experiment}
-        result={current}
-        onBack={() => reading.set(false)}
-      />
-    )
-  const labelWidth = labelWidthFor(current?.verdicts.map(({ evaluator }) => evaluator) ?? [], width)
   return (
-    <>
-      <PanelTitle
-        name={COMMAND}
-        parts={[
-          results.experiment,
-          plural(results.cases.length, 'case'),
-          plural(results.evaluators.length, 'evaluator'),
-        ]}
-        right={<ProgressBar done={results.cases.length} total={results.cases.length} />}
-      />
-      <SplitLine
-        left={<Tally passed={results.cases.length - failed} failed={failed} />}
-        right={
-          <Text dimColor>
-            {`${formatSeconds(results.seconds)} · ${plural(checks, 'check')} · score ${results.overall.toFixed(2)}`}
-          </Text>
-        }
-      />
-      <ItemList
-        items={ordered.map(caseLine)}
-        selected={index}
-        capacity={capacity}
-        labelWidth={labelWidthFor(
-          ordered.map(({ name }) => name),
-          width
-        )}
-        onClick={read}
-      />
-      <Rule width={width} />
-      {current?.verdicts.map((verdict) => (
-        <Field
-          key={verdict.evaluator}
-          label={verdict.evaluator}
-          value={`${(verdict.passed ? '✓' : '✗').padEnd(2)} ${verdict.score.toFixed(2).padEnd(SCORE_COLUMN)}${verdict.reason}`}
-          labelWidth={labelWidth + 2}
-          {...(verdict.passed ? {} : { tone: 'error' as const })}
-        />
-      ))}
-      <Fill />
-      <KeyHints
-        hints={[
-          '↑↓',
-          'Enter open case',
-          ...(failed > 0 ? ['r rerun failed'] : []),
-          'a rerun all',
-          'Esc back to the list',
-        ]}
-      />
-    </>
-  )
-}
-
-interface CaseRow {
-  readonly label: string
-  readonly lead: string
-  readonly text: string
-  readonly passed?: boolean
-}
-
-const verdictLead = ({ passed, score }: EvaluatorVerdict): string => `${passed ? '✓' : '✗'} ${score.toFixed(2)}  `
-
-const orNone = (text: string | undefined): string => (text?.trim() ? text : '(none)')
-
-const caseFields = (result: CaseResult): CaseRow[] => [
-  ...result.verdicts.map((verdict) => ({
-    label: verdict.evaluator,
-    lead: verdictLead(verdict),
-    text: verdict.reason,
-    passed: verdict.passed,
-  })),
-  { label: 'input', lead: '', text: result.input },
-  { label: 'expected', lead: '', text: orNone(result.expected) },
-  { label: 'output', lead: '', text: orNone(result.actual) },
-]
-
-const wrapCaseRows = (fields: readonly CaseRow[], width: number): CaseRow[] =>
-  fields.flatMap(({ label, lead, text, passed }) => {
-    const leadWidth = stringWidth(lead)
-    return wrapWords(sanitizeTerminalText(text), width - leadWidth).map((part, index) => ({
-      label: index === 0 ? label : '',
-      lead: index === 0 ? lead : ' '.repeat(leadWidth),
-      text: part,
-      ...(passed === undefined ? {} : { passed }),
-    }))
-  })
-
-const CaseView = ({
-  width,
-  height,
-  experiment,
-  result,
-  onBack,
-}: {
-  width: number
-  height: number
-  experiment: string
-  result: CaseResult
-  onBack: () => void
-}): ReactElement => {
-  const { success, error } = useTheme()
-  const fields = useMemo(() => caseFields(result), [result])
-  const labelWidth = labelWidthFor(
-    fields.map(({ label }) => label),
-    width
-  )
-  const labelColumn = CASE_INDENT.length + labelWidth
-  const rows = useMemo(() => wrapCaseRows(fields, width - labelColumn - CASE_LABEL_GAP), [fields, width, labelColumn])
-  const room = Math.max(1, height - CASE_CHROME_ROWS)
-  const lastOffset = Math.max(0, rows.length - room)
-  const page = Math.max(1, room - 1)
-  const scroll = useSyncedState(0)
-  const offset = Math.min(scroll.value, lastOffset)
-  const scrollBy = (step: number): void =>
-    scroll.set((value) => Math.max(0, Math.min(lastOffset, Math.min(value, lastOffset) + step)))
-  useInput((_input, key) => {
-    if (key.escape || key.return || key.leftArrow || key.backspace || key.delete) onBack()
-    else if (key.upArrow) scrollBy(-1)
-    else if (key.downArrow) scrollBy(1)
-    else if (key.pageUp) scrollBy(-page)
-    else if (key.pageDown) scrollBy(page)
-    else if (key.home) scroll.set(0)
-    else if (key.end) scroll.set(lastOffset)
-  })
-  const visible = rows.slice(offset, offset + room)
-  const scrolls = rows.length > room
-  return (
-    <>
-      <PanelTitle
-        name={COMMAND}
-        parts={[experiment, result.name, result.passed ? 'passed' : 'failed']}
-        right={
-          scrolls ? (
-            <Text dimColor>{`lines ${offset + 1}-${offset + visible.length} of ${rows.length}`}</Text>
-          ) : undefined
-        }
-      />
-      <Box flexDirection="column" height={room} flexShrink={0} overflow="hidden">
-        {visible.map((row, position) => (
-          <Box key={offset + position} height={1} flexShrink={0} overflow="hidden">
-            <Box width={labelColumn} marginRight={CASE_LABEL_GAP} flexShrink={0} overflow="hidden">
-              <Text dimColor wrap="truncate-end">{`${CASE_INDENT}${oneLine(row.label)}`}</Text>
-            </Box>
-            <Text wrap="truncate-end">
-              {row.lead ? <Text color={row.passed ? success : error}>{row.lead}</Text> : null}
-              {row.text}
-            </Text>
-          </Box>
-        ))}
-      </Box>
-      <KeyHints hints={scrolls ? ['↑↓ scroll', 'Esc back to the report'] : ['Esc back to the report']} />
-    </>
-  )
-}
-
-const Tally = ({ passed, failed }: { passed: number; failed: number }): ReactElement => {
-  const { success, error } = useTheme()
-  return (
-    <Text>
-      <Text color={success}>{`  ✓ ${passed} passed`}</Text>
-      <Text {...(failed > 0 ? { color: error } : { dimColor: true })}>{`   ✗ ${failed} failed`}</Text>
-    </Text>
+    <CaseReport
+      command={COMMAND}
+      context={[results.experiment]}
+      details={[plural(results.cases.length, 'case'), plural(results.evaluators.length, 'evaluator')]}
+      cases={results.cases}
+      summary={`${formatSeconds(results.seconds)} · ${plural(checks, 'check')} · score ${results.overall.toFixed(2)}`}
+      keys={[
+        ...(failed > 0 ? [{ key: 'r', hint: 'r rerun failed', run: onRerun }] : []),
+        { key: 'a', hint: 'a rerun all', run: onRunAgain },
+      ]}
+      backHint="Esc back to the list"
+      width={width}
+      height={height}
+      onBack={onBack}
+    />
   )
 }
