@@ -462,6 +462,59 @@ describe('Graph', () => {
       ])
     })
 
+    it('forwards the validated structured output, not the raw tool input', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
+        ),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string(), priority: z.string().default('normal') }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing","priority":"normal"}'),
+      ])
+    })
+
+    it('emits the structured output only once when the turn contains multiple structured-output calls', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn([
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } }),
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't2', input: { category: 'other' } }),
+        ]),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
+    })
+
     it('forwards a nested MultiAgentNode terminus structured output through the outer graph', async () => {
       const classifier = new Agent({
         model: new MockMessageModel().addTurn(
