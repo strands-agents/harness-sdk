@@ -1214,13 +1214,19 @@ async def test_event_loop_cycle_exception_model_hooks(mock_sleep, agent, model, 
 async def test_event_loop_cycle_raises_when_tool_use_names_no_tool_every_attempt(
     agent, model, messages, agenerator, alist, hook_provider
 ):
-    attempts = strands.event_loop.event_loop._MAX_EMPTY_TOOL_USE_RETRIES + 1
+    attempts = 3
     model.stream.side_effect = [
         agenerator(
             [
                 {"contentBlockDelta": {"delta": {"text": "<thinking>let me look that up</parameter>"}}},
                 {"contentBlockStop": {}},
                 {"messageStop": {"stopReason": "tool_use"}},
+                {
+                    "metadata": {
+                        "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+                        "metrics": {"latencyMs": 100},
+                    }
+                },
             ]
         )
         for _ in range(attempts)
@@ -1232,6 +1238,12 @@ async def test_event_loop_cycle_raises_when_tool_use_names_no_tool_every_attempt
 
     assert model.stream.call_count == attempts
     assert agent.messages == messages
+    assert agent.event_loop_metrics.accumulated_usage == {
+        "inputTokens": 10 * attempts,
+        "outputTokens": 5 * attempts,
+        "totalTokens": 15 * attempts,
+    }
+    assert agent.event_loop_metrics.accumulated_metrics["latencyMs"] == 100 * attempts
 
     _, events = hook_provider.get_events()
     after_events = [event for event in events if isinstance(event, AfterModelCallEvent)]
