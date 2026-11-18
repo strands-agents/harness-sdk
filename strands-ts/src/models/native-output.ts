@@ -201,7 +201,7 @@ export function findUnsupportedNativeOutputFeature(schema: JSONSchema): string |
  *
  * @param schema - A JSON schema, for example from `z.toJSONSchema()`
  * @returns The converted schema
- * @throws Error if a schema node has no `type`, `anyOf`, `oneOf`, `allOf` or `$ref`
+ * @throws Error if a schema node has no `type`, `anyOf`, `oneOf`, `allOf`, `$ref`, or primitive `enum` or `const`
  *
  * @internal
  */
@@ -268,10 +268,11 @@ function convertNode(schema: SchemaNode): SchemaNode {
     return converted
   }
 
-  const type = take(remaining, 'type')
+  let type = take(remaining, 'type')
+  if (convertLiterals(remaining, converted)) type = undefined
   convertComposition(remaining, converted, type)
 
-  for (const key of ['enum', 'description', 'title']) {
+  for (const key of ['description', 'title']) {
     const value = take(remaining, key)
     if (value !== undefined) converted[key] = value
   }
@@ -298,8 +299,33 @@ function convertComposition(remaining: SchemaNode, converted: SchemaNode, type: 
   if (Array.isArray(anyOf)) converted['anyOf'] = anyOf.map((variant) => convertNode(variant as SchemaNode))
   else if (Array.isArray(oneOf)) converted['anyOf'] = oneOf.map((variant) => convertNode(variant as SchemaNode))
   else if (Array.isArray(allOf)) converted['allOf'] = allOf.map((variant) => convertNode(variant as SchemaNode))
-  else if (type === undefined) throw new Error("Schema must have a 'type', 'anyOf', 'oneOf', or 'allOf' field.")
-  else converted['type'] = type
+  else if (type !== undefined) converted['type'] = type
+  else if (!('enum' in converted) && !('const' in converted)) {
+    throw new Error(
+      "Schema must have a 'type', 'anyOf', 'oneOf', or 'allOf' field, " +
+        "or a 'const' or non-empty 'enum' of strings, numbers, booleans, or null."
+    )
+  }
+}
+
+/** Moves a primitive `enum` or `const` into the converted schema, returning whether either was moved. */
+function convertLiterals(remaining: SchemaNode, converted: SchemaNode): boolean {
+  const values = remaining['enum']
+  if (Array.isArray(values) && values.length > 0 && values.every(isPrimitive)) {
+    converted['enum'] = values
+    take(remaining, 'enum')
+  }
+  const constValue = remaining['const']
+  if ('const' in remaining && isPrimitive(constValue)) {
+    converted['const'] = constValue as JSONValue
+    take(remaining, 'const')
+  }
+  return 'enum' in converted || 'const' in converted
+}
+
+/** Whether a value is one native structured output accepts in `enum` and `const`. */
+function isPrimitive(value: JSONValue | undefined): boolean {
+  return value === null || (value !== undefined && typeof value !== 'object')
 }
 
 function convertObject(remaining: SchemaNode, converted: SchemaNode): void {

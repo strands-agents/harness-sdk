@@ -16,6 +16,7 @@ import {
   ReasoningBlock,
   InjectedBlock,
   SummaryBlock,
+  OffloadedBlock,
   UnknownBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
@@ -216,6 +217,7 @@ describe('AnthropicModel', () => {
     it.each([
       ['claude-opus-5-5', true],
       ['claude-opus-5-5-20260401', true],
+      ['claude-haiku-5-5', false], // the API takes them, the model rarely uses their text (#6227)
       ['claude-sonnet-5', false],
       ['claude-sonnet-4-6', false],
     ])('reports temporary messages from the shared model info for %s: %s', (modelId, expected) => {
@@ -391,10 +393,14 @@ describe('AnthropicModel', () => {
       expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'toolUse' })
     })
 
-    it('maps anthropic stop reason "refusal" to "refusal"', async () => {
+    it.each([
+      ['refusal', 'refusal'],
+      ['max_tokens', 'maxTokens'],
+      ['stop_sequence', 'stopSequence'],
+    ])('maps anthropic stop reason "%s" to "%s"', async (anthropicReason, expectedReason) => {
       const mockClient = createMockClient(async function* () {
         yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 1 } } }
-        yield { type: 'message_delta', delta: { stop_reason: 'refusal' }, usage: { output_tokens: 1 } }
+        yield { type: 'message_delta', delta: { stop_reason: anthropicReason }, usage: { output_tokens: 1 } }
         yield { type: 'message_stop' }
       })
 
@@ -403,7 +409,7 @@ describe('AnthropicModel', () => {
 
       const events = await collectIterator(provider.stream(messages))
 
-      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'refusal' })
+      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: expectedReason })
     })
 
     it('handles thinking/reasoning events', async () => {
@@ -1062,6 +1068,25 @@ describe('AnthropicModel', () => {
       // The request the provider receives carries only role and content — never trackingId or metadata.
       expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }])
       expect('trackingId' in captured.request.messages[0]).toBe(false)
+    })
+
+    it('sends an offloaded block as the text the model receives, at top level and inside a tool result', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ modelId: 'claude-3-opus', maxTokens: 1000, client: mockClient })
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [placeholder, new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: '[Dropped] [ref: tu-1]' },
+        { type: 'tool_result', tool_use_id: 'tu-1', is_error: false, content: '[Dropped] [ref: tu-1]' },
+      ])
     })
 
     it('formats tools correctly', async () => {

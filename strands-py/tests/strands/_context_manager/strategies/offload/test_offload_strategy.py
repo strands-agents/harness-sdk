@@ -40,6 +40,22 @@ def _text(role, text):
     return Message(role=role, content=[ContentBlock(text=text)])
 
 
+def _count_messages_over_window(agent):
+    """Count against a 100k window where the messages overrun it and the system prompt and tool specs do not."""
+
+    async def count_tokens(messages, **_kwargs):
+        return 110000 if messages else 1000
+
+    agent.model.count_tokens = unittest.mock.AsyncMock(side_effect=count_tokens)
+    agent.model.estimate_utilization = unittest.mock.MagicMock(side_effect=lambda tokens: tokens / 100000)
+
+
+def _count_messages_under_window(agent):
+    """Count against a 100k window the messages fit inside."""
+    agent.model.count_tokens = unittest.mock.AsyncMock(return_value=1000)
+    agent.model.estimate_utilization = unittest.mock.MagicMock(side_effect=lambda tokens: tokens / 100000)
+
+
 def _make_tool_pair(tool_name="my_tool", tool_use_id="tu-1"):
     """Create an assistant tool-use message + user tool-result message pair."""
     assistant_msg = Message(
@@ -637,9 +653,29 @@ class TestEmergencyTruncateStrategy:
     """Tests for the last-resort emergency truncation."""
 
     @pytest.mark.asyncio
-    async def test_fires_when_utilization_above_one(self, mock_agent):
-        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=110000)
-        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=1.1)
+    async def test_fires_when_the_messages_alone_fill_the_window(self, mock_agent):
+        """The messages are what this strategy removes, so they are what it measures."""
+        _count_messages_over_window(mock_agent)
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+            Message(role="user", content=[ContentBlock(text="u3")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.2)
+        assert await strategy.apply(context) is True
+        assert len(messages) < 5
+
+    @pytest.mark.asyncio
+    async def test_skips_when_the_messages_fit_and_the_request_does_not(self, mock_agent):
+        """The pipeline's utilization carries the system prompt and tool specs as well as the messages.
+
+        Dropping messages cannot shrink those, so the gate measures only what it would drop.
+        """
+        _count_messages_under_window(mock_agent)
         strategy = EmergencyTruncateStrategy()
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -650,6 +686,23 @@ class TestEmergencyTruncateStrategy:
         ]
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=1.1)
+        assert await strategy.apply(context) is False
+        assert len(messages) == 5
+
+    @pytest.mark.asyncio
+    async def test_truncates_on_overflow_even_when_the_messages_fit(self, mock_agent):
+        """An overflow signal is the provider's verdict on a request it refused, so it outranks the estimate."""
+        _count_messages_under_window(mock_agent)
+        strategy = EmergencyTruncateStrategy()
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(role="assistant", content=[ContentBlock(text="a1")]),
+            Message(role="user", content=[ContentBlock(text="u2")]),
+            Message(role="assistant", content=[ContentBlock(text="a2")]),
+            Message(role="user", content=[ContentBlock(text="u3")]),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.2, overflow=True)
         assert await strategy.apply(context) is True
         assert len(messages) < 5
 

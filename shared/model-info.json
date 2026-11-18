@@ -170,7 +170,7 @@
         "forcedToolChoice": false,
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
-        "temporaryMessages": true,
+        "temporaryMessages": false,
         "defaultEffort": "medium"
       }
     },
@@ -375,6 +375,26 @@
     "zai.glm-5.3": {
       "limits": {
         "contextWindow": 1000000
+      }
+    },
+    "gpt-6.2-astra": {
+      "limits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "defaultEffort": "low"
+      }
+    },
+    "gpt-6.2-sol": {
+      "limits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "defaultEffort": "low"
       }
     },
     "gpt-6-astra": {
@@ -716,7 +736,7 @@
     },
     "mistral-large-latest": {
       "limits": {
-        "contextWindow": 262144
+        "contextWindow": 1048576
       }
     },
     "mistral-large-2512": {
@@ -864,6 +884,11 @@
       },
       "capabilities": {
         "defaultEffort": "medium"
+      }
+    },
+    "gemini-4-hydrogen": {
+      "limits": {
+        "contextWindow": 1048576
       }
     },
     "gemini-4-argon": {

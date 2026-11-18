@@ -18,7 +18,7 @@ option is used in practice, follow the links into the configure and tools guides
 
 | Python | TypeScript | Default | Purpose |
 |---|---|---|---|
-| `model` | `model` | `bedrock/global.anthropic.claude-opus-5` | A `provider/name` string, a bare Amazon Bedrock id, or a `Model` instance. See [choose a model](../../configure/model/). |
+| `model` | `model` | `bedrock/global.anthropic.claude-opus-5-5` | A `provider/name` string, a bare Amazon Bedrock id, or a `Model` instance. See [choose a model](../../configure/model/). |
 | `effort` | `effort` | `"auto"` | Reasoning effort: `"auto"`, `"low"`, `"medium"`, `"high"`, or off. Ignored for a `Model` instance. |
 | `instructions` | `instructions` | none | A domain block appended after the harness contract. Ignored when a full system prompt is passed. |
 | `tools` | `tools` | none | Consumer tools, added alongside the built-ins. See [add tools](../../configure/tools-and-instructions/). |
@@ -40,7 +40,7 @@ option is used in practice, follow the links into the configure and tools guides
 
 ## Value notes
 
-- **`effort`** accepts `"auto"` (provider recommended), `"low"`/`"medium"`/`"high"`
+- **`effort`** accepts `"auto"` (the model vendor's default, else `high`), `"low"`/`"medium"`/`"high"`
   (explicit; some providers accept finer levels), and `"off"`. A level the
   resolved provider rejects fails at construction.
 - **`caching`** accepts `"auto"`/`True` (on), `False`/`None` (off). Off has no effect where

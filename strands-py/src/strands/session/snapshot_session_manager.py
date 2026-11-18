@@ -443,7 +443,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
     def redact_latest_message(self, redact_message: Message, agent: LocalAgent, **kwargs: Any) -> None:
         """Persist immediately after a guardrail redaction, under every strategy.
 
-        The Agent has already applied the redaction to ``agent.messages[-1]`` before
+        The Agent has already applied the redaction to the last user message before
         calling this, so re-capturing the agent flushes pre-redaction content out of
         the persisted latest snapshot. This flush happens regardless of ``save_latest_on``
         (including ``"trigger"``) because the Agent invokes this method directly, not through
@@ -453,7 +453,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
 
         Args:
             redact_message: The redacted replacement message (already applied by the Agent).
-            agent: Agent whose latest message was redacted.
+            agent: Agent whose last user message was redacted.
             **kwargs: Additional keyword arguments for future extensibility.
         """
         run_async(lambda: self._save_latest(agent))

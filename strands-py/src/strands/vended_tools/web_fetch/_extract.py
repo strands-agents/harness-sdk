@@ -2,7 +2,10 @@
 
 Converts fetched HTML into markdown suitable for a model to read. Non-content
 elements are removed and ``data:`` URI images are replaced with their alt text
-so large inline blobs do not bloat the output. The page title is prepended.
+so large inline blobs do not bloat the output. Images with a ``javascript:`` or
+``vbscript:`` source are dropped, and links with a ``javascript:``,
+``vbscript:``, or ``data:`` href are reduced to their text. The page title is
+prepended.
 """
 
 from __future__ import annotations
@@ -45,12 +48,18 @@ _DROPPED_ELEMENTS = frozenset(
     ]
 )
 
+_SCRIPT_SCHEMES = frozenset(["javascript", "vbscript"])
+
+# Format characters (Cf) that the Unicode tables of Python 3.10 and 3.11 predate.
+_NEWER_FORMAT_CHARACTERS = frozenset(map(chr, (0x0890, 0x0891, *range(0x13439, 0x13440))))
+
 
 def _url_scheme(url: str) -> str:
-    """Return the URL scheme, stripping leading invisible characters first."""
+    """Return the URL scheme, stripping leading whitespace and invisible characters first."""
     for index, char in enumerate(url):
-        if unicodedata.category(char) not in ("Cc", "Cf", "Zs"):
-            return urlparse(url[index:]).scheme
+        if char not in _NEWER_FORMAT_CHARACTERS and unicodedata.category(char) not in ("Cc", "Cf", "Zs", "Zl", "Zp"):
+            # A scheme ends before the first "/". urlparse can raise on what follows (a malformed host).
+            return urlparse(url[index:].partition("/")[0]).scheme
     return ""
 
 
@@ -71,12 +80,13 @@ def _sanitize_tree(soup: BeautifulSoup) -> None:
         # data: URI blobs can be enormous, so replace them with their alt text.
         if scheme == "data":
             image.replace_with(_tag_attribute(image, "alt"))
-        # javascript: sources are not useful to a model.
-        elif scheme == "javascript":
+        # Script sources are not useful to a model.
+        elif scheme in _SCRIPT_SCHEMES:
             image.decompose()
-    # Unwrap javascript: links to their text so the scheme never reaches output.
+    # Unwrap script-scheme and data: links to their text so the scheme never reaches output.
     for anchor in soup.find_all("a"):
-        if _url_scheme(_tag_attribute(anchor, "href")) == "javascript":
+        scheme = _url_scheme(_tag_attribute(anchor, "href"))
+        if scheme in _SCRIPT_SCHEMES or scheme == "data":
             anchor.unwrap()
 
 
