@@ -194,20 +194,26 @@ def mock_tracer():
     return tracer
 
 
+@pytest.mark.parametrize("sort_tools", [None, False, True])
 @pytest.mark.parametrize("reverse", [False, True])
-def test_model_call_tool_order(tool, tool_times_2, tool_times_5, reverse):
-    # Stable model-facing tool order without changing registration order (#5700).
+def test_model_call_tool_order(tool, tool_times_2, tool_times_5, sort_tools, reverse):
+    # Opt-in stable model-facing tool order without changing registration order (#5700).
     tools = [tool, tool_times_5, tool_times_2]
     if reverse:
         tools.reverse()
+    options = {} if sort_tools is None else {"sort_tools": sort_tools}
     model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}])
-    agent = Agent(model=model, tools=tools, callback_handler=None)
+    agent = Agent(model=model, tools=tools, callback_handler=None, **options)
 
     with patch.object(model, "stream", wraps=model.stream) as stream:
         agent("hello")
 
     tru_specs = stream.call_args.args[1]
-    exp_specs = [tool_times_2.tool_spec, tool_times_5.tool_spec, tool.tool_spec]
+    exp_specs = (
+        [tool_times_2.tool_spec, tool_times_5.tool_spec, tool.tool_spec]
+        if sort_tools
+        else [registered.tool_spec for registered in tools]
+    )
     assert tru_specs == exp_specs
     tru_tool_names = agent.tool_names
     exp_tool_names = [registered.tool_name for registered in tools]
@@ -217,7 +223,7 @@ def test_model_call_tool_order(tool, tool_times_2, tool_times_5, reverse):
 def test_model_call_tool_order_before_middleware(tool, tool_times_2, tool_times_5):
     # Middleware sees sorted specs, and whatever order it passes on is sent as-is (#5700).
     model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}])
-    agent = Agent(model=model, tools=[tool, tool_times_2], callback_handler=None)
+    agent = Agent(model=model, tools=[tool, tool_times_2], sort_tools=True, callback_handler=None)
     middleware_specs = [tool.tool_spec, tool_times_5.tool_spec, tool_times_2.tool_spec]
     original_specs = copy.deepcopy(middleware_specs)
     choice = {"tool": {"name": tool.tool_name}}
@@ -246,7 +252,7 @@ def test_model_call_tool_order_before_middleware(tool, tool_times_2, tool_times_
 
 def test_model_call_tool_order_on_retry(tool, tool_times_2, tool_times_5):
     model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}] * 2)
-    agent = Agent(model=model, tools=[tool, tool_times_5], callback_handler=None)
+    agent = Agent(model=model, tools=[tool, tool_times_5], sort_tools=True, callback_handler=None)
 
     def retry_with_added_tool(event):
         if model.index == 1:

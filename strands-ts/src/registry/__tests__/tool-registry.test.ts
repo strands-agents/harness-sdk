@@ -287,12 +287,16 @@ describe('ToolRegistry', () => {
   })
 
   describe('toolSpecs', () => {
-    it('returns specs sorted by name and leaves list() in registration order (#5700)', () => {
+    it.each([
+      { options: undefined, expected: ['zeta', 'alpha', 'Mike'] },
+      { options: { sortToolSpecs: false }, expected: ['zeta', 'alpha', 'Mike'] },
+      { options: { sortToolSpecs: true }, expected: ['Mike', 'alpha', 'zeta'] },
+    ])('returns specs in order $expected for options $options (#5700)', ({ options, expected }) => {
       const tools = ['zeta', 'alpha', 'Mike'].map((name) =>
         createMockTool({ name, toolSpec: { name, description: 'd', inputSchema: { type: 'object', properties: {} } } })
       )
-      registry.add(tools)
-      expect(registry.toolSpecs().map((spec) => spec.name)).toStrictEqual(['Mike', 'alpha', 'zeta'])
+      registry = new ToolRegistry(tools, options)
+      expect(registry.toolSpecs().map((spec) => spec.name)).toStrictEqual(expected)
       expect(registry.list()).toStrictEqual(tools)
     })
   })

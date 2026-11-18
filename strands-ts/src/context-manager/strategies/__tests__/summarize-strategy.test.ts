@@ -857,7 +857,7 @@ describe('server-side summary', () => {
     const { model } = baseModel(true)
     const summarize = vi.spyOn(model, 'summarize').mockResolvedValue(summaryResult('compacted', 'anthropic'))
     const messages = serverSideMessages()
-    const toolRegistry = new ToolRegistry()
+    const toolRegistry = new ToolRegistry(undefined, { sortToolSpecs: true })
     toolRegistry.add(['zeta', 'alpha', 'mike'].map((name) => createMockTool(name, () => 'OK')))
     const agent = createMockAgent({
       messages,

@@ -33,8 +33,14 @@ class ToolRegistry:
     This class manages tool registration, validation, discovery, and invocation.
     """
 
-    def __init__(self) -> None:
-        """Initialize the tool registry."""
+    def __init__(self, *, sort_tool_specs: bool = False) -> None:
+        """Initialize the tool registry.
+
+        Args:
+            sort_tool_specs: Return tool specs sorted by name from `get_all_tool_specs`. Defaults to False, which
+                keeps registration order.
+        """
+        self.sort_tool_specs = sort_tool_specs
         self.registry: dict[str, AgentTool] = {}
         self.dynamic_tools: dict[str, AgentTool] = {}
         self.tool_config: dict[str, Any] | None = None
@@ -560,18 +566,20 @@ class ToolRegistry:
                 logger.debug("tool_name=<%s> | import error | %s", tool_name, error)
 
     def get_all_tool_specs(self) -> list[ToolSpec]:
-        """Get all the tool specs for all tools in this registry, sorted by name.
+        """Get all the tool specs for all tools in this registry.
 
-        Specs are sorted so that identical tool catalogs always produce the same model request, regardless of
-        registration order (for example, MCP servers returning tools in a different order across restarts).
-        This keeps prompt-cache prefixes stable. Every model-facing path reads specs from here, so they all send
-        the same order. Middleware can still reorder the specs it passes to the model.
+        Every model-facing path reads specs from here, so they all send the same order. When `sort_tool_specs`
+        is set, specs are sorted by name so identical tool catalogs produce the same model request regardless of
+        registration order (for example, MCP servers returning tools in a different order across restarts),
+        which keeps prompt-cache prefixes stable. Middleware can still reorder the specs it passes to the model.
 
         Returns:
-            A list of ToolSpecs, sorted by name.
+            A list of ToolSpecs, in registration order or sorted by name when `sort_tool_specs` is set.
         """
-        all_tools = self.get_all_tools_config()
-        return sorted(all_tools.values(), key=lambda tool_spec: tool_spec["name"])
+        tool_specs = list(self.get_all_tools_config().values())
+        if self.sort_tool_specs:
+            tool_specs.sort(key=lambda tool_spec: tool_spec["name"])
+        return tool_specs
 
     def register_dynamic_tool(self, tool: AgentTool) -> None:
         """Register a tool dynamically for temporary use.

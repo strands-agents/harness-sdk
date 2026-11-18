@@ -7,15 +7,20 @@ import { AfterModelCallEvent } from '../../hooks/events.js'
 
 describe('Agent', () => {
   describe('model-facing tool order (#5700)', () => {
-    it('sends specs sorted by name and keeps registry order', async () => {
+    it.each([undefined, false, true])('sends specs in the right order with sortTools=%s', async (sortTools) => {
       const tools = ['zebra', 'alpha', 'Bravo'].map((name) => createMockTool(name, () => 'OK'))
       for (const registered of [tools, [...tools].reverse()]) {
         const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'OK' })
         const stream = vi.spyOn(model, 'stream')
-        const agent = new Agent({ model, tools: registered, printer: false })
+        const agent = new Agent({
+          model,
+          tools: registered,
+          printer: false,
+          ...(sortTools !== undefined && { sortTools }),
+        })
         await agent.invoke('hello')
 
-        const expected = [tools[2]!, tools[1]!, tools[0]!]
+        const expected = sortTools ? [tools[2]!, tools[1]!, tools[0]!] : registered
         expect(stream.mock.calls[0]?.[1]?.toolSpecs).toEqual(expected.map((tool) => tool.toolSpec))
         expect(agent.tools).toEqual(registered)
       }
@@ -25,7 +30,7 @@ describe('Agent', () => {
       const tools = ['zebra', 'alpha', 'Bravo'].map((name) => createMockTool(name, () => 'OK'))
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'OK' })
       const stream = vi.spyOn(model, 'stream')
-      const agent = new Agent({ model, tools: tools.slice(0, 2), printer: false })
+      const agent = new Agent({ model, tools: tools.slice(0, 2), printer: false, sortTools: true })
       const middlewareSpecs = tools.map((tool) => tool.toolSpec)
       const originalSpecs = globalThis.structuredClone(middlewareSpecs)
       const toolChoice = { tool: { name: 'zebra' } }
@@ -50,7 +55,7 @@ describe('Agent', () => {
         .addTurn({ type: 'textBlock', text: 'OK' })
         .addTurn({ type: 'textBlock', text: 'OK' })
       const stream = vi.spyOn(model, 'stream')
-      const agent = new Agent({ model, tools: tools.slice(0, 2), printer: false })
+      const agent = new Agent({ model, tools: tools.slice(0, 2), printer: false, sortTools: true })
       agent.addHook(AfterModelCallEvent, (event) => {
         if (model.callCount === 1) {
           agent.toolRegistry.add(tools[2]!)

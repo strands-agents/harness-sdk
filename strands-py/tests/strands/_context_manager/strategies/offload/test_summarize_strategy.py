@@ -534,7 +534,7 @@ class TestBatchSummaryReplaysTheAgentRequest:
     @pytest.mark.asyncio
     async def test_sends_the_tools_in_the_same_sorted_order_as_the_model_call(self, mock_agent):
         # The summary must send the same tools block as the main loop to keep the cache and thinking valid (#5700).
-        mock_agent.tool_registry = ToolRegistry()
+        mock_agent.tool_registry = ToolRegistry(sort_tool_specs=True)
         for name in ["zeta", "alpha", "mike"]:
             mock_agent.tool_registry.register_tool(strands.tool(lambda a: a, name=name))
         messages = self._messages()

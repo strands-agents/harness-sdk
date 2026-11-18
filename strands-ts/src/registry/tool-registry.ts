@@ -11,12 +11,18 @@ export const MAX_TOOL_NAME_LENGTH = 64
 export class ToolRegistry {
   private _tools: Map<string, Tool> = new Map()
 
+  /** Whether {@link toolSpecs} returns specs sorted by name. */
+  sortToolSpecs: boolean
+
   /**
    * Creates a new ToolRegistry, optionally pre-populated with tools.
    *
    * @param tools - Optional initial tools to register
+   * @param options - Registry options. `sortToolSpecs` makes {@link toolSpecs} return specs sorted by name;
+   *   defaults to false, which keeps registration order.
    */
-  constructor(tools?: Tool[]) {
+  constructor(tools?: Tool[], options?: { sortToolSpecs?: boolean }) {
+    this.sortToolSpecs = options?.sortToolSpecs ?? false
     if (tools) {
       this.add(tools)
     }
@@ -156,20 +162,20 @@ export class ToolRegistry {
   }
 
   /**
-   * Returns the specs of all registered tools, sorted by name.
+   * Returns the specs of all registered tools, as sent to the model.
    *
-   * Sorting makes identical tool catalogs produce the same model request regardless of registration order
-   * (for example, MCP servers returning tools in a different order across restarts), which keeps
-   * prompt-cache prefixes stable. Every model-facing path reads specs from here so they all send the
-   * same order. Middleware can still reorder the specs it passes to the model. {@link list} keeps
-   * registration order.
+   * Every model-facing path reads specs from here so they all send the same order. When
+   * {@link sortToolSpecs} is set, specs are sorted by name so identical tool catalogs produce the same
+   * model request regardless of registration order (for example, MCP servers returning tools in a
+   * different order across restarts), which keeps prompt-cache prefixes stable. Middleware can still
+   * reorder the specs it passes to the model. {@link list} always keeps registration order.
    *
-   * @returns Array of tool specs, sorted by name
+   * @returns Array of tool specs, in registration order or sorted by name when `sortToolSpecs` is set
    */
   toolSpecs(): ToolSpec[] {
-    return this.list()
-      .map((tool) => tool.toolSpec)
-      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+    const specs = this.list().map((tool) => tool.toolSpec)
+    if (!this.sortToolSpecs) return specs
+    return specs.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
   }
 
   private _validateProperties(tool: Tool): void {

@@ -442,7 +442,7 @@ async def test_structured_output_context_not_enabled(mock_agent, agenerator, ali
     ("model", "exp_tool_names", "exp_structured_output_model"),
     [
         (Mock(), ["ProductModel"], None),
-        (Mock(_supports_structured_output=True), ["ProductModel", "lookup"], ProductModel),
+        (Mock(_supports_structured_output=True), ["lookup", "ProductModel"], ProductModel),
     ],
     ids=["narrowed", "enforced_by_model"],
 )
