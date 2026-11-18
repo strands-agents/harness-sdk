@@ -32,6 +32,7 @@ describe('webFetch against a loopback server', () => {
 
   beforeEach(() => {
     requests = []
+    vi.mocked(addressGuard.isPublicHost).mockReset()
   })
 
   afterAll(() => {

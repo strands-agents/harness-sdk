@@ -52,6 +52,12 @@ describe('isPublicHost', () => {
     await expect(isPublicHost('host.example')).resolves.toBe(false)
   })
 
+  it('is not public when the host resolves to no address', async () => {
+    mockLookup()
+
+    await expect(isPublicHost('host.example')).resolves.toBe(false)
+  })
+
   it('resolves every address of the host, without the brackets of an IPv6 literal', async () => {
     mockLookup('::1')
 

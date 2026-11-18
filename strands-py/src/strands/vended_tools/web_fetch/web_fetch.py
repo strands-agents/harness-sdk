@@ -312,7 +312,10 @@ async def _check_public(url: httpx.URL, timeout: float | None) -> None:
     except asyncio.TimeoutError as error:
         raise WebFetchError(f"Fetch timed out: {str(url)!r}") from error
     except OSError as error:
-        raise WebFetchError(f"Fetch failed: could not resolve host {host!r} to check its address") from error
+        raise WebFetchError(
+            f"Fetch failed: could not resolve host {host!r} to check its address. If a proxy or custom transport "
+            "resolves names for the client, set allow_private_addresses=True on make_web_fetch."
+        ) from error
     if not is_public:
         raise WebFetchError(
             f"Fetch refused: {host!r} is or resolves to a loopback, link-local, private, or other non-public address. "

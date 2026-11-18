@@ -20,7 +20,7 @@ from strands.vended_tools.web_fetch import (
     make_web_fetch,
 )
 from strands.vended_tools.web_fetch import _extract as extract_module
-from strands.vended_tools.web_fetch._address_guard import is_public_address
+from strands.vended_tools.web_fetch._address_guard import is_public_address, is_public_host
 from strands.vended_tools.web_fetch._extract import _tag_attribute, html_to_markdown
 from strands.vended_tools.web_fetch.web_fetch import _parse_charset
 
@@ -294,6 +294,12 @@ class TestNonPublicAddresses:
     def test_is_public_address(self, address, expected):
         assert is_public_address(address) is expected
 
+    @pytest.mark.asyncio
+    async def test_host_resolving_to_no_address_is_not_public(self, monkeypatch):
+        monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [])
+
+        assert await is_public_host("host.example") is False
+
     @pytest.mark.parametrize(
         "url",
         [
@@ -335,7 +341,8 @@ class TestNonPublicAddresses:
         tool = make_web_fetch(client=self._recording_client(requests), mode="markdown")
 
         with pytest.raises(
-            WebFetchError, match="^Fetch failed: could not resolve host 'unknown.example' to check its address"
+            WebFetchError,
+            match="^Fetch failed: could not resolve host 'unknown.example'.*allow_private_addresses=True",
         ):
             await tool(url="https://unknown.example/")
         assert requests == []

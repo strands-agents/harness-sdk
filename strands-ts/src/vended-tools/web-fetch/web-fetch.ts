@@ -249,7 +249,8 @@ async function _checkPublic(url: URL, signal: AbortSignal | null): Promise<void>
       throw new Error('Web fetch tool request cancelled', { cause: error })
     }
     throw new Error(
-      `url=<${url.href}> | fetch failed: could not check the host address: ${error instanceof Error ? error.message : String(error)}`,
+      `url=<${url.href}> | fetch failed: could not check the host address: ${error instanceof Error ? error.message : String(error)}. ` +
+        'If a proxy resolves names for fetch, or the runtime is not Node.js, set allowPrivateAddresses: true on makeWebFetch.',
       { cause: error }
     )
   }

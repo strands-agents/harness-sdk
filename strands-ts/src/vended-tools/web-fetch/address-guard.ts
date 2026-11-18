@@ -24,8 +24,9 @@ type Lookup = typeof import('node:dns/promises').lookup
 let guard: Promise<{ lookup: Lookup; nonPublic: BlockList }> | undefined
 
 /**
- * Whether every address `hostname` resolves to is public. Rejects when `hostname`
- * cannot be resolved, including on runtimes without `node:dns` and `node:net`.
+ * Whether `hostname` resolves to at least one address and every one of them is public.
+ * Rejects when `hostname` cannot be resolved, including on runtimes without `node:dns`
+ * and `node:net`.
  *
  * @internal
  */
@@ -33,7 +34,10 @@ export async function isPublicHost(hostname: string): Promise<boolean> {
   const { lookup, nonPublic } = await (guard ??= _loadGuard())
   const addresses = await lookup(hostname.replace(/^\[|\]$/g, ''), { all: true })
   // IPv4-mapped IPv6 addresses are matched against the IPv4 networks.
-  return addresses.every(({ address, family }) => !nonPublic.check(address, family === 6 ? 'ipv6' : 'ipv4'))
+  return (
+    addresses.length > 0 &&
+    addresses.every(({ address, family }) => !nonPublic.check(address, family === 6 ? 'ipv6' : 'ipv4'))
+  )
 }
 
 async function _loadGuard(): Promise<{ lookup: Lookup; nonPublic: BlockList }> {

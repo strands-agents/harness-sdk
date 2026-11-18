@@ -283,7 +283,8 @@ describe('webFetch tool', () => {
       vi.mocked(isPublicHost).mockRejectedValueOnce(new Error('ENOTFOUND'))
 
       await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://unknown.example/' })).rejects.toThrow(
-        'url=<https://unknown.example/> | fetch failed: could not check the host address: ENOTFOUND'
+        'url=<https://unknown.example/> | fetch failed: could not check the host address: ENOTFOUND. ' +
+          'If a proxy resolves names for fetch, or the runtime is not Node.js, set allowPrivateAddresses: true on makeWebFetch.'
       )
       expect(globalThis.fetch).not.toHaveBeenCalled()
     })

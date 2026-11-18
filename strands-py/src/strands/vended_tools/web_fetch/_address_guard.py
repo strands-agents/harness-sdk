@@ -37,10 +37,10 @@ def is_public_address(address: str) -> bool:
 
 
 async def is_public_host(host: str) -> bool:
-    """Whether every address ``host`` resolves to is public.
+    """Whether ``host`` resolves to at least one address and every one of them is public.
 
     Raises:
         OSError: When ``host`` cannot be resolved.
     """
     infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    return all(is_public_address(str(info[4][0])) for info in infos)
+    return bool(infos) and all(is_public_address(str(info[4][0])) for info in infos)
