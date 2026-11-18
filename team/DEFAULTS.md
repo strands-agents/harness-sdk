@@ -40,37 +40,37 @@ Default (rung 3).
 ```mermaid
 flowchart TD
     A{"What are you changing?"}
-    A -->|"rung 1"| A1["A capability that ships off by default,<br/>e.g. the todos plugin"]
-    A1 --> A1b["No evidence needed"]
-    A -->|"rung 2"| A2["What a mode expands to, e.g. which strategies<br/>context_manager='auto' configures"]
-    A -->|"rung 3 or 4"| A3["The value a user gets when they pass nothing,<br/>e.g. DEFAULT_MODEL, DEFAULT_BUILTIN_PLUGINS"]
+    A -->|"rung 1"| A1["A capability, off by default<br/>e.g. the todos plugin"]
+    A1 --> A1b["No benchmark needed"]
+    A -->|"rung 2"| A2["What a mode expands to<br/>e.g. context_manager='auto'"]
+    A -->|"rung 3 or 4"| A3["A default's value<br/>e.g. DEFAULT_MODEL"]
 
     A2 --> B
     A3 --> B
-    B{"Can a user reach both the old and the<br/>new behavior by configuration?"}
+    B{"Can a user configure their way<br/>back to the old behavior?"}
     B -->|no| B1["Stop. Build the knob first,<br/>in its own PR"]
 
-    B -->|yes| C{"Does it change what enters the context window,<br/>the tool loop, or the model call, on a normal turn?"}
-    C -->|no| C1["Tests both ways,<br/>and run it end to end"]
-    C -->|yes| C2["Matched Harbor runs: same tasks and revision,<br/>2+ model families, accuracy and tokens,<br/>per-benchmark, with spread"]
-    C2 --> C3{"Affects every turn<br/>for every user?"}
-    C3 -->|yes| C4["Add the full suite, a long-horizon agentic<br/>benchmark, cost per trial, and a named owner"]
+    B -->|yes| C{"Changes the context window, tool loop,<br/>or model call on a normal turn?"}
+    C -->|no| C1["Test both ways.<br/>Run it end to end"]
+    C -->|yes| C2["Matched Harbor runs: 2+ model families,<br/>accuracy and tokens, per benchmark, with spread"]
+    C2 --> C3{"Every turn,<br/>every user?"}
+    C3 -->|yes| C4["Add the full suite, a long-horizon agentic<br/>benchmark, cost per trial, and an owner"]
     C1 --> D
     C3 -->|no| D
     C4 --> D
 
-    D{"Does the evidence clear the bar?"}
-    D -->|no| E{"Does it clear the bar for a condition the SDK<br/>can detect, on both sides of that condition?"}
-    E -->|yes| E1["Rung 4, Adaptive — or rung 2, In a mode, with<br/>the expansion conditional on where it wins"]
-    E -->|no| E2["Rung 1, Available, recommended where<br/>it helps. Say so in the PR"]
+    D{"Clears the bar?"}
+    D -->|no| E{"Clears it for a condition the SDK<br/>can detect, on both sides?"}
+    E -->|yes| E1["Rung 4, Adaptive — or rung 2,<br/>expanding only where it wins"]
+    E -->|no| E2["Rung 1, Available.<br/>Say where it helps"]
 
     D -->|yes| F
     E1 --> F
     E2 --> F
-    F["Publish the run to the benchmark record: tasks, revision, models,<br/>accuracy, tokens, spread — whether it won or lost. It is the baseline<br/>the next proposal for this default has to beat"]
-    F --> G{"Ship it at the rung the evidence set.<br/>Which package?"}
+    F["Publish the run to the benchmark record, win or lose.<br/>It is the next proposal's baseline"]
+    F --> G{"Which package?"}
     G -->|SDK| G1["rung 1 or 2: minor<br/>rung 3 or 4: major"]
-    G -->|"harness / CLI"| G2["rung 1: patch<br/>rung 3 or 4: minor —<br/>0.x minor is the breaking channel"]
+    G -->|"harness / CLI"| G2["rung 1: patch<br/>rung 3 or 4: minor"]
 ```
 
 ## The bar
