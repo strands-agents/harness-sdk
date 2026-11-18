@@ -519,6 +519,10 @@ class TestHtmlToMarkdown:
                 '<a href="10.0.0.1:80\\a">x</a> <a href="\u200bmailto:a\\b">m</a>',
                 "[x](10.0.0.1:80/a) [m](\u200bmailto:a/b)",
             ),
+            (
+                '<a href="file:///C:\\Users\\me\\doc.txt">f</a> <a href="ftp://h\\a">g</a> <a href="WSS://h\\a">w</a>',
+                "[f](file:///C:/Users/me/doc.txt) [g](ftp://h/a) [w](WSS://h/a)",
+            ),
             ('<a href=" \n">blank</a>', "blank"),
             # a link whose text is its href is not written as <href>, which can be an HTML tag
             ('<a href="b">b</a>', "[b](b)"),
@@ -550,6 +554,7 @@ class TestHtmlToMarkdown:
                 "[Home](/) > [Products](/p) - all, C# 1. x",
             ),
             ("<p>#hashtag</p><p>+1</p><p>3.14</p><p>\u0661. x</p>", "#hashtag\n\n+1\n\n3.14\n\n\u0661. x"),
+            ("<p>~/projects/app</p><p>~100 and ~~ no</p>", "~/projects/app\n\n~100 and ~~ no"),
             ('<p>a<i class="icon"></i> - b</p>', "a - b"),
             (
                 '<h2>Intro<a href="#i">#</a></h2><p><span>Step</span> <span>1.</span> Open</p>',

@@ -80,9 +80,11 @@ def _tag_attribute(tag: Tag, name: str) -> str:
     return value or ""
 
 
-# A block marker at the start of a line: what turndown escapes at the start of text, and "1)" and "~". The marker is
-# escaped whether a space or the end of the line follows it. Whitespace before it is stripped later or is indentation.
-_BLOCK_MARKER = re.compile(r"^([^\S\n]*)(?=[-=>~]|(?:\+|#{1,6}|[0-9]+[.)])(?: |\s*$))([0-9]*)", re.MULTILINE)
+# A block marker at the start of a line: what turndown escapes at the start of text, "1)", and a "~" that ends its
+# line. The marker is escaped whether a space or the end of the line follows. Whitespace before it is stripped later.
+_BLOCK_MARKER = re.compile(
+    r"^([^\S\n]*)(?=[-=>]|~~~|~{1,2}\s*$|(?:\+|#{1,6}|[0-9]+[.)])(?: |\s*$))([0-9]*)", re.MULTILINE
+)
 
 
 def _escape_text(text: str) -> str:
@@ -106,8 +108,8 @@ def _escape_bare_alt_text(text: str) -> str:
 def _escape_url(url: str) -> str:
     """Drop tabs and newlines as URL parsers do, and percent-encode what a markdown parser could read as syntax."""
     url = re.sub(r"[\t\n\r]", "", url)
-    # URL parsers read "\" as "/" before the query of an http(s) or relative URL.
-    if re.match(r"https?:|(?![a-z][a-z0-9+.-]*:)", url, re.IGNORECASE | re.ASCII):
+    # URL parsers read "\" as "/" before the query of a relative URL and of an http(s), ftp, ws(s) or file URL.
+    if re.match(r"(?:https?|ftp|wss?|file):|(?![a-z][a-z0-9+.-]*:)", url, re.IGNORECASE | re.ASCII):
         url = re.sub(r"^[^?#]*", lambda match: match[0].replace("\\", "/"), url)
     return re.sub(rf"[{_WHITESPACE_OR_CONTROL}()<>\\\"'`]", lambda match: quote(match[0], safe=""), url)
 
@@ -155,6 +157,9 @@ class _Converter(MarkdownConverter):
         # markdownify escapes only "*" and "_".
         if "_escaped" not in parent_tags:
             text = re.sub(r"[\\\[\]`]", r"\\\g<0>", text)
+            # Next to the "~~" that markdownify writes for <del> and <s>, a "~" would open a fence.
+            if parent_tags & {"del", "s"}:
+                text = text.replace("~", r"\~")
         return str(super().escape(text, parent_tags))  # type: ignore[misc]
 
     def convert_img(self, el: Tag, text: str, parent_tags: set[str]) -> str:

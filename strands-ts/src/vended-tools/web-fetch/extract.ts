@@ -73,8 +73,8 @@ function _escapeAltText(text: string): string {
 // Drop tabs and newlines as URL parsers do, and percent-encode what a markdown parser could read as syntax.
 function _escapeUrl(url: string): string {
   let stripped = url.replace(/[\t\n\r]/g, '')
-  // URL parsers read "\" as "/" before the query of an http(s) or relative URL.
-  if (/^(?:https?:|(?![a-z][a-z0-9+.-]*:))/i.test(stripped)) {
+  // URL parsers read "\" as "/" before the query of a relative URL and of an http(s), ftp, ws(s) or file URL.
+  if (/^(?:(?:https?|ftp|wss?|file):|(?![a-z][a-z0-9+.-]*:))/i.test(stripped)) {
     stripped = stripped.replace(/^[^?#]*/, (path) => path.replace(/\\/g, '/'))
   }
   return stripped
