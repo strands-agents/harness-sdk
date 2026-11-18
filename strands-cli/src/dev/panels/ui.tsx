@@ -400,6 +400,10 @@ export interface PaidRunConfirm {
 
 export const agentModel = (agent: RunAgent | undefined): string => agent?.model ?? 'the model that the agent file sets'
 
+export const awsBedrockFact = (calls: string): string =>
+  `${calls} use AWS Bedrock, with the AWS credentials and region of the shell that started strands dev, also when ` +
+  'your agent uses another provider.'
+
 export const fileToolWarnings = (agent: RunAgent | undefined): string[] => {
   const tools = agent?.fileTools ?? []
   if (!agent || tools.length === 0) return []

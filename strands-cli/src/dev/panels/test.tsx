@@ -20,6 +20,7 @@ import {
 } from './model.js'
 import {
   agentModel,
+  awsBedrockFact,
   fileToolWarnings,
   formatSeconds,
   Fill,
@@ -97,6 +98,7 @@ const paidTest = (
   facts: [
     `Your agent answers ${cases} with ${agentModel(agent)}${detail}.`,
     'Each answer makes paid model calls, and each evaluator that uses a judge model makes more.',
+    awsBedrockFact('Judge calls'),
   ],
   warnings: fileToolWarnings(agent),
   start,

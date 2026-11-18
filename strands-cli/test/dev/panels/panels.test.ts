@@ -212,6 +212,10 @@ describe('TestPanel', () => {
     expect(text()).toContain('start a paid run?')
     expect(text().replace(/\s+/gu, ' ')).toContain(scope)
     expect(text()).toContain('Each answer makes paid model calls')
+    expect(text().replace(/\s+/gu, ' ')).toContain(
+      'Judge calls use AWS Bedrock, with the AWS credentials and region of the shell that started strands dev, ' +
+        'also when your agent uses another provider.'
+    )
     expect(session.run).not.toHaveBeenCalled()
     expect(session.rerunFailed).not.toHaveBeenCalled()
   })

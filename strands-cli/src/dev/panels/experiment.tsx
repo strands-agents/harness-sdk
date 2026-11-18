@@ -18,6 +18,7 @@ import {
   type Review,
 } from './model.js'
 import {
+  awsBedrockFact,
   editText,
   Field,
   Fill,
@@ -69,6 +70,7 @@ const paidGeneration = ({ name, settings }: Generation, start: () => void): Paid
     `The generator writes ${plural(settings.cases, 'case')} for ${name} again with ` +
       `${settings.model || DEFAULT_GENERATOR_MODEL}.`,
     'Generation makes paid model calls and can take minutes.',
+    awsBedrockFact('Generator calls'),
   ],
   start,
 })

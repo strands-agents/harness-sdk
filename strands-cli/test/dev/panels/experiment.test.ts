@@ -176,6 +176,10 @@ describe('ExperimentPanel home', () => {
     await press('r')
 
     expect(text().replace(/\s+/gu, ' ')).toContain('again with the strands-evals default model on AWS Bedrock.')
+    expect(text().replace(/\s+/gu, ' ')).toContain(
+      'Generator calls use AWS Bedrock, with the AWS credentials and region of the shell that started strands dev, ' +
+        'also when your agent uses another provider.'
+    )
     expect(session.generate).not.toHaveBeenCalled()
   })
 })
