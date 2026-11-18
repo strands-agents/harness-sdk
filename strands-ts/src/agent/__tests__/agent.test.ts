@@ -6,7 +6,7 @@ import { McpClient } from '../../mcp/index.js'
 import { McpTool } from '../../tools/mcp-tool.js'
 import { logger } from '../../logging/logger.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
-import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool, createRandomTool } from '../../__fixtures__/tool-helpers.js'
 import { ConcurrentInvocationError } from '../../errors.js'
 import {
@@ -37,6 +37,7 @@ import {
   BeforeModelCallEvent,
   BeforeToolsEvent,
   InterruptEvent,
+  MessageAddedEvent,
 } from '../../hooks/events.js'
 import { BedrockModel } from '../../models/bedrock.js'
 import { ModelRouter } from '../../models/routing/router.js'
@@ -2251,7 +2252,7 @@ describe('Agent', () => {
   })
 })
 
-describe('Agent._redactLastMessage', () => {
+describe('Agent._redactLastUserMessage', () => {
   const redactMessage = '[REDACTED]'
 
   it('redacts last user message with only text blocks', () => {
@@ -2266,7 +2267,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('user')
@@ -2289,7 +2290,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     expect(agent['messages'][agent['messages'].length - 1]!.trackingId).toBe('durable-1')
   })
@@ -2319,7 +2320,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('user')
@@ -2343,31 +2344,59 @@ describe('Agent._redactLastMessage', () => {
     expect((toolResult2.content[0] as TextBlock).text).toBe(redactMessage)
   })
 
-  it('does not redact when last message is not from user', () => {
+  it('does not redact when there is no user message', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
     const agent = new Agent({ model })
-
-    // Add an assistant message
     const assistantMessage = new Message({
       role: 'assistant',
       content: [new TextBlock('assistant response')],
     })
     agent['messages'].push(assistantMessage)
 
-    const originalContent = assistantMessage.content
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
-    const lastMessage = agent['messages'][agent['messages'].length - 1]!
-    expect(lastMessage.role).toBe('assistant')
-    expect(lastMessage.content).toBe(originalContent)
+    expect(agent.messages).toEqual([assistantMessage])
+    expect(warnSpy).toHaveBeenCalledWith('received input redaction but no user message found | redaction skipped')
+  })
+
+  it('redacts the user message when a hook appends an assistant message after it', async () => {
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'INPUT BLOCKED!' } }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'guardrailIntervened' }
+      yield { type: 'modelRedactionEvent', inputRedaction: { replaceContent: redactMessage } }
+    })
+    const agent = new Agent({ model, printer: false })
+    const contextMessage = new Message({
+      role: 'assistant',
+      content: [new TextBlock('<user_context>likes cats</user_context>')],
+    })
+    agent.addHook(MessageAddedEvent, (event) => {
+      if (event.message.role === 'user') {
+        agent.messages.push(contextMessage)
+      }
+    })
+
+    await agent.invoke('Tell me something bad')
+
+    expect(agent.messages).toEqual([
+      new Message({ role: 'user', content: [new TextBlock(redactMessage)], trackingId: anyTrackingId }),
+      contextMessage,
+      new Message({ role: 'assistant', content: [new TextBlock('INPUT BLOCKED!')], trackingId: anyTrackingId }),
+    ])
   })
 
   it('handles empty messages array gracefully', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
     const agent = new Agent({ model })
 
-    expect(() => agent['_redactLastMessage'](redactMessage)).not.toThrow()
+    expect(() => agent['_redactLastUserMessage'](redactMessage)).not.toThrow()
     expect(agent['messages']).toHaveLength(0)
+    expect(warnSpy).toHaveBeenCalledWith('received input redaction but no user message found | redaction skipped')
   })
 })
 

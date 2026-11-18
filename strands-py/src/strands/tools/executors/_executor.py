@@ -64,6 +64,24 @@ class ToolExecutor(abc.ABC):
             return not agent.cancel_signal.is_set()
         return not cast("Agent", agent)._observe_cancellation()
 
+    @staticmethod
+    def _before_tool_cancel_message(
+        agent: LocalAgent, before_event: BeforeToolCallEvent[LocalAgent], *, observe_agent_cancel: bool
+    ) -> str | None:
+        """Return the message for a tool call cancelled before it starts, or None when the tool should run.
+
+        With ``observe_agent_cancel``, a cancellation of a standard Agent that lands while the hooks run skips
+        the tool like a hook's ``cancel_tool``. BidiAgent observes cancellation only after a tool group completes.
+        """
+        cancel_tool = before_event.cancel_tool
+        if cancel_tool:
+            return cancel_tool if isinstance(cancel_tool, str) else "tool cancelled by user"
+        if not observe_agent_cancel or not ToolExecutor._is_agent(agent):
+            return None
+        if cast("Agent", agent)._observe_cancellation():
+            return "Tool execution cancelled"
+        return None
+
     async def _execute_background(
         self,
         agent: "Agent",
@@ -164,6 +182,7 @@ class ToolExecutor(abc.ABC):
         cycle_span: Any = None,
         cycle_trace: Trace | None = None,
         invocation_context: "InvocationContext | None" = None,
+        observe_agent_cancel: bool = False,
         **kwargs: Any,
     ) -> AsyncGenerator[TypedEvent, None]:
         """Stream tool events.
@@ -185,6 +204,8 @@ class ToolExecutor(abc.ABC):
             cycle_span: Parent span for the tool span, when running inside an event loop cycle.
             cycle_trace: Parent trace for the tool metrics, when running inside an event loop cycle.
             invocation_context: The request the tool call belongs to, handed to the tool's ``ToolContext``.
+            observe_agent_cancel: Skip the tool when the agent is cancelled while its BeforeToolCallEvent
+                hooks run. Set by the agent loop; direct tool calls run regardless of agent cancellation.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -228,10 +249,10 @@ class ToolExecutor(abc.ABC):
                 yield ToolInterruptEvent(tool_use, interrupts)
                 return
 
-            if before_event.cancel_tool:
-                cancel_message = (
-                    before_event.cancel_tool if isinstance(before_event.cancel_tool, str) else "tool cancelled by user"
-                )
+            cancel_message = ToolExecutor._before_tool_cancel_message(
+                agent, before_event, observe_agent_cancel=observe_agent_cancel
+            )
+            if cancel_message:
                 yield ToolCancelEvent(tool_use, cancel_message)
 
                 cancel_result: ToolResult = {
@@ -468,6 +489,7 @@ class ToolExecutor(abc.ABC):
             tracer=get_tracer(),
             cycle_span=cycle_span,
             cycle_trace=cycle_trace,
+            observe_agent_cancel=True,
             **kwargs,
         ):
             yield event
