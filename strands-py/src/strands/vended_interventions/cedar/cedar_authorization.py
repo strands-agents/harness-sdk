@@ -253,19 +253,16 @@ class CedarAuthorization(InterventionHandler):
         self._schema = schema
 
     def reset_call_counts(self, agent: Agent | None = None) -> None:
-        """Clear rate-limit call counters.
+        """Clear rate-limit call counters, including those persisted in agent.state.
 
         Args:
-            agent: Clear only this agent's counts, including those persisted in agent.state.
-                If omitted, clears the in-memory counts of every agent; counts persisted in
-                agent.state remain until that agent's next call.
+            agent: Clear only this agent's counts. If omitted, clears the counts of every
+                agent this handler tracks.
         """
-        if agent is None:
-            for counts in list(self._call_counts.values()):
-                counts.clear()
-            return
-        self._call_counts[agent] = {}
-        agent.state.set(_STATE_KEY, {})
+        agents = list(self._call_counts) if agent is None else [agent]
+        for tracked_agent in agents:
+            self._call_counts[tracked_agent] = {}
+            tracked_agent.state.set(_STATE_KEY, {})
 
     def _counts_for(self, agent: Agent) -> dict[str, int]:
         counts = self._call_counts.get(agent)

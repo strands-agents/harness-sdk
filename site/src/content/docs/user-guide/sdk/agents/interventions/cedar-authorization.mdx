@@ -91,7 +91,7 @@ Cedar policies can reference `context.session.call_count`, which tracks how many
 </Tab>
 </Tabs>
 
-Call counts persist with the agent's state and survive session reloads. Only successful tool calls increment the counter. Counts are tracked per agent, so when several agents share one handler, such as a parent and the subagents it delegates to, each has its own budget.
+Call counts persist with the agent's state and survive session reloads. Only successful tool calls increment the counter. Counts are tracked per agent, so when several agents share one handler, such as a parent and the subagents it delegates to, each has its own budget. A `call_count` limit therefore caps each agent rather than the whole delegation tree. To bound the total, also limit calls to the `subagent` tool with `call_count`.
 
 ## Schema validation
 

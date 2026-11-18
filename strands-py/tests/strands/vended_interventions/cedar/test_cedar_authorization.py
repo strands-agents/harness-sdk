@@ -296,6 +296,8 @@ class TestSharedAcrossAgents:
 
         cedar.reset_call_counts()
 
+        assert parent.agent.state.get("cedar-authorization") == {}
+        assert child.agent.state.get("cedar-authorization") == {}
         assert cedar.before_tool_call(parent).type == "proceed"
         assert cedar.before_tool_call(child).type == "proceed"
 
