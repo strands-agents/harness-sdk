@@ -424,8 +424,9 @@ class MCPClient(ToolProvider):
         Raises:
             ValueError: If neither or both of `transport_callable` and `url` are provided, if
                 `headers`, `auth`, or `auth_provider` is provided without `url`, if both `auth`
-                and `auth_provider` are provided, if `url` is not an http:// or https:// URL, or
-                if `auth` is missing required keys or a value has the wrong type.
+                and `auth_provider` are provided, if `url` is not an http:// or https:// URL, if
+                `auth` is missing required keys or a value has the wrong type, or if `auth` sets
+                an `issuer` that the installed `mcp` cannot enforce.
         """
         self._startup_timeout = startup_timeout
         self._tool_filters = tool_filters
@@ -2865,13 +2866,13 @@ def _build_client_credentials_auth(url: str, auth: MCPClientCredentials) -> http
     if scopes is not None and not (isinstance(scopes, list) and all(isinstance(scope, str) for scope in scopes)):
         raise ValueError("MCPClient: 'auth' requires 'scopes' to be a list of strings")
     issuer = values.get("issuer")
-    if issuer is not None and not isinstance(issuer, str):
-        raise ValueError("MCPClient: 'auth' requires 'issuer' to be a string")
+    if issuer is not None and not (isinstance(issuer, str) and urlparse(issuer).scheme in ("http", "https")):
+        raise ValueError("MCPClient: 'auth' requires 'issuer' to be an http:// or https:// URL")
     if issuer is None:
         logger.warning(
-            "url=<%s> | oauth client credentials have no issuer, "
-            "the mcp server decides which authorization server receives them",
-            url,
+            "host=<%s> | oauth client credentials have no issuer, the mcp server decides which "
+            "authorization server receives them | set the auth issuer to pin the authorization server",
+            urlparse(url).hostname,
         )
     return client_credentials_auth(
         server_url=url,

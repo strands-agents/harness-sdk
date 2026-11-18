@@ -1,7 +1,6 @@
 """Unit tests for MCPClient OAuth authentication (url/auth/auth_provider constructor path)."""
 
-import warnings
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, create_autospec, patch
 
 import httpx
 import pytest
@@ -20,6 +19,18 @@ def streamablehttp_transport():
     """Patch streamable_http_transport as imported into mcp_client."""
     with patch("strands.tools.mcp.mcp_client.streamable_http_transport") as http:
         yield http
+
+
+@pytest.fixture
+def issuer_provider():
+    """Patch the provider with one that takes `issuer`, as `mcp` 1.30.0 and 2.2.0 onwards do."""
+
+    def provider(server_url, storage, client_id, client_secret, scope=None, scopes=None, issuer=None): ...
+
+    with patch(
+        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", create_autospec(provider)
+    ) as provider_cls:
+        yield provider_cls
 
 
 # Transport resolution
@@ -86,16 +97,13 @@ def test_auth_scopes_joined_with_spaces():
     assert provider_cls.call_args.kwargs[SCOPE_KWARG] == "read write"
 
 
-def test_auth_issuer_passed_to_provider():
-    with patch(
-        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", autospec=True
-    ) as provider_cls:
-        MCPClient(
-            url="https://mcp.example.com",
-            auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
-        )
+def test_auth_issuer_passed_to_provider(issuer_provider):
+    MCPClient(
+        url="https://mcp.example.com",
+        auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
+    )
 
-    provider_cls.assert_called_once_with(
+    issuer_provider.assert_called_once_with(
         server_url="https://mcp.example.com",
         storage=ANY,
         client_id="id",
@@ -103,16 +111,6 @@ def test_auth_issuer_passed_to_provider():
         issuer="https://auth.example.com",
         **{SCOPE_KWARG: None},
     )
-
-
-def test_auth_issuer_accepted_by_installed_mcp_provider():
-    """The installed `mcp` warns when its provider receives no issuer, so no warning means it arrived."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        MCPClient(
-            url="https://mcp.example.com",
-            auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
-        )
 
 
 def test_auth_issuer_unsupported_by_installed_mcp_raises():
@@ -131,22 +129,24 @@ def test_auth_without_issuer_warns(caplog):
     with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider"):
         with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
             MCPClient(
-                url="https://mcp.example.com",
+                url="https://user:password@mcp.example.com/mcp?key=value",
                 auth=MCPClientCredentials(client_id="id", client_secret="secret"),
             )
 
-    assert "url=<https://mcp.example.com> | oauth client credentials have no issuer" in caplog.text
+    assert caplog.messages == [
+        "host=<mcp.example.com> | oauth client credentials have no issuer, the mcp server decides which "
+        "authorization server receives them | set the auth issuer to pin the authorization server"
+    ]
 
 
-def test_auth_with_issuer_does_not_warn(caplog):
-    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", autospec=True):
-        with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
-            MCPClient(
-                url="https://mcp.example.com",
-                auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
-            )
+def test_auth_with_issuer_does_not_warn(issuer_provider, caplog):
+    with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
+        MCPClient(
+            url="https://mcp.example.com",
+            auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
+        )
 
-    assert caplog.text == ""
+    assert caplog.messages == []
 
 
 def test_auth_provider_passed_through(streamablehttp_transport):
@@ -237,11 +237,12 @@ def test_auth_scopes_not_a_list_of_strings_raises(scopes):
         )
 
 
-def test_auth_issuer_not_a_string_raises():
-    with pytest.raises(ValueError, match="'issuer' to be a string"):
+@pytest.mark.parametrize("issuer", [123, "", "auth.example.com", "ftp://auth.example.com"])
+def test_auth_issuer_not_an_http_url_raises(issuer):
+    with pytest.raises(ValueError, match="'issuer' to be an http:// or https:// URL"):
         MCPClient(
             url="https://mcp.example.com",
-            auth={"client_id": "id", "client_secret": "secret", "issuer": 123},
+            auth={"client_id": "id", "client_secret": "secret", "issuer": issuer},
         )
 
 

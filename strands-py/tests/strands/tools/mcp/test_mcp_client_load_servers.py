@@ -1,7 +1,7 @@
 """Unit tests for MCPClient.load_servers (mcpServers JSON config loading)."""
 
 import json
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, create_autospec, patch
 
 import pytest
 
@@ -410,15 +410,18 @@ def test_config_auth_builds_client_credentials_provider(mock_client, transports)
     assert transports["http"].call_args.kwargs["auth"] is provider_cls.return_value
 
 
-def test_config_auth_issuer_passed_to_provider(mock_client, transports):
+def test_config_auth_issuer_passed_to_provider(mock_client, transports, monkeypatch):
+    def provider(server_url, storage, client_id, client_secret, scope=None, scopes=None, issuer=None): ...
+
+    monkeypatch.setenv("OAUTH_ISSUER", "https://auth.example.com")
     with patch(
-        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", autospec=True
+        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", create_autospec(provider)
     ) as provider_cls:
         MCPClient.load_servers(
             {
                 "srv": {
                     "url": "https://example.com/mcp",
-                    "auth": {"client_id": "id", "client_secret": "secret", "issuer": "https://auth.example.com"},
+                    "auth": {"client_id": "id", "client_secret": "secret", "issuer": "${OAUTH_ISSUER}"},
                 }
             }
         )
