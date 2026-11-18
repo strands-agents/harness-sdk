@@ -178,7 +178,7 @@ print(f"Cache read tokens: {response2.metrics.accumulated_usage.get('cacheReadIn
 **Amazon Nova**: Nova takes a cache point only directly after text, takes none on tool definitions, and takes no TTL, so <Syntax py="tools_ttl" ts="toolsTTL" /> has no effect and a TTL duration is ignored. Setting <Syntax py="system_prompt_ttl" ts="systemPromptTTL" /> or <Syntax py="messages_ttl" ts="messagesTTL" /> to `False` (`false`) still turns that part off. It also reads a cache entry only at a position an earlier request marked too. The SDK therefore places Nova's conversation cache points differently:
 
 - A cache point goes after the last text block of each of the last three user messages that have text, so a new turn repeats the positions the previous turn wrote. During a tool loop the points stay where they are.
-- A cache point you place in the last user message is kept and counts as one of the three.
+- A cache point you place in the last user message counts as one of the three. Nova takes it only directly after text, so it moves back to the nearest text block ahead of it, or is replaced by automatic placement when no text is ahead of it.
 - Bedrock accepts four cache points per request and the system prompt's count against them. With more than one cache point in the system prompt, the conversation gets fewer; with four, it gets none and a cache point you placed in the last user message is dropped.
 - On a cross-region inference profile (for example `us.amazon.nova-pro-v1:0`), a request only reads entries written in the region that serves it, so some follow-up turns miss the cache. An in-region model ID reads on every turn.
 
