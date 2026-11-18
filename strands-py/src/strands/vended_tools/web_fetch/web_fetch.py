@@ -247,7 +247,8 @@ async def _fetch_content(
         max_bytes=max_bytes,
         client=client,
         cancel_signal=cancel_signal,
-        sandbox=_agent_sandbox(tool_context) if sandbox is True else sandbox or None,
+        # ``is``, not truthiness: a Sandbox subclass may define ``__len__`` or ``__bool__``.
+        sandbox=_agent_sandbox(tool_context) if sandbox is True else None if sandbox is False else sandbox,
     )
     if client is None and sandbox is False:
         # httpx times each read, so the tool's own client also gets a total deadline; curl has --max-time.

@@ -796,8 +796,13 @@ class TestSandbox:
     @pytest.mark.parametrize("tool_context", [None, _sandbox_ctx(_Sandbox())], ids=["no_context", "agent_sandbox"])
     @pytest.mark.asyncio
     async def test_bound_sandbox_is_used_instead_of_the_agents(self, tool_context, monkeypatch):
+        class FalsySandbox(NotASandboxLocalEnvironment):
+            def __len__(self) -> int:
+                return 0
+
         fake = _Sandbox(_curl_output(b"page", content_type="text/plain"))
-        bound = NotASandboxLocalEnvironment()
+        # Falsy on purpose: the bound sandbox must be used whatever its truth value.
+        bound = FalsySandbox()
         monkeypatch.setattr(bound, "execute", fake.execute)
         tool = make_web_fetch(mode="markdown", sandbox=bound)
         assert await tool(url="https://example.com/", tool_context=tool_context) == "page"
