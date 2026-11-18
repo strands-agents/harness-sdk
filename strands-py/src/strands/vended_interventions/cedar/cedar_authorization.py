@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Callable
 from datetime import datetime as dt
 from datetime import timezone
@@ -76,10 +77,8 @@ class CedarAuthorization(InterventionHandler):
 
     Call counts are persisted to ``agent.state`` under the key ``"cedar-authorization"``
     so they survive handler recreation and are included in session snapshots.
-
-    .. note::
-        Each handler instance is scoped to a single agent. Sharing one instance across
-        multiple agents will cause rate-limit counts to leak between them.
+    Counts are tracked per agent, so agents that share one handler instance (such as a
+    parent and its subagents) each have their own budget.
 
     Example::
 
@@ -154,7 +153,7 @@ class CedarAuthorization(InterventionHandler):
 
         self._principal_resolver = principal_resolver
         self._context_enricher = context_enricher
-        self._call_counts: dict[str, int] = {}
+        self._call_counts: weakref.WeakKeyDictionary[Agent, dict[str, int]] = weakref.WeakKeyDictionary()
 
         _validate_policies(self._policies, self._schema, schema_is_auto_generated)
 
@@ -254,28 +253,33 @@ class CedarAuthorization(InterventionHandler):
         self._schema = schema
 
     def reset_call_counts(self, agent: Agent | None = None) -> None:
-        """Clear all rate-limit call counters.
+        """Clear rate-limit call counters, including those persisted in agent.state.
 
         Args:
-            agent: If provided, also clears persisted counts from agent.state.
+            agent: Clear only this agent's counts. If omitted, clears the counts of every
+                agent this handler tracks.
         """
-        self._call_counts.clear()
-        if agent is not None:
-            agent.state.set(_STATE_KEY, {})
+        agents = list(self._call_counts) if agent is None else [agent]
+        for tracked_agent in agents:
+            self._call_counts[tracked_agent] = {}
+            tracked_agent.state.set(_STATE_KEY, {})
+
+    def _counts_for(self, agent: Agent) -> dict[str, int]:
+        counts = self._call_counts.get(agent)
+        if counts is None:
+            stored = agent.state.get(_STATE_KEY)
+            counts = dict(stored) if isinstance(stored, dict) else {}
+            self._call_counts[agent] = counts
+        return counts
 
     def _increment_call_count(self, agent: Agent, tool_name: str) -> int:
-        if not self._call_counts:
-            stored = agent.state.get(_STATE_KEY)
-            if isinstance(stored, dict):
-                self._call_counts.update(stored)
-        current = self._call_counts.get(tool_name, 0)
-        next_count = current + 1
-        self._call_counts[tool_name] = next_count
-        agent.state.set(_STATE_KEY, dict(self._call_counts))
-        return next_count
+        counts = self._counts_for(agent)
+        counts[tool_name] = counts.get(tool_name, 0) + 1
+        agent.state.set(_STATE_KEY, dict(counts))
+        return counts[tool_name]
 
     def _decrement_call_count(self, agent: Agent, tool_name: str) -> None:
-        current = self._call_counts.get(tool_name, 0)
-        if current > 0:
-            self._call_counts[tool_name] = current - 1
-        agent.state.set(_STATE_KEY, dict(self._call_counts))
+        counts = self._counts_for(agent)
+        if counts.get(tool_name, 0) > 0:
+            counts[tool_name] -= 1
+        agent.state.set(_STATE_KEY, dict(counts))

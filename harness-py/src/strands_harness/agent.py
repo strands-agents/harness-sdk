@@ -264,9 +264,10 @@ def create_harness(
     Args:
         model: A ``Model`` or ``ModelRouter`` instance, a ``"provider/name"`` string (e.g.
             ``"anthropic/claude-fable-5"``), a bare Bedrock model id, or ``None`` for the
-            harness default (Bedrock Opus 5).
+            harness default (Bedrock Opus 5.5).
         effort: Reasoning effort applied to the resolved model, mapped to each provider's request
-            fields. ``"auto"`` (the default) uses the provider's recommended level, ``"off"`` turns
+            fields. ``"auto"`` (the default) uses the model vendor's default level (what Claude Code,
+            Codex, or Gemini CLI run it at; the provider's ``"high"`` otherwise), ``"off"`` turns
             reasoning off, and ``"minimal"``/``"low"``/``"medium"``/``"high"``/``"xhigh"``/``"max"``
             set it explicitly; a level the provider does not offer raises. When ``model`` is a
             ``Model`` or ``ModelRouter`` instance a non-``"auto"`` effort is ignored with a warning
@@ -308,7 +309,7 @@ def create_harness(
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
+            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). Elsewhere (Bedrock, other Mantle models,
             ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).

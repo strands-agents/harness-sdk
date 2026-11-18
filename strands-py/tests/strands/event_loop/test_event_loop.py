@@ -1211,6 +1211,46 @@ async def test_event_loop_cycle_exception_model_hooks(mock_sleep, agent, model, 
 
 
 @pytest.mark.asyncio
+async def test_event_loop_cycle_raises_when_tool_use_names_no_tool_every_attempt(
+    agent, model, messages, agenerator, alist, hook_provider
+):
+    attempts = 3
+    model.stream.side_effect = [
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "<thinking>let me look that up</parameter>"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+                {
+                    "metadata": {
+                        "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+                        "metrics": {"latencyMs": 100},
+                    }
+                },
+            ]
+        )
+        for _ in range(attempts)
+    ]
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    with pytest.raises(ValueError, match="no toolUse block"):
+        await alist(stream)
+
+    assert model.stream.call_count == attempts
+    assert agent.messages == messages
+    assert agent.event_loop_metrics.accumulated_usage == {
+        "inputTokens": 10 * attempts,
+        "outputTokens": 5 * attempts,
+        "totalTokens": 15 * attempts,
+    }
+    assert agent.event_loop_metrics.accumulated_metrics["latencyMs"] == 100 * attempts
+
+    _, events = hook_provider.get_events()
+    after_events = [event for event in events if isinstance(event, AfterModelCallEvent)]
+    assert [event.stop_response.stop_reason for event in after_events] == ["tool_use"] * attempts
+
+
+@pytest.mark.asyncio
 async def test_event_loop_cycle_before_tools_payload_order_and_result(agent, model, tool_stream, agenerator, alist):
     callback_order = []
     before_tools_events = []

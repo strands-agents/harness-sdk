@@ -1967,12 +1967,7 @@ class Agent(AgentBase, LocalAgent):
                     and event.chunk.get("redactContent")
                     and event.chunk["redactContent"].get("redactUserContentMessage")
                 ):
-                    self.messages[-1]["content"] = self._redact_user_content(
-                        self.messages[-1]["content"],
-                        str(event.chunk["redactContent"]["redactUserContentMessage"]),
-                    )
-                    if self._session_manager:
-                        self._session_manager.redact_latest_message(self.messages[-1], self)
+                    self._redact_last_user_message(str(event.chunk["redactContent"]["redactUserContentMessage"]))
                 yield event
 
         return terminal
@@ -2323,6 +2318,22 @@ class Agent(AgentBase, LocalAgent):
             self._model_state = copy.deepcopy(data["model_state"])
         if self._background_tasks is not None and "state" in data:
             self._background_tasks.load_state()
+
+    def _redact_last_user_message(self, redact_message: str) -> None:
+        """Redact the last user message in history and in the session.
+
+        Args:
+            redact_message: redact message to be replaced
+        """
+        # Session managers and hooks may append other messages after the user turn.
+        last_user_message = next((message for message in reversed(self.messages) if message["role"] == "user"), None)
+        if last_user_message is None:
+            logger.warning("no user message found to redact | guardrail redaction skipped")
+            return
+
+        last_user_message["content"] = self._redact_user_content(last_user_message["content"], redact_message)
+        if self._session_manager:
+            self._session_manager.redact_latest_message(last_user_message, self)
 
     def _redact_user_content(self, content: list[ContentBlock], redact_message: str) -> list[ContentBlock]:
         """Redact user content preserving toolResult blocks.

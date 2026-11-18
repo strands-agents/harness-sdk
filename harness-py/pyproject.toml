@@ -26,11 +26,16 @@ classifiers = [
 ]
 # [otel] pulls the OTLP exporter: telemetry is on by default (wired when a collector endpoint is
 # configured), so the exporter must always be importable, not an optional extra.
+# SDK 1.62.0 retries with drop_block when a history edit invalidates Opus 5.5 preserved-thinking blocks.
 # SDK 1.64.0 places OpenAI Responses cache points on GPT-5.6+, which the harness's caching relies on.
+# SDK 1.65.0 carries the AnthropicModel `client` parameter that runs Claude on Anthropic's Bedrock client.
+# anthropic is a hard dependency because the default model runs on it; 1.7.0 is the first release that
+# raises a mid-stream Bedrock error (e.g. throttling) as an APIStatusError the SDK can map.
 # pydantic-monty is the sandbox programmatic_tool_caller runs model-authored code in; it is a hard
 # dependency because the tool is on by default. Pinned exactly while Monty is pre-1.0 and its API moves.
 dependencies = [
-    "strands-agents[otel]>=1.64.0,<2.0.0",
+    "strands-agents[otel]>=1.65.0,<2.0.0",
+    "anthropic[bedrock]>=1.7.0,<3.0.0",
     "pydantic-monty==0.0.23",
     "pydantic>=2.5,<3",
 ]
@@ -79,8 +84,15 @@ raw-options.fallback_version = "0.0.0"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.hatch.build]
+# The copy the build hook writes is git-ignored, so it is named here to ship in the wheel and sdist anyway.
+artifacts = ["src/strands_harness/model_info.json"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/strands_harness"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
 
 [tool.ruff]
 line-length = 120

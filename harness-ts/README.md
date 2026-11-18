@@ -57,7 +57,7 @@ await agent.invoke("Find the slowest test in this repo and explain why it's slow
 
 ```typescript
 await createHarness({
-  model: 'bedrock/global.anthropic.claude-opus-5', // "provider/name", a bare Bedrock id, or a Model instance
+  model: 'bedrock/global.anthropic.claude-opus-5-5', // "provider/name", a bare Bedrock id, or a Model instance
   effort: 'auto', // "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
   instructions: undefined, // domain text appended to the system prompt
   tools: undefined, // your tools, added alongside the built-ins
@@ -96,12 +96,12 @@ npm install @strands-agents/harness
 `@strands-agents/sdk` is a required peer dependency. npm 7+ and pnpm install it automatically; with
 other package managers, add `@strands-agents/sdk` alongside the harness.
 
-The default agent runs on Amazon Bedrock, which needs no extra dependency. To use another
-provider, install its peer dependency:
+The default agent runs on Amazon Bedrock, which needs no extra dependency (Claude on Bedrock uses
+`@anthropic-ai/sdk`, a required peer npm installs for you). To use another provider, install its
+peer dependency:
 
 ```bash
 npm install openai              # for openai/*
-npm install @anthropic-ai/sdk   # for anthropic/*
 npm install @google/genai       # for google/*
 ```
 
@@ -110,7 +110,7 @@ npm install @google/genai       # for google/*
 Out of the box, `createHarness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5.5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
@@ -131,10 +131,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```typescript
-await createHarness({ model: 'anthropic/claude-opus-5' }) // Anthropic's API directly
+await createHarness({ model: 'anthropic/claude-opus-5-5' }) // Anthropic's API directly
 await createHarness({ model: 'openai/gpt-5.6-sol' }) // OpenAI
 await createHarness({ model: 'google/gemini-3.5-flash' }) // Google
-await createHarness({ model: 'bedrock/global.anthropic.claude-opus-5' }) // the default, spelled out
+await createHarness({ model: 'bedrock/global.anthropic.claude-opus-5-5' }) // the default, spelled out
 await createHarness({ model: 'bedrock-mantle/openai.gpt-5.6-sol' }) // Bedrock's OpenAI-compatible endpoint
 
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
@@ -148,7 +148,7 @@ for every provider:
 
 ```typescript
 await createHarness({ effort: 'high' }) // minimal | low | medium | high | xhigh | max, as the provider offers them
-await createHarness({ effort: 'auto' }) // the provider's recommended level (high where supported), the default
+await createHarness({ effort: 'auto' }) // the model vendor's default level (e.g. medium on Opus 5.5, else high), the default
 await createHarness({ effort: 'off' }) // reasoning off (the provider's `none` level where it has one)
 ```
 
@@ -324,7 +324,7 @@ await createHarness({ builtinTools: { web_fetch: { model: 'anthropic/claude-haik
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
 `bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
-native search (Amazon Bedrock Converse, other Mantle models, a `Model` instance) `web_search` is
+native search (Amazon Bedrock, other Mantle models, a `Model` instance) `web_search` is
 off by default. To enable web search for these providers, you can opt into Exa with
 `{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can

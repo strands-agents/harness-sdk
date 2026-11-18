@@ -271,7 +271,10 @@ class AgentAsToolStreamEvent(ToolStreamEvent):
 
 
 class ToolCancelEvent(TypedEvent):
-    """Event emitted when a user cancels a tool call from their BeforeToolCallEvent hook."""
+    """Event emitted when a tool call is cancelled before it starts.
+
+    Either a BeforeToolCallEvent hook cancelled it, or the agent was cancelled while those hooks ran.
+    """
 
     def __init__(self, tool_use: ToolUse, message: str) -> None:
         """Initialize with tool streaming data.
