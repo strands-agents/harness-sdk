@@ -52,10 +52,13 @@ _SCRIPT_SCHEMES = frozenset(["javascript", "vbscript"])
 
 
 def _url_scheme(url: str) -> str:
-    """Return the URL scheme, stripping leading invisible characters first."""
+    """Return the URL scheme ("" if unparseable), stripping leading whitespace and invisible characters first."""
     for index, char in enumerate(url):
-        if unicodedata.category(char) not in ("Cc", "Cf", "Zs"):
-            return urlparse(url[index:]).scheme
+        if unicodedata.category(char) not in ("Cc", "Cf", "Zs", "Zl", "Zp"):
+            try:
+                return urlparse(url[index:]).scheme
+            except ValueError:
+                return ""
     return ""
 
 
