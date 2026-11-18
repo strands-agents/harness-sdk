@@ -164,11 +164,35 @@ const tunesText = async (space: string | undefined, tuned: readonly string[]): P
 }
 
 const reflectionArguments = async (
-  { reflectionModel }: TemporaryOptimizeFlags,
+  reflectionModel: string | undefined,
   space: string | undefined,
   tuned: readonly string[]
 ): Promise<string[]> =>
   reflectionModel !== undefined && (await tunesText(space, tuned)) ? ['--reflection-model', reflectionModel] : []
+
+const runSettings = (
+  request: TemporaryOptimizationRequest,
+  passed: TemporaryOptimizeFlags
+): TemporaryOptimizeSettings => ({
+  ...TEMPORARY_OPTIMIZE_DEFAULTS,
+  ...request.settings,
+  ...(passed.iterations === undefined ? {} : { iterations: passed.iterations }),
+})
+
+const taskOf = (
+  { workspace, space }: TemporaryOptimizationRequest,
+  runnable: string,
+  passed: TemporaryOptimizeFlags,
+  baselineOnly: boolean
+): TemporaryTask => ({
+  agentFile: resolve(workspace.entrypoint),
+  experimentFile: resolve(runnable),
+  ...(space ? { spaceFile: resolve(space) } : {}),
+  settings: passed.tuned ?? TUNED_BY_DEFAULT,
+  ...(workspace.config.language === 'typescript' ? { typescriptRunner: temporaryTypescriptRunnerCommand() } : {}),
+  customEvaluators: passed.customEvaluators,
+  baselineOnly,
+})
 
 const writeTask = async (file: string, task: TemporaryTask): Promise<string> => {
   await mkdir(dirname(file), { recursive: true })
@@ -182,39 +206,26 @@ const newRunArguments = async (
   files: TemporaryOptimizationFiles,
   passed: TemporaryOptimizeFlags
 ): Promise<string[]> => {
-  const { workspace, space, objective } = request
-  const settings = {
-    ...TEMPORARY_OPTIMIZE_DEFAULTS,
-    ...request.settings,
-    ...(passed.iterations === undefined ? {} : { iterations: passed.iterations }),
-  }
+  const settings = runSettings(request, passed)
   const baselineOnly = isBaselineOnly(settings)
-  const tuned = passed.tuned ?? TUNED_BY_DEFAULT
   const runnable = await temporaryRunnableExperiment(experiment, files.copy)
-  const task = await writeTask(files.task, {
-    agentFile: resolve(workspace.entrypoint),
-    experimentFile: resolve(runnable),
-    ...(space ? { spaceFile: resolve(space) } : {}),
-    settings: tuned,
-    ...(workspace.config.language === 'typescript' ? { typescriptRunner: temporaryTypescriptRunnerCommand() } : {}),
-    customEvaluators: passed.customEvaluators,
-    baselineOnly,
-  })
+  const task = taskOf(request, runnable, passed, baselineOnly)
+  const taskFile = await writeTask(files.task, task)
   return [
     'run',
     runnable,
     '--agent',
-    `${task}:agent`,
+    `${taskFile}:agent`,
     '--rollout',
-    `${task}:rollout`,
-    ...(baselineOnly ? ['--search', `${task}:search`] : []),
+    `${taskFile}:rollout`,
+    ...(baselineOnly ? ['--search', `${taskFile}:search`] : []),
     '--base-dir',
     files.record,
     '--rich',
     ...settingArguments(settings),
-    ...(objective ? temporaryObjectiveArguments(objective) : []),
+    ...(request.objective ? temporaryObjectiveArguments(request.objective) : []),
     ...passed.flags,
-    ...(baselineOnly ? [] : await reflectionArguments(passed, space, tuned)),
+    ...(baselineOnly ? [] : await reflectionArguments(passed.reflectionModel, request.space, task.settings)),
   ]
 }
 
