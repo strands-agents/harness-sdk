@@ -70,20 +70,24 @@ export interface ResumeSession {
 }
 
 const SCRIPT_FILE = /\.[cm]?[jt]s$/iu
+const INSTALLED_PACKAGE = /[\\/]node_modules[\\/]/u
 
-const startedCommand = (entry = process.argv[1]): string =>
-  entry && !SCRIPT_FILE.test(entry) ? basename(entry) : 'strands'
+const startedProgram = (entry = process.argv[1]): readonly string[] => {
+  if (!entry) return ['strands']
+  if (!SCRIPT_FILE.test(entry)) return [basename(entry)]
+  return INSTALLED_PACKAGE.test(entry) ? ['strands'] : ['node', entry]
+}
 
 export function sessionResumeCommand(
   session: ResumeSession,
-  options: { cwd?: string; platform?: NodeJS.Platform; command?: string } = {}
+  options: { cwd?: string; platform?: NodeJS.Platform; command?: string; entry?: string } = {}
 ): string {
   const platform = options.platform ?? process.platform
   const paths = platform === 'win32' ? win32 : posix
   const workspace = paths.resolve(session.workspace)
   const directory = paths.resolve(workspace, session.sessionDirectory)
   const quote = (value: string): string => quoteArgument(value, platform)
-  const command = [quote(options.command ?? startedCommand())]
+  const command = (options.command ? [options.command] : startedProgram(options.entry)).map(quote)
   if (session.devWorkspace) command.push('dev', '--workspace', quote(paths.resolve(session.devWorkspace)))
   if (session.agentProject) command.push('--agent', quote(session.agentProject))
   command.push('--session-id', quote(session.sessionId))

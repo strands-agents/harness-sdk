@@ -120,6 +120,34 @@ describe('session resume commands', () => {
     ).toBe('strands-optimize dev --workspace /play/desk/strands-dev --session-id 20261112t151606z-0e6184d8')
   })
 
+  it.each([
+    [
+      'AScriptFile',
+      '/home/me/harness-sdk/strands-cli/dist/src/main.js',
+      'node /home/me/harness-sdk/strands-cli/dist/src/main.js',
+    ],
+    ['AScriptPathWithASpace', '/home/me/my sdk/bin/strands.js', "node '/home/me/my sdk/bin/strands.js'"],
+    ['AnInstalledCommand', '/usr/local/bin/strands', 'strands'],
+    ['AnInstalledPackageScript', '/usr/local/lib/node_modules/@strands-agents/cli/bin/strands.js', 'strands'],
+  ])('shouldResumeWithTheProgramThatStartedTheCliWhenItRanFrom%s', (_case, entry, program) => {
+    expect(sessionResumeCommand(devSession, { cwd: '/play/desk', platform: 'linux', entry })).toBe(
+      `${program} dev --workspace /play/desk/strands-dev --session-id 20261112t151606z-0e6184d8`
+    )
+  })
+
+  it('shouldResumeWithStrandsWhenTheWindowsNpmShimRanTheInstalledScript', () => {
+    expect(
+      sessionResumeCommand(
+        { ...devSession, workspace: 'C:\\play\\desk', devWorkspace: 'C:\\play\\desk\\strands-dev' },
+        {
+          cwd: 'C:\\play\\desk',
+          platform: 'win32',
+          entry: 'C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@strands-agents\\cli\\bin\\strands.js',
+        }
+      )
+    ).toMatch(/^strands dev --workspace /u)
+  })
+
   it('shouldKeepTheAgentWhenTheDevSessionRanAnotherEntrypoint', () => {
     expect(
       sessionResumeCommand(
