@@ -3,7 +3,7 @@ import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { formatChatRequest } from '../chat-adapter.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import {
   Message,
@@ -1429,7 +1429,10 @@ describe('OpenAIModel', () => {
     ])('turns reasoning off and warns when $modelId is sent tools at $baseURL', async (sent) => {
       const request = await send(sent)
 
-      expect(request.reasoning_effort).toBe('none')
+      expect(request).toStrictEqual({
+        ...formatChatRequest({ modelId: sent.modelId }, messages, { toolSpecs }),
+        reasoning_effort: 'none',
+      })
       expect(warnOnce).toHaveBeenCalledWith(
         expect.objectContaining({ warn: expect.any(Function) }),
         expect.stringContaining(`model_id=<${sent.modelId}> | this model accepts tools`)
@@ -1439,18 +1442,25 @@ describe('OpenAIModel', () => {
     it.each([
       { name: 'no tools', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', withTools: false },
       { name: 'effort none', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'none' } },
-      { name: 'no tools, tool-less model', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', withTools: false },
+      { name: 'effort low', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'low' } },
+      { name: 'tool-less model', baseURL: OPENAI_URL, modelId: 'gpt-6-astra' },
+      {
+        name: 'tool-less model, effort none',
+        baseURL: OPENAI_URL,
+        modelId: 'gpt-6.1-sol',
+        params: { reasoning_effort: 'none' },
+      },
+      { name: 'tool-less model on Mantle', baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-sol' },
       { name: 'older model', baseURL: OPENAI_URL, modelId: 'gpt-5.4', params: { reasoning_effort: 'low' } },
-      { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'low' } },
-      { name: 'other endpoint, tool-less model', baseURL: PROXY_URL, modelId: 'gpt-6-astra' },
+      { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-sol' },
       {
         name: 'bedrock-runtime',
         baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
-        modelId: 'openai.gpt-6.1-sol',
+        modelId: 'openai.gpt-6.1-terra',
       },
-      { name: 'look-alike host', baseURL: 'https://api.openai.com.evil.example/v1', modelId: 'gpt-6-astra' },
-      { name: 'client without a base URL', modelId: 'gpt-6-astra' },
-    ])('sends the request as formatted when no tool limit applies: $name', async (sent) => {
+      { name: 'look-alike host', baseURL: 'https://api.openai.com.evil.example/v1', modelId: 'gpt-6-sol' },
+      { name: 'client without a base URL', modelId: 'gpt-6-sol' },
+    ])('sends the request as formatted unless it turns reasoning off: $name', async (sent) => {
       const request = await send(sent)
       const formatted = formatChatRequest(
         { modelId: sent.modelId, ...(sent.params ? { params: sent.params } : {}) },
@@ -1462,19 +1472,49 @@ describe('OpenAIModel', () => {
       expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('accepts tools'))
     })
 
-    it('throws when reasoning is asked for with tools the model takes only without it', async () => {
-      await expect(
-        send({ baseURL: OPENAI_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'low' } })
-      ).rejects.toThrow(/gpt-6-sol accepts tools .* params\.reasoning_effort is 'low'.* api: 'responses'/)
+    const badRequest = Object.assign(new Error('400 Function tools with reasoning_effort are not supported'), {
+      status: 400,
     })
+
+    const reject = async ({ baseURL, modelId, params, withTools = true }: Sent, error: Error): Promise<unknown> => {
+      const client = { chat: { completions: { create: vi.fn().mockRejectedValue(error) } }, baseURL } as any
+      const provider = new OpenAIModel({ api: 'chat', client, modelId, ...(params ? { params } : {}) })
+      return collectIterator(provider.stream(messages, withTools ? { toolSpecs } : {})).catch((thrown) => thrown)
+    }
 
     it.each([
       { baseURL: OPENAI_URL, modelId: 'gpt-6-astra' },
       { baseURL: OPENAI_URL, modelId: 'gpt-6.1-sol', params: { reasoning_effort: 'none' } },
       { baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-sol' },
-    ])('throws when $modelId, which takes no tools on Chat Completions, is sent tools', async (sent) => {
-      await expect(send(sent)).rejects.toThrow(
-        `${sent.modelId} does not accept tools on the Chat Completions API. Use OpenAIModel with api: 'responses' instead.`
+    ])('points to the Responses API when tools are rejected for $modelId, which takes none', async (sent) => {
+      const thrown = await reject(sent, badRequest)
+
+      expect(thrown).toStrictEqual(
+        new ModelError(
+          `400 Function tools with reasoning_effort are not supported ${sent.modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`,
+          { cause: badRequest }
+        )
+      )
+    })
+
+    it.each([
+      { name: 'no tools', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', withTools: false },
+      {
+        name: 'model that takes tools',
+        baseURL: OPENAI_URL,
+        modelId: 'gpt-6-sol',
+        params: { reasoning_effort: 'low' },
+      },
+      { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-astra' },
+    ])('passes a rejection through when the model is not one that takes no tools: $name', async (sent) => {
+      expect(await reject(sent, badRequest)).toBe(badRequest)
+    })
+
+    it('still reports throttling for a model that takes no tools', async () => {
+      const throttled = Object.assign(new Error('Too many requests'), { status: 429 })
+
+      expect(await reject({ baseURL: OPENAI_URL, modelId: 'gpt-6-astra' }, throttled)).toBeInstanceOf(
+        ModelThrottledError
       )
     })
   })

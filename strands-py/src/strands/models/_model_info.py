@@ -18,6 +18,9 @@ from typing import Any, Literal, TypeAlias, TypeVar
 PromptCaching: TypeAlias = Literal["unsupported", "auto", "cache_points"]
 """How a model supports prompt caching."""
 
+# Internal: the values of ``capabilities.chatCompletionsTools`` in the data, which ModelCapabilities does not carry.
+ChatCompletionsTools: TypeAlias = Literal["reasoningOff", "unsupported"]
+
 
 @dataclass(frozen=True, kw_only=True)
 class ModelCapabilities:
@@ -164,10 +167,10 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     return section(**known)
 
 
-def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, str]]:
+def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTools]]:
     """Read the shared model info data, re-casing its camelCase keys onto the record fields.
 
-    The third item is ``capabilities.chatCompletionsTools`` by entry, which the SDK reads but does not type.
+    The third item is ``capabilities.chatCompletionsTools`` by entry, which ``ModelCapabilities`` does not carry.
     """
     package_copy = resources.files("strands.models").joinpath("model_info.json")
     try:
@@ -188,7 +191,7 @@ def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, str]]:
             )
             for model_id, entry in data["models"].items()
         }
-        chat_completions_tools = {
+        chat_completions_tools: dict[str, ChatCompletionsTools] = {
             model_id: entry["capabilities"]["chatCompletionsTools"]
             for model_id, entry in data["models"].items()
             if isinstance(entry.get("capabilities"), dict) and "chatCompletionsTools" in entry["capabilities"]
@@ -238,7 +241,7 @@ def _lookup_key(model_id: str) -> str | None:
         candidate = candidate[dot_index + 1 :]
 
 
-def lookup_chat_completions_tools(model_id: str) -> str | None:
+def lookup_chat_completions_tools(model_id: str) -> ChatCompletionsTools | None:
     """Report whether OpenAI's Chat Completions API accepts tools for a model.
 
     Args:

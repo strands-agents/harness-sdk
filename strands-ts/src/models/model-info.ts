@@ -179,18 +179,26 @@ function lookupKey(modelId: string): string | undefined {
 }
 
 /**
+ * The values of `capabilities.chatCompletionsTools` in the data.
+ *
+ * @internal
+ */
+export type ChatCompletionsTools = 'reasoningOff' | 'unsupported'
+
+/**
  * Whether OpenAI's Chat Completions API accepts tools for a model. The data carries this as
- * `capabilities.chatCompletionsTools`, which the SDK reads but does not type.
+ * `capabilities.chatCompletionsTools`, which `ModelCapabilities` does not carry.
  *
  * @internal
  * @param modelId - The model id to look up
  * @returns `'reasoningOff'` when only with reasoning off, `'unsupported'` when not at all, undefined when the data
  *   does not say
  */
-export function lookupChatCompletionsTools(modelId: string): string | undefined {
+export function lookupChatCompletionsTools(modelId: string): ChatCompletionsTools | undefined {
   const key = lookupKey(modelId)
   if (key === undefined) return undefined
-  return (data.models[key]?.capabilities as { chatCompletionsTools?: string } | undefined)?.chatCompletionsTools
+  return (data.models[key]?.capabilities as { chatCompletionsTools?: ChatCompletionsTools } | undefined)
+    ?.chatCompletionsTools
 }
 
 /**

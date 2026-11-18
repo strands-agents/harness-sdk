@@ -167,7 +167,7 @@ See the [OpenAI Harmony message format](https://cookbook.openai.com/articles/ope
 
 **Tools with GPT-5.6 and GPT-6 Models**
 
-OpenAI's Chat Completions API accepts tools for GPT-5.6 and GPT-6 models only with reasoning off, and for some of them (such as `gpt-6-astra` and `gpt-6.1-sol`) not at all. When the client targets `api.openai.com` or Amazon Bedrock Mantle, `OpenAIModel` therefore sends `reasoning_effort="none"` when an agent with tools runs on the first group, with a warning. It raises a `ValueError` if `params` sets another `reasoning_effort` for that group, and for any request with tools on the second. To use tools with reasoning on any of these models, use `OpenAIResponsesModel`. Requests to other OpenAI-compatible endpoints are sent as configured.
+OpenAI's Chat Completions API accepts tools for GPT-5.6 and GPT-6 models only with reasoning off, and for some of them (such as `gpt-6-astra` and `gpt-6.1-sol`) not at all. When the client targets `api.openai.com` or Amazon Bedrock Mantle, `OpenAIModel` therefore sends `reasoning_effort="none"`, with a warning, when an agent with tools runs on the first group and `params` sets no `reasoning_effort`. A `reasoning_effort` you set is sent as it is, so OpenAI rejects any value but `"none"`. For the second group, OpenAI rejects every request with tools, and the error `OpenAIModel` raises says so. To use tools with reasoning on any of these models, use `OpenAIResponsesModel`. Requests to other OpenAI-compatible endpoints are sent as configured.
 </Tab>
 <Tab label="TypeScript">
 
@@ -199,7 +199,7 @@ See the [OpenAI Harmony message format](https://cookbook.openai.com/articles/ope
 
 **Tools with GPT-5.6 and GPT-6 Models**
 
-OpenAI's Chat Completions API accepts tools for GPT-5.6 and GPT-6 models only with reasoning off, and for some of them (such as `gpt-6-astra` and `gpt-6.1-sol`) not at all. With `api: 'chat'` and a client that targets `api.openai.com` or Amazon Bedrock Mantle, `OpenAIModel` therefore sends `reasoning_effort: 'none'` when an agent with tools runs on the first group, with a warning. It throws if `params` sets another `reasoning_effort` for that group, and for any request with tools on the second. To use tools with reasoning on any of these models, use the default `api: 'responses'`. Requests to other OpenAI-compatible endpoints are sent as configured.
+OpenAI's Chat Completions API accepts tools for GPT-5.6 and GPT-6 models only with reasoning off, and for some of them (such as `gpt-6-astra` and `gpt-6.1-sol`) not at all. With `api: 'chat'` and a client that targets `api.openai.com` or Amazon Bedrock Mantle, `OpenAIModel` therefore sends `reasoning_effort: 'none'`, with a warning, when an agent with tools runs on the first group and `params` sets no `reasoning_effort`. A `reasoning_effort` you set is sent as it is, so OpenAI rejects any value but `'none'`. For the second group, OpenAI rejects every request with tools, and the error `OpenAIModel` throws says so. To use tools with reasoning on any of these models, use the default `api: 'responses'`. Requests to other OpenAI-compatible endpoints are sent as configured.
 </Tab>
 </Tabs>
 

@@ -26,7 +26,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._defaults import resolve_config_metadata
-from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo, lookup_chat_completions_tools
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ChatCompletionsTools, ModelInfo, lookup_chat_completions_tools
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
 from ._openai_cache import apply_cache_config
 from ._openai_errors import classify_openai_error
@@ -58,18 +58,18 @@ def _has_openai_tool_limits(client: Any) -> bool:
     return isinstance(host, str) and _TOOL_LIMITS_HOST.fullmatch(host.lower()) is not None
 
 
-def _apply_chat_completions_tools(request: dict[str, Any]) -> None:
-    """Turn reasoning off in a request with tools when the model needs that, or raise when it cannot take them."""
+def _apply_chat_completions_tools(client: Any, request: dict[str, Any]) -> ChatCompletionsTools | None:
+    """Turn reasoning off in a request with tools when the model accepts them only that way and none is asked for.
+
+    Returns:
+        The limit OpenAI's Chat Completions API puts on the request's tools, None when it has none or the client
+        targets an endpoint the limits were not measured on.
+    """
+    if not request.get("tools") or not _has_openai_tool_limits(client):
+        return None
     model_id = request["model"]
-    support = lookup_chat_completions_tools(model_id)
-    if support == "unsupported":
-        raise ValueError(
-            f"{model_id} does not accept tools on the Chat Completions API. Use OpenAIResponsesModel instead."
-        )
-    if support != "reasoningOff":
-        return
-    effort = request.get("reasoning_effort")
-    if effort is None:
+    limit = lookup_chat_completions_tools(model_id)
+    if limit == "reasoningOff" and request.get("reasoning_effort") is None:
         # Caller depth varies, so stacklevel=1 pins dedup to this line (once per model id).
         warnings.warn(
             f"model_id=<{model_id}> | this model accepts tools on the Chat Completions API only with reasoning"
@@ -77,12 +77,17 @@ def _apply_chat_completions_tools(request: dict[str, Any]) -> None:
             stacklevel=1,
         )
         request["reasoning_effort"] = "none"
-    elif effort != "none":
-        raise ValueError(
-            f"{model_id} accepts tools on the Chat Completions API only with reasoning off, but"
-            f" params[\"reasoning_effort\"] is '{effort}'. Set it to 'none' or leave it unset, or use"
-            " OpenAIResponsesModel to keep reasoning."
-        )
+    return limit
+
+
+def _with_responses_hint(error: openai.BadRequestError, model_id: str) -> openai.BadRequestError:
+    """Add the way out to OpenAI's rejection of tools for a model that accepts none on Chat Completions."""
+    return openai.BadRequestError(
+        f"{error.message} {model_id} does not accept tools on the Chat Completions API with any reasoning_effort."
+        " Use OpenAIResponsesModel instead.",
+        response=error.response,
+        body=error.body,
+    )
 
 
 class OpenAIModel(Model):
@@ -775,9 +780,6 @@ class OpenAIModel(Model):
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
-            ValueError: If the request has tools and OpenAI's Chat Completions API does not accept them for the
-                model, or accepts them only with reasoning off while ``params["reasoning_effort"]`` asks for
-                reasoning.
         """
         logger.debug("formatting request")
         request = self.format_request(messages, tool_specs, system_prompt, tool_choice, agent_metadata=agent_metadata)
@@ -789,8 +791,7 @@ class OpenAIModel(Model):
         # client. The asyncio event loop does not allow connections to be shared. For more details, please refer to
         # https://github.com/encode/httpx/discussions/2959.
         async with self._get_client() as client:
-            if request.get("tools") and _has_openai_tool_limits(client):
-                _apply_chat_completions_tools(request)
+            tool_limit = _apply_chat_completions_tools(client, request)
             try:
                 response = await client.chat.completions.create(**request)
 
@@ -873,6 +874,8 @@ class OpenAIModel(Model):
                 if error_kind == "context_overflow":
                     logger.warning("OpenAI threw context window overflow error")
                     raise ContextWindowOverflowException(str(error)) from error
+                if tool_limit == "unsupported" and isinstance(error, openai.BadRequestError):
+                    raise _with_responses_hint(error, request["model"]) from error
                 raise
         logger.debug("finished streaming response from model")
 

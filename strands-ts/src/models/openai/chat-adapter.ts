@@ -12,9 +12,11 @@ import { encodeBase64 } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
 import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
+import { ModelError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { lookupChatCompletionsTools } from '../model-info.js'
+import type { ChatCompletionsTools } from '../model-info.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig } from './cache.js'
@@ -63,40 +65,50 @@ function hasOpenAIToolLimits(baseURL: string | undefined): boolean {
 }
 
 /**
- * Turns reasoning off in a request with tools when OpenAI's Chat Completions API needs that for the model.
- * Leaves requests to other endpoints as they are.
+ * Turns reasoning off in a request with tools when OpenAI's Chat Completions API accepts them for the model
+ * only that way and `params.reasoning_effort` is unset. Leaves requests to other endpoints as they are.
  *
  * @internal
  * @param request - The request to send, changed in place
  * @param baseURL - The base URL of the client that sends it
- * @throws Error when the API accepts no tools for the model, or only with reasoning off while
- *   `params.reasoning_effort` asks for reasoning
+ * @returns The limit the API puts on the request's tools, undefined when it has none or the data does not say
  */
 export function applyChatCompletionsTools(
   request: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
   baseURL: string | undefined
-): void {
-  if (!request.tools?.length || !hasOpenAIToolLimits(baseURL)) return
-  const support = lookupChatCompletionsTools(request.model)
-  if (support === 'unsupported') {
-    throw new Error(
-      `${request.model} does not accept tools on the Chat Completions API. Use OpenAIModel with api: 'responses' instead.`
-    )
-  }
-  if (support !== 'reasoningOff') return
-  const effort = request.reasoning_effort
-  if (effort === undefined || effort === null) {
+): ChatCompletionsTools | undefined {
+  if (!request.tools?.length || !hasOpenAIToolLimits(baseURL)) return undefined
+  const limit = lookupChatCompletionsTools(request.model)
+  if (limit === 'reasoningOff' && (request.reasoning_effort === undefined || request.reasoning_effort === null)) {
     warnOnce(
       logger,
       `model_id=<${request.model}> | this model accepts tools on the Chat Completions API only with reasoning off, sending reasoning_effort='none'; use api: 'responses' to keep reasoning`
     )
     request.reasoning_effort = 'none'
-  } else if (effort !== 'none') {
-    throw new Error(
-      `${request.model} accepts tools on the Chat Completions API only with reasoning off, but params.reasoning_effort is '${effort}'. ` +
-        "Set it to 'none' or leave it unset, or use OpenAIModel with api: 'responses' to keep reasoning."
-    )
   }
+  return limit
+}
+
+/**
+ * Adds the way out to OpenAI's rejection of tools for a model that accepts none on Chat Completions: its message
+ * suggests `reasoning_effort: 'none'`, which such a model rejects too.
+ *
+ * @internal
+ * @param error - The error the request failed with
+ * @param toolLimit - What {@link applyChatCompletionsTools} returned for the request
+ * @param modelId - The model the request was sent to
+ * @returns A ModelError that wraps a 400 for a model with the `unsupported` limit, else the error as given
+ */
+export function withResponsesHint(
+  error: unknown,
+  toolLimit: ChatCompletionsTools | undefined,
+  modelId: string
+): unknown {
+  if (toolLimit !== 'unsupported' || (error as { status?: number } | null)?.status !== 400) return error
+  return new ModelError(
+    `${(error as Error).message} ${modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`,
+    { cause: error }
+  )
 }
 
 /**
