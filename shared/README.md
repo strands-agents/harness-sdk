@@ -47,5 +47,6 @@ When `STRANDS_CONFORMANCE_RESULTS` names a file, each run appends one JSON objec
 - `sdk`: `python` or `typescript`.
 - `status`: `passed`, `failed`, `error` (the provider could not serve the call: throttling, credentials, an outage, a model that is not served), `skipped` (the case applies but did not run, for example missing credentials) or `not-applicable` (the case's `requires` does not hold for the model, or the SDK leaves the case or provider out). Only `failed` is a verdict against the model; report `error` and `skipped` as not validated.
 - `reason`: present for `error`, `skipped` and `not-applicable`.
+- `attempts`: present when the case took more than one attempt, so a target that often needs a retry shows up in the results.
 
 When a line repeats an earlier `sdk`, `provider`, `model` and `case`, the later line wins.
