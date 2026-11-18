@@ -124,7 +124,7 @@ oauth_mcp_client = MCPClient(
 Set `issuer` to the issuer URL of the authorization server that issued the credentials.
 The client then requests tokens only through that authorization server and stops if
 the MCP server points anywhere else. Without `issuer`, the credentials go to whichever
-authorization server the MCP server advertises, and `MCPClient` logs a warning.
+authorization server the MCP server advertises, and `MCPClient` emits a warning.
 `issuer` requires `mcp` 1.30.0 or later on the 1.x line, or 2.2.0 or later; on an
 older version, `MCPClient` raises a `ValueError` instead of ignoring it.
 

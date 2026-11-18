@@ -1,5 +1,6 @@
 """Unit tests for MCPClient OAuth authentication (url/auth/auth_provider constructor path)."""
 
+import warnings
 from unittest.mock import ANY, create_autospec, patch
 
 import httpx
@@ -12,6 +13,8 @@ from strands.tools.mcp.mcp_client import _InMemoryTokenStorage
 
 # mcp 2.x renamed the provider's `scopes` keyword to `scope`.
 SCOPE_KWARG = "scope" if MCP_V2 else "scopes"
+
+pytestmark = pytest.mark.filterwarnings("ignore:MCPClient. 'auth' has no 'issuer':UserWarning")
 
 
 @pytest.fixture
@@ -125,28 +128,50 @@ def test_auth_issuer_unsupported_by_installed_mcp_raises():
             )
 
 
-def test_auth_without_issuer_warns(caplog):
-    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider"):
-        with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
-            MCPClient(
-                url="https://user:password@mcp.example.com/mcp?key=value",
-                auth=MCPClientCredentials(client_id="id", client_secret="secret"),
-            )
+def test_auth_without_issuer_warns_at_the_caller(issuer_provider):
+    with pytest.warns(UserWarning) as caught:
+        MCPClient(
+            url="https://user:password@mcp.example.com/mcp?key=value",
+            auth=MCPClientCredentials(client_id="id", client_secret="secret"),
+        )
 
-    assert caplog.messages == [
-        "host=<mcp.example.com> | oauth client credentials have no issuer, the mcp server decides which "
-        "authorization server receives them | set the auth issuer to pin the authorization server"
+    assert [str(warning.message) for warning in caught] == [
+        "MCPClient: 'auth' has no 'issuer', so the MCP server at 'mcp.example.com' decides which authorization "
+        "server receives the client credentials. Set 'issuer' to your authorization server's issuer URL to pin it."
+    ]
+    assert caught[0].filename == __file__
+
+
+def test_auth_without_issuer_warns_once_per_call_site(issuer_provider):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("default")
+        for _ in range(2):
+            MCPClient(url="https://mcp.example.com", auth=MCPClientCredentials(client_id="id", client_secret="secret"))
+
+    assert len(caught) == 1
+
+
+def test_auth_without_issuer_on_mcp_without_issuer_support_names_the_required_version():
+    def provider_without_issuer(server_url, storage, client_id, client_secret, scope=None, scopes=None): ...
+
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", provider_without_issuer):
+        with pytest.warns(UserWarning) as caught:
+            MCPClient(url="https://mcp.example.com", auth=MCPClientCredentials(client_id="id", client_secret="secret"))
+
+    assert [str(warning.message) for warning in caught] == [
+        "MCPClient: 'auth' has no 'issuer', so the MCP server at 'mcp.example.com' decides which authorization "
+        "server receives the client credentials. Pinning it with 'issuer' requires mcp>=1.30.0 on the 1.x line "
+        "or mcp>=2.2.0."
     ]
 
 
-def test_auth_with_issuer_does_not_warn(issuer_provider, caplog):
-    with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
+def test_auth_with_issuer_does_not_warn(issuer_provider):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         MCPClient(
             url="https://mcp.example.com",
             auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
         )
-
-    assert caplog.messages == []
 
 
 def test_auth_provider_passed_through(streamablehttp_transport):

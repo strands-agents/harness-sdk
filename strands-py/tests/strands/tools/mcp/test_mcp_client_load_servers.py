@@ -11,6 +11,8 @@ from strands.tools.mcp.mcp_client import MCPClient
 # mcp 2.x renamed the provider's `scopes` keyword to `scope`.
 SCOPE_KWARG = "scope" if MCP_V2 else "scopes"
 
+pytestmark = pytest.mark.filterwarnings("ignore:MCPClient. 'auth' has no 'issuer':UserWarning")
+
 
 @pytest.fixture
 def mock_client():
@@ -434,6 +436,16 @@ def test_config_auth_issuer_passed_to_provider(mock_client, transports, monkeypa
         issuer="https://auth.example.com",
         **{SCOPE_KWARG: None},
     )
+
+
+def test_config_auth_without_issuer_warns_at_the_caller(mock_client, transports):
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider"):
+        with pytest.warns(UserWarning, match="'auth' has no 'issuer', so the MCP server at 'example.com'") as caught:
+            MCPClient.load_servers(
+                {"srv": {"url": "https://example.com/mcp", "auth": {"client_id": "id", "client_secret": "secret"}}}
+            )
+
+    assert [warning.filename for warning in caught] == [__file__]
 
 
 def test_auth_interpolates_env_vars(mock_client, transports, monkeypatch):

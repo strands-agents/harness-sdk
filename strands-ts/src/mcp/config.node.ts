@@ -96,7 +96,7 @@ function buildHttpConfig(server: McpServerConfig): McpClientConfig {
       clientId: interpolateEnv(server.auth.clientId),
       clientSecret: interpolateEnv(server.auth.clientSecret),
       ...(server.auth.scopes && { scopes: server.auth.scopes.map(interpolateEnv) }),
-      ...(server.auth.issuer !== undefined && { issuer: interpolateEnv(server.auth.issuer) }),
+      ...(server.auth.issuer != null && { issuer: interpolateEnv(server.auth.issuer) }),
     }
   }
   return config

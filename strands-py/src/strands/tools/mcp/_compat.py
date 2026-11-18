@@ -182,6 +182,13 @@ async def call_tool(
     return await _drive_input_required(session, call_once)
 
 
+def client_credentials_supports_issuer() -> bool:
+    """Whether the installed `mcp` provider takes `issuer`: 1.30.0 on the 1.x line, 2.2.0 on the 2.x line."""
+    from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
+
+    return "issuer" in inspect.signature(ClientCredentialsOAuthProvider).parameters
+
+
 def client_credentials_auth(
     server_url: str, storage: Any, client_id: str, client_secret: str, scope: str | None, issuer: str | None
 ) -> httpx.Auth:
@@ -209,7 +216,7 @@ def client_credentials_auth(
 
     options: dict[str, Any] = {"scope" if MCP_V2 else "scopes": scope}
     if issuer is not None:
-        if "issuer" not in inspect.signature(ClientCredentialsOAuthProvider).parameters:
+        if not client_credentials_supports_issuer():
             raise ValueError("MCPClient: 'auth' key 'issuer' requires mcp>=1.30.0 on the 1.x line or mcp>=2.2.0")
         options["issuer"] = issuer
     return ClientCredentialsOAuthProvider(  # type: ignore[return-value]

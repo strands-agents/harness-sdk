@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import uuid
+import warnings
 from asyncio import AbstractEventLoop
 from collections.abc import Callable, Coroutine, Sequence
 from concurrent import futures
@@ -67,6 +68,7 @@ from ._compat import (
     MCP_V2,
     MCPError,
     client_credentials_auth,
+    client_credentials_supports_issuer,
     is_error,
     is_tools_list_changed,
     mime_type,
@@ -2847,11 +2849,11 @@ class _InMemoryTokenStorage:
         self._client_info = client_info
 
 
-def _build_client_credentials_auth(url: str, auth: MCPClientCredentials) -> httpx.Auth:
+def _build_client_credentials_auth(url: str, auth: MCPClientCredentials, *, stacklevel: int) -> httpx.Auth:
     """Build an httpx.Auth performing the OAuth client_credentials grant against the server.
 
     Error messages name only the offending keys, never their values, so credentials cannot
-    leak into logs.
+    leak into logs. `stacklevel` points the missing-issuer warning at the caller's code.
 
     Raises:
         ValueError: If `auth` is missing required keys or a value has the wrong type.
@@ -2869,10 +2871,15 @@ def _build_client_credentials_auth(url: str, auth: MCPClientCredentials) -> http
     if issuer is not None and not (isinstance(issuer, str) and urlparse(issuer).scheme in ("http", "https")):
         raise ValueError("MCPClient: 'auth' requires 'issuer' to be an http:// or https:// URL")
     if issuer is None:
-        logger.warning(
-            "host=<%s> | oauth client credentials have no issuer, the mcp server decides which "
-            "authorization server receives them | set the auth issuer to pin the authorization server",
-            urlparse(url).hostname,
+        fix = (
+            "Set 'issuer' to your authorization server's issuer URL to pin it."
+            if client_credentials_supports_issuer()
+            else "Pinning it with 'issuer' requires mcp>=1.30.0 on the 1.x line or mcp>=2.2.0."
+        )
+        warnings.warn(
+            f"MCPClient: 'auth' has no 'issuer', so the MCP server at '{urlparse(url).hostname}' decides "
+            f"which authorization server receives the client credentials. {fix}",
+            stacklevel=stacklevel,
         )
     return client_credentials_auth(
         server_url=url,
@@ -2918,7 +2925,9 @@ def _resolve_transport_callable(
         raise ValueError(f"MCPClient: 'url' must be an http:// or https:// URL, got '{server_url}'")
     if scheme == "http" and (auth is not None or auth_provider is not None):
         logger.warning("url=<%s> | sending oauth credentials over plaintext http", server_url)
-    resolved_auth = _build_client_credentials_auth(server_url, auth) if auth is not None else auth_provider
+    resolved_auth = (
+        _build_client_credentials_auth(server_url, auth, stacklevel=4) if auth is not None else auth_provider
+    )
     return lambda: streamable_http_transport(url=server_url, headers=headers, auth=resolved_auth)
 
 
@@ -3049,7 +3058,7 @@ def _parse_config_auth(name: str, url: str, auth: dict[str, Any] | None) -> http
         credentials["scopes"] = auth["scopes"]
     if auth.get("issuer") is not None:
         credentials["issuer"] = auth["issuer"]
-    return _build_client_credentials_auth(url, credentials)
+    return _build_client_credentials_auth(url, credentials, stacklevel=6)
 
 
 def _parse_config_tool_filters(name: str, config: dict[str, Any] | None) -> ToolFilters | None:

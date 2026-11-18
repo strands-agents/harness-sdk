@@ -155,6 +155,18 @@ describe('McpClient.loadServers', () => {
       })
     })
 
+    it('treats a null auth issuer as omitted', async () => {
+      await McpClient.loadServers({
+        server: {
+          url: 'https://example.com/mcp',
+          auth: { clientId: 'id', clientSecret: 'secret', issuer: null },
+        },
+      } as never)
+
+      const { authProvider } = vi.mocked(StreamableHTTPClientTransport).mock.calls[0]![1]!
+      expect((authProvider as ClientCredentialsProvider).clientInformation().issuer).toBeUndefined()
+    })
+
     it('throws when auth credential references missing env var', async () => {
       vi.unstubAllEnvs()
 
