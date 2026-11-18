@@ -736,6 +736,34 @@ const timer = setInterval(() => {
     }
   }, 30000)
 
+  it('shouldLeaveTheStrandsDevWorkspaceOutOfSettingsWhenADevChatOpensThem', async () => {
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness(${JSON.stringify({ ...defaults, name: 'Dev' })})\n`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = {
+      args: parseArgs(['dev', '--workspace', directory, '--agent', project().entrypoint]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    }
+
+    const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+
+    try {
+      await chat.submit('/settings')
+      expect(chat.getSnapshot().panel?.kind).toBe('settings')
+      expect(chat.getSnapshot().panel?.filters?.map(({ id }) => id)).not.toContain('settings:Workspace')
+      expect(await chat.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })).toBe(false)
+    } finally {
+      await chat.dispose()
+    }
+  }, 30000)
+
   it('shouldTurnOffTheCustomSessionManagerWhenADevChatOpensTheAgent', async () => {
     const ownSessions = join(root, 'own-sessions')
     await writeFile(

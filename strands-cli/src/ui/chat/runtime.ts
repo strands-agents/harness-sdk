@@ -2,12 +2,7 @@ import { resolve } from 'node:path'
 import { containsPath } from '../../paths.js'
 import { type HarnessAgentConfig } from '@strands-agents/harness'
 
-import {
-  configurationFromStore,
-  createBuiltinToolsRuntime,
-  type RequestSetup,
-  type WorkspaceAction,
-} from '../../agent/configuration.js'
+import { configurationFromStore, createBuiltinToolsRuntime, type RequestSetup } from '../../agent/configuration.js'
 import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
@@ -167,7 +162,6 @@ export async function createTypescriptChat(
         requestSetup,
         ...(devWorkspace
           ? {
-              workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
               devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
               skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
               saveAgentOptions: (change: AgentOptions): Promise<boolean> =>
@@ -381,7 +375,6 @@ export async function createPythonChat(
       requestSetup,
       ...(devWorkspace
         ? {
-            workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
             devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
             skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
             saveAgentOptions: (change: AgentOptions): Promise<boolean> =>

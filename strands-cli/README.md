@@ -290,25 +290,6 @@ The dev chat keeps its sessions and memory in the `.strands/state/` folder of th
 When the agent sets its own session manager, memory manager, memory stores, or storage, dev deactivates them in the dev chat.
 A notice in the chat tells you what dev deactivated. Without the session manager, dev does not save the chat.
 
-### Workspace Settings
-
-In a dev session, `/settings` includes **Strands dev workspace**. This section shows the workspace folder and active agent path.
-
-- **Edit workspace configuration** opens `.config` in your configured editor. Binding changes apply on the next launch.
-- **Import a different agent** opens the startup agent selector. The selector scans the same folders and hides the current agent.
-
-In the selector, you can select the Base CLI, a local project, or **Create a new harness** for a new TypeScript or Python project.
-When the current workspace is the Base CLI workspace, the selector does not show the Base CLI.
-The selection uses the same workspace folders as startup. The current workspace stays in its folder.
-
-When the selected agent already has its workspace, dev opens that workspace. Otherwise, dev asks for a folder under **Create a workspace**.
-When that folder holds the workspace of another agent, dev asks you to type DELETE first.
-Dev does not replace the open workspace. To replace it, restart strands dev and select the agent there.
-Dev also does not replace a folder that holds the agent of plain `strands`.
-
-A new chat starts in the selected workspace. If the new chat cannot start, dev returns to the previous workspace and chat.
-Press Esc in the selector to keep the current chat. These actions do not change the default agent for plain `strands`.
-
 ### Changes in a dev session
 
 Dev saves each change that you make in the CLI during a dev session.
