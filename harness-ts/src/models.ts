@@ -65,6 +65,12 @@ const CUSTOM_ENDPOINT_VARS: Record<string, string | undefined> = {
 }
 
 const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.'] as const
+const BEDROCK_GPT_NO_NONE_PREFIXES = [
+  'openai.gpt-6-astra',
+  'openai.gpt-6.1-sol',
+  'openai.gpt-6.2-astra',
+  'openai.gpt-6.2-sol',
+] as const
 const BEDROCK_GPT_PREFIXES = ['openai.gpt-5.', 'openai.gpt-daybreak-', 'openai.gpt-6-', 'openai.gpt-6.'] as const
 
 // Reasoning levels each provider's API accepts. `'off'` is the harness's spelling of a provider's
@@ -169,7 +175,7 @@ function bedrockLevels(modelId: string): readonly string[] {
   if (family.startsWith('openai.gpt-5.4') || family.startsWith('openai.gpt-5.5')) {
     return BEDROCK_GPT_NO_MAX_LEVELS
   }
-  if (family.startsWith('openai.gpt-6-astra') || family.startsWith('openai.gpt-6.1-sol')) {
+  if (BEDROCK_GPT_NO_NONE_PREFIXES.some((prefix) => family.startsWith(prefix))) {
     return BEDROCK_GPT_NO_NONE_LEVELS
   }
   if (isBedrockGpt(family)) {

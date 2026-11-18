@@ -25,6 +25,12 @@ const BEDROCK_GPT_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as
 // Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
 const BEDROCK_GPT_NO_MAX_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
 const BEDROCK_GPT_NO_NONE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+const BEDROCK_GPT_NO_NONE_PREFIXES = [
+  'openai.gpt-6-astra',
+  'openai.gpt-6.1-sol',
+  'openai.gpt-6.2-astra',
+  'openai.gpt-6.2-sol',
+] as const
 const BEDROCK_GPT_PREFIXES = ['openai.gpt-5.', 'openai.gpt-daybreak-', 'openai.gpt-6-', 'openai.gpt-6.'] as const
 const BEDROCK_GPT_OSS_EFFORTS = ['low', 'medium', 'high'] as const
 const BEDROCK_QWEN_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
@@ -150,7 +156,7 @@ function effortLevels(modelId: string): readonly string[] {
   if (family.startsWith('openai.gpt-5.4') || family.startsWith('openai.gpt-5.5')) {
     return BEDROCK_GPT_NO_MAX_EFFORTS
   }
-  if (family.startsWith('openai.gpt-6-astra') || family.startsWith('openai.gpt-6.1-sol')) {
+  if (BEDROCK_GPT_NO_NONE_PREFIXES.some((prefix) => family.startsWith(prefix))) {
     return BEDROCK_GPT_NO_NONE_EFFORTS
   }
   if (BEDROCK_GPT_PREFIXES.some((prefix) => family.startsWith(prefix))) {
