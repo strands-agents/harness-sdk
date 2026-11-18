@@ -92,6 +92,9 @@ export interface CedarAuthorizationConfig {
  * Each tool maps to: Action = tool name, Resource = unconstrained,
  * Context = `{ input: <tool args>, session: { hour_utc, call_count, ...enricher } }`.
  *
+ * Call counts are tracked per agent and persisted to `agent.appState`, so agents that share one
+ * handler instance (such as a parent and its subagents) each have their own budget.
+ *
  * @see {@link https://cedarpolicy.com | Cedar} · {@link https://github.com/cedar-policy/cedar-for-agents | cedar-for-agents}
  *
  * @example
@@ -122,7 +125,7 @@ export class CedarAuthorization extends InterventionHandler {
   private readonly _actionType: string
   private readonly _resourceType: string
   private readonly _resourceId: string
-  private readonly _callCounts = new Map<string, number>()
+  private readonly _callCounts = new WeakMap<object, Map<string, number>>()
   private static readonly _stateKey = 'cedar-authorization'
 
   constructor(config: CedarAuthorizationConfig) {
@@ -213,9 +216,9 @@ export class CedarAuthorization extends InterventionHandler {
     return proceed()
   }
 
-  /** Clears rate-limit call counters. */
+  /** Clears the agent's rate-limit call counters. */
   resetCallCounts(agent: { appState: { set: (key: string, value: unknown) => void } }): void {
-    this._callCounts.clear()
+    this._callCounts.delete(agent)
     agent.appState.set(CedarAuthorization._stateKey, {})
   }
 
@@ -237,33 +240,36 @@ export class CedarAuthorization extends InterventionHandler {
     this._schema = schema
   }
 
+  private _countsFor(agent: { appState: { get: (key: string) => unknown } }): Map<string, number> {
+    let counts = this._callCounts.get(agent)
+    if (!counts) {
+      const stored = agent.appState.get(CedarAuthorization._stateKey) as Record<string, number> | undefined
+      counts = new Map(Object.entries(stored ?? {}))
+      this._callCounts.set(agent, counts)
+    }
+    return counts
+  }
+
   private _incrementCallCount(
     agent: { appState: { get: (key: string) => unknown; set: (key: string, value: unknown) => void } },
     toolName: string
   ): number {
-    if (this._callCounts.size === 0) {
-      const stored = agent.appState.get(CedarAuthorization._stateKey) as Record<string, number> | undefined
-      if (stored) {
-        for (const [k, v] of Object.entries(stored)) {
-          this._callCounts.set(k, v)
-        }
-      }
-    }
-    const current = this._callCounts.get(toolName) ?? 0
-    const next = current + 1
-    this._callCounts.set(toolName, next)
-    agent.appState.set(CedarAuthorization._stateKey, Object.fromEntries(this._callCounts))
+    const counts = this._countsFor(agent)
+    const next = (counts.get(toolName) ?? 0) + 1
+    counts.set(toolName, next)
+    agent.appState.set(CedarAuthorization._stateKey, Object.fromEntries(counts))
     return next
   }
 
   private _decrementCallCount(
-    agent: { appState: { set: (key: string, value: unknown) => void } },
+    agent: { appState: { get: (key: string) => unknown; set: (key: string, value: unknown) => void } },
     toolName: string
   ): void {
-    const current = this._callCounts.get(toolName) ?? 0
+    const counts = this._countsFor(agent)
+    const current = counts.get(toolName) ?? 0
     if (current > 0) {
-      this._callCounts.set(toolName, current - 1)
-      agent.appState.set(CedarAuthorization._stateKey, Object.fromEntries(this._callCounts))
+      counts.set(toolName, current - 1)
+      agent.appState.set(CedarAuthorization._stateKey, Object.fromEntries(counts))
     }
   }
 }
