@@ -180,8 +180,13 @@ describe('ToolExecutor cancellation signal', () => {
       )
 
       expect(toolCallCount).toBe(0)
-      expect(results[0]?.status).toBe('error')
-      expect(results[0]?.content).toEqual([new TextBlock('Tool execution cancelled')])
+      expect(results).toEqual([
+        new ToolResultBlock({
+          toolUseId: 'marker-1',
+          status: 'error',
+          content: [new TextBlock('Tool execution cancelled')],
+        }),
+      ])
     })
   }
 })

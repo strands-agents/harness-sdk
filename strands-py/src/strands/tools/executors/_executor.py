@@ -64,6 +64,20 @@ class ToolExecutor(abc.ABC):
             return not agent.cancel_signal.is_set()
         return not cast("Agent", agent)._observe_cancellation()
 
+    @staticmethod
+    def _before_tool_cancel_message(agent: LocalAgent, before_event: BeforeToolCallEvent[LocalAgent]) -> str | None:
+        """Return the message for a tool call cancelled before it starts, or None when the tool should run.
+
+        A cancellation of a standard Agent that lands while the hooks run skips the tool like a hook's
+        ``cancel_tool``. BidiAgent observes cancellation only after a tool group completes.
+        """
+        cancel_tool = before_event.cancel_tool
+        if cancel_tool:
+            return cancel_tool if isinstance(cancel_tool, str) else "tool cancelled by user"
+        if ToolExecutor._is_agent(agent) and cast("Agent", agent)._observe_cancellation():
+            return "Tool execution cancelled"
+        return None
+
     async def _execute_background(
         self,
         agent: "Agent",
@@ -228,20 +242,8 @@ class ToolExecutor(abc.ABC):
                 yield ToolInterruptEvent(tool_use, interrupts)
                 return
 
-            # A cancel that arrives while BeforeToolCallEvent hooks are awaiting must
-            # skip the tool the same way as cancel_tool / the before-tool checkpoint.
-            # Prefer _observe_cancellation so invoke()-linked external signals are included.
-            signal_cancel = bool(agent._observe_cancellation())
-            if before_event.cancel_tool or signal_cancel:
-                cancel_message = (
-                    before_event.cancel_tool
-                    if isinstance(before_event.cancel_tool, str)
-                    else (
-                        "tool cancelled by user"
-                        if before_event.cancel_tool
-                        else "Tool execution cancelled"
-                    )
-                )
+            cancel_message = ToolExecutor._before_tool_cancel_message(agent, before_event)
+            if cancel_message:
                 yield ToolCancelEvent(tool_use, cancel_message)
 
                 cancel_result: ToolResult = {

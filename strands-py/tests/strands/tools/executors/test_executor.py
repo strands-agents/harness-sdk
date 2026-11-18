@@ -1,10 +1,11 @@
-import asyncio
 import unittest.mock
 from unittest.mock import ANY, MagicMock
 
 import pytest
 
 import strands
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BidiModel
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage
@@ -1116,41 +1117,33 @@ async def test_executor_stream_cancel_duration_is_none(
 
 
 @pytest.mark.asyncio
-async def test_executor_stream_skips_tool_when_cancel_arrives_during_before_hook(
-    executor, agent, tool_results, invocation_state, weather_tool, alist
+async def test_executor_stream_skips_tool_when_agent_cancelled_during_before_hook(
+    executor, agent, tool_results, invocation_state, tool_events, alist
 ):
-    """Cancel during an awaiting BeforeToolCallEvent must skip the tool callback."""
-    call_count = {"n": 0}
-    gate = asyncio.Event()
+    """An agent cancellation that lands while BeforeToolCallEvent hooks run skips the tool (#5665)."""
+    agent.hooks.add_callback(BeforeToolCallEvent, lambda event: agent._cancel_signal.set())
+    tool_use: ToolUse = {"name": "thread_tool", "toolUseId": "1", "input": {}}
 
-    @strands.tool(name="marker_tool")
-    def marker_tool():
-        call_count["n"] += 1
-        return "wrote"
+    tru_events = await alist(executor._stream(agent, tool_use, tool_results, invocation_state))
 
-    agent.tool_registry.register_tool(marker_tool)
+    exp_result = {"toolUseId": "1", "status": "error", "content": [{"text": "Tool execution cancelled"}]}
+    exp_events = [ToolCancelEvent(tool_use, "Tool execution cancelled"), ToolResultEvent(exp_result)]
+    assert tru_events == exp_events
+    assert tool_results == [exp_result]
+    assert tool_events == []
 
-    async def slow_before(event):
-        gate.set()
-        await asyncio.sleep(0.05)
-        return event
 
-    agent.hooks.add_callback(BeforeToolCallEvent, slow_before)
-    tool_use: ToolUse = {"name": "marker_tool", "toolUseId": "1", "input": {}}
+@pytest.mark.asyncio
+async def test_executor_stream_runs_bidi_agent_tool_cancelled_during_before_hook(
+    executor, weather_tool, tool_results, alist
+):
+    """BidiAgent observes cancellation only after a tool group completes, so the tool still runs."""
+    bidi_agent = BidiAgent(model=unittest.mock.AsyncMock(spec=BidiModel), tools=[weather_tool])
+    bidi_agent.hooks.add_callback(BeforeToolCallEvent, lambda event: bidi_agent.cancel())
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
 
-    async def cancel_while_hook_awaits():
-        await gate.wait()
-        agent._cancel_signal.set()
+    tru_events = await alist(executor._stream(bidi_agent, tool_use, tool_results, {}))
 
-    cancel_task = asyncio.create_task(cancel_while_hook_awaits())
-    events = await alist(executor._stream(agent, tool_use, tool_results, invocation_state))
-    await cancel_task
-
-    assert call_count["n"] == 0
-    assert isinstance(events[0], ToolCancelEvent)
-    assert events[-1].tool_result == {
-        "toolUseId": "1",
-        "status": "error",
-        "content": [{"text": "Tool execution cancelled"}],
-    }
-    assert tool_results == [events[-1].tool_result]
+    exp_result = {"toolUseId": "1", "status": "success", "content": [{"text": "sunny"}]}
+    assert tru_events == [ToolResultEvent(exp_result)]
+    assert tool_results == [exp_result]
