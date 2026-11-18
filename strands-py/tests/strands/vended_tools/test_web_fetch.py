@@ -442,6 +442,10 @@ class TestHtmlToMarkdown:
     def test_script_and_data_img_srcs_with_line_separator_prefix_are_dropped(self, prefix, src, expected):
         assert html_to_markdown(f'<img src="{prefix}{src}" alt="x">') == expected
 
+    @pytest.mark.parametrize("url", ["javascript://\u2100%0aalert(1)", "vbscript://[x", "data://[x/text/html,x"])
+    def test_script_and_data_hrefs_with_unparseable_host_are_dropped(self, url):
+        assert html_to_markdown(f'<a href="{url}">click</a>') == "click"
+
     def test_unparseable_href_is_kept_and_rest_of_page_is_converted(self):
         html = '<h1>Hi</h1><a href="javascript:alert(1)">js</a> <a href="http://[placeholder]/x">bad</a>'
         assert html_to_markdown(html) == "# Hi\n\njs [bad](http://[placeholder]/x)"
