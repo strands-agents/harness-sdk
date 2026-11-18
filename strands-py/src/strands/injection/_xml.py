@@ -45,8 +45,8 @@ def _escape_xml_attr(value: str) -> str:
 def _untrusted_json_block(tag: str, value: Any) -> str:
     r"""Serialize a value as JSON between ``<tag>`` and ``</tag>`` delimiters.
 
-    ``</`` is written as ``<\/`` and non-ASCII characters as ``\uXXXX``. Both parse back to the same value, so
-    the body is ASCII and cannot contain the closing delimiter.
+    ``</`` is written as ``<\/``, and DEL and non-ASCII characters as ``\uXXXX``, so the body is ASCII and cannot
+    contain a closing delimiter. Both are JSON escapes: a JSON parser reads the same value.
 
     Args:
         tag: The delimiter tag name.

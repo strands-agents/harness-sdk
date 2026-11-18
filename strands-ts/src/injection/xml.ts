@@ -34,9 +34,9 @@ export function escapeXmlAttr(value: string): string {
 }
 
 /**
- * Serializes a value as JSON between `<tag>` and `</tag>` delimiters. `</` is written as `<\/` and
- * non-ASCII characters as `\uXXXX`. Both parse back to the same value, so the body is ASCII and cannot
- * contain the closing delimiter.
+ * Serializes a value as JSON between `<tag>` and `</tag>` delimiters. `</` is written as `<\/`, and
+ * DEL and non-ASCII characters as `\uXXXX`, so the body is ASCII and cannot contain a closing
+ * delimiter. Both are JSON escapes: a JSON parser reads the same value.
  *
  * @param tag - The delimiter tag name
  * @param value - The JSON-serializable value to enclose
