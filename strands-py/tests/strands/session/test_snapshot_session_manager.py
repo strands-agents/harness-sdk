@@ -48,7 +48,7 @@ from strands.storage import LocalFileStorage
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types._snapshot import Snapshot
 from strands.types.content import ContentBlock
-from strands.types.exceptions import ContextWindowOverflowException, SnapshotException
+from strands.types.exceptions import ContextWindowOverflowException, SnapshotException, StorageError
 from strands.vended_plugins.context_injector import ContextInjector
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -1437,7 +1437,9 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
     snapshot_ids = []
 
     async def write_failing(key, data):
-        raise OSError("latest write failed" if key == _on_disk_key("s1", "a1") else "checkpoint write failed")
+        if key == _on_disk_key("s1", "a1"):
+            raise OSError("latest write failed")
+        raise StorageError("checkpoint write failed") from PermissionError("permission denied")
 
     async def checkpoint(event):
         snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
@@ -1456,6 +1458,64 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
         " | failed to flush a redaction to immutable snapshot",
     ]
     assert tru_warnings == exp_warnings
+    # The checkpoint error is not raised, so its log carries the cause the storage wrapped.
+    assert "PermissionError: permission denied" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("latest_write_fails", "exp_error", "exp_latest_warnings"),
+    [
+        (False, "listing failed", []),
+        (
+            True,
+            "latest write failed",
+            [
+                "agent_id=<a1>, session_id=<s1>, error=<latest write failed>"
+                " | failed to flush a redaction to snapshot_latest"
+            ],
+        ),
+    ],
+)
+def test_redaction_listing_error_is_logged(storage, caplog, latest_write_fails, exp_error, exp_latest_warnings):
+    """A failed listing leaves the checkpoints as they were and is logged, also when the latest error is raised."""
+    manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="trigger")
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    snapshot_ids = []
+    write, list_keys = storage.write, storage.list
+
+    async def write_failing_on_latest(key, data):
+        if key == _on_disk_key("s1", "a1"):
+            raise OSError("latest write failed")
+        await write(key, data)
+
+    async def list_failing(prefix):
+        raise StorageError("listing failed") from PermissionError("permission denied")
+
+    async def checkpoint(event):
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+        storage.list = list_failing  # type: ignore[method-assign]
+        if latest_write_fails:
+            storage.write = write_failing_on_latest  # type: ignore[method-assign]
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    manager_logger = "strands.session.snapshot_session_manager"
+    with caplog.at_level(logging.WARNING, logger=manager_logger):
+        with pytest.raises((OSError, StorageError), match=exp_error):
+            agent("sensitive prompt")
+    storage.list = list_keys  # type: ignore[method-assign]
+
+    tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
+    exp_warnings = [
+        *exp_latest_warnings,
+        "agent_id=<a1>, session_id=<s1>, error=<listing failed> | failed to list immutable snapshots while flushing"
+        " a redaction | no immutable snapshot was rewritten",
+    ]
+    assert tru_warnings == exp_warnings
+    assert "PermissionError: permission denied" in caplog.text
+    assert b"sensitive prompt" in _immutable_snapshot_data(storage, snapshot_ids[0])
 
 
 def test_redaction_rewrites_every_copy_of_message(storage):

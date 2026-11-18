@@ -640,7 +640,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 error,
             )
             # A failed latest write must not leave the immutable snapshots unredacted. Its error is
-            # the one raised; a failed immutable snapshot is logged.
+            # the one raised; a failure on the immutable snapshots is logged.
             with contextlib.suppress(Exception):
                 await self._redact_immutable_snapshots(redact_message, agent)
             raise
@@ -657,7 +657,18 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 await self._redact_immutable_snapshot(snapshot_id, redact_message, agent)
 
         # Every snapshot is read: after a restore, one that holds the message can be older than ones that do not.
-        snapshot_ids = await self.list_snapshot_ids(agent)
+        try:
+            snapshot_ids = await self.list_snapshot_ids(agent)
+        except Exception as list_error:
+            logger.warning(
+                "agent_id=<%s>, session_id=<%s>, error=<%s> | failed to list immutable snapshots while flushing a "
+                "redaction | no immutable snapshot was rewritten",
+                agent.agent_id,
+                self.session_id,
+                list_error,
+                exc_info=list_error,
+            )
+            raise
         # Let every rewrite finish before failing, so a storage error leaves only its own snapshot unredacted.
         results = await asyncio.gather(*map(_redact, snapshot_ids), return_exceptions=True)
         errors = [
@@ -673,6 +684,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 self.session_id,
                 snapshot_id,
                 error,
+                exc_info=error,
             )
         if errors:
             raise errors[0][1]
