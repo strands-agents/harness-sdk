@@ -53,9 +53,13 @@ describe('TEMPORARY create-experiment flow', () => {
     ['three sources', 'Cases come from one of three sources'],
     ['the source that the request names', 'Use the source that the request names'],
     ['a goal for a retried generation', 'a retry of a failed generation uses a goal'],
-    ['one plain question when the source is open', 'Otherwise ask one plain question before anything else'],
-    ['past chats only when there are some', 'Offer past chats only when newExperiment.pastChats'],
-    ['the number of past chats', 'You have 12 past chats with this agent'],
+    [
+      'one question about the goal when the request is open',
+      'ask what the experiment should test before anything else',
+    ],
+    ['nothing else before the answer', 'Make no other tool call, and start nothing, until the developer answers'],
+    ['past chats only when there are some', 'When it is above 0, add one clause to that question'],
+    ['the number of past chats', 'or I can build cases from your 12 past chats'],
     ['the newest session-converter skill', 'call strands_dev_session_converter and follow the skill that it returns'],
   ])('shouldAskWhereTheCasesComeFromWith %s', (_rule, line) => {
     expect(instructions()).toContain(line)

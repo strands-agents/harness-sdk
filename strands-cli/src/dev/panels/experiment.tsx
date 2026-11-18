@@ -168,7 +168,7 @@ const homeItem = (row: HomeRow, now: number): ListItem => {
     return {
       key: 'new',
       label: 'New experiment',
-      detail: 'describe it to the agent in the chat',
+      detail: 'the agent asks what to test',
       mark: { text: '+' },
       tone: 'muted',
     }

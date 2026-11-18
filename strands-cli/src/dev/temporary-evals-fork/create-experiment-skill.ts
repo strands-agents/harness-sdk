@@ -11,12 +11,12 @@ Help the developer turn something they want to learn about the agent into a smal
 
 ## Choose where the cases come from
 
-Call strands_dev_status first. Cases come from one of three sources:
+Cases come from one of three sources:
 - A goal: generate new cases from what the developer wants to try or check. The rest of this skill covers this source.
 - Past chats: build cases from the developer's earlier strands dev chats with this agent.
 - Other sources: traces in Langfuse, CloudWatch, or OpenSearch, chats from another harness, or a session file.
 
-Use the source that the request names; a retry of a failed generation uses a goal. Otherwise ask one plain question before anything else. Offer past chats only when newExperiment.pastChats in strands_dev_status is above 0, and give that number, for example: "You have 12 past chats with this agent. Build cases from them, describe what to test, or pull from traces?" Without past chats, ask whether to describe what to test or to pull from traces or files.
+Use the source that the request names; a retry of a failed generation uses a goal. When the request gives no goal and no source, for example when the developer only selected New experiment in /experiment, ask what the experiment should test before anything else, in one short question. Call strands_dev_status first only to learn newExperiment.pastChats. When it is above 0, add one clause to that question that offers the past chats instead, and give the number, for example: "What should this experiment test? Describe a task or a few example questions, or I can build cases from your 12 past chats." Make no other tool call, and start nothing, until the developer answers. Offer traces or files only when the developer asks for another source.
 
 For past chats or other sources, call strands_dev_session_converter and follow the skill that it returns, with the strands dev rules at its top. It is the newest session-converter skill from strands-evals, so do not use the goal steps below for these sources.
 
