@@ -6,6 +6,7 @@ import { ContextWindowOverflowError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock, OffloadedBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { Offload } from '../strategies/offload/index.js'
 import { ToolRegistry } from '../../registry/tool-registry.js'
 import { ToolStreamEvent } from '../../tools/tool.js'
 import type { CountTokensOptions } from '../../models/model.js'
@@ -79,6 +80,16 @@ describe('ContextManager', () => {
         strategies: [{ name: 'custom', apply: async () => false }],
       })
       expect(cm).toBeDefined()
+    })
+
+    it.each([
+      ['the preset and Offload.defer', ['dynamicToolLoading' as const, Offload.defer(['!shell'])]],
+      ['two Offload.defer strategies', [Offload.defer('toolSpecs'), Offload.defer(['shell'])]],
+    ])('rejects %s, which would share one tools list', (_name, strategies) => {
+      expect(() => new ContextManager({ strategies })).toThrow(
+        "contextManager takes one Offload.defer strategy, and the 'dynamicToolLoading' preset is one; " +
+          'to change what the preset defers or when, use Offload.defer(target).when(conditions) in its place'
+      )
     })
   })
 

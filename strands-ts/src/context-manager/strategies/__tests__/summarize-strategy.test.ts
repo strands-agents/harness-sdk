@@ -16,7 +16,7 @@ import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
-import { TestModelProvider } from '../../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, TestModelProvider } from '../../../__fixtures__/model-test-helpers.js'
 import {
   heuristicCountTokens,
   makeContext as makeBaseContext,
@@ -31,6 +31,7 @@ import type { ContextState } from '../../types.js'
 import { ToolRegistry } from '../../../registry/tool-registry.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import type { Model } from '../../../models/model.js'
+import { ModelProxy } from '../../../models/model-proxy.js'
 
 const summaryResult = (text: string, provider?: string): SummarizeResult => ({
   content: [new SummaryBlock({ text, ...(provider && { provider }) })],
@@ -582,6 +583,19 @@ describe('a summarized run replays the agent request', () => {
     const [sent, options] = summarize.mock.calls[0]!
     expect(turns(sent)).toEqual(turns(replayMessages().slice(0, 4)))
     expect(options).toEqual(replayOptions(agent))
+  })
+
+  it("sends the tools of the agent's latest model call, so the summary shares its prompt cache", async () => {
+    const messages = replayMessages()
+    const { agent, summarize } = mockAgent(messages)
+    const loader = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+    const callTools = { toolSpecs: [AGENT_TOOL, loader], deferredTools: new Set(['shell']) }
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    await collectGenerator(new ModelProxy(model, agent).streamAggregated(messages, callTools))
+
+    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(summarize.mock.calls[0]![1]).toEqual({ ...replayOptions(agent), ...callTools })
   })
 
   it('summarizes each side of a kept pin on its own', async () => {

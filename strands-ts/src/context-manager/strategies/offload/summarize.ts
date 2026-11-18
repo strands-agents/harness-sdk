@@ -17,6 +17,7 @@ import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
 import type { Model, SummarizeOptions } from '../../../models/model.js'
 import type { SummarizeResult } from '../../../models/summarize.js'
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
+import { latestCallTools } from '../../../models/model-proxy.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import { formatToolResultLabel, toolResultToContentBlocks } from '../../content-rendering.js'
@@ -307,10 +308,21 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       cancelSignal: agent.cancelSignal,
       ...(agent.agentMetadata && { agentMetadata: agent.agentMetadata }),
       ...(replay && {
-        toolSpecs: agent.toolRegistry.toolSpecs(),
+        ...this._replayedTools(agent),
         ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
       }),
     }
+  }
+
+  /**
+   * The tools a replay sends: those of the agent's latest model call, since the replay shares that call's prompt cache
+   * only with the same tools. Before the first call, the ones it would send with the registry's tools.
+   */
+  private _replayedTools(agent: LocalAgent): Pick<SummarizeOptions, 'toolSpecs' | 'deferredTools'> {
+    const recorded = latestCallTools(agent)
+    if (recorded) return recorded
+    const toolSpecs = agent.toolRegistry.toolSpecs()
+    return agent.contextManager?.callTools(agent, toolSpecs, agent.model) ?? { toolSpecs }
   }
 
   private _resolveModel(agent: LocalAgent): Model | undefined {

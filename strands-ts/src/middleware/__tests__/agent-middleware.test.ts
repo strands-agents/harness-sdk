@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../../agent/agent.js'
+import { latestCallTools } from '../../models/model-proxy.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
@@ -203,6 +204,26 @@ describe('Agent middleware integration — InvokeModelStage', () => {
       expect(streamSpy).toHaveBeenCalled()
       const calledOptions = streamSpy.mock.calls[0]![1]
       expect(calledOptions?.toolSpecs).toStrictEqual([])
+    })
+
+    it('passes the deferred tools to the model and records the tools it received', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      // A model that takes stubs would get the deferred spec as a stub.
+      model.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading: 'native' } } })
+      const agent = new Agent({ model, printer: false })
+      const shell = { name: 'shell', description: 'Run a command', inputSchema: { type: 'object' as const } }
+      const grep = { name: 'grep', description: 'Search files', inputSchema: { type: 'object' as const } }
+      const deferredTools = new Set(['shell'])
+      agent.addMiddleware(InvokeModelStage.Input, (context) => ({ ...context, toolSpecs: [shell], deferredTools }))
+      agent.addMiddleware(InvokeModelStage, (context, next) =>
+        next({ ...context, toolSpecs: [...context.toolSpecs, grep] })
+      )
+      const streamSpy = vi.spyOn(model, 'stream')
+
+      await agent.invoke('Test prompt')
+
+      expect(streamSpy.mock.calls[0]![1]).toMatchObject({ toolSpecs: [shell, grep], deferredTools })
+      expect(latestCallTools(agent)).toEqual({ toolSpecs: [shell, grep], deferredTools })
     })
   })
 

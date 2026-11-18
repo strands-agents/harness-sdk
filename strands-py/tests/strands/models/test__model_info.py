@@ -36,6 +36,8 @@ _PACKAGE_COPY = pathlib.Path(__file__).parents[3] / "src" / "strands" / "models"
 
 _MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.:@-]*$")
 _LIMIT_KEYS = ("contextWindow", "maxOutputTokens")
+# The TypeScript SDK reads this key; the Python loader skips it until the port.
+_DYNAMIC_TOOL_LOADING_VALUES = ("unsupported", "native")
 _BOOLEAN_CAPABILITY_KEYS = (
     "stateful",
     "forcedToolChoice",
@@ -288,6 +290,8 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
                 assert value is False, f"{model_id}.{key}"
             elif key == "defaultEffort":
                 assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
+            elif key == "dynamicToolLoading":
+                assert value in _DYNAMIC_TOOL_LOADING_VALUES, f"{model_id}.{key}"
             else:
                 assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
                 assert isinstance(value, bool), f"{model_id}.{key}"
