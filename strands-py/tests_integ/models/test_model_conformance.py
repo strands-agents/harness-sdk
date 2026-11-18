@@ -13,7 +13,7 @@ import strands
 from strands import Agent
 from strands.models import CacheConfig
 from strands.models._model_info import lookup_model_info
-from strands.models._native_output import _FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES
+from strands.models._native_output import _is_unsupported_mechanism_message
 from strands.vended_plugins.context_injector import ContextInjector
 from tests_integ.models import conformance
 
@@ -26,9 +26,17 @@ class Profile(BaseModel):
     occupation: str
 
 
-# A provider can be briefly unavailable and a model can answer differently from one call to the next, so every
-# case gets three attempts. Slow reasoning models can take longer than the suite's default timeout.
-pytestmark = [pytest.mark.flaky(reruns=2, reruns_delay=5), pytest.mark.timeout(180)]
+# A provider can be unavailable for a short while, so an error gets three attempts half a minute apart. A failed
+# assertion is the case's verdict and is not retried. Slow reasoning models can take longer than the suite's
+# default timeout.
+pytestmark = [
+    pytest.mark.flaky(reruns=2, reruns_delay=30, rerun_except=["AssertionError", "^assert "]),
+    pytest.mark.timeout(180),
+]
+
+# On a single call a model can skip a tool or ignore injected text, so these cases also retry a failed assertion.
+# A target that does it often belongs in knownFailures as intermittent.
+retries_assertions = pytest.mark.flaky(reruns=2, reruns_delay=30)
 
 PROFILE_PROMPT = "Create a profile for John who is a 25 year old dentist."
 EXPECTED_PROFILE = Profile(name="John", age=25, occupation="dentist")
@@ -50,12 +58,14 @@ def model(request, target):
     model = target.create_model()
     case_id = request.function.conformance_case
     reason = conformance.not_applicable_reason(case_id, model)
+    known = conformance.KNOWN_FAILURES.get((target.provider, target.model_id, case_id))
+    if reason and known:
+        pytest.fail(
+            f"known failure #{known['issue']} no longer applies ({reason}); "
+            "remove it from knownFailures in shared/conformance.json"
+        )
     if reason:
         pytest.skip(f"{conformance.NOT_APPLICABLE}: {reason}")
-    known = conformance.KNOWN_FAILURES.get((target.provider, target.model_id, case_id))
-    if known:
-        strict = not known.get("intermittent", False)
-        request.applymarker(pytest.mark.xfail(strict=strict, reason=f"known failure, see #{known['issue']}"))
     return model
 
 
@@ -76,7 +86,17 @@ def test_shared_cases_and_providers_are_all_accounted_for():
     assert unmapped_providers == set()
 
 
+def test_known_failures_name_a_live_target_and_a_case():
+    stale = [
+        key
+        for key in conformance.KNOWN_FAILURES
+        if key[:2] not in conformance.LIVE_TARGETS or key[2] not in conformance.CASES
+    ]
+    assert stale == []
+
+
 @conformance.case("tool-use")
+@retries_assertions
 def test_tool_use(model):
     agent = _agent(model, tools=[echo])
 
@@ -96,6 +116,7 @@ def test_context_window(model, target):
 
 
 @conformance.case("structured-output")
+@retries_assertions
 def test_structured_output(model):
     result = _agent(model)(PROFILE_PROMPT, structured_output_model=Profile)
 
@@ -112,20 +133,18 @@ def test_max_output_tokens(model):
 
 async def _forced_tool_choice_outcome(model, alist):
     messages = [{"role": "user", "content": [{"text": "Hello there!"}]}]
-    # A model that accepts a forced call can still end a turn without one, so only a tool use or a refusal is final.
-    for _ in range(3):
-        try:
-            events = await alist(model.stream(messages, tool_specs=[echo.tool_spec], tool_choice={"any": {}}))
-        except Exception as error:
-            if not any(message in str(error) for message in _FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES):
-                raise
-            return "refused"
-        if any("toolUse" in event.get("contentBlockStart", {}).get("start", {}) for event in events):
-            return "accepted"
-    return "no tool use"
+    try:
+        events = await alist(model.stream(messages, tool_specs=[echo.tool_spec], tool_choice={"any": {}}))
+    except Exception as error:
+        if not _is_unsupported_mechanism_message(str(error), "forced"):
+            raise
+        return "refused"
+    used_tool = any("toolUse" in event.get("contentBlockStart", {}).get("start", {}) for event in events)
+    return "accepted" if used_tool else "no tool use"
 
 
 @conformance.case("forced-tool-choice")
+@retries_assertions
 @pytest.mark.asyncio
 async def test_forced_tool_choice(model, alist):
     tru_outcome = await _forced_tool_choice_outcome(model, alist)
@@ -200,6 +219,7 @@ async def test_server_side_summary(model):
 
 
 @conformance.case("temporary-messages")
+@retries_assertions
 def test_temporary_messages(model):
     order_number = uuid.uuid4().hex[:8]
     agent = _agent(model, plugins=[ContextInjector(lambda context: f"The user's order number is {order_number}.")])

@@ -1,0 +1,64 @@
+name: "Model Conformance"
+
+# Runs every case in shared/conformance.json against every listed model, on main. Pull requests run the
+# same cases through the integration workflows, only when they change something that can affect a model.
+on:
+  schedule:
+    - cron: '23 8 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: model-conformance
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  python:
+    name: Python
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: strands-py
+    steps:
+      - name: Configure Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.STRANDS_INTEG_TEST_ROLE }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir hatch
+
+      - name: Run the conformance cases
+        env:
+          AWS_REGION: us-east-1
+          AWS_REGION_NAME: us-east-1
+          STRANDS_TEST_API_KEYS_SECRET_NAME: ${{ secrets.STRANDS_TEST_API_KEYS_SECRET_NAME }}
+          STRANDS_CONFORMANCE: all
+          STRANDS_CONFORMANCE_RESULTS: ${{ runner.temp }}/conformance-python.jsonl
+        run: hatch test tests_integ/models/test_model_conformance.py
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: conformance-python
+          path: ${{ runner.temp }}/conformance-python.jsonl
+          if-no-files-found: warn
+
