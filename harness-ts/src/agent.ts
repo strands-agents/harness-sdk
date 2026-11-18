@@ -4,7 +4,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import {
   Agent,
   type AgentConfig,
@@ -448,6 +449,10 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
       }
       const sessionDir = sessionConfig.dir ?? DEFAULT_SESSION_DIR
       const sessionId = sessionConfig.id ? sanitizeSessionId(sessionConfig.id) : randomUUID().slice(0, 8)
+      // The stash below can write before the first snapshot and keeps only its own folder private, so
+      // the session directory is made here. A failure is left for the first write to report.
+      await mkdir(dirname(resolve(sessionDir)), { recursive: true }).catch(() => {})
+      await mkdir(sessionDir, { recursive: true, mode: 0o700 }).catch(() => {})
       sessionManager = new SessionManager({
         sessionId,
         storage: { snapshot: new SessionFileStorage(sessionDir) },

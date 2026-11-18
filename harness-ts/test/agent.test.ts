@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -648,6 +648,37 @@ describe('createHarness', () => {
     // Every folder under the session dir is read as a session, so the stash stays inside this one.
     expect(readdirSync(dir)).toEqual(['retrieval'])
   })
+
+  // https://github.com/strands-agents/harness-sdk/issues/6248
+  it.skipIf(process.platform === 'win32')(
+    'keeps the session directory private when the stash writes before the first snapshot',
+    async () => {
+      const parent = makeTempDir()
+      mkdirSync(parent)
+      const dir = join(parent, 'agent', 'sessions')
+      // The SDK logs its warnings through the console by default.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const agent = await createHarness({
+        model: new RetrievingModel(),
+        tools: [readLargeTool],
+        session: { id: 'retrieval', dir },
+        builtinTools: [],
+        builtinPlugins: [],
+        memory: false,
+        skills: false,
+        printer: false,
+      })
+      await agent.invoke('Read the document.', { limits: { turns: 4 } })
+      const openRootWarnings = warn.mock.calls.flat().filter((message) => String(message).includes('accessible by'))
+      warn.mockRestore()
+
+      const mode = (path: string): number => statSync(path).mode & 0o777
+      expect(mode(dir)).toBe(0o700)
+      expect(mode(join(dir, 'retrieval'))).toBe(0o700)
+      expect(mode(join(parent, 'agent'))).toBe(mode(parent))
+      expect(openRootWarnings).toEqual([])
+    }
+  )
 
   it.each([
     ['without a session', (): HarnessAgentOptions => ({ session: false })],
