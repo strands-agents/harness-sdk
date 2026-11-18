@@ -699,6 +699,10 @@ async def _handle_model_execution(
                     )
 
             tool_specs = agent.tool_registry.get_all_tool_specs()
+            if agent._sort_tools:
+                # Sort before middleware so identical catalogs produce a stable request, while
+                # middleware remains free to reorder the specs it passes on.
+                tool_specs = sorted(tool_specs, key=lambda spec: spec["name"])
 
             # Build middleware context with defensive copies to prevent accidental mutation.
             # invocation_state is intentionally shared by reference (hooks/tools write to it).
@@ -885,8 +889,6 @@ def _make_invoke_model_terminal(
 
         system_prompt_str, system_prompt_content = split_system_prompt(ctx.system_prompt)
         tool_specs, structured_output_model = _structured_output_request(ctx)
-        if agent._sort_tools:
-            tool_specs = sorted(tool_specs, key=lambda spec: spec["name"])
 
         model_id = ctx.model.config.get("model_id") if hasattr(ctx.model, "config") else None
         model_invoke_span = tracer.start_model_invoke_span(

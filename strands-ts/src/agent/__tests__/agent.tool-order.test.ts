@@ -26,26 +26,32 @@ describe('Agent', () => {
       }
     })
 
-    it.each([true, false])('handles middleware additions with sortTools=%s', async (sortTools) => {
-      const tools = ['zebra', 'alpha', 'Bravo'].map((name) => createMockTool(name, () => 'OK'))
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'OK' })
-      const stream = vi.spyOn(model, 'stream')
-      const agent = new Agent({ model, tools: tools.slice(0, 2), printer: false, sortTools })
-      const middlewareSpecs = tools.map((tool) => tool.toolSpec)
-      const originalSpecs = globalThis.structuredClone(middlewareSpecs)
-      const toolChoice = { tool: { name: 'zebra' } }
-      agent.addMiddleware(InvokeModelStage, async function* (context, next) {
-        return yield* next({ ...context, toolSpecs: middlewareSpecs, toolChoice })
-      })
+    it.each([true, false])(
+      'sorts before middleware and sends middleware output as-is with sortTools=%s',
+      async (sortTools) => {
+        const tools = ['zebra', 'alpha', 'Bravo'].map((name) => createMockTool(name, () => 'OK'))
+        const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'OK' })
+        const stream = vi.spyOn(model, 'stream')
+        const agent = new Agent({ model, tools: tools.slice(0, 2), printer: false, sortTools })
+        const middlewareSpecs = tools.map((tool) => tool.toolSpec)
+        const originalSpecs = globalThis.structuredClone(middlewareSpecs)
+        const toolChoice = { tool: { name: 'zebra' } }
+        const seenSpecs: unknown[] = []
+        agent.addMiddleware(InvokeModelStage, async function* (context, next) {
+          seenSpecs.push(globalThis.structuredClone(context.toolSpecs))
+          return yield* next({ ...context, toolSpecs: middlewareSpecs, toolChoice })
+        })
 
-      await agent.invoke('hello')
+        await agent.invoke('hello')
 
-      const expected = sortTools ? [tools[2]!, tools[1]!, tools[0]!] : tools
-      expect(stream.mock.calls[0]?.[1]?.toolSpecs).toEqual(expected.map((tool) => tool.toolSpec))
-      expect(stream.mock.calls[0]?.[1]?.toolChoice).toEqual(toolChoice)
-      expect(middlewareSpecs).toEqual(originalSpecs)
-      expect(agent.tools).toEqual(tools.slice(0, 2))
-    })
+        const expectedSeen = sortTools ? [tools[1]!, tools[0]!] : tools.slice(0, 2)
+        expect(seenSpecs).toEqual([expectedSeen.map((tool) => tool.toolSpec)])
+        expect(stream.mock.calls[0]?.[1]?.toolSpecs).toEqual(originalSpecs)
+        expect(stream.mock.calls[0]?.[1]?.toolChoice).toEqual(toolChoice)
+        expect(middlewareSpecs).toEqual(originalSpecs)
+        expect(agent.tools).toEqual(tools.slice(0, 2))
+      }
+    )
 
     it('orders newly registered tools on a model retry', async () => {
       const tools = ['zebra', 'alpha', 'Bravo'].map((name) => createMockTool(name, () => 'OK'))

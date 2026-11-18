@@ -122,14 +122,14 @@ console.log(agent.tools)
 </Tabs>
 
 
-To keep identical tool catalogs stable across requests, agents sort outgoing tool
-definitions by name before each model call, after middleware. Tools remain in
-registration order in the tool registry. This helps avoid prompt-cache misses when
-MCP servers return the same tools in different orders; it does not enable caching.
+To keep identical tool catalogs stable across requests, agents sort tool
+definitions by name before each model call, before middleware runs. Tools remain in
+registration order in the tool registry, and middleware can still reorder the
+definitions it passes on. This helps avoid prompt-cache misses when MCP servers
+return the same tools in different orders; it does not enable caching.
 
-If your application relies on outgoing tool order, disable sorting with
+If your application relies on registration order, disable sorting with
 <Syntax py="Agent(sort_tools=False)" ts="new Agent({ sortTools: false })" />.
-This preserves the order supplied by registration and any middleware changes.
 
 ## Using Tools
 

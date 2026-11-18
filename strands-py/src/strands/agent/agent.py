@@ -303,9 +303,9 @@ class Agent(AgentBase, LocalAgent):
             system_prompt: System prompt to guide model behavior.
                 Can be a string or a list of SystemContentBlock objects for advanced features like caching.
                 If None, the model will behave according to its default settings.
-            sort_tools: Sort tool specifications by name after middleware, before each model call, to stabilize
-                prompt-cache prefixes. Defaults to True. Set False to preserve the outgoing order, including
-                middleware changes. Registration order is preserved in the tool registry.
+            sort_tools: Sort tool specifications by name before middleware on each model call, to stabilize
+                prompt-cache prefixes. Defaults to True. Set False to keep registration order. Middleware can
+                still reorder the specs either way. Registration order is preserved in the tool registry.
             structured_output_model: Pydantic model type(s) for structured output.
                 When specified, all agent calls will attempt to return structured output of this type.
                 This can be overridden on the agent invocation.

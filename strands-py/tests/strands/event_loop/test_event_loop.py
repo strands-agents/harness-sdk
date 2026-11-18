@@ -220,16 +220,18 @@ def test_model_call_tool_order(tool, tool_times_2, tool_times_5, sort_tools, rev
 
 
 @pytest.mark.parametrize("sort_tools", [True, False])
-def test_model_call_tool_order_after_middleware(tool, tool_times_2, tool_times_5, sort_tools):
-    # Middleware additions participate in ordering without mutating its list or tool choice (#5700).
+def test_model_call_tool_order_before_middleware(tool, tool_times_2, tool_times_5, sort_tools):
+    # Sorting happens before middleware, so middleware sees sorted specs and its output is sent as-is (#5700).
     model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}])
-    agent = Agent(model=model, tools=[tool_times_2, tool], sort_tools=sort_tools, callback_handler=None)
+    agent = Agent(model=model, tools=[tool, tool_times_2], sort_tools=sort_tools, callback_handler=None)
     registered_specs = copy.deepcopy(agent.tool_registry.get_all_tool_specs())
     middleware_specs = [tool.tool_spec, tool_times_5.tool_spec, tool_times_2.tool_spec]
     original_specs = copy.deepcopy(middleware_specs)
     choice = {"tool": {"name": tool.tool_name}}
+    seen_specs = []
 
     async def modify_specs(context, next_fn):
+        seen_specs.append(copy.deepcopy(context.tool_specs))
         async for event in next_fn(replace(context, tool_specs=middleware_specs, tool_choice=choice)):
             yield event
 
@@ -237,8 +239,11 @@ def test_model_call_tool_order_after_middleware(tool, tool_times_2, tool_times_5
     with patch.object(model, "stream", wraps=model.stream) as stream:
         agent("hello")
 
+    tru_seen_specs = seen_specs
+    exp_seen_specs = [[tool_times_2.tool_spec, tool.tool_spec] if sort_tools else registered_specs]
+    assert tru_seen_specs == exp_seen_specs
     tru_specs = stream.call_args.args[1]
-    exp_specs = [tool_times_2.tool_spec, tool_times_5.tool_spec, tool.tool_spec] if sort_tools else original_specs
+    exp_specs = original_specs
     assert tru_specs == exp_specs
     tru_choice = stream.call_args.kwargs["tool_choice"]
     exp_choice = choice

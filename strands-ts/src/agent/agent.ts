@@ -200,7 +200,7 @@ export type AgentConfig = {
    * {@link Agent} instances are automatically wrapped as tools via {@link Agent.asTool}.
    */
   tools?: ToolList
-  /** Sort specs by name after middleware (default true); false preserves outgoing order. Registry order is unchanged. */
+  /** Sort specs by name before middleware (default true); false keeps registry order. Middleware may still reorder. */
   sortTools?: boolean
   /**
    * A system prompt which guides model behavior.
@@ -2564,6 +2564,17 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Deep-copies the registry's tool specs for a model call, sorted by name unless `sortTools` is false.
+   * Sorting happens before middleware so identical catalogs produce a stable request while middleware
+   * can still reorder the specs it passes on.
+   */
+  private _modelToolSpecs(): ToolSpec[] {
+    const specs = deepCopy(this._toolRegistry.list().map((tool) => tool.toolSpec)) as unknown as ToolSpec[]
+    if (!this._sortTools) return specs
+    return specs.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+  }
+
+  /**
    * Invokes the model through the InvokeModelStage middleware chain.
    * Builds an InvokeModelContext from current agent state and composes the
    * middleware chain with a terminal function that calls _streamFromModel
@@ -2591,7 +2602,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       model: selectedModel,
       messages: this.messages.map((msg) => msg.clone()),
       ...(this.systemPrompt !== undefined && { systemPrompt: cloneSystemPrompt(this.systemPrompt) }),
-      toolSpecs: deepCopy(this._toolRegistry.list().map((tool) => tool.toolSpec)) as unknown as ToolSpec[],
+      toolSpecs: this._modelToolSpecs(),
       ...(toolChoice !== undefined && { toolChoice: deepCopy(toolChoice) as unknown as ToolChoice }),
       invocationState,
       ...(projectedInputTokens !== undefined && { projectedInputTokens }),
@@ -2627,9 +2638,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           tempModelState = new StateStore(modelStateSnapshot)
           const streamOptions: StreamOptions = {
             cancelSignal: self._abortSignal,
-            toolSpecs: self._sortTools
-              ? [...ctx.toolSpecs].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
-              : (ctx.toolSpecs as ToolSpec[]),
+            toolSpecs: ctx.toolSpecs as ToolSpec[],
             modelState: tempModelState,
             ...(ctx.systemPrompt !== undefined && { systemPrompt: ctx.systemPrompt }),
             ...(ctx.toolChoice && { toolChoice: ctx.toolChoice }),
