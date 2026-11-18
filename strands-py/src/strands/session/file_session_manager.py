@@ -64,7 +64,7 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
             storage_dir: Directory for local filesystem storage.
                 Defaults to a user-private ``~/.strands/sessions/`` directory.
                 A new directory is created with mode ``0o700``. An existing directory keeps its
-                permissions, and a ``UserWarning`` is emitted if it is accessible by group or others.
+                permissions; on POSIX a ``UserWarning`` is emitted if it is accessible by group or others.
             **kwargs: Additional keyword arguments for future extensibility.
         """
         self.storage_dir = storage_dir or self._default_storage_dir()

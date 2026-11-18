@@ -60,15 +60,16 @@ class TestDefaultStorageDir:
         assert mode == 0o700, f"Expected 0o700, got {oct(mode)}"
 
     @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
-    @pytest.mark.parametrize("mode", [0o755, 0o750, 0o701])
+    @pytest.mark.parametrize("mode", [0o755, 0o740, 0o720, 0o710, 0o704, 0o702, 0o701])
     def test_existing_wide_storage_dir_warns_and_keeps_mode(self, mode, temp_dir):
         """An existing storage directory open to group or others is reported, not modified."""
         os.chmod(temp_dir, mode)
 
         expected = f"Session storage directory {temp_dir} is accessible by group or others (mode {mode:o})"
-        with pytest.warns(UserWarning, match=re.escape(expected)):
+        with pytest.warns(UserWarning, match=re.escape(expected)) as record:
             FileSessionManager(session_id="test", storage_dir=temp_dir)
 
+        assert record[0].filename == __file__
         assert stat.S_IMODE(os.stat(temp_dir).st_mode) == mode
 
     @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
