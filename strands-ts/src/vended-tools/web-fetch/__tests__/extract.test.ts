@@ -197,8 +197,8 @@ describe('htmlToMarkdown', () => {
     // every title with text is a heading, and a title in a dropped element is dropped
     ['<title> </title><title>One</title><p>body</p><title># Two</title>', '# One\n\nbody\n\n# # Two'],
     [
-      '<rss><channel><title>Blog</title><item><title>Post</title><description>Hello</description></item></channel></rss>',
-      '# Blog\n\n# Post\n\nHello',
+      '<rss><channel><title>Blog</title><item><description>Hello</description><title>Post</title></item></channel></rss>',
+      '# Blog\n\nHello\n\n# Post',
     ],
     ['<html><head><title>T</title><body><p>body</p></body></html>', '# T\n\nbody'],
     ['<svg><title>icon</title></svg><p>body</p>', 'body'],
@@ -218,7 +218,7 @@ describe('htmlToMarkdown', () => {
       '<a href="docs\\page.htm?q=a\\b">x</a> <a href="mailto:a\\b">m</a>',
       '[x](docs/page.htm?q=a%5Cb) [m](mailto:a%5Cb)',
     ],
-    ['<a href="10.0.0.1:80\\a">x</a>', '[x](10.0.0.1:80/a)'],
+    ['<a href="10.0.0.1:80\\a">x</a> <a href="\u200bmailto:a\\b">m</a>', '[x](10.0.0.1:80/a) [m](\u200bmailto:a/b)'],
     ['<a href=" \n">blank</a>', 'blank'],
     ['<a href="b">b</a>', '[b](b)'],
     // an ordinary href and title are not escaped
@@ -241,7 +241,7 @@ describe('htmlToMarkdown', () => {
       '<p><a href="/">Home</a> > <a href="/p">Products</a> - all, C# 1. x</p>',
       '[Home](/) > [Products](/p) - all, C# 1. x',
     ],
-    ['<p>#hashtag</p><p>+1</p><p>3.14</p>', '#hashtag\n\n+1\n\n3.14'],
+    ['<p>#hashtag</p><p>+1</p><p>3.14</p><p>\u0661. x</p>', '#hashtag\n\n+1\n\n3.14\n\n\u0661. x'],
     ['<p>a<i class="icon"></i> - b</p>', 'a - b'],
     [
       '<h2>Intro<a href="#i">#</a></h2><p><span>Step</span> <span>1.</span> Open</p>',
@@ -250,6 +250,7 @@ describe('htmlToMarkdown', () => {
     ['<p><code>a\n# b\n[c](u)</code></p>', '`a # b [c](u)`'],
     // image alt text written without the image
     ['<p><img src="data:image/png;base64,AA" alt="# x"></p>', '\\# x'],
+    ['<p><img src="data:image/png;base64,AA" alt="* a_b"></p>', '\\* a\\_b'],
     // a line of backticks in a code block does not close its fence
     ['<pre><code>```\ncode\n```</code></pre><p><a href="u">link</a></p>', '````\n```\ncode\n```\n````\n\n[link](u)'],
   ])('escapes block markers and backticks in %s', async (html, expected) => {

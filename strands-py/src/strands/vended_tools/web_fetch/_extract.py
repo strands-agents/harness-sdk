@@ -163,7 +163,7 @@ class _Converter(MarkdownConverter):
         return _escape_bare_alt_text(markdown) if "_inline" in parent_tags else markdown
 
     def convert_code(self, el: Tag, text: str, parent_tags: set[str]) -> str:
-        # A line break would end a code span, and the lines after it would be read as markdown.
+        # A line that starts a block would end a code span, so the span is written on one line.
         if "_noformat" not in parent_tags:
             text = text.replace("\n", " ")
         return str(super().convert_code(el, text, parent_tags))  # type: ignore[misc]

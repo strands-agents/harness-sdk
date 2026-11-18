@@ -127,9 +127,10 @@ async function _createTurndownService(): Promise<TurndownService> {
       const src = _trimC0ControlOrSpace(element.getAttribute('src') ?? '')
       const alt = _escapeAltText(element.getAttribute('alt') ?? '')
       // Written as bare text, a trailing "!" would turn a link that follows into an image, and a block marker at
-      // the start could start a heading, list or quote.
+      // the start could start a heading, list or quote. "*" and "_" are escaped as they are in body text.
       const bareAlt = alt
         .replace(/!(?= ?$)/, '\\!')
+        .replace(/[*_]/g, '\\$&')
         .replace(/^ ?(?=[-=>]|(?:\+|#{1,6}|[0-9]+[.)])(?: |$))[0-9]*/, '$&\\')
       if (!src) return bareAlt
       const scheme = _urlScheme(src)
