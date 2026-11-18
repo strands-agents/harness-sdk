@@ -45,7 +45,7 @@ describe.skipIf(!PYTHON)('strands_dev_evals in strands-evals', () => {
 
   it.each([
     {
-      kind: 'run',
+      entry: 'RunEntryFile',
       write: (folder: string) =>
         writeEvalsRunEntry(join(folder, 'task.py'), {
           agentFile: join(folder, 'missing-agent.py'),
@@ -54,7 +54,7 @@ describe.skipIf(!PYTHON)('strands_dev_evals in strands-evals', () => {
         }),
     },
     {
-      kind: 'optimize',
+      entry: 'OptimizeEntryFile',
       write: (folder: string) =>
         writeEvalsOptimizeEntry(join(folder, 'task.py'), {
           agentFile: join(folder, 'missing-agent.py'),
@@ -65,7 +65,7 @@ describe.skipIf(!PYTHON)('strands_dev_evals in strands-evals', () => {
         }),
     },
   ])(
-    'shouldImportThePackageFromItsFolderWhenPythonRunsThe$kindEntryFile',
+    'shouldImportThePackageFromItsFolderWhenPythonRunsThe$entry',
     async ({ write }) => {
       const folder = await temporaryDirectory()
       const flags = await write(folder)
