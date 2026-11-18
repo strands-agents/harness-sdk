@@ -1,28 +1,15 @@
 # Changing a Default
 
-A default is the most expensive API decision we make. Every user gets it, most never read the
-config reference, and the ones who notice usually notice as a cost line or a regression. This
-document is the gate a default change passes through: how to classify it, what evidence it needs,
-and how it ships in the SDK versus the harness.
-
-It applies to the SDK packages (`strands-py`, `strands-ts`) and to Strands harness
-(`harness-py`, `harness-ts`) and the CLI. It sits between
+A default is the most expensive API decision we make: every user gets it, and most never read the
+config reference. This document is the gate a default change passes through — how to classify it,
+what evidence it needs, and how it ships in the SDK (`strands-py`, `strands-ts`) versus Strands
+harness (`harness-py`, `harness-ts`) and the CLI. It sits between
 [FEATURE_LIFECYCLE.md](./FEATURE_LIFECYCLE.md) (how features arrive and leave) and
-[COMPATIBILITY.md](./COMPATIBILITY.md) (what counts as breaking). Neither of those answers
-"should this be on for everyone, and how would we know."
+[COMPATIBILITY.md](./COMPATIBILITY.md) (what counts as breaking); neither answers "should this be on
+for everyone, and how would we know."
 
-## Tenet pressure
-
-Two tenets pull against each other here, and naming the tension is most of the work:
-
-- **The obvious path is the happy path** argues for turning good things on. A capability nobody
-  discovers delivers nothing.
-- **Simple at any scale** and **Pay for Play** argue for leaving them off. Every default is a tax on
-  users who didn't ask for it — tokens, latency, surface area, surprise.
-
-The resolution: **a default is earned by evidence, not by enthusiasm.** Shipping a capability
-off-by-default is cheap and reversible. Shipping it on-by-default is a claim that it helps the
-median user, and that claim needs to be measured.
+**A default is earned by evidence, not by enthusiasm.** Off-by-default is cheap and reversible.
+On-by-default is a claim that it helps the median user, and that claim gets measured.
 
 ## The promotion ladder
 
@@ -54,10 +41,10 @@ Default (rung 3).
 flowchart TD
     A{"What are you changing?"}
     A -->|"rung 1"| A1["A capability that ships off by default,<br/>e.g. the todos plugin"]
-    A1 --> A1b["No evidence needed.<br/>SDK minor, harness patch"]
+    A1 --> A1b["No evidence needed"]
     A -->|"rung 2"| A2["What a mode expands to, e.g. which strategies<br/>context_manager='auto' configures"]
     A -->|"rung 3 or 4"| A3["The value a user gets when they pass nothing,<br/>e.g. DEFAULT_MODEL, DEFAULT_BUILTIN_PLUGINS"]
-    A -->|"not on the ladder"| A4["Prompt text, undocumented tuning, or an 'auto' the model<br/>answers, e.g. ModelCapabilities.prompt_caching.<br/>Ships in any release"]
+    A -->|"not on the ladder"| A4["Prompt text, undocumented tuning, or an 'auto' the<br/>model answers, e.g. ModelCapabilities.prompt_caching"]
 
     A2 --> B
     A3 --> B
@@ -78,11 +65,7 @@ flowchart TD
     E -->|yes| E1["Rung 4, Adaptive — or rung 2, In a mode, with<br/>the expansion conditional on where it wins"]
     E -->|no| E2["Rung 1, Available, recommended where<br/>it helps. Say so in the PR"]
 
-    D -->|yes| F{"Which package, and is the<br/>default documented?"}
-    F -->|"SDK, documented"| F1["major, or the<br/>preset-expansion rule"]
-    F -->|"SDK, undocumented tuning"| F2["minor"]
-    F -->|"harness / CLI, documented"| F3["minor<br/>0.x minor is the breaking channel"]
-    F -->|"harness / CLI, undocumented"| F4["patch"]
+    D -->|yes| F["Ship it at the rung you set out for.<br/>How it ships has the release"]
 ```
 
 ## The bar
@@ -95,8 +78,7 @@ A default must **win on at least one axis and lose on neither**:
 | flat | down | every family and benchmark | **Default** (rung 3) — efficiency alone is a win |
 | up | up | every family and benchmark | **In a mode** (rung 2) — paying more for accuracy is the user's call, and a keyword like `effort` is where that choice belongs |
 | up | up | some families or benchmarks | **Adaptive** (rung 4) if the SDK can detect the condition, otherwise **In a mode** (rung 2). As a default it taxes every user for a benefit some of them get |
-| flat | up | anywhere | ship it **Available** (rung 1), recommended for the specific cases where it earns its tokens |
-| down | anything | anywhere | ship it **Available** (rung 1), recommended only for the cases it helps. **Adaptive** (rung 4) if the SDK can detect that condition |
+| flat or down | anything | anywhere | ship it **Available** (rung 1), recommended only for the cases it helps. **Adaptive** (rung 4) if the SDK can detect that condition |
 
 ## How it ships
 
@@ -108,8 +90,8 @@ A default must **win on at least one axis and lose on neither**:
 | harness / CLI | the value of a documented default, or a default becoming conditional (**Default** / **Adaptive**, rungs 3 and 4) | **minor** — 0.x minor *is* the breaking channel ([versioning](../site/src/content/docs/user-guide/harness/versioning.mdx)) |
 | harness / CLI | a new tool or plugin, off by default (**Available**, rung 1) | patch |
 
-Recommending something in the docs ships no code. Undocumented tuning is not on the ladder at all —
-it changes nothing a user configured — and ships in any release.
+Recommending something in the docs ships no code. Prompt text and undocumented tuning are not on
+the ladder — they change nothing a user configured — and ship in an SDK minor or any harness release.
 
 ## Action items
 
@@ -123,7 +105,6 @@ Gaps this document exposes. Each needs an owner and an issue.
 - **The evidence has no home.** A PR description is the only record of a benchmark run, and nothing
   indexes it. Defaults outlive their measurements.
 - **No current default has cleared this bar.** Every `DEFAULT_*` value predates the document.
-  `todos` is the one that was measured, and it failed.
 
 ## Worked example: `todos`
 
