@@ -286,7 +286,7 @@ latest orchestrator snapshot before the first invocation.
 - **Agent Initialization**: When an agent is created with a session manager, it automatically restores any existing state and messages from the session.
 - **Message Addition**: When a new message is added to the conversation, it's automatically persisted to the session (`SnapshotSessionManager` does this under `save_latest_on="message"`).
 - **Agent Invocation**: After each agent invocation, the agent state is synchronized with the session to capture any updates (`SnapshotSessionManager` default, `save_latest_on="invocation"`).
-- **Message Redaction**: When sensitive information needs to be redacted, the session manager replaces the original message with a redacted version while maintaining conversation flow. `SnapshotSessionManager` flushes the redacted content to the latest snapshot under every strategy, and rewrites the redacted message in immutable snapshots that already hold it.
+- **Message Redaction**: When sensitive information needs to be redacted, the session manager replaces the original message with a redacted version while maintaining conversation flow. `SnapshotSessionManager` flushes the redacted content to the latest snapshot under every strategy, and rewrites the redacted message in every immutable snapshot that holds it (see [Immutable snapshots](#immutable-snapshots) for the exceptions).
 - **Snapshot Trigger** (`SnapshotSessionManager`): Creates an immutable checkpoint when the `snapshot_trigger` callback returns `True`.
 
 </Tab>
@@ -345,6 +345,10 @@ Repository-based session managers are available in the Python SDK only.
 ## Immutable snapshots
 
 A [snapshot](./snapshots.mdx) captures agent state at a point in time. Snapshot-based session managers persist them for you: alongside `snapshot_latest`, `SnapshotSessionManager` (Python) and `SessionManager` (TypeScript) keep **immutable snapshots**, append-only checkpoints identified by UUID v7. These enable time-travel restore: you can restore the agent to any prior checkpoint, not just the latest state.
+
+:::note[Python only]
+A guardrail redaction is the one case where `SnapshotSessionManager` rewrites an immutable snapshot. It replaces the redacted message in every checkpoint that holds it, so restoring one returns the redacted version, and leaves the rest of the checkpoint unchanged. The original content stays in a checkpoint saved before the message had a `tracking_id` (a message passed to `Agent(messages=...)` and checkpointed before its first invocation), and in a checkpoint's stash entries and pending tool results.
+:::
 
 ### Creating immutable snapshots
 

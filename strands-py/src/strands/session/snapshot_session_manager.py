@@ -5,7 +5,9 @@ blob on each lifecycle event:
 
 - A mutable ``snapshot_latest`` is overwritten on each save, for crash/restart resume.
 - Append-only immutable snapshots (time-ordered keys) are written when a ``snapshot_trigger``
-  fires, enabling checkpointing — restore to any prior state, not just the latest.
+  fires, enabling checkpointing — restore to any prior state, not just the latest. The one
+  in-place rewrite is a guardrail redaction, which replaces the redacted message in the
+  snapshots that hold it; see :meth:`SnapshotSessionManager.redact_latest_message`.
 
 The manager persists snapshots through the unified :class:`~strands.storage.storage.Storage`
 primitive (``write``/``read``/``delete``/``list`` over byte blobs). It owns the key layout,
@@ -65,9 +67,10 @@ SaveLatestStrategy = Literal["message", "invocation", "trigger"]
 - ``"trigger"``: only when ``snapshot_trigger`` fires (or manually via ``save_snapshot``).
 
 Guardrail redactions are flushed immediately under every strategy, including ``"trigger"``:
-the redacted message replaces the original in ``snapshot_latest`` and in the immutable snapshots
-that hold it. This diverges from the TypeScript SDK, which does not flush redactions under
-``"trigger"``; see :meth:`SnapshotSessionManager.redact_latest_message`.
+the redacted message replaces the original in ``snapshot_latest`` and in every immutable snapshot
+that holds it under the same ``tracking_id``. :meth:`SnapshotSessionManager.redact_latest_message`
+lists what is not rewritten. This diverges from the TypeScript SDK, which does not flush redactions
+under ``"trigger"`` and does not rewrite immutable snapshots.
 """
 
 # Derived from the Literal above so the accepted runtime values cannot drift from the type.
@@ -113,6 +116,9 @@ _SNAPSHOT_REGEX = re.compile(r"snapshot_([\w-]+)\.json\Z")
 # Cap concurrent deletes so a session with many immutable checkpoints does not spawn thousands
 # of simultaneous blocking storage calls (e.g. S3's per-object delete via asyncio.to_thread).
 _DELETE_CONCURRENCY = 100
+
+# Cap concurrent rewrites during a redaction; each one holds a whole snapshot in memory.
+_REDACTION_CONCURRENCY = 10
 
 # -- Key layout, relative to the "session" storage namespace applied in __init__ --
 #
@@ -446,10 +452,17 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
 
         The Agent has already applied the redaction to the last user message before
         calling this, so re-capturing the agent replaces the original message in
-        ``snapshot_latest``. Immutable snapshots that hold the message (saved before the model
-        call, or by an invocation that stopped before a model call saw it) get that message
-        rewritten and are otherwise unchanged; the newest-first walk ends at the first snapshot
-        without the message. Stash entries and pending tool results in a snapshot are not redacted.
+        ``snapshot_latest``. Every immutable snapshot is then read, and each one that holds the
+        message under the same ``tracking_id`` (saved before the model call, or by an invocation
+        that stopped before a model call saw it) gets that message rewritten and is otherwise
+        unchanged.
+
+        The original content stays at rest in:
+
+        - an immutable snapshot saved before the message had a ``tracking_id``: a message passed
+          to ``Agent(messages=...)`` or appended to ``agent.messages`` gets its id on the first
+          invocation after it was added.
+        - the stash entries and pending tool results (``interrupt_state``) of any snapshot.
 
         This flush happens regardless of ``save_latest_on`` (including ``"trigger"``) because the
         Agent invokes this method directly, not through a hook the manager could decline to
@@ -605,37 +618,50 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         await self.save_snapshot(agent, is_latest=True)
 
     async def _flush_redaction(self, redact_message: Message, agent: LocalAgent) -> None:
-        """Overwrite ``snapshot_latest``, then rewrite the message in the immutable snapshots that hold it."""
+        """Overwrite ``snapshot_latest``, then rewrite the message in every immutable snapshot that holds it."""
         await self._save_latest(agent)
 
         tracking_id = redact_message.get("tracking_id")
-        if tracking_id is None:
+        if not tracking_id:
             return
-        for snapshot_id in reversed(await self.list_snapshot_ids(agent)):
+        storage = self._resolved_storage
+        semaphore = asyncio.Semaphore(_REDACTION_CONCURRENCY)
+
+        async def _redact(snapshot_id: str) -> None:
             key = _snapshot_key(self.session_id, agent.agent_id, snapshot_id=snapshot_id)
-            data = await self._resolved_storage.read(key)
-            if data is None:
-                continue
-            try:
-                snapshot = _deserialize_snapshot(data)
-            except SnapshotException:
-                logger.warning(
-                    "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s> | skipping unreadable immutable snapshot "
-                    "while flushing a redaction",
+            async with semaphore:
+                data = await storage.read(key)
+                if data is None:
+                    return
+                try:
+                    snapshot = _deserialize_snapshot(data)
+                except SnapshotException:
+                    logger.warning(
+                        "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s> | skipping unreadable immutable snapshot "
+                        "while flushing a redaction",
+                        agent.agent_id,
+                        self.session_id,
+                        snapshot_id,
+                    )
+                    return
+                messages = snapshot.data.get("messages", [])
+                if not any(message.get("tracking_id") == tracking_id for message in messages):
+                    return
+                snapshot.data["messages"] = [
+                    redact_message if message.get("tracking_id") == tracking_id else message for message in messages
+                ]
+                await storage.write(key, _serialize_snapshot(snapshot))
+                logger.info(
+                    "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s>, tracking_id=<%s> | rewrote redacted message "
+                    "in immutable snapshot",
                     agent.agent_id,
                     self.session_id,
                     snapshot_id,
+                    tracking_id,
                 )
-                continue
-            messages = snapshot.data.get("messages", [])
-            if not any(message.get("tracking_id") == tracking_id for message in messages):
-                # Older snapshots predate the message. One restored and continued from after newer
-                # snapshots were written is not reached.
-                return
-            snapshot.data["messages"] = [
-                redact_message if message.get("tracking_id") == tracking_id else message for message in messages
-            ]
-            await self._resolved_storage.write(key, _serialize_snapshot(snapshot))
+
+        # Every snapshot is read: after a restore, one that holds the message can be older than ones that do not.
+        await asyncio.gather(*(_redact(snapshot_id) for snapshot_id in await self.list_snapshot_ids(agent)))
 
     async def _save_immutable_and_latest(self, agent: LocalAgent) -> None:
         """Capture once and write the immutable snapshot, then ``snapshot_latest``.
