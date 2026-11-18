@@ -39,8 +39,8 @@ type MontyModule = typeof import('@pydantic/monty')
 
 // Enforced by the Monty VM. Duration counts interpreter time only (the clock pauses while a tool
 // call is in flight), so it bounds runaway guest code without penalizing slow tools; the wall clock
-// is bounded separately by `timeout`. Suspensions are host round trips: a tool call costs about one,
-// and gathering in small batches adds a few, so this is roughly 700 to 1,000 tool calls per run.
+// is bounded separately by `timeout`. Suspensions are host round trips: a tool call costs one and
+// `asyncio.gather` adds more, so this is roughly 500 to 1,000 tool calls per run.
 /** @internal Exported for tests, which lower the duration to exercise the limit quickly. */
 export const LIMITS = { maxFeedDurationSecs: 60, maxMemory: 256 * 1024 * 1024, maxSuspensions: 1_000 }
 
@@ -663,6 +663,9 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
     const available = resolveAvailableTools(agent, allowedTools)
     const externalLookup = buildExternalLookup(available, agent, context, controller.signal, toolTimeout)
 
+    if (controller.signal.aborted) {
+      throw new Error('Execution cancelled.')
+    }
     const { Monty, MontyError, MontyRuntimeError, MontySyntaxError } = await loadMonty()
     const pool = await Monty.create()
     let session: Awaited<ReturnType<typeof pool.checkout>>
@@ -674,6 +677,9 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
     }
     let abandoned = false
     try {
+      if (controller.signal.aborted) {
+        throw new Error('cancel')
+      }
       const run = session.feedRun(code, {
         externalLookup,
         printCallback: (stream, text) => output.write(stream, text),

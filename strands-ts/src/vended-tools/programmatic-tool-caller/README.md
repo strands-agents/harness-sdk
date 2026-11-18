@@ -84,4 +84,6 @@ One event can carry several `print()` calls, and streaming stops at the output l
 
 ### Limits
 
-The sandbox bounds the code's own compute time (60 seconds, not counting time spent waiting on tools), memory (256 MiB), and output (200,000 characters). A run makes roughly 700 to 1,000 tool calls before it reaches the sandbox's limit on host round trips.
+The sandbox bounds the code's own compute time (60 seconds, not counting time spent waiting on tools), memory (256 MiB), and output (200,000 characters). A run makes roughly 500 to 1,000 tool calls before it reaches the sandbox's limit on host round trips; calls made with `asyncio.gather` cost more than calls awaited one at a time. `time.sleep` and `asyncio.sleep` wait for at most 10 seconds each and do not count as compute, so the run timeout is what bounds code that sleeps in a loop.
+
+A run that times out or is cancelled while the code is computing returns at once, but its interpreter keeps running in the background until the compute limit ends it, and the Node.js process does not exit before then.

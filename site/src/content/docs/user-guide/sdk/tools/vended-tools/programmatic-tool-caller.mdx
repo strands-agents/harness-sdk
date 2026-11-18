@@ -217,13 +217,22 @@ Every run has fixed limits that are separate from the timeouts:
 - **Compute:** 60 seconds of interpreter time. The clock pauses while a tool call is in
   flight, so slow tools do not count against it.
 - **Memory:** 256 MiB.
-- **Suspensions:** 1,000 per run, which is roughly 700 to 1,000 tool calls.
+- **Suspensions:** 1,000 per run, which is roughly 500 to 1,000 tool calls. Calls made
+  with `asyncio.gather` cost more than calls awaited one at a time.
+- **Sleep:** `time.sleep` and `asyncio.sleep` wait for at most 10 seconds each. A sleep
+  is one suspension and does not count as compute, so the run timeout is what bounds
+  code that sleeps in a loop.
 - **Concurrency:** 10 tool calls in flight at once. Further calls wait for a free slot.
 - **Output:** 200,000 characters. Longer output is truncated.
 
 In TypeScript, the tool falls back to a WebAssembly build of Monty when the native addon
 cannot load, for example on Alpine Linux. That build has the same limits but runs the code
-more slowly.
+more slowly, and a run that times out while the code is computing loses what it printed
+since its last tool call.
+
+Also in TypeScript, a run that times out or is cancelled while the code is computing
+returns at once, but its interpreter keeps running in the background until the compute
+limit ends it, and the Node.js process does not exit before then.
 
 ## Hooks and interventions
 

@@ -55,8 +55,8 @@ logger = logging.getLogger(__name__)
 
 # Enforced by the Monty VM. Duration counts interpreter time only (the clock pauses while a tool call
 # is in flight), so it bounds runaway guest code without penalizing slow tools; the wall clock is
-# bounded separately by ``timeout``. Suspensions are host round trips: a tool call costs about one,
-# and gathering in small batches adds a few, so this is roughly 700 to 1,000 tool calls per run.
+# bounded separately by ``timeout``. Suspensions are host round trips: a tool call costs one and
+# ``asyncio.gather`` adds more, so this is roughly 500 to 1,000 tool calls per run.
 _LIMITS: ResourceLimits = {"max_feed_duration_secs": 60.0, "max_memory": 256 * 1024 * 1024, "max_suspensions": 1_000}
 
 # Inner tool calls in flight at once per run: ``asyncio.gather`` over a big list must not fan out

@@ -422,6 +422,25 @@ describe('programmatic_tool_caller', () => {
     }
   })
 
+  it('returns at once when cancelled while the code is still computing', async () => {
+    const controller = new AbortController()
+    const previous = LIMITS.maxFeedDurationSecs
+    LIMITS.maxFeedDurationSecs = 3
+    try {
+      const generator = streamWithContext(agentWith(calculator), "print('start')\nwhile True:\n    pass", {
+        cancelSignal: controller.signal,
+      })
+      await generator.next()
+      const cancelled = Date.now()
+      controller.abort()
+      const last = await generator.next()
+      expect(Date.now() - cancelled).toBeLessThan(1500)
+      expect(text(last.value as ToolResultBlock)).toContain('Execution cancelled.')
+    } finally {
+      LIMITS.maxFeedDurationSecs = previous
+    }
+  })
+
   it('enforces the timeout', async () => {
     const slow = tool({
       name: 'slow',
