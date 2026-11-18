@@ -377,6 +377,26 @@
         "contextWindow": 1000000
       }
     },
+    "gpt-6.2-astra": {
+      "limits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "defaultEffort": "low"
+      }
+    },
+    "gpt-6.2-sol": {
+      "limits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "defaultEffort": "low"
+      }
+    },
     "gpt-6-astra": {
       "limits": {
         "contextWindow": 1050000
