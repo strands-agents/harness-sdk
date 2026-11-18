@@ -460,6 +460,11 @@ async function readSessionMetadata(sessionDirectory: string): Promise<SessionMet
   return undefined
 }
 
+export async function savedSessionCount(sessionDirectory: string, exclude?: string): Promise<number> {
+  const sessions = await listFileSessions(resolve(sessionDirectory), exclude)
+  return sessions.filter(({ active, messageCount }) => !active && (messageCount ?? 0) > 0).length
+}
+
 export async function hasSavedSession(sessionDirectory: string, sessionId: string): Promise<boolean> {
   return (await readSessionMetadata(join(resolve(sessionDirectory), sessionId))) !== undefined
 }

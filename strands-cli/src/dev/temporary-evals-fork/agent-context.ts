@@ -8,6 +8,7 @@ export interface TemporaryAgentFacts {
   description?: string
   model?: string
   sessionId?: string
+  sessionDirectory?: string
   tools?: readonly ChatToolInfo[]
 }
 

@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { TemporaryAgentFacts } from '../../../src/dev/temporary-evals-fork/agent-context.js'
 import { TEMPORARY_EVALS_FORK } from '../../../src/dev/temporary-evals-fork/fork.js'
 import {
   temporarySessionHistory,
@@ -14,6 +15,7 @@ import { temporaryDirectory } from '../../fixtures/tempdir.js'
 const FIRST = 'a'.repeat(40)
 const SECOND = 'b'.repeat(40)
 const REPOSITORY = 'https://github.com/example/evals'
+const CURRENT = '20261117t101500z-current'
 const PYTHON = '/desk/strands-dev/tmp/.state/evals-env/bin/python'
 const SKILL = '.agents/skills/session-converter'
 const SKILL_MD = [
@@ -73,13 +75,13 @@ const workspaceFixture = async (): Promise<DevWorkspace> => {
   }
 }
 
-const setup = async (environment: NodeJS.ProcessEnv = {}) => {
+const setup = async (environment: NodeJS.ProcessEnv = {}, facts: TemporaryAgentFacts = { sessionId: CURRENT }) => {
   const workspace = await workspaceFixture()
   const github = fakeGitHub()
   const historyAt = (evals?: TemporaryEvalsSource) =>
     temporarySessionHistory({
       workspace,
-      currentChat: () => '20261117t101500z-current',
+      agent: () => facts,
       ...(evals ? { evals } : {}),
       fetch: github.fetch,
       environment,
@@ -91,9 +93,14 @@ const setup = async (environment: NodeJS.ProcessEnv = {}) => {
   return { workspace, github, history, historyAt, folder, requested }
 }
 
-const chatFolder = async (workspace: DevWorkspace, name: string, saved = true): Promise<void> => {
-  const folder = join(workspace.directory!, '.strands', 'state', 'sessions', name)
-  await mkdir(saved ? join(folder, 'scopes', 'agent', 'agent', 'snapshots') : folder, { recursive: true })
+const savedChat = async (folder: string, name: string, messages = 2): Promise<void> => {
+  const snapshots = join(folder, name, 'scopes', 'agent', 'agent', 'snapshots')
+  await mkdir(snapshots, { recursive: true })
+  const turns = Array.from({ length: messages }, (_, index) => ({
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: [{ text: `turn ${index}` }],
+  }))
+  await writeFile(join(snapshots, 'snapshot_latest.json'), JSON.stringify({ data: { messages: turns } }))
 }
 
 describe('TEMPORARY session-converter skill', () => {
@@ -223,15 +230,38 @@ describe('TEMPORARY session-converter skill', () => {
 })
 
 describe('TEMPORARY past chats', () => {
-  it('shouldCountTheSavedChatsExceptThisOneWhenTheWorkspaceHasChats', async () => {
+  it('shouldCountTheChatsWithMessagesExceptThisOneWhenATypeScriptAgentSavedThem', async () => {
     const { workspace, history } = await setup()
-    await chatFolder(workspace, '20261116t090000z-first')
-    await chatFolder(workspace, '20261116t100000z-second')
-    await chatFolder(workspace, '20261117t101500z-current')
-    await chatFolder(workspace, '20261117t100000z-empty', false)
-    await writeFile(join(workspace.directory!, '.strands', 'state', 'sessions', 'notes.txt'), 'not a chat')
+    const chats = join(workspace.directory!, '.strands', 'state', 'sessions')
+    await savedChat(chats, '20261116t090000z-first')
+    await savedChat(chats, '20261116t100000z-second')
+    await savedChat(chats, CURRENT)
+    await savedChat(chats, '20261117t100000z-empty', 0)
+    await mkdir(join(chats, '20261117t100500z-unsaved'))
+    await writeFile(join(chats, 'notes.txt'), 'not a chat')
 
     await expect(history.pastChats()).resolves.toBe(2)
+  })
+
+  it('shouldCountTheChatsInTheSessionFolderOfTheAgentWhenAPythonAgentSavedThem', async () => {
+    const workspace = await workspaceFixture()
+    const chats = join(workspace.directory!, '.strands', 'state', 'sessions', 'session')
+    const { history } = await setup({}, { sessionId: 'c66f1c2e', sessionDirectory: chats })
+    await savedChat(chats, '29726c2f')
+    await savedChat(chats, 'c66f1c2e', 0)
+    await savedChat(join(workspace.directory!, '.strands', 'state', 'sessions', 'context'), '29726c2f')
+
+    await expect(history.pastChats()).resolves.toBe(1)
+  })
+
+  it('shouldNameTheSessionFolderOfTheAgentInTheRulesWhenAPythonAgentRuns', async () => {
+    const chats = '/desk/strands-dev/.strands/state/sessions/session'
+    const { history } = await setup({}, { sessionId: 'c66f1c2e', sessionDirectory: chats })
+
+    const guide = await history.converter()
+
+    expect(guide).toContain(`Strands CLI sessions, and ${chats} is their <directory>`)
+    expect(guide).toContain('Skip c66f1c2e, which is this chat.')
   })
 
   it('shouldCountNoChatsWhenTheWorkspaceHasNoSessionsFolder', async () => {

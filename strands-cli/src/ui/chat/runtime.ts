@@ -113,7 +113,7 @@ export async function createTypescriptChat(
       signal,
       extension
     )
-    devAgent = (): TemporaryAgentFacts => backend.info?.() ?? {}
+    devAgent = (): TemporaryAgentFacts => ({ ...backend.info?.(), sessionDirectory: backend.sessionDirectory })
     try {
       signal.throwIfAborted()
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
@@ -335,7 +335,7 @@ export async function createPythonChat(
   let devAgent = (): TemporaryAgentFacts => ({})
   const extension = devExtension(devWorkspace, project, () => devAgent())
   const createController = async (backend: PythonBackend, conversation?: ChatConversation): Promise<ChatController> => {
-    devAgent = (): TemporaryAgentFacts => backend.info?.() ?? {}
+    devAgent = (): TemporaryAgentFacts => ({ ...backend.info?.(), sessionDirectory: backend.sessionDirectory })
     const snapshot = config.snapshot()
     const sessions = new FileSessionRuntime(backend, backend.sessionDirectory, {
       workspace: backend.cwd,

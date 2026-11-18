@@ -1,14 +1,16 @@
 import { Skill } from '@strands-agents/sdk/vended-plugins/skills'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { URL } from 'node:url'
 
 import { assertPortablePathComponent } from '../../project/packaging.js'
 import { errorMessage } from '../../terminal/text.js'
+import { savedSessionCount } from '../../session/sessions.js'
 import { isRecord } from '../../values.js'
 import { devSessionsFolder } from '../runtime.js'
 import type { DevWorkspace } from '../workspace.js'
+import type { TemporaryAgentFacts } from './agent-context.js'
 import { prepareTemporaryOptimizerEnvironment } from './environment.js'
 import { temporaryWorkspaceDirectory } from './evals-process.js'
 import { TEMPORARY_EVALS_FORK } from './fork.js'
@@ -35,7 +37,7 @@ export interface TemporaryEvalsSource {
 
 export interface TemporarySessionHistoryOptions {
   readonly workspace: DevWorkspace
-  readonly currentChat: () => string | undefined
+  readonly agent: () => TemporaryAgentFacts
   readonly evals?: TemporaryEvalsSource
   readonly fetch?: Fetch
   readonly environment?: NodeJS.ProcessEnv
@@ -62,17 +64,8 @@ const githubRepository = (url: string): string => {
   return path
 }
 
-const countPastChats = async (folder: string, current: string | undefined): Promise<number> => {
-  try {
-    const entries = await readdir(folder, { withFileTypes: true })
-    return entries.filter(
-      (entry) => entry.isDirectory() && entry.name !== current && existsSync(join(folder, entry.name, 'scopes'))
-    ).length
-  } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT') return 0
-    throw error
-  }
-}
+const chatsFolder = ({ sessionDirectory }: TemporaryAgentFacts, workspaceDirectory: string): string =>
+  sessionDirectory ?? devSessionsFolder(workspaceDirectory)
 
 const fetchText = async ({ fetch }: GitHub, url: string, headers: Record<string, string>): Promise<string> => {
   const response = await fetch(url, { headers, redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
@@ -182,11 +175,12 @@ interface Guide {
   readonly download: Download
   readonly python: string
   readonly workspaceDirectory: string
+  readonly chats: string
   readonly currentChat: string | undefined
 }
 
-const strandsDevRules = ({ python, workspaceDirectory, currentChat }: Guide): string[] => [
-  `Past chats: the chats with this agent are Strands CLI sessions, and ${devSessionsFolder(workspaceDirectory)} is ` +
+const strandsDevRules = ({ python, workspaceDirectory, chats, currentChat }: Guide): string[] => [
+  `Past chats: the chats with this agent are Strands CLI sessions, and ${chats} is ` +
     'their <directory>. Use only them, unless the developer asks for other harnesses, traces, or files.' +
     (currentChat ? ` Skip ${currentChat}, which is this chat.` : ''),
   "Questions: ask the skill's questions one at a time, in plain words, without numbered options. " +
@@ -226,7 +220,7 @@ const guideText = (guide: Guide): string => {
 
 export const temporarySessionHistory = ({
   workspace,
-  currentChat,
+  agent,
   evals = TEMPORARY_EVALS_FORK,
   fetch = globalThis.fetch,
   environment = process.env,
@@ -240,8 +234,11 @@ export const temporarySessionHistory = ({
       language: workspace.config.language,
     })
   return {
-    pastChats: async (): Promise<number> =>
-      workspace.directory ? countPastChats(devSessionsFolder(workspace.directory), currentChat()) : 0,
+    pastChats: async (): Promise<number> => {
+      if (!workspace.directory) return 0
+      const facts = agent()
+      return savedSessionCount(chatsFolder(facts, workspace.directory), facts.sessionId)
+    },
     converter: async (): Promise<string> => {
       const workspaceDirectory = temporaryWorkspaceDirectory(workspace)
       const folder = join(temporarySkillsFolder(workspaceDirectory), SKILL_NAME)
@@ -250,13 +247,15 @@ export const temporarySessionHistory = ({
         pinnedSkill({ fetch, environment, repository }, folder, evals.commit),
         evalsPython(workspaceDirectory),
       ])
+      const facts = agent()
       return guideText({
         folder,
         repository,
         download,
         python: interpreter,
         workspaceDirectory,
-        currentChat: currentChat(),
+        chats: chatsFolder(facts, workspaceDirectory),
+        currentChat: facts.sessionId,
       })
     },
   }

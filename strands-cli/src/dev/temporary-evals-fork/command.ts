@@ -171,7 +171,7 @@ export const temporaryDevChatPart = (
   return temporaryAgentTools({
     sessions: () => temporaryDevSessions({ workspace: target, agent }),
     evaluators: () => readTemporaryEvaluators(target),
-    history: temporarySessionHistory({ workspace: target, currentChat: () => agent().sessionId }),
+    history: temporarySessionHistory({ workspace: target, agent }),
   })
 }
 
