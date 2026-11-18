@@ -69,6 +69,31 @@ expect_branch selective "single src file" "strands-ts/src/agent/agent.ts"
 expect_branch selective "src plus unrelated docs" "strands-ts/src/agent/agent.ts" "site/docs/x.md"
 expect_branch selective "nested src file" "strands-ts/src/vended-tools/bash/types.ts"
 
+# expect_conformance <on|off> <description> <asked: 1 or empty> <changed-files...>
+expect_conformance() {
+  local expected="$1" desc="$2" asked="$3"
+  shift 3
+  local out actual="off"
+  out="$(SELECTIVE_DRY_RUN=1 STRANDS_CONFORMANCE_ON_CHANGE="$asked" SELECTIVE_CHANGED_FILES="$(printf '%s\n' "$@")" bash "$SCRIPT" 2>&1)"
+  [[ "$out" == *"Model conformance cases enabled"* ]] && actual="on"
+
+  if [[ "$actual" == "$expected" ]]; then
+    pass=$((pass + 1))
+    echo "ok   - $desc (conformance $actual)"
+  else
+    fail=$((fail + 1))
+    echo "FAIL - $desc: expected conformance $expected, got $actual"
+    echo "       output: $out"
+  fi
+}
+
+# --- Model conformance: only when asked for, and only for changes that can affect a model ---
+expect_conformance on "model provider source" 1 "strands-ts/src/models/bedrock.ts"
+expect_conformance on "shared model data" 1 "shared/model-info.json"
+expect_conformance on "the conformance cases" 1 "strands-ts/test/integ/models/model-conformance.test.ts"
+expect_conformance off "unrelated source" 1 "strands-ts/src/agent/agent.ts"
+expect_conformance off "model provider source, not asked for" "" "strands-ts/src/models/bedrock.ts"
+
 echo "---"
 echo "passed: $pass, failed: $fail"
 [[ "$fail" -eq 0 ]]

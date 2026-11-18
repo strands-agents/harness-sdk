@@ -18,6 +18,13 @@ export interface ConformanceCase {
 export interface ConformanceTarget {
   provider: string
   model: string
+  endOfLife?: boolean
+}
+
+export interface KnownFailure extends ConformanceTarget {
+  case: string
+  issue: number
+  intermittent?: boolean
 }
 
 export interface ConformanceConfig {
@@ -35,17 +42,33 @@ export type ConformanceStatus = 'passed' | 'failed' | 'error' | 'skipped' | 'not
 export const cases: Record<string, ConformanceCase> = conformance.cases
 export const targets: ConformanceTarget[] = conformance.targets
 
+const { intro, topics, actions } = conformance.cachePrompt
+
 /**
- * The issue that tracks why a case fails on a target, or undefined when it is expected to pass.
+ * The caching case's system prompt, one guideline per topic and action pair: about twice the largest cache minimum
+ * among the targets, and ordinary prose so that no provider filters it.
+ */
+export const cachePrompt = [
+  intro,
+  ...topics.flatMap((topic, topicIndex) =>
+    actions.map(
+      (action, actionIndex) =>
+        `${topicIndex * actions.length + actionIndex + 1}. When a customer asks about ${topic}, ${action}.`
+    )
+  ),
+].join('\n')
+
+/**
+ * The shared known failure entry for a case on a target, or undefined when the case is expected to pass.
  *
  * @param target - The provider and model
  * @param caseId - The case id
- * @returns The issue number from the shared known failures
+ * @returns The entry, which names the issue that tracks the failure
  */
-export function knownFailureIssue(target: ConformanceTarget, caseId: string): number | undefined {
-  return conformance.knownFailures.find(
+export function knownFailure(target: ConformanceTarget, caseId: string): KnownFailure | undefined {
+  return (conformance.knownFailures as KnownFailure[]).find(
     (known) => known.provider === target.provider && known.model === target.model && known.case === caseId
-  )?.issue
+  )
 }
 
 // Factories set no output token limit, so the cases run on each provider's defaults.

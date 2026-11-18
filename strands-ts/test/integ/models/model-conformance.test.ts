@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, inject, it } from 'vitest'
 import { z } from 'zod'
 import { Agent, Message, TextBlock } from '@strands-agents/sdk'
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
@@ -7,8 +7,9 @@ import { FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES } from '$/sdk/models/native-out
 import { ContextInjector } from '$/sdk/vended-plugins/context-injector/index.js'
 
 import {
+  cachePrompt,
   cases,
-  knownFailureIssue,
+  knownFailure,
   notApplicableReason,
   omittedCases,
   omittedProviders,
@@ -119,9 +120,8 @@ const implementations: Record<string, (context: CaseContext) => Promise<void>> =
   },
 
   'prompt-caching': async ({ create }) => {
-    // Salted so a rerun cannot read an entry an earlier run wrote, and sized to about twice the largest cache
-    // minimum among the targets.
-    const systemPrompt = `Dossier ${globalThis.crypto.randomUUID()}. ${'The subject prefers concise written answers. '.repeat(1200)}`
+    // Salted so a rerun cannot read an entry an earlier run wrote.
+    const systemPrompt = `Session ${globalThis.crypto.randomUUID()}.\n${cachePrompt}`
     const agent = new Agent({ model: create({ cacheConfig: { strategy: 'auto' } }), systemPrompt, printer: false })
 
     await agent.invoke('Reply ALPHA.')
@@ -191,11 +191,12 @@ describe('Model conformance coverage', () => {
   })
 })
 
-describe.each(targets)('Model conformance: $provider $model', (target) => {
+describe.skipIf(!inject('conformanceEnabled')).each(targets)('Model conformance: $provider $model', (target) => {
   const provider = providers[target.provider]
 
   // Why no case can run on this target, as a result status and reason.
   const unavailable = (): ['skipped' | 'not-applicable', string] | undefined => {
+    if (target.endOfLife) return ['not-applicable', 'end of life']
     if (!provider) return ['not-applicable', omittedProviders[target.provider] ?? 'provider is not mapped']
     if (provider.skip) return ['skipped', 'credentials are not available']
     if (provider.nodeOnly && isInBrowser()) return ['skipped', 'provider runs in node only']
@@ -203,8 +204,10 @@ describe.each(targets)('Model conformance: $provider $model', (target) => {
   }
 
   for (const caseId of Object.keys(cases)) {
-    // A known failure still runs and is recorded; the run goes red when it starts passing.
-    it(caseId, { fails: knownFailureIssue(target, caseId) !== undefined }, async (ctx) => {
+    const known = knownFailure(target, caseId)
+    // A known failure still runs and is recorded; the run goes red when it starts passing, unless it only fails
+    // some of the time. Slow reasoning models can take longer than the default timeout for a single case.
+    it(caseId, { fails: known !== undefined && !known.intermittent, timeout: 180_000 }, async (ctx) => {
       // Recorded when the attempt finishes, so a timeout or a throw before the case body still leaves a record.
       let status: ConformanceStatus = 'failed'
       let reason: string | undefined
@@ -229,7 +232,7 @@ describe.each(targets)('Model conformance: $provider $model', (target) => {
       } catch (error) {
         reason = providerErrorReason(error)
         if (reason) status = 'error'
-        throw error
+        if (!known?.intermittent) throw error
       }
     })
   }

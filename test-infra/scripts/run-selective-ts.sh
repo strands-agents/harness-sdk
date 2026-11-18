@@ -76,6 +76,21 @@ if [[ -z "$CHANGED" ]]; then
   exit 0
 fi
 
+# --- Model conformance ---
+# The conformance cases call every listed model, so they stay off unless CI asks for them on a pull request
+# (STRANDS_CONFORMANCE_ON_CHANGE) and the change can affect a model's behavior.
+CONFORMANCE_PATTERNS=(
+  '^shared/'
+  '^strands-ts/src/models/'
+  '^strands-ts/test/integ/models/model-conformance\.test\.ts$'
+  '^strands-ts/test/integ/__fixtures__/conformance\.ts$'
+)
+CONFORMANCE="$(IFS='|'; echo "${CONFORMANCE_PATTERNS[*]}")"
+if [[ -n "${STRANDS_CONFORMANCE_ON_CHANGE:-}" ]] && echo "$CHANGED" | grep -qE "$CONFORMANCE"; then
+  export STRANDS_CONFORMANCE=1
+  echo "Model conformance cases enabled for this change."
+fi
+
 # --- Branch 1: structural fallback ---
 # These paths force the FULL suite: the module-graph tracer cannot see them as
 # dependencies of a test, so a change to any of them must fail safe rather than

@@ -172,6 +172,9 @@ jobs:
           # diffing against origin/main (which would miss interactions with
           # earlier-enqueued PRs and could narrow the test set unsafely).
           SELECTIVE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          # Lets the selective runner turn on the model conformance cases when a pull request changes
+          # something that can affect a model's behavior. model-conformance.yml runs the whole list weekly.
+          STRANDS_CONFORMANCE_ON_CHANGE: ${{ github.event_name == 'pull_request_target' && '1' || '' }}
         run: npm run test:integ:selective
 
       - name: Upload test artifacts
