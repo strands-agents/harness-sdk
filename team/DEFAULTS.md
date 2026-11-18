@@ -68,7 +68,9 @@ flowchart TD
     E1 --> F
     E2 --> F
     F["Publish the run to the benchmark record: tasks, revision, models,<br/>accuracy, tokens, spread — whether it won or lost. It is the baseline<br/>the next proposal for this default has to beat"]
-    F --> G["Ship it at the rung the evidence set.<br/>How it ships has the release"]
+    F --> G{"Ship it at the rung the evidence set.<br/>Which package?"}
+    G -->|SDK| G1["rung 1 or 2: minor<br/>rung 3 or 4: major"]
+    G -->|"harness / CLI"| G2["rung 1: patch<br/>rung 3 or 4: minor —<br/>0.x minor is the breaking channel"]
 ```
 
 ## The bar
