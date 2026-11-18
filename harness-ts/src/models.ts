@@ -595,9 +595,11 @@ interface ModelClient {
   _client?: { baseURL?: string; config?: { region?: () => Promise<string> } }
 }
 
-// Default hosts of Anthropic's Bedrock and Mantle clients and of OpenAI's `bedrockMantleConfig`. Matching
-// the host (not an `awsRegion` field) keeps non-Bedrock AWS clients such as Claude Platform on AWS out.
-const BEDROCK_BASE_URL = /^https:\/\/bedrock-(?:runtime|mantle)\.([a-z0-9-]+)\.(?:amazonaws\.com|api\.aws)(?:\/|$)/
+// Hosts of Anthropic's Bedrock and Mantle clients and of OpenAI's `bedrockMantleConfig`, including FIPS
+// and VPC (PrivateLink) endpoints. Matching the host (not an `awsRegion` field) keeps non-Bedrock AWS
+// clients such as Claude Platform on AWS out.
+const BEDROCK_BASE_URL =
+  /^https:\/\/(?:[a-z0-9-]+\.)?bedrock-(?:runtime|mantle)(?:-fips)?\.([a-z0-9-]+)\.(?:vpce\.)?(?:amazonaws\.com|api\.aws)(?:\/|$)/
 
 /** The region a non-Converse model's client calls Bedrock in, or `undefined` if it isn't a Bedrock client. */
 function vendorBedrockRegion(model: Model): string | undefined {

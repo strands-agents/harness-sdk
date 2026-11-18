@@ -174,6 +174,7 @@ afterEach(() => {
   }
   resetWarnOnce()
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('createHarness', () => {
@@ -384,9 +385,28 @@ describe('createHarness', () => {
   })
 
   it('serves web_search on bedrock from the AgentCore tool, by default and when named', async () => {
+    // The default Claude model runs on Anthropic's Bedrock client; search follows its region, also
+    // when an endpoint override hides the region from the client's URL.
+    vi.stubEnv('AWS_REGION', 'eu-west-1')
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    const search = (a: Agent): Promise<string> =>
+      (
+        a.tools.find((t) => t.name === 'web_search') as unknown as {
+          invoke: (input: unknown, context: unknown) => Promise<string>
+        }
+      ).invoke({ query: 'q' }, {})
     const agent = await createHarness()
     expect(toolNames(agent)).toContain('web_search')
     expect(agent.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+    vi.stubEnv('AWS_ENDPOINT_URL_BEDROCK_RUNTIME', 'https://proxy.example')
+    expect([await search(agent), await search(await createHarness())]).toEqual(['No results.', 'No results.'])
+    expect(regions).toEqual(['eu-west-1', 'eu-west-1'])
     const named = await createHarness({
       model: 'bedrock/us.amazon.nova-2-lite-v1:0',
       builtinTools: ['read', 'web_search'],

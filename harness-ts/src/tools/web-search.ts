@@ -23,7 +23,8 @@ const EXA_TOOL = 'web_search_exa'
 const TIMEOUT_MS = 30_000
 const MAX_RESULTS = 10
 const SNIPPET_CHARS = 500
-const UNAVAILABLE = ' web_search is unavailable here; answer without it.'
+// Appended to a permanent failure's tool result, so the model stops retrying.
+const ANSWER_WITHOUT_SEARCH = ' web_search is unavailable here; answer without it.'
 
 export interface SearchResult {
   title: string
@@ -125,8 +126,9 @@ export interface MakeAgentCoreWebSearchOptions {
 }
 
 /**
- * One client per backend, in `region` or else the one the harness's `BedrockModel` defaults to:
- * `AWS_REGION` / `AWS_DEFAULT_REGION`, then the shared config profile, then BedrockModel's default.
+ * One client per backend. As with `BedrockModel`, `region` wins over `clientConfig.region`; without
+ * either it is the region the harness's `BedrockModel` defaults to: `AWS_REGION` /
+ * `AWS_DEFAULT_REGION`, then the shared config profile, then BedrockModel's default.
  */
 async function agentCoreClient(
   options: MakeAgentCoreWebSearchOptions
@@ -134,11 +136,13 @@ async function agentCoreClient(
   const { BedrockAgentCoreClient } = await import('@aws-sdk/client-bedrock-agentcore')
   const region =
     options.region ||
+    options.clientConfig?.region ||
     process.env.AWS_REGION ||
     process.env.AWS_DEFAULT_REGION ||
     (await new BedrockAgentCoreClient({}).config.region().catch(() => BEDROCK_DEFAULT_REGION))
   // Bounded like the Exa path (see TIMEOUT_MS on send), instead of the SDK's 3 attempts per call.
-  return { client: new BedrockAgentCoreClient({ maxAttempts: 2, ...options.clientConfig, region }), region }
+  const client = new BedrockAgentCoreClient({ maxAttempts: 2, ...options.clientConfig, region })
+  return { client, region: await client.config.region() }
 }
 
 /**
@@ -152,7 +156,7 @@ export function agentCoreBackend(options: MakeAgentCoreWebSearchOptions = {}): S
   const markUnavailable = (reason: string): WebSearchError => {
     if (unavailable === undefined) {
       logger.warn(`web_search: AgentCore web search is unavailable, so every search will fail: ${reason}`)
-      unavailable = reason + UNAVAILABLE
+      unavailable = reason + ANSWER_WITHOUT_SEARCH
     }
     return new WebSearchError(unavailable)
   }

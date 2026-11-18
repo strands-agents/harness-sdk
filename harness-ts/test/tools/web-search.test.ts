@@ -335,6 +335,16 @@ describe('makeAgentCoreWebSearch', () => {
     expect(await calls[0]!.client.config.credentials()).toMatchObject(credentials)
   })
 
+  it('takes the region from clientConfig like BedrockModel, with `region` winning', async () => {
+    vi.stubEnv('AWS_REGION', 'eu-west-1')
+    const calls = mockSend({ results: [] }, { results: [] })
+    await invoke(makeAgentCoreWebSearch({ clientConfig: { region: 'us-east-1' } }), { query: 'q' })
+    await invoke(makeAgentCoreWebSearch({ region: 'ap-south-1', clientConfig: { region: 'us-east-1' } }), {
+      query: 'q',
+    })
+    expect(calls.map((c) => c.region)).toEqual(['us-east-1', 'ap-south-1'])
+  })
+
   it('passes other service errors through, including a modeled 404, and keeps calling', async () => {
     vi.stubEnv('AWS_REGION', 'us-east-1')
     const notFound = Object.assign(new ResourceNotFoundException({ message: 'no such web search', $metadata: {} }), {

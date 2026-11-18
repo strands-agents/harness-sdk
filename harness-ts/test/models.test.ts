@@ -926,6 +926,8 @@ describe('supportsWebSearch', () => {
         anthropicOn({ awsRegion: 'ap-south-1', baseURL: 'https://bedrock-mantle.ap-south-1.api.aws/anthropic' }),
         'ap-south-1',
       ],
+      [anthropicOn({ baseURL: 'https://vpce-0abc.bedrock-runtime.us-east-1.vpce.amazonaws.com' }), 'us-east-1'],
+      [anthropicOn({ baseURL: 'https://bedrock-runtime-fips.us-gov-west-1.amazonaws.com' }), 'us-gov-west-1'],
       [new OpenAIModel({ modelId: 'qwen.qwen3-32b-v1:0', bedrockMantleConfig: { region: 'us-east-2' } }), 'us-east-2'],
     ]
     for (const [model, region] of cases) {
