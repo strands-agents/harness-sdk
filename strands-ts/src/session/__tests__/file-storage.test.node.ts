@@ -54,6 +54,17 @@ describe('FileStorage', () => {
         if (++arrived === values.length) release()
         await writesFinished
       })
+      const rename = fs.rename.bind(fs)
+      let renaming = false
+      vi.spyOn(fs, 'rename').mockImplementation(async (source, destination) => {
+        if (renaming) throw Object.assign(new Error('Overlapping rename'), { code: 'EPERM' })
+        renaming = true
+        try {
+          await rename(source, destination)
+        } finally {
+          renaming = false
+        }
+      })
       const stores = [storage, new FileStorage(testDir)]
 
       const results = await Promise.allSettled(
@@ -77,28 +88,34 @@ describe('FileStorage', () => {
       expect(await fs.readdir(directory)).toEqual([kind === 'snapshot' ? 'snapshot_latest.json' : 'manifest.json'])
     })
 
-    it('persists complete JSON for many overlapping saves on the real filesystem', async () => {
+    it('continues queued saves after a rename fails', async () => {
       const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
-      const snapshots = Array.from({ length: 20 }, (_, index) =>
-        createTestSnapshot({ appData: { value: 'x'.repeat((index + 1) * 1000) } })
-      )
-      const manifests = Array.from({ length: 20 }, (_, index) =>
-        createTestManifest({ updatedAt: new Date(Date.UTC(2024, 0, index + 1)).toISOString() })
-      )
-      const stores = [storage, new FileStorage(testDir)]
+      const snapshots = createTestSnapshots(2)
+      const writeFile = fs.writeFile.bind(fs)
+      let arrived = 0
+      let release!: () => void
+      const writesFinished = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      vi.spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
+        await writeFile(...args)
+        if (++arrived === snapshots.length) release()
+        await writesFinished
+      })
+      const error = new Error('Rename failed')
+      vi.spyOn(fs, 'rename').mockRejectedValueOnce(error)
 
-      const results = await Promise.allSettled([
-        ...snapshots.map((snapshot, index) =>
-          stores[index % 2]!.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
-        ),
-        ...manifests.map((manifest, index) => stores[index % 2]!.saveManifest({ location, manifest })),
+      const results = await Promise.allSettled(
+        snapshots.map((snapshot) => storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot }))
+      )
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toEqual([
+        { status: 'fulfilled', value: undefined },
       ])
-
-      expect(results.filter((result) => result.status === 'rejected')).toEqual([])
+      expect(results.filter((result) => result.status === 'rejected')).toEqual([
+        { status: 'rejected', reason: expect.objectContaining({ name: 'SessionError', cause: error }) },
+      ])
       expect(snapshots).toContainEqual(await storage.loadSnapshot({ location }))
-      expect(manifests).toContainEqual(await storage.loadManifest({ location }))
-      const directory = join(testDir, location.sessionId, 'scopes', location.scope, location.scopeId, 'snapshots')
-      expect((await fs.readdir(directory)).sort()).toEqual(['manifest.json', 'snapshot_latest.json'])
     })
   })
 

@@ -9,6 +9,8 @@ const SNAPSHOT_LATEST = 'snapshot_latest.json'
 const IMMUTABLE_HISTORY = 'immutable_history'
 const SNAPSHOT_REGEX = /snapshot_([\w-]+)\.json$/
 const SCHEMA_VERSION = '1.0'
+// Windows may reject simultaneous replacements of the same destination.
+const PENDING_RENAMES = new Map<string, Promise<void>>()
 
 /**
  * File-based implementation of SnapshotStorage.
@@ -169,13 +171,22 @@ export class FileStorage implements SnapshotStorage {
     let tmpPath: string | undefined
     try {
       const { promises: fs } = await import('fs')
-      const { dirname } = await import('path')
+      const { dirname, resolve } = await import('path')
       await fs.mkdir(dirname(path), { recursive: true })
       const { randomUUID } = await import('crypto')
       const uniquePath = `${path}.${randomUUID()}.tmp`
       tmpPath = uniquePath
       await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), 'utf8')
-      await fs.rename(uniquePath, path)
+      const target = resolve(path)
+      const pendingRename = (PENDING_RENAMES.get(target) ?? Promise.resolve())
+        .catch(() => {})
+        .then(() => fs.rename(uniquePath, path))
+      PENDING_RENAMES.set(target, pendingRename)
+      try {
+        await pendingRename
+      } finally {
+        if (PENDING_RENAMES.get(target) === pendingRename) PENDING_RENAMES.delete(target)
+      }
     } catch (error: unknown) {
       if (tmpPath) {
         const { promises: fs } = await import('fs')
