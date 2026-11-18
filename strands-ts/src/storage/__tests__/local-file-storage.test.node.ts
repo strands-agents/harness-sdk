@@ -5,7 +5,7 @@ import type { SearchStrategy } from '../search/types.js'
 import { NotASandboxLocalEnvironment } from '../../sandbox/not-a-sandbox-local-environment.js'
 import { SandboxPathNotFoundError } from '../../sandbox/errors.js'
 import { logger } from '../../logging/logger.js'
-import { lstat, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -135,6 +135,15 @@ describe('LocalFileStorage', () => {
 
       expect(await mode(rootDir)).toBe(0o700)
       expect(await mode(join(baseDir, 'parent'))).toBe(await mode(baseDir))
+    })
+
+    it('leaves the mode of an existing storage root unchanged', async () => {
+      await mkdir(rootDir, { recursive: true, mode: 0o755 })
+      await chmod(rootDir, 0o755)
+
+      await storage.write('key.txt', data)
+
+      expect(await mode(rootDir)).toBe(0o755)
     })
 
     it('refuses to read through a symbolic link and logs it once', async () => {
