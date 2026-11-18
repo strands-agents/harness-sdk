@@ -34,7 +34,7 @@ describe('BackgroundTasks', () => {
       .addTurn({ type: 'textBlock', text: 'Listed.' })
     const agent = new Agent({
       model,
-      backgroundTasks: { managementToolName: toolName, always: ['*'] },
+      backgroundTasks: { manageToolName: toolName, always: ['*'] },
       printer: false,
     })
 
@@ -69,7 +69,7 @@ describe('BackgroundTasks', () => {
     const agent = new Agent({
       model,
       tools: [work],
-      backgroundTasks: { managementToolName: toolName, agentic: [work] },
+      backgroundTasks: { manageToolName: toolName, agentic: [work] },
       printer: false,
     })
     let toolSpecs: readonly ToolSpec[] | undefined

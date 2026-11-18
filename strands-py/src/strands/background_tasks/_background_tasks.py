@@ -81,7 +81,7 @@ class _BackgroundTasks(Plugin):
         self._tasks_lock = threading.Lock()
         super().__init__()
         self._manage_tool = tool(
-            name=config.get("management_tool_name", _MANAGE_TOOL_NAME),
+            name=config.get("manage_tool_name", _MANAGE_TOOL_NAME),
             description=(
                 "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
                 "Do not poll for results."
@@ -93,9 +93,12 @@ class _BackgroundTasks(Plugin):
         """Validate exact policies, then attach the task manager, middleware, and lifecycle hooks.
 
         Raises:
+            ValueError: If the management tool name matches another registered tool.
             TypeError: If a tool declares the reserved ``_background_execution`` parameter or an explicitly
                 configured tool cannot honor its execution mode. Every violation is reported in the one message.
         """
+        if self._manage_tool.tool_name in agent.tool_registry.registry:
+            raise ValueError(f"manage_tool_name=<{self._manage_tool.tool_name}> | tool already registered")
         self._agent = agent
         errors: list[str] = []
         for tool_instance in agent.tool_registry.registry.values():

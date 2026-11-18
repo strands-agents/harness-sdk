@@ -141,14 +141,29 @@ def test__init__registers_management_tool_only_when_enabled(background_tasks: An
     assert (_MANAGE_TOOL_NAME in agent.tool_registry.registry) is enabled
 
 
+@pytest.mark.parametrize(
+    ("background_tasks", "tool_name"),
+    [(True, _MANAGE_TOOL_NAME), ({"manage_tool_name": "lookup"}, "lookup")],
+)
+def test__init__rejects_management_tool_name_collision(background_tasks: Any, tool_name: str) -> None:
+    existing_tool = tool(name=tool_name)(lambda: "original")
+    with pytest.raises(ValueError, match=rf"manage_tool_name=<{tool_name}> \| tool already registered"):
+        Agent(
+            model=MockedModelProvider([]),
+            tools=[existing_tool],
+            background_tasks=background_tasks,
+            callback_handler=None,
+        )
+
+
 @pytest.mark.asyncio
-async def test_management_tool_name_controls_foreground_calls() -> None:
+async def test_manage_tool_name_controls_foreground_calls() -> None:
     tool_name = "manage_background_task"
     agent = Agent(
         model=MockedModelProvider(
             [_assistant_tool_use(tool_name, "management-use", {"mode": "list"}), _assistant_text("Listed.")]
         ),
-        background_tasks={"management_tool_name": tool_name, "always": ["*"]},
+        background_tasks={"manage_tool_name": tool_name, "always": ["*"]},
         callback_handler=None,
     )
 
@@ -405,7 +420,7 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
     agent = Agent(
         model=model,
         tools=[work],
-        background_tasks={"management_tool_name": tool_name, "agentic": [work]},
+        background_tasks={"manage_tool_name": tool_name, "agentic": [work]},
         callback_handler=None,
     )
     tool_specs = _capture_tool_specs(agent)

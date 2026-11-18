@@ -4,8 +4,12 @@ import type { ToolResultContentData } from '../types/messages.js'
 
 /** Configures background tool execution. */
 export interface BackgroundTasksConfig {
-  /** Unique management tool name. Defaults to `strands_manage_background_task`. */
-  readonly managementToolName?: string
+  /**
+   * Name of the tool the model calls to list, get, or cancel background tasks.
+   * Must not match another tool on the agent. The name is written into conversation history,
+   * so keep it stable across a saved session. Defaults to `strands_manage_background_task`.
+   */
+  readonly manageToolName?: string
   /** Wait for background work before an invocation returns. Defaults to `true`. */
   readonly waitForCompletion?: boolean
   /** Tools or registered tool names whose execution mode is selected by the model. Defaults to `['*']`. */

@@ -68,7 +68,7 @@ export class BackgroundTasks implements Plugin {
     this._executeTool = executeTool
     this._policy = resolvePolicy(config)
     this._manageTool = tool({
-      name: config.managementToolName ?? MANAGE_TOOL_NAME,
+      name: config.manageToolName ?? MANAGE_TOOL_NAME,
       description:
         "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. Do not poll for results.",
       inputSchema: z.object({
