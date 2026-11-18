@@ -240,8 +240,21 @@ def load_temporary_typescript_harness(path_text: str, runner_command: str | None
     return TemporaryTypescriptHarness(runner, _python_options(description), _effort_unavailable(description))
 
 
+TEMPORARY_TRAJECTORY_EVALUATORS = frozenset(
+    {
+        "TrajectoryEvaluator",
+        "InteractionsEvaluator",
+        "ToolCalled",
+        "SkillInvoked",
+        "SkillSelectionAccuracyEvaluator",
+        "SkillInstructionFollowingEvaluator",
+    }
+)
+
+
 def _reads_trace(evaluator: Evaluator) -> bool:
-    return getattr(type(evaluator), "evaluation_level", None) is not None
+    kind = type(evaluator)
+    return getattr(kind, "evaluation_level", None) is not None or kind.__name__ in TEMPORARY_TRAJECTORY_EVALUATORS
 
 
 def _experiment_evaluators(experiment_file: str, custom_evaluators: Sequence[str]) -> list[Evaluator]:

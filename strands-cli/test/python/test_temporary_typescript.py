@@ -94,6 +94,8 @@ def test_should_count_the_runner_usage_when_trials_finish(tmp_path, monkeypatch,
     ("evaluators", "flags", "named"),
     [
         ([{"evaluator_type": "HelpfulnessEvaluator"}], [], "HelpfulnessEvaluator"),
+        ([{"evaluator_type": "ToolCalled", "tool_name": "lookup"}], [], "ToolCalled"),
+        ([{"evaluator_type": "TrajectoryEvaluator", "rubric": "Uses the right tools."}], [], "TrajectoryEvaluator"),
         (
             [{"evaluator_type": "Contains", "value": "effort"}, {"evaluator_type": "SeesTrace"}],
             ["--custom-evaluator", "dev_evals_support:SeesTrace"],
