@@ -4,7 +4,7 @@
  * @internal
  */
 
-import OpenAI from 'openai'
+import OpenAI, { BadRequestError } from 'openai'
 import type { ChatCompletionContentPartText } from 'openai/resources/index.mjs'
 import type { Message, StopReason, ToolResultBlock } from '../../types/messages.js'
 import type { ImageBlock, DocumentBlock } from '../../types/media.js'
@@ -12,7 +12,6 @@ import { encodeBase64 } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
 import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
-import { ModelError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { lookupChatCompletionsTools } from '../model-info.js'
@@ -97,18 +96,22 @@ export function applyChatCompletionsTools(
  * @param error - The error the request failed with
  * @param toolLimit - What {@link applyChatCompletionsTools} returned for the request
  * @param modelId - The model the request was sent to
- * @returns A ModelError that wraps a 400 for a model with the `unsupported` limit, else the error as given
+ * @returns For that rejection of a model with the `unsupported` limit, a copy of the error with the hint in its
+ *   message and the error as its cause; else the error as given
  */
 export function withResponsesHint(
   error: unknown,
   toolLimit: ChatCompletionsTools | undefined,
   modelId: string
 ): unknown {
-  if (toolLimit !== 'unsupported' || (error as { status?: number } | null)?.status !== 400) return error
-  return new ModelError(
-    `${(error as Error).message} ${modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`,
-    { cause: error }
-  )
+  // OpenAI names this param in both of its rejections: tools with reasoning, and 'none' unsupported.
+  const rejectsTools = error instanceof BadRequestError && error.param === 'reasoning_effort'
+  if (toolLimit !== 'unsupported' || !rejectsTools) return error
+  // The constructor takes its message from the body, so the hint is set after it.
+  const hinted = new BadRequestError(error.status, error.error, undefined, error.headers)
+  hinted.message = `${error.message} ${modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`
+  hinted.cause = error
+  return hinted
 }
 
 /**

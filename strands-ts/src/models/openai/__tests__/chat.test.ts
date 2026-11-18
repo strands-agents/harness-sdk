@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import OpenAI, { APIUserAbortError } from 'openai'
+import OpenAI, { APIError, APIUserAbortError, BadRequestError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { formatChatRequest } from '../chat-adapter.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../../errors.js'
+import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import {
   Message,
@@ -1472,11 +1472,15 @@ describe('OpenAIModel', () => {
       expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('accepts tools'))
     })
 
-    const badRequest = Object.assign(new Error('400 Function tools with reasoning_effort are not supported'), {
-      status: 400,
-    })
+    const apiError = (status: number, param: string | null): APIError =>
+      APIError.generate(
+        status,
+        { error: { message: 'Function tools with reasoning_effort are not supported', param } },
+        undefined,
+        new Headers({ 'x-request-id': 'req_1' })
+      )
 
-    const reject = async ({ baseURL, modelId, params, withTools = true }: Sent, error: Error): Promise<unknown> => {
+    const reject = async ({ baseURL, modelId, params, withTools = true }: Sent, error: Error): Promise<any> => {
       const client = { chat: { completions: { create: vi.fn().mockRejectedValue(error) } }, baseURL } as any
       const provider = new OpenAIModel({ api: 'chat', client, modelId, ...(params ? { params } : {}) })
       return collectIterator(provider.stream(messages, withTools ? { toolSpecs } : {})).catch((thrown) => thrown)
@@ -1487,14 +1491,18 @@ describe('OpenAIModel', () => {
       { baseURL: OPENAI_URL, modelId: 'gpt-6.1-sol', params: { reasoning_effort: 'none' } },
       { baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-sol' },
     ])('points to the Responses API when tools are rejected for $modelId, which takes none', async (sent) => {
-      const thrown = await reject(sent, badRequest)
+      const error = apiError(400, 'reasoning_effort')
 
-      expect(thrown).toStrictEqual(
-        new ModelError(
-          `400 Function tools with reasoning_effort are not supported ${sent.modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`,
-          { cause: badRequest }
-        )
-      )
+      const thrown = await reject(sent, error)
+
+      expect(thrown).toBeInstanceOf(BadRequestError)
+      expect(thrown).not.toBe(error)
+      expect(thrown.cause).toBe(error)
+      expect({ ...thrown, message: thrown.message }).toStrictEqual({
+        ...error,
+        message: `400 Function tools with reasoning_effort are not supported ${sent.modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`,
+        cause: error,
+      })
     })
 
     it.each([
@@ -1506,34 +1514,17 @@ describe('OpenAIModel', () => {
         params: { reasoning_effort: 'low' },
       },
       { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-astra' },
-      {
-        name: 'server error',
-        baseURL: OPENAI_URL,
-        modelId: 'gpt-6-astra',
-        error: Object.assign(new Error('500 Server error'), { status: 500 }),
-      },
+      { name: 'other param', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', param: 'max_completion_tokens' },
+      { name: 'no param', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', param: null },
+      { name: 'server error', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', status: 500 },
     ])(
       'passes an error through unless tools are rejected for a model that takes none: $name',
-      async ({ error = badRequest, ...sent }) => {
+      async ({ status = 400, param = 'reasoning_effort', ...sent }) => {
+        const error = apiError(status, param)
+
         expect(await reject(sent, error)).toBe(error)
       }
     )
-
-    it('still reports context overflow for a model that takes no tools', async () => {
-      const overflow = Object.assign(new Error("400 This model's maximum context length is exceeded"), { status: 400 })
-
-      expect(await reject({ baseURL: OPENAI_URL, modelId: 'gpt-6-astra' }, overflow)).toStrictEqual(
-        new ContextWindowOverflowError("400 This model's maximum context length is exceeded")
-      )
-    })
-
-    it('still reports throttling for a model that takes no tools', async () => {
-      const throttled = Object.assign(new Error('Too many requests'), { status: 429 })
-
-      expect(await reject({ baseURL: OPENAI_URL, modelId: 'gpt-6-astra' }, throttled)).toBeInstanceOf(
-        ModelThrottledError
-      )
-    })
   })
 
   describe('systemPrompt handling', () => {

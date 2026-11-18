@@ -874,7 +874,12 @@ class OpenAIModel(Model):
                 if error_kind == "context_overflow":
                     logger.warning("OpenAI threw context window overflow error")
                     raise ContextWindowOverflowException(str(error)) from error
-                if tool_limit == "unsupported" and isinstance(error, openai.BadRequestError):
+                # OpenAI names this param in both of its rejections: tools with reasoning, and "none" unsupported.
+                if (
+                    tool_limit == "unsupported"
+                    and isinstance(error, openai.BadRequestError)
+                    and error.param == "reasoning_effort"
+                ):
                     raise _with_responses_hint(error, request["model"]) from error
                 raise
         logger.debug("finished streaming response from model")
