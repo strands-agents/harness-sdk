@@ -40,8 +40,20 @@ export const RETRIEVAL_TOOL_NAME = 'retrieve_context'
 const DEFAULT_MAX_RESULT_TOKENS = 10_000
 const CHARS_PER_TOKEN = 4
 
+/**
+ * Default budget for a `query`, which is what sizes its result: the search strategy decides the order
+ * of the sections and this decides how many of them fit. Lower than the whole-result ceiling because
+ * accuracy over the retrieval corpora stops improving here, and the header tells the model when
+ * raising `max_tokens` would show it more.
+ */
+const DEFAULT_QUERY_TOKENS = 2_400
+
 const retrievalInputSchema = z.object({
   reference: z.string().describe('The <id> from the "[ref: <id>]" at the end of the offload placeholder.'),
+  query: z
+    .string()
+    .optional()
+    .describe('Question to answer from the content. Returns the sections most relevant to it, ranked.'),
   pattern: z.string().optional().describe('Regex or keyword to grep for. Returns matching lines with context.'),
   line_range: z
     .object({
@@ -51,6 +63,12 @@ const retrievalInputSchema = z.object({
     .optional()
     .describe('Return only this span of lines.'),
   context_lines: z.number().int().min(0).optional().describe('Lines of context around each match (default: 5).'),
+  max_tokens: z
+    .number()
+    .int()
+    .min(100)
+    .optional()
+    .describe('Cap on the result size. Raise it when the result says sections were withheld.'),
 })
 
 /**
@@ -73,33 +91,51 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       'persisted and the placeholder left in its place ends in "[ref: <id>]". Pass that ' +
       '<id> as the reference to access the original content.\n\n' +
       'Options:\n' +
+      '  - query: a question, to get the sections that answer it. Prefer this when you do not ' +
+      'already know a string that appears in the content.\n' +
       '  - pattern: regex/keyword to find matching lines with context\n' +
       '  - line_range: { start, end } to read a specific span\n' +
-      '  - Without pattern/line_range: returns the full original content\n\n' +
+      '  - Without query/pattern/line_range: returns the full original content\n\n' +
       'Examples:\n' +
+      '  { reference: "toolu_abc", query: "why did the checkout requests fail" }\n' +
       '  { reference: "toolu_abc", pattern: "error" }\n' +
       '  { reference: "toolu_abc", line_range: { start: 10, end: 25 } }\n' +
       '  { reference: "toolu_abc" }',
     inputSchema: retrievalInputSchema,
-    callback: async (input) => {
-      const reference = input.reference.trim()
-      const entries = await resolveReference(stash, reference)
-      // Thrown, not returned: the tool factory gives a returned string success status, and a model that
-      // reads "Error" under success retries and then invents the content. A missing reference is terminal
-      // only once the id was passed as the placeholder lists it; content offloaded again never comes back.
-      if (entries.length === 0) {
-        throw new Error(
-          `reference not found: ${reference}. Pass only the <id> from the placeholder's "[ref: <id>]". ` +
-            'If that is what you passed, the content is unavailable — do not retry.'
-        )
-      }
-      if (entries.some(isOffloaded)) {
-        throw new Error(`original content for reference ${reference} is no longer available — do not retry.`)
-      }
-      if (!input.pattern && !input.line_range) return fullContent(entries, maxChars)
-      return searchEntries(entries, input, maxChars)
-    },
+    callback: (input) => retrieve(stash, input, maxChars),
   })
+}
+
+/** Resolves the reference, then returns the slice of it the input asked for, within `maxChars`. */
+async function retrieve(
+  stash: Stash,
+  input: z.infer<typeof retrievalInputSchema>,
+  maxChars: number
+): Promise<JSONValue> {
+  const reference = input.reference.trim()
+  // Actionable rather than terminal: the content is there, the search arguments are what cannot apply.
+  if (input.query && input.pattern) {
+    throw new Error('pass either query or pattern, not both. Use query for a question, pattern for a literal string.')
+  }
+
+  const entries = await resolveReference(stash, reference)
+  // Thrown, not returned: the tool factory gives a returned string success status, and a model that
+  // reads "Error" under success retries and then invents the content. A missing reference is terminal
+  // only once the id was passed as the placeholder lists it; content offloaded again never comes back.
+  if (entries.length === 0) {
+    throw new Error(
+      `reference not found: ${reference}. Pass only the <id> from the placeholder's "[ref: <id>]". ` +
+        'If that is what you passed, the content is unavailable — do not retry.'
+    )
+  }
+  if (entries.some(isOffloaded)) {
+    throw new Error(`original content for reference ${reference} is no longer available — do not retry.`)
+  }
+
+  const fallback = input.query ? Math.min(DEFAULT_QUERY_TOKENS * CHARS_PER_TOKEN, maxChars) : maxChars
+  const budget = input.max_tokens ? Math.min(input.max_tokens * CHARS_PER_TOKEN, maxChars) : fallback
+  if (!input.query && !input.pattern && !input.line_range) return fullContent(entries, budget)
+  return searchEntries(entries, input, budget)
 }
 
 /**
@@ -150,7 +186,7 @@ function clipText(blocks: ToolResultContent[], maxChars: number): ToolResultCont
   return kept
 }
 
-/** The lines of the entries' text that match `pattern` or fall in `line_range`. */
+/** The lines of the entries' text that answer `query`, match `pattern`, or fall in `line_range`. */
 function searchEntries(
   entries: StashEntry[],
   input: z.infer<typeof retrievalInputSchema>,
@@ -158,10 +194,15 @@ function searchEntries(
 ): ReturnType<typeof searchContent> {
   const text = joinText(entries.map(entryText))
   // Actionable rather than terminal: the content is there, the search arguments are what cannot apply.
-  if (!text) throw new Error('cannot search non-text content. Omit pattern/line_range to retrieve full content.')
+  if (!text) throw new Error('cannot search non-text content. Omit query/pattern/line_range to retrieve full content.')
   return searchContent(
     text,
-    { pattern: input.pattern, line_range: input.line_range, context_lines: input.context_lines ?? 5 },
+    {
+      query: input.query,
+      pattern: input.pattern,
+      line_range: input.line_range,
+      context_lines: input.context_lines ?? 5,
+    },
     maxChars
   )
 }
