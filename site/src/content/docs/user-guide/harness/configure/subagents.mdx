@@ -65,10 +65,12 @@ conversation, so the model must put everything the subtask needs into the call, 
 returns a single self-contained answer.
 
 The generalist gets the same plugin instances you pass in `plugins`, so a plugin's hooks
-run in both agents. A hook you add to the parent after creating it, with
-<Syntax py="agent.add_hook()" ts="agent.addHook()" />, does not run in the generalist. In
-Python, the generalist also runs hooks you pass to `create_harness` in `hooks`; the
-TypeScript `createHarness` has no `hooks` option.
+run in both agents. Each plugin's <Syntax py="init_agent" ts="initAgent" /> runs for the
+parent and again for every delegation, so a plugin that keeps per-agent state must key it
+by agent instead of storing it on itself. A hook you add to the parent after creating it,
+with <Syntax py="agent.add_hook()" ts="agent.addHook()" />, does not run in the
+generalist. In Python, the generalist also runs hooks you pass to `create_harness` in
+`hooks`; the TypeScript `createHarness` has no `hooks` option.
 
 Reach for it when a subtask would otherwise flood the main context: searching many files,
 a multi-step change, or open-ended exploration where you only need the conclusion. Because
