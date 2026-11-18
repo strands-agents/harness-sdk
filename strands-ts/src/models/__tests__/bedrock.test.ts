@@ -4103,26 +4103,42 @@ describe('BedrockModel', () => {
         }
       )
 
-      it('keeps cache points on earlier user messages behind a caller-placed one', () => {
-        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
-        const messages = [
-          ...chat('One', 'Two', 'Three'),
-          new Message({ role: 'assistant', content: [new TextBlock('Ok')] }),
-          new Message({
-            role: 'user',
-            content: [new TextBlock('Four'), new CachePointBlock({ cacheType: 'default' }), new TextBlock('per-call')],
-          }),
-        ]
+      it.each([
+        { systemPoints: 0, marked: ['Two', 'Three'], callerPoint: [cachePoint] },
+        { systemPoints: 1, marked: ['Two', 'Three'], callerPoint: [cachePoint] },
+        { systemPoints: 2, marked: ['Three'], callerPoint: [cachePoint] },
+        { systemPoints: 3, marked: [], callerPoint: [cachePoint] },
+        { systemPoints: 4, marked: [], callerPoint: [] },
+      ])(
+        'keeps cache points on earlier user messages behind a caller-placed one ($systemPoints in the system prompt)',
+        ({ systemPoints, marked, callerPoint }) => {
+          const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
+          const systemPrompt = Array.from({ length: systemPoints }, () => [
+            new TextBlock('Be helpful'),
+            new CachePointBlock({ cacheType: 'default' }),
+          ]).flat()
+          const messages = [
+            ...chat('One', 'Two', 'Three'),
+            new Message({ role: 'assistant', content: [new TextBlock('Ok')] }),
+            new Message({
+              role: 'user',
+              content: [
+                new TextBlock('Four'),
+                new CachePointBlock({ cacheType: 'default' }),
+                new TextBlock('per-call'),
+              ],
+            }),
+          ]
 
-        collectIterator(provider.stream(messages))
+          collectIterator(provider.stream(messages, { systemPrompt }))
 
-        expect(userContent()).toStrictEqual([
-          [{ text: 'One' }],
-          [{ text: 'Two' }, cachePoint],
-          [{ text: 'Three' }, cachePoint],
-          [{ text: 'Four' }, cachePoint, { text: 'per-call' }],
-        ])
-      })
+          expect(userContent()).toStrictEqual([
+            ...['One', 'Two', 'Three'].map((text) => (marked.includes(text) ? [{ text }, cachePoint] : [{ text }])),
+            [{ text: 'Four' }, ...callerPoint, { text: 'per-call' }],
+          ])
+          expect(allCachePoints().length).toBeLessThanOrEqual(4)
+        }
+      )
 
       it('keeps the tools cache point and TTL on Claude', () => {
         const provider = new BedrockModel({

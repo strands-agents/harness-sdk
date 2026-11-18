@@ -1393,7 +1393,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Ensure the last user message carries exactly one cache point.
+   * Place the conversation cache points: one in the last user message, several across recent ones on Nova.
    *
    * A cache point already present in the last user message is honored where it sits rather than
    * replaced: a caller places one to mark where its reusable prefix ends, ahead of content that is
@@ -1479,6 +1479,13 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             )
           }
           const placedIdx = placedIdxs[0] as number
+          if (this._limitsCachePoints() && novaPoints <= 0) {
+            content.splice(placedIdx, 1)
+            logger.warn(
+              `msg_idx=<${lastUserIdx}> | dropped caller-placed cache point, the system prompt holds every cache point Converse accepts`
+            )
+            return
+          }
           if (this._honorPlacedCachePoint(content, placedIdx, lastUserIdx, ttl)) {
             if (this._limitsCachePoints()) {
               // The caller's point is the newest one, so the rest go on the user messages before it.

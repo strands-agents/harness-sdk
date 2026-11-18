@@ -932,7 +932,7 @@ class BedrockModel(Model):
     def _inject_cache_point(
         self, messages: list[dict[str, Any]], dynamic_trailing_blocks: int = 0, system_cache_points: int = 0
     ) -> None:
-        """Ensure the last user message carries exactly one cache point.
+        """Place the conversation cache points: one in the last user message, several across recent ones on Nova.
 
         A cache point already present in the last user message is honored where it sits rather than
         replaced: a caller places one to mark where its reusable prefix ends, ahead of content that is
@@ -996,6 +996,14 @@ class BedrockModel(Model):
                         last_user_idx,
                         extra_idx,
                     )
+                if self._limits_cache_points and nova_points <= 0:
+                    del content[placed_idxs[0]]
+                    logger.warning(
+                        "msg_idx=<%s> | dropped caller-placed cache point, the system prompt holds every cache point"
+                        " Converse accepts",
+                        last_user_idx,
+                    )
+                    return
                 if self._honor_placed_cache_point(content, placed_idxs[0], last_user_idx):
                     if self._limits_cache_points:
                         # The caller's point is the newest one, so the rest go on the user messages before it.

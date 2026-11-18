@@ -4974,22 +4974,62 @@ def test_nova_counts_the_deprecated_cache_prompt_point_against_the_four_converse
     assert tru_content == exp_content
 
 
-def test_nova_keeps_cache_points_on_earlier_user_messages_behind_a_caller_placed_one(bedrock_client):
+@pytest.mark.parametrize(
+    ("system_points", "exp_content"),
+    [
+        (
+            0,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}, NOVA_CACHE_POINT],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            1,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}, NOVA_CACHE_POINT],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            2,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            3,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}],
+                [{"text": "Three"}],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (4, [[{"text": "One"}], [{"text": "Two"}], [{"text": "Three"}], [{"text": "Four"}, {"text": "per-call"}]]),
+    ],
+)
+def test_nova_keeps_cache_points_on_earlier_user_messages_behind_a_caller_placed_one(
+    bedrock_client, system_points, exp_content
+):
     _ = bedrock_client
     model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    system = [{"text": "Be helpful"}, NOVA_CACHE_POINT] * system_points
     messages = _nova_chat("One", "Two", "Three", "Four")
     messages[-1]["content"] = [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}]
 
-    request = model.format_request(messages)
+    request = model.format_request(messages, system_prompt_content=system)
 
     tru_content = _user_content(request)
-    exp_content = [
-        [{"text": "One"}],
-        [{"text": "Two"}, NOVA_CACHE_POINT],
-        [{"text": "Three"}, NOVA_CACHE_POINT],
-        [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
-    ]
     assert tru_content == exp_content
+    assert len(_all_cache_points(request)) <= 4
 
 
 def test_claude_keeps_the_tools_cache_point_and_ttl(bedrock_client):
