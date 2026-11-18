@@ -28,7 +28,7 @@ from ..experimental.checkpoint import Checkpoint, CheckpointPosition
 from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
 from ..interrupt import InterruptException, PendingToolExecution
 from ..middleware.stages import InvokeModelContext, InvokeModelStage
-from ..models._model_proxy import ModelProxy
+from ..models._model_proxy import ModelProxy, _count_request_tokens
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
@@ -71,6 +71,7 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 6
 INITIAL_DELAY = 4
 MAX_DELAY = 240  # 4 minutes
+_MAX_EMPTY_TOOL_USE_RETRIES = 2
 
 
 def _has_tool_use_in_latest_message(messages: "Messages") -> bool:
@@ -126,14 +127,8 @@ async def _estimate_input_tokens(agent: "Agent") -> int:
         # System prompt and tool spec tokens are already included in the baseline
         return known_baseline + await ModelProxy(agent.model).count_tokens(new_messages)
 
-    # Cold start: resolve tool specs lazily for estimation only
-    tool_specs = agent.tool_registry.get_all_tool_specs()
-    return await ModelProxy(agent.model).count_tokens(
-        messages,
-        tool_specs=tool_specs,
-        system_prompt=agent.system_prompt,
-        system_prompt_content=agent._system_prompt_content,
-    )
+    # Cold start: tool specs are resolved lazily for estimation only
+    return await _count_request_tokens(agent, messages)
 
 
 def _build_checkpoint_stop_event(
@@ -621,6 +616,8 @@ async def _handle_model_execution(
     stream_trace = Trace("stream_messages", parent_id=cycle_trace.id)
     cycle_trace.add_child(stream_trace)
 
+    empty_tool_use_attempts = 0
+
     # Retry loop - actual retry logic is handled by retry_strategy hook
     # Hooks control when to stop retrying via the event.retry flag
     while True:
@@ -793,6 +790,17 @@ async def _handle_model_execution(
                 )
                 continue  # Retry the model call
 
+            if stop_reason == "tool_use" and not any("toolUse" in block for block in message["content"]):
+                empty_tool_use_attempts += 1
+                if empty_tool_use_attempts <= _MAX_EMPTY_TOOL_USE_RETRIES:
+                    agent.event_loop_metrics.update_usage(usage)
+                    agent.event_loop_metrics.update_metrics(metrics)
+                    logger.warning(
+                        "attempt=<%s> | tool_use stop with no toolUse blocks | retrying the model call",
+                        empty_tool_use_attempts,
+                    )
+                    continue
+
             if stop_reason == "max_tokens":
                 message = recover_message_on_max_tokens_reached(message)
 
@@ -828,6 +836,17 @@ async def _handle_model_execution(
             # No retry requested, raise the exception
             yield ForceStopEvent(reason=e)
             raise e
+
+    # Raised outside the loop so the model call's except handler cannot fire a second AfterModelCallEvent.
+    if stop_reason == "tool_use" and not any("toolUse" in block for block in message["content"]):
+        agent.event_loop_metrics.update_usage(usage)
+        agent.event_loop_metrics.update_metrics(metrics)
+        no_tool_error = ValueError(
+            f'Model returned stop_reason "tool_use" but the response contains no toolUse block in '
+            f"{empty_tool_use_attempts} attempts. The reply was discarded rather than reported as a completed turn."
+        )
+        yield ForceStopEvent(reason=no_tool_error)
+        raise no_tool_error
 
     try:
         # Add message in trace and mark the end of the stream messages trace

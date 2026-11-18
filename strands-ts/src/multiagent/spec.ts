@@ -453,6 +453,9 @@ export function _resolveSpecs(modelInputs: unknown, axes: ResolveSpecAxes, label
  * the parent's intervention handler instances, so tool calls made by a child are subject to
  * the same approval and authorization checks as the parent's.
  *
+ * The parent's hooks and plugins are not passed to children; a child that needs them
+ * requires a custom builder.
+ *
  * @param parent - The parent agent whose resources child agents inherit.
  * @returns An {@link AgentBuilder} that creates configured child agents from a spec.
  * @internal Not part of the public API.

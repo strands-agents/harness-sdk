@@ -32,7 +32,7 @@ import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
 import { Model } from '../models/model.js'
-import { ModelProxy } from '../models/model-proxy.js'
+import { countRequestTokens, ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import type { AgentMetadata } from './agent-metadata.js'
@@ -2447,15 +2447,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolChoice?: ToolChoice,
     structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
-    const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
-    if (this.systemPrompt !== undefined) {
-      streamOptions.systemPrompt = this.systemPrompt
-    }
-    if (toolChoice) {
-      streamOptions.toolChoice = toolChoice
-    }
-
     let attemptCount = 1
     while (true) {
       // An abort during retry backoff must stop before another model attempt begins.
@@ -2464,7 +2455,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       let projectedInputTokens: number | undefined
       try {
         // Context management continues to size against the agent's default model.
-        projectedInputTokens = await this._estimateInputTokens(streamOptions)
+        projectedInputTokens = await this._estimateInputTokens()
       } catch (error) {
         logger.debug(`error=<${error}> | token estimation failed, proceeding without estimate`)
       }
@@ -2524,7 +2515,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       if (modelContinuation !== undefined) {
         try {
-          projectedInputTokens = await this._estimateInputTokens(streamOptions)
+          projectedInputTokens = await this._estimateInputTokens()
         } catch (error) {
           projectedInputTokens = undefined
           logger.debug(
@@ -2558,7 +2549,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         })
 
         if (result.redaction?.userMessage) {
-          this._redactLastMessage(result.redaction.userMessage)
+          this._redactLastUserMessage(result.redaction.userMessage)
         }
 
         const stopData: ModelStopData = {
@@ -2914,7 +2905,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Redacts the last message in the conversation history.
+   * Redacts the last user message in the conversation history.
    * Called when guardrails block user input and redaction is enabled.
    *
    * Follows the redaction strategy:
@@ -2925,45 +2916,44 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * @param redactMessage - The redaction message to replace the content with
    */
-  private _redactLastMessage(redactMessage: string): void {
-    // Find and redact the last message
-    const lastIndex = this.messages.length - 1
-    if (lastIndex >= 0) {
-      const lastMessage = this.messages[lastIndex]
-      if (lastMessage && lastMessage.role === 'user') {
-        // Collect only tool result blocks with redacted content
-        const redactedContent: ContentBlock[] = []
-        for (const block of lastMessage.content) {
-          if (block.type === 'toolResultBlock') {
-            // Preserve tool result block structure, only redact its content
-            redactedContent.push(
-              new ToolResultBlock({
-                toolUseId: block.toolUseId,
-                status: block.status,
-                content: [new TextBlock(redactMessage)],
-              })
-            )
-          }
-        }
+  private _redactLastUserMessage(redactMessage: string): void {
+    // Session managers and hooks may append non-user messages after the user turn.
+    let lastUserIndex = this.messages.length - 1
+    while (lastUserIndex >= 0 && this.messages[lastUserIndex]!.role !== 'user') {
+      lastUserIndex--
+    }
+    if (lastUserIndex < 0) {
+      logger.warn('received input redaction but no user message found | redaction skipped')
+      return
+    }
+    const lastUserMessage = this.messages[lastUserIndex]!
 
-        // If no tool result blocks were found, replace entire content with redaction message
-        if (redactedContent.length === 0) {
-          redactedContent.push(new TextBlock(redactMessage))
-        }
-
-        this.messages[lastIndex] = new Message({
-          role: 'user',
-          content: redactedContent,
-          // Redaction rewrites content but it's the same logical message, so keep its tracking id.
-          trackingId: lastMessage.trackingId,
-        })
-      } else if (lastMessage) {
-        // Unexpected state: redaction requested but last message is not from user
-        logger.warn(
-          `role=<${lastMessage.role}> | received input redaction but last message is not from user | redaction skipped`
+    // Collect only tool result blocks with redacted content
+    const redactedContent: ContentBlock[] = []
+    for (const block of lastUserMessage.content) {
+      if (block.type === 'toolResultBlock') {
+        // Preserve tool result block structure, only redact its content
+        redactedContent.push(
+          new ToolResultBlock({
+            toolUseId: block.toolUseId,
+            status: block.status,
+            content: [new TextBlock(redactMessage)],
+          })
         )
       }
     }
+
+    // If no tool result blocks were found, replace entire content with redaction message
+    if (redactedContent.length === 0) {
+      redactedContent.push(new TextBlock(redactMessage))
+    }
+
+    this.messages[lastUserIndex] = new Message({
+      role: 'user',
+      content: redactedContent,
+      // Redaction rewrites content but it's the same logical message, so keep its tracking id.
+      trackingId: lastUserMessage.trackingId,
+    })
   }
 
   /**
@@ -2974,10 +2964,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * estimates only new messages added after it. Falls back to full estimation when no metadata is
    * available (cold start or first call).
    *
-   * @param streamOptions - The stream options containing system prompt and tool specs
    * @returns Estimated input token count
    */
-  private async _estimateInputTokens(streamOptions: StreamOptions): Promise<number> {
+  private async _estimateInputTokens(): Promise<number> {
     // Find the last assistant message with usage metadata
     let lastAssistantIdx = -1
     for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -2999,10 +2988,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await new ModelProxy(this.model).countTokens(this.messages, {
-        ...(streamOptions.systemPrompt !== undefined && { systemPrompt: streamOptions.systemPrompt }),
-        ...(streamOptions.toolSpecs !== undefined && { toolSpecs: streamOptions.toolSpecs }),
-      })
+      estimate = await countRequestTokens(this, this.messages)
     }
 
     return estimate
