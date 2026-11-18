@@ -115,10 +115,17 @@ oauth_mcp_client = MCPClient(
     auth={
         "client_id": os.environ["OAUTH_CLIENT_ID"],
         "client_secret": os.environ["OAUTH_CLIENT_SECRET"],
+        "issuer": "https://auth.example.com",
         "scopes": ["mcp:tools"],  # optional
     },
 )
 ```
+
+Set `issuer` to the issuer URL of the authorization server that issued the credentials.
+The client then sends them only to that authorization server and stops if the MCP
+server points anywhere else. Without `issuer`, the credentials go to whichever
+authorization server the MCP server advertises, and `MCPClient` logs a warning.
+`issuer` requires `mcp` 1.30.0 or later on the 1.x line, or 2.2.0 or later.
 
 `scopes` is joined with spaces and is advisory only: if the server advertises its
 own scopes (via the `WWW-Authenticate` header or its protected-resource or
@@ -151,7 +158,8 @@ interpolation keeps secrets in the environment:
       "url": "https://api.example.com/mcp/",
       "auth": {
         "client_id": "${OAUTH_CLIENT_ID}",
-        "client_secret": "${OAUTH_CLIENT_SECRET}"
+        "client_secret": "${OAUTH_CLIENT_SECRET}",
+        "issuer": "https://auth.example.com"
       }
     }
   }

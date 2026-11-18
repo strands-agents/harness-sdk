@@ -1896,6 +1896,28 @@ describe('McpClient transport resolution', () => {
     })
   })
 
+  it('passes issuer as expectedIssuer without warning', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    new McpClient({
+      url: 'https://mcp.example.com',
+      auth: { clientId: 'id', clientSecret: 'secret', issuer: 'https://auth.example.com' },
+    })
+    expect(ClientCredentialsProvider).toHaveBeenCalledWith({
+      clientId: 'id',
+      clientSecret: 'secret',
+      expectedIssuer: 'https://auth.example.com',
+    })
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('warns when auth has no issuer', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    new McpClient({ url: 'https://mcp.example.com', auth: { clientId: 'id', clientSecret: 'secret' } })
+    expect(warnSpy).toHaveBeenCalledWith(
+      'url=<https://mcp.example.com/> | oauth client credentials have no issuer, the mcp server decides which authorization server receives them'
+    )
+  })
+
   it('passes custom authProvider to transport', () => {
     const customProvider = { redirectUrl: undefined, clientMetadata: {} } as never
     new McpClient({ url: 'https://mcp.example.com', authProvider: customProvider })

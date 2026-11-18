@@ -410,6 +410,29 @@ def test_config_auth_builds_client_credentials_provider(mock_client, transports)
     assert transports["http"].call_args.kwargs["auth"] is provider_cls.return_value
 
 
+def test_config_auth_issuer_passed_to_provider(mock_client, transports):
+    with patch(
+        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", autospec=True
+    ) as provider_cls:
+        MCPClient.load_servers(
+            {
+                "srv": {
+                    "url": "https://example.com/mcp",
+                    "auth": {"client_id": "id", "client_secret": "secret", "issuer": "https://auth.example.com"},
+                }
+            }
+        )
+
+    provider_cls.assert_called_once_with(
+        server_url="https://example.com/mcp",
+        storage=ANY,
+        client_id="id",
+        client_secret="secret",
+        issuer="https://auth.example.com",
+        **{SCOPE_KWARG: None},
+    )
+
+
 def test_auth_interpolates_env_vars(mock_client, transports, monkeypatch):
     monkeypatch.setenv("OAUTH_ID", "env-id")
     monkeypatch.setenv("OAUTH_SECRET", "env-secret")

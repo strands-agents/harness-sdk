@@ -1,5 +1,6 @@
 """Unit tests for MCPClient OAuth authentication (url/auth/auth_provider constructor path)."""
 
+import warnings
 from unittest.mock import ANY, patch
 
 import httpx
@@ -83,6 +84,69 @@ def test_auth_scopes_joined_with_spaces():
         )
 
     assert provider_cls.call_args.kwargs[SCOPE_KWARG] == "read write"
+
+
+def test_auth_issuer_passed_to_provider():
+    with patch(
+        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", autospec=True
+    ) as provider_cls:
+        MCPClient(
+            url="https://mcp.example.com",
+            auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
+        )
+
+    provider_cls.assert_called_once_with(
+        server_url="https://mcp.example.com",
+        storage=ANY,
+        client_id="id",
+        client_secret="secret",
+        issuer="https://auth.example.com",
+        **{SCOPE_KWARG: None},
+    )
+
+
+def test_auth_issuer_accepted_by_installed_mcp_provider():
+    """The installed `mcp` warns when its provider receives no issuer, so no warning means it arrived."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        MCPClient(
+            url="https://mcp.example.com",
+            auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
+        )
+
+
+def test_auth_issuer_unsupported_by_installed_mcp_raises():
+    def provider_without_issuer(server_url, storage, client_id, client_secret, scope=None, scopes=None):
+        raise AssertionError("the provider must not be built without the issuer")
+
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", provider_without_issuer):
+        with pytest.raises(ValueError, match="'issuer' requires mcp>=1.30.0"):
+            MCPClient(
+                url="https://mcp.example.com",
+                auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
+            )
+
+
+def test_auth_without_issuer_warns(caplog):
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider"):
+        with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
+            MCPClient(
+                url="https://mcp.example.com",
+                auth=MCPClientCredentials(client_id="id", client_secret="secret"),
+            )
+
+    assert "url=<https://mcp.example.com> | oauth client credentials have no issuer" in caplog.text
+
+
+def test_auth_with_issuer_does_not_warn(caplog):
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", autospec=True):
+        with caplog.at_level("WARNING", logger="strands.tools.mcp.mcp_client"):
+            MCPClient(
+                url="https://mcp.example.com",
+                auth=MCPClientCredentials(client_id="id", client_secret="secret", issuer="https://auth.example.com"),
+            )
+
+    assert caplog.text == ""
 
 
 def test_auth_provider_passed_through(streamablehttp_transport):
@@ -170,6 +234,14 @@ def test_auth_scopes_not_a_list_of_strings_raises(scopes):
         MCPClient(
             url="https://mcp.example.com",
             auth={"client_id": "id", "client_secret": "secret", "scopes": scopes},
+        )
+
+
+def test_auth_issuer_not_a_string_raises():
+    with pytest.raises(ValueError, match="'issuer' to be a string"):
+        MCPClient(
+            url="https://mcp.example.com",
+            auth={"client_id": "id", "client_secret": "secret", "issuer": 123},
         )
 
 

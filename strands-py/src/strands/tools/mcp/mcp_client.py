@@ -2864,12 +2864,22 @@ def _build_client_credentials_auth(url: str, auth: MCPClientCredentials) -> http
     scopes = values.get("scopes")
     if scopes is not None and not (isinstance(scopes, list) and all(isinstance(scope, str) for scope in scopes)):
         raise ValueError("MCPClient: 'auth' requires 'scopes' to be a list of strings")
+    issuer = values.get("issuer")
+    if issuer is not None and not isinstance(issuer, str):
+        raise ValueError("MCPClient: 'auth' requires 'issuer' to be a string")
+    if issuer is None:
+        logger.warning(
+            "url=<%s> | oauth client credentials have no issuer, "
+            "the mcp server decides which authorization server receives them",
+            url,
+        )
     return client_credentials_auth(
         server_url=url,
         storage=_InMemoryTokenStorage(),
         client_id=values["client_id"],
         client_secret=values["client_secret"],
         scope=" ".join(scopes) if scopes else None,
+        issuer=issuer,
     )
 
 
@@ -3036,6 +3046,8 @@ def _parse_config_auth(name: str, url: str, auth: dict[str, Any] | None) -> http
     credentials = MCPClientCredentials(client_id=auth["client_id"], client_secret=auth["client_secret"])
     if auth.get("scopes") is not None:
         credentials["scopes"] = auth["scopes"]
+    if auth.get("issuer") is not None:
+        credentials["issuer"] = auth["issuer"]
     return _build_client_credentials_auth(url, credentials)
 
 

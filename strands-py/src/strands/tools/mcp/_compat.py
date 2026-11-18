@@ -14,6 +14,7 @@ ignores the installed line doesn't need.
 """
 
 import asyncio
+import inspect
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from datetime import timedelta
@@ -182,12 +183,13 @@ async def call_tool(
 
 
 def client_credentials_auth(
-    server_url: str, storage: Any, client_id: str, client_secret: str, scope: str | None
+    server_url: str, storage: Any, client_id: str, client_secret: str, scope: str | None, issuer: str | None
 ) -> httpx.Auth:
     """Construct the OAuth client_credentials provider, on either `mcp` major line.
 
     `mcp` 2.x renamed the provider's `scopes` keyword to `scope`. The import
     path and the space-joined scope string value are the same on both lines.
+    The `issuer` keyword exists from `mcp` 1.30.0 on the 1.x line and 2.2.0 on the 2.x line.
 
     Args:
         server_url: The MCP server endpoint URL the grant authenticates against.
@@ -195,26 +197,27 @@ def client_credentials_auth(
         client_id: The OAuth client identifier.
         client_secret: The OAuth client secret.
         scope: Space-joined OAuth scopes to request, if any.
+        issuer: The issuer URL of the authorization server the credentials belong to, if any.
 
     Returns:
         The provider, an HTTPX auth implementation.
+
+    Raises:
+        ValueError: If `issuer` is set and the installed `mcp` cannot enforce it.
     """
     from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
 
-    if MCP_V2:
-        return ClientCredentialsOAuthProvider(  # type: ignore[return-value]
-            server_url=server_url,
-            storage=storage,
-            client_id=client_id,
-            client_secret=client_secret,
-            scope=scope,  # type: ignore[call-arg]
-        )
+    options: dict[str, Any] = {"scope" if MCP_V2 else "scopes": scope}
+    if issuer is not None:
+        if "issuer" not in inspect.signature(ClientCredentialsOAuthProvider).parameters:
+            raise ValueError("MCPClient: 'auth' key 'issuer' requires mcp>=1.30.0 on the 1.x line or mcp>=2.2.0")
+        options["issuer"] = issuer
     return ClientCredentialsOAuthProvider(  # type: ignore[return-value]
         server_url=server_url,
         storage=storage,
         client_id=client_id,
         client_secret=client_secret,
-        scopes=scope,  # type: ignore[call-arg]
+        **options,
     )
 
 

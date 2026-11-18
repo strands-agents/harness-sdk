@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
-import { StreamableHTTPClientTransport, SSEClientTransport, Client } from '@modelcontextprotocol/client'
+import {
+  ClientCredentialsProvider,
+  StreamableHTTPClientTransport,
+  SSEClientTransport,
+  Client,
+} from '@modelcontextprotocol/client'
 import { McpClient } from '../client.js'
 import { mcpServerLoader } from '../config.js'
 
@@ -130,6 +135,24 @@ describe('McpClient.loadServers', () => {
       })
 
       expect(clients).toHaveLength(1)
+    })
+
+    it('interpolates the auth issuer and passes it to the provider', async () => {
+      vi.stubEnv('AUTH_ISSUER', 'https://auth.example.com')
+
+      await McpClient.loadServers({
+        server: {
+          url: 'https://example.com/mcp',
+          auth: { clientId: 'id', clientSecret: 'secret', issuer: '${AUTH_ISSUER}' },
+        },
+      })
+
+      const { authProvider } = vi.mocked(StreamableHTTPClientTransport).mock.calls[0]![1]!
+      expect((authProvider as ClientCredentialsProvider).clientInformation()).toStrictEqual({
+        client_id: 'id',
+        client_secret: 'secret',
+        issuer: 'https://auth.example.com',
+      })
     })
 
     it('throws when auth credential references missing env var', async () => {

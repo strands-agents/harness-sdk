@@ -216,6 +216,7 @@ async function streamableHttpOAuthExample() {
     auth: {
       clientId,
       clientSecret,
+      issuer: 'https://auth.example.com',
       scopes: ['mcp:tools'],
     },
     headers: { 'X-Client-Name': 'support-agent' },
@@ -240,6 +241,7 @@ async function loadServersExample() {
         auth: {
           clientId: '${OAUTH_CLIENT_ID}',
           clientSecret: '${OAUTH_CLIENT_SECRET}',
+          issuer: 'https://auth.example.com',
           scopes: ['mcp:tools'],
         },
       },

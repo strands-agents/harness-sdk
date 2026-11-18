@@ -89,6 +89,8 @@ export interface McpClientCredentials {
   clientSecret: string
   /** OAuth scopes to request. Joined with spaces before sending to the token endpoint. */
   scopes?: string[]
+  /** Issuer URL of the authorization server the credentials belong to. When set, they are only sent there. */
+  issuer?: string
 }
 
 /** Decides whether a tool matches a filter. Receives the tool under its agent-facing name. */
@@ -492,15 +494,21 @@ export class McpClient {
       throw new Error('McpClientConfig: provide either "auth" or "authProvider", not both')
     }
 
+    const url = args.url instanceof URL ? args.url : new URL(args.url!)
+    if (args.auth && !args.auth.issuer) {
+      logger.warn(
+        `url=<${url.href}> | oauth client credentials have no issuer, the mcp server decides which authorization server receives them`
+      )
+    }
     const authProvider = args.auth
       ? new ClientCredentialsProvider({
           clientId: args.auth.clientId,
           clientSecret: args.auth.clientSecret,
           ...(args.auth.scopes && { scope: args.auth.scopes.join(' ') }),
+          ...(args.auth.issuer !== undefined && { expectedIssuer: args.auth.issuer }),
         })
       : args.authProvider
 
-    const url = args.url instanceof URL ? args.url : new URL(args.url!)
     return new StreamableHTTPClientTransport(url, {
       ...(authProvider && { authProvider }),
       ...(args.headers && { requestInit: { headers: args.headers } }),
