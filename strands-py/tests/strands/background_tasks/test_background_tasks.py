@@ -1215,8 +1215,9 @@ async def test_cancel_background_tasks_from_another_thread_settles_the_waiting_i
 
     canceller = threading.Thread(target=cancel_once_started)
     canceller.start()
-    await asyncio.wait_for(agent.invoke_async("Run work."), timeout=2)
+    result = await asyncio.wait_for(agent.invoke_async("Run work."), timeout=2)
     canceller.join(timeout=1)
+    assert result.stop_reason == "cancelled"
     assert await asyncio.to_thread(cancelled.wait, 1)
 
     await agent.invoke_async("Continue.")

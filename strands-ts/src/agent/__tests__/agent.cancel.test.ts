@@ -657,6 +657,53 @@ describe('Agent Cancellation', () => {
     })
   })
 
+  describe('cancel outside a loop pass', () => {
+    it('cancels the resumed pass when cancel lands during AfterInvocationEvent hooks', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Hello' })
+        .addTurn({ type: 'textBlock', text: 'unreachable' })
+      const agent = new Agent({ model, printer: false })
+      let passes = 0
+      agent.addHook(AfterInvocationEvent, (event) => {
+        if (++passes === 1) agent.cancel({ message: 'Stopped.' })
+        if (passes < 5) event.resume = 'Again'
+      })
+
+      const result = await agent.invoke('Hi')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('Stopped.'))
+      expect(passes).toBe(2)
+    })
+
+    it('does not resume a cancelled pass', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Hello' })
+        .addTurn({ type: 'textBlock', text: 'unreachable' })
+      const agent = new Agent({ model, printer: false })
+      let passes = 0
+      agent.addHook(BeforeModelCallEvent, () => agent.cancel())
+      agent.addHook(AfterInvocationEvent, (event) => {
+        if (++passes < 5) event.resume = 'Again'
+      })
+
+      const result = await agent.invoke('Hi')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(passes).toBe(1)
+    })
+
+    it('cancels an invocation that has not reached its first pass yet', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model, printer: false })
+
+      const pending = agent.invoke('Hi')
+      agent.cancel()
+
+      expect((await pending).stopReason).toBe('cancelled')
+    })
+  })
+
   describe('messages state invariants', () => {
     it('has no orphaned toolUse blocks after cancel during streaming', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
