@@ -520,8 +520,9 @@ class TestHtmlToMarkdown:
                 "[x](10.0.0.1:80/a) [m](\u200bmailto:a/b)",
             ),
             (
-                '<a href="file:///C:\\Users\\me\\doc.txt">f</a> <a href="ftp://h\\a">g</a> <a href="WSS://h\\a">w</a>',
-                "[f](file:///C:/Users/me/doc.txt) [g](ftp://h/a) [w](WSS://h/a)",
+                '<a href="file:///C:\\Users\\me\\doc.txt">f</a> <a href="ftp://h\\a">g</a> <a href="WSS://h\\a">w</a> '
+                '<a href="ws://h\\a">v</a>',
+                "[f](file:///C:/Users/me/doc.txt) [g](ftp://h/a) [w](WSS://h/a) [v](ws://h/a)",
             ),
             ('<a href=" \n">blank</a>', "blank"),
             # a link whose text is its href is not written as <href>, which can be an HTML tag
@@ -599,6 +600,10 @@ class TestHtmlToMarkdown:
             ("<p>#<span> x</span></p><p>1.</p>", "\\# x\n\n1\\."),
             ("<p>1)</p>", r"1\)"),
             ("<p><del>~100</del> 80</p><p>~<span>~~</span></p>", "~~\\~100~~ 80\n\n\\~~~"),
+            (
+                "<p><s>~100</s> 80</p><p>~~<span>~</span></p><p><a>~~&nbsp;</a>~x</p>",
+                "~~\\~100~~ 80\n\n\\~~~\n\n\\~~~x",
+            ),
             # a table cell follows "|", and text after other output on its line is not escaped as turndown does
             ("<table><tr><th>#</th><th>1.</th></tr></table>", "| # | 1. |\n| --- | --- |"),
             ("<p><b>x</b>> y</p>", "**x**> y"),

@@ -80,8 +80,8 @@ def _tag_attribute(tag: Tag, name: str) -> str:
     return value or ""
 
 
-# A block marker at the start of a line: what turndown escapes at the start of text, "1)", and a "~" that ends its
-# line. The marker is escaped whether a space or the end of the line follows. Whitespace before it is stripped later.
+# A block marker at the start of a line: what turndown escapes at the start of text, "1)", and "~" or "~~" ending its
+# line. It is escaped whether a space or the end of the line follows. Whitespace before it is stripped or indentation.
 _BLOCK_MARKER = re.compile(
     r"^([^\S\n]*)(?=[-=>]|~~~|~{1,2}\s*$|(?:\+|#{1,6}|[0-9]+[.)])(?: |\s*$))([0-9]*)", re.MULTILINE
 )

@@ -222,8 +222,8 @@ describe('htmlToMarkdown', () => {
     ],
     ['<a href="10.0.0.1:80\\a">x</a> <a href="\u200bmailto:a\\b">m</a>', '[x](10.0.0.1:80/a) [m](\u200bmailto:a/b)'],
     [
-      '<a href="file:///C:\\Users\\me\\doc.txt">f</a> <a href="ftp://h\\a">g</a> <a href="WSS://h\\a">w</a>',
-      '[f](file:///C:/Users/me/doc.txt) [g](ftp://h/a) [w](WSS://h/a)',
+      '<a href="file:///C:\\Users\\me\\doc.txt">f</a> <a href="ftp://h\\a">g</a> <a href="WSS://h\\a">w</a> <a href="ws://h\\a">v</a>',
+      '[f](file:///C:/Users/me/doc.txt) [g](ftp://h/a) [w](WSS://h/a) [v](ws://h/a)',
     ],
     ['<a href=" \n">blank</a>', 'blank'],
     ['<a href="b">b</a>', '[b](b)'],
