@@ -301,7 +301,7 @@ def test_take_snapshot_app_data_is_independent_copy():
 
 
 def test_take_snapshot_conversation_manager_state_is_independent_copy():
-    """Captured conversation manager state is independent of the live summary."""
+    """Captured conversation manager state is independent of the live summary, see #6270."""
     manager = SummarizingConversationManager()
     summary = {"role": "user", "content": [{"text": "original"}]}
     manager.restore_from_session({**manager.get_state(), "summary_message": summary})
@@ -323,7 +323,7 @@ def test_take_snapshot_conversation_manager_state_is_independent_copy():
 
 
 def test_load_snapshot_conversation_manager_state_is_independent_copy():
-    """Restored conversation manager mutations leave the snapshot unchanged."""
+    """Restored conversation manager mutations leave the snapshot unchanged, see #6270."""
     exp_state = {
         "__name__": "SummarizingConversationManager",
         "summary_message": {"role": "user", "content": [{"text": "original"}]},
@@ -343,7 +343,7 @@ def test_load_snapshot_conversation_manager_state_is_independent_copy():
 
 @pytest.mark.parametrize("restore", [False, True], ids=["capture", "restore"])
 def test_snapshot_interrupt_state_is_independent_copy(restore):
-    """Live interrupt mutations leave captured and loaded snapshots unchanged."""
+    """Live interrupt mutations leave captured and loaded snapshots unchanged, see #6270."""
     exp_state = {
         "interrupts": {"tool-1": {"id": "tool-1", "name": "approval", "reason": ["original"], "response": ["yes"]}},
         "context": {"nested": ["original"]},
