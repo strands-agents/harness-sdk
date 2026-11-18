@@ -526,14 +526,12 @@ describe('TEMPORARY dev optimization', () => {
     const workspace = await workspaceFixture()
     const spawnOptimizer = vi.fn(async () => ({ code: 2, stdout: '', stderrTail: [`strands-evals: error: ${error}`] }))
 
-    const failure = await runTemporaryOptimization(
+    const running = runTemporaryOptimization(
       { workspace, now: () => NOW },
       { run: environmentRunner(), spawnOptimizer }
-    ).catch((caught: unknown) => caught as Error)
+    )
 
-    const [, nextStep = ''] = failure.message.split('\n')
-    expect(nextStep.startsWith(step)).toBe(true)
-    expect(nextStep).toContain(' The full optimizer output is in ')
+    await expect(running).rejects.toThrow(`: ${error}\n${step}`)
   })
 
   it('shouldReturnTheResultAndFlagTheProposerFailureWhenTheSearchStoppedOnAProposerError', async () => {
