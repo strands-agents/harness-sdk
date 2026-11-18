@@ -24,8 +24,10 @@ plugin now ships in the SDK as `Todos`: construct it yourself and pass it in `pl
 :::
 
 Naming `todos` in `builtin_plugins` still adds the `todo_write` tool and still keeps the
-list in view, but it warns on construction. The SDK plugin is the same plugin, so moving
-to it changes how you attach it and nothing about how the agent behaves:
+list in view, but it warns on construction. Moving to the SDK plugin changes how you
+attach it and how often the list is re-surfaced: the built-in does it before every model
+call, the SDK plugin every `reminder_interval` (`reminderInterval` in TypeScript) model
+calls, `10` by default. Set it to `1` for the closest match:
 
 <Tabs>
   <Tab label="Python">

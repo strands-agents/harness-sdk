@@ -5,6 +5,7 @@ import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { InvokeModelStage } from '../../../middleware/index.js'
 import { Agent } from '../../../agent/agent.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import type { MockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { InjectionContext } from '../../../injection/types.js'
 import type { InvokableTool, ToolContext } from '../../../tools/tool.js'
@@ -153,22 +154,77 @@ describe('Todos', () => {
     await expect(agent.initialize()).rejects.toThrow(/todo_write/)
   })
 
-  it('re-surfaces the list on the next model call in the same invocation', async () => {
-    // The everyTurn trigger exists for this: under userTurn the mid-loop call carries no reminder.
-    const todos: TodoItem[] = [{ content: 'Run tests', activeForm: 'Running tests', status: 'in_progress' }]
-    const model = new MockMessageModel()
-      .addTurn({ type: 'toolUseBlock', name: 'todo_write', toolUseId: 't1', input: { todos } })
-      .addTurn({ type: 'textBlock', text: 'Done' })
-    const agent = new Agent({ model, printer: false, plugins: [new Todos()] })
-    const requests: MessageData[][] = []
-    const originalStream = model.stream.bind(model)
-    vi.spyOn(model, 'stream').mockImplementation(async function* (messages, streamOptions) {
-      requests.push(messages.map((message) => message.toJSON()))
-      yield* originalStream(messages, streamOptions)
+  describe('reminder pacing', () => {
+    async function remindedCalls(agent: Agent, model: MockMessageModel, invocations = 1): Promise<boolean[]> {
+      const requests: MessageData[][] = []
+      const originalStream = model.stream.bind(model)
+      vi.spyOn(model, 'stream').mockImplementation(async function* (messages, streamOptions) {
+        requests.push(messages.map((message) => message.toJSON()))
+        yield* originalStream(messages, streamOptions)
+      })
+
+      for (let invocation = 0; invocation < invocations; invocation++) {
+        await agent.invoke('go')
+      }
+
+      return requests.map(hasReminder)
+    }
+
+    it.each([
+      {
+        name: 'an interval of 1 skips only the call that carries the todo_write result',
+        config: { reminderInterval: 1 },
+        invocations: [['todo_write', 'work', 'work']],
+        expected: [false, false, true, true],
+      },
+      {
+        name: 'a todo_write result and a reminder both restart the count',
+        config: { reminderInterval: 2 },
+        invocations: [['todo_write', 'work', 'work', 'work', 'work', 'todo_write', 'work', 'work']],
+        expected: [false, false, false, true, false, true, false, false, true],
+      },
+      {
+        name: 'the default interval is 10',
+        config: {},
+        invocations: [['todo_write', ...Array<string>(11).fill('work')]],
+        expected: [...Array<boolean>(11).fill(false), true, false],
+      },
+      {
+        name: 'a user turn neither brings the reminder forward nor restarts the count',
+        config: { reminderInterval: 3 },
+        invocations: [['todo_write', 'work'], [], [], ['work']],
+        expected: [false, false, false, false, true, false, false],
+      },
+    ])(
+      'waits reminderInterval model calls after the list was last shown: $name',
+      async ({ config, invocations, expected }) => {
+        const todos: TodoItem[] = [{ content: 'Run tests', activeForm: 'Running tests', status: 'in_progress' }]
+        const model = new MockMessageModel()
+        let toolUses = 0
+        for (const toolNames of invocations) {
+          for (const name of toolNames) {
+            const input = name === 'todo_write' ? { todos } : {}
+            model.addTurn({ type: 'toolUseBlock', name, toolUseId: `t${toolUses++}`, input })
+          }
+          model.addTurn({ type: 'textBlock', text: 'Done' })
+        }
+        const work = createMockTool('work', () => 'ok')
+        const agent = new Agent({ model, printer: false, plugins: [new Todos(config)], tools: [work] })
+
+        expect(await remindedCalls(agent, model, invocations.length)).toStrictEqual(expected)
+      }
+    )
+
+    it('reminds at once when the conversation does not show the list', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Done' })
+      const agent = new Agent({ model, printer: false, plugins: [new Todos()] })
+      agent.appState.set('todos', sampleTodos())
+
+      expect(await remindedCalls(agent, model)).toStrictEqual([true])
     })
 
-    await agent.invoke('go')
-
-    expect(requests.map(hasReminder)).toStrictEqual([false, true])
+    it.each([0, -1, 2.5, NaN])('rejects a reminderInterval of %s', (reminderInterval) => {
+      expect(() => new Todos({ reminderInterval })).toThrow(`reminderInterval=<${reminderInterval}>`)
+    })
   })
 })

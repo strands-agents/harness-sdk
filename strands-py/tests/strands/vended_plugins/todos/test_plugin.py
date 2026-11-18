@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands import Agent
+from strands import Agent, tool
 from strands.middleware.stages import InvokeModelStage
 from strands.vended_plugins.todos import TodoItem, Todos
 from strands.vended_plugins.todos.plugin import _DEFAULT_NAME
@@ -172,20 +172,84 @@ def test_the_tool_validates_the_model_facing_schema():
     assert "todos.0.status" in rejected["content"][0]["text"]
 
 
-def test_the_list_is_resurfaced_on_the_next_model_call_in_the_same_invocation():
-    """The everyTurn trigger exists for this: under userTurn the mid-loop call carries no reminder."""
+@tool
+def work() -> str:
+    """Stand in for a step of the task."""
+    return "ok"
+
+
+def _reminded_calls(plugin: Todos, invocations: list[list[str]]) -> list[bool]:
+    """Run invocations that each call the named tools in turn; report which model calls carried the reminder."""
     todos = [{"content": "Run tests", "activeForm": "Running tests", "status": "in_progress"}]
-    model = MockedModelProvider(
-        [
-            {
-                "role": "assistant",
-                "content": [{"toolUse": {"toolUseId": "t1", "name": "todo_write", "input": {"todos": todos}}}],
-            },
-            {"role": "assistant", "content": [{"text": "Done"}]},
-        ]
-    )
+    responses = []
+    for tool_names in invocations:
+        for name in tool_names:
+            tool_use = {
+                "toolUseId": f"t{len(responses)}",
+                "name": name,
+                "input": {"todos": todos} if name == "todo_write" else {},
+            }
+            responses.append({"role": "assistant", "content": [{"toolUse": tool_use}]})
+        responses.append({"role": "assistant", "content": [{"text": "Done"}]})
+    model = MockedModelProvider(responses)
     requests = _capture_requests(model)
+    agent = Agent(model=model, callback_handler=None, plugins=[plugin], tools=[work])
 
-    Agent(model=model, callback_handler=None, plugins=[Todos()])("go")
+    for _ in invocations:
+        agent("go")
 
-    assert [_has_reminder(request) for request in requests] == [False, True]
+    return [_has_reminder(request) for request in requests]
+
+
+@pytest.mark.parametrize(
+    ("plugin", "invocations", "exp_reminded"),
+    [
+        pytest.param(
+            Todos(reminder_interval=1),
+            [["todo_write", "work", "work"]],
+            [False, False, True, True],
+            id="an interval of 1 skips only the call that carries the todo_write result",
+        ),
+        pytest.param(
+            Todos(reminder_interval=2),
+            [["todo_write", "work", "work", "work", "work", "todo_write", "work", "work"]],
+            [False, False, False, True, False, True, False, False, True],
+            id="a todo_write result and a reminder both restart the count",
+        ),
+        pytest.param(
+            Todos(),
+            [["todo_write", *["work"] * 11]],
+            [*[False] * 11, True, False],
+            id="the default interval is 10",
+        ),
+        pytest.param(
+            Todos(reminder_interval=3),
+            [["todo_write", "work"], [], [], ["work"]],
+            [False, False, False, False, True, False, False],
+            id="a user turn neither brings the reminder forward nor restarts the count",
+        ),
+    ],
+)
+def test_the_reminder_waits_reminder_interval_model_calls_after_the_list_was_last_shown(
+    plugin, invocations, exp_reminded
+):
+    tru_reminded = _reminded_calls(plugin, invocations)
+
+    assert tru_reminded == exp_reminded
+
+
+def test_a_list_the_conversation_does_not_show_is_reminded_at_once(todos):
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "Done"}]}])
+    requests = _capture_requests(model)
+    agent = Agent(model=model, callback_handler=None, plugins=[Todos()])
+    agent.state.set("todos", todos)
+
+    agent("go")
+
+    assert [_has_reminder(request) for request in requests] == [True]
+
+
+@pytest.mark.parametrize("reminder_interval", [0, -1, 2.5, True])
+def test_a_reminder_interval_that_is_not_a_positive_integer_is_rejected(reminder_interval):
+    with pytest.raises(ValueError, match=f"reminder_interval=<{reminder_interval}>"):
+        Todos(reminder_interval=reminder_interval)

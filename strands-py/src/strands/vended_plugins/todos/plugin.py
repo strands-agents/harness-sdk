@@ -1,8 +1,8 @@
 """Todos plugin for maintaining a structured task list across a multi-step run.
 
 A single ``todo_write`` tool writes the current list to agent state; an internal
-``ContextInjector`` re-renders that list before each model call so the agent keeps its plan in
-view without restating it.
+``ContextInjector`` re-renders that list at intervals, so the agent keeps its plan in view without
+restating it.
 
 Re-surfacing goes through ``ContextInjector`` rather than editing ``agent.messages`` directly.
 The list is rewritten on every ``todo_write`` call, so what matters is that the model sees one
@@ -12,9 +12,10 @@ text — older ones are dropped from the request. The lists stay readable in ``a
 for anything inspecting history, and callers that do not want them can skip any block where
 ``"injected" in block``.
 
-The injector fires on ``everyTurn``, not ``userTurn``: the agent updates the list mid-loop via
-``todo_write``, so it should see the refreshed list on the next model call within the same
-invocation, not only at the start of the next user turn.
+The reminder is paced in model calls, not user turns, so a long single invocation gets it
+mid-loop. The model last saw the list on the call after a ``todo_write`` or in a reminder; the
+next reminder waits ``reminder_interval`` model calls after that, since repeating a list the model
+has just read only costs tokens.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from typing_extensions import TypedDict
 from ...injection.types import InjectionContext
 from ...plugins import Plugin
 from ...tools.decorator import tool
+from ...types.content import ContentBlock
 from ...types.tools import ToolContext
 from ..context_injector import ContextInjector
 
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
 
 _STATE_KEY = "todos"
 _DEFAULT_NAME = "strands:todos"
+_DEFAULT_REMINDER_INTERVAL = 10
 
 
 class TodoItem(TypedDict):
@@ -63,16 +66,17 @@ def _render_list(todos: list[TodoItem]) -> str:
 class Todos(Plugin):
     """Gives the agent a ``todo_write`` tool and keeps the current list in view.
 
-    The tool persists the list to ``agent.state`` under ``state_key``; before each model call the
-    plugin re-renders it as a ``<system-reminder>``. Sharing one instance across agents is safe:
-    the list lives in per-agent state, not on the plugin.
+    The tool persists the list to ``agent.state`` under ``state_key``; every ``reminder_interval``
+    model calls, counted from the call that last showed the list, the plugin re-renders it as a
+    ``<system-reminder>``. Sharing one instance across agents is safe: the list lives in per-agent
+    state, not on the plugin.
 
     One agent takes one ``Todos``. The tool is always named ``todo_write``, so a second instance
     raises no matter how ``name`` and ``state_key`` are set.
 
-    Because the list is re-rendered on every model call, it changes the tail of the request each
-    turn. On a provider without explicit cache points that moves the cached prefix boundary, so
-    weigh it against the task tracking it buys.
+    A reminder changes the tail of the request it is sent with. On a provider without explicit
+    cache points that moves the cached prefix boundary, so a lower ``reminder_interval`` trades
+    cache hits and tokens for a fresher list.
 
     Example:
         ```python
@@ -87,12 +91,29 @@ class Todos(Plugin):
             a retry or a restored session from injecting a second copy, so keep it stable.
             Defaults to ``"strands:todos"``.
         state_key: Agent-state key the list is stored under. Defaults to ``"todos"``.
+        reminder_interval: Re-render the list every this many model calls, counted from the call
+            that last showed it: the one after a ``todo_write`` call, or a reminder. ``1``
+            re-renders it on every call that does not already carry a ``todo_write`` result.
+            Defaults to ``10``.
+
+    Raises:
+        ValueError: If ``reminder_interval`` is not a positive integer.
     """
 
-    def __init__(self, *, name: str = _DEFAULT_NAME, state_key: str = _STATE_KEY) -> None:
+    def __init__(
+        self,
+        *,
+        name: str = _DEFAULT_NAME,
+        state_key: str = _STATE_KEY,
+        reminder_interval: int = _DEFAULT_REMINDER_INTERVAL,
+    ) -> None:
         """Initialize the plugin."""
+        if not isinstance(reminder_interval, int) or isinstance(reminder_interval, bool) or reminder_interval < 1:
+            raise ValueError(f"reminder_interval=<{reminder_interval}> | must be a positive integer")
         self._name = name
         self._state_key = state_key
+        self._reminder_interval = reminder_interval
+        self._injector_name = f"{name}:injector"
         super().__init__()
 
     @property
@@ -113,9 +134,28 @@ class Todos(Plugin):
 
         ContextInjector(
             self._render_reminder,
-            name=f"{self._name}:injector",
-            trigger="everyTurn",
+            name=self._injector_name,
+            trigger=self._reminder_due,
         ).init_agent(agent)
+
+    def _reminder_due(self, context: InjectionContext) -> bool:
+        """Whether ``reminder_interval`` model calls have passed since one last showed the list.
+
+        Read from the messages rather than a counter, so there is no state to restore, and a list
+        the conversation does not show is re-rendered at once.
+        """
+        calls_since_shown = 0
+        for message in reversed(context.messages):
+            if any(self._shows_list(block) for block in message["content"]):
+                return calls_since_shown >= self._reminder_interval
+            if message["role"] == "assistant":
+                calls_since_shown += 1
+        return True
+
+    def _shows_list(self, block: ContentBlock) -> bool:
+        if "injected" in block:
+            return block["injected"]["source"] == self._injector_name
+        return "toolUse" in block and block["toolUse"]["name"] == self.todo_write.tool_name
 
     def _render_reminder(self, context: InjectionContext) -> str | None:
         todos = context.state.get(self._state_key)
@@ -133,8 +173,8 @@ class Todos(Plugin):
 
         Use proactively for multi-step work (roughly 3+ distinct steps). Keep exactly one item
         ``in_progress`` at a time, and update status as you go rather than batching. The current
-        list is re-surfaced to you before each step, so you do not need to restate it. Pass an
-        empty list to clear it when the work is done.
+        list is re-surfaced to you periodically, so you do not need to restate it. Pass an empty
+        list to clear it when the work is done.
 
         Args:
             todos: The full updated list. Each item has ``content`` (the task, imperative:
