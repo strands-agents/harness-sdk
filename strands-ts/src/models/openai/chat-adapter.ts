@@ -4,7 +4,7 @@
  * @internal
  */
 
-import OpenAI, { BadRequestError } from 'openai'
+import OpenAI, { type BadRequestError } from 'openai'
 import type { ChatCompletionContentPartText } from 'openai/resources/index.mjs'
 import type { Message, StopReason, ToolResultBlock } from '../../types/messages.js'
 import type { ImageBlock, DocumentBlock } from '../../types/media.js'
@@ -105,12 +105,18 @@ export function withResponsesHint(
   modelId: string
 ): unknown {
   // OpenAI names this param in both of its rejections: tools with reasoning, and 'none' unsupported.
-  const rejectsTools = error instanceof BadRequestError && error.param === 'reasoning_effort'
-  if (toolLimit !== 'unsupported' || !rejectsTools) return error
-  // The constructor takes its message from the body, so the hint is set after it.
-  const hinted = new BadRequestError(error.status, error.error, undefined, error.headers)
-  hinted.message = `${error.message} ${modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`
-  hinted.cause = error
+  const rejection = error as BadRequestError | null | undefined
+  if (toolLimit !== 'unsupported' || rejection?.status !== 400 || rejection.param !== 'reasoning_effort') return error
+  // The error's own class, since a client can come from another copy of the openai package. Its constructor
+  // takes the message from the body, so the hint is set after it.
+  const hinted = new (rejection.constructor as typeof BadRequestError)(
+    400,
+    rejection.error,
+    undefined,
+    rejection.headers
+  )
+  hinted.message = `${rejection.message} ${modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`
+  hinted.cause = rejection
   return hinted
 }
 

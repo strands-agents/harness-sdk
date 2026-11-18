@@ -1505,6 +1505,22 @@ describe('OpenAIModel', () => {
       })
     })
 
+    it('keeps the class of a rejection that comes from another copy of the openai package', async () => {
+      class OtherCopyBadRequestError extends APIError<400, Headers> {}
+      const error = new OtherCopyBadRequestError(
+        400,
+        { message: 'Function tools with reasoning_effort are not supported', param: 'reasoning_effort' },
+        undefined,
+        new Headers()
+      )
+
+      const thrown = await reject({ baseURL: OPENAI_URL, modelId: 'gpt-6-astra' }, error)
+
+      expect(thrown).toBeInstanceOf(OtherCopyBadRequestError)
+      expect(thrown.message).toContain('gpt-6-astra does not accept tools on the Chat Completions API')
+      expect(thrown.cause).toBe(error)
+    })
+
     it.each([
       { name: 'no tools', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', withTools: false },
       {
