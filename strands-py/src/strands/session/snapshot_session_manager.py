@@ -453,10 +453,10 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
 
         The Agent has already applied the redaction to the last user message before
         calling this, so re-capturing the agent replaces the original message in
-        ``snapshot_latest``. Every immutable snapshot is then read, and each one that holds the
-        message under the same ``tracking_id`` (saved before the model call, or by an invocation
-        that stopped before a model call saw it) gets that message rewritten and is otherwise
-        unchanged.
+        ``snapshot_latest``. If the message has a ``tracking_id``, every immutable snapshot is then
+        read, and each one that holds the message under the same ``tracking_id`` (saved before the
+        model call, or by an invocation that stopped before a model call saw it) gets that message
+        rewritten and is otherwise unchanged.
 
         Only messages with that ``tracking_id`` are rewritten. The original content stays at rest in:
 
@@ -467,6 +467,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         - any other part of a snapshot that holds a copy of it, such as stash entries (in
           ``snapshot_latest`` too), pending tool results (``interrupt_state``), and background
           task results that were not yet delivered (agent ``state``).
+        - an immutable snapshot that cannot be deserialized, which is skipped with a warning.
 
         This flush happens regardless of ``save_latest_on`` (including ``"trigger"``) because the
         Agent invokes this method directly, not through a hook the manager could decline to
@@ -638,6 +639,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 agent.agent_id,
                 self.session_id,
                 error,
+                exc_info=error,
             )
             # A failed latest write must not leave the immutable snapshots unredacted. Its error is
             # the one raised; a failure on the immutable snapshots is logged.
@@ -697,13 +699,14 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             return
         try:
             snapshot = _deserialize_snapshot(data)
-        except SnapshotException:
+        except SnapshotException as error:
             logger.warning(
-                "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s> | skipping unreadable immutable snapshot "
-                "while flushing a redaction",
+                "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s>, error=<%s> | skipping unreadable immutable "
+                "snapshot while flushing a redaction",
                 agent.agent_id,
                 self.session_id,
                 snapshot_id,
+                error,
             )
             return
         tracking_id = redact_message["tracking_id"]

@@ -1438,7 +1438,7 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
 
     async def write_failing(key, data):
         if key == _on_disk_key("s1", "a1"):
-            raise OSError("latest write failed")
+            raise StorageError("latest write failed") from TimeoutError("timed out")
         raise StorageError("checkpoint write failed") from PermissionError("permission denied")
 
     async def checkpoint(event):
@@ -1448,7 +1448,7 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
     agent.add_hook(checkpoint, BeforeModelCallEvent)
     manager_logger = "strands.session.snapshot_session_manager"
     with caplog.at_level(logging.WARNING, logger=manager_logger):
-        with pytest.raises(OSError, match="latest write failed"):
+        with pytest.raises(StorageError, match="latest write failed"):
             agent("sensitive prompt")
 
     tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
@@ -1458,7 +1458,8 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
         " | failed to flush a redaction to immutable snapshot",
     ]
     assert tru_warnings == exp_warnings
-    # The checkpoint error is not raised, so its log carries the cause the storage wrapped.
+    # Each log carries the cause the storage wrapped; the checkpoint error is not raised at all.
+    assert "TimeoutError: timed out" in caplog.text
     assert "PermissionError: permission denied" in caplog.text
 
 
@@ -1563,12 +1564,18 @@ def test_redaction_skips_unreadable_immutable_snapshot(storage, caplog):
         await storage.write(unreadable_key, b"not json")
 
     agent.add_hook(checkpoint, BeforeModelCallEvent)
-    with caplog.at_level(logging.WARNING, logger="strands.session.snapshot_session_manager"):
+    manager_logger = "strands.session.snapshot_session_manager"
+    with caplog.at_level(logging.WARNING, logger=manager_logger):
         result = agent("sensitive prompt")
 
     assert result.stop_reason == "guardrail_intervened"
-    assert "skipping unreadable immutable snapshot" in caplog.text
     [holder_id, unreadable_id] = asyncio.run(manager.list_snapshot_ids(agent))
+    [tru_warning] = [record.getMessage() for record in caplog.records if record.name == manager_logger]
+    # The text between the two parts is the JSON decoder's message.
+    assert tru_warning.startswith(
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{unreadable_id}>, error=<Failed to deserialize snapshot: "
+    )
+    assert tru_warning.endswith("> | skipping unreadable immutable snapshot while flushing a redaction")
     tru_snapshots = [json.loads(_immutable_snapshot_data(storage, holder_id))]
     assert tru_snapshots == exp_snapshots
     assert _immutable_snapshot_data(storage, unreadable_id) == b"not json"
