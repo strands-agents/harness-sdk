@@ -2252,7 +2252,7 @@ describe('Agent', () => {
   })
 })
 
-describe('Agent._redactLastMessage', () => {
+describe('Agent._redactLastUserMessage', () => {
   const redactMessage = '[REDACTED]'
 
   it('redacts last user message with only text blocks', () => {
@@ -2267,7 +2267,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('user')
@@ -2290,7 +2290,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     expect(agent['messages'][agent['messages'].length - 1]!.trackingId).toBe('durable-1')
   })
@@ -2320,7 +2320,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('user')
@@ -2354,7 +2354,7 @@ describe('Agent._redactLastMessage', () => {
     })
     agent['messages'].push(assistantMessage)
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     expect(agent.messages).toEqual([assistantMessage])
     expect(warnSpy).toHaveBeenCalledWith('received input redaction but no user message found | redaction skipped')
@@ -2393,7 +2393,7 @@ describe('Agent._redactLastMessage', () => {
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
     const agent = new Agent({ model })
 
-    expect(() => agent['_redactLastMessage'](redactMessage)).not.toThrow()
+    expect(() => agent['_redactLastUserMessage'](redactMessage)).not.toThrow()
     expect(agent['messages']).toHaveLength(0)
   })
 })

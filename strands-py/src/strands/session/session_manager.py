@@ -64,7 +64,8 @@ class SessionManager(HookProvider, ABC, Generic[_SessionAgentT]):
     def redact_latest_message(self, redact_message: Message, agent: _SessionAgentT, **kwargs: Any) -> None:
         """Redact the agent's last user message in the session.
 
-        It may not be the message most recently appended to the session.
+        The message is not necessarily the one most recently appended to the session, so implementations
+        should locate the stored record by ``redact_message``'s identity or ``tracking_id``.
 
         Args:
             redact_message: New message to use that contains the redact content

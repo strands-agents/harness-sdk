@@ -2518,7 +2518,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         })
 
         if (result.redaction?.userMessage) {
-          this._redactLastMessage(result.redaction.userMessage)
+          this._redactLastUserMessage(result.redaction.userMessage)
         }
 
         const stopData: ModelStopData = {
@@ -2885,7 +2885,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * @param redactMessage - The redaction message to replace the content with
    */
-  private _redactLastMessage(redactMessage: string): void {
+  private _redactLastUserMessage(redactMessage: string): void {
     // Session managers and hooks may append non-user messages after the user turn.
     let lastUserIndex = this.messages.length - 1
     while (lastUserIndex >= 0 && this.messages[lastUserIndex]!.role !== 'user') {
