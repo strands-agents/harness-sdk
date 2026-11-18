@@ -9,6 +9,7 @@
 import { z } from 'zod'
 import { tool } from '../tools/tool-factory.js'
 import { searchContent } from '../vended-plugins/context-offloader/search.js'
+import { searchByQuery } from './query-search.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../types/media.js'
 import { CitationsBlock } from '../types/citations.js'
 import {
@@ -193,22 +194,20 @@ function searchEntries(
   entries: ArchiveEntry[],
   input: z.infer<typeof retrievalInputSchema>,
   maxChars: number
-): ReturnType<typeof searchContent> {
+): Promise<string> | string {
   const text = joinText(entries.map(entryText))
   // Actionable rather than terminal: the content is there, the search arguments are what cannot apply.
   if (!text) throw new Error('cannot search non-text content. Omit query/pattern/line_range to retrieve full content.')
+  if (input.query) {
+    // Ranks on the archive's own storage, so the strategy configured on it does the ranking. Returns
+    // null on a backend without search(), and the query then ranks in an ephemeral store instead.
+    return searchByQuery(text, input.query, input.line_range, maxChars, (lines, query, scopeStart, scopeEnd) =>
+      archive.rankWindows(reference, lines, query, scopeStart, scopeEnd)
+    )
+  }
   return searchContent(
     text,
-    {
-      query: input.query,
-      pattern: input.pattern,
-      line_range: input.line_range,
-      context_lines: input.context_lines ?? 5,
-      // Ranks on the configured storage, so the strategy set on it does the ranking. Returns null on
-      // a backend without search(), and searchContent then ranks in an ephemeral store instead.
-      rank_windows: (lines, query, scopeStart, scopeEnd) =>
-        archive.rankWindows(reference, lines, query, scopeStart, scopeEnd),
-    },
+    { pattern: input.pattern, line_range: input.line_range, context_lines: input.context_lines ?? 5 },
     maxChars
   )
 }
