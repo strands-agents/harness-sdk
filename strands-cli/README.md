@@ -368,6 +368,39 @@ The `.gitignore` in `experiments/` ignores `runs/`, `optimizations/`, `.state/`,
 Dev keeps the 20 newest test runs of each experiment. A rerun of the failed cases replaces only those cases in `<name>.report.json`.
 At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/`, and `tmp/optimization/` folders into this layout. It does not move an experiment while one of its runs is active.
 
+### Optimization runs
+
+`/optimize` runs the upstream `strands-evals optimize run` command from the pinned evals fork.
+For each run, dev writes `.state/task.py` in the folder of the run. The `--agent` and `--rollout` flags of the command refer to this file.
+The file calls `temporary_task` of the fork with the agent file, the experiment, and the space file.
+Dev uses the `--agent` route for each agent, because only that route can tune every marker. That route also examines each candidate before the candidate uses a rollout.
+
+Dev gives each setting to the command explicitly. These settings are the split, the iterations, the candidates per step, the runs per case, the parallel trials, the rollout cap, and the seed.
+Thus the setup page and the estimate show the numbers of the run. A run with 0 iterations measures only the baseline.
+
+The objective row of the setup sets what the run improves, for example `Minimize(tokens)`.
+The constraints row sets what the chosen candidate must meet, for example `tokens <= 4000, Correctness >= 0.8`.
+Dev gives each goal to the command as one `--objective` spec, and each constraint as one `--constraint` spec.
+A metric name with a colon cannot go into an objective spec. Thus the setup shows the problem before the run starts.
+
+A run continues after strands dev closes. When a run stops, for example after a restart, dev continues the run at the next start with `strands-evals optimize resume <run folder>`.
+The upstream command reads the inputs of the run again from `cli.json` in the run folder. Thus `task.py` must stay in its folder.
+When the proposer fails, the search stops early, but the optimizer still selects the best candidate and measures it on the test cases. Then `/optimize` shows the proposer error.
+
+From a shell, `strands dev optimize <experiment>` runs the same command and prints the result. The flags after `--` go to `strands-evals optimize run`.
+For example, `strands dev optimize refunds -- --max-iterations 2 --constraint 'tokens<=4000'` runs 2 iterations with a token constraint. `--max-iterations 0` measures only the baseline.
+Dev sets the agent, the record folder, and the output format itself. Thus dev rejects `--agent`, `--build-task`, `--space`, `--config`, `--rollout`, `--search`, `--base-dir`, `--name`, `--json`, and `--rich`.
+
+The flags of the older fork command also work. Dev changes `--iterations`, `--width`, `--repetitions`, `--max-concurrency`, `--rewriter-model`, `--at-most`, and `--at-least` to the upstream flags.
+Dev also changes an `--objective` expression, such as `Minimize(tokens)`, to the upstream specs. `--tune instructions,effort` selects the settings to tune, as before.
+When the search stops on a proposer error, the command prints the result and exits with 1.
+
+**Limits:**
+
+- Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
+- A TypeScript agent runs in a Node runner, not in the process of the optimizer. Its trials report the answer and the token usage from the runner, but no trajectory. Thus the experiment can use only evaluators that read the answer.
+- Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
+
 ### Evals UI
 
 When the chat starts, dev also starts the evals UI of strands-evals for `strands-dev/experiments/`.

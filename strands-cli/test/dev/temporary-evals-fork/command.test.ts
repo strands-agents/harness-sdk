@@ -70,6 +70,14 @@ describe('TEMPORARY dev commands', () => {
     expect(optimize).not.toContain('limit')
   })
 
+  it('shouldNameTheUpstreamCommandsWhenOptimizeHelpShowsTheDetails', async () => {
+    const { workspace, project } = await fixture()
+
+    const [, , optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
+
+    expect(optimize).toContain('with strands-evals optimize run and strands-evals optimize resume')
+  })
+
   it('shouldReportNoRunningJobsWhenNothingRuns', async () => {
     const { workspace, project } = await fixture()
 

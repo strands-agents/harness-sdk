@@ -69,7 +69,7 @@ const OPTIMIZE_DETAILS = paragraphs(
   'The test check shows the gain on test cases that the search did not use, and its 90% confidence range. If the range includes 0, the gain can be luck.',
   '/optimize opens the list of experiments, with the number of runs of each. Select an experiment to start a new run, or to see its runs that go on and its past runs. Select a run to see its progress or to open its report again.',
   'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
-  'Experimental: a fork of strands-evals runs the upstream optimizer for now.'
+  'Experimental: a fork of strands-evals runs the upstream optimizer for now, with strands-evals optimize run and strands-evals optimize resume.'
 )
 
 const devCommand = <State>(
