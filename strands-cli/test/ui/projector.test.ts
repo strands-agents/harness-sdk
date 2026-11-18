@@ -417,6 +417,20 @@ describe('TurnProjector', () => {
     expect(original.content[0]?.type === 'textBlock' ? original.content[0].text : '').toContain('Name: John')
   })
 
+  it('leaves a typed prompt that starts with an agent profile pair as typed', () => {
+    const typed = '<strands_agent_profile>\nName: Bob\n</strands_agent_profile> who are you?'
+    const original = new Message({
+      role: 'user',
+      content: [new TextBlock(typed)],
+      metadata: { custom: displayPromptMetadata(typed) },
+    })
+
+    const messages = upgradeDesktopAgentProfileMessages([original])
+
+    expect(messages[0]).toBe(original)
+    expect(projectMessages(messages)[0]?.prompt).toBe(typed)
+  })
+
   it('restores the visible skill command instead of its activation instructions', () => {
     const turns = projectMessages([
       new Message({
@@ -454,6 +468,12 @@ describe('TurnProjector', () => {
     {
       name: 'the prompt after an envelope that contains its own closing marker',
       text: '<strands_skill_activation>a</strands_skill_activation> b\n</strands_skill_activation>\n\n/review',
+      custom: displayPromptMetadata('/review'),
+      prompt: '/review',
+    },
+    {
+      name: 'the prompt after an envelope that contains an unterminated escape sequence',
+      text: '<strands_skill_activation>Title: \u001b]0;t\n</strands_skill_activation>\n\n/review',
       custom: displayPromptMetadata('/review'),
       prompt: '/review',
     },

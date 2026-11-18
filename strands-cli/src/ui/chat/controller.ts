@@ -658,7 +658,7 @@ export class ChatController implements ChatControllerApi {
     const prompt =
       submission.attachments.length === 0 ? submission.text : attachmentContent(submission.text, submission.attachments)
     const shown = displayPrompt ?? submission.text
-    const persistShown = restoredPrompt(submission.text, shown) !== restoredPrompt(submission.text)
+    const persistShown = restoredPrompt([submission.text], shown) !== restoredPrompt([submission.text])
     return this._runStream(
       shown,
       persistShown ? this._backend.stream(prompt, shown) : this._backend.stream(prompt),

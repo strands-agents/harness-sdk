@@ -22,7 +22,8 @@ const DISPLAY_PROMPT_METADATA_KEY = 'strands.displayPrompt'
 export function upgradeDesktopAgentProfileMessages(messages: Message[]): Message[] {
   let changed = false
   const upgraded = messages.map((message) => {
-    if (message.role !== 'user') {
+    // A message with a stored display prompt was typed in this CLI, so its text is not a Desktop profile.
+    if (message.role !== 'user' || readDisplayPromptMetadata(message.metadata?.custom) !== undefined) {
       return message
     }
     let contentChanged = false
@@ -70,14 +71,15 @@ function visibleDesktopPrompt(text: string): string {
 }
 
 /**
- * The prompt a restored transcript shows for a saved user message's text.
- * `displayPrompt` is used only when it is the tail of text that starts with an envelope marker.
+ * The prompt a restored transcript shows for a saved user message's text blocks.
+ * `displayPrompt` is used only when the text starts with an envelope marker and ends with it.
  */
-export function restoredPrompt(text: string, displayPrompt?: string): string {
-  const saved = sanitizeTerminalText(text).trim()
-  const shown = sanitizeTerminalText(displayPrompt ?? '').trim()
+export function restoredPrompt(texts: readonly string[], displayPrompt = ''): string {
+  const saved = texts.map(sanitizeTerminalText).join('\n').trim()
+  const shown = sanitizeTerminalText(displayPrompt).trim()
   const enveloped = HIDDEN_DESKTOP_ENVELOPES.some(([opening]) => saved.startsWith(opening))
-  return shown && enveloped && saved.endsWith(shown) ? shown : visibleDesktopPrompt(saved)
+  const tail = texts.join('\n').trimEnd().endsWith(displayPrompt.trimEnd())
+  return shown && enveloped && tail ? shown : visibleDesktopPrompt(saved)
 }
 
 /** Message metadata recording the prompt the transcript showed, for turns the saved text alone would restore differently. */
