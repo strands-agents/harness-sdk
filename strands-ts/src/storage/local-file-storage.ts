@@ -72,14 +72,42 @@ function isNotFoundError(error: unknown): boolean {
 }
 
 /**
+ * Returns true if the error carries one of the given Node.js error codes.
+ *
+ * @param error - The caught error to inspect
+ * @param codes - Error codes to match
+ * @returns Whether the error has one of the codes
+ */
+function hasErrorCode(error: unknown, ...codes: string[]): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && codes.includes(error.code as string)
+}
+
+/**
+ * Returns true if `path` is a symbolic link.
+ *
+ * @param path - Host filesystem path to check
+ * @returns Whether a symbolic link exists at `path`
+ */
+async function isSymlink(path: string): Promise<boolean> {
+  try {
+    const { lstat } = await import('node:fs/promises')
+    return (await lstat(path)).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/**
  * Local-filesystem {@link Storage} backend.
  *
  * Persists each key as a file under a base directory, mapping the key's `/` segments
  * onto directory segments. On the host filesystem, writes are atomic (write to a
  * scratch sibling, then rename) so a crash mid-write never leaves a partially written
- * file. When bound to a {@link Sandbox} via {@link forSandbox}, all I/O is routed
- * through that sandbox instead of the host's `node:fs` (atomicity depends on the
- * sandbox implementation).
+ * file. Directories it creates from the base directory down, and the files it writes,
+ * are accessible to the owner only, and a key whose file is a symbolic link is refused.
+ * When bound to a {@link Sandbox} via {@link forSandbox}, all I/O is routed
+ * through that sandbox instead of the host's `node:fs` (atomicity, permissions and
+ * symbolic link handling depend on the sandbox implementation).
  *
  * @example
  * ```typescript
@@ -94,6 +122,8 @@ function isNotFoundError(error: unknown): boolean {
  */
 export class LocalFileStorage implements Storage {
   private readonly _baseDir: string
+  /** Base directory of the storage this instance was namespaced from, or its own. */
+  private _rootDir: string
   private readonly _sandbox: Sandbox | undefined
   private readonly _searchStrategy: SearchStrategy<LocalFileStorage> | undefined
 
@@ -143,6 +173,7 @@ export class LocalFileStorage implements Storage {
       throw new Error(`${strategy.constructor.name} requires host filesystem access and cannot be used with a sandbox`)
     }
     this._baseDir = baseDir.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1')
+    this._rootDir = this._baseDir
     this._sandbox = sandbox
     this._searchStrategy = strategy
   }
@@ -175,7 +206,7 @@ export class LocalFileStorage implements Storage {
    *
    * @param key - Opaque string key identifying the value
    * @param data - Raw bytes to persist
-   * @throws {@link StorageError} if the key is invalid or the write fails
+   * @throws {@link StorageError} if the key is invalid, its file is a symbolic link, or the write fails
    */
   async write(key: string, data: Uint8Array): Promise<void> {
     const normalized = normalizeKey(key)
@@ -192,13 +223,20 @@ export class LocalFileStorage implements Storage {
     try {
       const { mkdir, writeFile, rename } = await import('node:fs/promises')
       const { dirname } = await import('node:path')
-      await mkdir(dirname(path), { recursive: true })
+      if (await isSymlink(path)) {
+        throw new StorageError(`Refusing to write '${normalized}' over a symbolic link in local storage`)
+      }
+      // Directories above the storage root keep the default mode.
+      await mkdir(dirname(this._rootDir), { recursive: true })
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 })
       const { randomUUID } = await import('node:crypto')
       tmpPath = `${path}.__strands_tmp_${randomUUID()}`
-      await writeFile(tmpPath, data)
+      await writeFile(tmpPath, data, { mode: 0o600, flag: 'wx' })
       await rename(tmpPath, path)
     } catch (error: unknown) {
-      if (tmpPath) {
+      if (error instanceof StorageError) throw error
+      // On EEXIST the scratch path was not created by this call, so it is not ours to remove.
+      if (tmpPath && !hasErrorCode(error, 'EEXIST')) {
         const { rm } = await import('node:fs/promises')
         await rm(tmpPath, { force: true }).catch(() => {})
       }
@@ -215,7 +253,7 @@ export class LocalFileStorage implements Storage {
    *
    * @param key - The key to read
    * @returns The stored bytes, or `null` if no value exists for `key`
-   * @throws {@link StorageError} if the key is invalid or the read fails
+   * @throws {@link StorageError} if the key is invalid, its file is a symbolic link, or the read fails
    */
   async read(key: string): Promise<Uint8Array | null> {
     const normalized = normalizeKey(key)
@@ -228,12 +266,22 @@ export class LocalFileStorage implements Storage {
         throw new StorageError(`Failed to read '${normalized}' from sandbox storage`, { cause: error })
       }
     }
+    const symlinkMessage = `Refusing to read '${normalized}' through a symbolic link in local storage`
     try {
-      const { readFile } = await import('node:fs/promises')
-      const content = await readFile(path)
+      const { readFile, constants } = await import('node:fs/promises')
+      if (await isSymlink(path)) {
+        throw new StorageError(symlinkMessage)
+      }
+      // O_NOFOLLOW (not on Windows) also refuses a link swapped in after the check above.
+      const content = await readFile(path, { flag: constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) })
       return new Uint8Array(content)
     } catch (error: unknown) {
+      if (error instanceof StorageError) throw error
       if (isNotFoundError(error)) return null
+      // ELOOP on Linux and macOS, EMLINK on FreeBSD.
+      if (hasErrorCode(error, 'ELOOP', 'EMLINK')) {
+        throw new StorageError(symlinkMessage, { cause: error })
+      }
       throw new StorageError(`Failed to read '${normalized}' from local storage`, { cause: error })
     }
   }
@@ -371,6 +419,7 @@ export class LocalFileStorage implements Storage {
         new LocalFileStorage(subDir, this._sandbox, this._searchStrategy as SandboxSafeSearchStrategy)
       : new LocalFileStorage(subDir, undefined, this._searchStrategy)
     Object.defineProperty(scoped, NAMESPACED, { value: true })
+    scoped._rootDir = this._rootDir
     return scoped
   }
 }

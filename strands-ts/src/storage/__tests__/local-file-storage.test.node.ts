@@ -5,10 +5,16 @@ import type { SearchStrategy } from '../search/types.js'
 import { NotASandboxLocalEnvironment } from '../../sandbox/not-a-sandbox-local-environment.js'
 import { SandboxPathNotFoundError } from '../../sandbox/errors.js'
 import { logger } from '../../logging/logger.js'
-import { rm, readFile, stat } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
+
+// Lets a test fail or intercept one filesystem call; every other call goes to the real filesystem.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, lstat: vi.fn(actual.lstat), writeFile: vi.fn(actual.writeFile) }
+})
 
 describe('LocalFileStorage', () => {
   let baseDir: string
@@ -72,6 +78,89 @@ describe('LocalFileStorage', () => {
       } finally {
         await chmod(dir, 0o755)
       }
+    })
+  })
+
+  // Regression: https://github.com/strands-agents/harness-sdk/issues/6248
+  describe.skipIf(process.platform === 'win32')('private storage', () => {
+    const data = new TextEncoder().encode('stored')
+    const mode = async (path: string): Promise<number> => (await stat(path)).mode & 0o777
+    let rootDir: string
+    let outsidePath: string
+
+    beforeEach(async () => {
+      // baseDir holds the storage root and a file outside it.
+      rootDir = join(baseDir, 'parent', 'root')
+      storage = new LocalFileStorage(rootDir)
+      await mkdir(baseDir)
+      outsidePath = join(baseDir, 'outside.txt')
+      await writeFile(outsidePath, 'outside')
+    })
+
+    it('creates the storage root, its directories and its files accessible to the owner only', async () => {
+      await storage.write('a/b/key.txt', data)
+
+      for (const dir of [rootDir, join(rootDir, 'a'), join(rootDir, 'a', 'b')]) {
+        expect({ dir, mode: await mode(dir) }).toEqual({ dir, mode: 0o700 })
+      }
+      expect(await mode(join(rootDir, 'a', 'b', 'key.txt'))).toBe(0o600)
+      expect(await mode(join(baseDir, 'parent'))).toBe(await mode(baseDir))
+    })
+
+    it('creates the storage root accessible to the owner only when the first write is namespaced', async () => {
+      await storage.namespace('a').namespace('b').write('key.txt', data)
+
+      expect(await mode(rootDir)).toBe(0o700)
+      expect(await mode(join(baseDir, 'parent'))).toBe(await mode(baseDir))
+    })
+
+    it('refuses to read through a symbolic link', async () => {
+      await mkdir(rootDir, { recursive: true })
+      await symlink(outsidePath, join(rootDir, 'key.txt'))
+
+      await expect(storage.read('key.txt')).rejects.toMatchObject({
+        name: 'StorageError',
+        message: "Refusing to read 'key.txt' through a symbolic link in local storage",
+      })
+    })
+
+    it('refuses to read through a symbolic link swapped in after the check', async () => {
+      await mkdir(rootDir, { recursive: true })
+      await symlink(outsidePath, join(rootDir, 'key.txt'))
+      vi.mocked(lstat).mockRejectedValueOnce(Object.assign(new Error('Not found'), { code: 'ENOENT' }))
+
+      await expect(storage.read('key.txt')).rejects.toMatchObject({
+        name: 'StorageError',
+        message: "Refusing to read 'key.txt' through a symbolic link in local storage",
+        cause: expect.objectContaining({ code: 'ELOOP' }),
+      })
+    })
+
+    it('refuses to write over a symbolic link', async () => {
+      await mkdir(rootDir, { recursive: true })
+      await symlink(outsidePath, join(rootDir, 'key.txt'))
+
+      await expect(storage.write('key.txt', data)).rejects.toMatchObject({
+        name: 'StorageError',
+        message: "Refusing to write 'key.txt' over a symbolic link in local storage",
+      })
+      expect(await readFile(outsidePath, 'utf8')).toBe('outside')
+      expect(await readdir(rootDir)).toEqual(['key.txt'])
+    })
+
+    it('does not write through a symbolic link planted at the scratch path', async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      vi.mocked(writeFile).mockImplementationOnce(async (path, ...rest) => {
+        await symlink(outsidePath, path as string)
+        await actual.writeFile(path, ...rest)
+      })
+
+      await expect(storage.write('key.txt', data)).rejects.toMatchObject({
+        name: 'StorageError',
+        cause: expect.objectContaining({ code: 'EEXIST' }),
+      })
+      expect(await readFile(outsidePath, 'utf8')).toBe('outside')
+      expect(await readdir(rootDir)).toEqual([expect.stringMatching(/^key\.txt\.__strands_tmp_/)])
     })
   })
 
