@@ -57,10 +57,10 @@ const prepareProject = async (workspace: DevWorkspace): Promise<void> => {
 const optimize = async (
   shared: Shared,
   dependencies: TemporaryDevCommandDependencies
-): Promise<{ lines: string[]; code: number }> => ({
-  lines: (await runTemporaryOptimization(shared, dependencies)).summary,
-  code: 0,
-})
+): Promise<{ lines: string[]; code: number }> => {
+  const { summary, proposerFailed } = await runTemporaryOptimization(shared, dependencies)
+  return { lines: summary, code: proposerFailed ? 1 : 0 }
+}
 
 const rememberTest = async (
   { home, report, seconds }: TemporaryTestOutcome,

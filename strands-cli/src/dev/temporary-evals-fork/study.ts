@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -598,6 +599,11 @@ export const temporaryRunFolder = async (record: string): Promise<string | undef
   if (entries.includes(EVENTS)) return record
   const runs = entries.filter((entry) => /^\d{8}-\d{6}-[0-9a-f]+$/u.test(entry)).sort()
   return runs.length > 0 ? join(record, runs.at(-1)!) : undefined
+}
+
+export const hasTemporaryRunResult = async (record: string): Promise<boolean> => {
+  const folder = await temporaryRunFolder(record)
+  return folder !== undefined && existsSync(join(folder, RESULT))
 }
 
 export const tailTemporaryRun = (record: string, onLine: (line: string) => void): TemporaryTail => {

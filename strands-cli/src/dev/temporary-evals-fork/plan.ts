@@ -8,6 +8,9 @@ export interface TemporaryOptimizeSettings {
   readonly repetitions: number
   readonly width: number
   readonly iterations: number
+  readonly concurrency: number
+  readonly maxRollouts: number
+  readonly seed: number
 }
 
 export interface TemporaryRolloutPlan {
@@ -30,6 +33,9 @@ export const TEMPORARY_OPTIMIZE_DEFAULTS: TemporaryOptimizeSettings = {
   repetitions: 1,
   width: 4,
   iterations: 4,
+  concurrency: 4,
+  maxRollouts: 500,
+  seed: 0,
 }
 
 export const TEMPORARY_ITERATION_CHOICES: readonly number[] = [1, 2, 4, 6, 8]

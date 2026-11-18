@@ -35,7 +35,15 @@ describe('TEMPORARY optimize plan', () => {
   })
 
   it('shouldUseTheForkDefaultSplitWhenNoSplitIsGiven', () => {
-    expect(TEMPORARY_OPTIMIZE_DEFAULTS).toEqual({ split: DEFAULT_SPLIT, repetitions: 1, width: 4, iterations: 4 })
+    expect(TEMPORARY_OPTIMIZE_DEFAULTS).toEqual({
+      split: DEFAULT_SPLIT,
+      repetitions: 1,
+      width: 4,
+      iterations: 4,
+      concurrency: 4,
+      maxRollouts: 500,
+      seed: 0,
+    })
     expect(temporaryCaseSplit(8)).toEqual({ train: 4, validation: 2, test: 2 })
   })
 

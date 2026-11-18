@@ -15,6 +15,10 @@ describe('TEMPORARY strands-evals failures', () => {
       tail: ['strands-evals optimize: error: unrecognized arguments: --bogus'],
       headline: 'unrecognized arguments: --bogus',
     },
+    {
+      tail: ["strands-evals optimize run: error: argument --max-iterations: invalid int value: 'many'", 'usage tail'],
+      headline: "argument --max-iterations: invalid int value: 'many'",
+    },
     { tail: ['Traceback (most recent call last):', 'KeyError: cases'], headline: 'KeyError: cases' },
     { tail: [], headline: 'it printed no error' },
   ])('shouldLeadWithTheReportedErrorWhenTheCommandFails ($headline)', ({ tail, headline }) => {

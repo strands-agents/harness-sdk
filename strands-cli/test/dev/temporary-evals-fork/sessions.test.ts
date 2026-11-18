@@ -35,6 +35,7 @@ import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/typ
 import { pythonExecutable } from '../../fixtures/python-runtime.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 import {
+  OPTIMIZER_RUN_FOLDER,
   optimizerCandidate,
   optimizerConfig,
   optimizerIterationEnd,
@@ -93,12 +94,26 @@ const experimentDocument = (names: readonly string[], evaluators: readonly strin
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 
+const recordOf = (args: readonly string[]): string =>
+  args[3] === 'resume' ? dirname(args[4]!) : flagValue(args, '--base-dir')
+
+const spaceOf = async (args: readonly string[]): Promise<string> => {
+  const task = await readFile(flagValue(args, '--agent').replace(/:agent$/u, ''), 'utf8')
+  return JSON.parse(/^ {4}space_file=(".*"),$/mu.exec(task)![1]!) as string
+}
+
 const OBJECTIVE_FLAGS = ['--objective', '--constraint']
 
 const objectiveFlags = (args: readonly string[]): string[] =>
   args.flatMap((arg, index) => (OBJECTIVE_FLAGS.includes(arg) ? [arg, args[index + 1]!] : []))
 
 const exit = { code: 0, stdout: '', stderrTail: [] }
+
+const proposerStopped = {
+  code: 3,
+  stdout: '',
+  stderrTail: ["strands-evals: error: the search stopped: a proposer (block 'instructions') raised KeyError: x"],
+}
 
 const held = (): { promise: Promise<void>; resolve: () => void } => {
   let resolve!: () => void
@@ -159,7 +174,7 @@ const studyLines = (best: number, values: { baseline?: object; winner?: object }
 
 const optimizingProcess = () =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-    await writeOptimizerRun(flagValue(args, '--record'), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
+    await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
     return exit
   })
 
@@ -536,7 +551,7 @@ describe('TEMPORARY dev sessions', () => {
     ])
     expect(state.review.best).toBeGreaterThan(state.review.baseline)
     expect(await readFile(join(workspace.root, 'instructions.md'), 'utf8')).toBe(`${WINNER}\n`)
-    const space = JSON.parse(await readFile(flagValue(optimizing.mock.calls.at(-1)![0].args, '--space'), 'utf8')) as {
+    const space = JSON.parse(await readFile(await spaceOf(optimizing.mock.calls.at(-1)![0].args), 'utf8')) as {
       variables: unknown[]
     }
     expect(space.variables).toEqual([
@@ -651,14 +666,10 @@ describe('TEMPORARY dev sessions', () => {
     const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
       await vi.waitFor(async () => {
-        recorded = JSON.parse(await readFile(resumeRecordOf(flagValue(process.args, '--record')), 'utf8'))
+        recorded = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
         expect(recorded).toMatchObject({ pid: 4242 })
       })
-      await writeOptimizerRun(flagValue(process.args, '--record'), [
-        ...studyLines(0.9),
-        optimizerStop(),
-        optimizerPicked('win'),
-      ])
+      await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
@@ -669,7 +680,7 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    const record = flagValue(optimizing.mock.calls[0]![0].args, '--record')
+    const record = recordOf(optimizing.mock.calls[0]![0].args)
     const stamp = basename(dirname(record))
     expect(optimizing.mock.calls[0]![0]).toMatchObject({ detached: true })
     expect(stamp).toMatch(/^\d{8}-\d{6}$/u)
@@ -689,14 +700,10 @@ describe('TEMPORARY dev sessions', () => {
     ['continues a run that stopped when strands dev closed', false],
   ])('shouldResumeOnStartWhenItSees a record and %s', async (_, finished) => {
     const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(
-        flagValue(args, '--resume'),
-        [...studyLines(0.9), optimizerStop(), optimizerPicked('win')],
-        {
-          baseline_id: 'base',
-          validation: { champion_id: 'win' },
-        }
-      )
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')], {
+        baseline_id: 'base',
+        validation: { champion_id: 'win' },
+      })
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
@@ -738,20 +745,23 @@ describe('TEMPORARY dev sessions', () => {
     })
     expect(continuing).toHaveBeenCalledTimes(finished ? 0 : 1)
     if (!finished)
-      expect(continuing.mock.calls[0]![0].args).toEqual(expect.arrayContaining(['--resume', record, '--space', space]))
+      expect(continuing.mock.calls[0]![0].args).toEqual([
+        '-m',
+        'strands_evals.cli',
+        'optimize',
+        'resume',
+        join(record, OPTIMIZER_RUN_FOLDER),
+        '--rich',
+      ])
     expect(existsSync(resume)).toBe(false)
   })
 
   it.each<[string, readonly number[] | undefined, readonly string[]]>([
     ['TheSplitOfTheFirstRun', [0.7, 0.15, 0.15], ['--split', '0.7,0.15,0.15']],
-    ['NoSplitWhenTheRecordIsFromBeforeTheSplit', undefined, []],
-  ])('shouldResumeAStoppedRunWith%s', async (_case, split, flags) => {
+    ['TheDefaultSplitWhenTheRecordIsFromBeforeTheSplit', undefined, ['--split', '0.5,0.25,0.25']],
+  ])('shouldStartARunThatStoppedBeforeItsRunFolderAgainWith%s', async (_case, split, flags) => {
     const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(flagValue(args, '--resume'), [
-        ...studyLines(0.9),
-        optimizerStop(),
-        optimizerPicked('win'),
-      ])
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
@@ -761,7 +771,6 @@ describe('TEMPORARY dev sessions', () => {
       space,
       JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
     )
-    await writeOptimizerRun(record, studyLines(0.6))
     await writeFileAt(
       resume,
       JSON.stringify({
@@ -781,7 +790,7 @@ describe('TEMPORARY dev sessions', () => {
     await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
     const args = continuing.mock.calls[0]![0].args
     const at = args.indexOf('--split')
-    expect(at >= 0 ? args.slice(at, at + 2) : []).toEqual(flags)
+    expect(args.slice(at, at + 2)).toEqual(flags)
   })
 
   it('shouldRecordTheSplitWhenARunStartsSoThatItCanResumeWithIt', async () => {
@@ -789,14 +798,10 @@ describe('TEMPORARY dev sessions', () => {
     const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
       await vi.waitFor(async () => {
-        recorded = JSON.parse(await readFile(resumeRecordOf(flagValue(process.args, '--record')), 'utf8'))
+        recorded = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
         expect(recorded).toMatchObject({ pid: 4242 })
       })
-      await writeOptimizerRun(flagValue(process.args, '--record'), [
-        ...studyLines(0.9),
-        optimizerStop(),
-        optimizerPicked('win'),
-      ])
+      await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
@@ -829,6 +834,23 @@ describe('TEMPORARY dev sessions', () => {
 
     await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
     expect(flagValue(optimizing.mock.calls[0]![0].args, '--split')).toBe('0.7,0.15,0.15')
+  })
+
+  it('shouldGiveTheOptimizerTheBudgetOfThePlanWhenTheRunStarts', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.setIterations(2)
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
+    const { args } = optimizing.mock.calls[0]![0]
+    expect(
+      ['--max-iterations', '--proposals-per-iteration', '--runs-per-candidate'].map((flag) => flagValue(args, flag))
+    ).toEqual(['2', '4', '1'])
   })
 
   it('shouldStartFromTheMeanOfEveryEvaluatorAndOfferPresetsAndEveryMetric', async () => {
@@ -898,14 +920,10 @@ describe('TEMPORARY dev sessions', () => {
     const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
       await vi.waitFor(async () => {
-        recorded = JSON.parse(await readFile(resumeRecordOf(flagValue(process.args, '--record')), 'utf8'))
+        recorded = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
         expect(recorded).toMatchObject({ pid: 4242 })
       })
-      await writeOptimizerRun(flagValue(process.args, '--record'), [
-        ...studyLines(0.9),
-        optimizerStop(),
-        optimizerPicked('win'),
-      ])
+      await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
@@ -932,13 +950,9 @@ describe('TEMPORARY dev sessions', () => {
       ['--objective', 'maximize:Equals'],
     ],
     ['NoObjectiveFlagWhenTheRecordIsFromBeforeTheObjective', undefined, []],
-  ])('shouldResumeAStoppedRunWith%s', async (_case, objective, flags) => {
+  ])('shouldStartARunThatStoppedBeforeItsRunFolderAgainWith%s', async (_case, objective, flags) => {
     const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(flagValue(args, '--resume'), [
-        ...studyLines(0.9),
-        optimizerStop(),
-        optimizerPicked('win'),
-      ])
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
@@ -948,7 +962,6 @@ describe('TEMPORARY dev sessions', () => {
       space,
       JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
     )
-    await writeOptimizerRun(record, studyLines(0.6))
     await writeFileAt(
       resume,
       JSON.stringify({
@@ -972,13 +985,9 @@ describe('TEMPORARY dev sessions', () => {
   it('shouldKeepTheRunGoingAndListItWhenTheDeveloperGoesBackToTheList', async () => {
     const gate = held()
     const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(flagValue(args, '--record'), studyLines(0.7))
+      await writeOptimizerRun(recordOf(args), studyLines(0.7))
       await gate.promise
-      await writeOptimizerRun(flagValue(args, '--record'), [
-        ...studyLines(0.9),
-        optimizerStop(),
-        optimizerPicked('win'),
-      ])
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
@@ -1006,11 +1015,12 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldListTheReasonAsASentenceWhenTheOptimizerStopsWithAnError', async () => {
     const failing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(flagValue(args, '--record'), [
-        ...studyLines(0.6),
-        optimizerStop('proposer_error', 'a proposer raised; see the proposer_error event'),
-      ])
-      return exit
+      await writeOptimizerRun(
+        recordOf(args),
+        [...studyLines(0.6), optimizerStop('proposer_error', 'a proposer raised; see the proposer_error event')],
+        { baseline_id: 'base' }
+      )
+      return proposerStopped
     })
     const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: failing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
@@ -1020,7 +1030,7 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
-    const record = flagValue(failing.mock.calls[0]![0].args, '--record')
+    const record = recordOf(failing.mock.calls[0]![0].args)
     expect(sessions.optimize.snapshot()).toMatchObject({
       message: `a proposer raised; see the proposer_error event. The full optimizer output is in ${runLogOf(record)}.`,
       record,
@@ -1033,12 +1043,16 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldNameTheProposerErrorAndTheCredentialsItUsesWhenTheProposerCannotSignIn', async () => {
     const failing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(flagValue(args, '--record'), [
-        ...studyLines(0.6),
-        proposerError('ProfileNotFound', 'The config profile (dev) could not be found'),
-        optimizerStop('proposer_error', 'a proposer raised; see the proposer_error event'),
-      ])
-      return exit
+      await writeOptimizerRun(
+        recordOf(args),
+        [
+          ...studyLines(0.6),
+          proposerError('ProfileNotFound', 'The config profile (dev) could not be found'),
+          optimizerStop('proposer_error', 'a proposer raised; see the proposer_error event'),
+        ],
+        { baseline_id: 'base' }
+      )
+      return proposerStopped
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: failing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
@@ -1048,7 +1062,7 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
-    const record = flagValue(failing.mock.calls[0]![0].args, '--record')
+    const record = recordOf(failing.mock.calls[0]![0].args)
     expect(sessions.optimize.snapshot()).toMatchObject({
       message:
         'The proposer failed with ProfileNotFound: The config profile (dev) could not be found. ' +
@@ -1160,7 +1174,7 @@ describe('TEMPORARY dev sessions', () => {
     const failing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
       await vi.waitFor(async () =>
-        expect(JSON.parse(await readFile(resumeRecordOf(flagValue(process.args, '--record')), 'utf8'))).toMatchObject({
+        expect(JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))).toMatchObject({
           pid: 4242,
         })
       )
@@ -1176,10 +1190,10 @@ describe('TEMPORARY dev sessions', () => {
 
     await restarted.resume()
 
-    const record = flagValue(failing.mock.calls[0]![0].args, '--record')
+    const record = recordOf(failing.mock.calls[0]![0].args)
     expect(sessions.optimize.snapshot()).toMatchObject({
       message:
-        'strands-evals optimize stopped with exit code 1: the agent file did not load\n' +
+        'strands-evals optimize run stopped with exit code 1: the agent file did not load\n' +
         `The full optimizer output is in ${runLogOf(record)}.`,
       record,
     })
@@ -1195,11 +1209,7 @@ describe('TEMPORARY dev sessions', () => {
     const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
       const gate = gates[optimizing.mock.calls.length - 1]!
       await gate.promise
-      await writeOptimizerRun(flagValue(args, '--record'), [
-        ...studyLines(0.9),
-        optimizerStop(),
-        optimizerPicked('win'),
-      ])
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
@@ -1231,7 +1241,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldShowTheTestCheckWithItsConfidenceRangeWhenTheRunReportsOne', async () => {
     const tested = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(flagValue(args, '--record'), [
+      await writeOptimizerRun(recordOf(args), [
         ...studyLines(0.9),
         optimizerStop(),
         optimizerPicked('win'),
@@ -1339,7 +1349,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldKeepTheBestSoFarWhenTheUserStopsTheRun', async () => {
     const stopped = vi.fn(async ({ args, signal }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(flagValue(args, '--record'), studyLines(0.8))
+      await writeOptimizerRun(recordOf(args), studyLines(0.8))
       await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))
       return { code: 143, stdout: '', stderrTail: ['terminated'] }
     })
@@ -1642,7 +1652,7 @@ describe('TEMPORARY dev sessions on open', () => {
     'shouldKeepTheReviewAndNameTheChangedFileWhenAnApplyStopsHalfway',
     async () => {
       const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-        await writeOptimizerRun(flagValue(args, '--record'), [
+        await writeOptimizerRun(recordOf(args), [
           ...studyLines(0.9, { baseline: { effort: 'low' }, winner: { effort: 'high' } }),
           optimizerStop(),
           optimizerPicked('win'),

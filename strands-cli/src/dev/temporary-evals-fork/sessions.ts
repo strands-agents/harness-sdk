@@ -74,12 +74,7 @@ import {
   type TemporaryKnobChange,
   type TemporarySpaceVariable,
 } from './knobs.js'
-import {
-  checkTemporaryObjective,
-  temporaryObjectiveArguments,
-  temporaryObjectivePresets,
-  TEMPORARY_USAGE_METRICS,
-} from './objective.js'
+import { checkTemporaryObjective, temporaryObjectivePresets, TEMPORARY_USAGE_METRICS } from './objective.js'
 import { runTemporaryOptimization } from './optimize.js'
 import {
   dropTemporaryOptimizeRecord,
@@ -100,10 +95,10 @@ import {
 } from './plan.js'
 import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import {
+  hasTemporaryRunResult,
   readTemporaryStudy,
   readTemporaryUsageProfile,
   tailTemporaryRun,
-  temporaryRunFolder,
   temporaryStudyReader,
   type TemporaryUsageProfile,
   type TemporaryMeasurement,
@@ -138,7 +133,7 @@ const WIDTH = 4
 const REPETITIONS = 1
 const MILLISECONDS = 1000
 
-type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width' | 'split'> & {
+type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width' | 'repetitions' | 'split'> & {
   readonly objective?: OptimizeObjective
 }
 
@@ -1015,7 +1010,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       entry.record = saved.record
       this.publish()
       if (await isTemporaryOptimizeAlive(saved)) return await this.follow(entry, plan, knobs, saved)
-      if (await this.hasResult(saved.record)) {
+      if (await hasTemporaryRunResult(saved.record)) {
         await this.finish(entry, saved.record, plan, knobs, false)
         return await dropTemporaryOptimizeRecord(saved)
       }
@@ -1045,6 +1040,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       experiment: { name: basename(saved.experiment, '.json'), path: saved.experiment, caseCount },
       iterations: saved.iterations,
       width: WIDTH,
+      repetitions: REPETITIONS,
       split: temporaryCaseSplit(caseCount, saved.split ?? TEMPORARY_OPTIMIZE_DEFAULTS.split),
       ...(saved.objective ? { objective: saved.objective } : {}),
     }
@@ -1056,11 +1052,6 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     const variables = isRecord(space) && Array.isArray(space.variables) ? space.variables : []
     const options = new Set(variables.filter(isRecord).map(({ option }) => option))
     return knobs.map((knob) => ({ ...knob, enabled: options.has(knob.option) }))
-  }
-
-  private async hasResult(record: string): Promise<boolean> {
-    const folder = await temporaryRunFolder(record)
-    return folder !== undefined && existsSync(join(folder, 'result.json'))
   }
 
   private async follow(
@@ -1155,14 +1146,14 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         {
           workspace: this.host().workspace,
           experiment: plan.experiment.path,
-          forkArguments: [
-            '--space',
-            space,
-            '--iterations',
-            String(plan.iterations),
-            ...(shares ? ['--split', shares.join(',')] : []),
-            ...(plan.objective ? temporaryObjectiveArguments(plan.objective) : []),
-          ],
+          settings: {
+            iterations: plan.iterations,
+            width: plan.width,
+            repetitions: plan.repetitions,
+            ...(shares ? { split: shares } : {}),
+          },
+          ...(plan.objective ? { objective: plan.objective } : {}),
+          space,
           now: () => now,
           background: true,
           detached: true,

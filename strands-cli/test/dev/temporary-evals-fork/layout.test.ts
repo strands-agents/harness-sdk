@@ -67,6 +67,7 @@ describe('TEMPORARY run files', () => {
       space: join(folder, '.state/space.json'),
       copy: join(folder, '.state/experiment.json'),
       resume: join(folder, '.state/record.json'),
+      task: join(folder, '.state/task.py'),
     })
   })
 

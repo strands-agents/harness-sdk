@@ -22,6 +22,7 @@ const RECORD_FILE = 'record.json'
 const CASE_STORE_FOLDER = 'cases'
 const CASES_COPY_FILE = 'experiment.json'
 const SPACE_FILE = 'space.json'
+const TASK_FILE = 'task.py'
 const LATEST_FILE = 'latest.json'
 const EXPERIMENTS_IGNORE_FILE = '.gitignore'
 const STAMP = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-(\d+))?$/u
@@ -44,6 +45,7 @@ export interface TemporaryOptimizationFiles {
   readonly space: string
   readonly copy: string
   readonly resume: string
+  readonly task: string
 }
 
 export interface TemporaryRunFolder {
@@ -144,6 +146,7 @@ export const temporaryOptimizationFiles = (home: string, stamp: string): Tempora
     space: join(state, SPACE_FILE),
     copy: join(state, CASES_COPY_FILE),
     resume: join(state, RECORD_FILE),
+    task: join(state, TASK_FILE),
   }
 }
 

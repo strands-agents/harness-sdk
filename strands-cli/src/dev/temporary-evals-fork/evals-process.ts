@@ -34,7 +34,7 @@ export type TemporaryEvalsSpawner = (process: TemporaryEvalsProcess) => Promise<
 const STDERR_TAIL_LINES = 20
 const LOG_TAIL_BYTES = 64 * 1024
 const DETACHABLE = process.platform !== 'win32'
-const ERROR_LINE = /^strands-evals(?: [a-z-]+)?: error: /u
+const ERROR_LINE = /^strands-evals(?: [a-z-]+)*: error: /u
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
@@ -75,18 +75,23 @@ export const temporaryEvalsEnvironment = (python: string, environment: NodeJS.Pr
   ...(environment.AWS_REGION ? { AWS_DEFAULT_REGION: environment.AWS_REGION } : {}),
 })
 
+export const temporaryEvalsHeadline = ({ stderrTail }: TemporaryEvalsExit): string => {
+  const reported = [...stderrTail].reverse().find((line) => ERROR_LINE.test(line))
+  return reported?.replace(ERROR_LINE, '') ?? stderrTail.at(-1) ?? 'it printed no error'
+}
+
 export const temporaryEvalsFailure = (
   command: string,
   exit: TemporaryEvalsExit,
   environment: NodeJS.ProcessEnv,
   nextStep: string
-): Error => {
-  const reported = [...exit.stderrTail].reverse().find((line) => ERROR_LINE.test(line))
-  const headline = reported?.replace(ERROR_LINE, '') ?? exit.stderrTail.at(-1) ?? 'it printed no error'
-  return new Error(
-    redactPreparationOutput(`${command} stopped with exit code ${exit.code}: ${headline}\n${nextStep}`, environment)
+): Error =>
+  new Error(
+    redactPreparationOutput(
+      `${command} stopped with exit code ${exit.code}: ${temporaryEvalsHeadline(exit)}\n${nextStep}`,
+      environment
+    )
   )
-}
 
 const releaseEventLoop = (streams: readonly unknown[]): void => {
   for (const stream of streams) (stream as Partial<Pick<Socket, 'unref'>>).unref?.()

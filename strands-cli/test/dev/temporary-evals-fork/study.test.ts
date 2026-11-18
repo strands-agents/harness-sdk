@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { measuredVersions, type EvalCase } from '../../../src/dev/panels/model.js'
 import {
+  hasTemporaryRunResult,
   readTemporaryStudy,
   readTemporaryUsageProfile,
   tailTemporaryRun,
@@ -338,6 +339,17 @@ describe('TEMPORARY optimization trials', () => {
 })
 
 describe('TEMPORARY optimization run', () => {
+  it.each([
+    ['NoRunFolder', false, false],
+    ['ARunFolderWithoutAResult', true, false],
+    ['ARunFolderWithAResult', true, true],
+  ])('shouldSeeAFinishedRunOnlyWhenTheRecordHas%s', async (_case, started, finished) => {
+    const record = join(await temporaryDirectory(), 'optimizer')
+    if (started) await writeOptimizerRun(record, [optimizerConfig()], finished ? { baseline_id: 'base' } : undefined)
+
+    expect(await hasTemporaryRunResult(record)).toBe(finished)
+  })
+
   it.each([
     ['OneEvaluator', 'Maximize(OutputEvaluator)', 'OutputEvaluator'],
     ['TheMeanOfEveryEvaluator', 'WeightedSum(Maximize(Contains), Maximize(Equals))', 'mean of Contains, Equals'],

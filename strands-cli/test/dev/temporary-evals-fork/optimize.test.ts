@@ -6,6 +6,7 @@ import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import { runTemporaryOptimization } from '../../../src/dev/temporary-evals-fork/optimize.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
+import { writeOptimizerRun } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
@@ -64,32 +65,55 @@ const succeeding = (stdout = 'ships candidate 3\nrecord: somewhere\n') =>
   })
 
 describe('TEMPORARY dev optimization', () => {
-  it('shouldRunTheForkCommandAgainstTheWorkspaceAgentWhenOneExperimentExists', async () => {
+  it('shouldRunOptimizeRunWithATaskFileForTheWorkspaceAgentWhenOneExperimentExists', async () => {
     const workspace = await workspaceFixture()
     const spawnOptimizer = succeeding()
     const progress: string[] = []
 
     const outcome = await runTemporaryOptimization(
-      { workspace, forkArguments: ['--width', '2'], now: () => NOW, onProgress: (line) => progress.push(line) },
+      {
+        workspace,
+        forkArguments: ['--max-rollouts', '100'],
+        now: () => NOW,
+        onProgress: (line) => progress.push(line),
+      },
       { run: environmentRunner(), spawnOptimizer }
     )
 
     const experiment = experimentFile(workspace.directory!, 'support')
     const record = optimizationFile(workspace, 'optimizer')
+    const task = optimizationFile(workspace, '.state/task.py')
     const [{ command, args, cwd, env, log }] = spawnOptimizer.mock.calls[0]!
     expect(command).toBe(temporaryVenvPython(evalsEnvironment(workspace)))
     expect(args).toEqual([
       '-m',
       'strands_evals.cli',
       'optimize',
+      'run',
       experiment,
       '--agent',
-      workspace.entrypoint,
-      '--record',
+      `${task}:agent`,
+      '--rollout',
+      `${task}:rollout`,
+      '--base-dir',
       record,
       '--rich',
-      '--width',
-      '2',
+      '--split',
+      '0.5,0.25,0.25',
+      '--max-iterations',
+      '4',
+      '--proposals-per-iteration',
+      '4',
+      '--runs-per-candidate',
+      '1',
+      '--max-workers',
+      '4',
+      '--max-rollouts',
+      '500',
+      '--seed',
+      '0',
+      '--max-rollouts',
+      '100',
     ])
     expect(cwd).toBe(workspace.root)
     expect(env.PATH?.startsWith(dirname(command))).toBe(true)
@@ -98,8 +122,98 @@ describe('TEMPORARY dev optimization', () => {
       experiment,
       record,
       summary: ['ships candidate 3', 'record: somewhere'],
+      proposerFailed: false,
     })
     expect(progress).toContain('candidate  0 baseline complete n=4 Contains 0.5')
+  })
+
+  it('shouldWriteATaskFileWithAbsolutePathsWhenANewRunStarts', async () => {
+    const workspace = await workspaceFixture()
+
+    await runTemporaryOptimization(
+      { workspace, now: () => NOW },
+      { run: environmentRunner(), spawnOptimizer: succeeding() }
+    )
+
+    expect(await readFile(optimizationFile(workspace, '.state/task.py'), 'utf8')).toBe(
+      [
+        'from strands_evals.cli.commands._temporary_task import temporary_task',
+        '',
+        '_task = temporary_task(',
+        `    ${JSON.stringify(workspace.entrypoint)},`,
+        `    experiment_file=${JSON.stringify(experimentFile(workspace.directory!, 'support'))},`,
+        '    settings=("instructions",),',
+        '    baseline_only=False,',
+        ')',
+        'agent = _task.agent',
+        'rollout = _task.rollout',
+        'search = _task.search',
+        '',
+      ].join('\n')
+    )
+  })
+
+  it('shouldGiveTheOptimizerTheSettingsObjectiveAndSpaceOfTheRequestWhenTheSessionStartsARun', async () => {
+    const workspace = await workspaceFixture()
+    const space = optimizationFile(workspace, '.state/space.json')
+    const spawnOptimizer = succeeding()
+
+    await runTemporaryOptimization(
+      {
+        workspace,
+        settings: { iterations: 2, split: [0.6, 0.2, 0.2], width: 3, repetitions: 2 },
+        objective: { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8' },
+        space,
+        now: () => NOW,
+      },
+      { run: environmentRunner(), spawnOptimizer }
+    )
+
+    const { args } = spawnOptimizer.mock.calls[0]![0]
+    expect(args.slice(args.indexOf('--split'))).toEqual([
+      '--split',
+      '0.6,0.2,0.2',
+      '--max-iterations',
+      '2',
+      '--proposals-per-iteration',
+      '3',
+      '--runs-per-candidate',
+      '2',
+      '--max-workers',
+      '4',
+      '--max-rollouts',
+      '500',
+      '--seed',
+      '0',
+      '--objective',
+      'minimize:tokens',
+      '--constraint',
+      'Contains>=0.8',
+    ])
+    expect(await readFile(optimizationFile(workspace, '.state/task.py'), 'utf8')).toContain(
+      `    space_file=${JSON.stringify(space)},\n`
+    )
+  })
+
+  it('shouldMeasureOnlyTheBaselineWithTheSearchOfTheTaskWhenTheRunHasNoIterations', async () => {
+    const workspace = await workspaceFixture()
+    const spawnOptimizer = succeeding()
+
+    await runTemporaryOptimization(
+      { workspace, settings: { iterations: 0 }, now: () => NOW },
+      { run: environmentRunner(), spawnOptimizer }
+    )
+
+    const task = optimizationFile(workspace, '.state/task.py')
+    const { args } = spawnOptimizer.mock.calls[0]![0]
+    expect(args.slice(args.indexOf('--rollout'), args.indexOf('--base-dir'))).toEqual([
+      '--rollout',
+      `${task}:rollout`,
+      '--search',
+      `${task}:search`,
+    ])
+    expect(args).not.toContain('--max-iterations')
+    expect(await readFile(task, 'utf8')).toContain('    baseline_only=True,\n')
   })
 
   it('shouldGiveTheOptimizerACopyWithUniqueCaseNamesWhenCasesRepeatOrLackANameAndKeepTheExperimentFile', async () => {
@@ -118,7 +232,7 @@ describe('TEMPORARY dev optimization', () => {
     await runTemporaryOptimization({ workspace, now: () => NOW }, { run: environmentRunner(), spawnOptimizer })
 
     const copy = optimizationFile(workspace, '.state/experiment.json')
-    expect(spawnOptimizer.mock.calls[0]![0].args[3]).toBe(copy)
+    expect(spawnOptimizer.mock.calls[0]![0].args[4]).toBe(copy)
     const named = JSON.parse(await readFile(copy, 'utf8')) as { cases: { name: string; input: string }[] }
     expect(named.cases.map(({ name, input }) => [name, input])).toEqual([
       ['greeting', 'Hello'],
@@ -137,7 +251,7 @@ describe('TEMPORARY dev optimization', () => {
       { run: environmentRunner(), spawnOptimizer }
     )
 
-    expect(spawnOptimizer.mock.calls[0]![0].args[3]).toBe(experimentFile(workspace.directory!, 'billing'))
+    expect(spawnOptimizer.mock.calls[0]![0].args[4]).toBe(experimentFile(workspace.directory!, 'billing'))
   })
 
   it.each([
@@ -171,16 +285,26 @@ describe('TEMPORARY dev optimization', () => {
     expect(spawnOptimizer).not.toHaveBeenCalled()
   })
 
-  it.each([['--agent', 'other.py'], ['--record=elsewhere'], ['--json'], ['--rich'], ['--typescript-runner', 'node']])(
-    'shouldRejectFlagsThatStrandsDevOwnsWhen%sIsPassed',
-    async (...forkArguments) => {
-      const workspace = await workspaceFixture()
-      const run = environmentRunner()
+  it.each([
+    ['--agent', 'other.py:agent'],
+    ['--build-task=tuning.py:build_task'],
+    ['--space', 'tuning.py:space'],
+    ['--config', 'agent.json'],
+    ['--rollout', 'tuning.py:rollout'],
+    ['--search=tuning.py:search'],
+    ['--base-dir', 'elsewhere'],
+    ['--name', 'support'],
+    ['--json'],
+    ['--rich'],
+    ['--record=elsewhere'],
+    ['--typescript-runner', 'node'],
+  ])('shouldRejectFlagsThatStrandsDevOwnsWhen%sIsPassed', async (...forkArguments) => {
+    const workspace = await workspaceFixture()
+    const run = environmentRunner()
 
-      await expect(runTemporaryOptimization({ workspace, forkArguments }, { run })).rejects.toThrow('strands dev sets')
-      expect(run).not.toHaveBeenCalled()
-    }
-  )
+    await expect(runTemporaryOptimization({ workspace, forkArguments }, { run })).rejects.toThrow('strands dev sets')
+    expect(run).not.toHaveBeenCalled()
+  })
 
   it('shouldStartTheTypescriptRunnerAndUseTheSystemPythonWhenTheWorkspaceAgentIsTypeScript', async () => {
     vi.stubEnv('PYTHON', '/opt/python3.12')
@@ -191,22 +315,45 @@ describe('TEMPORARY dev optimization', () => {
     await runTemporaryOptimization({ workspace }, { run, spawnOptimizer })
 
     const { args } = spawnOptimizer.mock.calls[0]![0]
-    const runner = args[args.indexOf('--typescript-runner') + 1]!
+    const task = await readFile(args[args.indexOf('--agent') + 1]!.replace(/:agent$/u, ''), 'utf8')
+    const runner = JSON.parse(/^ {4}typescript_runner=(".*"),$/mu.exec(task)![1]!) as string
     expect(runner).toMatch(/^'.+' '.+typescript-runner-main\.js'$/u)
     expect(runner).toContain(process.execPath)
+    expect(args).not.toContain('--typescript-runner')
     const venv = run.mock.calls.map(([request]) => request).find((request) => request.args[1] === 'venv')
     expect(venv?.command).toBe('/opt/python3.12')
     vi.unstubAllEnvs()
   })
 
-  it.each([
-    ['--resume when the record already holds a run', true, '--resume'],
-    ['--record when the optimizer died before it made a run', false, '--record'],
-  ])('shouldContinueARecordedRunWith %s', async (_, hasRun, flag) => {
+  it('shouldResumeWithTheRunFolderAloneAndKeepTheTaskFileWhenTheRecordHoldsARun', async () => {
     const workspace = await workspaceFixture()
     const record = optimizationFile(workspace, 'optimizer')
-    await mkdir(hasRun ? join(record, '20261111-150406-abc123') : record, { recursive: true })
-    if (hasRun) await writeFile(join(record, '20261111-150406-abc123', 'events.jsonl'), '')
+    const runFolder = join(record, '20261111-150406-abc123')
+    const task = optimizationFile(workspace, '.state/task.py')
+    await writeFileAt(join(runFolder, 'events.jsonl'), '')
+    await writeFileAt(task, 'the task of the first run\n')
+    const spawnOptimizer = succeeding()
+
+    await runTemporaryOptimization(
+      { workspace, continuing: record, settings: { iterations: 8 }, now: () => NOW },
+      { run: environmentRunner(), spawnOptimizer }
+    )
+
+    expect(spawnOptimizer.mock.calls[0]![0].args).toEqual([
+      '-m',
+      'strands_evals.cli',
+      'optimize',
+      'resume',
+      runFolder,
+      '--rich',
+    ])
+    expect(await readFile(task, 'utf8')).toBe('the task of the first run\n')
+  })
+
+  it('shouldStartTheRunAgainInItsRecordWhenTheOptimizerStoppedBeforeItMadeARunFolder', async () => {
+    const workspace = await workspaceFixture()
+    const record = optimizationFile(workspace, 'optimizer')
+    await mkdir(record, { recursive: true })
     const spawnOptimizer = succeeding()
 
     await runTemporaryOptimization(
@@ -215,8 +362,8 @@ describe('TEMPORARY dev optimization', () => {
     )
 
     const { args } = spawnOptimizer.mock.calls[0]![0]
-    expect(args.slice(args.indexOf(flag), args.indexOf(flag) + 2)).toEqual([flag, record])
-    expect(args).not.toContain(flag === '--resume' ? '--record' : '--resume')
+    expect(args.slice(3, 4)).toEqual(['run'])
+    expect(args.slice(args.indexOf('--base-dir'), args.indexOf('--base-dir') + 2)).toEqual(['--base-dir', record])
   })
 
   it('shouldStartTheOptimizerDetachedAndReportItsProcessWhenAskedToOutliveStrandsDev', async () => {
@@ -245,8 +392,43 @@ describe('TEMPORARY dev optimization', () => {
     }))
 
     await expect(runTemporaryOptimization({ workspace }, { run: environmentRunner(), spawnOptimizer })).rejects.toThrow(
-      /stopped with exit code 2: agent\.py must export a Strands Agent .*\nThe full optimizer output is in .+run\.log\./u
+      /^strands-evals optimize run stopped with exit code 2: agent\.py must export a Strands Agent .*\nThe full optimizer output is in .+run\.log\./u
     )
+  })
+
+  it('shouldReturnTheResultAndFlagTheProposerFailureWhenTheSearchStoppedOnAProposerError', async () => {
+    const workspace = await workspaceFixture()
+    const spawnOptimizer = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(args[args.indexOf('--base-dir') + 1]!, [], { baseline_id: 'base' })
+      return {
+        code: 3,
+        stdout: 'ships the baseline\n',
+        stderrTail: ["strands-evals: error: the search stopped: a proposer (block 'instructions') raised KeyError: x"],
+      }
+    })
+
+    const outcome = await runTemporaryOptimization(
+      { workspace, now: () => NOW },
+      { run: environmentRunner(), spawnOptimizer }
+    )
+
+    expect(outcome).toMatchObject({ summary: ['ships the baseline'], proposerFailed: true })
+  })
+
+  it('shouldReportTheErrorWhenTheOptimizerExitsWithThreeAndTheRunHasNoResult', async () => {
+    const workspace = await workspaceFixture()
+    const spawnOptimizer = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(args[args.indexOf('--base-dir') + 1]!, [])
+      return {
+        code: 3,
+        stdout: '',
+        stderrTail: ['strands-evals: error: every train trial of the baseline failed, so nothing was measured'],
+      }
+    })
+
+    await expect(
+      runTemporaryOptimization({ workspace, now: () => NOW }, { run: environmentRunner(), spawnOptimizer })
+    ).rejects.toThrow('stopped with exit code 3: every train trial of the baseline failed, so nothing was measured')
   })
 
   it.each([
