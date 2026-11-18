@@ -4,6 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { FileStorage } from '../file-storage.js'
 import { SessionError } from '../../errors.js'
+import { logger } from '../../logging/logger.js'
 import {
   createTestSnapshot,
   createTestManifest,
@@ -20,7 +21,7 @@ describe('FileStorage', () => {
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `file-storage-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    await fs.mkdir(testDir, { recursive: true })
+    await fs.mkdir(testDir, { recursive: true, mode: 0o700 })
     storage = new FileStorage(testDir)
   })
 
@@ -166,12 +167,21 @@ describe('FileStorage', () => {
     it('keeps the save called last when the earlier symbolic link check finishes later', async () => {
       const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
       const manifests = [1, 2].map((day) => createTestManifest({ updatedAt: `2024-01-0${day}T00:00:00.000Z` }))
-      vi.spyOn(fs, 'lstat').mockImplementationOnce(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 50))
-        throw Object.assign(new Error('Not found'), { code: 'ENOENT' })
-      })
+      let finishFirstCheck!: () => void
+      vi.spyOn(fs, 'lstat').mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            finishFirstCheck = () => reject(Object.assign(new Error('Not found'), { code: 'ENOENT' }))
+          })
+      )
+      const writeFile = vi.spyOn(fs, 'writeFile')
 
-      await Promise.all(manifests.map((manifest) => storage.saveManifest({ location, manifest })))
+      const saves = manifests.map((manifest) => storage.saveManifest({ location, manifest }))
+      // The later save finishes its write while the earlier one is still on its link check.
+      await vi.waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1))
+      await writeFile.mock.results[0]!.value
+      finishFirstCheck()
+      await Promise.all(saves)
 
       expect(await storage.loadManifest({ location })).toEqual(manifests[1])
     })
@@ -308,7 +318,9 @@ describe('FileStorage', () => {
           dir = join(dir, '..')
         }
         expect(await mode(join(historyDir, 'snapshot_1.json'))).toBe(0o600)
-        expect(await mode(parentDir)).toBe(await mode(testDir))
+        const defaultDir = join(testDir, 'default')
+        await fs.mkdir(defaultDir)
+        expect(await mode(parentDir)).toBe(await mode(defaultDir))
       })
 
       it('refuses to load through a symbolic link', async () => {
@@ -358,8 +370,32 @@ describe('FileStorage', () => {
 
         await expect(storage.loadSnapshot({ location })).rejects.toMatchObject({
           name: 'SessionError',
+          message: `Refusing to read symbolic link at ${latestPath}`,
           cause: expect.objectContaining({ code: 'ELOOP' }),
         })
+      })
+
+      it('warns once when an existing storage root is accessible by group or others', async () => {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        await fs.chmod(testDir, 0o755)
+
+        await storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+        await new FileStorage(testDir).saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+
+        expect(warn.mock.calls).toEqual([
+          [
+            `path=<${testDir}>, mode=<755> | session storage directory is accessible by group or others | restrict it with chmod 700`,
+          ],
+        ])
+        expect(await mode(testDir)).toBe(0o755)
+      })
+
+      it('does not warn when the storage root is accessible to the owner only', async () => {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+        await storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+
+        expect(warn).not.toHaveBeenCalled()
       })
     })
   })

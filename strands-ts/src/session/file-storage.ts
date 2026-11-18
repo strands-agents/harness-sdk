@@ -2,6 +2,8 @@ import type { SnapshotStorage, SnapshotLocation } from './storage.js'
 import type { Snapshot, SnapshotManifest } from './types.js'
 
 import { SessionError } from '../errors.js'
+import { logger } from '../logging/logger.js'
+import { warnOnce } from '../logging/warn-once.js'
 import { validateIdentifier, validateScope, validateUuidV7 } from './validation.js'
 
 const MANIFEST = 'manifest.json'
@@ -32,7 +34,9 @@ export class FileStorage implements SnapshotStorage {
   private readonly _baseDir: string
 
   /**
-   * @param baseDir - Absolute path to the root directory for storing session snapshots.
+   * @param baseDir - Absolute path to the root directory for storing session snapshots. A missing
+   *   directory is created accessible to the owner only. An existing one keeps its permissions, and
+   *   on POSIX a warning is logged if it is accessible by group or others.
    */
   constructor(baseDir: string) {
     this._baseDir = baseDir
@@ -187,6 +191,14 @@ export class FileStorage implements SnapshotStorage {
         // Directories above the storage root keep the default mode.
         await fs.mkdir(dirname(this._baseDir), { recursive: true })
         await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
+        // An existing storage root keeps its mode. Windows does not report POSIX permission bits.
+        const rootMode = process.platform === 'win32' ? 0 : (await fs.stat(this._baseDir)).mode & 0o777
+        if (rootMode & 0o077) {
+          warnOnce(
+            logger,
+            `path=<${this._baseDir}>, mode=<${rootMode.toString(8)}> | session storage directory is accessible by group or others | restrict it with chmod 700`
+          )
+        }
         await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
       })()
       const pendingRename = Promise.allSettled([PENDING_RENAMES.get(target), written])
@@ -229,6 +241,10 @@ export class FileStorage implements SnapshotStorage {
       }
       if (error instanceof SyntaxError) {
         throw new SessionError(`Invalid JSON in file ${path}`, { cause: error })
+      }
+      // ELOOP on Linux and macOS, EMLINK on FreeBSD.
+      if (this._hasErrorCode(error, 'ELOOP') || this._hasErrorCode(error, 'EMLINK')) {
+        throw new SessionError(`Refusing to read symbolic link at ${path}`, { cause: error })
       }
       throw new SessionError(`File system error reading ${path}`, { cause: error })
     }
