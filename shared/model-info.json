@@ -831,6 +831,9 @@
     "mistral.magistral-small-2509": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "toolUse": false
       }
     },
     "mistral.pixtral-large-2502": {

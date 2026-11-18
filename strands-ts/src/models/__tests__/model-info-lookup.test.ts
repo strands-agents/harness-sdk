@@ -120,6 +120,8 @@ describe('shared model info data', () => {
         // Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
         else if (key === 'chatCompletionsTools')
           expect(['reasoningOff', 'unsupported'], `${id}.${key}`).toContain(value)
+        // A record that the model cannot call tools, not part of ModelCapabilities.
+        else if (key === 'toolUse') expect(value, `${id}.${key}`).toBe(false)
         // Read by another consumer (the harness), not typed by the SDK.
         else if (key === 'defaultEffort')
           expect(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], `${id}.${key}`).toContain(value)
