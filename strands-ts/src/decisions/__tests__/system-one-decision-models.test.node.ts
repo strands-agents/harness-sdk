@@ -345,7 +345,8 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       '{"input_tokens":12,"output_tokens":1e999}',
       '{"input_tokens":-1e999,"output_tokens":3}',
       '{"input_tokens":1e308,"output_tokens":1e308}',
-    ])('omits nonfinite usage %s without changing invocation counters', async (usage) => {
+      '{"input_tokens":12.5,"output_tokens":3}',
+    ])('omits non-integer usage %s without changing invocation counters', async (usage) => {
       const raw = `{"model":"resolved-model","answers":{"q":{"type":"noul","noul":1}},"usage":${usage}}`
       const fetch = vi.fn(async (): Promise<Response> => new Response(raw)) as typeof globalThis.fetch
       const decision = create({ apiKey: 'test-key', fetch })
