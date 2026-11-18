@@ -75,10 +75,40 @@ describe('TEMPORARY optimize objective', () => {
     [
       'TheObjectiveAndEachConstraint',
       { expression: ' Minimize(tokens) ', constraints: 'Contains >= 0.8, tokens <= 4000' },
-      ['--objective', 'Minimize(tokens)', '--at-least', 'Contains=0.8', '--at-most', 'tokens=4000'],
+      ['--objective', 'minimize:tokens', '--constraint', 'Contains>=0.8', '--constraint', 'tokens<=4000'],
+    ],
+    [
+      'OneSpecForEachTermOfAWeightedSum',
+      { expression: 'WeightedSum(Maximize(Contains, weight=2), Minimize(tokens, scale=1000))', constraints: '' },
+      ['--objective', 'maximize:Contains:weight=2', '--objective', 'minimize:tokens:scale=1000'],
+    ],
+    [
+      'TheTermsAndParetoForAParetoFront',
+      { expression: 'Pareto(Maximize(Contains), Minimize(seconds, scale=10))', constraints: '' },
+      ['--objective', 'maximize:Contains', '--objective', 'minimize:seconds:scale=10', '--pareto'],
+    ],
+    [
+      'TheLoneGoalForACombinationOfOneGoal',
+      { expression: 'Pareto(Maximize(Contains, weight=2))', constraints: '' },
+      ['--objective', 'maximize:Contains'],
+    ],
+    [
+      'TheBareNameOfAQuotedMetric',
+      { expression: 'Maximize("refund-policy")', constraints: '"refund-policy" >= 0.5' },
+      ['--objective', 'maximize:refund-policy', '--constraint', 'refund-policy>=0.5'],
     ],
   ])('shouldPass%s', (_case, objective, flags) => {
     expect(temporaryObjectiveArguments(objective)).toEqual(flags)
+  })
+
+  it.each([
+    ['AnObjectiveMetricWithAColon', 'Maximize("team:score")', '', 'because the name has a colon'],
+    ['AConstraintMetricWithAnOperator', '', '"score=a" >= 0.5', 'because the name has <, >, or ='],
+  ])('shouldRefuseANameThatTheOptimizerCannotReadWhenItIs%s', (_case, expression, constraints, problem) => {
+    const objective = { expression, constraints }
+
+    expect(checkTemporaryObjective(objective, ['team:score', 'score=a']).problem).toContain(problem)
+    expect(() => temporaryObjectiveArguments(objective)).toThrow(problem)
   })
 
   it('shouldOfferTheMeanEachEvaluatorAndTheUsageTradeOffsAsPresets', () => {

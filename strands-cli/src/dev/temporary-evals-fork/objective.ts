@@ -54,6 +54,8 @@ const DEFAULT_FLOOR = 0.8
 const TOKEN_SCALE = 1000
 const SECONDS_SCALE = 10
 const SHORT_SUFFIX = 'Evaluator'
+const SPEC_SEPARATOR = ':'
+const CONSTRAINT_OPERATORS = /[<>=]/u
 
 const USAGE =
   'The objective must look like Maximize(Helpfulness), Minimize(tokens), or ' +
@@ -134,6 +136,11 @@ const readGoal = (reader: Reader): Goal => {
   reader.expect('(')
   const metric = reader.next()
   if (metric.kind !== 'name' && metric.kind !== 'string') throw misfit(metric.text)
+  if (metric.text.includes(SPEC_SEPARATOR))
+    throw new ObjectiveProblem(
+      `The optimizer cannot take ${metricText(metric.text)} in an objective, because the name has a colon. ` +
+        'Give the evaluator a name without a colon, or choose another objective.'
+    )
   const settings = new Map<string, number>()
   while (reader.accept(',')) readSetting(reader, settings)
   reader.expect(')')
@@ -168,12 +175,14 @@ const readConstraints = (constraints: string): Constraint[] =>
         throw new ObjectiveProblem(
           `Each constraint must look like tokens <= 4000 or Correctness >= 0.8. '${part}' does not fit.`
         )
-      const [, metric = '', bound, value = '0'] = match
-      return {
-        metric: metric.startsWith('"') || metric.startsWith("'") ? unquote(metric) : metric,
-        bound: bound === '<=' ? 'at-most' : 'at-least',
-        value: Number(value),
-      }
+      const [, quoted = '', bound, value = '0'] = match
+      const metric = quoted.startsWith('"') || quoted.startsWith("'") ? unquote(quoted) : quoted
+      if (CONSTRAINT_OPERATORS.test(metric))
+        throw new ObjectiveProblem(
+          `The optimizer cannot take ${metricText(metric)} in a constraint, because the name has <, >, or =. ` +
+            'Give the evaluator another name, or remove the constraint.'
+        )
+      return { metric, bound: bound === '<=' ? 'at-most' : 'at-least', value: Number(value) }
     })
 
 const resolve = (metric: string, evaluators: readonly string[]): string => {
@@ -239,12 +248,25 @@ export const checkTemporaryObjective = (
   }
 }
 
+const goalSpec = ({ direction, metric, settings }: Goal, combined: boolean): string =>
+  [direction.toLowerCase(), metric, ...(combined ? [...settings].map(([name, value]) => `${name}=${value}`) : [])].join(
+    SPEC_SEPARATOR
+  )
+
+const objectiveSpecs = ({ combination, goals }: Goals): string[] => {
+  const combined = goals.length > 1
+  return [
+    ...goals.flatMap((goal) => ['--objective', goalSpec(goal, combined)]),
+    ...(combined && combination === 'Pareto' ? ['--pareto'] : []),
+  ]
+}
+
+const constraintSpec = ({ metric, bound, value }: Constraint): string =>
+  `${metric}${bound === 'at-most' ? '<=' : '>='}${value}`
+
 export const temporaryObjectiveArguments = ({ expression, constraints }: OptimizeObjective): string[] => [
-  ...(expression.trim() ? ['--objective', expression.trim()] : []),
-  ...readConstraints(constraints).flatMap(({ metric, bound, value }) => [
-    bound === 'at-most' ? '--at-most' : '--at-least',
-    `${metric}=${value}`,
-  ]),
+  ...(expression.trim() ? objectiveSpecs(readGoals(expression)) : []),
+  ...readConstraints(constraints).flatMap((constraint) => ['--constraint', constraintSpec(constraint)]),
 ]
 
 const metricText = (metric: string): string => (PLAIN_NAME.test(metric) ? metric : JSON.stringify(metric))

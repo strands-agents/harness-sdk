@@ -93,7 +93,7 @@ const experimentDocument = (names: readonly string[], evaluators: readonly strin
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 
-const OBJECTIVE_FLAGS = ['--objective', '--at-least', '--at-most']
+const OBJECTIVE_FLAGS = ['--objective', '--constraint']
 
 const objectiveFlags = (args: readonly string[]): string[] =>
   args.flatMap((arg, index) => (OBJECTIVE_FLAGS.includes(arg) ? [arg, args[index + 1]!] : []))
@@ -876,7 +876,7 @@ describe('TEMPORARY dev sessions', () => {
     [
       'TheObjectiveAndItsConstraints',
       { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8, seconds <= 30' },
-      ['--objective', 'Minimize(tokens)', '--at-least', 'Contains=0.8', '--at-most', 'seconds=30'],
+      ['--objective', 'minimize:tokens', '--constraint', 'Contains>=0.8', '--constraint', 'seconds<=30'],
     ],
     ['NoObjectiveFlagForTheMeanOfEveryEvaluator', undefined, []],
   ])('shouldGiveTheOptimizer%sWhenTheRunStarts', async (_case, objective, flags) => {
@@ -924,12 +924,12 @@ describe('TEMPORARY dev sessions', () => {
     [
       'TheObjectiveOfTheFirstRun',
       { expression: 'Minimize(seconds)', constraints: 'Equals >= 0.5' },
-      ['--objective', 'Minimize(seconds)', '--at-least', 'Equals=0.5'],
+      ['--objective', 'minimize:seconds', '--constraint', 'Equals>=0.5'],
     ],
     [
       'AnObjectiveSavedBeforeTheApiNotation',
       { kind: 'evaluator', evaluator: 'Equals' },
-      ['--objective', 'Maximize("Equals")'],
+      ['--objective', 'maximize:Equals'],
     ],
     ['NoObjectiveFlagWhenTheRecordIsFromBeforeTheObjective', undefined, []],
   ])('shouldResumeAStoppedRunWith%s', async (_case, objective, flags) => {
