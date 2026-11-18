@@ -19,7 +19,8 @@ export const CONCURRENT_INVOCATION_MODES = ['throw', 'cancelPrevious', 'stopPrev
  *   latest-wins predecessors, and run this call next.
  * - `'stopPrevious'`: latest wins, gracefully — the running invocation is stopped with
  *   `cancel({ afterCurrentTools: true })`, so it finishes its current step first; queued
- *   latest-wins predecessors are displaced and this call runs next.
+ *   latest-wins predecessors are displaced and this call runs next. The stop stays in
+ *   effect if the caller then leaves the queue.
  * - `'queue'`: wait FIFO; the call runs as its own invocation when the current one
  *   finishes.
  *
