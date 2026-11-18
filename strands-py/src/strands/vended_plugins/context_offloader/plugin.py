@@ -417,10 +417,16 @@ class ContextOffloader(Plugin):
                 were supplied, or line_range falls outside the content.
         """
         storage = self._storage_for_agent(tool_context.agent)
+        reference = reference.strip()
         try:
             content_bytes, content_type = await _retrieve_content(storage, reference)
         except KeyError as error:
-            raise ValueError(f"reference not found: {reference}") from error
+            # The placeholder lists each reference with a description, so a model can copy the decoration with it.
+            # Terminal only once it has passed the reference as listed.
+            raise ValueError(
+                f"reference not found: {reference}. Pass the reference exactly as the placeholder lists it. "
+                "If that is what you passed, the content is unavailable — do not retry."
+            ) from error
 
         # Refresh the eviction cycle so actively-retrieved content survives
         # eviction for unified Storage backends, matching InMemoryStorage.retrieve.
