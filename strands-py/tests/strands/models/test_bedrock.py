@@ -23,6 +23,7 @@ from botocore.session import Session as BotocoreSession
 
 import strands
 from strands import _exception_notes
+from strands._context_manager.placeholder import offload_placeholder
 from strands.models import BedrockModel, CacheConfig, CacheToolsConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.bedrock import (
     DEFAULT_BEDROCK_MODEL_ID,
@@ -364,6 +365,21 @@ def test__init__model_config(bedrock_client):
     assert tru_max_tokens == exp_max_tokens
 
 
+@pytest.mark.parametrize(
+    "guardrail_config",
+    [
+        {"guardrail_id": "g1"},
+        {"guardrail_version": "v1"},
+        {"guardrail_id": "", "guardrail_version": "v1"},
+        {"guardrail_id": "g1", "guardrail_version": ""},
+    ],
+)
+def test__init__partial_guardrail_config_raises_value_error(bedrock_client, guardrail_config):
+    """Reject partial guardrail configuration (#4204)."""
+    with pytest.raises(ValueError, match="guardrail_id and guardrail_version must be set together"):
+        BedrockModel(model_id="m1", **guardrail_config)
+
+
 def test__init__context_window_limit(bedrock_client):
     _ = bedrock_client
 
@@ -431,6 +447,21 @@ def test_update_config(model, model_id):
     exp_model_id = model_id
 
     assert tru_model_id == exp_model_id
+
+
+@pytest.mark.parametrize(
+    "guardrail_config",
+    [
+        {"guardrail_id": "g1"},
+        {"guardrail_version": "v1"},
+        {"guardrail_id": "", "guardrail_version": "v1"},
+        {"guardrail_id": "g1", "guardrail_version": ""},
+    ],
+)
+def test_update_config_partial_guardrail_config_raises_value_error(model, guardrail_config):
+    """Reject updating only one guardrail setting (#4204)."""
+    with pytest.raises(ValueError, match="guardrail_id and guardrail_version must be set together"):
+        model.update_config(**guardrail_config)
 
 
 def test_cache_key_round_trips_through_config(model):
@@ -3107,6 +3138,27 @@ def test_format_request_message_content_preserves_nonempty_tool_result_content(m
 
     tool_result = formatted_request["messages"][2]["content"][0]["toolResult"]
     assert tool_result["content"] == [{"text": "some result"}]
+
+
+def test_format_request_message_content_sends_an_offloaded_block_as_text(model, model_id):
+    """Bedrock rejects unknown content block fields, so a placeholder reaches it as the text the model receives."""
+    placeholder = offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                placeholder,
+                {"toolResult": {"toolUseId": "tu-1", "status": "success", "content": [placeholder]}},
+            ],
+        }
+    ]
+
+    formatted_messages = model._format_bedrock_messages(messages)
+
+    assert formatted_messages[0]["content"] == [
+        {"text": "[Dropped: ~1,200 tokens] [ref: tu-1]"},
+        {"toolResult": {"toolUseId": "tu-1", "content": [{"text": "[Dropped: ~1,200 tokens] [ref: tu-1]"}]}},
+    ]
 
 
 def test_format_request_message_content_guard_content_without_qualifiers(model, model_id):

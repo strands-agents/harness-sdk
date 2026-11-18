@@ -250,6 +250,7 @@ class Agent(AgentBase, LocalAgent):
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
         baggage_attributes: Mapping[str, str] | None = None,
+        sort_tools: bool = False,
         aux_model: Model | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
@@ -303,6 +304,10 @@ class Agent(AgentBase, LocalAgent):
             system_prompt: System prompt to guide model behavior.
                 Can be a string or a list of SystemContentBlock objects for advanced features like caching.
                 If None, the model will behave according to its default settings.
+            sort_tools: Send tool specifications to the model sorted by name, on every request (model calls,
+                context summaries, token counts), to keep prompt-cache prefixes stable when the same tools are
+                registered in a different order, e.g. from MCP servers. Sorting happens before middleware, which
+                can still reorder them. Defaults to False, which keeps registration order.
             structured_output_model: Pydantic model type(s) for structured output.
                 When specified, all agent calls will attempt to return structured output of this type.
                 This can be overridden on the agent invocation.
@@ -494,7 +499,7 @@ class Agent(AgentBase, LocalAgent):
         self._deferred_cancel = False
         self._cancel_message: str | None = None
 
-        self.tool_registry = ToolRegistry()
+        self.tool_registry = ToolRegistry(sort_tool_specs=sort_tools)
 
         # Process tool list if provided
         if tools is not None:

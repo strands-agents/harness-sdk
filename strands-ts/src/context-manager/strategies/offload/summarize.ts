@@ -307,7 +307,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       cancelSignal: agent.cancelSignal,
       ...(agent.agentMetadata && { agentMetadata: agent.agentMetadata }),
       ...(replay && {
-        toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
+        toolSpecs: agent.toolRegistry.toolSpecs(),
         ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
       }),
     }
