@@ -58,6 +58,19 @@ describe('Stash', () => {
       const result = await stash.retrieve(ref)
       expect(result).toBeNull()
     })
+
+    it('drops the window index with the entry it was derived from', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const lines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}: the connection pool was exhausted`)
+      const ref = await stash.store('tool-x', 0, new TextEncoder().encode(JSON.stringify(lines.join('\n'))))
+
+      await stash.rankWindows(ref, lines, 'connection pool', 0, lines.length - 1)
+      expect(await storage.list('context/test-session/scopes/agent/test-agent/windows/')).not.toEqual([])
+
+      await stash.delete(ref)
+      expect(await storage.list('context/test-session/scopes/agent/test-agent/windows/')).toEqual([])
+    })
   })
 
   describe('namespacing', () => {

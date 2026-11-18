@@ -341,10 +341,14 @@ describe('retrieval tool', () => {
 
   describe('a query', () => {
     /** Filler that shares no terms with the queries below, so only the planted answer can rank. */
-    function makeStashWithBuriedAnswer(): { stash: Stash; refPromise: Promise<string> } {
+    function buriedAnswerLines(): string[] {
       const lines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: nothing of note`)
       lines[61] = 'line 62: the payment database connection pool was exhausted at peak traffic'
-      return makeStashWithTextBlock(lines.join('\n'))
+      return lines
+    }
+
+    function makeStashWithBuriedAnswer(): { stash: Stash; refPromise: Promise<string> } {
+      return makeStashWithTextBlock(buriedAnswerLines().join('\n'))
     }
 
     it('returns the sections that answer the query', async () => {
@@ -359,6 +363,82 @@ describe('retrieval tool', () => {
 
       expect(result).toContain('connection pool was exhausted')
       expect(result).toMatch(/^\[showing \d+ of \d+ relevant sections? for/)
+    })
+
+    it('ranks with the search strategy configured on the storage', async () => {
+      const ranked: string[] = []
+      const strategy = {
+        async search(storage: InMemoryStorage): Promise<Array<{ key: string; score: number }>> {
+          const keys = await storage.list('')
+          ranked.push(...keys)
+          // Ranks the content's first window top whatever the query, so only this strategy explains the result.
+          return [{ key: '0-11', score: 1 }]
+        },
+      }
+      const stash = new Stash(new InMemoryStorage({ searchStrategy: strategy }), 'test-session', 'test-agent')
+      const lines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: nothing of note`)
+      lines[61] = 'line 62: the payment database connection pool was exhausted at peak traffic'
+      const ref = await stash.store('tool-1', 0, encodeJSON({ text: lines.join('\n') }))
+
+      const result = (await invoke(createRetrievalTool(stash), {
+        reference: ref,
+        query: 'database connection pool exhausted',
+      })) as string
+
+      expect(ranked).toContain('0-11')
+      expect(result).toContain('line 1: nothing of note')
+      expect(result).not.toContain('connection pool was exhausted')
+    })
+
+    it('reuses the window index across queries rather than rebuilding it', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const ref = await stash.store('tool-1', 0, encodeJSON({ text: buriedAnswerLines().join('\n') }))
+      const retrievalTool = createRetrievalTool(stash)
+      const indexKeys = async (): Promise<string[]> =>
+        (await storage.list('')).filter((key) => key.includes('/windows/'))
+
+      expect(await indexKeys()).toHaveLength(0)
+      await invoke(retrievalTool, { reference: ref, query: 'connection pool exhausted' })
+      const built = await indexKeys()
+      await invoke(retrievalTool, { reference: ref, query: 'peak traffic' })
+
+      expect(built.length).toBeGreaterThan(0)
+      expect(await indexKeys()).toEqual(built)
+    })
+
+    it('leaves the window index out of a snapshot, since it is derived', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+
+      await invoke(createRetrievalTool(stash), { reference: ref, query: 'connection pool exhausted' })
+
+      expect(Object.keys(await stash.takeSnapshot())).toEqual([ref])
+    })
+
+    it('ranks in memory when the storage has no search of its own', async () => {
+      const backing = new InMemoryStorage()
+      // A minimal custom backend: the Storage contract without the optional search().
+      const stash = new Stash(
+        {
+          write: (key, data) => backing.write(key, data),
+          read: (key) => backing.read(key),
+          delete: (key) => backing.delete(key),
+          list: (prefix) => backing.list(prefix),
+        },
+        'test-session',
+        'test-agent'
+      )
+      const ref = await stash.store('tool-1', 0, encodeJSON({ text: buriedAnswerLines().join('\n') }))
+
+      const result = (await invoke(createRetrievalTool(stash), {
+        reference: ref,
+        query: 'database connection pool exhausted',
+      })) as string
+
+      expect(result).toContain('connection pool was exhausted')
+      // Only the stashed content; a backend that cannot search is never given an index to maintain.
+      expect(await backing.list('')).toEqual([`context/test-session/scopes/agent/test-agent/${ref}`])
     })
 
     it('rejects a query and a pattern together', async () => {
@@ -386,6 +466,10 @@ describe('retrieval tool', () => {
       expect(result).toContain('withheld by max_tokens')
     })
 
+    // A budget below one section's worth returns the head of the top-ranked section, cut by line.
+    // The answer surviving the cut is not guaranteed at this budget — the body is ordered by line
+    // number, so a match late in the section is cut — hence the truncation message telling the model
+    // to raise max_tokens rather than conclude the content does not hold the answer.
     it('cuts the top section to fit when max_tokens leaves no room for a whole one', async () => {
       const { stash, refPromise } = makeStashWithBuriedAnswer()
       const ref = await refPromise
@@ -399,7 +483,9 @@ describe('retrieval tool', () => {
 
       expect(result.length).toBeLessThanOrEqual(400)
       expect(result).toContain('output truncated, raise max_tokens')
-      expect(result).toContain('connection pool was exhausted')
+      // Lines from the top-ranked section, contiguous and in order, rather than a section boundary.
+      expect(result).toMatch(/ 55\| line 55/)
+      expect(result).not.toContain('---')
     })
 
     it('clamps max_tokens to the configured result budget', async () => {

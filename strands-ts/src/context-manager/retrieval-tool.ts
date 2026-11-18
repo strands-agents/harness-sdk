@@ -135,7 +135,7 @@ async function retrieve(
   const fallback = input.query ? Math.min(DEFAULT_QUERY_TOKENS * CHARS_PER_TOKEN, maxChars) : maxChars
   const budget = input.max_tokens ? Math.min(input.max_tokens * CHARS_PER_TOKEN, maxChars) : fallback
   if (!input.query && !input.pattern && !input.line_range) return fullContent(entries, budget)
-  return searchEntries(entries, input, budget)
+  return searchEntries(stash, reference, entries, input, budget)
 }
 
 /**
@@ -188,6 +188,8 @@ function clipText(blocks: ToolResultContent[], maxChars: number): ToolResultCont
 
 /** The lines of the entries' text that answer `query`, match `pattern`, or fall in `line_range`. */
 function searchEntries(
+  stash: Stash,
+  reference: string,
   entries: StashEntry[],
   input: z.infer<typeof retrievalInputSchema>,
   maxChars: number
@@ -202,6 +204,10 @@ function searchEntries(
       pattern: input.pattern,
       line_range: input.line_range,
       context_lines: input.context_lines ?? 5,
+      // Ranks on the configured storage, so the strategy set on it does the ranking. Returns null on
+      // a backend without search(), and searchContent then ranks in an ephemeral store instead.
+      rank_windows: (lines, query, scopeStart, scopeEnd) =>
+        stash.rankWindows(reference, lines, query, scopeStart, scopeEnd),
     },
     maxChars
   )
