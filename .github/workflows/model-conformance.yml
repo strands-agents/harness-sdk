@@ -70,6 +70,10 @@ jobs:
     name: TypeScript
     runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 60
+    # The integration workflows run their credentialed jobs in this environment on trusted triggers.
+    environment:
+      name: auto-approve
+      deployment: false
     permissions:
       id-token: write
       contents: read
