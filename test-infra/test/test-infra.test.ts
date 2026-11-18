@@ -225,19 +225,10 @@ test('internal mode grants the permissions Bidi integration tests need', () => {
   const statements = Object.values(policies).flatMap(
     (p: any) => p.Properties?.PolicyDocument?.Statement ?? [],
   );
-  const novaSonicStatement = statements.find((statement: any) => {
-    const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
-    const resources = Array.isArray(statement.Resource) ? statement.Resource : [statement.Resource];
-
-    return (
-      actions.includes('bedrock:InvokeModel') && resources.includes('arn:aws:bedrock:*::foundation-model/*')
-    );
-  });
   const pollyStatement = statements.find(
     (statement: any) => statement.Action === 'polly:SynthesizeSpeech',
   );
 
-  expect(novaSonicStatement).toBeDefined();
   expect(pollyStatement?.Resource).toBe('*');
 });
 
@@ -253,11 +244,21 @@ test('internal mode grants the Bedrock models the integ suites invoke', () => {
       Array.isArray(statement.Action) && statement.Action.includes('bedrock:InvokeModelWithResponseStream'),
   );
 
-  expect(invokeStatement.Resource).toEqual([
-    'arn:aws:bedrock:*::foundation-model/*',
-    'arn:aws:bedrock:*:*:inference-profile/*',
-    'arn:aws:bedrock:*:*:async-invoke/*',
-  ]);
+  // The resources are wildcards, so the action list is what keeps this statement narrow.
+  expect(invokeStatement).toEqual({
+    Effect: 'Allow',
+    Action: [
+      'bedrock:InvokeModel',
+      'bedrock:InvokeModelWithResponseStream',
+      'bedrock:ListAsyncInvokes',
+      'bedrock:GetAsyncInvoke',
+    ],
+    Resource: [
+      'arn:aws:bedrock:*::foundation-model/*',
+      'arn:aws:bedrock:*:*:inference-profile/*',
+      'arn:aws:bedrock:*:*:async-invoke/*',
+    ],
+  });
 });
 
 test('community mode does not attach the legacy broad policy', () => {
