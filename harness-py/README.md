@@ -320,7 +320,7 @@ nothing from the model: it resolves its region the way `BedrockModel` does (your
 then `us-west-2`) and uses the default AWS credential chain. To use another region or identity, or
 your own `web_search` tool, turn the built-in off and pass yours:
 `builtin_tools={"web_search": False}, tools=[make_agentcore_web_search(boto_session=session)]`
-(`make_agentcore_web_search` takes the same options as `BedrockModel`). A tool named `web_search`
+(`make_agentcore_web_search`, from `strands_harness.tools`, takes the same options as `BedrockModel`). A tool named `web_search`
 next to the built-in is a name collision, as with any built-in. Elsewhere (another provider's `Model` instance) `web_search` is off by default. To search there, opt into Exa with
 `{"web_search": "exa"}`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can

@@ -43,13 +43,13 @@ from strands_harness.telemetry import setup_telemetry
 from strands_harness.tools import (
     edit,
     exa_web_search,
+    make_agentcore_web_search,
     make_programmatic_tool_caller,
     make_read,
     make_web_fetch,
     write,
 )
 from strands_harness.tools.subagent import build_default_subagent
-from strands_harness.tools.web_search import make_agentcore_web_search
 from strands_harness.types.agent import (
     BuiltinPluginName,
     BuiltinToolName,

@@ -158,7 +158,7 @@ export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
   builtins: ResolvedBuiltinTools,
-  webSearch?: WebSearchMode
+  webSearch: WebSearchMode | undefined
 ): Promise<Record<BuiltinToolName, Tool>> {
   const webFetch = builtinToolConfig(builtins, 'web_fetch')
   const caller = builtinToolConfig(builtins, 'programmatic_tool_caller') ?? {}

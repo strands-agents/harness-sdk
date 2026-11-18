@@ -1110,12 +1110,27 @@ describe('subagent delegate (built child)', () => {
     expect((child.model.getConfig().params as { tools: unknown }).tools).toEqual([{ type: 'web_search' }])
   })
 
-  it('gives a narrowed delegate of a default bedrock parent AgentCore web search', async () => {
+  it('gives delegates of a default bedrock parent AgentCore web search', async () => {
     const spec = new AgentSpec('x')
     spec.tools = ['read']
-    const child = await buildChild({}, spec)
-    expect(toolNames(child)).toContain('web_search')
-    expect(child.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+    for (const child of [await buildChild({}, spec), await buildChild({}, new AgentSpec('x'))]) {
+      expect(toolNames(child)).toContain('web_search')
+      expect(child.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+    }
+  })
+
+  it("hands delegates the caller's web_search when the built-in is off", async () => {
+    const mine = tool({
+      name: 'web_search',
+      description: 'Search.',
+      inputSchema: z.object({ query: z.string() }),
+      callback: ({ query }) => query,
+    })
+    const parent = await createHarness({ tools: [mine], builtinTools: { web_search: false } })
+    expect((await buildChildFrom(parent, new AgentSpec('x'))).tools.find((t) => t.name === 'web_search')).toBe(mine)
+    const spec = new AgentSpec('x')
+    spec.tools = ['read']
+    expect(toolNames(await buildChildFrom(parent, spec))).not.toContain('web_search')
   })
 
   it('carries the Exa fallback onto a narrowed delegate', async () => {

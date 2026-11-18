@@ -575,6 +575,12 @@ def test_web_search_on_bedrock_collides_with_a_passed_web_search_tool_like_any_b
         create_harness(tools=[my_search])
     agent = create_harness(tools=[my_search], builtin_tools={"web_search": False})
     assert agent.tool_registry.registry["web_search"] is my_search
+    # Delegates follow the parent: the caller's tool when inherited, none when narrowed away.
+    from strands_harness.tools import AgentSpec
+
+    builder = agent.tool_registry.registry["subagent"]._builder
+    assert builder(AgentSpec(task="x")).tool_registry.registry["web_search"] is my_search
+    assert "web_search" not in builder(AgentSpec(task="x", tools=["read"])).tool_names
 
 
 def test_web_search_default_without_a_backend_logs_info_not_warning_and_builds(caplog):
@@ -1506,7 +1512,7 @@ def test_exa_wins_over_agentcore_on_bedrock():
 def test_subagent_child_on_bedrock_gets_agentcore_web_search():
     from strands_harness.tools import AgentSpec, exa_web_search
 
-    parent = create_harness()
-    child = parent.tool_registry.registry["subagent"]._builder(AgentSpec(task="x", tools=["read"]))
-    assert "web_search" in child.tool_names
-    assert child.tool_registry.registry["web_search"] is not exa_web_search
+    builder = create_harness().tool_registry.registry["subagent"]._builder
+    for child in (builder(AgentSpec(task="x", tools=["read"])), builder(AgentSpec(task="x"))):
+        assert "web_search" in child.tool_names
+        assert child.tool_registry.registry["web_search"] is not exa_web_search
