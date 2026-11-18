@@ -146,13 +146,18 @@ export class Todos implements Plugin {
   }
 
   /**
-   * Whether `reminderInterval` model calls have passed since one last showed the list. Read from
-   * the messages rather than a counter, so there is no state to restore, and a list the
+   * Whether there is a list and `reminderInterval` model calls have passed since one showed it.
+   * Read from the messages rather than a counter, so there is no state to restore, and a list the
    * conversation does not show is re-rendered at once.
    */
   private _reminderDue(context: InjectionContext): boolean {
+    const todos = context.appState.get(this._stateKey) as TodoItem[] | undefined
+    if (!todos?.length) {
+      return false
+    }
     let callsSinceShown = 0
-    for (const message of [...context.messages].reverse()) {
+    for (let index = context.messages.length - 1; index >= 0; index--) {
+      const message = context.messages[index]!
       if (message.content.some((block) => this._showsList(block))) {
         return callsSinceShown >= this._reminderInterval
       }

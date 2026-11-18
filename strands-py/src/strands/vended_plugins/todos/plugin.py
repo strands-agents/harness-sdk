@@ -139,11 +139,13 @@ class Todos(Plugin):
         ).init_agent(agent)
 
     def _reminder_due(self, context: InjectionContext) -> bool:
-        """Whether ``reminder_interval`` model calls have passed since one last showed the list.
+        """Whether there is a list and ``reminder_interval`` model calls have passed since one showed it.
 
         Read from the messages rather than a counter, so there is no state to restore, and a list
         the conversation does not show is re-rendered at once.
         """
+        if not context.state.get(self._state_key):
+            return False
         calls_since_shown = 0
         for message in reversed(context.messages):
             if any(self._shows_list(block) for block in message["content"]):

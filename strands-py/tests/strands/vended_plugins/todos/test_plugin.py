@@ -107,6 +107,7 @@ def test_the_reminder_renders_the_current_list(agent, todos):
 
 def test_there_is_no_reminder_when_the_list_is_empty(agent):
     assert Todos()._render_reminder(_injection_context(agent)) is None
+    assert Todos()._reminder_due(_injection_context(agent)) is False
 
 
 def test_the_list_is_scoped_to_the_agent_not_the_plugin(todos):

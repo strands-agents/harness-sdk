@@ -94,7 +94,13 @@ describe('Todos', () => {
   })
 
   it('renders no reminder when the list is empty', () => {
-    expect(renderReminder(new Todos(), createMockAgent())).toBeUndefined()
+    const agent = createMockAgent()
+    const plugin = new Todos()
+
+    expect(renderReminder(plugin, agent)).toBeUndefined()
+    expect(
+      (plugin as unknown as { _reminderDue(context: InjectionContext): boolean })._reminderDue(injectionContext(agent))
+    ).toBe(false)
   })
 
   it('scopes the list to the agent, not the plugin', async () => {
