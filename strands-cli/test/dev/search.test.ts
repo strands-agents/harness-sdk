@@ -210,6 +210,49 @@ describe('discoverHarnesses', () => {
   })
 
   it.each([
+    [
+      'tests/test_tools.py',
+      'from strands_harness import create_harness\ndef test_tool():\n    agent = create_harness()',
+    ],
+    ['tests_integ/conftest.py', 'from strands_harness import create_harness\nshared = create_harness()'],
+    [
+      'test/cli/acp.test.ts',
+      "import { createHarness } from '@strands-agents/harness'\nit('runs', async () => {\n  await createHarness()\n})",
+    ],
+    [
+      'src/support-agent.spec.ts',
+      "import { createHarness } from '@strands-agents/harness'\nexport const other = await createHarness()",
+    ],
+    [
+      'src/runtime.ts',
+      "import { createHarness } from '@strands-agents/harness'\nexport const build = async () => createHarness()",
+    ],
+    ['lib/runtime.py', 'from strands_harness import create_harness\ndef build():\n    return create_harness()'],
+  ])('shouldNotHintWhenTheCallIsInATestOrInsideALibraryFunction %s', async (file, source) => {
+    const root = await directory()
+    await sourceFile(root, file, source)
+
+    expect(await discoverWithSkipped(root)).toEqual({ harnesses: [], warnings: [], skipped: [] })
+  })
+
+  it.each([
+    [
+      'src/support.ts',
+      "import { createHarness } from '@strands-agents/harness'\nexport const support = await createHarness()",
+    ],
+    ['support.py', 'from strands_harness import create_harness\nsupport = create_harness()'],
+    [
+      'src/support-agent.ts',
+      "import { createHarness } from '@strands-agents/harness'\nexport const build = () => createHarness()",
+    ],
+  ])('shouldHintWhenAModuleBuildsAHarnessOrAnAgentFileWrapsOne %s', async (file, source) => {
+    const root = await directory()
+    const entrypoint = await sourceFile(root, file, source)
+
+    expect((await discoverWithSkipped(root)).skipped.map((skipped) => skipped.entrypoint)).toEqual([entrypoint])
+  })
+
+  it.each([
     ["import { Agent } from '@strands-agents/sdk'; export const agent = new Agent({})", 'ts'],
     ["import { createHarness } from 'other-library'; export const other = createHarness({})", 'ts'],
     ["import type { createHarness } from '@strands-agents/harness'; export const other = createHarness({})", 'ts'],

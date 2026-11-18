@@ -1,7 +1,7 @@
 import { constants, type Stats } from 'node:fs'
 import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 import ts from 'typescript'
 
@@ -53,12 +53,16 @@ const EXPECTED_SHAPE = {
   python: 'agent = create_harness(...)',
 } as const
 const PYTHON_FACTORY = 'create_agent'
+const TEST_FOLDERS = new Set(['test', 'tests', '__tests__', 'tests_integ', 'spec', 'specs'])
+const TEST_FILE = /^(?:test_.+\.py|.+_test\.py|conftest\.py|.+\.(?:test|spec)\.[cm]?[jt]sx?)$/u
+const AGENT_FILE = /agent/iu
 
 interface DiscoveryState {
   harnesses: Map<string, DiscoveredHarness>
   warnings: Set<string>
   visited: Set<string>
   vendored: Set<string>
+  roots: readonly string[]
   search: HarnessSearch
 }
 
@@ -71,6 +75,7 @@ export async function discoverHarnesses(
     warnings: new Set(),
     visited: new Set(),
     vendored: new Set(),
+    roots: [],
     search,
   }
   const paths = new Set<string>()
@@ -78,6 +83,7 @@ export async function discoverHarnesses(
     if (!root.trim()) warn(state, root, new Error('Discovery root must not be empty.'))
     else paths.add(resolve(expandHome(root)))
   }
+  state.roots = [...paths]
   for (const path of [...paths].sort()) await visit(path, state, true)
   return {
     harnesses: [...state.harnesses.values()]
@@ -149,8 +155,9 @@ async function scanSource(path: string, details: Stats, state: DiscoveryState): 
   if (state.harnesses.has(path)) return
   const source = await readSource(path, details)
   const language = path.endsWith('.py') ? 'python' : 'typescript'
-  const inspection = language === 'python' ? pythonInspection(source) : typescriptInspection(path, source)
-  if (inspection.kind === 'unloadable') state.search.skipped?.({ entrypoint: path, expected: EXPECTED_SHAPE[language] })
+  const inspection = language === 'python' ? pythonInspection(path, source) : typescriptInspection(path, source)
+  if (inspection.kind === 'unloadable' && !isTestSource(path, state.roots))
+    state.search.skipped?.({ entrypoint: path, expected: EXPECTED_SHAPE[language] })
   if (inspection.kind !== 'harness') return
   await guardProjectMetadata(path)
   const { root } = importAgentProject(path)
@@ -229,6 +236,15 @@ async function readSource(path: string, expected: Stats): Promise<string> {
 
 type SourceInspection = { kind: 'harness'; name: string | undefined } | { kind: 'unloadable' } | { kind: 'unrelated' }
 
+const isTestSource = (path: string, roots: readonly string[]): boolean => {
+  const root = roots.find((candidate) => containsPath(candidate, path)) ?? dirname(path)
+  const parts = relative(root, path).split(sep)
+  return TEST_FILE.test(parts.at(-1) ?? '') || parts.slice(0, -1).some((part) => TEST_FOLDERS.has(part))
+}
+
+const missedAgent = (path: string, constructsAtTopLevel: boolean): SourceInspection =>
+  constructsAtTopLevel || AGENT_FILE.test(basename(path)) ? { kind: 'unloadable' } : { kind: 'unrelated' }
+
 type ConstructorTest = (callee: ts.Expression) => boolean
 
 const typescriptInspection = (path: string, source: string): SourceInspection => {
@@ -241,7 +257,7 @@ const typescriptInspection = (path: string, source: string): SourceInspection =>
   if (call && (constructs(call.expression) || callsLocalFunction(file, call.expression))) {
     return { kind: 'harness', name: typescriptName(call.arguments[0]) }
   }
-  return { kind: 'unloadable' }
+  return missedAgent(path, callsTypescriptConstructorOutsideFunctions(file, constructs))
 }
 
 const typescriptConstructor = (file: ts.SourceFile): ConstructorTest | undefined => {
@@ -277,6 +293,13 @@ const typescriptConstructor = (file: ts.SourceFile): ConstructorTest | undefined
 const callsTypescriptConstructor = (node: ts.Node, constructs: ConstructorTest): boolean =>
   (ts.isCallExpression(node) && constructs(node.expression)) ||
   (ts.forEachChild(node, (child) => callsTypescriptConstructor(child, constructs) || undefined) ?? false)
+
+const callsTypescriptConstructorOutsideFunctions = (node: ts.Node, constructs: ConstructorTest): boolean =>
+  !ts.isFunctionLike(node) &&
+  !ts.isClassLike(node) &&
+  ((ts.isCallExpression(node) && constructs(node.expression)) ||
+    (ts.forEachChild(node, (child) => callsTypescriptConstructorOutsideFunctions(child, constructs) || undefined) ??
+      false))
 
 const typescriptAgentCall = (file: ts.SourceFile): ts.CallExpression | undefined => {
   const statement = file.statements.find(
@@ -339,7 +362,7 @@ interface PythonCall {
   argumentsList: PythonToken[]
 }
 
-const pythonInspection = (source: string): SourceInspection => {
+const pythonInspection = (path: string, source: string): SourceInspection => {
   const statements = pythonStatements(source)
   const topLevel = statements.filter((statement) => statement.indent === 0)
   const constructors = new Set<string>()
@@ -363,7 +386,7 @@ const pythonInspection = (source: string): SourceInspection => {
       return { kind: 'harness', name: pythonName(call.argumentsList) }
     }
   }
-  return { kind: 'unloadable' }
+  return missedAgent(path, topLevel.some(callsConstructor))
 }
 
 const pythonAgentCall = (tokens: readonly PythonToken[]): PythonCall | undefined => {
