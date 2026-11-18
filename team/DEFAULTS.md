@@ -17,10 +17,10 @@ Nothing lands directly on rung 3 or 4. Each rung is a separate decision with a s
 
 | Rung | State | What it costs the user | Bar |
 |---|---|---|---|
-| 1 | **Available** — selectable by name, documented, and recommended for the cases it helps | nothing | code and docs review, plus a stated "when" if you recommend it |
-| 2 | **In a mode** — part of what a named mode like `"auto"` configures, so anyone who wrote that one keyword gets it | everyone who wrote the keyword pays | this document, at the tier its blast radius sets |
-| 3 | **Default** — on for everyone, including users who configured nothing | everyone pays | this document, at the tier its blast radius sets |
-| 4 | **Adaptive** — off until the SDK judges the situation calls for it, then on without the user naming it or a mode | only the situations it fires in pay | this document, plus evidence on **both** sides of the trigger and a visible signal |
+| 1 | **Available** — selectable by name, documented, and recommended for the cases it helps. Today: the `todos` plugin | nothing | code and docs review, plus a stated "when" if you recommend it |
+| 2 | **In a mode** — part of what a named mode configures, so anyone who wrote that one keyword gets it. Today: what `context_manager="auto"` expands to | everyone who wrote the keyword pays | this document |
+| 3 | **Default** — on for everyone, including users who configured nothing. Today: `DEFAULT_MODEL`, and `environment` in `DEFAULT_BUILTIN_PLUGINS` | everyone pays | this document |
+| 4 | **Adaptive** — off until the SDK judges the situation calls for it, then on without the user naming it or a mode. Nothing is here today | only the situations it fires in pay | this document, plus evidence on **both** sides of the trigger and a visible signal |
 
 ### An SDK mode is not automatically a harness default
 
@@ -40,8 +40,6 @@ Default (rung 3).
 ```mermaid
 flowchart TD
     A{"What are you changing?"}
-    A -->|"rung 1"| A1["A capability, off by default<br/>e.g. the todos plugin"]
-    A1 --> A1b["No benchmark needed"]
     A -->|"rung 2"| A2["What a mode expands to<br/>e.g. context_manager='auto'"]
     A -->|"rung 3 or 4"| A3["A default's value<br/>e.g. DEFAULT_MODEL"]
 
@@ -51,11 +49,10 @@ flowchart TD
     B -->|no| B1["Stop. Build the knob first,<br/>in its own PR"]
 
     B -->|yes| C{"Changes the context window, tool loop,<br/>or model call on a normal turn?"}
-    C -->|no| C1["Test both ways.<br/>Run it end to end"]
+    C -->|no| C1["Test both ways, run it end to end.<br/>No benchmark, so no bar to clear"]
     C -->|yes| C2["Matched Harbor runs: 2+ model families,<br/>accuracy and tokens, per benchmark, with spread"]
     C2 --> C3{"Every turn,<br/>every user?"}
-    C3 -->|yes| C4["Add the full suite, a long-horizon agentic<br/>benchmark, cost per trial, and an owner"]
-    C1 --> D
+    C3 -->|yes| C4["Add the full suite, a long-horizon agentic benchmark,<br/>cost per trial, and an owner for the result"]
     C3 -->|no| D
     C4 --> D
 
@@ -68,19 +65,23 @@ flowchart TD
     E1 --> F
     E2 --> F
     F["Publish the run to the benchmark record, win or lose.<br/>It is the next proposal's baseline"]
-    F --> G{"Which package?"}
+    C1 --> G
+    F --> G
+    G{"Which package?"}
     G -->|SDK| G1["rung 1 or 2: minor<br/>rung 3 or 4: major"]
-    G -->|"harness / CLI"| G2["rung 1: patch<br/>rung 3 or 4: minor"]
+    G -->|"harness / CLI"| G2["rung 1: patch<br/>rung 2 and up: minor<br/>new on-by-default tool: patch"]
 ```
 
 ## The bar
 
-A default must **win on at least one axis and lose on neither**:
+A default must **win on at least one axis and lose on neither**. Read the table top to bottom; the
+first row that matches wins. *Flat* means inside the spread you reported.
 
 | Accuracy | Tokens / cost | Where it holds | Verdict |
 |---|---|---|---|
 | up | down or flat | every family and benchmark | **Default** (rung 3) |
 | flat | down | every family and benchmark | **Default** (rung 3) — efficiency alone is a win |
+| up | down or flat | some families or benchmarks, neutral on the rest | **Default** (rung 3) — it wins somewhere and loses nowhere |
 | up | up | every family and benchmark | **In a mode** (rung 2) — paying more for accuracy is the user's call, and a keyword like `effort` is where that choice belongs |
 | up | up | some families or benchmarks | **Adaptive** (rung 4) if the SDK can detect the condition, otherwise **In a mode** (rung 2). As a default it taxes every user for a benefit some of them get |
 | flat or down | anything | anywhere | ship it **Available** (rung 1), recommended only for the cases it helps. **Adaptive** (rung 4) if the SDK can detect that condition |
@@ -92,8 +93,16 @@ A default must **win on at least one axis and lose on neither**:
 | SDK | the value of a documented default, or a default becoming conditional (**Default** / **Adaptive**, rungs 3 and 4) | **major** — [Pay for Play does not cover default behavior](./FEATURE_LIFECYCLE.md#pay-for-play-opt-in-breaking-changes) |
 | SDK | what a preset or `"auto"` expands to (**In a mode**, rung 2) | **minor**, named in the release notes |
 | SDK | a new capability, off by default, experimental or not (**Available**, rung 1) | minor |
-| harness / CLI | the value of a documented default, or a default becoming conditional (**Default** / **Adaptive**, rungs 3 and 4) | **minor** — 0.x minor *is* the breaking channel ([versioning](../site/src/content/docs/user-guide/harness/versioning.mdx)) |
+| harness / CLI | what a mode or `"auto"` expands to (**In a mode**, rung 2) | **minor**, named in the release notes |
+| harness / CLI | the value of an existing documented default — the model, a default tool's permissions (**Default** / **Adaptive**, rungs 3 and 4) | **minor** — 0.x minor *is* the breaking channel ([versioning](../site/src/content/docs/user-guide/harness/versioning.mdx)) |
+| harness / CLI | a new built-in tool or plugin that is on by default (**Default**, rung 3) | **patch** — adding one is [not breaking](../site/src/content/docs/user-guide/harness/versioning.mdx), so the bar above is the only thing standing between it and every user |
 | harness / CLI | a new tool or plugin, off by default (**Available**, rung 1) | patch |
+
+**Coming back down the ladder** is itself a change to a documented default, so it ships in the row
+above that matches it. The evidence is the inverse: a rung is held by a win, so the absence of one is
+grounds to demote. **Security and safety are carved out.** Tightening a default tool's permission or
+a human-in-the-loop default is judged on risk, not on accuracy against tokens; it ships in any
+release and is named in the release notes.
 
 Recommending something in the docs ships no code. Prompt text and undocumented tuning are not on
 the ladder — they change nothing a user configured — and ship in an SDK minor or any harness release.
@@ -111,6 +120,8 @@ Gaps this document exposes. Each needs an owner and an issue.
 - **The benchmark record does not exist.** The tree says to publish every measured run, wins and
   losses, so the next proposal for that default has a baseline to beat. Today a PR description is the
   only record and nothing indexes it. Defaults outlive their measurements.
+- **Harbor has no contributor entry point.** The tree asks for matched Harbor runs, but nothing in
+  the repo says how to launch one, who can, or where the results land.
 - **No current default has cleared this bar.** Every `DEFAULT_*` value predates the document.
 
 ## Worked example: `todos`
