@@ -4,7 +4,8 @@
  * Memory entries and other injected content are frequently user-derived, so interpolating them raw
  * into `<entry>…</entry>` both breaks the block structurally (a stray `</entry>` or `"`) and opens a
  * stored-prompt-injection surface. These helpers are deliberately tiny — enough to keep a `<memory>`
- * block well-formed, not a general-purpose serializer.
+ * block well-formed, not a general-purpose serializer. `untrustedJsonBlock` delimits a JSON value
+ * instead of escaping it, so an evaluator model reads the data unchanged.
  */
 
 /**
@@ -29,4 +30,17 @@ export function escapeXmlText(value: string): string {
  */
 export function escapeXmlAttr(value: string): string {
   return escapeXmlText(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
+/**
+ * Serializes a value as JSON between `<tag>` and `</tag>` delimiters. `</` is written as `<\/`, which
+ * is the same JSON string, so the value cannot contain the closing delimiter.
+ *
+ * @param tag - The delimiter tag name
+ * @param value - The JSON-serializable value to enclose
+ * @returns The delimited block
+ * @internal Used by the evaluator prompts of the vended interventions
+ */
+export function untrustedJsonBlock(tag: string, value: unknown): string {
+  return `<${tag}>\n${JSON.stringify(value, null, 2).replace(/<\//g, '<\\/')}\n</${tag}>`
 }
