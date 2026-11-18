@@ -132,6 +132,7 @@ If you go back, cancel, or quit before the chat starts, dev puts the old folder 
 The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
 When `strands-workspace/` holds the same new harness, dev opens it.
 When it holds a different harness, dev asks you to type DELETE before it replaces that project.
+A new harness is a general-purpose agent. It gets the model settings of the saved profile (`model`, `modelModule`, `effort`, and `caching`) and its `dependencies`. The description, instructions, tools, skills, MCP servers, and other options of the profile stay with the Base CLI. Dev adds its own instructions, skills, and tools only to the dev chat, at runtime.
 If the model module of the saved profile is in the other language, the new harness uses the `model` of the profile. The form shows a note.
 The form shows the project folder under the name. The name is the harness name. It does not change the folder.
 A name can have letters, digits, `.`, `_`, and `-`, and at most 64 characters. The form removes other characters and shows a note.
@@ -252,11 +253,11 @@ strands-dev/
 ```
 
 For Python, the project contains `agent.py` and its dependency files instead.
-In `strands-workspace/`, an `agent/` folder holds packaged tools, skills, and policies. Dev makes this folder only when the saved profile has such files.
+In `strands-workspace/`, an `agent/` folder holds the packaged model module. Dev makes this folder only when the saved profile has a local model module.
 The top-level `agent/` in a workspace exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
 When the workspace is inside the project, dev keeps the workspace out of candidate copies, `/export`, and the source watcher.
 
-Dev copies only the skills that the profile configures, as `/export` does. Skills that skill discovery finds, for example in `~/.codex/skills`, stay out of the new project. Unlike `/export`, dev skips a configured skill folder that does not exist.
+The Base CLI view copies only the skills that the profile configures, as `/export` does. Skills that skill discovery finds, for example in `~/.codex/skills`, stay out of the view. Unlike `/export`, dev skips a configured skill folder that does not exist.
 
 ```json
 {

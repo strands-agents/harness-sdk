@@ -1,6 +1,7 @@
 import { lstat, readFile, readdir, rmdir } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { type ParsedArgs } from '../cli/arguments.js'
+import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import { CliConfigStore, type CliConfigSnapshot, type ConfigLayer } from '../config/store.js'
 import { isProfileBaseCli, refreshBaseCliView } from './base-cli.js'
 import { containsPath, expandHome, strandsUserPath } from '../paths.js'
@@ -367,10 +368,22 @@ const freeOccupiedFolder = async (
   await claims.replace(directory, project && containsPath(project, directory) ? dirname(project) : undefined)
 }
 
-const withProfileName = (snapshot: CliConfigSnapshot, name: string): CliConfigSnapshot => ({
-  ...snapshot,
-  profile: { ...snapshot.profile, name },
-})
+const generalPurposeSnapshot = (snapshot: CliConfigSnapshot, name: string): CliConfigSnapshot => {
+  const { model, modelModule, effort, caching, dependencies } = snapshot.profile
+  return {
+    ...snapshot,
+    profile: {
+      ...globalThis.structuredClone(DEFAULT_HARNESS_AGENT_CONFIG),
+      name,
+      model,
+      modelModule,
+      effort,
+      caching,
+      dependencies,
+      skills: false,
+    },
+  }
+}
 
 const createInFolder = async (
   choice: Exclude<HarnessChoice, { kind: 'discovered' }>,
@@ -380,7 +393,7 @@ const createInFolder = async (
   return createDevWorkspace({
     destination: directory,
     kind: choice.kind === 'cli' ? 'cli' : choice.language,
-    snapshot: choice.kind === 'create' ? withProfileName(snapshot, choice.name) : snapshot,
+    snapshot: choice.kind === 'create' ? generalPurposeSnapshot(snapshot, choice.name) : snapshot,
     ...(deferDependencies ? { deferDependencies: true } : {}),
     ...(signal ? { signal } : {}),
     cwd,
@@ -411,7 +424,7 @@ const createInLaunchFolder = async (
   else await removeEmptyFolder(root)
   return createProject(claims, {
     language: choice.language,
-    snapshot: withProfileName(snapshot, choice.name),
+    snapshot: generalPurposeSnapshot(snapshot, choice.name),
     cwd,
     ...(signal ? { signal } : {}),
     ...(deferDependencies ? { deferDependencies: true } : {}),

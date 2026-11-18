@@ -702,6 +702,54 @@ describe('workspace folder selection', () => {
     expect(prepared?.workspace.config).toMatchObject({ name: 'fresh', origin: { kind: 'created' } })
   })
 
+  it.each([
+    ['TheLaunchFolder', undefined],
+    ['AChosenFolder', 'chosen'],
+  ])('shouldCreateAGeneralPurposeHarnessWithTheSavedModelWhenANewHarnessIsMadeIn%s', async (_case, folderName) => {
+    const base = await temporaryDirectory()
+    for (const folder of [join(base, 'my-skills', 'lint'), join(base, '.agent', 'skills', 'review')]) {
+      await mkdir(folder, { recursive: true })
+      await writeFile(
+        join(folder, 'SKILL.md'),
+        `---\nname: ${basename(folder)}\ndescription: Check code.\n---\nUse the rules.\n`
+      )
+    }
+    const persona = {
+      name: 'Saved CLI',
+      description: 'Writes code for the Strands ecosystem.',
+      instructions: 'You are a development agent for the Strands ecosystem.',
+      model: 'bedrock/us.example.model',
+      effort: 'high' as const,
+      caching: false,
+      skills: ['./my-skills'],
+      session: false,
+      memory: false,
+    }
+    const saved = CliConfigStore.memory({}, {}, { profile: persona, profileBaseDir: base })
+    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
+    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
+    const folder = folderName === undefined ? undefined : join(process.cwd(), folderName)
+    if (folder) await mkdir(folder)
+    vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
+      open({ kind: 'create', language: 'typescript', name: 'fresh' }, screen.signal, folder)
+    )
+    const screen = { signal: new AbortController().signal, show: vi.fn() }
+
+    const prepared = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+
+    const source = await readFile(prepared!.workspace.entrypoint, 'utf8')
+    expect(source).toContain("name: 'fresh'")
+    expect(source).toContain("model: 'bedrock/us.example.model'")
+    expect(source).toContain("effort: 'high'")
+    expect(source).toContain('caching: false')
+    expect(source).not.toContain('Strands ecosystem')
+    expect(source).not.toMatch(/description|instructions|session: false|memory: false/u)
+    await expect(readdir(join(prepared!.workspace.root, 'agent', 'skills'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(saved.snapshot().profile).toMatchObject(persona)
+  })
+
   it('shouldCreateANewHarnessInPlaceWhenTheChosenFolderIsAnEmptyStrandsDevFolder', async () => {
     const folder = join(process.cwd(), 'strands-dev')
     await mkdir(folder)

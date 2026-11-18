@@ -278,8 +278,8 @@ export const HarnessPicker = ({
       key: CREATE_ROW,
       label: 'Create a new harness',
       detail: newProject
-        ? `Creates ${sanitizeTerminalText(newProject)} from your saved profile.`
-        : 'Start a separate project from your saved profile.',
+        ? `Creates ${sanitizeTerminalText(newProject)}: a general-purpose agent with your saved model.`
+        : 'Start a separate project: a general-purpose agent with your saved model.',
       group: 'New Harness',
       language: '',
     },
