@@ -26,7 +26,7 @@ const docsCategories = [
   ...(await Promise.all(
     products.map(async (p) => ({
       title: p.slug,
-      description: p.description,
+      description: p.navDescription ?? p.description,
       href: p.href,
       accent: p.accent,
       pages: p.pages,
