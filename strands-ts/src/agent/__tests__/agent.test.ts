@@ -2345,6 +2345,7 @@ describe('Agent._redactLastMessage', () => {
   })
 
   it('does not redact when there is no user message', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
     const agent = new Agent({ model })
     const assistantMessage = new Message({
@@ -2356,6 +2357,7 @@ describe('Agent._redactLastMessage', () => {
     agent['_redactLastMessage'](redactMessage)
 
     expect(agent.messages).toEqual([assistantMessage])
+    expect(warnSpy).toHaveBeenCalledWith('received input redaction but no user message found | redaction skipped')
   })
 
   it('redacts the user message when a hook appends an assistant message after it', async () => {

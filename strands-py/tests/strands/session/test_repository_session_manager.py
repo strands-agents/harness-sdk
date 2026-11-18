@@ -1406,3 +1406,26 @@ def test_redact_latest_message_falls_back_to_latest_record(session_manager, mock
     session_manager.redact_latest_message(redacted, agent)
 
     assert [m.to_message() for m in mock_repository.list_messages("test-session", "a")] == [redacted]
+
+
+def test_redact_latest_message_updates_record_with_same_tracking_id(session_manager, mock_repository):
+    agent = Agent(agent_id="a", session_manager=session_manager)
+    context_message = {"role": "assistant", "content": [{"text": "context"}], "tracking_id": "t2"}
+    session_manager.append_message({"role": "user", "content": [{"text": "secret"}], "tracking_id": "t1"}, agent)
+    session_manager.append_message(context_message, agent)
+    redacted = {"role": "user", "content": [{"text": "[redacted]"}], "tracking_id": "t1"}
+
+    session_manager.redact_latest_message(redacted, agent)
+
+    assert [m.to_message() for m in mock_repository.list_messages("test-session", "a")] == [redacted, context_message]
+
+
+def test_redact_latest_message_skips_latest_record_with_different_role(session_manager, mock_repository, caplog):
+    agent = Agent(agent_id="a", session_manager=session_manager)
+    context_message = {"role": "assistant", "content": [{"text": "context"}]}
+    session_manager.append_message(context_message, agent)
+
+    session_manager.redact_latest_message({"role": "user", "content": [{"text": "[redacted]"}]}, agent)
+
+    assert [m.to_message() for m in mock_repository.list_messages("test-session", "a")] == [context_message]
+    assert "no stored message holds the redacted message" in caplog.text

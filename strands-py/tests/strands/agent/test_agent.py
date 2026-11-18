@@ -2185,6 +2185,30 @@ def test_agent_redacts_user_message_not_ltm_context():
     ]
 
 
+def test_agent_skips_redaction_without_user_message(caplog):
+    mocked_model = MockedModelProvider(
+        [{"redactedUserContent": "BLOCKED!", "redactedAssistantContent": "INPUT BLOCKED!"}]
+    )
+    agent = Agent(
+        model=mocked_model,
+        messages=[{"role": "assistant", "content": [{"text": "hello"}]}],
+        callback_handler=None,
+    )
+
+    agent()
+
+    assert agent.messages == [
+        {"role": "assistant", "content": [{"text": "hello"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "assistant",
+            "content": [{"text": "INPUT BLOCKED!"}],
+            "metadata": unittest.mock.ANY,
+            "tracking_id": unittest.mock.ANY,
+        },
+    ]
+    assert "no user message found to redact" in caplog.text
+
+
 def test_agent_restored_from_session_management_with_correct_index():
     mock_model_provider = MockedModelProvider(
         [{"role": "assistant", "content": [{"text": "hello!"}]}, {"role": "assistant", "content": [{"text": "world!"}]}]

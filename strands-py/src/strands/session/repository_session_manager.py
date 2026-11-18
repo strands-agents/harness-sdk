@@ -103,7 +103,8 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
     def redact_latest_message(self, redact_message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
         """Redact the stored message that holds ``redact_message``.
 
-        Falls back to the latest message appended to the session when no stored message holds it.
+        A stored message holds it when it is the same object or has the same tracking id. When none
+        does, the latest message appended to the session is redacted if it has the same role.
 
         Args:
             redact_message: New message to use that contains the redact content
@@ -115,8 +116,23 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             raise SessionException("No message to redact.")
 
         # A retried prompt may have stored the same dict in several records; rewrite them all.
-        records = [r for r in self._held_records.get(agent.agent_id, []) if r.to_message() is redact_message]
-        for record in records or [latest_agent_message]:
+        tracking_id = redact_message.get("tracking_id")
+        records = [
+            record
+            for record in self._held_records.get(agent.agent_id, [])
+            if record.to_message() is redact_message
+            or (tracking_id is not None and record.to_message().get("tracking_id") == tracking_id)
+        ]
+        if not records and latest_agent_message.to_message()["role"] == redact_message["role"]:
+            records = [latest_agent_message]
+        if not records:
+            logger.warning(
+                "agent_id=<%s>, session_id=<%s> | no stored message holds the redacted message | redaction not stored",
+                agent.agent_id,
+                self.session_id,
+            )
+
+        for record in records:
             record.redact_message = redact_message
             self.session_repository.update_message(self.session_id, agent.agent_id, record)
 
