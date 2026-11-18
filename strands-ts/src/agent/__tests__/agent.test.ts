@@ -2390,11 +2390,13 @@ describe('Agent._redactLastUserMessage', () => {
   })
 
   it('handles empty messages array gracefully', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
     const agent = new Agent({ model })
 
     expect(() => agent['_redactLastUserMessage'](redactMessage)).not.toThrow()
     expect(agent['messages']).toHaveLength(0)
+    expect(warnSpy).toHaveBeenCalledWith('received input redaction but no user message found | redaction skipped')
   })
 })
 
