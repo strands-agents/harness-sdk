@@ -282,8 +282,7 @@ function parseResult<const Q extends Record<string, Question>>(
   const rawAnswers = requireRecord(response['answers'], 'decision provider answers')
   const parsedAnswers = Object.keys(questions).map((id) => {
     const question = questions[id]!
-    if (!Object.hasOwn(rawAnswers, id) || rawAnswers[id] === undefined)
-      throw new ModelError(`decision provider omitted answer for question id=<${id}>`)
+    if (!Object.hasOwn(rawAnswers, id)) throw new ModelError(`decision provider omitted answer for question id=<${id}>`)
     const parsed = parseAnswer(rawAnswers[id], question, id)
     const minConfidence = resolveMinConfidence(question, defaultMinConfidence)
     const answer = minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
