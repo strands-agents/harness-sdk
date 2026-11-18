@@ -248,6 +248,30 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     margin: 0 auto;
   }
 
+  .box-start__body {
+    --box-capability-columns: repeat(3, minmax(0, 1fr));
+    --box-connector-left: calc(16.6667% - 8px);
+    --box-connector-right: calc(16.6667% - 8px);
+  }
+
+  .box-start__body:has(.box-start__capability-group:nth-child(1) .box-start__capability.is-open) {
+    --box-capability-columns: 2fr 1fr 1fr;
+    --box-connector-left: calc(25% - 12px);
+    --box-connector-right: calc(12.5% - 6px);
+  }
+
+  .box-start__body:has(.box-start__capability-group:nth-child(2) .box-start__capability.is-open) {
+    --box-capability-columns: 1fr 2fr 1fr;
+    --box-connector-left: calc(12.5% - 6px);
+    --box-connector-right: calc(12.5% - 6px);
+  }
+
+  .box-start__body:has(.box-start__capability-group:nth-child(3) .box-start__capability.is-open) {
+    --box-capability-columns: 1fr 1fr 2fr;
+    --box-connector-left: calc(12.5% - 6px);
+    --box-connector-right: calc(25% - 12px);
+  }
+
   .box-start__header {
     margin-bottom: 18px;
   }
@@ -284,7 +308,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     margin: 0;
     color: var(--box-purple);
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 700;
     line-height: 1.15;
   }
@@ -571,24 +595,10 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
   }
 
   .box-start__capabilities {
-    --box-capability-columns: repeat(3, minmax(0, 1fr));
-
     display: grid;
     grid-template-columns: var(--box-capability-columns);
     gap: 24px;
     transition: grid-template-columns 300ms ease;
-  }
-
-  .box-start__capabilities:has(.box-start__capability-group:nth-child(1) .box-start__capability.is-open) {
-    --box-capability-columns: 2fr 1fr 1fr;
-  }
-
-  .box-start__capabilities:has(.box-start__capability-group:nth-child(2) .box-start__capability.is-open) {
-    --box-capability-columns: 1fr 2fr 1fr;
-  }
-
-  .box-start__capabilities:has(.box-start__capability-group:nth-child(3) .box-start__capability.is-open) {
-    --box-capability-columns: 1fr 1fr 2fr;
   }
 
   .box-start__capability {
@@ -794,10 +804,11 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     position: relative;
     display: grid;
     height: 36px;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: var(--box-capability-columns);
     gap: 24px;
     margin-top: 48px;
     margin-bottom: 14px;
+    transition: grid-template-columns 300ms ease;
   }
 
   .box-start__connectors::before,
@@ -819,9 +830,12 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
   .box-start__connectors::after {
     position: absolute;
     top: 0;
-    right: calc(16.6667% - 8px);
-    left: calc(16.6667% - 8px);
+    right: var(--box-connector-right);
+    left: var(--box-connector-left);
     border-top: 1.5px dashed var(--fg);
+    transition:
+      right 300ms ease,
+      left 300ms ease;
     content: '';
   }
 
@@ -891,7 +905,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     }
 
     .box-start__product {
-      font-size: 22px;
+      font-size: 24px;
     }
 
     .box-start__summary {
@@ -975,6 +989,8 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 
   @media (prefers-reduced-motion: reduce) {
     .box-start__capabilities,
+    .box-start__connectors,
+    .box-start__connectors::after,
     .box-start__agent-tabs a,
     .box-start__panel-footer a span {
       transition: none;
