@@ -2,6 +2,7 @@ import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
   httpTransport,
+  isRecord,
   resolveSystemOneProviderConfig,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
@@ -25,6 +26,8 @@ export interface TypeSafeDecisionModelOptions {
 
 /**
  * Decision model backed by TypeSafe's hosted Jev API.
+ * HTTP 413 and TypeSafe's HTTP 400 `max_tokens_exceeded` responses raise
+ * {@link ContextWindowOverflowError}, preserving the HTTP failure as the cause.
  *
  * @example
  * ```typescript
@@ -60,10 +63,16 @@ export class TypeSafeDecisionModel extends DecisionModel {
   ): Promise<DecisionResult<Q>> {
     return askSystemOne(
       this._providerConfig,
-      httpTransport(this._providerConfig),
+      httpTransport(this._providerConfig, isContextOverflow),
       state,
       questions,
       options.cancelSignal
     )
   }
+}
+
+function isContextOverflow(status: number, body: unknown): boolean {
+  if (status !== 400 || !isRecord(body)) return false
+  const detail = body['detail']
+  return isRecord(detail) && detail['error_type'] === 'max_tokens_exceeded'
 }

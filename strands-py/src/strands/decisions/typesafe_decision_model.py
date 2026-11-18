@@ -18,7 +18,8 @@ class TypeSafeDecisionModel(DecisionModel):
 
     ``ask`` raises ``ModelThrottledException`` on provider throttling (HTTP 429/503/529, with the
     ``httpx.HTTPStatusError`` as ``__cause__``), ``ContextWindowOverflowException`` when the request
-    exceeds the provider's size limit (HTTP 413), ``ValueError`` for
+    exceeds the provider's size limit (HTTP 413) or context window (HTTP 400 with
+    ``max_tokens_exceeded``, with the ``httpx.HTTPStatusError`` as ``__cause__``), ``ValueError`` for
     request-level violations (too many choices, binary content, state that is not JSON-serializable
     or contains NaN/infinity), ``httpx.HTTPStatusError`` for any other non-2xx response, and
     ``StructuredOutputException`` for a malformed provider response. Transport errors from the HTTP
@@ -70,4 +71,12 @@ class TypeSafeDecisionModel(DecisionModel):
         )
 
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
-        return await _ask_system_one(self._provider_config, _http_transport(self._provider_config), state, questions)
+        transport = _http_transport(self._provider_config, is_context_overflow=_is_context_overflow)
+        return await _ask_system_one(self._provider_config, transport, state, questions)
+
+
+def _is_context_overflow(status: int, body: Any) -> bool:
+    if status != 400 or not isinstance(body, dict):
+        return False
+    detail = body.get("detail")
+    return isinstance(detail, dict) and detail.get("error_type") == "max_tokens_exceeded"

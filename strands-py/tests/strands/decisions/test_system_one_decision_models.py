@@ -327,9 +327,33 @@ class TestAsk:
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
         # The body is sent without a client-side size check; only the server's 413 maps it.
-        with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large"):
+        with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large") as caught:
             await decision.ask("x" * (64 * 1024), {"q": {"question": "ok?", "choices": "boolean"}})
         assert len(captured) == 1
+        assert isinstance(caught.value.__cause__, httpx.HTTPStatusError)
+        assert caught.value.__cause__.response.status_code == 413
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "error_type"),
+        [(400, "max_tokens_exceeded"), (400, "invalid_request"), (500, "max_tokens_exceeded")],
+    )
+    async def test_maps_only_typesafe_context_overflow(self, provider: _ProviderCase, status: int, error_type: str):
+        body = {"detail": {"error_type": error_type}}
+        client = _fake_client(body, status=status)
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+        is_context_overflow = (
+            provider.provider_name == "typesafe" and status == 400 and error_type == "max_tokens_exceeded"
+        )
+        error_class = ContextWindowOverflowException if is_context_overflow else httpx.HTTPStatusError
+
+        with pytest.raises(error_class, match=f"HTTP {status}: {error_type}") as caught:
+            await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+        cause = caught.value.__cause__ if is_context_overflow else caught.value
+        assert isinstance(cause, httpx.HTTPStatusError)
+        assert cause.response.status_code == status
+        assert cause.response.json() == body
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

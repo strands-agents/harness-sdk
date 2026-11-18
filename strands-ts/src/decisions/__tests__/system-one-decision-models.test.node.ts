@@ -310,7 +310,29 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       )
 
       expect(error).toBeInstanceOf(ContextWindowOverflowError)
+      expect((error as Error).cause).toMatchObject({ status: 413, body: { error: 'request body too large' } })
       expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      { status: 400, errorType: 'max_tokens_exceeded' },
+      { status: 400, errorType: 'invalid_request' },
+      { status: 500, errorType: 'max_tokens_exceeded' },
+    ])('scopes vendor context overflow for HTTP $status/$errorType', async ({ status, errorType }) => {
+      const body = { detail: { error_type: errorType } }
+      const decision = create({ apiKey: 'test-key', fetch: fakeFetch(body, { status }) })
+      const error = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+
+      const expectedClass =
+        providerName === 'typesafe' && status === 400 && errorType === 'max_tokens_exceeded'
+          ? ContextWindowOverflowError
+          : ModelError
+      expect((error as Error).constructor).toBe(expectedClass)
+      expect((error as Error).message).toBe(`${providerName} decision request failed with HTTP ${status}: ${errorType}`)
+      expect((error as Error).cause).toMatchObject({ status, body })
     })
 
     it('wraps transport failures as ModelError with the original cause', async () => {

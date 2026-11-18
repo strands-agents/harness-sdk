@@ -35,6 +35,7 @@ _BINARY_MEDIA_KEYS = ("audio", "image", "video", "document")
 # Sends a serialized System One request and resolves to the parsed JSON response payload. Raises a
 # model-error exception when the request fails.
 _SystemOneTransport = Callable[[str], Awaitable[Any]]
+_ContextOverflowClassifier = Callable[[int, Any], bool]
 
 
 @dataclass(kw_only=True)
@@ -157,14 +158,16 @@ async def _ask_system_one(
     )
 
 
-def _http_transport(config: _SystemOneProviderConfig) -> _SystemOneTransport:
+def _http_transport(
+    config: _SystemOneProviderConfig, *, is_context_overflow: _ContextOverflowClassifier | None = None
+) -> _SystemOneTransport:
     """Build the HTTP transport for hosted System One APIs: POSTs the request with the API key."""
 
     async def transport(body: str) -> Any:
         response = await _post(config, body)
         payload = _read_payload(response)
         if not response.is_success:
-            _raise_http_error(config.provider_name, response, payload)
+            _raise_http_error(config.provider_name, response, payload, is_context_overflow=is_context_overflow)
         return payload
 
     return transport
@@ -246,14 +249,19 @@ def _reject_json_constant(value: str) -> NoReturn:
     raise ValueError(f"invalid JSON constant: {value}")
 
 
-def _raise_http_error(provider_name: str, response: httpx.Response, body: Any) -> NoReturn:
+def _raise_http_error(
+    provider_name: str,
+    response: httpx.Response,
+    body: Any,
+    *,
+    is_context_overflow: _ContextOverflowClassifier | None = None,
+) -> NoReturn:
     status = response.status_code
     detail = _error_detail(body)
     message = f"{provider_name} decision request failed with HTTP {status}" + (f": {detail}" if detail else "")
-    if status == 413:
-        raise ContextWindowOverflowException(message)
-
     error = httpx.HTTPStatusError(message, request=response.request, response=response)
+    if status == 413 or (is_context_overflow is not None and is_context_overflow(status, body)):
+        raise ContextWindowOverflowException(message) from error
     if status in (429, 503, 529):
         raise ModelThrottledException(message) from error
     raise error
@@ -269,7 +277,7 @@ def _error_detail(body: Any) -> str | None:
         if isinstance(value, str):
             return value
         if isinstance(value, dict):
-            nested = value.get("message")
+            nested = value.get("message") or value.get("error_type")
             if isinstance(nested, str):
                 return nested
     return None
