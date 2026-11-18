@@ -315,12 +315,12 @@ Each candidate has its own dependency environment and reports directory. Credent
 `candidate.json` records the original agent and baseline fingerprint. The stale-baseline check rejects candidates when the main source changes.
 Creating or editing candidates never switches the dev chat away from the bound agent.
 
-### Experiments, tests, and optimization
+### Experiments, evaluations, and optimization
 
 Inside a `strands dev` chat:
 
 - `/experiment` creates and reviews sets of test cases. **Create a new experiment** starts a conversation about what to test, rather than running generation immediately.
-- `/test` selects saved experiments, runs the agent on their cases, and shows results and reports. It runs four cases at once. To stop a run, open it and press `s`. A run continues after strands dev closes. When strands dev opens the workspace again, it follows a run that is still active and shows the results of a run that finished. It also resumes a run that stopped, for example after a restart. Cases that finished before are not run again.
+- `/evaluate` selects saved experiments, runs the agent on their cases, and shows results and reports. It runs four cases at once. To stop a run, open it and press `s`. A run continues after strands dev closes. When strands dev opens the workspace again, it follows a run that is still active and shows the results of a run that finished. It also resumes a run that stopped, for example after a restart. Cases that finished before are not run again.
 - `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
   The list shows each experiment with its number of runs. Select an experiment to start a new run, or to open one of its runs.
   The setup sets the runs of each case and the candidates of each step. Its Advanced section sets the number of parallel trials.
@@ -329,9 +329,9 @@ Inside a `strands dev` chat:
 
 In the panels, a paid run starts only after a confirm step. The confirm step shows the case count and the model. For `/optimize`, the confirm step also shows the token and time estimate when strands dev has one. When the run tunes a text knob, the confirm step tells you that the proposer runs shell commands that can use your credentials. Enter starts the run, and Esc cancels it.
 
-You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-tests`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. These skills are not slash commands: dev adds only `/experiment`, `/test`, and `/optimize`. Reading cases or past results does not start a new run. Tests support one or several experiments; optimization returns proposed edits for explicit acceptance, and can be stopped or its pending proposals discarded on request.
+You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-evaluations`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. These skills are not slash commands: dev adds only `/experiment`, `/evaluate`, and `/optimize`. Reading cases or past results does not start a new run. An evaluation can run one or several experiments. An optimization returns proposed edits, and dev applies only the edits that you accept. On request, the agent stops an optimization or discards its pending proposals.
 
-Generation, testing, and optimization call models and can incur charges. Review and approve the proposed run before it starts.
+Generation, evaluation, and optimization call models and can incur charges. Review and approve the proposed run before it starts.
 Running jobs show below the chat input in one row, one job at a time, as background tasks do.
 With an empty input, ↓ selects the first background task or job. ←→ selects the next one, Enter opens its progress, and Esc goes back.
 A click on the row opens the job that the row shows. Dev keeps each experiment and its history in one folder:
@@ -342,15 +342,15 @@ strands-dev/
     .gitignore               keeps the history out of git
     <name>/
       <name>.json            the experiment, which you can commit
-      <name>.report.json     the latest test report
-      runs/<time>/           one test run, with report.json and run.log
+      <name>.report.json     the latest evaluation report
+      runs/<time>/           one evaluation run, with report.json and run.log
       optimizations/<time>/  one optimization run, with optimizer/ and run.log
   tmp/
     .state/                  drafts, downloaded skills, and the evals environment of the workspace
 ```
 
 The `.gitignore` in `experiments/` ignores `runs/`, `optimizations/`, `.state/`, and the latest reports. Thus git keeps only the experiment files.
-Dev keeps the 20 newest test runs of each experiment. A rerun of the failed cases replaces only those cases in `<name>.report.json`.
+Dev keeps the 20 newest evaluation runs of each experiment. A rerun of the failed cases replaces only those cases in `<name>.report.json`.
 At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/`, and `tmp/optimization/` folders into this layout. It does not move an experiment while one of its runs is active.
 
 ### Optimization runs
@@ -384,14 +384,14 @@ When the search stops on a proposer error, the command prints the result and exi
 **Limits:**
 
 - Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
-- **TEMPORARY:** `/test` and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. When strands-evals can run TypeScript agents, dev removes this limit.
+- **TEMPORARY:** `/evaluate` and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. When strands-evals can run TypeScript agents, dev removes this limit.
 - Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
 
 ### Evals UI
 
 When the chat starts, dev also starts the evals UI of strands-evals for `strands-dev/experiments/`.
 The evals UI is a local web page with larger views of experiments, reports, and optimization runs.
-In `/experiment`, `/test`, and `/optimize`, push `o` to open the current item in a browser.
+In `/experiment`, `/evaluate`, and `/optimize`, push `o` to open the current item in a browser.
 
 The page server listens on `127.0.0.1` only, on a free port. Each start makes a new random token.
 The page link contains the token. The server rejects each request that does not have the token.

@@ -334,7 +334,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     try {
       records = await readTemporaryRunRecords(this.workspaceDirectory())
     } catch (error) {
-      announce(this.host(), 'error', `test · /test cannot read its unfinished runs: ${errorMessage(error)}`)
+      announce(this.host(), 'error', `evaluate · /evaluate cannot read its unfinished runs: ${errorMessage(error)}`)
       return
     }
     await Promise.all(records.map((record) => this.continueRun(record)))
@@ -360,7 +360,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
       announce(
         this.host(),
         'success',
-        `test · ${experiment.name} · resumed the run that stopped when strands dev closed`
+        `evaluate · ${experiment.name} · resumed the run that stopped when strands dev closed`
       )
       await this.execute(experiment, record.cases, record.rerun, record, record.only)
     } catch (error) {
@@ -368,7 +368,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
       announce(
         this.host(),
         'error',
-        `test · ${basename(record.experiment, '.json')} could not resume · /test shows why`
+        `evaluate · ${basename(record.experiment, '.json')} could not resume · /evaluate shows why`
       )
     }
   }
@@ -400,7 +400,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
       await this.finish(experiment, record.report, record.startedAt, record.only)
     } catch (error) {
       this.update(experiment, { status: 'failed', message: errorMessage(error) })
-      announce(this.host(), 'error', `test · ${experiment.name} stopped · /test shows why`)
+      announce(this.host(), 'error', `evaluate · ${experiment.name} stopped · /evaluate shows why`)
     } finally {
       stopCounting()
       if (this.stops.get(experiment.path) === abort) this.stops.delete(experiment.path)
@@ -425,7 +425,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     const rerun = only
       ? `${run.cases.filter((item) => item.passed).length} of ${plural(run.cases.length, 'rerun case')} passed · `
       : ''
-    announce(this.host(), 'success', `test · ${experiment.name} · ${rerun}${total} · /test shows the results`)
+    announce(this.host(), 'success', `evaluate · ${experiment.name} · ${rerun}${total} · /evaluate shows the results`)
   }
 
   private isRunning(path: string): boolean {
@@ -456,7 +456,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
       announce(
         this.host(),
         'error',
-        `test · ${experiment.name} · /test cannot show this report after a restart: ${errorMessage(error)}`
+        `evaluate · ${experiment.name} · /evaluate cannot show this report after a restart: ${errorMessage(error)}`
       )
       return results
     }
@@ -507,7 +507,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
           announce(
             this.host(),
             'error',
-            `test · ${experiment.name} cannot save its run record, so it cannot resume after a restart: ${errorMessage(error)}`
+            `evaluate · ${experiment.name} cannot save its run record, so it cannot resume after a restart: ${errorMessage(error)}`
           )
         )
       return saving
@@ -557,7 +557,7 @@ export class TemporaryTest extends Store<TestState> implements TestSession {
     } catch (error) {
       if (abort.signal.aborted) return this.update(experiment, { status: 'failed', message: STOPPED_BY_USER })
       this.update(experiment, { status: 'failed', message: errorMessage(error) })
-      announce(this.host(), 'error', `test · ${experiment.name} stopped · /test shows why`)
+      announce(this.host(), 'error', `evaluate · ${experiment.name} stopped · /evaluate shows why`)
     } finally {
       stopCounting()
       if (this.stops.get(experiment.path) === abort) this.stops.delete(experiment.path)
@@ -1385,7 +1385,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         applied.push(target)
         written.push(edit)
       } catch (error) {
-        applyError = `Could not change ${target}: ${errorMessage(error)} Change it by hand, then run /test.`
+        applyError = `Could not change ${target}: ${errorMessage(error)} Change it by hand, then run /evaluate.`
         break
       }
     }
@@ -1396,7 +1396,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     announce(
       this.host(),
       applyError ? 'error' : 'success',
-      applyError ? `optimize · ${changed} · ${applyError}` : `optimize · ${changed} · run /test to check your agent`
+      applyError ? `optimize · ${changed} · ${applyError}` : `optimize · ${changed} · run /evaluate to check your agent`
     )
   }
 }

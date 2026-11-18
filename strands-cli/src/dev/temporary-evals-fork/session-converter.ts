@@ -201,8 +201,8 @@ const strandsDevRules = ({ python, workspaceDirectory, currentChat }: Guide): st
     'name of letters, numbers, dots, dashes, and underscores, not <timestamp>_<uuid>. Never replace a file.',
   'Cost: reading the chats in step 3 uses the chat model, and synthesizing cases calls a Bedrock model about one ' +
     'time for each case. Before each, say what it reads or makes, and wait for a yes.',
-  'Handoff: point to /experiment to review the cases and to /test to run them, not to strands-evals run. ' +
-    'For a smoke test, offer /test.',
+  'Handoff: point to /experiment to review the cases and to /evaluate to run them, not to strands-evals run. ' +
+    'For a smoke test, offer /evaluate.',
 ]
 
 const guideText = (guide: Guide): string => {

@@ -319,7 +319,7 @@ describe('TEMPORARY dev chat part', () => {
     expect(part.skills.map(({ name }) => name)).toEqual([
       'create-experiment',
       'manage-experiments',
-      'run-tests',
+      'run-evaluations',
       'optimize-harness',
     ])
     expect(part.tools.map(({ name, readOnly }) => [name, readOnly === true])).toEqual([
@@ -328,8 +328,8 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_create_experiment', false],
       ['strands_dev_session_converter', false],
       ['strands_dev_read_experiment', true],
-      ['strands_dev_test_results', true],
-      ['strands_dev_test', false],
+      ['strands_dev_evaluation_results', true],
+      ['strands_dev_evaluate', false],
       ['strands_dev_optimize', false],
       ['strands_dev_cancel_optimization', false],
       ['strands_dev_reject_optimization', false],
@@ -368,7 +368,7 @@ describe('TEMPORARY dev chat part', () => {
       ],
       generations: [],
       optimization: { step: 'idle' },
-      evalsUi: { status: 'ready', open: expect.stringContaining('presses o in /experiment, /test, or /optimize') },
+      evalsUi: { status: 'ready', open: expect.stringContaining('presses o in /experiment, /evaluate, or /optimize') },
     })
   })
 
@@ -526,9 +526,9 @@ describe('TEMPORARY dev chat part', () => {
 
   it('shouldReadSavedTestDetailsWithoutRerunning', async () => {
     const { call, test, sessions } = setup()
-    expect(await call('strands_dev_test_results', { experiment: 'refunds' })).toMatchObject({ status: 'not_run' })
+    expect(await call('strands_dev_evaluation_results', { experiment: 'refunds' })).toMatchObject({ status: 'not_run' })
     test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
-    expect(await call('strands_dev_test_results', { experiment: 'refunds', offset: 1, limit: 1 })).toMatchObject({
+    expect(await call('strands_dev_evaluation_results', { experiment: 'refunds', offset: 1, limit: 1 })).toMatchObject({
       status: 'done',
       passed: 1,
       total: 2,
@@ -548,7 +548,7 @@ describe('TEMPORARY dev chat part', () => {
   it('shouldStartMultipleExperimentsAndRetainBothResults', async () => {
     const { call, test, sessions, experiments } = setup()
     experiments.set({ ...experiments.snapshot(), saved: [REFUNDS, CAPITAL] })
-    const done = call('strands_dev_test', { experiments: ['refunds', 'capital'] })
+    const done = call('strands_dev_evaluate', { experiments: ['refunds', 'capital'] })
     await vi.waitFor(() => expect(sessions.test.run).toHaveBeenCalledWith([REFUNDS, CAPITAL]))
     test.set({
       runs: [
@@ -563,13 +563,13 @@ describe('TEMPORARY dev chat part', () => {
 
   it('shouldValidateAllRequestedExperimentsBeforeStartingAny', async () => {
     const { call, sessions } = setup()
-    await expect(call('strands_dev_test', { experiments: ['refunds', 'missing'] })).rejects.toThrow(
+    await expect(call('strands_dev_evaluate', { experiments: ['refunds', 'missing'] })).rejects.toThrow(
       'no experiment named missing'
     )
-    await expect(call('strands_dev_test', { experiment: 'refunds', experiments: ['capital'] })).rejects.toThrow(
+    await expect(call('strands_dev_evaluate', { experiment: 'refunds', experiments: ['capital'] })).rejects.toThrow(
       'not both'
     )
-    await expect(call('strands_dev_test', { experiments: [] })).rejects.toThrow('nonempty list')
+    await expect(call('strands_dev_evaluate', { experiments: [] })).rejects.toThrow('nonempty list')
     expect(sessions.test.run).not.toHaveBeenCalled()
   })
 
@@ -583,8 +583,8 @@ describe('TEMPORARY dev chat part', () => {
         },
       ],
     })
-    await expect(call('strands_dev_test', { experiment: 'refunds' })).rejects.toThrow('already running')
-    expect(await call('strands_dev_test_results', { experiment: 'refunds' })).toMatchObject({ status: 'running' })
+    await expect(call('strands_dev_evaluate', { experiment: 'refunds' })).rejects.toThrow('already running')
+    expect(await call('strands_dev_evaluation_results', { experiment: 'refunds' })).toMatchObject({ status: 'running' })
     expect(sessions.test.run).not.toHaveBeenCalled()
   })
 
@@ -641,7 +641,7 @@ describe('TEMPORARY dev chat part', () => {
   it('shouldWaitForTheRunAndReportWhyEachCaseFailedWhenItTestsAnExperiment', async () => {
     const { tool, test, sessions } = setup()
 
-    const running = tool('strands_dev_test').run({ experiment: 'Refunds' })
+    const running = tool('strands_dev_evaluate').run({ experiment: 'Refunds' })
     await vi.waitFor(() => expect(sessions.test.run).toHaveBeenCalledWith([REFUNDS]))
     test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
     const report = JSON.parse(await running)
@@ -667,7 +667,7 @@ describe('TEMPORARY dev chat part', () => {
       setTimeout(() => test.set({ runs: [{ experiment: REFUNDS, run: { status: 'failed', message: 'boom' } }] }), 0)
     )
 
-    await expect(tool('strands_dev_test').run({ experiment: 'refunds', failedOnly: true })).rejects.toThrow('boom')
+    await expect(tool('strands_dev_evaluate').run({ experiment: 'refunds', failedOnly: true })).rejects.toThrow('boom')
     expect(sessions.test.rerunFailed).toHaveBeenCalledWith(REFUNDS.path)
   })
 
@@ -680,7 +680,7 @@ describe('TEMPORARY dev chat part', () => {
       setTimeout(() => test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] }), 0)
     )
 
-    const report = JSON.parse(await tool('strands_dev_test').run({ experiment: 'refunds', failedOnly: true }))
+    const report = JSON.parse(await tool('strands_dev_evaluate').run({ experiment: 'refunds', failedOnly: true }))
 
     expect(sessions.test.rerunFailed).toHaveBeenCalledWith(REFUNDS.path)
     expect(report).toMatchObject({ passed: 1, total: 2 })
@@ -689,7 +689,7 @@ describe('TEMPORARY dev chat part', () => {
   it('shouldNameTheSavedExperimentsWhenTheRequestedOneDoesNotExist', async () => {
     const { tool, sessions } = setup()
 
-    await expect(tool('strands_dev_test').run({ experiment: 'billing' })).rejects.toThrow(
+    await expect(tool('strands_dev_evaluate').run({ experiment: 'billing' })).rejects.toThrow(
       'There is no experiment named billing. Saved experiments: refunds.'
     )
     expect(sessions.test.run).not.toHaveBeenCalled()
@@ -892,7 +892,7 @@ describe('TEMPORARY dev chat part', () => {
     ])
     expect(applied).toEqual({
       applied: ['agent.py'],
-      next: 'Run strands_dev_test on the experiment to check the change.',
+      next: 'Run strands_dev_evaluate on the experiment to check the change.',
     })
   })
 
@@ -909,13 +909,13 @@ describe('TEMPORARY dev chat part', () => {
 })
 
 describe('plain-language dev chat guidance', () => {
-  const PAID_TOOLS = ['strands_dev_create_experiment', 'strands_dev_test', 'strands_dev_optimize'] as const
+  const PAID_TOOLS = ['strands_dev_create_experiment', 'strands_dev_evaluate', 'strands_dev_optimize'] as const
 
   it('shouldSendAPlainRequestToAWorkflowSkillRatherThanStraightToATool', () => {
     const { part } = setup()
 
     expect(part.instructions).toContain(
-      'activate manage-experiments, run-tests, or optimize-harness before you answer one'
+      'activate manage-experiments, run-evaluations, or optimize-harness before you answer one'
     )
   })
 
@@ -946,7 +946,9 @@ describe('plain-language dev chat guidance', () => {
     expect(part.instructions).toContain('name the experiments and case counts and stop')
     expect(part.instructions).toContain('call the tool only in a later turn, after the developer answered')
     expect(part.instructions).toContain('A scope that looks obvious is still not approval')
-    expect(tool('strands_dev_test').description).toContain('Being asked to test the agent is not that answer')
+    expect(tool('strands_dev_evaluate').description).toContain(
+      'Being asked to evaluate or test the agent is not that answer'
+    )
     expect(tool('strands_dev_optimize').description).toContain('Being asked to improve the agent is not that answer')
   })
 

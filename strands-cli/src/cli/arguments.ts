@@ -59,7 +59,7 @@ const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'i
 const COMMAND_USAGE_WIDTH = 26
 
 const TEMPORARY_DEV_COMMAND_SUMMARIES: readonly CommandSummary[] = [
-  ['test [experiment]', 'experimental: run the agent on an experiment'],
+  ['evaluate [experiment]', 'experimental: run the agent on an experiment'],
   ['optimize [experiment]', 'experimental: tune the agent against an experiment'],
 ]
 

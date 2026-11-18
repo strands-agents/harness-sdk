@@ -8,7 +8,7 @@ Answer the question that was asked and stop. Answer it from tool output read in 
 
 Before a paid run, briefly explain the concrete scope, that model calls cost money, and that the run can take minutes; obtain approval before starting. Being asked to run, test, or improve something is not that approval: end that turn with the scope and wait for a separate answer. A specific run already approved after that explanation needs no repeated approval. Approval for one run is not permission for additional runs or a larger scope. Do not invent a price or model-call count that the tools have not supplied.
 
-The evals UI shows experiments, reports, and optimization runs in a browser. When the developer wants a closer look, tell them to press o in /experiment, /test, or /optimize. strands_dev_status says if the evals UI is ready.`
+The evals UI shows experiments, reports, and optimization runs in a browser. When the developer wants a closer look, tell them to press o in /experiment, /evaluate, or /optimize. strands_dev_status says if the evals UI is ready.`
 
 const MANAGE_EXPERIMENTS = `# Manage experiments in dev chat
 
@@ -18,29 +18,29 @@ Help with requests such as "what experiments do I have?", "show the refund cases
 
 Always call strands_dev_status afresh before listing saved experiments or claiming none exist; earlier chat messages and prior tool output may be stale. Then list saved experiments and their last results. Use strands_dev_read_experiment with {experiment, offset?, limit?} to read saved cases and evaluator details; page through the returned data when needed rather than claiming a partial page is the whole experiment. Explain actual inputs, expected outputs, and scoring rules, distinguishing saved expectations from observed agent answers. Use strands_dev_evaluators when the developer needs the available evaluator catalog or setting details. The first evaluator lookup can take a minute while the environment is prepared.
 
-For new cases or a new experiment, use the existing create-experiment skill and strands_dev_create_experiment; do not replace its goal-shaping and generation approval workflow. Listing or reading an experiment must not trigger generation, a test, or optimization.
+For new cases or a new experiment, use the existing create-experiment skill and strands_dev_create_experiment; do not replace its goal-shaping and generation approval workflow. Listing or reading an experiment must not trigger generation, an evaluation, or optimization.
 
-There is no dedicated experiment-edit or delete tool here. Edit saved experiment files with existing file tools only when the developer requests edits, first reading the file and keeping unrelated cases and evaluators intact. Do not automatically delete experiments. If the developer wants to run or tune an experiment, use run-tests or optimize-harness guidance and obtain any needed paid-run approval.`
+There is no dedicated experiment-edit or delete tool here. Edit saved experiment files with existing file tools only when the developer requests edits, first reading the file and keeping unrelated cases and evaluators intact. Do not automatically delete experiments. If the developer wants to run or tune an experiment, use run-evaluations or optimize-harness guidance and obtain any needed paid-run approval.`
 
-const RUN_TESTS = `# Run tests and inspect results in dev chat
+const RUN_EVALUATIONS = `# Run evaluations and inspect results in dev chat
 
 ${DEV_ONLY}
 
-Help with requests such as "test refunds", "run these experiments", "rerun the failures", or "show the latest results". Resolve experiment names from the conversation and strands_dev_status; if the selection is ambiguous, ask only for the missing scope. Read cases and evaluator details with strands_dev_read_experiment when needed to explain the run.
+Help with requests such as "evaluate refunds", "test refunds", "run these experiments", "rerun the failures", or "show the latest results". Resolve experiment names from the conversation and strands_dev_status; if the selection is ambiguous, ask only for the missing scope. Read cases and evaluator details with strands_dev_read_experiment when needed to explain the run.
 
-Tests exercise the current authored agent through its SDK-configured runtime, not a separate generator provider or the chat assistant. Testing leaves the agent source unchanged. Explain which experiments and cases will run and that scoring may also call models before obtaining paid-run approval. "Run my tests" and "check my agent against my examples" ask for that explanation, not for the run: name the experiments and case counts, then end the turn. Use existing defaults rather than asking the developer to configure a generator model.
+Evaluations exercise the current authored agent through its SDK-configured runtime, not a separate generator provider or the chat assistant. An evaluation leaves the agent source unchanged. Explain which experiments and cases will run and that scoring may also call models before obtaining paid-run approval. "Run my tests" and "check my agent against my examples" ask for that explanation, not for the run: name the experiments and case counts, then end the turn. Use existing defaults rather than asking the developer to configure a generator model.
 
-Call strands_dev_test with {experiment, failedOnly?} for one experiment, or {experiments: string[], failedOnly?} for a batch. Use one selector, not both. Set failedOnly only when the developer requests it and prior failures exist in a finished run for each selected experiment; check strands_dev_test_results first. If there are no prior failures, explain that and ask before substituting a paid full run. Do not silently expand a failed-only request to all cases.
+Call strands_dev_evaluate with {experiment, failedOnly?} for one experiment, or {experiments: string[], failedOnly?} for a batch. Use one selector, not both. Set failedOnly only when the developer requests it and prior failures exist in a finished run for each selected experiment; check strands_dev_evaluation_results first. If there are no prior failures, explain that and ask before substituting a paid full run. Do not silently expand a failed-only request to all cases.
 
-Never infer that an experiment or result is missing from earlier conversation. Always call strands_dev_test_results with {experiment, offset?, limit?}; it reads status and case results without rerunning anything. Use strands_dev_status for an overview and page through case results as needed. A request to inspect results is not permission to rerun tests. A test may continue after the developer cancels the chat turn. Do not claim that cancelling a turn stopped the test or promise a test-cancellation tool.
+Never infer that an experiment or result is missing from earlier conversation. Always call strands_dev_evaluation_results with {experiment, offset?, limit?}; it reads status and case results without rerunning anything. Use strands_dev_status for an overview and page through case results as needed. A request to inspect results is not permission to rerun evaluations. An evaluation may continue after the developer cancels the chat turn. Do not claim that cancelling a turn stopped the evaluation or promise an evaluation-cancellation tool.
 
-Report actual evidence from the tools: status, completed case counts, pass/fail outcomes, scores and evaluator feedback when present. Distinguish queued, running, failed execution, and completed results. Do not fabricate results, infer success from a started job, or present a partial page as the complete run. Summarize representative failures with their inputs, expected outputs, actual answers, and feedback only when returned. A failing test is evidence to discuss, not permission to change source, regenerate cases, optimize, or start another paid run.`
+Report actual evidence from the tools: status, completed case counts, pass/fail outcomes, scores and evaluator feedback when present. Distinguish queued, running, failed execution, and completed results. Do not fabricate results, infer success from a started job, or present a partial page as the complete run. Summarize representative failures with their inputs, expected outputs, actual answers, and feedback only when returned. A failing case is evidence to discuss, not permission to change source, regenerate cases, optimize, or start another paid run.`
 
 const OPTIMIZE_HARNESS = `# Optimize the harness in dev chat
 
 ${DEV_ONLY}
 
-Help with requests such as "improve this agent on refunds" or "tune its effort". Use strands_dev_status to inspect experiments and any running optimization or pending review, and strands_dev_read_experiment to inspect the chosen cases and evaluators. Use prior test evidence when available; do not require or start a separate paid baseline test just to begin this conversation.
+Help with requests such as "improve this agent on refunds" or "tune its effort". Use strands_dev_status to inspect experiments and any running optimization or pending review, and strands_dev_read_experiment to inspect the chosen cases and evaluators. Use prior evaluation evidence when available; do not require or start a separate paid baseline evaluation just to begin this conversation.
 
 For now, optimization of a TypeScript agent scores the final answer only, so it supports evaluators that read the answer, such as OutputEvaluator, Contains, Equals, and StartsWith. Optimization of a Python agent also scores trajectory and tool-use evaluators. Check the saved evaluators, explain an incompatible experiment, and help the developer choose a compatible one; do not silently remove evaluators or rewrite the experiment to make it compatible.
 
@@ -64,13 +64,13 @@ export const temporaryWorkflowSkills = (): AgentExtensionSkill[] => [
     instructions: MANAGE_EXPERIMENTS,
   },
   {
-    name: 'run-tests',
+    name: 'run-evaluations',
     description:
-      'Run approved tests, or inspect the progress and case results of tests already run, in dev chat. ' +
+      'Run approved evaluations, or inspect the progress and case results of evaluations already run, in dev chat. ' +
       'Use it when the developer asks to try the agent on saved cases or asks how a run went, in any wording, including ' +
-      '"run my tests", "check my agent against my examples", "test refunds", "try these cases", ' +
+      '"run my tests", "evaluate my agent", "check my agent against my examples", "test refunds", "try these cases", ' +
       '"did my last test pass", "how did the run go", and "rerun the failures". Not part of the exported agent.',
-    instructions: RUN_TESTS,
+    instructions: RUN_EVALUATIONS,
   },
   {
     name: 'optimize-harness',

@@ -718,7 +718,7 @@ const timer = setInterval(() => {
       mcpPaths: [],
       mcpStrictPaths: [],
     }
-    const devSkills = ['create-experiment', 'manage-experiments', 'run-tests', 'optimize-harness']
+    const devSkills = ['create-experiment', 'manage-experiments', 'run-evaluations', 'optimize-harness']
 
     const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
     const listed = (input: string): string[] => chat.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
@@ -727,7 +727,7 @@ const timer = setInterval(() => {
       await chat.submit('/skills')
       await vi.waitFor(() => expect(chat.getSnapshot().panel?.title).toMatch(/^Skills \(\d+\)$/))
       expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
-      expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'test', 'optimize']))
+      expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'evaluate', 'optimize']))
       expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
       expect(listed('/opt')).toEqual(['optimize'])
       expect(chat.actionableCommandToken('/optimize-harness')).toBeUndefined()

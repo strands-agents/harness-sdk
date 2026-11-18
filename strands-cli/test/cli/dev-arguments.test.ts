@@ -17,7 +17,7 @@ describe('dev help', () => {
       'Dev',
       ['dev', '--help'],
       'Chat with the agent of a local harness workspace.',
-      ['  init ', '  test [experiment] ', '  optimize [experiment] '],
+      ['  init ', '  evaluate [experiment] ', '  optimize [experiment] '],
     ],
     ['DevInit', ['dev', 'init', '--help'], 'Set up a local harness workspace, then exit', []],
   ])('shouldDescribeTheCommandAndListItsSubcommandsWhenTheHelpOf%sIsShown', (_case, argv, description, commands) => {
@@ -87,9 +87,9 @@ describe('dev arguments', () => {
 
   it.each<[string, string[], Record<string, unknown>]>([
     [
-      'Test',
-      ['dev', '--workspace', 'desk', 'test', 'refunds'],
-      { workspace: 'desk', temporaryCommand: { name: 'test', experiment: 'refunds', forkArguments: [] } },
+      'Evaluate',
+      ['dev', '--workspace', 'desk', 'evaluate', 'refunds'],
+      { workspace: 'desk', temporaryCommand: { name: 'evaluate', experiment: 'refunds', forkArguments: [] } },
     ],
     [
       'Optimize',

@@ -18,17 +18,17 @@ describe('TEMPORARY strands dev optimize arguments', () => {
     expect(() => parseArgs(['dev', 'optimize', '--tune', 'effort'])).toThrow()
   })
 
-  it('shouldParseTheTestCommandWhenDevTestIsCalled', () => {
-    const parsed = parseArgs(['dev', 'test', 'refunds', '--', '--max-workers', '2'])
+  it('shouldParseTheEvaluateCommandWhenDevEvaluateIsCalled', () => {
+    const parsed = parseArgs(['dev', 'evaluate', 'refunds', '--', '--max-workers', '2'])
 
     expect(parsed.dev?.temporaryCommand).toEqual({
-      name: 'test',
+      name: 'evaluate',
       experiment: 'refunds',
       forkArguments: ['--max-workers', '2'],
     })
   })
 
-  it.each(['optimize', 'test'] as const)('shouldLabelTheCommandExperimentalWhenDev%sPrintsItsHelp', (name) => {
+  it.each(['optimize', 'evaluate'] as const)('shouldLabelTheCommandExperimentalWhenDev%sPrintsItsHelp', (name) => {
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 
     expect(() => parseTemporaryDevCommandArguments(name, ['--help'])).toThrow()

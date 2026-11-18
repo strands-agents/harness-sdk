@@ -54,31 +54,31 @@ const TEXT_LIMIT = 600
 const EDIT_LIMIT = 4000
 const KNOB_NAMES = TEMPORARY_KNOB_NAMES.join(', ')
 
-const INSTRUCTIONS = `strands_dev_create_experiment, strands_dev_test, and strands_dev_optimize spend the developer's money the moment you call them. Two turns, never one: in the turn that asks for the work, name the experiments and case counts and stop; call the tool only in a later turn, after the developer answered. "Run my tests", "check my agent against my examples", and "make my agent better" ask for that first turn. A scope that looks obvious is still not approval, and neither is one saved experiment or one evident choice. Finish the turn with your question as the last thing you write.
+const INSTRUCTIONS = `strands_dev_create_experiment, strands_dev_evaluate, and strands_dev_optimize spend the developer's money the moment you call them. Two turns, never one: in the turn that asks for the work, name the experiments and case counts and stop; call the tool only in a later turn, after the developer answered. "Run my tests", "check my agent against my examples", and "make my agent better" ask for that first turn. A scope that looks obvious is still not approval, and neither is one saved experiment or one evident choice. Finish the turn with your question as the last thing you write.
 
-Experiments, tests, and optimization:
+Experiments, evaluations, and optimization:
 - experiments/<name>/<name>.json: a saved experiment, which the developer can commit. "cases" holds the test cases (name, input, expected_output or expected_assertion, and optional expected_trajectory and metadata). "evaluators" says how each case is scored.
-- experiments/<name>/<name>.report.json: the report of the latest test run of that experiment.
-- experiments/<name>/runs/<time>/: one test run, with report.json and run.log.
+- experiments/<name>/<name>.report.json: the report of the latest evaluation run of that experiment.
+- experiments/<name>/runs/<time>/: one evaluation run, with report.json and run.log.
 - experiments/<name>/optimizations/<time>/: one optimization run, with the optimizer record in optimizer/ and run.log.
 - tmp/.state/drafts/: generated cases that wait for a review in /experiment.
 
-The developer can open a panel with /experiment, /test, or /optimize, or ask you in plain words. A plain-words request still belongs to a skill: activate manage-experiments, run-tests, or optimize-harness before you answer one, and use these tools:
+The developer can open a panel with /experiment, /evaluate, or /optimize, or ask you in plain words. A plain-words request still belongs to a skill: activate manage-experiments, run-evaluations, or optimize-harness before you answer one, and use these tools:
 - strands_dev_status: the experiments, the drafts, the running jobs, and the last results. Call it again in every turn that asks what exists. The developer, the panels, and finished runs change these files between turns, so an answer from an earlier turn is stale and repeating it is a false claim about the workspace.
 - strands_dev_evaluators: the evaluators that can score this agent, with what each one checks and the settings it needs.
 - strands_dev_create_experiment: generate test cases and save them as an experiment. Use the create-experiment skill to help the developer shape a test goal naturally; keep technical defaults in the background.
 - strands_dev_session_converter: the newest session-converter skill from strands-evals, to build an experiment from past chats or traces. The create-experiment skill says when to use it.
 - strands_dev_read_experiment: read saved cases and evaluator definitions without running anything. Use the manage-experiments skill for browsing and explaining them.
-- strands_dev_test: run this agent on one or more experiments and report each case. Use the run-tests skill for plain-language test requests.
-- strands_dev_test_results: inspect existing test results without rerunning an experiment.
+- strands_dev_evaluate: run this agent on one or more experiments and report each case. Use the run-evaluations skill for plain-language requests to evaluate or test the agent.
+- strands_dev_evaluation_results: inspect existing evaluation results without rerunning an experiment.
 - strands_dev_optimize: tune the instructions or the effort of this agent against an experiment, and report the proposed edits. Use the optimize-harness skill for optimization requests.
 - strands_dev_cancel_optimization: stop the active optimization when the developer asks.
 - strands_dev_reject_optimization: discard pending optimization edits without applying them when the developer asks.
 - strands_dev_apply_optimization: write the edits that the developer accepts into the agent source.
 
-The evals UI is a local browser page with larger views of experiments, reports, and optimization runs. In /experiment, /test, and /optimize, the developer presses o to open the current item there. Never write the page address yourself; strands dev gives it to the developer.
+The evals UI is a local browser page with larger views of experiments, reports, and optimization runs. In /experiment, /evaluate, and /optimize, the developer presses o to open the current item there. Never write the page address yourself; strands dev gives it to the developer.
 
-Apply optimization edits only when the developer says which edits to apply. A run continues when the turn is cancelled; its progress shows below the chat input, and /test or /optimize shows the result.
+Apply optimization edits only when the developer says which edits to apply. A run continues when the turn is cancelled; its progress shows below the chat input, and /evaluate or /optimize shows the result.
 
 Answer the question that was asked, from the tool output of this turn. Do not add settings, defaults, generator details, or a menu of next steps that the developer did not ask for.`
 
@@ -236,10 +236,10 @@ const readExperimentTool = (sessions: Sessions): DevChatTool => ({
 })
 
 const testResultsTool = (sessions: Sessions): DevChatTool => ({
-  name: 'strands_dev_test_results',
+  name: 'strands_dev_evaluation_results',
   readOnly: true,
   description:
-    'Inspect existing progress or the last test result, including inputs, outputs, and evaluator verdicts. Does not rerun tests.',
+    'Inspect existing progress or the last evaluation result, including inputs, outputs, and evaluator verdicts. Does not rerun evaluations.',
   inputSchema: {
     type: 'object',
     properties: { experiment: { type: 'string' }, ...PAGE_PROPERTIES },
@@ -382,7 +382,7 @@ const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefin
   return found ? runStatus(found.run) : undefined
 }
 
-const EVALS_UI_OPENING = 'The developer presses o in /experiment, /test, or /optimize to open the current item.'
+const EVALS_UI_OPENING = 'The developer presses o in /experiment, /evaluate, or /optimize to open the current item.'
 
 const evalsUiStatus = (ui: EvalsBrowser): object => {
   const { status, detail } = ui.snapshot()
@@ -393,7 +393,7 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
   name: 'strands_dev_status',
   readOnly: true,
   description:
-    'Show the strands dev workspace: the saved experiments with their last test result, the generations that run or failed, ' +
+    'Show the strands dev workspace: the saved experiments with their last evaluation result, the generations that run or failed, ' +
     'the optimization state, and the suggested settings for a new experiment with the number of past chats. ' +
     'Call it again in every turn that asks what exists, including a repeated question. ' +
     'An answer from an earlier turn is stale, because files and runs change in between.',
@@ -526,13 +526,13 @@ const requestedExperiments = async (sessions: Sessions, input: Input): Promise<E
 }
 
 const testTool = (sessions: Sessions): DevChatTool => ({
-  name: 'strands_dev_test',
+  name: 'strands_dev_evaluate',
   description:
-    'Start the paid test run. This call starts the paid run itself and asks nothing first, so call it ' +
+    'Start the paid evaluation run. This call starts the paid run itself and asks nothing first, so call it ' +
     'only after the developer answered yes, in an earlier turn, to the experiments and cases you named. ' +
-    'Being asked to test the agent is not that answer, and a scope that looks obvious is not that answer. ' +
+    'Being asked to evaluate or test the agent is not that answer, and a scope that looks obvious is not that answer. ' +
     'Runs this agent on the saved experiments and reports each case. ' +
-    'Set failedOnly to rerun only prior failures. Read a finished or running test with strands_dev_test_results instead.',
+    'Set failedOnly to rerun only prior failures. Read a finished or running evaluation with strands_dev_evaluation_results instead.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -556,7 +556,7 @@ const testTool = (sessions: Sessions): DevChatTool => ({
     for (const experiment of experiments) {
       const run = before.get(experiment.path)
       if (run?.status === 'running')
-        throw new Error(`${experiment.name} is already running. Use strands_dev_test_results for progress.`)
+        throw new Error(`${experiment.name} is already running. Use strands_dev_evaluation_results for progress.`)
       if (failedOnly && (run?.status !== 'done' || run.results.cases.every((item) => item.passed)))
         throw new Error(`${experiment.name} has no failed cases from a finished run. Run the whole experiment.`)
     }
@@ -812,7 +812,7 @@ const applyTool = (sessions: Sessions): DevChatTool => ({
       return run?.step === 'review' && run.review.applied ? run.review : undefined
     })
     if (review.applyError) throw new Error(review.applyError)
-    return reply({ applied: review.applied, next: 'Run strands_dev_test on the experiment to check the change.' })
+    return reply({ applied: review.applied, next: 'Run strands_dev_evaluate on the experiment to check the change.' })
   },
 })
 

@@ -105,14 +105,14 @@ const readScores = async (report: string): Promise<{ passed: number; checks: num
 const testNextStep = (code: number, log: string): string =>
   code === 2
     ? 'Fix the cause above (it is in the agent file, the experiment file, or the flags after --), then run the ' +
-      `test again. The full output is in ${log}.`
-    : `Fix the error above, then run the test again. The full output is in ${log}.`
+      `evaluation again. The full output is in ${log}.`
+    : `Fix the error above, then run the evaluation again. The full output is in ${log}.`
 
 const assertCases = (experiment: string, cases: number): void => {
   if (cases === 0)
     throw new Error(
-      `${experiment} has no cases, so there is nothing to test. Add cases to it, or draft cases with ` +
-        '/experiment, then run the test again.'
+      `${experiment} has no cases, so there is nothing to evaluate. Add cases to it, or draft cases with ` +
+        '/experiment, then run the evaluation again.'
     )
 }
 
@@ -155,7 +155,7 @@ const assertChecked = (experiment: string, report: string, checks: number): void
   if (checks === 0)
     throw new Error(
       `strands-evals run checked nothing: ${report} has no results. Check that ${experiment} lists evaluators, ` +
-        'then run the test again.'
+        'then run the evaluation again.'
     )
 }
 
@@ -166,7 +166,11 @@ export const runTemporaryTest = async (
   const { workspace, forkArguments = [], environment = process.env, signal, onProgress = ignoreProgress } = request
   const directory = temporaryWorkspaceDirectory(workspace)
   assertTemporaryForkArguments(forkArguments, TEST_OWNED_FLAGS, 'strands dev')
-  const experiment = await resolveTemporaryExperiment(temporaryExperimentsFolder(directory), request.experiment, 'test')
+  const experiment = await resolveTemporaryExperiment(
+    temporaryExperimentsFolder(directory),
+    request.experiment,
+    'evaluate'
+  )
   const cases = await temporaryCaseCount(experiment)
   assertCases(experiment, cases)
   await request.prepare?.()

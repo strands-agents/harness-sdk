@@ -8,7 +8,7 @@ import { missingCaseField, type EvalCase, type Experiment, type ExperimentSummar
 import { isTemporaryExperimentName } from './experiment.js'
 import { listTemporaryExperimentFiles } from './layout.js'
 
-export type TemporaryExperimentUse = 'optimize' | 'test'
+export type TemporaryExperimentUse = 'optimize' | 'evaluate'
 
 export type TemporaryRawCase = Readonly<Record<string, unknown>>
 

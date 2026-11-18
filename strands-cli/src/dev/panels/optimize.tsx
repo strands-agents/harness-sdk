@@ -1607,7 +1607,7 @@ const ReviewView = ({
         ) : null}
         {review.applyError ? <Line tone="error">{`  ${review.applyError}`}</Line> : null}
         {changed.length > 0 ? (
-          <Line>{'  Your agent reloads when its files change. Run /test to check the new version.'}</Line>
+          <Line>{'  Your agent reloads when its files change. Run /evaluate to check the new version.'}</Line>
         ) : null}
         <Fill />
         <KeyHints hints={[BACK_HINT]} />

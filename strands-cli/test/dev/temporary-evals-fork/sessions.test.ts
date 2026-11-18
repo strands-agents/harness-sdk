@@ -330,7 +330,7 @@ describe('TEMPORARY dev sessions', () => {
     expect(results.cases.find(({ name }) => name === 'c1')?.verdicts[0]?.reason).toBe('named the wrong city')
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'test · capital · 2 of 3 cases passed · /test shows the results',
+      text: 'evaluate · capital · 2 of 3 cases passed · /evaluate shows the results',
     })
   })
 
@@ -397,7 +397,7 @@ describe('TEMPORARY dev sessions', () => {
     expect(results.report).toBe(join(experimentHome(workspace), 'capital.report.json'))
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'test · capital · 2 of 3 rerun cases passed · 7 of 8 cases passed · /test shows the results',
+      text: 'evaluate · capital · 2 of 3 rerun cases passed · 7 of 8 cases passed · /evaluate shows the results',
     })
   })
 
@@ -1663,7 +1663,7 @@ describe('TEMPORARY dev sessions on open', () => {
     await restarted.show()
 
     expect(restarted.snapshot().runs.map(({ run }) => run)).toEqual([
-      { status: 'failed', message: expect.stringContaining('is not a usable test report') },
+      { status: 'failed', message: expect.stringContaining('is not a usable evaluation report') },
     ])
   })
 
@@ -1712,9 +1712,9 @@ describe('TEMPORARY dev sessions on open', () => {
     expect(notices).toEqual([
       {
         status: 'error',
-        text: expect.stringMatching(/^test · capital · \/test cannot show this report after a restart: /u),
+        text: expect.stringMatching(/^evaluate · capital · \/evaluate cannot show this report after a restart: /u),
       },
-      { status: 'success', text: 'test · capital · 1 of 2 cases passed · /test shows the results' },
+      { status: 'success', text: 'evaluate · capital · 1 of 2 cases passed · /evaluate shows the results' },
     ])
   })
 
@@ -1836,7 +1836,7 @@ const finishRun = (record: TemporaryTestRecord, failing: readonly string[] = ['c
     onLine: () => undefined,
   })
 
-describe('TEMPORARY /test runs after strands dev closes', () => {
+describe('TEMPORARY /evaluate runs after strands dev closes', () => {
   it('shouldResumeARunThatEndedWhenStrandsDevClosedWithTheCasesItAlreadyFinished', async () => {
     const testing = testingProcess()
     let cutAtResume: boolean | undefined
@@ -1864,7 +1864,7 @@ describe('TEMPORARY /test runs after strands dev closes', () => {
     expect(cutAtResume).toBe(false)
     expect(notices).toContainEqual({
       status: 'success',
-      text: 'test · capital · resumed the run that stopped when strands dev closed',
+      text: 'evaluate · capital · resumed the run that stopped when strands dev closed',
     })
     await vi.waitFor(async () => expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([]))
   })
@@ -1882,7 +1882,7 @@ describe('TEMPORARY /test runs after strands dev closes', () => {
     expect(spawnTests).not.toHaveBeenCalled()
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'test · capital · 2 of 3 cases passed · /test shows the results',
+      text: 'evaluate · capital · 2 of 3 cases passed · /evaluate shows the results',
     })
     expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([])
   })
@@ -1912,7 +1912,7 @@ describe('TEMPORARY /test runs after strands dev closes', () => {
     ])
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'test · capital · 1 of 1 rerun case passed · 3 of 3 cases passed · /test shows the results',
+      text: 'evaluate · capital · 1 of 1 rerun case passed · 3 of 3 cases passed · /evaluate shows the results',
     })
     expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([])
   })

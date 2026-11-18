@@ -37,7 +37,7 @@ describe('TEMPORARY dev commands', () => {
 
     const commands = temporaryDevCommands(workspace, project)
 
-    expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/test', '/optimize'])
+    expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/evaluate', '/optimize'])
     expect(commands.every(({ spec }) => spec.replacement === undefined)).toBe(true)
     expect(commands.map(({ spec }) => spec.description)).toEqual([
       'Generate test cases for this agent with strands-evals, and review them',
@@ -126,7 +126,10 @@ describe('TEMPORARY dev commands', () => {
     temporaryDevCommands(workspace, project)[1]!.attach?.({ ...context, report: announced })
 
     await vi.waitFor(() =>
-      expect(announced).toHaveBeenCalledWith('success', 'test · capital · 1 of 1 case passed · /test shows the results')
+      expect(announced).toHaveBeenCalledWith(
+        'success',
+        'evaluate · capital · 1 of 1 case passed · /evaluate shows the results'
+      )
     )
   })
 

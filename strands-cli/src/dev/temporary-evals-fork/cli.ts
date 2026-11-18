@@ -72,11 +72,11 @@ const rememberTest = async (
       await readTemporaryTestResults(report, { experiment: basename(home), seconds })
     )
   } catch (error) {
-    warn(`warning: /test cannot show this result: ${errorMessage(error)}`)
+    warn(`warning: /evaluate cannot show this result: ${errorMessage(error)}`)
   }
 }
 
-const test = async (
+const evaluate = async (
   shared: Shared,
   dependencies: TemporaryDevCommandDependencies
 ): Promise<{ lines: string[]; code: number }> => {
@@ -89,7 +89,7 @@ const test = async (
   }
 }
 
-const RUNNERS = { optimize, test }
+const RUNNERS = { optimize, evaluate }
 
 export const runTemporaryDevCommand = async (
   args: ParsedArgs,

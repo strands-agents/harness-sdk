@@ -119,7 +119,7 @@ const showViewInFrame = async (command: string, view: DevChatPanelView, clicks: 
 }
 
 const showInFrame = (session: TestSession, clicks: DevPanelClicks) =>
-  showViewInFrame('test', (viewProps) => createElement(TestPanel, { ...viewProps, session }), clicks)
+  showViewInFrame('evaluate', (viewProps) => createElement(TestPanel, { ...viewProps, session }), clicks)
 
 const showOptimizeInFrame = (session: OptimizeSession, clicks: DevPanelClicks) =>
   showViewInFrame('optimize', (viewProps) => createElement(OptimizePanel, { ...viewProps, session }), clicks, 120)
@@ -135,7 +135,7 @@ describe('TestPanel', () => {
 
     const { text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)
 
-    expect(text()).toContain('test · 3 experiments · 1 running')
+    expect(text()).toContain('evaluate · 3 experiments · 1 running')
     expect(text()).toMatch(/☐ capital\s+4 cases · running 2\/4/u)
     expect(text()).toMatch(/☐ refunds\s+2 cases · 1\/2 passed/u)
     expect(text()).toMatch(/☐ cities\s+6 cases · not run yet/u)
@@ -177,7 +177,7 @@ describe('TestPanel', () => {
 
     expect(selected).toContain('2 selected')
     expect(selected).toContain('Enter run 2')
-    expect(confirm).toContain('test · 2 experiments · start a paid run?')
+    expect(confirm).toContain('evaluate · 2 experiments · start a paid run?')
     expect(confirm).toContain(
       'Your agent answers 10 cases from 2 experiments with the model that the agent file sets: capital 4 and cities 6.'
     )
@@ -329,7 +329,7 @@ describe('TestPanel', () => {
 
     await press(key)
 
-    expect(text()).toContain('test · capital · 4 cases · 1 evaluator')
+    expect(text()).toContain('evaluate · capital · 4 cases · 1 evaluator')
     expect(text()).toContain('2/4')
     expect(session.run).not.toHaveBeenCalled()
   })
@@ -343,7 +343,7 @@ describe('TestPanel', () => {
     await press('\r')
 
     expect(list).toContain('Enter open report')
-    expect(text()).toContain('test · refunds · 2 cases · 1 evaluator')
+    expect(text()).toContain('evaluate · refunds · 2 cases · 1 evaluator')
     expect(text()).toContain('✗ refund-window')
     expect(session.run).not.toHaveBeenCalled()
   })
@@ -358,7 +358,7 @@ describe('TestPanel', () => {
     await press('\r')
 
     expect(list).toContain('Enter show why it stopped')
-    expect(text()).toContain('test · cities · stopped')
+    expect(text()).toContain('evaluate · cities · stopped')
     expect(text()).toContain('All case names must be unique.')
     expect(session.run).not.toHaveBeenCalled()
   })
@@ -382,7 +382,7 @@ describe('TestPanel', () => {
 
     await click('refunds')
 
-    await vi.waitFor(() => expect(text()).toContain('test · refunds · 2 cases · 1 evaluator'))
+    await vi.waitFor(() => expect(text()).toContain('evaluate · refunds · 2 cases · 1 evaluator'))
     expect(text()).toContain('issued refund without checking delivery date')
     expect(session.run).not.toHaveBeenCalled()
   })
@@ -405,7 +405,7 @@ describe('TestPanel', () => {
 
     await click('standard-refund')
 
-    await vi.waitFor(() => expect(text()).toContain('test · refunds · standard-refund · passed'))
+    await vi.waitFor(() => expect(text()).toContain('evaluate · refunds · standard-refund · passed'))
     expect(text()).toMatch(/OutputEvaluator\s+✓ 1\.00\s+Refunded correctly/u)
   })
 
@@ -443,7 +443,7 @@ describe('TestPanel', () => {
     const { session, text } = await openFailedCase({ reason: LONG_REASON, actual: LONG_OUTPUT }, key)
 
     const flat = text().replace(/\s+/gu, ' ')
-    expect(text()).toContain('test · refunds · refund-window · failed')
+    expect(text()).toContain('evaluate · refunds · refund-window · failed')
     expect(flat).toContain(`OutputEvaluator ✗ 0.00 ${LONG_REASON}`)
     expect(flat).toContain(`output ${LONG_OUTPUT}`)
     expect(flat).toContain('input Refund order 1094')
@@ -1819,7 +1819,7 @@ describe('OptimizePanel', () => {
           },
         ],
         applied: ['instructions.md'],
-        applyError: 'Could not change agent.py: it changed on disk. Change it by hand, then run /test.',
+        applyError: 'Could not change agent.py: it changed on disk. Change it by hand, then run /evaluate.',
       },
     })
 

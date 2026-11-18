@@ -56,7 +56,7 @@ export interface TestPanelProps extends DevChatPanelProps {
 
 type OpenInBrowser = (place: EvalsBrowserPlace) => void
 
-const COMMAND = 'test'
+const COMMAND = 'evaluate'
 const LIST_CHROME_ROWS = 3
 
 type TestRow =

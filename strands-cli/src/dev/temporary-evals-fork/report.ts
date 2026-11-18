@@ -37,7 +37,7 @@ interface CaseGroup {
 }
 
 const unusableReport = (path: string, detail: string, cause?: unknown): Error =>
-  new Error(`${path} is not a usable test report (${detail}). Run the test again.`, { cause })
+  new Error(`${path} is not a usable evaluation report (${detail}). Run the evaluation again.`, { cause })
 
 const evaluatorOf = (testCase: TemporaryRawCase): string => {
   const name = [testCase.evaluator, testCase.evaluator_type].find((value) => typeof value === 'string' && value)
@@ -120,7 +120,9 @@ export const readTemporaryTestResults = async (
 }
 
 const unusableRecord = (path: string, detail: string, cause?: unknown): Error =>
-  new Error(`${path} is not a usable record of the last test run (${detail}). Run the test again.`, { cause })
+  new Error(`${path} is not a usable record of the last evaluation run (${detail}). Run the evaluation again.`, {
+    cause,
+  })
 
 const REPORT_ROW_FIELDS = [
   'cases',

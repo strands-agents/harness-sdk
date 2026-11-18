@@ -65,7 +65,7 @@ const reporting = (passes: boolean[], overall: number) =>
     return { code: 0, stdout: '', stderrTail: ['strands-evals run | Contains: 1/2 passed (0.50) | overall: 0.50'] }
   })
 
-describe('TEMPORARY /test', () => {
+describe('TEMPORARY /evaluate', () => {
   it('shouldRunTheExperimentAndSaveTheReportInItsRunFolder', async () => {
     const workspace = await workspaceFixture()
     const spawnTests = reporting([true, false], 0.5)
@@ -284,9 +284,9 @@ describe('TEMPORARY /test', () => {
   })
 
   it.each([
-    { experiments: [], requested: undefined, message: 'There is no experiment to test yet' },
-    { experiments: [], requested: 'refunds', message: 'then run strands dev test again' },
-    { experiments: ['a', 'b'], requested: undefined, message: 'for example strands dev test a' },
+    { experiments: [], requested: undefined, message: 'There is no experiment to evaluate yet' },
+    { experiments: [], requested: 'refunds', message: 'then run strands dev evaluate again' },
+    { experiments: ['a', 'b'], requested: undefined, message: 'for example strands dev evaluate a' },
   ])('shouldGuideTheUserToAnExperimentWhen$message', async ({ experiments, requested, message }) => {
     const workspace = await workspaceFixture(experiments)
     const spawnTests = reporting([true], 1)
@@ -313,7 +313,7 @@ describe('TEMPORARY /test', () => {
 
   it.each([
     { code: 2, step: 'Fix the cause above \\(it is in the agent file, the experiment file, or the flags after --\\)' },
-    { code: 3, step: 'Fix the error above, then run the test again' },
+    { code: 3, step: 'Fix the error above, then run the evaluation again' },
   ])('shouldReportTheRunErrorAndTheNextStepWhenRunExitsWith$code', async ({ code, step }) => {
     const workspace = await workspaceFixture()
     const spawnTests = vi.fn(async () => ({
@@ -332,7 +332,10 @@ describe('TEMPORARY /test', () => {
       content: '{"cases": [',
       message: /is not a usable Experiment file \(.+\)\. Fix the file, or draft new cases with \/experiment/u,
     },
-    { content: JSON.stringify({ cases: [], evaluators: [] }), message: /has no cases, so there is nothing to test/u },
+    {
+      content: JSON.stringify({ cases: [], evaluators: [] }),
+      message: /has no cases, so there is nothing to evaluate/u,
+    },
   ])('shouldExplainWhatToFixWhenTheExperimentFileCannotBeTested', async ({ content, message }) => {
     const workspace = await workspaceFixture([])
     await writeFileAt(experimentFile(workspace.directory!, 'support'), content)

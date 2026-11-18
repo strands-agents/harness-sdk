@@ -12,7 +12,7 @@ describe('dev-only workflow skills', () => {
   it('shouldProvideThreeWorkflowSkillsWithoutReplacingCreateExperiment', () => {
     expect(temporaryWorkflowSkills().map(({ name }) => name)).toEqual([
       'manage-experiments',
-      'run-tests',
+      'run-evaluations',
       'optimize-harness',
     ])
     expect(instructionsFor('manage-experiments')).toContain('use the existing create-experiment skill')
@@ -73,8 +73,14 @@ describe('workflow skill activation triggers', () => {
   it.each([
     ['manage-experiments', ['what experiments do I have', 'show me my cases', 'how is this scored']],
     [
-      'run-tests',
-      ['run my tests', 'check my agent against my examples', 'did my last test pass', 'rerun the failures'],
+      'run-evaluations',
+      [
+        'run my tests',
+        'evaluate my agent',
+        'check my agent against my examples',
+        'did my last test pass',
+        'rerun the failures',
+      ],
     ],
     ['optimize-harness', ['can you make my agent better at this', 'improve this agent on refunds', 'tune its effort']],
   ])('shouldNameThePhrasesThatReach%s', (name, phrases) => {
@@ -85,7 +91,7 @@ describe('workflow skill activation triggers', () => {
 
   it('shouldKeepEachSetOfTriggerPhrasesOutOfTheOtherSkills', () => {
     expect(descriptionFor('manage-experiments')).not.toContain('run my tests')
-    expect(descriptionFor('run-tests')).not.toContain('what experiments do I have')
+    expect(descriptionFor('run-evaluations')).not.toContain('what experiments do I have')
     expect(descriptionFor('optimize-harness')).not.toContain('did my last test pass')
   })
 })
@@ -99,7 +105,7 @@ describe('manage-experiments guidance', () => {
     expect(instructions).toContain('read saved cases and evaluator details')
     expect(instructions).toContain('partial page is the whole experiment')
     expect(instructions).toContain('strands_dev_evaluators')
-    expect(instructions).toContain('must not trigger generation, a test, or optimization')
+    expect(instructions).toContain('must not trigger generation, an evaluation, or optimization')
   })
 
   it('shouldAllowOnlyRequestedFileEditsAndNeverInventManagementTools', () => {
@@ -113,34 +119,34 @@ describe('manage-experiments guidance', () => {
   })
 })
 
-describe('run-tests guidance', () => {
-  const instructions = instructionsFor('run-tests')
+describe('run-evaluations guidance', () => {
+  const instructions = instructionsFor('run-evaluations')
 
   it('shouldTestTheCurrentRuntimeAgentWithoutChangingSourceOrChoosingAGenerator', () => {
     expect(instructions).toContain('current authored agent through its SDK-configured runtime')
     expect(instructions).toContain('not a separate generator provider or the chat assistant')
-    expect(instructions).toContain('Testing leaves the agent source unchanged')
+    expect(instructions).toContain('An evaluation leaves the agent source unchanged')
     expect(instructions).toContain('scoring may also call models')
     expect(instructions).toContain('rather than asking the developer to configure a generator model')
   })
 
   it('shouldSupportSingleAndBatchRunsWithGuardedFailedOnlySelection', () => {
-    expect(instructions).toContain('strands_dev_test with {experiment, failedOnly?}')
+    expect(instructions).toContain('strands_dev_evaluate with {experiment, failedOnly?}')
     expect(instructions).toContain('{experiments: string[], failedOnly?}')
     expect(instructions).toContain('Use one selector, not both')
     expect(instructions).toContain('prior failures exist in a finished run for each selected experiment')
-    expect(instructions).toContain('check strands_dev_test_results first')
+    expect(instructions).toContain('check strands_dev_evaluation_results first')
     expect(instructions).toContain('ask before substituting a paid full run')
     expect(instructions).toContain('Do not silently expand a failed-only request to all cases')
   })
 
   it('shouldReadExistingResultsWithoutRerunningOrClaimingTurnCancellationStopsTests', () => {
-    expect(instructions).toContain('strands_dev_test_results with {experiment, offset?, limit?}')
+    expect(instructions).toContain('strands_dev_evaluation_results with {experiment, offset?, limit?}')
     expect(instructions).toContain('without rerunning anything')
     expect(instructions).toContain('page through case results as needed')
-    expect(instructions).toContain('inspect results is not permission to rerun tests')
-    expect(instructions).toContain('test may continue after the developer cancels the chat turn')
-    expect(instructions).toContain('Do not claim that cancelling a turn stopped the test')
+    expect(instructions).toContain('inspect results is not permission to rerun evaluations')
+    expect(instructions).toContain('evaluation may continue after the developer cancels the chat turn')
+    expect(instructions).toContain('Do not claim that cancelling a turn stopped the evaluation')
     expect(instructions).not.toContain('strands_dev_cancel_test')
   })
 
@@ -163,7 +169,7 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('OutputEvaluator, Contains, Equals, and StartsWith')
     expect(instructions).toContain('Optimization of a Python agent also scores trajectory and tool-use evaluators')
     expect(instructions).toContain('do not silently remove evaluators or rewrite the experiment')
-    expect(instructions).toContain('do not require or start a separate paid baseline test')
+    expect(instructions).toContain('do not require or start a separate paid baseline evaluation')
   })
 
   it('shouldLimitTuningToSupportedKnobsAndExplainCostsWithoutPromisingImprovement', () => {

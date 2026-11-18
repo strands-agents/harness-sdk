@@ -266,7 +266,7 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     announce(
       this.host(),
       'success',
-      'evals UI ready · press o in /experiment, /test, or /optimize to open it in a browser'
+      'evals UI ready · press o in /experiment, /evaluate, or /optimize to open it in a browser'
     )
   }
 
@@ -276,7 +276,7 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     announce(
       this.host(),
       'error',
-      `evals UI unavailable · ${detail} · press o in /experiment, /test, or /optimize to retry`
+      `evals UI unavailable · ${detail} · press o in /experiment, /evaluate, or /optimize to retry`
     )
   }
 }

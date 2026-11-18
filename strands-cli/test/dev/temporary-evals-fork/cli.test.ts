@@ -134,7 +134,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     const spawnTests = reportingTests({ overall_score: 0.5, test_passes: passes })
 
     const exit = await runTemporaryDevCommand(
-      parseArgs(['dev', 'test', 'support']),
+      parseArgs(['dev', 'evaluate', 'support']),
       { stdout: stdout.stream, stderr: stderr.stream },
       {
         openWorkspace: async () => opened(workspace),
@@ -156,7 +156,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     const spawnTests = reportingTests({ overall_score: 0, test_passes: [false] })
 
     await runTemporaryDevCommand(
-      parseArgs(['dev', 'test', 'support', '--workspace', '/work/desk']),
+      parseArgs(['dev', 'evaluate', 'support', '--workspace', '/work/desk']),
       { stdout: stdout.stream, stderr: captured().stream },
       {
         openWorkspace: async () => opened(workspace),
@@ -181,7 +181,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     }
 
     await runTemporaryDevCommand(
-      parseArgs(['dev', 'test', 'support']),
+      parseArgs(['dev', 'evaluate', 'support']),
       { stdout: captured().stream, stderr: stderr.stream },
       {
         openWorkspace: async () => opened(workspace),
@@ -208,7 +208,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     const stderr = captured()
 
     const exit = await runTemporaryDevCommand(
-      parseArgs(['dev', 'test', 'support']),
+      parseArgs(['dev', 'evaluate', 'support']),
       { stdout: captured().stream, stderr: stderr.stream },
       {
         openWorkspace: async () => opened(workspace),
@@ -219,7 +219,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     )
 
     expect(exit).toBe(0)
-    expect(stderr.text()).toMatch(/warning: \/test cannot show this result: .+ is not a usable test report/u)
+    expect(stderr.text()).toMatch(/warning: \/evaluate cannot show this result: .+ is not a usable evaluation report/u)
     expect(existsSync(join(workspace.directory!, 'experiments/support/.state/latest.json'))).toBe(false)
   })
 })

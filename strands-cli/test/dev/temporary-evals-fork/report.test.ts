@@ -69,7 +69,7 @@ const writeRunReport = async (home: string, content: unknown, stamp = STAMP): Pr
 
 const writeReport = async (content: unknown): Promise<string> => writeRunReport(await experimentHome(), content)
 
-describe('TEMPORARY test report', () => {
+describe('TEMPORARY evaluation report', () => {
   it('shouldGroupTheVerdictsByCaseWhenTheReportHasSeveralEvaluators', async () => {
     const path = await writeReport(report(ROWS, 0.375))
 
@@ -189,7 +189,10 @@ describe('TEMPORARY test report', () => {
     const path = content === undefined ? join(await temporaryDirectory(), 'missing.json') : await writeReport(content)
 
     await expect(readTemporaryTestResults(path, RUN)).rejects.toThrow(
-      new RegExp(`^${literal(path)} is not a usable test report \\(.*${detail}.*\\)\\. Run the test again\\.$`, 'u')
+      new RegExp(
+        `^${literal(path)} is not a usable evaluation report \\(.*${detail}.*\\)\\. Run the evaluation again\\.$`,
+        'u'
+      )
     )
   })
 })
@@ -207,7 +210,7 @@ const rememberRun = async (home: string, content: unknown, stamp: string, only?:
   return rememberTemporaryTestResults(home, await readTemporaryTestResults(path, RUN), only)
 }
 
-describe('TEMPORARY last test run', () => {
+describe('TEMPORARY last evaluation run', () => {
   it('shouldReadTheRememberedResultsWhenTheExperimentRanBefore', async () => {
     const home = await experimentHome()
     const results = await readTemporaryTestResults(await writeRunReport(home, report(ROWS)), RUN)
@@ -319,7 +322,7 @@ describe('TEMPORARY last test run', () => {
 
     await expect(readTemporaryLatestTestResults(home)).rejects.toThrow(
       new RegExp(
-        `^${literal(latestRecord(home))} is not a usable record of the last test run \\(.*${detail}.*\\)\\. Run the test again\\.$`,
+        `^${literal(latestRecord(home))} is not a usable record of the last evaluation run \\(.*${detail}.*\\)\\. Run the evaluation again\\.$`,
         'u'
       )
     )
@@ -331,7 +334,7 @@ describe('TEMPORARY last test run', () => {
     await rm(latestReport(home))
 
     await expect(readTemporaryLatestTestResults(home)).rejects.toThrow(
-      `${latestReport(home)} is not a usable test report`
+      `${latestReport(home)} is not a usable evaluation report`
     )
   })
 })

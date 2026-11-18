@@ -1,6 +1,6 @@
 import { Command } from 'commander'
 
-export type TemporaryDevCommandName = 'optimize' | 'test'
+export type TemporaryDevCommandName = 'optimize' | 'evaluate'
 
 export interface TemporaryDevCommandArguments {
   name: TemporaryDevCommandName
@@ -14,13 +14,13 @@ const DESCRIPTIONS: Record<TemporaryDevCommandName, string> = {
     'Experimental: tune the dev workspace agent against an experiment in strands-dev/experiments with ' +
     'strands-evals optimize run from the evals fork. Flags after -- go to strands-evals optimize run. ' +
     '--max-iterations 0 measures only the baseline.',
-  test:
+  evaluate:
     'Experimental: run the dev workspace agent on an experiment in strands-dev/experiments with strands-evals run ' +
     "from the evals fork, and save the report in the experiment's runs folder. Flags after -- go to strands-evals run.",
 }
 
 export const isTemporaryDevCommand = (name: string | undefined): name is TemporaryDevCommandName =>
-  name === 'optimize' || name === 'test'
+  name === 'optimize' || name === 'evaluate'
 
 export const parseTemporaryDevCommandArguments = (
   name: TemporaryDevCommandName,
