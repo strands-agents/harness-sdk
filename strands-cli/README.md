@@ -424,7 +424,7 @@ If the evals UI cannot start, the chat continues to work. A message gives the ca
 The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
 
 **Temporary dependency:** the evaluation workflow installs `strands-agents-evals[optimization]` from the pinned
-[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/909f57b4582466b73606d0a5064029509eca2bd3)
+[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/5a41cdabe8090bad9f5200a03039c1beeca0cb68)
 in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
 
 Dev installs the fork one time for each fork commit and Python version, in `~/.strands/temporary-evals/`. All workspaces share that environment.
