@@ -81,7 +81,7 @@ class _BackgroundTasks(Plugin):
         self._tasks_lock = threading.Lock()
         super().__init__()
         self._manage_tool = tool(
-            name=config.get("tool_name", _MANAGE_TOOL_NAME),
+            name=config.get("management_tool_name", _MANAGE_TOOL_NAME),
             description=(
                 "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
                 "Do not poll for results."

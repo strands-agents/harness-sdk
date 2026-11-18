@@ -4,8 +4,8 @@ import type { ToolResultContentData } from '../types/messages.js'
 
 /** Configures background tool execution. */
 export interface BackgroundTasksConfig {
-  /** Name of the management tool. Defaults to `strands_manage_background_task`. */
-  readonly toolName?: string
+  /** Unique management tool name. Defaults to `strands_manage_background_task`. */
+  readonly managementToolName?: string
   /** Wait for background work before an invocation returns. Defaults to `true`. */
   readonly waitForCompletion?: boolean
   /** Tools or registered tool names whose execution mode is selected by the model. Defaults to `['*']`. */

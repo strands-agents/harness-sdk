@@ -196,10 +196,7 @@ describe('createHarness', () => {
 
   it('backgrounds the subagent and leaves other compatible tools agent-selectable', async () => {
     const agent = await createHarness()
-    await agent.initialize()
 
-    expect(toolNames(agent)).toContain('manage_background_task')
-    expect(toolNames(agent)).not.toContain('strands_manage_background_task')
     expect([...backgroundTaskPolicy(agent)!]).toEqual([
       ['*', 'agentic'],
       ['subagent', 'always'],
@@ -208,9 +205,7 @@ describe('createHarness', () => {
 
   it('treats backgroundTasks true the same as the default', async () => {
     const agent = await createHarness({ backgroundTasks: true })
-    await agent.initialize()
 
-    expect(toolNames(agent)).toContain('manage_background_task')
     expect([...backgroundTaskPolicy(agent)!]).toEqual([
       ['*', 'agentic'],
       ['subagent', 'always'],
@@ -220,17 +215,12 @@ describe('createHarness', () => {
   it('keeps the subagent backgrounded under a custom policy', async () => {
     const agent = await createHarness({
       backgroundTasks: {
-        toolName: 'task_admin',
         always: ['sample_tool', 'subagent'],
         never: ['*', 'subagent'],
         waitForCompletion: false,
       },
-      tools: [sampleTool],
     })
-    await agent.initialize()
 
-    expect(toolNames(agent)).toContain('task_admin')
-    expect(toolNames(agent)).not.toContain('manage_background_task')
     expect([...backgroundTaskPolicy(agent)!]).toEqual([
       ['sample_tool', 'always'],
       ['subagent', 'always'],

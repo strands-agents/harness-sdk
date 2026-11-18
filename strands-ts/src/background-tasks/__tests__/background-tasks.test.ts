@@ -32,7 +32,11 @@ describe('BackgroundTasks', () => {
     const model = new MockMessageModel()
       .addTurn({ type: 'toolUseBlock', name: toolName, toolUseId: 'management-use', input: { mode: 'list' } })
       .addTurn({ type: 'textBlock', text: 'Listed.' })
-    const agent = new Agent({ model, backgroundTasks: { toolName, always: ['*'] }, printer: false })
+    const agent = new Agent({
+      model,
+      backgroundTasks: { managementToolName: toolName, always: ['*'] },
+      printer: false,
+    })
 
     await agent.invoke('List tasks.')
 
@@ -65,7 +69,7 @@ describe('BackgroundTasks', () => {
     const agent = new Agent({
       model,
       tools: [work],
-      backgroundTasks: { toolName, agentic: [work] },
+      backgroundTasks: { managementToolName: toolName, agentic: [work] },
       printer: false,
     })
     let toolSpecs: readonly ToolSpec[] | undefined

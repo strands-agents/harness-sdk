@@ -148,7 +148,7 @@ async def test_management_tool_name_controls_foreground_calls() -> None:
         model=MockedModelProvider(
             [_assistant_tool_use(tool_name, "management-use", {"mode": "list"}), _assistant_text("Listed.")]
         ),
-        background_tasks={"tool_name": tool_name, "always": ["*"]},
+        background_tasks={"management_tool_name": tool_name, "always": ["*"]},
         callback_handler=None,
     )
 
@@ -403,7 +403,10 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
         ]
     )
     agent = Agent(
-        model=model, tools=[work], background_tasks={"tool_name": tool_name, "agentic": [work]}, callback_handler=None
+        model=model,
+        tools=[work],
+        background_tasks={"management_tool_name": tool_name, "agentic": [work]},
+        callback_handler=None,
     )
     tool_specs = _capture_tool_specs(agent)
     middleware_calls = 0

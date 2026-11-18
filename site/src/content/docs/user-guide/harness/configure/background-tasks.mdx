@@ -3,8 +3,6 @@ title: Run work in the background
 description: "Strands harness runs the generalist in the background and lets the model run other tools there too. Tune or disable that with backgroundTasks."
 sourceLinks:
   - path: harness-ts/src/agent.ts
-  - path: strands-py/src/strands/background_tasks/_types.py
-  - path: strands-ts/src/background-tasks/types.ts
 sidebar:
   label: "Run work in the background"
 ---
@@ -42,14 +40,6 @@ const scoped = await createHarness({
 
 The default policy is equivalent to `{ agentic: ['*'] }`: the model may run any compatible
 tool in the background.
-
-## Choose the management tool name
-
-Strands harness uses `manage_background_task` by default. To keep the old
-name, set <Syntax py="background_tasks.tool_name" ts="backgroundTasks.toolName" /> to
-`"strands_manage_background_task"`. Direct SDK agents retain that default.
-The selected name applies to tool calls and automatic completion records. Update any
-checks that depend on the name when upgrading the harness.
 
 ## The CLI
 

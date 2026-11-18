@@ -14,7 +14,7 @@ class BackgroundTasksConfig(TypedDict, total=False):
     """Configure background tool execution.
 
     Attributes:
-        tool_name: Name of the management tool. Defaults to ``strands_manage_background_task``.
+        management_tool_name: Unique management tool name. Defaults to ``strands_manage_background_task``.
         wait_for_completion: Wait for background work before an invocation returns. Defaults to True.
         agentic: Tools or registered tool names whose execution mode is selected by the model.
             Defaults to ``["*"]``.
@@ -24,7 +24,7 @@ class BackgroundTasksConfig(TypedDict, total=False):
         timeout: Per-execution timeout in seconds. Defaults to infinity.
     """
 
-    tool_name: str
+    management_tool_name: str
     wait_for_completion: bool
     agentic: Sequence[AgentTool | str]
     always: Sequence[AgentTool | str]
