@@ -10,6 +10,7 @@ import type { JSONSchema, JSONValue } from '../types/json.js'
 import type { ToolChoice } from '../tools/types.js'
 import type { ModelInfo } from './model-info.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
+import { normalizeError } from '../errors.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { childSchemas, isRecord, type SchemaNode } from './strict-schema.js'
@@ -224,6 +225,17 @@ function unsupportedMechanisms(
 
 function modelKey(provider: string, modelId: string): string {
   return `${provider}:${modelId}`
+}
+
+/**
+ * The provider's error text. The Anthropic SDK's error message is the JSON-encoded response body, which escapes
+ * quotes in the text, so the body's own message is read when present.
+ *
+ * @internal
+ */
+export function apiErrorMessage(error: unknown): string {
+  const message = (error as { error?: { error?: { message?: unknown } } }).error?.error?.message
+  return typeof message === 'string' ? message : normalizeError(error).message
 }
 
 /**

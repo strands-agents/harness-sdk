@@ -166,6 +166,16 @@ export function notApplicableReason(conformanceCase: ConformanceCase, modelInfo:
 // HTTP statuses that mean the provider could not serve the call, which says nothing about the case.
 const PROVIDER_ERROR_STATUSES = new Set([401, 403, 404, 408, 429])
 
+// The HTTP status a vendor SDK error carries, on the error or one of its causes.
+function httpStatus(error: unknown): number | undefined {
+  for (let current = error; current instanceof Error; current = current.cause) {
+    const { status, $metadata } = current as { status?: unknown; $metadata?: { httpStatusCode?: unknown } }
+    const found = [status, $metadata?.httpStatusCode].find((value) => typeof value === 'number')
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
 /**
  * Why a failure is the provider's (throttling, credentials, an outage, a model that is not served), or undefined
  * when the failure is a verdict on the case.
@@ -176,13 +186,24 @@ const PROVIDER_ERROR_STATUSES = new Set([401, 403, 404, 408, 429])
 export function providerErrorReason(error: unknown): string | undefined {
   for (let current = error; current instanceof Error; current = current.cause) {
     if (current instanceof ModelThrottledError) return current.name
-    const { status, $metadata } = current as { status?: unknown; $metadata?: { httpStatusCode?: unknown } }
-    const httpStatus = [status, $metadata?.httpStatusCode].find((value) => typeof value === 'number')
-    if (httpStatus !== undefined && (PROVIDER_ERROR_STATUSES.has(httpStatus) || httpStatus >= 500)) {
-      return `${current.name} (HTTP ${httpStatus})`
-    }
+  }
+  const status = httpStatus(error)
+  if (status !== undefined && (PROVIDER_ERROR_STATUSES.has(status) || status >= 500)) {
+    return `${error instanceof Error ? error.name : 'Error'} (HTTP ${status})`
   }
   return undefined
+}
+
+/**
+ * Whether another attempt cannot change the outcome: the provider rejected the request with a 4xx that is neither a
+ * timeout nor a throttle, as it does for bad credentials, a model it does not serve, or an unsupported request.
+ *
+ * @param error - What the case threw
+ * @returns True when retrying is pointless
+ */
+export function willNotClear(error: unknown): boolean {
+  const status = httpStatus(error)
+  return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429
 }
 
 /**

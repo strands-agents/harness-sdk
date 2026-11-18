@@ -14,6 +14,7 @@ import {
 } from '../models/model.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import {
+  apiErrorMessage,
   handleRejectedMechanism,
   structuredOutputMechanisms,
   toNativeOutputSchema,
@@ -173,17 +174,6 @@ function withNativeOutput(
 /** Whether the request forces a tool call, which rules thinking out. */
 function isToolForced(request: Anthropic.MessageStreamParams): boolean {
   return request.tool_choice?.type === 'any' || request.tool_choice?.type === 'tool'
-}
-
-/**
- * The provider's error text. The SDK's error message is the JSON-encoded response body, which escapes quotes in the
- * text, so the body's own message is read when present.
- *
- * @internal
- */
-export function apiErrorMessage(error: unknown): string {
-  const message = (error as { error?: { error?: { message?: unknown } } }).error?.error?.message
-  return typeof message === 'string' ? message : normalizeError(error).message
 }
 
 /**

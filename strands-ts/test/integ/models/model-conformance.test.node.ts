@@ -3,8 +3,7 @@ import { z } from 'zod'
 import { Agent, Message, TextBlock } from '@strands-agents/sdk'
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 import { lookupModelInfo } from '$/sdk/models/model-info.js'
-import { apiErrorMessage } from '$/sdk/models/anthropic.js'
-import { isUnsupportedMechanismMessage } from '$/sdk/models/native-output.js'
+import { apiErrorMessage, isUnsupportedMechanismMessage } from '$/sdk/models/native-output.js'
 import { ContextInjector } from '$/sdk/vended-plugins/context-injector/index.js'
 
 import {
@@ -19,6 +18,7 @@ import {
   providerErrorReason,
   providers,
   recordResult,
+  willNotClear,
   targets,
 } from '../__fixtures__/conformance.js'
 import { echoTool, hasToolUse } from '../__fixtures__/test-helpers.js'
@@ -218,19 +218,17 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
     const stale = (problem: string): Error =>
       new Error(`known failure #${known?.issue} ${problem}; remove it from knownFailures in shared/conformance.json`)
 
-    // A provider can be unavailable for a short while, so an error gets three attempts half a minute apart. A
-    // failed assertion is the case's verdict and is retried only for the cases named above. Slow reasoning
-    // models get a longer timeout.
-    const options = {
-      timeout: 180_000,
-      retry: {
-        count: 2,
-        delay: 30_000,
-        condition: (error: { name?: string }) => error.name !== 'AssertionError' || retriesAssertions.has(caseId),
-      },
+    // A provider can be unavailable for a short while, so an error that may clear gets three attempts half a
+    // minute apart. One that will not clear is not retried, and a failed assertion, the case's verdict, is retried
+    // only for the cases named above.
+    const mayPassOnRetry = (error: unknown): boolean => {
+      const isVerdict = error instanceof Error && error.name === 'AssertionError'
+      return isVerdict ? retriesAssertions.has(caseId) : !willNotClear(error)
     }
-    it(caseId, options, async (ctx) => {
-      // Recorded when the attempt finishes, so a timeout or a throw before the case body still leaves a record.
+
+    // The attempts happen inside the test, so vitest's own retry is off. Slow reasoning models need the long timeout.
+    it(caseId, { timeout: 600_000, retry: 0 }, async (ctx) => {
+      // Recorded when the test finishes, so a timeout or a throw before the case body still leaves a record.
       let status: ConformanceStatus = 'failed'
       let reason: string | undefined
       ctx.onTestFinished(() => recordResult(target, caseId, status, reason))
@@ -249,15 +247,18 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
       if (known && notApplicable) throw stale(`no longer applies (${notApplicable})`)
       if (!run || notApplicable) return skip('not-applicable', notApplicable)
 
-      try {
-        await run({ modelId: target.model, model, create: (config) => provider!.create(target.model, config) })
-        status = 'passed'
-      } catch (error) {
-        reason = providerErrorReason(error)
-        if (reason) status = 'error'
-        // Only the tracked failure is expected. Any other error on a known failure still fails the run.
-        if (known && isTrackedFailure(known, error)) return
-        throw error
+      for (let attempt = 1; status !== 'passed'; attempt++) {
+        try {
+          await run({ modelId: target.model, model, create: (config) => provider!.create(target.model, config) })
+          status = 'passed'
+        } catch (error) {
+          reason = providerErrorReason(error)
+          status = reason ? 'error' : 'failed'
+          // Only the tracked failure is expected. Any other error on a known failure still fails the run.
+          if (known && isTrackedFailure(known, error)) return
+          if (attempt === 3 || !mayPassOnRetry(error)) throw error
+          await new Promise((resolve) => setTimeout(resolve, 30_000))
+        }
       }
       if (known && !known.intermittent) throw stale('now passes')
     })
