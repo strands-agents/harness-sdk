@@ -36,7 +36,7 @@ import { logger } from '../../logging/logger.js'
  * Builds the Strands error for each recognized Google error type.
  */
 const GOOGLE_ERROR_FACTORIES: Record<GoogleErrorType, (error: Error) => Error> = {
-  contextOverflow: (error) => new ContextWindowOverflowError(error.message),
+  contextOverflow: (error) => new ContextWindowOverflowError(error.message, { cause: error }),
   throttling: (error) => new ModelThrottledError(error.message, { cause: error }),
   network: (error) => new ModelNetworkError(error.message, { cause: error }),
 }

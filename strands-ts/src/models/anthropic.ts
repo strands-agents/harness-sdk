@@ -702,7 +702,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
     const lowered = error.message.toLowerCase()
     if (CONTEXT_WINDOW_OVERFLOW_ERRORS.some((msg) => lowered.includes(msg))) {
-      return new ContextWindowOverflowError(error.message)
+      return new ContextWindowOverflowError(error.message, { cause: error })
     }
 
     const err = unknownError as Error & { status?: number; type?: string }
