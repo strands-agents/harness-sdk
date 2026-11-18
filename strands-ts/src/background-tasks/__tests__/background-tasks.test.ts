@@ -17,11 +17,9 @@ import type { BackgroundTask } from '../types.js'
 
 const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 
-function deliveries(agent: Agent): ToolUseBlock[] {
+function deliveries(agent: Agent, toolName = 'strands_manage_background_task'): ToolUseBlock[] {
   const blocks = agent.messages.flatMap((message) => message.content)
-  return blocks.filter(
-    (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === 'strands_manage_background_task'
-  )
+  return blocks.filter((block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === toolName)
 }
 
 function persistedTasks(agent: Agent): BackgroundTask[] | undefined {
@@ -29,7 +27,30 @@ function persistedTasks(agent: Agent): BackgroundTask[] | undefined {
 }
 
 describe('BackgroundTasks', () => {
+  it('registers the custom management tool name and runs its calls in the foreground', async () => {
+    const toolName = 'manage_background_task'
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: toolName, toolUseId: 'management-use', input: { mode: 'list' } })
+      .addTurn({ type: 'textBlock', text: 'Listed.' })
+    const agent = new Agent({
+      model,
+      backgroundTasks: { manageToolName: toolName, always: ['*'] },
+      printer: false,
+    })
+
+    await agent.invoke('List tasks.')
+
+    expect(agent.tools.map((tool) => tool.name)).toEqual([toolName])
+    expect(agent.messages.flatMap((message) => message.content)).toContainEqual({
+      type: 'toolResultBlock',
+      toolUseId: 'management-use',
+      status: 'success',
+      content: [{ type: 'jsonBlock', json: { tasks: [] } }],
+    })
+  })
+
   it('dispatches selected calls through the normal tool pipeline and delivers their results', async () => {
+    const toolName = 'task_admin'
     const work = tool({
       name: 'work',
       description: 'Perform work.',
@@ -48,7 +69,7 @@ describe('BackgroundTasks', () => {
     const agent = new Agent({
       model,
       tools: [work],
-      backgroundTasks: { agentic: [work] },
+      backgroundTasks: { manageToolName: toolName, agentic: [work] },
       printer: false,
     })
     let toolSpecs: readonly ToolSpec[] | undefined
@@ -75,10 +96,10 @@ describe('BackgroundTasks', () => {
     expect(toolSpecs?.find((spec) => spec.name === 'work')?.inputSchema?.properties).toHaveProperty(
       '_background_execution'
     )
-    const [delivery] = deliveries(agent)
+    const [delivery] = deliveries(agent, toolName)
     expect(delivery).toEqual({
       type: 'toolUseBlock',
-      name: 'strands_manage_background_task',
+      name: toolName,
       toolUseId: expect.any(String),
       input: { mode: 'get', taskId: delivery!.toolUseId },
     })
@@ -382,6 +403,45 @@ describe('BackgroundTasks', () => {
       content: inspected.content,
     })
     expect(persistedTasks(restored)).toBeUndefined()
+  })
+
+  it('stops waiting for running tasks when the invocation is cancelled', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const work = tool({
+      name: 'work',
+      description: 'Perform deferred work.',
+      inputSchema: z.object({}),
+      callback: async () => {
+        await released
+        return 'done'
+      },
+    })
+    const abort = tool({
+      name: 'abort',
+      description: 'Cancel the invocation.',
+      inputSchema: z.object({}),
+      callback: (_input, context) => {
+        context!.agent.cancel()
+        return 'aborting'
+      },
+    })
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'work', toolUseId: 'work-use', input: { _background_execution: true } },
+        { type: 'toolUseBlock', name: 'abort', toolUseId: 'abort-use', input: {} },
+      ])
+      .addTurn({ type: 'textBlock', text: 'unreachable' })
+    const agent = new Agent({ model, tools: [work, abort], backgroundTasks: {}, printer: false })
+
+    const result = await agent.invoke('Run work.')
+
+    expect(result.stopReason).toBe('cancelled')
+    expect(persistedTasks(agent)![0]!.status).toBe('working')
+    release()
+    await expect.poll(() => persistedTasks(agent)![0]!.status).toBe('completed')
   })
 
   it('fails interrupted work restored from appState', async () => {

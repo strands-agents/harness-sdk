@@ -18,6 +18,8 @@ from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._native_output import with_schema_instructions
 from ._validation import (
     _has_location_source,
     _log_skipped_blocks,
@@ -104,6 +106,15 @@ class OllamaModel(Model):
         """
         validate_config_keys(model_config, self.OllamaConfig)
         self.config.update(model_config)
+
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        Ollama has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @override
     def get_config(self) -> OllamaConfig:
@@ -398,8 +409,11 @@ class OllamaModel(Model):
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
         """
-        formatted_request = self.format_request(messages=prompt, system_prompt=system_prompt)
-        formatted_request["format"] = output_model.model_json_schema()
+        schema = output_model.model_json_schema()
+        formatted_request = self.format_request(
+            messages=prompt, system_prompt=with_schema_instructions(system_prompt, schema)
+        )
+        formatted_request["format"] = schema
         formatted_request["stream"] = False
 
         client = ollama.AsyncClient(self.host, **self.client_args)

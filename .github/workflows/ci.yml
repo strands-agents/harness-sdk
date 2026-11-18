@@ -39,10 +39,13 @@ jobs:
           filters: |
             python:
               - 'strands-py/**/!(*.md)'
+              # Data both SDKs copy into their packages at build.
+              - 'shared/**/!(*.md)'
               - '.github/workflows/python-*'
               - '.github/workflows/ci.yml'
             typescript:
               - 'strands-ts/**/!(*.md)'
+              - 'shared/**/!(*.md)'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/typescript-*'
@@ -67,10 +70,12 @@ jobs:
             strands-py-src:
               - 'strands-py/src/**/!(*.md)'
               - 'strands-py/pyproject.toml'
+              - 'shared/**/!(*.md)'
             strands-ts-src:
               - 'strands-ts/src/**/!(*.md)'
               - 'strands-ts/package.json'
               - 'strands-ts/tsconfig.base.json'
+              - 'shared/**/!(*.md)'
             strands-cli:
               - 'strands-cli/**/!(*.md)'
               - '.github/workflows/harness-cli-*'
@@ -171,8 +176,22 @@ jobs:
     uses: ./.github/workflows/harness-cli-test-lint.yml
     permissions:
       contents: read
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  cli-tui-integration:
+    name: Strands CLI TUI Integration
+    needs: detect-changes
+    if: needs.detect-changes.outputs.strands-cli == 'true'
+    uses: ./.github/workflows/harness-cli-tui-integration-test.yml
+    permissions:
+      contents: read
+
+  cli-package:
+    name: Strands CLI Package
+    needs: detect-changes
+    if: needs.detect-changes.outputs.strands-cli == 'true'
+    uses: ./.github/workflows/harness-cli-test-package-pack.yml
+    permissions:
+      contents: read
 
   pr-metrics:
     name: PR Metrics Scripts
@@ -208,7 +227,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - name: Install publisher dependencies
@@ -216,19 +235,34 @@ jobs:
       - run: python -m pytest .github/scripts -q
       - name: Lint
         run: |
-          ruff check .github/scripts/*.py test-infra/dashboards/generate.py
-          ruff format --check .github/scripts/upload-integ-test-metrics.py .github/scripts/test_upload_integ_test_metrics.py test-infra/dashboards/generate.py
+          ruff check .github/scripts/*.py test-infra/dashboards/*.py
+          ruff format --check .github/scripts/upload-integ-test-metrics.py .github/scripts/test_upload_integ_test_metrics.py test-infra/dashboards/generate.py test-infra/dashboards/check_series.py
       - name: Check dashboards are up to date
         run: python test-infra/dashboards/generate.py --check
 
   ci-gate:
     name: CI Gate
     if: always()
-    needs: [detect-changes, dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics, integ-metrics]
+    needs:
+      [
+        detect-changes,
+        dependency-review,
+        python,
+        typescript,
+        docs,
+        mcp,
+        harness-python,
+        harness-typescript,
+        cli,
+        cli-tui-integration,
+        cli-package,
+        pr-metrics,
+        integ-metrics,
+      ]
     runs-on: strands-agents_ubuntu-latest_4-core
     permissions: {}
     steps:
       - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
         with:
-          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, pr-metrics, integ-metrics
+          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, cli-tui-integration, cli-package, pr-metrics, integ-metrics
           jobs: ${{ toJSON(needs) }}

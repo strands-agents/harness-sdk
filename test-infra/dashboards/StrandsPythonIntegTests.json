@@ -5,7 +5,7 @@
     {
       "type": "text",
       "properties": {
-        "markdown": "## Python integration tests: health and flaky-test triage\n\nEvery completed integration test run publishes one datapoint per test (TestPassed / TestFailed / TestSkipped / TestDuration) from [upload-integ-test-metrics.py](https://github.com/strands-agents/harness-sdk/blob/main/.github/scripts/upload-integ-test-metrics.py). This dashboard is generated from code in [test-infra/dashboards](https://github.com/strands-agents/harness-sdk/tree/main/test-infra/dashboards); edit it there.\n\n**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window (failed executions / all executions, skips count as not failed). 1.00 = failed every run (broken). 0.05-0.95 = flaky. A row showing 0 means no test in that group is inside the band. Tests are split into groups by name token because one widget can only show 500 series.\n\n**Caveats.** Most datapoints come from pull requests, so a PR breaking its own tests shows up here as flakiness; the \"merge queue / main only\" section at the bottom separates the two. Metric math cannot join a \"minimum runs\" filter onto a rate, so read the rate tables together with the \"fewer than 5 runs\" tables. Widgets built on Metrics Insights (SELECT ...) only see the last 14 days whatever the time range says. A test that has not run for 14 days drops out of every table."
+        "markdown": "## Python integration tests: health and flaky-test triage\n\nEvery completed integration test run publishes one datapoint per test (TestPassed / TestFailed / TestSkipped / TestDuration) from [upload-integ-test-metrics.py](https://github.com/strands-agents/harness-sdk/blob/main/.github/scripts/upload-integ-test-metrics.py). This dashboard is generated from code in [test-infra/dashboards](https://github.com/strands-agents/harness-sdk/tree/main/test-infra/dashboards); edit it there.\n\n**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window (failed / (passed + failed); a skipped execution publishes only TestSkipped and does not count). 1.00 = failed every run (broken). 0.05-0.95 = flaky. A row showing 0 means no test in that group is inside the band. Tests are split into groups by name token because one widget can only show 500 series.\n\n**Caveats.** Most datapoints come from pull requests, so a PR breaking its own tests shows up here as flakiness; the \"merge queue / main only\" section at the bottom separates the two. Metric math cannot join a \"minimum runs\" filter onto a rate, so read the rate tables together with the \"fewer than 5 runs\" tables. Widgets built on Metrics Insights (SELECT ...) only see the last 14 days whatever the time range says. A test that has not run for 14 days drops out of every table."
       },
       "x": 0,
       "y": 0,
@@ -94,7 +94,7 @@
     {
       "type": "metric",
       "properties": {
-        "title": "Datapoints published, latest hour (about tests x runs)",
+        "title": "Datapoints published, latest hour (executed tests x runs; skips excluded)",
         "region": "us-east-1",
         "view": "singleValue",
         "period": 3600,
@@ -200,7 +200,7 @@
               "expression": "1 - fr",
               "id": "passing",
               "period": 86400,
-              "label": "1 - failed/(all executions incl. skipped)"
+              "label": "1 - failed/(passed + failed)"
             }
           ]
         ],

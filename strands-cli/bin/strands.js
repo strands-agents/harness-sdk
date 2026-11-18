@@ -21,7 +21,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const BUILD_INPUT_DIRECTORIES = ['strands-cli/src', 'harness-py/src']
+const BUILD_INPUT_DIRECTORIES = ['strands-cli/src']
 const BUILD_INPUT_FILES = [
   'package.json',
   'package-lock.json',
@@ -30,10 +30,6 @@ const BUILD_INPUT_FILES = [
   'strands-cli/scripts/setup-source.js',
   'strands-cli/tsconfig.base.json',
   'strands-cli/src/tsconfig.json',
-  'harness-py/pyproject.toml',
-  'harness-py/README.md',
-  'harness-py/LICENSE',
-  'harness-py/NOTICE',
 ]
 const BUILD_LOCK_TIMEOUT_MS = 120_000
 const BUILD_LOCK_STALE_MS = 300_000

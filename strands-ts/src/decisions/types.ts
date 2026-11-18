@@ -15,8 +15,14 @@ import type { ContentBlock, Message } from '../types/messages.js'
  */
 export type DecisionInput = string | ContentBlock[] | Message[]
 
+/** Per-call options a {@link DecisionModel} implementation receives in `_ask`. */
+export interface DecisionCallOptions {
+  /** Aborts the underlying decision call when signalled. Built-in implementations honor it; the provider decides how promptly the call stops. */
+  cancelSignal?: AbortSignal
+}
+
 /** Per-call options for {@link DecisionModel.ask}. */
-export interface AskOptions {
+export interface AskOptions extends DecisionCallOptions {
   /** The request to add this decision's token usage to, such as a hook event's or tool context's `invocationContext`; the request's limits don't apply to the decision. */
   invocationContext?: InvocationContext
 }
@@ -112,5 +118,13 @@ export interface DecisionResult<Q extends Record<string, Question> = Record<stri
   metadata: {
     /** Time spent in the underlying model call, in milliseconds. */
     latencyMs: number
+    /** Provider that served the decision. */
+    providerName?: string
+    /** Model identifier that served the decision, as reported by the provider, or the requested model when the provider reports none. */
+    modelId?: string
+    /** Per-question probability distributions, keyed by answer value. */
+    probabilities?: { readonly [K in keyof Q]: Readonly<Record<string, number>> }
+    /** Per-question confidence values in `[0.0, 1.0]`. */
+    confidence?: { readonly [K in keyof Q]: number }
   }
 }

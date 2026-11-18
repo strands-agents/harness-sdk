@@ -86,6 +86,12 @@ the same page.
 **SVG files contain geometry and class names only.** No `fill="#…"`, no `style=`, no
 `<style>`, no fonts, no background rect.
 
+The one exception is a diagram that also has to render on its own, outside the site
+(for example a blog figure people open or share directly). It may carry a `dg-bg` rect
+and a `<style>` of fallback colors, with every selector wrapped in `:where(.<name> …)`
+so it has zero specificity and `diagrams.css` always wins on the site.
+`redteam-judge-vs-tool-check.svg` is the example.
+
 ## Classes
 
 | Class | Use |
@@ -98,6 +104,8 @@ the same page.
 | `dg-node is-event` | Lifecycle event chip: one event name per chip in a centered `dg-code` (baseline `y + 18`), 28px tall, or 44px with a `dg-sub` qualifier inside (baseline `y + 34`). Same width for every chip in a diagram; stack them 12px apart inside a stage `dg-zone`. Tinted so it never reads as a zone |
 | `dg-zone` | Grouping region: "these belong together", a scope, a phase band |
 | `dg-zone is-boundary` | Trust, process, or sandbox boundary (dashed, no fill). A sandbox with nothing drawn inside it can carry a `dg-name` + `dg-sub` directly instead of an eyebrow |
+| `is-danger-text` | Text modifier for an error: a breach or a violation. Red; works on any text class |
+| `dg-bg` | Background rect, only for a diagram that must also render outside the site (see below) |
 | `dg-edge` | Default connector |
 | `dg-edge is-accent` | The headline path, at most one or two per diagram. Pair it with the accent marker |
 | `dg-edge is-dashed` | Returns, async, optional, write-backs, queries to a decision service (a policy engine "ask"), and conditional edges (pair a conditional edge with an `IF …` label). It combines with `is-accent` for a headline conditional path |
@@ -116,6 +124,7 @@ existing `--dg-*` tokens. Don't hard-code a color in the SVG.
 
 ## Color and emphasis
 
+- **Red means an error.** Use `is-danger-text` only for a breach or a violation. It isn't a second accent; green still marks what to look at.
 - **Accent is editorial, not decoration.** Use green on one or two elements only: the
   focal node or the headline path. If you want to accent four things, you haven't
   decided what matters.

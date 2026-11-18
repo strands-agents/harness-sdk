@@ -1,4 +1,5 @@
 import re
+from urllib.parse import urlparse
 
 from .doc_fetcher import Page
 
@@ -45,6 +46,14 @@ def title_from_url(url: str) -> str:
     return slug.title() or "Documentation"
 
 
+def _url_path_words(url: str) -> str:
+    """Return the URL path after the host as words, e.g. "docs user guide evals sdk quickstart"."""
+    parts = urlparse(url).path.split("/")
+    if parts[-1].startswith("index."):
+        parts = parts[:-1]
+    return normalize(" ".join(parts).replace("-", " ").replace("_", " "))
+
+
 def format_display_title(url: str, extracted: str | None, url_titles: dict[str, str]) -> str:
     """Determine the best display title for a document.
 
@@ -77,31 +86,30 @@ def format_display_title(url: str, extracted: str | None, url_titles: dict[str, 
     return normalize(t)
 
 
-def index_title_variants(display_title: str, url: str) -> str:
+def index_title_variants(display_title: str, url: str, description: str = "") -> str:
     """Generate searchable title variants for indexing.
 
     Args:
         display_title: The main display title
         url: Document URL for additional context
+        description: One-line page description from llms.txt, if any
 
     Returns:
-        Space-separated string of title variants for search indexing
+        Space-separated string of title variants, URL path words, and description for search indexing
 
     """
     base = display_title
-    # hyphen/underscore variants from URL slug
-    slug = title_from_url(url)
+    path_words = _url_path_words(url)
 
     # numeric-to-word '2' -> 'to' for cases like Agent2Agent
     variant = re.sub(r"(?i)(\w)2(\w)", r"\1 to \2", base)
     # collapse whitespace
     base = normalize(base)
-    slug = normalize(slug)
     variant = normalize(variant)
 
     # Build a minimal distinct set: avoid obvious duplicates like "Agent Loop" twice
     variants = []
-    for v in (base, variant, slug):
+    for v in (base, variant, path_words, normalize(description)):
         if v and v.lower() not in {x.lower() for x in variants}:
             variants.append(v)
 

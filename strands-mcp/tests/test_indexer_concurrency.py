@@ -325,10 +325,10 @@ class TestBlocker1ConcurrentIndexCorruption:
         assert alpha_df == num_docs, f"doc_frequency corrupted: expected {num_docs}, got {alpha_df}"
 
     def test_concurrent_operations_never_produce_negative_scores(self):
-        """Concurrent add() + update_content() must never produce negative TF-IDF scores.
+        """Concurrent add() + update_content() must never produce negative scores.
 
         Race conditions can lead to corrupted doc_frequency values which could
-        produce unexpected IDF values. TF-IDF scores should always be non-negative.
+        produce unexpected IDF values. Scores should always be non-negative.
         """
         index = indexer.IndexSearch()
 

@@ -42,12 +42,23 @@ MIN_RUNS = 5
 class DashboardSpec:
     sdk: str
     name: str
-    # (label, SEARCH term): disjoint, complete, and < 500 series each. SEARCH tokenizes TestName on
-    # non-alphanumerics, so "models" matches tests_integ.models.* and test/integ/models/*.
+    # (label, SEARCH term): complete and < 450 series each, so the 500-series widget cap holds while renamed tests'
+    # old names stay visible for 14 days. SEARCH tokenizes TestName on non-alphanumerics, so "models" matches
+    # tests_integ.models.* and test/integ/models/*. A name carrying both project tokens appears in both partitions.
     partitions: tuple[tuple[str, str], ...]
     # (label, Leg, SEARCH term) for the nightly tables; every test the nightly run executes is in exactly one cell.
     nightly_partitions: tuple[tuple[str, str, str], ...]
 
+
+TS_PARTITIONS = (
+    ("browser, agent", "browser agent"),
+    ("browser, interventions", "browser interventions NOT agent"),
+    ("browser, other", "browser NOT agent NOT interventions"),
+    ("node, agent", "node agent"),
+    ("node, interventions", "node interventions NOT agent"),
+    ("node, models", "node models NOT agent NOT interventions"),
+    ("node, other", "node NOT agent NOT interventions NOT models"),
+)
 
 SPECS = (
     DashboardSpec(
@@ -65,17 +76,12 @@ SPECS = (
     DashboardSpec(
         sdk="typescript",
         name="StrandsTypescriptIntegTests",
-        partitions=(
-            ("agent", "agent"),
-            ("interventions", "interventions NOT agent"),
-            ("other", "NOT agent NOT interventions"),
-        ),
+        # TestName is `<vitest project>/<file>.<title>`, so `browser` / `node` are the project tokens (integ-browser,
+        # integ-node). `node` also matches *.test.node.ts file names, which is why the node remainder is split once
+        # more on `models` to keep its headroom.
+        partitions=TS_PARTITIONS,
         # TypeScript has a single matrix leg, published as Leg="all".
-        nightly_partitions=(
-            ("agent", "all", "agent"),
-            ("interventions", "all", "interventions NOT agent"),
-            ("other", "all", "NOT agent NOT interventions"),
-        ),
+        nightly_partitions=tuple((label, "all", term) for label, term in TS_PARTITIONS),
     ),
 )
 
@@ -172,7 +178,8 @@ def header(spec: DashboardSpec) -> str:
             f"This dashboard is generated from code in [test-infra/dashboards]({DASHBOARDS_URL}); edit it there.",
             "",
             "**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window "
-            "(failed executions / all executions, skips count as not failed). 1.00 = failed every run (broken). "
+            "(failed / (passed + failed); a skipped execution publishes only TestSkipped and does not count). "
+            "1.00 = failed every run (broken). "
             f"{FLAKY_LOW}-{FLAKY_HIGH} = flaky. A row showing 0 means no test in that group is inside the band. "
             "Tests are split into groups by name token because one widget can only show 500 series.",
             "",
@@ -190,7 +197,7 @@ def last_publish_row(spec: DashboardSpec, layout: Layout) -> None:
         ("Failed, latest hour", "SUM(TestFailed)"),
         ("Passed, latest hour", "SUM(TestPassed)"),
         ("Skipped, latest hour", "SUM(TestSkipped)"),
-        ("Datapoints published, latest hour (about tests x runs)", "COUNT(TestFailed)"),
+        ("Datapoints published, latest hour (executed tests x runs; skips excluded)", "COUNT(TestFailed)"),
     ]
     layout.row(
         [
@@ -227,7 +234,7 @@ def suite_health(spec: DashboardSpec, layout: Layout) -> None:
         f"Share of executions passing per day, last 14 days; {volume_note}",
         [
             expr(insights("AVG(TestFailed)", spec.sdk), "fr", DAY, visible=False),
-            expr("1 - fr", "passing", DAY, label="1 - failed/(all executions incl. skipped)"),
+            expr("1 - fr", "passing", DAY, label="1 - failed/(passed + failed)"),
         ],
         DAY,
         "timeSeries",

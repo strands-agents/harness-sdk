@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 560" width="720" height="560">
+  <!-- Type: flowchart. Story: Box forwards a shipment request only when eligibility was confirmed and no shipment was confirmed for the same order in the last five minutes. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head is-accent" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <text class="dg-name" x="24" y="32">How Box checks a shipment request</text>
+  <text class="dg-sub" x="24" y="56">Both checks use recorded responses for the same order within the last five minutes.</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M248,136 V182" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M380,232 H498" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-accent" d="M248,280 V326" marker-end="url(#arrow-accent)"/>
+  <path class="dg-edge" d="M380,376 H498" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-accent" d="M248,424 V470" marker-end="url(#arrow-accent)"/>
+
+  <!-- Decision labels -->
+  <text class="dg-label" x="440" y="220" text-anchor="middle">NO</text>
+  <text class="dg-label" x="264" y="308">YES</text>
+  <text class="dg-label" x="440" y="364" text-anchor="middle">YES</text>
+  <text class="dg-label" x="264" y="452">NO</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="152" y="88" width="192" height="48" rx="24"/>
+  <polygon class="dg-node" points="248,184 380,232 248,280 116,232"/>
+  <rect class="dg-node" x="500" y="208" width="176" height="48" rx="6"/>
+  <polygon class="dg-node" points="248,328 380,376 248,424 116,376"/>
+  <rect class="dg-node" x="500" y="352" width="176" height="48" rx="6"/>
+  <rect class="dg-node is-input" x="136" y="472" width="224" height="64" rx="32"/>
+
+  <!-- Node labels -->
+  <text class="dg-name" x="248" y="117" text-anchor="middle">Shipment request</text>
+  <text class="dg-name" x="248" y="229" text-anchor="middle">Eligibility</text>
+  <text class="dg-name" x="248" y="247" text-anchor="middle">confirmed?</text>
+  <text class="dg-name" x="588" y="237" text-anchor="middle">Request blocked</text>
+  <text class="dg-name" x="248" y="373" text-anchor="middle">Shipment</text>
+  <text class="dg-name" x="248" y="391" text-anchor="middle">confirmed?</text>
+  <text class="dg-name" x="588" y="381" text-anchor="middle">Request blocked</text>
+  <text class="dg-name" x="248" y="501" text-anchor="middle">Forward request</text>
+  <text class="dg-sub" x="248" y="519" text-anchor="middle">To the order service</text>
+</svg>

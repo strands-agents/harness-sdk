@@ -2,17 +2,25 @@
 # Classifies issues by technical area/subsystem.
 
 instructions: |
-  This is the Strands Agents SDK repository (Python + TypeScript monorepo).
+  This is the Strands Agents monorepo: the Python and TypeScript SDKs (strands-py, strands-ts), Strands harness (harness-py, harness-ts), the strands CLI (strands-cli), the strands-mcp server for coding agents, and the documentation site.
   CI dependency bumps (dependabot, renovate) should be labeled area-community.
   MCP tools should be labeled area-mcp, not area-tool.
   Provider-specific bugs (Bedrock, OpenAI, Anthropic, Gemini, Ollama, etc.) belong to area-model.
   Issues about hook lifecycle events belong to area-hooks even if they mention tools or agents.
-  Guardrails and content filtering belong to area-interventions, not area-hooks.
+  Middleware (agent.add_middleware, stage handlers that wrap model invocation or tool execution) belongs to area-middleware, not area-hooks.
+  Retry configured on the model (ModelRetryStrategy, backoff, retry budgets) belongs to area-model; retry written as a middleware handler belongs to area-middleware.
+  Guardrails, content filtering, steering handlers, and Cedar authorization belong to area-interventions, not area-hooks.
+  DecisionModel issues belong to area-decisions. When a decision model drives another feature (model routing, interventions, tool selection, memory filtering), list area-decisions first and the consuming area second.
+  AgentSkills, Skill loading, and skill sources belong to area-skills, not area-tool. Strands skill bundles and plugins for coding agents (.agents/skills, .claude-plugin, .cursor-plugin, Claude Code, Codex, Cursor) are area-devx, never area-skills.
   Documentation content issues belong to documentation, not area-devx.
-  Anything about adding or updating an integration in the integrations catalog (entries under site/src/content/catalog, the catalog submission process, catalog site pages) belongs to area-catalog; area-catalog takes priority over documentation for catalog entry submissions.
-  Storage backend implementation issues (S3, DynamoDB, file) belong to area-persistence. Session lifecycle and interface issues belong to area-sessions.
-  Context window/token management belongs to area-context.
+  Anything about adding or updating an integration in the integrations catalog (entries under site/src/content/catalog, the catalog submission process, catalog site pages) belongs to area-catalog; area-catalog takes priority over documentation for catalog entry submissions. The model catalog (model IDs, context windows, effort levels) is not area-catalog.
+  Storage backend implementation issues (Storage interface, LocalFileStorage, S3, DynamoDB, file) belong to area-persistence. Session lifecycle and interface issues belong to area-sessions.
+  Context window/token management, ContextManager, ContextInjector, and ContextOffloader belong to area-context. Cross-session recall through MemoryManager or a memory store belongs to area-memory.
   General agent class behavior (invocation, streaming, result handling) belongs to area-agent. Do not assign area-agent merely because an issue mentions "agent"; require evidence it concerns the core agent class itself.
+  Issues scoped to Strands harness (title prefix "Harness:", harness-py, harness-ts, create_harness, createHarness) get area-harness first, then the concrete subsystem. Issues scoped to the strands CLI (title prefix "CLI:", strands-cli, the `strands` command, the terminal UI) get area-cli first, then the concrete subsystem.
+  Requests to move ("uplevel") harness code into the core SDK are core SDK work: list the core area first and area-harness second. Example: "Uplevel the harness web_fetch tool into core vended tools" -> area-tool, then area-harness.
+  area-language is only for new language SDKs beyond Python and TypeScript. Do not use it for issues specific to Python or TypeScript, ports between them ([PORT]), or OS/platform support such as Windows.
+  The Claude Code, Codex, and Cursor plugins for building with Strands belong to area-devx, not area-mcp. The strands-mcp docs server (strands-mcp/) belongs to area-mcp.
   area-community is NOT a catch-all. Use it only for repo health, governance, contributor process, release process, and CI dependency bumps. If no area clearly applies, assign no area label rather than defaulting to area-community.
   area-devx covers how it feels to use the SDK: papercuts, confusing or awkward public APIs, error-message quality, ergonomics, surprising behavior that does not match what a developer would reasonably expect, and usability of the developer-facing interface. It is appropriate even for a specific subsystem when the issue is about that subsystem's public API being confusing, awkward, or surprising to use (as opposed to a clear functional bug in its internal behavior). It is NOT a catch-all for any generic "make it better" request that lacks a concrete usability concern.
   Order matters: list the most important label first, because at most 2 labels are kept. Rank by specificity — concrete feature areas (area-mcp, area-model, area-agent, area-persistence, etc.) come before softer cross-cutting labels (area-devx, area-community) that are not tied to one feature area. When an issue reports a bug in a concrete area, that area takes priority.
@@ -20,48 +28,60 @@ instructions: |
 
 labels:
   area-a2a:
-    description: "Agent-to-Agent protocol, A2AAgent, A2AClient, A2AServer, agent cards, cross-agent communication"
+    description: "Agent-to-Agent protocol, A2AAgent, A2AClient, A2AServer, a2a_client vended tool, agent cards, cross-agent communication"
   area-agent:
-    description: "Core agent class, agent invocation, agent lifecycle, streaming responses, AgentResult, system prompt"
+    description: "Core agent class, agent invocation, agent lifecycle, streaming responses, AgentResult, system prompt, cancellation, stop reasons, turn and token limits"
   area-async:
-    description: "Asynchronous flows, multi-threading, asyncio, concurrent execution, event loops, non-blocking operations"
+    description: "Asynchronous flows, multi-threading, asyncio, concurrent execution, event loops, non-blocking operations, background tasks and background tool execution"
   area-bidirectional-streaming:
     description: "Bidirectional streaming, BidiAgent, real-time audio/video, WebRTC, WebSocket, Bedrock Nova Sonic, Google Gemini Live, OpenAI Realtime, voice agents"
   area-catalog:
     description: "Integrations catalog: entries under site/src/content/catalog, submission process, catalog site pages"
+  area-cli:
+    description: "Strands CLI (strands-cli/, @strands-agents/cli, the `strands` command): terminal chat, TUI rendering, input handling, CLI configuration, authentication, CLI sessions"
   area-community:
     description: "Repo health, governance, contributor guides, release process, and CI dependency bumps. Not a fallback for issues that fit no other area."
   area-config:
-    description: "Config-based agents, agent config files, mcp-config, declarative agent/graph/swarm definitions from YAML"
+    description: "Config-based agents, agent config files, config_to_agent, mcp-config, declarative agent/graph/swarm definitions from YAML"
   area-context:
-    description: "Conversation management, context windows, context reduction, sliding window, token management, compression strategies"
+    description: "Conversation management, context windows, ContextManager, context reduction, compaction, summarization, sliding window, ContextInjector, ContextOffloader, retrieve_context, token management"
+  area-decisions:
+    description: "Decision models: DecisionModel, LLMDecisionModel, System One decision models, decision-gated routing, interventions, and tool selection"
   area-devx:
-    description: "Developer experience: papercuts, confusing or awkward public APIs, error messages, ergonomics, surprising behavior that doesn't match expectations, helper methods, and usability of the SDK's developer-facing interface"
+    description: "Developer experience: papercuts, confusing or awkward public APIs, error messages, ergonomics, surprising behavior that doesn't match expectations, helper methods, usability of the SDK's developer-facing interface, and the coding-agent plugins"
+  area-harness:
+    description: "Strands harness (harness-py/, harness-ts/, strands-harness, @strands-agents/harness): create_harness/createHarness, benchmarked defaults, bundled tools and plugins, model effort levels, harness config"
   area-hil:
-    description: "Human-in-the-loop, interrupt/resume, suspend/resume, approval workflows, callback-based tool execution"
+    description: "Human-in-the-loop, interrupt/resume, suspend/resume, approval workflows, HumanInTheLoop, handoff_to_user, callback-based tool execution"
   area-hooks:
-    description: "Hook events, hook registry, callbacks, lifecycle events, BeforeEvent/AfterEvent, Plugin protocol"
+    description: "Hook events, hook registry, callbacks, lifecycle events, BeforeEvent/AfterEvent, Plugin protocol, @hook decorator, MultiAgentPlugin"
   area-interventions:
-    description: "Guardrails, input/output filtering, content moderation, safety controls, Bedrock Guardrails integration"
+    description: "Interventions, InterventionHandler, guardrails, input/output filtering, content moderation, safety controls, steering handlers, Cedar authorization, Bedrock Guardrails integration"
   area-language:
-    description: "New language SDKs (Ruby, .NET, Rust, Go, etc.) or language-specific development"
+    description: "New language SDKs beyond Python and TypeScript (Ruby, .NET, Rust, Go, etc.)"
   area-mcp:
-    description: "Model Context Protocol, MCP servers, MCP clients, MCP transport, MCP tools, Streamable HTTP"
+    description: "Model Context Protocol in the SDK: MCP clients, MCP transport, MCP tools, mcp_router, Streamable HTTP, and the strands-mcp docs server"
+  area-memory:
+    description: "Cross-session memory: MemoryManager, MemoryStore backends (FileMemoryStore, BedrockKnowledgeBaseStore), memory extraction, memory search/add tools, memory injection"
+  area-middleware:
+    description: "Middleware wrapping agent stages: add_middleware, model invocation and tool execution stages, Input/Wrap/Output phases, retry/cache/short-circuit handlers"
   area-model:
-    description: "Model providers (Bedrock, OpenAI, Anthropic, Gemini, Ollama, LiteLLM, SageMaker, vLLM, Mistral), model config, caching"
+    description: "Model providers (Bedrock, OpenAI, OpenAI Responses, Anthropic, Gemini, Ollama, LiteLLM, SageMaker, vLLM, Mistral, LlamaCpp, Writer, Vercel), model config, caching, thinking and effort levels, model retry strategy, model routing, ModelRouter, fallback"
   area-multiagent:
-    description: "Multi-agent patterns, swarm, graph, orchestrator, agent-as-tool, arena, agent coordination, GraphNode"
+    description: "Multi-agent patterns, swarm, graph, orchestrator, agent-as-tool, subagent vended tool, arena, agent coordination, GraphNode"
   area-otel:
     description: "OpenTelemetry, tracing, metrics, spans, observability, OTLP export, telemetry instrumentation"
   area-persistence:
-    description: "Session storage backends, checkpointing, S3SessionManager, DynamoDB sessions, state serialization"
+    description: "Storage interface and backends (LocalFileStorage, InMemoryStorage, S3Storage), session storage, checkpointing, S3SessionManager, DynamoDB sessions, state serialization"
   area-server:
-    description: "Strands Server, sandbox, runtime container, execution boundaries, credential injection, blast radius"
+    description: "Strands Server, sandboxes (Docker, SSH, POSIX shell, local), runtime container, execution boundaries, path containment, credential injection, blast radius"
   area-sessions:
     description: "Session management, session lifecycle, session ID handling, session state, SessionManager interface"
+  area-skills:
+    description: "AgentSkills plugin, Skill definitions, loading skills from directories, content, or git/HTTPS sources, dynamic skill loading"
   area-structured-output:
-    description: "Structured output API, JSON schema enforcement, Pydantic output models, deterministic response formatting"
+    description: "Structured output API, JSON schema enforcement, Pydantic output models, native structured output, deterministic response formatting"
   area-tool:
-    description: "Tool behavior, tool definitions, tool execution, @tool decorator, tool results, tool validation"
+    description: "Tool behavior, tool definitions, tool execution, @tool decorator, tool results, tool validation, ToolProvider, tool search and selection, vended tools (shell, edit, write, file_editor, http_request, web_fetch, python_repl, notebook, sleep, stop)"
   documentation:
     description: "Documentation changes, improvements, additions, content updates, site improvements, examples, guides"

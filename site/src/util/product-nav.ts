@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { StarlightRouteData } from '@astrojs/starlight/route-data'
 import { getCollection } from 'astro:content'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../sidebar'
 import { pathWithBase } from './links'
@@ -7,6 +8,26 @@ import { pathWithBase } from './links'
 export type ProductNavItem =
   | { type: 'link'; label: string; href: string; external?: boolean }
   | { type: 'group'; label: string; items: ProductNavItem[] }
+
+type SidebarGroup = Extract<StarlightSidebarItem, { items: StarlightSidebarItem[] }>
+
+/** Convert Starlight's normalized route sidebar into the mobile navigation shape. */
+export function normalizedSidebarToProductNav(sidebar: StarlightRouteData['sidebar']): ProductNavItem[] {
+  return sidebar.map((entry) =>
+    entry.type === 'group'
+      ? {
+          type: 'group',
+          label: entry.label,
+          items: normalizedSidebarToProductNav(entry.entries),
+        }
+      : {
+          type: 'link',
+          label: entry.label,
+          href: entry.href,
+          ...(/^https?:\/\//.test(entry.href) && { external: true }),
+        }
+  )
+}
 
 // Built once per build: the nav renders on every page but the tree is static.
 let cached: Promise<StarlightSidebarItem[]> | undefined
@@ -40,20 +61,50 @@ function toNavItem(item: StarlightSidebarItem, labels: Map<string, string>): Pro
   return { type: 'link', label, href: pathWithBase(`/${item.slug}/`) }
 }
 
-function hasSlug(item: StarlightSidebarItem, slug: string): boolean {
-  if ('items' in item) return item.items.some((child) => hasSlug(child, slug))
-  return 'slug' in item && item.slug === slug
+function hasSlugAtOrBelow(item: StarlightSidebarItem, slug: string): boolean {
+  if ('items' in item) return item.items.some((child) => hasSlugAtOrBelow(child, slug))
+  return 'slug' in item && (item.slug === slug || item.slug.startsWith(`${slug}/`))
+}
+
+function findGroupByLabel(
+  items: StarlightSidebarItem[],
+  labels: Set<string>,
+  matches: (group: SidebarGroup) => boolean
+): SidebarGroup | undefined {
+  for (const item of items) {
+    if (!('items' in item)) continue
+    if (labels.has(item.label) && matches(item)) return item
+    const nested = findGroupByLabel(item.items, labels, matches)
+    if (nested) return nested
+  }
+  return undefined
+}
+
+export function findProductNavGroup(
+  sidebar: StarlightSidebarItem[],
+  hubSlug: string,
+  groupLabels: string[] = []
+): SidebarGroup | undefined {
+  const labels = new Set(groupLabels)
+  const labeledGroup =
+    labels.size > 0 ? findGroupByLabel(sidebar, labels, (group) => hasSlugAtOrBelow(group, hubSlug)) : undefined
+
+  return (
+    labeledGroup ?? sidebar.find((item): item is SidebarGroup => 'items' in item && hasSlugAtOrBelow(item, hubSlug))
+  )
 }
 
 /**
  * The full sidebar tree of the product whose hub page is `hubHref`, for the
- * mobile menu. Matched by hub page rather than label because product and
- * sidebar group labels differ (e.g. "Evals" vs "Evals SDK").
+ * mobile menu. Prefer an explicit product or navigation label so a product
+ * nested inside a broader section can still own its mobile tree. Fall back to
+ * the hub route because some product and sidebar labels differ (for example,
+ * "Evals" and "Evals SDK").
  */
-export async function getProductNav(hubHref: string): Promise<ProductNavItem[]> {
+export async function getProductNav(hubHref: string, groupLabels: string[] = []): Promise<ProductNavItem[]> {
   const [sidebar, labels] = await Promise.all([getSidebar(), getLabels()])
   const hubSlug = hubHref.replace(pathWithBase('/'), '').replace(/\/$/, '')
-  const group = sidebar.find((item) => 'items' in item && hasSlug(item, hubSlug))
-  if (!group || !('items' in group)) return []
+  const group = findProductNavGroup(sidebar, hubSlug, groupLabels)
+  if (!group) return []
   return group.items.map((item) => toNavItem(item, labels)).filter((i) => i !== null)
 }

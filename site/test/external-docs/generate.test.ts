@@ -1,0 +1,311 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  buildExternalDocsProduct,
+  loadExternalDocsManifest,
+  writeExternalDocsProduct,
+} from '../../scripts/external-docs/generate'
+import { parseExternalDocsConfig, parseExternalDocsManifest } from '../../scripts/external-docs/schema'
+import { loadPreviewExternalDocsRoutes } from '../../src/plugins/sitemap-lastmod'
+import { loadSidebarFromConfig } from '../../src/sidebar'
+
+const temporaryDirectories: string[] = []
+const revision = '1234567890abcdef1234567890abcdef12345678'
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+describe('external docs generation', () => {
+  it('produces deterministic pages and ordered navigation', () => {
+    const fixture = createFixture()
+    const first = buildExternalDocsProduct(fixture)
+    const second = buildExternalDocsProduct(fixture)
+
+    expect([...first.files]).toEqual([...second.files])
+    expect(first.navigation).toEqual({
+      schemaVersion: 1,
+      product: { id: 'example', name: 'Example', status: 'preview' },
+      revision,
+      routePrefix: 'docs/user-guide/example/source',
+      label: 'Upstream docs preview',
+      groups: [
+        {
+          label: 'Guides',
+          items: [
+            { label: 'First guide', slug: 'docs/user-guide/example/source/guides/first' },
+            { label: 'Second guide', slug: 'docs/user-guide/example/source/guides/second' },
+          ],
+        },
+        {
+          label: 'Overview',
+          items: [{ label: 'Overview', slug: 'docs/user-guide/example/source/overview' }],
+        },
+      ],
+    })
+    expect(second.navigation).toEqual(first.navigation)
+
+    const firstGuide = first.files.get('guides/first.md')
+    expect(firstGuide).toBe(`---
+title: "First guide"
+description: "First guide description."
+slug: "docs/user-guide/example/source/guides/first"
+editUrl: "https://github.com/example/docs/edit/main/docs/user/first.md"
+pagefind: false
+head:
+  - tag: meta
+    attrs:
+      name: robots
+      content: "noindex, nofollow"
+externalDocs:
+  product: "Example"
+  productId: "example"
+  status: "preview"
+  repository: "https://github.com/example/docs"
+  ref: "main"
+  revision: "${revision}"
+  source: "docs/user/first.md"
+---
+Read [Second](../second/).
+`)
+  })
+
+  it('disables the edit link for a local source override', () => {
+    const fixture = createFixture()
+    const built = buildExternalDocsProduct({ ...fixture, editRef: null })
+
+    expect(built.files.get('guides/first.md')).toContain('editUrl: false')
+    expect(built.files.get('guides/first.md')).not.toContain('/edit/')
+  })
+
+  it('writes generated navigation that expands from one sidebar placeholder', () => {
+    const fixture = createFixture()
+    const built = buildExternalDocsProduct(fixture)
+    const root = temporaryDirectory()
+    const outputRoot = path.join(root, 'external-docs')
+    const contentRoot = path.join(root, 'content')
+    const navigationPath = path.join(root, 'navigation.yml')
+
+    writeExternalDocsProduct(outputRoot, built)
+    expect(loadPreviewExternalDocsRoutes(outputRoot)).toEqual(['docs/user-guide/example/source/'])
+    for (const item of built.navigation.groups.flatMap((group) => group.items)) {
+      const contentPath = path.join(contentRoot, `${item.slug}.md`)
+      fs.mkdirSync(path.dirname(contentPath), { recursive: true })
+      fs.writeFileSync(contentPath, 'generated')
+    }
+    fs.writeFileSync(
+      navigationPath,
+      `navbar: []
+sidebar:
+  - label: Example
+    items:
+      - externalDocs: example
+github:
+  sections: []
+`
+    )
+
+    const sidebar = loadSidebarFromConfig(navigationPath, contentRoot, new Date('2026-10-29T00:00:00Z'), outputRoot)
+
+    expect(sidebar).toEqual([
+      {
+        label: 'Example',
+        items: [
+          {
+            label: 'Upstream docs preview',
+            items: [
+              {
+                label: 'Guides',
+                items: [
+                  { label: 'First guide', slug: 'docs/user-guide/example/source/guides/first' },
+                  { label: 'Second guide', slug: 'docs/user-guide/example/source/guides/second' },
+                ],
+              },
+              {
+                label: 'Overview',
+                items: [{ label: 'Overview', slug: 'docs/user-guide/example/source/overview' }],
+              },
+            ],
+          },
+        ],
+      },
+    ])
+  })
+
+  it('mounts canonical external routes without a second hand-authored page list', () => {
+    const fixture = createFixture()
+    fixture.config = {
+      ...fixture.config,
+      routePrefix: 'docs/user-guide/example',
+      navLabel: 'Example',
+    }
+    const built = buildExternalDocsProduct(fixture)
+    const root = temporaryDirectory()
+    const outputRoot = path.join(root, 'external-docs')
+    const contentRoot = path.join(root, 'content')
+    const navigationPath = path.join(root, 'navigation.yml')
+
+    writeExternalDocsProduct(outputRoot, built)
+    fs.mkdirSync(path.join(contentRoot, 'docs/user-guide'), { recursive: true })
+    fs.symlinkSync(path.join(outputRoot, 'example/content'), path.join(contentRoot, 'docs/user-guide/example'), 'dir')
+    fs.writeFileSync(
+      navigationPath,
+      `navbar: []
+sidebar:
+  - externalDocs: example
+github:
+  sections: []
+`
+    )
+
+    const sidebar = loadSidebarFromConfig(navigationPath, contentRoot, new Date('2026-11-03T00:00:00Z'), outputRoot)
+
+    expect(sidebar).toEqual([
+      {
+        label: 'Example',
+        items: [
+          {
+            label: 'Guides',
+            items: [
+              { label: 'First guide', slug: 'docs/user-guide/example/guides/first' },
+              { label: 'Second guide', slug: 'docs/user-guide/example/guides/second' },
+            ],
+          },
+          {
+            label: 'Overview',
+            items: [{ label: 'Overview', slug: 'docs/user-guide/example/overview' }],
+          },
+        ],
+      },
+    ])
+  })
+
+  it('rejects source symlinks even when they point to a regular file', () => {
+    const fixture = createFixture()
+    const outside = path.join(temporaryDirectory(), 'outside.md')
+    fs.writeFileSync(outside, '# Outside\n')
+    fs.rmSync(path.join(fixture.sourceRoot, 'docs/user/first.md'))
+    fs.symlinkSync(outside, path.join(fixture.sourceRoot, 'docs/user/first.md'))
+
+    expect(() => buildExternalDocsProduct(fixture)).toThrow(/regular files/)
+  })
+
+  it('loads and validates the manifest from the configured checkout path', () => {
+    const fixture = createFixture()
+    const loaded = loadExternalDocsManifest(fixture.sourceRoot, fixture.config)
+    expect(loaded).toEqual(fixture.manifest)
+  })
+
+  it('uses preview site status when the deprecated upstream status is stable', () => {
+    const fixture = createFixture()
+    const manifest = {
+      ...fixture.manifest,
+      product: { ...fixture.manifest.product, status: 'stable' as const },
+    }
+
+    expect(buildExternalDocsProduct({ ...fixture, manifest })).toEqual(buildExternalDocsProduct(fixture))
+  })
+
+  it('uses stable site status when the deprecated upstream status is preview', () => {
+    const fixture = createFixture()
+    const config = { ...fixture.config, publicationStatus: 'stable' as const }
+    const built = buildExternalDocsProduct({ ...fixture, config })
+
+    expect(built.navigation).toEqual({
+      schemaVersion: 1,
+      product: { id: 'example', name: 'Example', status: 'stable' },
+      revision,
+      routePrefix: 'docs/user-guide/example/source',
+      label: 'Upstream docs preview',
+      groups: [
+        {
+          label: 'Guides',
+          items: [
+            { label: 'First guide', slug: 'docs/user-guide/example/source/guides/first' },
+            { label: 'Second guide', slug: 'docs/user-guide/example/source/guides/second' },
+          ],
+        },
+        {
+          label: 'Overview',
+          items: [{ label: 'Overview', slug: 'docs/user-guide/example/source/overview' }],
+        },
+      ],
+    })
+    expect(built.files.get('guides/first.md')).toBe(`---
+title: "First guide"
+description: "First guide description."
+slug: "docs/user-guide/example/source/guides/first"
+editUrl: "https://github.com/example/docs/edit/main/docs/user/first.md"
+externalDocs:
+  product: "Example"
+  productId: "example"
+  status: "stable"
+  repository: "https://github.com/example/docs"
+  ref: "main"
+  revision: "${revision}"
+  source: "docs/user/first.md"
+---
+Read [Second](../second/).
+`)
+  })
+})
+
+function createFixture() {
+  const sourceRoot = temporaryDirectory()
+  fs.mkdirSync(path.join(sourceRoot, 'docs/user'), { recursive: true })
+  fs.writeFileSync(
+    path.join(sourceRoot, 'docs/user/first.md'),
+    '# First source heading\n\nRead [Second](./second.md).\n'
+  )
+  fs.writeFileSync(path.join(sourceRoot, 'docs/user/second.md'), '# Second source heading\n\nSecond.\n')
+  fs.writeFileSync(path.join(sourceRoot, 'docs/user/overview.md'), '# Overview source heading\n\nOverview.\n')
+
+  const manifest = parseExternalDocsManifest({
+    schemaVersion: 1,
+    product: { id: 'example', name: 'Example', status: 'preview' },
+    pages: [
+      page('second', 'docs/user/second.md', 'guides/second', 'Second guide', 'Guides', 2),
+      page('overview', 'docs/user/overview.md', 'overview', 'Overview', 'Overview', 1),
+      page('first', 'docs/user/first.md', 'guides/first', 'First guide', 'Guides', 1),
+    ],
+  })
+  fs.mkdirSync(path.join(sourceRoot, 'docs'), { recursive: true })
+  fs.writeFileSync(path.join(sourceRoot, 'docs/site-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+
+  const config = parseExternalDocsConfig({
+    schemaVersion: 1,
+    products: [
+      {
+        id: 'example',
+        repository: 'https://github.com/example/docs',
+        ref: 'main',
+        manifest: 'docs/site-manifest.json',
+        routePrefix: 'docs/user-guide/example/source',
+        navLabel: 'Upstream docs preview',
+        publicationStatus: 'preview',
+      },
+    ],
+  }).products[0]!
+  return { sourceRoot, config, manifest, revision, editRef: 'main' }
+}
+
+function page(id: string, source: string, slug: string, title: string, group: string, order: number) {
+  return {
+    id,
+    source,
+    slug,
+    title,
+    description: `${title} description.`,
+    nav: { group, order },
+  }
+}
+
+function temporaryDirectory(): string {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'external-docs-'))
+  temporaryDirectories.push(directory)
+  return directory
+}

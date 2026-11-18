@@ -8,7 +8,7 @@ import { DefaultModelRetryStrategy } from '../../retry/default-model-retry-strat
 import { ModelRetryStrategy } from '../../retry/model-retry-strategy.js'
 import type { RetryDecision } from '../../retry/retry-strategy.js'
 import { ConstantBackoff } from '../../retry/backoff-strategy.js'
-import { ModelThrottledError } from '../../errors.js'
+import { ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import { AfterModelCallEvent } from '../../hooks/events.js'
 import { logger } from '../../logging/logger.js'
 
@@ -89,6 +89,19 @@ describe('Agent retryStrategy wiring', () => {
     const model = new MockMessageModel()
       .addTurn(new ModelThrottledError('throttled 1'))
       .addTurn(new ModelThrottledError('throttled 2'))
+      .addTurn({ type: 'textBlock', text: 'ok' })
+
+    const agent = new Agent({ model })
+    const invokePromise = agent.invoke('hi')
+    await vi.runAllTimersAsync()
+    const result = await invokePromise
+
+    expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'ok' })
+  })
+
+  it('retries model calls that throw ModelNetworkError with the default strategy', async () => {
+    const model = new MockMessageModel()
+      .addTurn(new ModelNetworkError('Language model stream error: Failed to fetch'))
       .addTurn({ type: 'textBlock', text: 'ok' })
 
     const agent = new Agent({ model })

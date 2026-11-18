@@ -489,10 +489,20 @@ export interface CitationsDelta {
 /**
  * Token usage statistics for a model invocation.
  * Tracks input, output, and total tokens, plus cache-related metrics.
+ *
+ * Providers differ on whether `inputTokens` includes cached tokens. Some count cache reads and
+ * writes inside `inputTokens`; others count them only in `cacheReadInputTokens` and
+ * `cacheWriteInputTokens`. `totalTokens` always includes cached tokens, so for a single model call:
+ * if `inputTokens + outputTokens === totalTokens`, `inputTokens` already includes the cache fields;
+ * otherwise, total input is `inputTokens + cacheReadInputTokens + cacheWriteInputTokens`. Adding the
+ * cache fields to an `inputTokens` that already includes them counts cached tokens twice.
+ *
+ * Custom model providers should include cached tokens in `inputTokens` (matching the OpenTelemetry
+ * GenAI conventions), so that `totalTokens === inputTokens + outputTokens`.
  */
 export interface Usage {
   /**
-   * Number of tokens in the input (prompt).
+   * Number of input tokens, as the model provider counts them (may or may not include cached tokens).
    */
   inputTokens: number
 
@@ -502,7 +512,7 @@ export interface Usage {
   outputTokens: number
 
   /**
-   * Total number of tokens (input + output).
+   * Total number of tokens processed, including any cached input tokens.
    */
   totalTokens: number
 

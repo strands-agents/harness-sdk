@@ -13,6 +13,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ matrix.os }}
+    # The Windows legs take about 9 min and the slowest passing run took 17; 30 min replaces the 6-hour default.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -39,10 +41,13 @@ jobs:
         run: npm run test:browser:install
 
       - name: Run unit tests
+        # Below the job timeout, so a hung run fails this step by name and the artifacts still upload.
+        timeout-minutes: 20
         run: npm run test:all:coverage
 
       - name: Upload test artifacts
         if: always()
+        continue-on-error: true # the artifacts are diagnostics; an upload outage should not fail a passing run
         uses: actions/upload-artifact@v7.0.2
         with:
           name: test-artifacts-${{ matrix.node-version }}-${{ matrix.os }}

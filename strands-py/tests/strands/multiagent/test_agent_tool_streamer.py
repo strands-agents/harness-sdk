@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from strands.interrupt import Interrupt, _InterruptState
+from strands.interrupt import Interrupt, InterruptException, _InterruptState
 from strands.multiagent._agent_tool_streamer import (
     _INTERRUPTED_TURNS_KEY,
     _AgentToolStreamer,
@@ -44,6 +44,28 @@ def test_multiagent_adapter_reports_incomplete_result_with_its_label():
     assert MULTI_AGENT_ADAPTER.classify(Mock(), result) == (
         f"Swarm stopped before completing (status=failed, 2 iterations). Partial output:\n{result}"
     )
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "text", "expected"),
+    [
+        (
+            "content_filtered",
+            "half an answer\n",
+            "Child stopped before finishing (stop_reason=content_filtered).\n\nPartial output:\nhalf an answer",
+        ),
+        ("refusal", "", "Child stopped before finishing (stop_reason=refusal)."),
+    ],
+)
+def test_agent_adapter_reports_a_child_that_produced_no_answer_as_an_error(stop_reason, text, expected):
+    result = Mock(stop_reason=stop_reason, __str__=lambda self: text)
+
+    assert AGENT_ADAPTER.classify(Mock(), result) == expected
+
+
+@pytest.mark.parametrize("stop_reason", ["end_turn", "guardrail_intervened"])
+def test_agent_adapter_treats_an_answer_as_success(stop_reason):
+    assert AGENT_ADAPTER.classify(Mock(), Mock(stop_reason=stop_reason, __str__=lambda self: "answer")) is None
 
 
 def test_multiagent_adapter_round_trips_orchestrator_state():
@@ -162,6 +184,30 @@ def test_resume_returns_error_when_saved_turn_is_missing_or_unreadable(turn):
 
     assert responses is None
     assert tool_streamer.error == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_raise_unfinished_raises_from_stream_and_resume(alist):
+    child = Mock()
+    child.take_snapshot.return_value = Snapshot(scope="agent", schema_version="1.0", data={}, app_data={})
+    result = Mock(stop_reason="interrupt", interrupts=[Interrupt("approval", "confirm")])
+    parent_state = _InterruptState()
+    tool_streamer = _AgentToolStreamer(
+        interrupt_state=parent_state, tool_use_id=TOOL_USE["toolUseId"], namespace="v1:test", raise_unfinished=True
+    )
+
+    with pytest.raises(InterruptException) as exc_info:
+        await alist(tool_streamer.stream(AGENT_ADAPTER, child, _stream({"result": result})))
+    assert exc_info.value.interrupt == Interrupt("v1:test:t:approval", "confirm")
+
+    parent_state.interrupts = {exc_info.value.interrupt.id: exc_info.value.interrupt}
+    parent_state.activated = True
+    resumed = _AgentToolStreamer(
+        interrupt_state=parent_state, tool_use_id=TOOL_USE["toolUseId"], namespace="v1:test", raise_unfinished=True
+    )
+    child._interrupt_state = SimpleNamespace(activated=False)
+    with pytest.raises(RuntimeError, match="^unavailable$"):
+        resumed.resume(AGENT_ADAPTER, child, "unavailable")
 
 
 @pytest.mark.asyncio
