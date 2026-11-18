@@ -164,22 +164,26 @@ export class FileStorage implements SnapshotStorage {
   }
 
   /**
-   * Atomically writes JSON to a file using a `.tmp` intermediary to prevent partial writes.
+   * Atomically writes JSON to a file through a unique `.tmp` intermediary to prevent partial writes.
    * Creates parent directories if they do not exist.
+   * Overlapping saves to the same file write concurrently and are renamed one at a time in call
+   * order, so the last save called wins. This holds within one process only.
    */
   private async _writeJSON(path: string, data: unknown): Promise<void> {
     let tmpPath: string | undefined
     try {
       const { promises: fs } = await import('fs')
       const { dirname, resolve } = await import('path')
-      await fs.mkdir(dirname(path), { recursive: true })
       const { randomUUID } = await import('crypto')
       const uniquePath = `${path}.${randomUUID()}.tmp`
       tmpPath = uniquePath
-      await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), 'utf8')
       const target = resolve(path)
-      const pendingRename = (PENDING_RENAMES.get(target) ?? Promise.resolve())
-        .catch(() => {})
+      // No I/O is awaited before this save takes its place in the queue, which keeps call order.
+      const written = fs
+        .mkdir(dirname(path), { recursive: true })
+        .then(() => fs.writeFile(uniquePath, JSON.stringify(data, null, 2), 'utf8'))
+      const pendingRename = Promise.allSettled([PENDING_RENAMES.get(target), written])
+        .then(() => written)
         .then(() => fs.rename(uniquePath, path))
       PENDING_RENAMES.set(target, pendingRename)
       try {

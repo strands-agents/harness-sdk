@@ -83,7 +83,7 @@ describe('FileStorage', () => {
       expect(results).toEqual(values.map(() => ({ status: 'fulfilled', value: undefined })))
       const saved =
         kind === 'snapshot' ? await storage.loadSnapshot({ location }) : await storage.loadManifest({ location })
-      expect(values).toContainEqual(saved)
+      expect(saved).toEqual(values[1])
       const directory = join(testDir, location.sessionId, 'scopes', location.scope, location.scopeId, 'snapshots')
       expect(await fs.readdir(directory)).toEqual([kind === 'snapshot' ? 'snapshot_latest.json' : 'manifest.json'])
     })
@@ -111,11 +111,23 @@ describe('FileStorage', () => {
 
       failFirstRename()
       const results = await Promise.allSettled(saves)
-      expect(results.filter((result) => result.status === 'rejected')).toEqual([
+      expect(results).toEqual([
         { status: 'rejected', reason: expect.objectContaining({ name: 'SessionError', cause: error }) },
+        { status: 'fulfilled', value: undefined },
       ])
       expect(rename).toHaveBeenCalledTimes(2)
-      expect(snapshots).toContainEqual(await storage.loadSnapshot({ location }))
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots[1])
+    })
+
+    it('keeps the save called last when the earlier save has the larger payload', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const snapshots = [4_000_000, 1].map((length) => createTestSnapshot({ appData: { value: 'x'.repeat(length) } }))
+
+      await Promise.all(
+        snapshots.map((snapshot) => storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot }))
+      )
+
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots[1])
     })
 
     it('persists complete JSON for many overlapping saves on the real filesystem', async () => {
@@ -136,8 +148,8 @@ describe('FileStorage', () => {
       ])
 
       expect(results.filter((result) => result.status === 'rejected')).toEqual([])
-      expect(snapshots).toContainEqual(await storage.loadSnapshot({ location }))
-      expect(manifests).toContainEqual(await storage.loadManifest({ location }))
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots.at(-1))
+      expect(await storage.loadManifest({ location })).toEqual(manifests.at(-1))
       const directory = join(testDir, location.sessionId, 'scopes', location.scope, location.scopeId, 'snapshots')
       expect((await fs.readdir(directory)).sort()).toEqual(['manifest.json', 'snapshot_latest.json'])
     })
