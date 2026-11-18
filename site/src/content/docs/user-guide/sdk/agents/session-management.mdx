@@ -349,7 +349,7 @@ A [snapshot](./snapshots.mdx) captures agent state at a point in time. Snapshot-
 :::note[Python only]
 A guardrail redaction is the one case where `SnapshotSessionManager` rewrites an immutable snapshot. It replaces the redacted message in every checkpoint that holds it, so restoring one returns the redacted version, and leaves the rest of the checkpoint unchanged. Only messages with the redacted message's `tracking_id` are rewritten. The original content stays in a checkpoint that holds it under no `tracking_id` or under another one (a message passed to `Agent(messages=...)` and checkpointed before its first invocation, or a message that context management later merged into the one before it). It also stays in any other part of a snapshot that holds a copy of it, such as stash entries (in `snapshot_latest` too), pending tool results, and background task results that were not yet delivered. A checkpoint that cannot be parsed is skipped with a warning.
 
-Each redaction reads every immutable snapshot of the agent, and a storage error during it fails the invocation.
+When the redacted message has a `tracking_id`, the redaction reads every immutable snapshot of the agent. A storage error during a redaction fails the invocation.
 :::
 
 ### Creating immutable snapshots

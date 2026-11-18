@@ -184,6 +184,11 @@ def _multi_agent_latest_key(session_id: str, orchestrator_id: str) -> str:
     return f"{_session_prefix(session_id)}scopes/multiAgent/{orchestrator_id}/snapshots/{_SNAPSHOT_LATEST}"
 
 
+def _cause_name(error: BaseException) -> str | None:
+    """The type of the error a storage backend wrapped, without its message, which can quote stored content."""
+    return type(error.__cause__).__name__ if error.__cause__ else None
+
+
 def _serialize_snapshot(snapshot: Snapshot) -> bytes:
     """Serialize a snapshot to JSON bytes, base64-encoding any bytes content."""
     return json.dumps(encode_bytes_values(snapshot.to_dict()), ensure_ascii=False).encode("utf-8")
@@ -635,11 +640,12 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             await self._save_latest(agent)
         except Exception as error:
             logger.warning(
-                "agent_id=<%s>, session_id=<%s>, error=<%s> | failed to flush a redaction to snapshot_latest",
+                "agent_id=<%s>, session_id=<%s>, error=<%s>, cause=<%s> | failed to flush a redaction to "
+                "snapshot_latest",
                 agent.agent_id,
                 self.session_id,
                 error,
-                exc_info=error,
+                _cause_name(error),
             )
             # A failed latest write must not leave the immutable snapshots unredacted. Its error is
             # the one raised; a failure on the immutable snapshots is logged.
@@ -663,12 +669,12 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             snapshot_ids = await self.list_snapshot_ids(agent)
         except Exception as list_error:
             logger.warning(
-                "agent_id=<%s>, session_id=<%s>, error=<%s> | failed to list immutable snapshots while flushing a "
-                "redaction | no immutable snapshot was rewritten",
+                "agent_id=<%s>, session_id=<%s>, error=<%s>, cause=<%s> | failed to list immutable snapshots while "
+                "flushing a redaction | no immutable snapshot was rewritten",
                 agent.agent_id,
                 self.session_id,
                 list_error,
-                exc_info=list_error,
+                _cause_name(list_error),
             )
             raise
         # Let every rewrite finish before failing, so a storage error leaves only its own snapshot unredacted.
@@ -680,13 +686,13 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         ]
         for snapshot_id, error in errors:
             logger.warning(
-                "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s>, error=<%s> | failed to flush a redaction to "
-                "immutable snapshot",
+                "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s>, error=<%s>, cause=<%s> | failed to flush a "
+                "redaction to immutable snapshot",
                 agent.agent_id,
                 self.session_id,
                 snapshot_id,
                 error,
-                exc_info=error,
+                _cause_name(error),
             )
         if errors:
             raise errors[0][1]

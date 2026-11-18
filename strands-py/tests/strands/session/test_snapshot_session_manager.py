@@ -1386,7 +1386,7 @@ def test_redaction_storage_error_fails_invocation_after_other_rewrites(storage, 
     assert json.loads(rewritten_data) == exp_snapshot
     tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
     exp_warnings = [
-        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<disk full>"
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<disk full>, cause=<None>"
         " | failed to flush a redaction to immutable snapshot"
     ]
     assert tru_warnings == exp_warnings
@@ -1438,8 +1438,8 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
 
     async def write_failing(key, data):
         if key == _on_disk_key("s1", "a1"):
-            raise StorageError("latest write failed") from TimeoutError("timed out")
-        raise StorageError("checkpoint write failed") from PermissionError("permission denied")
+            raise StorageError("latest write failed") from TimeoutError("timed out writing: sensitive prompt")
+        raise StorageError("checkpoint write failed") from PermissionError("cannot write: sensitive prompt")
 
     async def checkpoint(event):
         snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
@@ -1453,14 +1453,14 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
 
     tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
     exp_warnings = [
-        "agent_id=<a1>, session_id=<s1>, error=<latest write failed> | failed to flush a redaction to snapshot_latest",
-        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<checkpoint write failed>"
-        " | failed to flush a redaction to immutable snapshot",
+        "agent_id=<a1>, session_id=<s1>, error=<latest write failed>, cause=<TimeoutError>"
+        " | failed to flush a redaction to snapshot_latest",
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<checkpoint write failed>,"
+        " cause=<PermissionError> | failed to flush a redaction to immutable snapshot",
     ]
     assert tru_warnings == exp_warnings
-    # Each log carries the cause the storage wrapped; the checkpoint error is not raised at all.
-    assert "TimeoutError: timed out" in caplog.text
-    assert "PermissionError: permission denied" in caplog.text
+    # A wrapped cause can quote the stored document, so the logs name its type only.
+    assert "sensitive prompt" not in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -1471,7 +1471,7 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
             True,
             "latest write failed",
             [
-                "agent_id=<a1>, session_id=<s1>, error=<latest write failed>"
+                "agent_id=<a1>, session_id=<s1>, error=<latest write failed>, cause=<None>"
                 " | failed to flush a redaction to snapshot_latest"
             ],
         ),
@@ -1493,7 +1493,7 @@ def test_redaction_listing_error_is_logged(storage, caplog, latest_write_fails, 
         await write(key, data)
 
     async def list_failing(prefix):
-        raise StorageError("listing failed") from PermissionError("permission denied")
+        raise StorageError("listing failed") from PermissionError("cannot list: sensitive prompt")
 
     async def checkpoint(event):
         snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
@@ -1511,11 +1511,11 @@ def test_redaction_listing_error_is_logged(storage, caplog, latest_write_fails, 
     tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
     exp_warnings = [
         *exp_latest_warnings,
-        "agent_id=<a1>, session_id=<s1>, error=<listing failed> | failed to list immutable snapshots while flushing"
-        " a redaction | no immutable snapshot was rewritten",
+        "agent_id=<a1>, session_id=<s1>, error=<listing failed>, cause=<PermissionError>"
+        " | failed to list immutable snapshots while flushing a redaction | no immutable snapshot was rewritten",
     ]
     assert tru_warnings == exp_warnings
-    assert "PermissionError: permission denied" in caplog.text
+    assert "sensitive prompt" not in caplog.text
     assert b"sensitive prompt" in _immutable_snapshot_data(storage, snapshot_ids[0])
 
 
