@@ -311,6 +311,8 @@ class MCPClient(ToolProvider):
                 ``continue_on_error``. A failure building an individual server (e.g. a missing env
                 var) also raises unless ``continue_on_error`` applies to that server, in which case
                 it is skipped.
+            Warning: If a warnings filter turns a warning raised while building a server into an
+                error, regardless of ``continue_on_error``.
         """
         servers = _load_servers_mapping(config)
 
@@ -337,7 +339,8 @@ class MCPClient(ToolProvider):
                     )
                 )
             except Exception as e:
-                if not server.get("continue_on_error", continue_on_error):
+                # A warning raised as an error (python -W error) must fail, not skip the server.
+                if isinstance(e, Warning) or not server.get("continue_on_error", continue_on_error):
                     raise
                 logger.warning("server_name=<%s>, error=<%s> | MCP server config failed, skipping", name, e)
 

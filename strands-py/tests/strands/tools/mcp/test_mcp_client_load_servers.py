@@ -1,6 +1,7 @@
 """Unit tests for MCPClient.load_servers (mcpServers JSON config loading)."""
 
 import json
+import warnings
 from unittest.mock import ANY, create_autospec, patch
 
 import pytest
@@ -345,6 +346,27 @@ def test_continue_on_error_logs_warning(mock_client, transports, caplog):
             {"broken": {"command": "node", "env": {"V": "${NONEXISTENT_VAR}"}, "continue_on_error": True}}
         )
     assert "MCP server config failed, skipping" in caplog.text
+
+
+def test_continue_on_error_raises_a_warning_turned_into_an_error(mock_client, transports):
+    """Under `python -W error::UserWarning`, a server whose auth has no issuer fails instead of being skipped."""
+    config = {"srv": {"url": "https://example.com/mcp", "auth": {"client_id": "id", "client_secret": "secret"}}}
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            with pytest.raises(UserWarning, match="'auth' has no 'issuer'"):
+                MCPClient.load_servers(config, continue_on_error=True)
+
+
+def test_continue_on_error_raises_other_warning_categories(mock_client, transports):
+    """As when `python -W error` turns the `mcp` 1.30 provider's DeprecationWarning into an error."""
+    config = {"srv": {"url": "https://example.com/mcp", "auth": {"client_id": "id", "client_secret": "secret"}}}
+    with patch(
+        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider",
+        side_effect=DeprecationWarning("Omitting `issuer` is deprecated"),
+    ):
+        with pytest.raises(DeprecationWarning):
+            MCPClient.load_servers(config, continue_on_error=True)
 
 
 def test_continue_on_error_passed_to_client(mock_client, transports):
