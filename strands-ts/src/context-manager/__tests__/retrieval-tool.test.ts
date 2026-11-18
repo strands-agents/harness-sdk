@@ -342,4 +342,140 @@ describe('retrieval tool', () => {
       expect((result.content[0] as TextBlock).text).toContain('must be <= line_range.end')
     })
   })
+
+  describe('a query', () => {
+    /** Filler that shares no terms with the queries below, so only the planted answer can rank. */
+    function makeArchiveWithBuriedAnswer(): { archive: Archive; refPromise: Promise<string> } {
+      const lines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: nothing of note`)
+      lines[61] = 'line 62: the payment database connection pool was exhausted at peak traffic'
+      return makeArchiveWithTextBlock(lines.join('\n'))
+    }
+
+    it('returns the sections that answer the query', async () => {
+      const { archive, refPromise } = makeArchiveWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(archive)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'why was the database connection pool exhausted',
+      })) as string
+
+      expect(result).toContain('connection pool was exhausted')
+      expect(result).toMatch(/^\[showing \d+ of \d+ relevant sections? for/)
+    })
+
+    it('rejects a query and a pattern together', async () => {
+      const { archive, refPromise } = makeArchiveWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(archive)
+
+      await expect(invoke(retrievalTool, { reference: ref, query: 'pool', pattern: 'pool' })).rejects.toThrow(
+        'pass either query or pattern, not both. Use query for a question, pattern for a literal string.'
+      )
+    })
+
+    it('keeps the result within max_tokens and reports what was withheld', async () => {
+      const { archive, refPromise } = makeArchiveWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(archive)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'line note exhausted',
+        max_tokens: 200,
+      })) as string
+
+      expect(result.length).toBeLessThanOrEqual(800)
+      expect(result).toContain('withheld by max_tokens')
+    })
+
+    it('cuts the top section to fit when max_tokens leaves no room for a whole one', async () => {
+      const { archive, refPromise } = makeArchiveWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(archive)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'line note exhausted',
+        max_tokens: 100,
+      })) as string
+
+      expect(result.length).toBeLessThanOrEqual(400)
+      expect(result).toContain('output truncated, raise max_tokens')
+      expect(result).toContain('connection pool was exhausted')
+    })
+
+    it('clamps max_tokens to the configured result budget', async () => {
+      const { archive, refPromise } = makeArchiveWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(archive, 50)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'line note exhausted',
+        max_tokens: 100_000,
+      })) as string
+
+      expect(result.length).toBeLessThanOrEqual(200)
+    })
+
+    it('ranks only within line_range', async () => {
+      const { archive, refPromise } = makeArchiveWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(archive)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'why was the database connection pool exhausted',
+        line_range: { start: 1, end: 40 },
+      })) as string
+
+      expect(result).not.toContain('connection pool was exhausted')
+    })
+
+    it('returns the best-scoring section first rather than the earliest', async () => {
+      const lines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: nothing of note`)
+      lines[19] = 'line 20: the database was briefly slow'
+      lines[61] = 'line 62: the payment database connection pool was exhausted at peak traffic'
+      const { archive, refPromise } = makeArchiveWithTextBlock(lines.join('\n'))
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(archive)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'database connection pool exhausted',
+        max_tokens: 150,
+      })) as string
+
+      expect(result).toContain('connection pool was exhausted')
+      expect(result).not.toContain('briefly slow')
+    })
+
+    it('reports when nothing in the entry is relevant', async () => {
+      const { archive, refPromise } = makeArchiveWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(archive)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'kubernetes ingress certificate',
+      })) as string
+      expect(result).toBe("No relevant content found for query 'kubernetes ingress certificate'.")
+    })
+
+    it('rejects a query against an entry with no text to rank', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
+      const ref = await archive.store(
+        'tool-img',
+        0,
+        encodeJSON({ image: { format: 'png', source: { bytes: 'iVBORw0=' } } })
+      )
+      const retrievalTool = createRetrievalTool(archive)
+
+      await expect(invoke(retrievalTool, { reference: ref, query: 'anything' })).rejects.toThrow(
+        'cannot search non-text content'
+      )
+    })
+  })
 })
