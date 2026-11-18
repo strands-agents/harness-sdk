@@ -1,6 +1,7 @@
 """Tests for FileSessionManager symlink attack protection."""
 
 import json
+import logging
 import os
 import platform
 import stat
@@ -56,6 +57,27 @@ class TestDefaultStorageDir:
         mode = stat.S_IMODE(os.stat(storage).st_mode)
         assert mode == 0o700, f"Expected 0o700, got {oct(mode)}"
 
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_existing_wide_storage_dir_warns_and_keeps_mode(self, temp_dir, caplog):
+        """An existing storage directory open to group or others is reported, not modified."""
+        os.chmod(temp_dir, 0o755)
+
+        with caplog.at_level(logging.WARNING, logger="strands.session.file_session_manager"):
+            FileSessionManager(session_id="test", storage_dir=temp_dir)
+
+        assert f"storage_dir=<{temp_dir}>, mode=<755> | session storage directory is accessible" in caplog.text
+        assert stat.S_IMODE(os.stat(temp_dir).st_mode) == 0o755
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_existing_private_storage_dir_does_not_warn(self, temp_dir, caplog):
+        """An existing storage directory with mode 0o700 logs nothing."""
+        os.chmod(temp_dir, 0o700)
+
+        with caplog.at_level(logging.WARNING, logger="strands.session.file_session_manager"):
+            FileSessionManager(session_id="test", storage_dir=temp_dir)
+
+        assert caplog.text == ""
+
 
 class TestSymlinkProtection:
     """Tests for symlink attack prevention."""
@@ -92,6 +114,26 @@ class TestSymlinkProtection:
 
         with pytest.raises(SessionException, match="symlink"):
             file_manager._read_file(symlink_path)
+
+    @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="Platform lacks O_NOFOLLOW")
+    def test_read_refuses_symlink_swapped_in_after_check(self, file_manager, temp_dir):
+        """_read_file should not follow a symlink that replaces the file after the islink check."""
+        real_file = os.path.join(temp_dir, "real.json")
+        with open(real_file, "w") as f:
+            json.dump({"secret": "***"}, f)
+
+        session_file = os.path.join(temp_dir, "session.json")
+        with open(session_file, "w") as f:
+            json.dump({"session_id": "test"}, f)
+
+        def swap_after_check(path):
+            os.remove(path)
+            os.symlink(real_file, path)
+            return False
+
+        with patch("strands.session.file_session_manager.os.path.islink", side_effect=swap_after_check):
+            with pytest.raises(SessionException, match="symlink"):
+                file_manager._read_file(session_file)
 
     @pytest.mark.skipif(platform.system() == "Windows", reason="Symlinks need Unix")
     def test_write_uses_unpredictable_temp(self, file_manager, temp_dir):
