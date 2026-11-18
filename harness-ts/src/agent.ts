@@ -439,6 +439,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
 
   let sessionManager = agentConfig.sessionManager
   let storage = agentConfig.storage
+  let sessionDir: string | undefined
   if (session && sessionManager === undefined) {
     if (session instanceof SessionManager) {
       sessionManager = session
@@ -447,12 +448,8 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
       if (sessionConfig.id !== undefined && sessionConfig.id.trim() === '') {
         throw new Error('session.id must be a non-empty string.')
       }
-      const sessionDir = sessionConfig.dir ?? DEFAULT_SESSION_DIR
+      sessionDir = sessionConfig.dir ?? DEFAULT_SESSION_DIR
       const sessionId = sessionConfig.id ? sanitizeSessionId(sessionConfig.id) : randomUUID().slice(0, 8)
-      // The stash below can write before the first snapshot and keeps only its own folder private, so
-      // the session directory is made here. A failure is left for the first write to report.
-      await mkdir(dirname(resolve(sessionDir)), { recursive: true }).catch(() => {})
-      await mkdir(sessionDir, { recursive: true, mode: 0o700 }).catch(() => {})
       sessionManager = new SessionManager({
         sessionId,
         storage: { snapshot: new SessionFileStorage(sessionDir) },
@@ -526,6 +523,15 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     ...(memoryManager !== undefined && { memoryManager }),
     interventions: resolvedInterventions,
   })
+  if (sessionDir !== undefined) {
+    const dir = sessionDir
+    // The stash can write before the first snapshot and keeps only its own folder private, so the
+    // session directory is made before either writes. A failure is left for that write to report.
+    agent.addHook(InitializedEvent, async () => {
+      await mkdir(dirname(resolve(dir)), { recursive: true }).catch(() => {})
+      await mkdir(dir, { recursive: true, mode: 0o700 }).catch(() => {})
+    })
+  }
   if (agentConfig.sandbox) {
     // The SDK registers sandbox tools lazily in initialize(), so dedupe once that has run.
     agent.addHook(InitializedEvent, () => dropSandboxTools(agent))

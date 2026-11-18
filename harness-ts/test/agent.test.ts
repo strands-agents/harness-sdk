@@ -668,6 +668,7 @@ describe('createHarness', () => {
         skills: false,
         printer: false,
       })
+      expect(existsSync(dir)).toBe(false)
       await agent.invoke('Read the document.', { limits: { turns: 4 } })
       const openRootWarnings = warn.mock.calls.flat().filter((message) => String(message).includes('accessible by'))
       warn.mockRestore()
