@@ -89,10 +89,10 @@ Everywhere else on Amazon Bedrock, the agent instead gets a `web_search` tool ba
 [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html).
 That covers `bedrock/...` and the other `bedrock-mantle/...` models, a `BedrockModel` you build
 yourself, an `AnthropicModel` on Anthropic's Bedrock or Mantle client, an OpenAI model with a
-Bedrock Mantle config, and a `ModelRouter` of only those. It calls the `InvokeWebSearch` API in the
-model's region, and each query is authorized by IAM and billed to your AWS account. Search has its
-own credentials: the default AWS credential chain, not a session or client config you gave a model
-instance. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
+Bedrock Mantle config, and a `ModelRouter` of only those. Each query calls the
+`InvokeWebSearch` API, authorized by IAM and billed to your AWS account. Search is configured on
+its own and reads nothing from the model: it resolves its region the way `BedrockModel` does (your
+AWS environment, then `us-west-2`) and uses the default AWS credential chain. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
 `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is available in a subset
 of regions. Without the permission, or in an unsupported region, the first search returns an
 error telling the model to answer without search, and later searches fail without a request. A

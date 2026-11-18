@@ -49,7 +49,7 @@ import {
 import { type InterventionsOption, resolveInterventions } from './interventions.js'
 import { resolveMemory } from './memory.js'
 import { logger } from './logging.js'
-import { bedrockRegion, resolveModel } from './models.js'
+import { resolveModel } from './models.js'
 import { buildSystemPrompt } from './prompt.js'
 import { makeAgentCoreWebSearch } from './tools/web-search.js'
 import { setupTelemetry } from './telemetry.js'
@@ -128,7 +128,8 @@ export interface HarnessAgentOptions extends Omit<
    * (`ToolConfig`; the keys per tool are `BUILTIN_TOOL_CONFIG_KEYS`). `web_search` turns on the
    * provider's native web search (OpenAI, Anthropic, Google, GPT-5, GPT-6, and Daybreak models on bedrock-mantle).
    * On every other Bedrock API (`supportsWebSearch`) it is a tool backed by Amazon Bedrock AgentCore web
-   * search in the model's region (needs the `bedrock-agentcore:InvokeWebSearch` IAM permission).
+   * search, which resolves its region and credentials on its own, as `BedrockModel` does (they need
+   * the `bedrock-agentcore:InvokeWebSearch` IAM permission).
    * Elsewhere it is off, and naming
    * it there throws. `{ web_search: 'exa' }` instead gives the model a
    * `web_search` tool backed by Exa's hosted search on any model, a third party that receives the
@@ -443,8 +444,8 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
 
   const builtinToolsByName = await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
   if (webSearch === 'agentcore') {
-    const region = await bedrockRegion(resolvedModel)
-    builtinToolsByName.web_search = makeAgentCoreWebSearch(region !== undefined ? { region } : {})
+    // Search resolves its own region and credentials, as BedrockModel does; nothing is read off the model.
+    builtinToolsByName.web_search = makeAgentCoreWebSearch()
   }
   const builtin = selectBuiltinTools(
     enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' || webSearch === 'agentcore' }),

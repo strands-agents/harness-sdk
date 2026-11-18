@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  bedrockRegion,
   resolveModel,
   resolveWebFetchModel,
   supportsMedia,
@@ -917,23 +916,14 @@ describe('supportsWebSearch', () => {
     const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
     const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
     const anthropicOn = (client: object) => new AnthropicModel({ modelId: 'claude', client: client as never })
-    const cases: [Model, string][] = [
-      [
-        anthropicOn({ awsRegion: 'eu-west-1', baseURL: 'https://bedrock-runtime.eu-west-1.amazonaws.com' }),
-        'eu-west-1',
-      ],
-      [
-        anthropicOn({ awsRegion: 'ap-south-1', baseURL: 'https://bedrock-mantle.ap-south-1.api.aws/anthropic' }),
-        'ap-south-1',
-      ],
-      [anthropicOn({ baseURL: 'https://vpce-0abc.bedrock-runtime.us-east-1.vpce.amazonaws.com' }), 'us-east-1'],
-      [anthropicOn({ baseURL: 'https://bedrock-runtime-fips.us-gov-west-1.amazonaws.com' }), 'us-gov-west-1'],
-      [new OpenAIModel({ modelId: 'qwen.qwen3-32b-v1:0', bedrockMantleConfig: { region: 'us-east-2' } }), 'us-east-2'],
+    const onBedrock = [
+      anthropicOn({ baseURL: 'https://bedrock-runtime.eu-west-1.amazonaws.com' }),
+      anthropicOn({ baseURL: 'https://bedrock-mantle.ap-south-1.api.aws/anthropic' }),
+      anthropicOn({ baseURL: 'https://vpce-0abc.bedrock-runtime.us-east-1.vpce.amazonaws.com' }),
+      anthropicOn({ baseURL: 'https://bedrock-runtime-fips.us-gov-west-1.amazonaws.com' }),
+      new OpenAIModel({ modelId: 'qwen.qwen3-32b-v1:0', bedrockMantleConfig: { region: 'us-east-2' } }),
     ]
-    for (const [model, region] of cases) {
-      expect(webSearchKind(model)).toBe('agentcore')
-      expect(await bedrockRegion(model)).toBe(region)
-    }
+    expect(onBedrock.map((model) => webSearchKind(model))).toEqual(onBedrock.map(() => 'agentcore'))
     expect(webSearchKind(anthropicOn({ baseURL: 'https://api.anthropic.com' }))).toBeUndefined()
     // Claude Platform on AWS (`AnthropicAws`) carries an `awsRegion` too, but it isn't Bedrock.
     expect(
@@ -954,19 +944,6 @@ describe('supportsWebSearch', () => {
       new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }),
     ])
     expect(supportsWebSearch(mixed)).toBe(false)
-  })
-})
-
-describe('bedrockRegion', () => {
-  it("reads a BedrockModel's region and is undefined for other models", async () => {
-    const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
-    expect(await bedrockRegion(new BedrockModel({ modelId: 'x', region: 'eu-west-1' }))).toBe('eu-west-1')
-    expect(await bedrockRegion(new OpenAIModel({ modelId: 'gpt-5.6-sol', apiKey: 'x' }))).toBeUndefined()
-    const router = new ModelRouter([
-      new BedrockModel({ modelId: 'a', region: 'ap-south-1' }),
-      new BedrockModel({ modelId: 'b', region: 'eu-west-1' }),
-    ])
-    expect(await bedrockRegion(router)).toBe('ap-south-1')
   })
 })
 

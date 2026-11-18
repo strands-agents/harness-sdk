@@ -327,12 +327,13 @@ model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, 
 Bedrock API (Converse; Anthropic's Bedrock or Mantle client; OpenAI-compatible models on Mantle,
 including other `bedrock-mantle` models), the model gets a `web_search` tool backed by
 [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
-(`InvokeWebSearch`), called in the model's region (model instances and all-Bedrock `ModelRouter`s too) and billed
-per query to your AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM
+(`InvokeWebSearch`), billed per query to your AWS account (model instances and all-Bedrock
+`ModelRouter`s get it too). The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM
 permission on `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is offered
 in a subset of regions; without them the first search returns an error telling the model to answer
-without search, and later ones fail without a request. Search has its own credentials: the default
-AWS credential chain, not the `clientConfig` you gave a model instance. A `web_search` tool you pass
+without search, and later ones fail without a request. Search is configured on its own and reads
+nothing from the model: it resolves its region the way `BedrockModel` does (your AWS environment,
+then `us-west-2`) and uses the default AWS credential chain. A `web_search` tool you pass
 yourself replaces this default, and `makeAgentCoreWebSearch` takes the same `region` and
 `clientConfig` options as `BedrockModel`, so
 `tools: [makeAgentCoreWebSearch({ clientConfig: { credentials } })]` searches with other credentials. An MCP server that exposes `web_search` needs

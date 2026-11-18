@@ -590,24 +590,21 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
   return (PROVIDERS[providerName]?.levels.length ?? 0) > 0
 }
 
-/** The SDK client a model wraps; its fields have no public accessor on the model. */
+/** The SDK client a model wraps; it has no public accessor on the model. */
 interface ModelClient {
-  _client?: { baseURL?: string; config?: { region?: () => Promise<string> } }
+  _client?: { baseURL?: string }
 }
 
 // Hosts of Anthropic's Bedrock and Mantle clients and of OpenAI's `bedrockMantleConfig`, including FIPS
 // and VPC (PrivateLink) endpoints. Matching the host (not an `awsRegion` field) keeps non-Bedrock AWS
 // clients such as Claude Platform on AWS out.
 const BEDROCK_BASE_URL =
-  /^https:\/\/(?:[a-z0-9-]+\.)?bedrock-(?:runtime|mantle)(?:-fips)?\.([a-z0-9-]+)\.(?:vpce\.)?(?:amazonaws\.com|api\.aws)(?:\/|$)/
+  /^https:\/\/(?:[a-z0-9-]+\.)?bedrock-(?:runtime|mantle)(?:-fips)?\.[a-z0-9-]+\.(?:vpce\.)?(?:amazonaws\.com|api\.aws)(?:\/|$)/
 
-/** The region a non-Converse model's client calls Bedrock in, or `undefined` if it isn't a Bedrock client. */
-function vendorBedrockRegion(model: Model): string | undefined {
+/** Whether a non-Converse model's client targets a Bedrock host. */
+function onBedrockHost(model: Model): boolean {
   const client = (model as unknown as ModelClient)._client
-  if (client === null || typeof client !== 'object') {
-    return undefined
-  }
-  return BEDROCK_BASE_URL.exec(client.baseURL ?? '')?.[1]
+  return client !== null && typeof client === 'object' && BEDROCK_BASE_URL.test(client.baseURL ?? '')
 }
 
 /**
@@ -619,7 +616,7 @@ function onBedrock(model: Model | ModelRouter): boolean {
   if (model instanceof ModelRouter) {
     return model.candidates.every((c) => onBedrock(c.model))
   }
-  return model instanceof BedrockModel || vendorBedrockRegion(model) !== undefined
+  return model instanceof BedrockModel || onBedrockHost(model)
 }
 
 /**
@@ -645,22 +642,6 @@ export function webSearchKind(model: Model | ModelRouter | string | undefined): 
     return 'native'
   }
   return providerName === 'bedrock' || providerName === 'bedrock-mantle' ? 'agentcore' : undefined
-}
-
-/**
- * The region a Bedrock-backed model calls (a router's default model's), or `undefined` when it can't
- * be read (AgentCore then resolves it the way `BedrockModel` does).
- *
- * @internal
- */
-export async function bedrockRegion(model: Model | ModelRouter): Promise<string | undefined> {
-  if (model instanceof ModelRouter) {
-    return bedrockRegion(model.defaultModel)
-  }
-  if (model instanceof BedrockModel) {
-    return (model as unknown as ModelClient)._client?.config?.region?.().catch(() => undefined)
-  }
-  return vendorBedrockRegion(model)
 }
 
 /**

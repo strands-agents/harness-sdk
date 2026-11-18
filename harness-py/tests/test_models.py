@@ -692,24 +692,18 @@ def test_web_search_kind_covers_every_bedrock_api():
     from strands.models.openai import OpenAIModel
     from strands.models.openai_responses import OpenAIResponsesModel
 
-    from strands_harness.models import _bedrock_region, _web_search_kind
+    from strands_harness.models import _web_search_kind
 
     def anthropic_on(client):
-        # Set after construction so this runs on SDK releases whose AnthropicModel has no ``client`` argument.
-        model = AnthropicModel(model_id="claude", max_tokens=10)
-        model.client = client
-        return model
+        return AnthropicModel(client=client, model_id="claude", max_tokens=10)
 
-    bedrock_models = {
-        "eu-west-1": anthropic_on(AsyncAnthropicBedrock(aws_region="eu-west-1")),
-        "ap-south-1": anthropic_on(AsyncAnthropicBedrockMantle(aws_region="ap-south-1")),
-        "us-east-2": OpenAIResponsesModel(
-            model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "us-east-2"}
-        ),
-        "ca-central-1": OpenAIModel(model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "ca-central-1"}),
-    }
-    for region, model in bedrock_models.items():
-        assert (_web_search_kind(model), _bedrock_region(model)) == ("agentcore", region)
+    bedrock_models = [
+        anthropic_on(AsyncAnthropicBedrock(aws_region="eu-west-1")),
+        anthropic_on(AsyncAnthropicBedrockMantle(aws_region="ap-south-1")),
+        OpenAIResponsesModel(model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "us-east-2"}),
+        OpenAIModel(model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "ca-central-1"}),
+    ]
+    assert [_web_search_kind(model) for model in bedrock_models] == ["agentcore"] * 4
     assert _web_search_kind(anthropic_on(AsyncAnthropic(api_key="x"))) is None
     assert _web_search_kind(OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")) is None
     assert _web_search_kind("bedrock-mantle/qwen.qwen3-32b-v1:0") == "agentcore"

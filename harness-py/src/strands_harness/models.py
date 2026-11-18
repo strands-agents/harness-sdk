@@ -477,21 +477,6 @@ def _on_bedrock(model: Model | ModelRouter) -> bool:
     )
 
 
-def _bedrock_region(model: Model | ModelRouter) -> str | None:
-    """The region a Bedrock-backed model calls (a router's default model's), or ``None`` when it can't be read
-    (AgentCore then resolves it the way ``BedrockModel`` does)."""
-    if isinstance(model, ModelRouter):
-        return _bedrock_region(model.default_model)
-    if isinstance(model, BedrockModel):
-        return str(model.client.meta.region_name)
-    if (client := _anthropic_bedrock_client(model)) is not None:
-        return client.aws_region
-    if (config := getattr(model, "_bedrock_mantle_config", None)) is not None:
-        session = config.get("boto_session")
-        return config.get("region") or (session.region_name if session else None)
-    return None
-
-
 def _web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
     """How ``web_search`` is served for ``model`` without the Exa opt-in: the provider's native
     search, else AgentCore web search on any Bedrock API (a harness tool), else ``None``.

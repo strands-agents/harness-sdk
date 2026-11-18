@@ -1,8 +1,8 @@
 /**
  * web_search: search the web and return the top results as numbered sources.
  *
- * On Bedrock models the tool is backed by Amazon Bedrock AgentCore's `InvokeWebSearch` API, in the
- * model's region and authorized by IAM. The opt-in Exa tool (`builtinTools: { web_search: 'exa' }`)
+ * On Bedrock models the tool is backed by Amazon Bedrock AgentCore's `InvokeWebSearch` API,
+ * authorized by IAM and configured on its own, the way `BedrockModel` is. The opt-in Exa tool (`builtinTools: { web_search: 'exa' }`)
  * serves it on any model from Exa's hosted MCP server, a third party that receives the queries; the
  * keyless free tier covers getting started and `EXA_API_KEY` lifts the rate limit in place. On
  * OpenAI, Anthropic, Gemini and Mantle GPT models a plain `true` is a model flag instead and no tool

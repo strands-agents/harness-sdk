@@ -24,7 +24,6 @@ from strands_harness import defaults
 from strands_harness.interventions import InterventionsOption, resolve_interventions
 from strands_harness.memory import resolve_memory
 from strands_harness.models import (
-    _bedrock_region,
     _supports_media,
     _web_search_kind,
     resolve_model,
@@ -316,10 +315,10 @@ def create_harness(
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
             GPT-5, GPT-6, and Daybreak models on bedrock-mantle). On every other Bedrock API
-            (``supports_web_search``) it is a tool backed by Amazon Bedrock AgentCore web search in the
-            model's region (signed by the default AWS credential chain, which needs the
+            (``supports_web_search``) it is a tool backed by Amazon Bedrock AgentCore web search. It
+            resolves its region and credentials on its own, as ``BedrockModel`` does (they need the
             ``bedrock-agentcore:InvokeWebSearch`` IAM permission), and a ``web_search`` tool you pass
-            replaces it (e.g. ``make_agentcore_web_search(boto_session=...)``). Elsewhere (another
+            replaces it (e.g. ``make_agentcore_web_search(region_name=...)``). Elsewhere (another
             provider's ``Model`` instance) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
@@ -470,7 +469,8 @@ def create_harness(
     builtin_tools_by_name = _builtin_tools(parent_config)
     default_agentcore = None
     if web_search == "agentcore":
-        builtin_tools_by_name["web_search"] = make_agentcore_web_search(region_name=_bedrock_region(resolved_model))
+        # Search resolves its own region and credentials, as BedrockModel does; nothing is read off the model.
+        builtin_tools_by_name["web_search"] = make_agentcore_web_search()
         if not web_search_explicit:
             # A caller's own web_search (a tool, plugin, or MCP server) replaces the default, so it is
             # registered after the Agent loads theirs; naming web_search in builtin_tools still collides.

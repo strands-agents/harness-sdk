@@ -385,8 +385,8 @@ describe('createHarness', () => {
   })
 
   it('serves web_search on bedrock from the AgentCore tool, by default and when named', async () => {
-    // The default Claude model runs on Anthropic's Bedrock client; search follows its region, also
-    // when an endpoint override hides the region from the client's URL.
+    // The default Claude model runs on Anthropic's Bedrock client. Search resolves its region from the
+    // same environment, with or without an endpoint override on the model.
     vi.stubEnv('AWS_REGION', 'eu-west-1')
     const regions: string[] = []
     vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
@@ -424,7 +424,8 @@ describe('createHarness', () => {
     expect(info).toHaveBeenCalledWith(expect.stringContaining('A pre-built ModelRouter has no built-in web search'))
   })
 
-  it('serves web_search on a BedrockModel instance from AgentCore in its region', async () => {
+  it('serves web_search on a BedrockModel instance from AgentCore, taking nothing from the model', async () => {
+    vi.stubEnv('AWS_REGION', 'us-east-2')
     const regions: string[] = []
     vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
       this: BedrockAgentCoreClient
@@ -437,7 +438,7 @@ describe('createHarness', () => {
       invoke: (input: unknown, context: unknown) => Promise<string>
     }
     expect(await search.invoke({ query: 'q' }, {})).toBe('No results.')
-    expect(regions).toEqual(['eu-west-1'])
+    expect(regions).toEqual(['us-east-2'])
   })
 
   it('yields the default bedrock web_search to a passed one, but not a named one', async () => {
@@ -529,8 +530,9 @@ describe('createHarness', () => {
     expect(agent.model.getConfig().params).not.toHaveProperty('tools')
   })
 
-  it('serves web_search from AgentCore for an AnthropicModel on a Bedrock client, in its region', async () => {
+  it('serves web_search from AgentCore for an AnthropicModel on a Bedrock client', async () => {
     const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
+    vi.stubEnv('AWS_REGION', 'us-east-2')
     const regions: string[] = []
     vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
       this: BedrockAgentCoreClient
@@ -545,7 +547,7 @@ describe('createHarness', () => {
       invoke: (input: unknown, context: unknown) => Promise<string>
     }
     expect(await search.invoke({ query: 'q' }, {})).toBe('No results.')
-    expect(regions).toEqual(['eu-west-1'])
+    expect(regions).toEqual(['us-east-2'])
   })
 
   it('enables web_search when explicitly selected on a supported provider', async () => {

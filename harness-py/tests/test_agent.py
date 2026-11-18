@@ -5,6 +5,7 @@ import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import boto3
 import pytest
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
@@ -517,64 +518,51 @@ def test_web_search_enabled_on_supported_provider_from_default():
     assert agent.model.config["params"]["tools"] == [{"type": "web_search"}]
 
 
-def test_web_search_on_bedrock_is_the_agentcore_tool_in_the_model_region(monkeypatch):
-    regions = []
+@pytest.fixture
+def agentcore_factory_calls(monkeypatch):
+    """The keyword arguments ``create_harness`` builds each AgentCore ``web_search`` tool with."""
+    calls = []
     real = agent_module.make_agentcore_web_search
-    monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region_name"]) or real(**kw)
-    )
+    monkeypatch.setattr(agent_module, "make_agentcore_web_search", lambda **kw: calls.append(kw) or real(**kw))
+    return calls
+
+
+def test_web_search_on_bedrock_is_the_agentcore_tool(agentcore_factory_calls):
     # The default Claude model runs on Anthropic's Bedrock client; other families run on BedrockModel.
-    agent = create_harness()
-    assert "web_search" in agent.tool_names
+    assert "web_search" in create_harness().tool_names
     explicit = create_harness(model="bedrock/us.amazon.nova-2-lite-v1:0", builtin_tools=["read", "web_search"])
     assert "web_search" in explicit.tool_names
-    assert regions == [agent.model.client.aws_region, explicit.model.client.meta.region_name]
+    mantle = create_harness(model="bedrock-mantle/qwen.qwen3-32b-v1:0")
+    assert "web_search" in mantle.tool_names
+    assert "tools" not in mantle.model.config.get("params", {})
+    assert agentcore_factory_calls == [{}, {}, {}]
 
 
-def test_web_search_on_an_all_bedrock_router_is_agentcore_in_the_default_models_region(monkeypatch, caplog):
+def test_web_search_on_bedrock_model_instances_takes_nothing_from_the_model(agentcore_factory_calls):
+    from anthropic import AsyncAnthropicBedrock
+    from strands.models.anthropic import AnthropicModel
+
+    # Search resolves its own region and credentials, so a model's region or session is not copied.
+    session = boto3.Session(region_name="ap-south-1")
+    anthropic_model = AnthropicModel(client=AsyncAnthropicBedrock(aws_region="eu-west-1"), model_id="c", max_tokens=10)
+    models = [
+        BedrockModel(model_id="x", region_name="eu-west-1"),
+        BedrockModel(model_id="x", boto_session=session),
+        anthropic_model,
+        ModelRouter([BedrockModel(model_id="fast", region_name="eu-west-1"), BedrockModel(model_id="deep")]),
+    ]
+    for model in models:
+        assert "web_search" in create_harness(model=model).tool_names
+    assert agentcore_factory_calls == [{}] * len(models)
+
+
+def test_web_search_on_a_mixed_router_is_off_and_names_the_router(caplog):
     import logging
 
-    regions = []
-    real = agent_module.make_agentcore_web_search
-    monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region_name"]) or real(**kw)
-    )
-    router = ModelRouter([BedrockModel(model_id="fast", region_name="eu-west-1"), BedrockModel(model_id="deep")])
-    assert "web_search" in create_harness(model=router).tool_names
-    assert regions == ["eu-west-1"]
     with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
         mixed = create_harness(model=ModelRouter([BedrockModel(model_id="fast"), _RetrievingModel()]))
     assert "web_search" not in mixed.tool_names
     assert any("A pre-built ModelRouter has no built-in web search" in r.getMessage() for r in caplog.records)
-
-
-def test_web_search_on_other_bedrock_apis_is_agentcore_in_the_clients_region(monkeypatch):
-    from anthropic import AsyncAnthropicBedrock
-    from strands.models.anthropic import AnthropicModel
-
-    regions = []
-    real = agent_module.make_agentcore_web_search
-    monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region_name"]) or real(**kw)
-    )
-    model = AnthropicModel(model_id="claude", max_tokens=10)
-    model.client = AsyncAnthropicBedrock(aws_region="eu-west-1")
-    assert "web_search" in create_harness(model=model).tool_names
-    mantle = create_harness(model="bedrock-mantle/qwen.qwen3-32b-v1:0")
-    assert "web_search" in mantle.tool_names
-    assert "tools" not in mantle.model.config.get("params", {})
-    assert regions == ["eu-west-1", None]
-
-
-def test_web_search_on_a_bedrock_model_instance_is_the_agentcore_tool_in_its_region(monkeypatch):
-    regions = []
-    real = agent_module.make_agentcore_web_search
-    monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region_name"]) or real(**kw)
-    )
-    agent = create_harness(model=BedrockModel(model_id="x", region_name="eu-west-1"))
-    assert "web_search" in agent.tool_names
-    assert regions == ["eu-west-1"]
 
 
 def test_web_search_default_on_bedrock_yields_to_a_passed_web_search_tool(caplog):
