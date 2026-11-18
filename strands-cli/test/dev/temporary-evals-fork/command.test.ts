@@ -157,6 +157,18 @@ describe('TEMPORARY dev commands', () => {
     expect(optimize.snapshot().step).toBe('pick')
   })
 
+  it('shouldOpenTheRunOfAJobWhenTheJobRowOpensTheOptimizePanel', async () => {
+    const { workspace, project } = await fixture()
+    const { optimize } = temporaryDevSessions({ workspace, agent: () => ({}) })
+    const openRun = vi.spyOn(optimize, 'openRun')
+    const command = temporaryDevCommands(workspace, project)[2]!
+
+    command.open(context, { job: 'run-1' })
+
+    expect(openRun).toHaveBeenCalledWith('run-1')
+    expect(optimize.snapshot().step).toBe('pick')
+  })
+
   it.each([0, 1, 2])('shouldOpenAPanelViewWhenCommand%iRuns', async (index) => {
     const { workspace, project } = await fixture()
 

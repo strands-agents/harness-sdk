@@ -1,7 +1,13 @@
 import { createElement } from 'react'
 
 import type { ImportedAgentProject } from '../../project/import.js'
-import type { DevChatCommand, DevChatCommandContext, DevChatJob, DevChatPanelView } from '../../ui/chat/types.js'
+import type {
+  DevChatCommand,
+  DevChatCommandContext,
+  DevChatJob,
+  DevChatPanelView,
+  DevPanelOpening,
+} from '../../ui/chat/types.js'
 import { ExperimentPanel } from '../panels/experiment.js'
 import { OptimizePanel } from '../panels/optimize.js'
 import { TestPanel } from '../panels/test.js'
@@ -30,7 +36,8 @@ interface PanelCommand<State> {
   readonly details: string
   readonly session: (sessions: TemporaryDevSessions) => PanelSession<State>
   readonly jobs: (state: State) => readonly DevChatJob[]
-  readonly view: (sessions: TemporaryDevSessions) => DevChatPanelView
+  readonly view: (sessions: TemporaryDevSessions, opening?: DevPanelOpening) => DevChatPanelView
+  readonly openJob?: (sessions: TemporaryDevSessions, job: string) => void
   readonly resume?: (sessions: TemporaryDevSessions) => Promise<void>
 }
 
@@ -73,14 +80,15 @@ const OPTIMIZE_DETAILS = paragraphs(
 )
 
 const devCommand = <State>(
-  { name, description, details, session, jobs, view, resume }: PanelCommand<State>,
+  { name, description, details, session, jobs, view, openJob, resume }: PanelCommand<State>,
   sessions: Sessions
 ): DevChatCommand => ({
   spec: { name, usage: `/${name}`, description, details },
   open: (context, opening): DevChatPanelView => {
     const opened = sessions(context)
     if (!opening?.restore) session(opened).show()
-    return view(opened)
+    if (opening?.job) openJob?.(opened, opening.job)
+    return view(opened, opening)
   },
   attach: (context): void => void resume?.(sessions(context)),
   jobs: temporaryJobsFeed(session(sessions()), jobs),
@@ -117,9 +125,14 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
         jobs: temporaryTestJobs,
         resume: ({ test }) => test.resume(),
         view:
-          ({ test, ui }) =>
+          ({ test, ui }, opening) =>
           (props) =>
-            createElement(TestPanel, { ...props, session: test, browser: ui }),
+            createElement(TestPanel, {
+              ...props,
+              session: test,
+              browser: ui,
+              ...(opening?.job ? { initialRun: opening.job } : {}),
+            }),
       },
       sessions
     ),
@@ -131,6 +144,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
         details: OPTIMIZE_DETAILS,
         session: ({ optimize }) => optimize,
         jobs: temporaryOptimizeJobs,
+        openJob: ({ optimize }, job) => optimize.openRun(job),
         view:
           ({ optimize, ui }) =>
           (props) =>
