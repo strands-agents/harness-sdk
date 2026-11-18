@@ -409,12 +409,24 @@ describe('FileStorage', () => {
         expect(await mode(testDir)).toBe(0o755)
       })
 
-      it('saves when the storage root cannot be checked', async () => {
-        vi.spyOn(fs, 'stat').mockRejectedValueOnce(Object.assign(new Error('Not found'), { code: 'ENOENT' }))
+      it('saves when the storage root cannot be checked and checks again on the next save', async () => {
+        const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+        const error = Object.assign(new Error('Not permitted'), { code: 'EACCES' })
+        vi.spyOn(fs, 'stat').mockRejectedValueOnce(error)
+        await fs.chmod(testDir, 0o755)
 
         await storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
 
         expect(await storage.loadSnapshot({ location })).toEqual(snapshot)
+        expect(warn).not.toHaveBeenCalled()
+        expect(debug.mock.calls).toEqual([
+          [`path=<${testDir}>, error=<${error}> | could not check session storage directory permissions`],
+        ])
+
+        await storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+
+        expect(warn).toHaveBeenCalledTimes(1)
       })
 
       it('does not warn when the storage root is accessible to the owner only', async () => {

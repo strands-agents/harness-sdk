@@ -247,25 +247,25 @@ export class FileStorage implements SnapshotStorage {
 
   /**
    * Warns once if the storage root is accessible by group or others; an existing root keeps its mode.
-   * The check is advisory, so it never fails a save.
+   * The check is advisory, so it never fails a save. A check that fails is tried again on the next save.
    */
   private async _warnIfRootIsOpen(): Promise<void> {
     // Windows does not report POSIX permission bits.
     if (this._rootChecked || process.platform === 'win32') return
-    this._rootChecked = true
+    const { resolve } = await import('path')
+    const root = resolve(this._baseDir)
     try {
       const { promises: fs } = await import('fs')
-      const { resolve } = await import('path')
-      const root = resolve(this._baseDir)
       const mode = (await fs.stat(root)).mode & 0o777
+      this._rootChecked = true
       if (mode & 0o077) {
         warnOnce(
           logger,
           `path=<${root}>, mode=<${mode.toString(8)}> | session storage directory is accessible by group or others | restrict it with chmod 700`
         )
       }
-    } catch {
-      // Ignored: the write reports real filesystem errors.
+    } catch (error: unknown) {
+      logger.debug(`path=<${root}>, error=<${error}> | could not check session storage directory permissions`)
     }
   }
 
