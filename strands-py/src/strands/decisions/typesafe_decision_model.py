@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from ..types.exceptions import ContextWindowOverflowException
 from ._system_one_http_adapter import _ask_system_one, _http_transport, _resolve_system_one_provider_config
 from .decision_model import DecisionModel
 from .types import DecisionInput, DecisionResult, Question
@@ -71,12 +72,23 @@ class TypeSafeDecisionModel(DecisionModel):
         )
 
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
-        transport = _http_transport(self._provider_config, is_context_overflow=_is_context_overflow)
-        return await _ask_system_one(self._provider_config, transport, state, questions)
+        try:
+            return await _ask_system_one(
+                self._provider_config, _http_transport(self._provider_config), state, questions
+            )
+        except httpx.HTTPStatusError as error:
+            if _is_context_overflow(error.response):
+                raise ContextWindowOverflowException(str(error)) from error
+            raise
 
 
-def _is_context_overflow(status: int, body: Any) -> bool:
-    if status != 400 or not isinstance(body, dict):
+def _is_context_overflow(response: httpx.Response) -> bool:
+    # TypeSafe reports a request longer than the model's context as HTTP 400 `max_tokens_exceeded`.
+    if response.status_code != 400:
         return False
-    detail = body.get("detail")
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    detail = body.get("detail") if isinstance(body, dict) else None
     return isinstance(detail, dict) and detail.get("error_type") == "max_tokens_exceeded"

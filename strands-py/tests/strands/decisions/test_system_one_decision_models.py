@@ -335,22 +335,29 @@ class TestAsk:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("status", "error_type"),
-        [(400, "max_tokens_exceeded"), (400, "invalid_request"), (500, "max_tokens_exceeded")],
+        ("status", "error_type", "exp_error_by_provider"),
+        [
+            (
+                400,
+                "max_tokens_exceeded",
+                {"typesafe": ContextWindowOverflowException, "decisions_api": httpx.HTTPStatusError},
+            ),
+            (400, "invalid_request", {"typesafe": httpx.HTTPStatusError, "decisions_api": httpx.HTTPStatusError}),
+            (500, "max_tokens_exceeded", {"typesafe": httpx.HTTPStatusError, "decisions_api": httpx.HTTPStatusError}),
+        ],
     )
-    async def test_maps_only_typesafe_context_overflow(self, provider: _ProviderCase, status: int, error_type: str):
+    async def test_maps_only_typesafe_context_overflow(
+        self, provider: _ProviderCase, status: int, error_type: str, exp_error_by_provider: dict[str, type[Exception]]
+    ):
         body = {"detail": {"error_type": error_type}}
         client = _fake_client(body, status=status)
         decision = provider.model_cls(api_key="test-key", http_client=client)
-        is_context_overflow = (
-            provider.provider_name == "typesafe" and status == 400 and error_type == "max_tokens_exceeded"
-        )
-        error_class = ContextWindowOverflowException if is_context_overflow else httpx.HTTPStatusError
+        exp_error = exp_error_by_provider[provider.provider_name]
 
-        with pytest.raises(error_class, match=f"HTTP {status}: {error_type}") as caught:
+        with pytest.raises(exp_error, match=f"HTTP {status}: {error_type}") as caught:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
-        cause = caught.value.__cause__ if is_context_overflow else caught.value
+        cause = caught.value if exp_error is httpx.HTTPStatusError else caught.value.__cause__
         assert isinstance(cause, httpx.HTTPStatusError)
         assert cause.response.status_code == status
         assert cause.response.json() == body

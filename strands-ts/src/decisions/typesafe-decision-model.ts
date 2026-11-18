@@ -1,9 +1,11 @@
+import { ContextWindowOverflowError, ModelError } from '../errors.js'
 import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
   httpTransport,
   isRecord,
   resolveSystemOneProviderConfig,
+  SystemOneHttpError,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
@@ -56,23 +58,30 @@ export class TypeSafeDecisionModel extends DecisionModel {
     })
   }
 
-  protected _ask<const Q extends Record<string, Question>>(
+  protected async _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
     questions: Q,
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
-    return askSystemOne(
-      this._providerConfig,
-      httpTransport(this._providerConfig, isContextOverflow),
-      state,
-      questions,
-      options.cancelSignal
-    )
+    try {
+      return await askSystemOne(
+        this._providerConfig,
+        httpTransport(this._providerConfig),
+        state,
+        questions,
+        options.cancelSignal
+      )
+    } catch (error) {
+      if (isContextOverflow(error)) throw new ContextWindowOverflowError(error.message, { cause: error.cause })
+      throw error
+    }
   }
 }
 
-function isContextOverflow(status: number, body: unknown): boolean {
-  if (status !== 400 || !isRecord(body)) return false
-  const detail = body['detail']
-  return isRecord(detail) && detail['error_type'] === 'max_tokens_exceeded'
+/** TypeSafe reports a request longer than the model's context as HTTP 400 `max_tokens_exceeded`. */
+function isContextOverflow(error: unknown): error is ModelError & { cause: SystemOneHttpError } {
+  if (!(error instanceof ModelError) || !(error.cause instanceof SystemOneHttpError)) return false
+  const { status, body } = error.cause
+  const detail = isRecord(body) ? body['detail'] : undefined
+  return status === 400 && isRecord(detail) && detail['error_type'] === 'max_tokens_exceeded'
 }

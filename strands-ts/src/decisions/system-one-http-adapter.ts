@@ -37,8 +37,6 @@ export interface SystemOneProviderConfig extends SystemOneRequestConfig {
  */
 export type SystemOneTransport = (body: string, cancelSignal?: AbortSignal) => Promise<unknown>
 
-type ContextOverflowClassifier = (status: number, body: unknown) => boolean
-
 /** @internal */
 export function resolveDefaultMinConfidence(value: number, className: string): number {
   if (!Number.isFinite(value) || value < 0 || value > 1) {
@@ -113,7 +111,12 @@ interface ParsedAnswer {
   confidence: number
 }
 
-class SystemOneHttpError extends Error {
+/**
+ * Cause attached to errors for non-2xx System One responses, carrying the status and parsed body.
+ *
+ * @internal
+ */
+export class SystemOneHttpError extends Error {
   constructor(
     readonly status: number,
     readonly body: unknown,
@@ -206,24 +209,13 @@ function toWireQuestions(questions: Record<string, Question>): Record<string, Wi
 /**
  * The HTTP transport for hosted System One APIs: POSTs the request with the provider's API key.
  *
- * @param config - Resolved HTTP provider configuration.
- * @param isContextOverflow - Optional classifier for provider-specific context overflow responses.
- * @returns A transport that maps HTTP failures to SDK model errors.
  * @internal
  */
-export function httpTransport(
-  config: SystemOneProviderConfig,
-  isContextOverflow?: ContextOverflowClassifier
-): SystemOneTransport {
-  return (body, cancelSignal) => sendHttp(config, body, cancelSignal, isContextOverflow)
+export function httpTransport(config: SystemOneProviderConfig): SystemOneTransport {
+  return (body, cancelSignal) => sendHttp(config, body, cancelSignal)
 }
 
-async function sendHttp(
-  config: SystemOneProviderConfig,
-  body: string,
-  cancelSignal?: AbortSignal,
-  isContextOverflow?: ContextOverflowClassifier
-): Promise<unknown> {
+async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSignal?: AbortSignal): Promise<unknown> {
   let response: Response
   try {
     response = await config.fetch(config.endpoint, {
@@ -242,7 +234,7 @@ async function sendHttp(
   }
 
   const payload = await readPayload(response)
-  if (!response.ok) throw translateHttpError(config.providerName, response.status, payload, isContextOverflow)
+  if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
   return payload
 }
 
@@ -259,17 +251,12 @@ async function readPayload(response: Response): Promise<unknown> {
   }
 }
 
-function translateHttpError(
-  providerName: string,
-  status: number,
-  body: unknown,
-  isContextOverflow?: ContextOverflowClassifier
-): Error {
+function translateHttpError(providerName: string, status: number, body: unknown): Error {
   const detail = errorDetail(body)
   const message = `${providerName} decision request failed with HTTP ${status}${detail ? `: ${detail}` : ''}`
   const cause = new SystemOneHttpError(status, body, message)
   if (status === 429 || status === 503 || status === 529) return new ModelThrottledError(message, { cause })
-  if (status === 413 || isContextOverflow?.(status, body)) return new ContextWindowOverflowError(message, { cause })
+  if (status === 413) return new ContextWindowOverflowError(message, { cause })
   return new ModelError(message, { cause })
 }
 
@@ -280,7 +267,7 @@ function errorDetail(body: unknown): string | undefined {
     const value = body[field]
     if (typeof value === 'string') return value
     if (isRecord(value)) {
-      const nested = value['message'] ?? value['error_type']
+      const nested = value['message'] || value['error_type']
       if (typeof nested === 'string') return nested
     }
   }
