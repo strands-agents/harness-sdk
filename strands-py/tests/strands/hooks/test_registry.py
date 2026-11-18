@@ -1,4 +1,7 @@
+import asyncio
+import gc
 import unittest.mock
+import warnings
 from typing import Union
 
 import pytest
@@ -38,6 +41,115 @@ def test_hook_registry_add_callback_agent_init_coroutine(registry):
 
     with pytest.raises(ValueError, match=r"AgentInitializedEvent can only be registered with a synchronous callback"):
         registry.add_callback(AgentInitializedEvent, callback)
+
+
+def test_hook_registry_add_callback_agent_init_async_callable_object(registry):
+    """Reject async callable objects for sync-only initialization hooks.
+
+    Regression for https://github.com/strands-agents/harness-sdk/issues/4337.
+    """
+
+    class AsyncCallableHook:
+        async def __call__(self, event):
+            pass
+
+    with pytest.raises(ValueError, match=r"AgentInitializedEvent can only be registered with a synchronous callback"):
+        registry.add_callback(AgentInitializedEvent, AsyncCallableHook())
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_invoke_callbacks_async_awaitable_result(registry, agent):
+    """Await any awaitable returned by a synchronous callback, in registration order."""
+
+    calls = []
+
+    async def deferred():
+        calls.append("deferred")
+
+    async def scheduled():
+        calls.append("scheduled")
+
+    def sync_callback(event):
+        calls.append("sync")
+
+    def coroutine_wrapper(event):
+        return deferred()
+
+    def future_wrapper(event):
+        return asyncio.ensure_future(scheduled())
+
+    registry.add_callback(BeforeInvocationEvent, sync_callback)
+    registry.add_callback(BeforeInvocationEvent, coroutine_wrapper)
+    registry.add_callback(BeforeInvocationEvent, future_wrapper)
+
+    await registry.invoke_callbacks_async(BeforeInvocationEvent(agent=agent))
+
+    assert calls == ["sync", "deferred", "scheduled"]
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_invoke_callbacks_async_callable_object(registry, agent):
+    """Await async callable objects.
+
+    Regression for https://github.com/strands-agents/harness-sdk/issues/4337.
+    """
+
+    class AsyncCallableHook:
+        def __init__(self):
+            self.called = False
+
+        async def __call__(self, event):
+            self.called = True
+
+    callback = AsyncCallableHook()
+    registry.add_callback(BeforeInvocationEvent, callback)
+
+    await registry.invoke_callbacks_async(BeforeInvocationEvent(agent=agent))
+
+    assert callback.called
+
+
+def test_hook_registry_invoke_callbacks_coroutine_result_raises_without_warning(registry, agent):
+    """Close unexpected coroutines on the synchronous path.
+
+    Regression for https://github.com/strands-agents/harness-sdk/issues/4337.
+    """
+
+    async def deferred_callback():
+        pass
+
+    def callback(event):
+        return deferred_callback()
+
+    registry.add_callback(BeforeInvocationEvent, callback)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        with pytest.raises(RuntimeError, match=r"callback returned a coroutine"):
+            registry.invoke_callbacks(BeforeInvocationEvent(agent=agent))
+        gc.collect()
+
+    assert not [warning for warning in caught if issubclass(warning.category, RuntimeWarning)]
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_invoke_callbacks_scheduled_awaitable_result(registry, agent):
+    """Leave an already-scheduled awaitable returned by a synchronous callback to run on its own."""
+
+    calls = []
+
+    async def scheduled():
+        calls.append("scheduled")
+
+    def callback(event):
+        return asyncio.ensure_future(scheduled())
+
+    registry.add_callback(BeforeInvocationEvent, callback)
+
+    registry.invoke_callbacks(BeforeInvocationEvent(agent=agent))
+    await asyncio.sleep(0)
+
+    assert calls == ["scheduled"]
 
 
 @pytest.mark.asyncio

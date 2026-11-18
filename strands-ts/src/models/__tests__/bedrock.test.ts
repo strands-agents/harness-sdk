@@ -606,6 +606,8 @@ describe('BedrockModel', () => {
       it.each([
         ['a listed model id', { modelId: 'anthropic.claude-sonnet-4-6' }, 128_000],
         ['a cross-region model id', { modelId: 'us.anthropic.claude-sonnet-4-6' }, 128_000],
+        ['GPT-6.2 Astra on Bedrock', { modelId: 'us.openai.gpt-6.2-astra' }, 128_000],
+        ['GPT-6.2 Sol on Bedrock', { modelId: 'global.openai.gpt-6.2-sol' }, 128_000],
         ['the SDK default model', {}, 128_000],
         ['an older Claude model', { modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0' }, 8192],
         [

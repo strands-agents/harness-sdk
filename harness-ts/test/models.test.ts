@@ -746,6 +746,8 @@ describe('default effort', () => {
     ['bedrock/us.openai.gpt-5.5', BEDROCK_GPT, 'medium'],
     ['bedrock/global.openai.gpt-6-astra', BEDROCK_GPT, 'low'],
     ['bedrock/us.openai.gpt-6.1-terra', BEDROCK_GPT, 'low'],
+    ['bedrock/us.openai.gpt-6.2-astra', BEDROCK_GPT, 'low'],
+    ['bedrock/global.openai.gpt-6.2-sol', BEDROCK_GPT, 'low'],
     ['bedrock/us.openai.gpt-6-sol', BEDROCK_GPT, 'medium'],
     ['bedrock/openai.gpt-5.6-cyber', BEDROCK_GPT, 'high'],
     ['bedrock/openai.gpt-oss-120b-1:0', BEDROCK_REASONING_EFFORT, 'medium'],

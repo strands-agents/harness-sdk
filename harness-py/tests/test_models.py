@@ -286,6 +286,8 @@ _BEDROCK_REASONING_EFFORT = ("additional_request_fields", "reasoning_effort")
         ("bedrock/us.openai.gpt-5.5", _BEDROCK_GPT, "medium"),
         ("bedrock/global.openai.gpt-6-astra", _BEDROCK_GPT, "low"),
         ("bedrock/us.openai.gpt-6.1-terra", _BEDROCK_GPT, "low"),
+        ("bedrock/us.openai.gpt-6.2-astra", _BEDROCK_GPT, "low"),
+        ("bedrock/global.openai.gpt-6.2-sol", _BEDROCK_GPT, "low"),
         ("bedrock/us.openai.gpt-6-sol", _BEDROCK_GPT, "medium"),
         ("bedrock/openai.gpt-5.6-cyber", _BEDROCK_GPT, "high"),
         ("bedrock/openai.gpt-oss-120b-1:0", _BEDROCK_REASONING_EFFORT, "medium"),
