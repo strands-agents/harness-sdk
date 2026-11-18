@@ -48,4 +48,10 @@ export interface MakeWebFetchOptions {
   model?: Model
   /** Extraction mode. Defaults to `'agentic'`. */
   mode?: 'markdown' | 'agentic'
+  /**
+   * Allow URLs whose host is, or resolves to, a loopback, link-local, private-range, or
+   * otherwise non-public address. Defaults to `false`: such a URL is refused, as is a
+   * redirect to one and a host that cannot be resolved.
+   */
+  allowPrivateAddresses?: boolean
 }

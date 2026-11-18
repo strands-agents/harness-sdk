@@ -4,11 +4,15 @@ import { Agent } from '../../agent/agent.js'
 import { createAuxiliaryInvocationContext } from '../../agent/invocation-context.js'
 import type { InvokeOptions } from '../../types/agent.js'
 import { tool } from '../../tools/tool-factory.js'
+import { isPublicHost } from './address-guard.js'
 import { htmlToMarkdown } from './extract.js'
 import { type MakeWebFetchOptions, WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DESCRIPTION_AGENTIC } from './types.js'
 
 export const DEFAULT_MAX_BYTES = 5 * 1024 * 1024 // 5 MiB
 export const DEFAULT_MAX_CONTENT_CHARS = 50_000
+
+const _MAX_REDIRECTS = 20
+const _REDIRECT_STATUSES = [301, 302, 303, 307, 308]
 
 const _HEADERS = {
   'User-Agent': 'strands-agents-web-fetch/1.0',
@@ -41,7 +45,7 @@ const webFetchAgenticInputSchema = z.object({
  * with conservative limits; use this factory to tune them.
  */
 export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<typeof tool> {
-  const { mode = 'agentic', model: analystModel } = options
+  const { mode = 'agentic', model: analystModel, allowPrivateAddresses = false } = options
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
   const maxContentChars = options.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS
   if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
@@ -63,7 +67,7 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
       const { url } = input
       const signal = context?.cancelSignal ?? null
 
-      const [contentType, raw] = await fetchOnce(url, maxBytes, signal)
+      const [contentType, raw] = await fetchOnce(url, maxBytes, signal, allowPrivateAddresses)
 
       const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
       let content = isMarkup ? await htmlToMarkdown(raw) : raw
@@ -98,7 +102,7 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
         ...(context?.cancelSignal && { cancelSignal: context.cancelSignal }),
         ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
       }
-      const [contentType, raw] = await fetchOnce(url, maxBytes, signal)
+      const [contentType, raw] = await fetchOnce(url, maxBytes, signal, allowPrivateAddresses)
 
       const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
       let content = isMarkup ? await htmlToMarkdown(raw) : raw
@@ -134,27 +138,13 @@ export const webFetch = makeWebFetch()
 
 // ---- Internals ----
 
-async function fetchOnce(url: string, maxBytes: number, signal: AbortSignal | null): Promise<[string, string]> {
-  // Validate scheme before hitting the network
-  if (!URL.canParse(url)) {
-    throw new Error(`url=<${url}> | fetch failed: invalid URL`)
-  }
-  const { protocol } = new URL(url)
-  if (protocol !== 'http:' && protocol !== 'https:') {
-    throw new Error(`url=<${url}> | fetch failed: only http and https URLs are supported`)
-  }
-
-  let response: Response
-  try {
-    response = await globalThis.fetch(url, { method: 'GET', headers: _HEADERS, signal })
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Web fetch tool request cancelled', { cause: error })
-    }
-    throw new Error(`url=<${url}> | fetch failed: ${error instanceof Error ? error.message : String(error)}`, {
-      cause: error,
-    })
-  }
+async function fetchOnce(
+  url: string,
+  maxBytes: number,
+  signal: AbortSignal | null,
+  allowPrivateAddresses: boolean
+): Promise<[string, string]> {
+  const response = await _send(url, signal, allowPrivateAddresses)
 
   if (!response.ok) {
     await response.body?.cancel()
@@ -195,6 +185,66 @@ async function fetchOnce(url: string, maxBytes: number, signal: AbortSignal | nu
   }
 
   return [contentType, chunks.join('')]
+}
+
+// Sends the GET, checking the target of every redirect hop unless private addresses are allowed.
+async function _send(url: string, signal: AbortSignal | null, allowPrivateAddresses: boolean): Promise<Response> {
+  let target = url
+  for (let hop = 0; hop <= _MAX_REDIRECTS; hop++) {
+    await _checkUrl(target, allowPrivateAddresses)
+
+    let response: Response
+    try {
+      response = await globalThis.fetch(target, {
+        method: 'GET',
+        headers: _HEADERS,
+        signal,
+        redirect: allowPrivateAddresses ? 'follow' : 'manual',
+      })
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Web fetch tool request cancelled', { cause: error })
+      }
+      throw new Error(`url=<${target}> | fetch failed: ${error instanceof Error ? error.message : String(error)}`, {
+        cause: error,
+      })
+    }
+
+    const location = response.headers.get('location')
+    if (allowPrivateAddresses || !_REDIRECT_STATUSES.includes(response.status) || location === null) {
+      return response
+    }
+    await response.body?.cancel()
+    if (!URL.canParse(location, target)) {
+      throw new Error(`url=<${target}> | fetch failed: invalid redirect location`)
+    }
+    target = new URL(location, target).href
+  }
+  throw new Error(`url=<${url}> | fetch failed: too many redirects`)
+}
+
+// Throws unless `url` is http(s) and, when private addresses are not allowed, its host resolves only to public ones.
+async function _checkUrl(url: string, allowPrivateAddresses: boolean): Promise<void> {
+  if (!URL.canParse(url)) {
+    throw new Error(`url=<${url}> | fetch failed: invalid URL`)
+  }
+  const { protocol, hostname } = new URL(url)
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    throw new Error(`url=<${url}> | fetch failed: only http and https URLs are supported`)
+  }
+  if (allowPrivateAddresses) return
+
+  let isPublic: boolean
+  try {
+    isPublic = await isPublicHost(hostname)
+  } catch (error) {
+    throw new Error(`url=<${url}> | fetch failed: could not resolve host`, { cause: error })
+  }
+  if (!isPublic) {
+    throw new Error(
+      `url=<${url}> | fetch refused: host is or resolves to a loopback, link-local, private, or other non-public address`
+    )
+  }
 }
 
 function _parseCharset(contentType: string): string {

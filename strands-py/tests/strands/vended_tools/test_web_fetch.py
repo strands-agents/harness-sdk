@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import threading
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from strands.vended_tools.web_fetch import (
     make_web_fetch,
 )
 from strands.vended_tools.web_fetch import _extract as extract_module
+from strands.vended_tools.web_fetch._address_guard import is_public_address
 from strands.vended_tools.web_fetch._extract import _tag_attribute, html_to_markdown
 from strands.vended_tools.web_fetch.web_fetch import _parse_charset
 
@@ -40,6 +42,26 @@ def _make_ctx(cancel: threading.Event | None = None) -> ToolContext:
 
 def _raising_beautiful_soup(*args, **kwargs):
     raise ValueError("mock extraction failure")
+
+
+@pytest.fixture(autouse=True)
+def dns(monkeypatch):
+    """Resolve hostnames from the returned mapping instead of the network; unmapped names are public."""
+    hosts: dict[str, list[str]] = {}
+    real_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo(host, port, *args, **kwargs):
+        try:
+            return real_getaddrinfo(host, port, flags=socket.AI_NUMERICHOST)
+        except socket.gaierror:
+            pass
+        addresses = hosts.get(host, ["93.184.216.34"])
+        if not addresses:
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (address, 0)) for address in addresses]
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return hosts
 
 
 class TestLazyLoad:
@@ -219,6 +241,166 @@ class TestWebFetchToolCall:
         tool = make_web_fetch(client=_client(handler), mode="markdown")
         with pytest.raises(asyncio.CancelledError):
             await tool(url="https://example.com/", tool_context=ctx)
+
+
+class TestNonPublicAddresses:
+    """Hosts that are, or resolve to, non-public addresses are refused unless allowed."""
+
+    @staticmethod
+    def _recording_client(requests: list[str], redirects: dict[str, str] | None = None, **kwargs) -> httpx.AsyncClient:
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(str(request.url))
+            location = (redirects or {}).get(str(request.url))
+            if location is not None:
+                return httpx.Response(302, headers={"location": location})
+            return httpx.Response(200, headers={"content-type": "text/plain"}, text="secret")
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
+
+    @pytest.mark.parametrize(
+        ("address", "expected"),
+        [
+            ("0.0.0.0", False),
+            ("10.0.0.5", False),
+            ("100.64.0.1", False),
+            ("127.0.0.1", False),
+            ("127.255.255.254", False),
+            ("169.254.169.254", False),
+            ("172.16.0.1", False),
+            ("172.31.255.255", False),
+            ("192.0.0.192", False),
+            ("192.168.1.1", False),
+            ("198.18.0.1", False),
+            ("224.0.0.1", False),
+            ("255.255.255.255", False),
+            ("::", False),
+            ("::1", False),
+            ("::ffff:127.0.0.1", False),
+            ("::ffff:a00:5", False),
+            ("fc00::1", False),
+            ("fd00:ec2::254", False),
+            ("fe80::1", False),
+            ("fe80::1%eth0", False),
+            ("fec0::1", False),
+            ("ff02::1", False),
+            ("8.8.8.8", True),
+            ("172.15.255.255", True),
+            ("172.32.0.1", True),
+            ("::ffff:8.8.8.8", True),
+            ("2606:4700:4700::1111", True),
+        ],
+    )
+    def test_is_public_address(self, address, expected):
+        assert is_public_address(address) is expected
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1:8080/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.5/",
+            "http://0.0.0.0/",
+            "http://2130706433/",
+            "http://[::1]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[fe80::1]/",
+            "https://[fd00:ec2::254]/",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_refuses_literal_address_without_sending_a_request(self, url):
+        requests: list[str] = []
+        tool = make_web_fetch(client=self._recording_client(requests), mode="markdown")
+
+        with pytest.raises(WebFetchError, match="^Fetch refused"):
+            await tool(url=url)
+        assert requests == []
+
+    @pytest.mark.parametrize("addresses", [["10.0.0.5"], ["::1"], ["93.184.216.34", "169.254.169.254"]])
+    @pytest.mark.asyncio
+    async def test_refuses_hostname_resolving_to_a_non_public_address(self, dns, addresses):
+        dns["internal.example"] = addresses
+        requests: list[str] = []
+        tool = make_web_fetch(client=self._recording_client(requests), mode="markdown")
+
+        with pytest.raises(WebFetchError, match="^Fetch refused: 'internal.example'"):
+            await tool(url="https://internal.example/")
+        assert requests == []
+
+    @pytest.mark.asyncio
+    async def test_refuses_hostname_that_does_not_resolve(self, dns):
+        dns["unknown.example"] = []
+        requests: list[str] = []
+        tool = make_web_fetch(client=self._recording_client(requests), mode="markdown")
+
+        with pytest.raises(WebFetchError, match="^Fetch failed: could not resolve host 'unknown.example'"):
+            await tool(url="https://unknown.example/")
+        assert requests == []
+
+    @pytest.mark.asyncio
+    async def test_refuses_redirect_to_a_non_public_address(self):
+        requests: list[str] = []
+        redirects = {"https://example.com/": "http://127.0.0.1:8080/admin"}
+        client = self._recording_client(requests, redirects, follow_redirects=True)
+
+        with pytest.raises(WebFetchError, match="^Fetch refused: '127.0.0.1'"):
+            await make_web_fetch(client=client, mode="markdown")(url="https://example.com/")
+        assert requests == ["https://example.com/"]
+
+    @pytest.mark.asyncio
+    async def test_refuses_redirect_to_a_hostname_resolving_to_a_non_public_address(self, dns):
+        dns["internal.example"] = ["10.0.0.5"]
+        requests: list[str] = []
+        redirects = {"https://example.com/": "/hop", "https://example.com/hop": "https://internal.example/"}
+        client = self._recording_client(requests, redirects, follow_redirects=True)
+
+        with pytest.raises(WebFetchError, match="^Fetch refused: 'internal.example'"):
+            await make_web_fetch(client=client, mode="markdown")(url="https://example.com/")
+        assert requests == ["https://example.com/", "https://example.com/hop"]
+
+    @pytest.mark.asyncio
+    async def test_follows_redirects_to_public_hosts(self):
+        requests: list[str] = []
+        redirects = {"https://example.com/old": "/new"}
+        client = self._recording_client(requests, redirects, follow_redirects=True)
+
+        tru_result = await make_web_fetch(client=client, mode="markdown")(url="https://example.com/old")
+
+        assert tru_result == "secret"
+        assert requests == ["https://example.com/old", "https://example.com/new"]
+
+    @pytest.mark.asyncio
+    async def test_does_not_follow_redirects_when_the_client_does_not(self):
+        requests: list[str] = []
+        redirects = {"https://example.com/": "https://example.com/next"}
+        client = self._recording_client(requests, redirects)
+
+        await make_web_fetch(client=client, mode="markdown")(url="https://example.com/")
+
+        assert requests == ["https://example.com/"]
+
+    @pytest.mark.asyncio
+    async def test_stops_after_the_client_redirect_limit(self):
+        requests: list[str] = []
+        redirects = {"https://example.com/loop": "https://example.com/loop"}
+        client = self._recording_client(requests, redirects, follow_redirects=True, max_redirects=3)
+
+        with pytest.raises(WebFetchError, match="too many redirects"):
+            await make_web_fetch(client=client, mode="markdown")(url="https://example.com/loop")
+        assert len(requests) == 4
+
+    @pytest.mark.asyncio
+    async def test_allow_private_addresses_fetches_through_a_redirect(self, dns):
+        dns["internal.example"] = ["10.0.0.5"]
+        requests: list[str] = []
+        redirects = {"https://internal.example/": "http://127.0.0.1:8080/admin"}
+        client = self._recording_client(requests, redirects, follow_redirects=True)
+        tool = make_web_fetch(client=client, mode="markdown", allow_private_addresses=True)
+
+        tru_result = await tool(url="https://internal.example/")
+
+        assert tru_result == "secret"
+        assert requests == ["https://internal.example/", "http://127.0.0.1:8080/admin"]
 
 
 class TestAnalyst:

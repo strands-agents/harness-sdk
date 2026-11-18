@@ -50,7 +50,15 @@ npm install turndown
 
 :::note[Security posture]
 Web fetch accepts only `http://` and `https://` URLs and caps response bodies
-at 5 MiB by default. Egress control belongs at the layer that encapsulates the
+at 5 MiB by default. It refuses a URL whose host is, or resolves to, a
+loopback, link-local, private-range, or otherwise non-public address, and
+checks every redirect the same way. A host that cannot be resolved from the
+agent's process is refused too. To fetch local targets, pass
+<Syntax py="allow_private_addresses=True" ts="allowPrivateAddresses: true" />
+to the factory.
+
+The host is resolved before the request is sent, so this check does not stop
+DNS rebinding. Egress control belongs at the layer that encapsulates the
 agent (a sandbox, microVM, or network policy) where it can be enforced
 consistently across all tools, including `shell`.
 :::

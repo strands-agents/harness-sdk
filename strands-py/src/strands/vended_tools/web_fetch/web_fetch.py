@@ -26,6 +26,7 @@ import httpx
 from ...agent.invocation_context import _create_auxiliary_invocation_context
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
+from ._address_guard import is_public_host
 from ._extract import html_to_markdown
 from .types import WEB_FETCH_DESCRIPTION_AGENTIC, WEB_FETCH_DESCRIPTION_MARKDOWN
 
@@ -63,6 +64,7 @@ def make_web_fetch(
     client: httpx.AsyncClient | None = None,
     model: Model | None = None,
     mode: Literal["markdown", "agentic"] = "agentic",
+    allow_private_addresses: bool = False,
 ) -> DecoratedFunctionTool:
     """Create a web fetch tool.
 
@@ -84,6 +86,10 @@ def make_web_fetch(
             Resolution order: this ``model`` > ``agent.aux_model`` > ``agent.model`` of the host
             agent; ``WebFetchError`` if none is available.
         mode: Extraction mode. Defaults to ``agentic``.
+        allow_private_addresses: Allow URLs whose host is, or resolves to, a loopback,
+            link-local, private-range, or otherwise non-public address. Defaults to
+            ``False``: such a URL is refused with ``WebFetchError``, as is a redirect
+            to one, a non-``http(s)`` URL, and a host that cannot be resolved.
 
     Returns:
         A decorated tool that fetches a URL and extracts content according to
@@ -126,6 +132,7 @@ def make_web_fetch(
             max_bytes=max_bytes,
             client=external_client,
             cancel_signal=cancel_signal,
+            allow_private_addresses=allow_private_addresses,
         )
 
         is_markup = "html" in content_type.lower() or "xml" in content_type.lower()
@@ -171,6 +178,7 @@ def make_web_fetch(
             max_bytes=max_bytes,
             client=external_client,
             cancel_signal=cancel_signal,
+            allow_private_addresses=allow_private_addresses,
         )
 
         # Fresh agent per call — no history from one fetch bleeds into the next.
@@ -212,6 +220,7 @@ async def _fetch_once(
     max_bytes: int,
     client: httpx.AsyncClient | None,
     cancel_signal: threading.Event | None,
+    allow_private_addresses: bool,
 ) -> tuple[str, str]:
     """Perform one HTTP GET, returning ``(content_type, body_text)``.
 
@@ -227,8 +236,9 @@ async def _fetch_once(
     active_client = client if client is not None else httpx.AsyncClient(follow_redirects=True)
     try:
         try:
-            request = active_client.build_request("GET", url, headers=_HEADERS)
-            response = await active_client.send(request, stream=True)
+            response = await _send(active_client, url, allow_private_addresses)
+        except WebFetchError:
+            raise
         except httpx.TimeoutException as error:
             raise WebFetchError(f"Fetch timed out: {url!r}") from error
         except (httpx.InvalidURL, httpx.RequestError, ValueError) as exc:
@@ -260,6 +270,37 @@ async def _fetch_once(
         raw = body.decode("utf-8", errors="replace")
 
     return content_type, raw
+
+
+async def _send(client: httpx.AsyncClient, url: str, allow_private_addresses: bool) -> httpx.Response:
+    """Send the GET, checking the target of every redirect hop unless private addresses are allowed."""
+    request = client.build_request("GET", url, headers=_HEADERS)
+    if allow_private_addresses:
+        return await client.send(request, stream=True)
+
+    for _ in range(client.max_redirects + 1):
+        await _check_public(request.url)
+        response = await client.send(request, stream=True, follow_redirects=False)
+        if response.next_request is None or not client.follow_redirects:
+            return response
+        await response.aclose()
+        request = response.next_request
+    raise WebFetchError(f"Fetch failed: too many redirects: {url!r}")
+
+
+async def _check_public(url: httpx.URL) -> None:
+    """Raise ``WebFetchError`` unless ``url`` is http(s) and its host resolves only to public addresses."""
+    if url.scheme not in ("http", "https"):
+        raise WebFetchError(f"Fetch failed: only http and https URLs are supported: {str(url)!r}")
+    host = url.raw_host.decode("ascii")
+    try:
+        is_public = await is_public_host(host)
+    except OSError as error:
+        raise WebFetchError(f"Fetch failed: could not resolve host {host!r}") from error
+    if not is_public:
+        raise WebFetchError(
+            f"Fetch refused: {host!r} is or resolves to a loopback, link-local, private, or other non-public address"
+        )
 
 
 def _parse_charset(content_type: str) -> str:
