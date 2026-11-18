@@ -217,6 +217,7 @@ agent("Fetch https://strandsagents.com and save a one-paragraph summary to /tmp/
 | Web fetch | `web_fetch`, `make_web_fetch` | Fetch a web page for the model to read. Requires the `web-fetch` extra |
 | Notebook | `notebook`, `make_notebook` | Keep persistent text notes |
 | Python REPL | `python_repl`, `make_python_repl` | Run Python code |
+| Programmatic tool caller | `programmatic_tool_caller`, `make_programmatic_tool_caller` | Let the agent orchestrate its other tools with sandboxed Python code. Requires the `programmatic-tool-caller` extra |
 | Sleep | `sleep`, `make_sleep` | Pause for a bounded, cancellable duration |
 | Handoff to user | `handoff_to_user`, `make_handoff_to_user` | Pause the agent loop and ask the user for input |
 | Stop | `stop`, `make_stop` | End the agent loop when the task is done |
