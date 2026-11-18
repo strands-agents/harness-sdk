@@ -191,7 +191,7 @@ export class FileStorage implements SnapshotStorage {
         }
         // Directories above the storage root keep the default mode. Windows rejects mkdir on a drive
         // root, and a real failure here also fails the mkdir below.
-        await fs.mkdir(dirname(this._baseDir), { recursive: true }).catch(() => {})
+        await fs.mkdir(dirname(resolve(this._baseDir)), { recursive: true }).catch(() => {})
         await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
         await this._warnIfRootIsOpen()
         await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })

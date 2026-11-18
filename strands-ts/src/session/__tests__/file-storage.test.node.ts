@@ -331,6 +331,13 @@ describe('FileStorage', () => {
         expect(await mode(parentDir)).toBe(await mode(defaultDir))
       })
 
+      it('creates the storage root accessible to the owner only when the base directory ends in a dot segment', async () => {
+        const baseDir = join(testDir, 'base')
+        await new FileStorage(`${baseDir}/.`).saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+
+        expect(await mode(baseDir)).toBe(0o700)
+      })
+
       it('refuses to load through a symbolic link', async () => {
         await fs.mkdir(snapshotsDir, { recursive: true })
         await fs.symlink(outsidePath, latestPath)
