@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
@@ -1266,3 +1266,32 @@ async def test_cancel_background_tasks_after_a_nested_reentrant_invocation_still
     result = await asyncio.wait_for(agent.invoke_async("Nest."), timeout=2)
 
     assert result.stop_reason == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_while_interrupt_responses_are_applied_finishes_as_cancelled() -> None:
+    @tool(name="approval", context=True)
+    def approval(tool_context: ToolContext) -> str:
+        """Ask before finishing."""
+        return tool_context.interrupt("approve", reason="Approve work?")
+
+    agent = _background_agent(approval, responses=[_assistant_text("Task admitted."), _assistant_text("Unreached.")])
+    interrupted = await agent.invoke_async("Run approval.")
+    manager = agent._background_tasks._manager
+    list_tasks = manager.list
+
+    async def list_then_cancel() -> list[Any]:
+        tasks = await list_tasks()
+        await asyncio.to_thread(agent.cancel, cancel_background_tasks=True)
+        return tasks
+
+    with patch.object(manager, "list", list_then_cancel):
+        result = await agent.invoke_async(
+            [{"interruptResponse": {"interruptId": interrupted.interrupts[0].id, "response": "yes"}}]
+        )
+
+    assert result.stop_reason == "cancelled"
+    assert not agent._interrupt_state.activated
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status

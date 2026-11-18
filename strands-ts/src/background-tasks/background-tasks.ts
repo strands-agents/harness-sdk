@@ -357,15 +357,16 @@ export class BackgroundTasks implements Plugin {
   }
 
   /**
-   * Requests cancellation of every non-terminal task and drops the agent interrupts they raised.
-   * Does not wait for the tasks to settle.
+   * Cancels every non-terminal task and drops the agent interrupts they raised. The tasks are recorded as
+   * cancelled before this returns; it does not wait for their tools to stop.
    */
   cancelAll(): void {
     const interruptIds = [...this._tasks.values()]
       .filter((task) => !isTaskStatusTerminal(task.status))
       .flatMap((task) => (task.interrupts ?? []).map((interrupt) => interrupt.id))
-    this._manager.cancelAll()
+    for (const task of this._manager.cancelAll()) this._tasks.set(task.taskId, task)
     this._dropInterrupts(interruptIds)
+    this._persistTasks()
   }
 
   private _dropInterrupts(interruptIds: Iterable<string>): void {

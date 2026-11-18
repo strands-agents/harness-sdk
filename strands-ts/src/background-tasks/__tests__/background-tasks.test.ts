@@ -491,7 +491,7 @@ describe('BackgroundTasks', () => {
       await expect.poll(() => persistedTasks(agent)?.[0]?.status).toBe('cancelled')
     })
 
-    it('cancels an input-required task so the next invoke does not re-raise its interrupt', async () => {
+    function approvalAgent(): Agent {
       const approval = tool({
         name: 'approval',
         description: 'Wait for approval.',
@@ -512,10 +512,16 @@ describe('BackgroundTasks', () => {
         context.interrupt<string>({ name: 'approve', reason: 'Approve work?' })
         return yield* next(context)
       })
+      return agent
+    }
+
+    it('cancels an input-required task so the next invoke does not re-raise its interrupt', async () => {
+      const agent = approvalAgent()
       const interrupted = await agent.invoke('Run approval.')
       expect(interrupted.stopReason).toBe('interrupt')
 
       agent.cancel({ cancelBackgroundTasks: true })
+      expect(persistedTasks(agent)?.map((task) => task.status)).toEqual(['cancelled'])
       const resumed = await agent.invoke('Continue.')
 
       expect(resumed.stopReason).toBe('endTurn')
@@ -525,6 +531,23 @@ describe('BackgroundTasks', () => {
         .flatMap((message) => message.content)
         .find((block) => block.type === 'toolResultBlock' && block.toolUseId === delivery!.toolUseId)
       expect(delivered).toMatchObject({ content: [{ type: 'jsonBlock', json: { status: 'cancelled' } }] })
+    })
+
+    it('finishes as cancelled whenever cancel lands while interrupt responses are applied', async () => {
+      const stopReasons = new Set<string>()
+      // Each round lands the cancel one microtask later, to cover every await on the resume path.
+      for (let ticks = 1; ticks <= 40; ticks++) {
+        const agent = approvalAgent()
+        const interrupted = await agent.invoke('Run approval.')
+        const resuming = agent.invoke([
+          new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
+        ])
+        for (let tick = 0; tick < ticks; tick++) await Promise.resolve()
+        agent.cancel({ cancelBackgroundTasks: true })
+        stopReasons.add((await resuming).stopReason)
+      }
+
+      expect([...stopReasons]).toEqual(['cancelled'])
     })
 
     it('cancels background tasks immediately while afterCurrentTools lets the tool batch finish', async () => {

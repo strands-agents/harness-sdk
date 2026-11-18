@@ -32,8 +32,12 @@ export interface BackgroundTaskManager {
    * @throws BackgroundTaskNotFoundError if the task does not exist.
    */
   cancel(taskId: string): Promise<BackgroundTask>
-  /** Synchronously requests cancellation of every non-terminal task, including ones submitted but not yet notified. */
-  cancelAll(): void
+  /**
+   * Synchronously cancels every non-terminal task, including ones submitted but not yet notified.
+   *
+   * @returns The tasks it cancelled.
+   */
+  cancelAll(): readonly BackgroundTask[]
   /**
    * Waits until one task requires input or reaches a terminal state.
    *
@@ -50,7 +54,8 @@ export interface BackgroundTaskManager {
    */
   waitForIdle(options?: { readonly timeout?: number }): Promise<void>
   /**
-   * Applies interrupt responses to one task that requires input.
+   * Applies interrupt responses to one task that requires input. A task that was cancelled or otherwise
+   * finished in the meantime is returned unchanged.
    *
    * @throws BackgroundTaskNotFoundError if the task does not exist.
    * @throws Error if the task cannot accept the interrupt responses.

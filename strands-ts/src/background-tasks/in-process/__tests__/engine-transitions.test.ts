@@ -54,6 +54,24 @@ describe('InProcessTaskEngine', () => {
       })
     })
 
+    it('returns a cancelled task unchanged instead of resuming it', async () => {
+      let executions = 0
+      const engine = createEngine(async () => {
+        executions++
+        return { status: 'input_required', state: createState('waiting') }
+      })
+      const task = engine.submit(createAdmission('work'))
+      await engine.waitForIdle()
+      const cancelled = engine.cancel(task.taskId, { reason: 'stop' })
+
+      const resumed = engine.resume(task.taskId, (state) => ({ state, ready: true }))
+      await engine.waitForIdle()
+
+      expect(resumed).toEqual(cancelled)
+      expectTask(engine.get(task.taskId), task, { status: 'cancelled' })
+      expect(executions).toBe(1)
+    })
+
     it('cancels running work and removes it before execution settles', async () => {
       const finish = deferred<InProcessTaskExecutionOutcome>()
       let executionSignal: AbortSignal | undefined
