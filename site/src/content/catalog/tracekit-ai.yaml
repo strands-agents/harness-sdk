@@ -1,6 +1,6 @@
 name: Tracekit
 description: Hook provider that has a Tracekit signer allow, deny or hold each tool call for a person before it runs, and records every call in a signed, hash-chained log.
-integrationType: intervention
+integrationType: plugin
 languages:
   python:
     package: tracekit-ai
