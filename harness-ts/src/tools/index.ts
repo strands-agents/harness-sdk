@@ -1,11 +1,10 @@
 /**
  * Harness-authored tools.
  *
- * Thin, self-contained tools that fill gaps in the SDK's vended set. Each is a candidate to port
- * into the core SDK later; keep them minimal and SDK-idiomatic.
+ * Thin, self-contained tools that fill gaps in the SDK's vended set. The filesystem tools
+ * (`read`, `write`, `edit`) now live in `@strands-agents/sdk/vended-tools`; import them from there.
  */
 
-export { edit, makeRead, read, write } from './file-tools.js'
 export {
   DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
   makeProgrammaticToolCaller,

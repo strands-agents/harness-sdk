@@ -21,7 +21,7 @@ harness-ts/
 │   ├── defaults.ts    # default model, effort, context manager, tools, session dir
 │   ├── config.ts      # JSON config bridge: normalizeHarnessAgentConfig(), harnessAgentOptionsFromConfig()
 │   ├── builtin-tools.ts  # resolveBuiltinTools(): list (pin) or mapping (edits) -> one resolved record
-│   ├── tools/         # harness-authored built-in tools: file-tools.ts (read/write/edit), web-fetch.ts
+│   ├── tools/         # harness-authored built-in tools: web-fetch.ts (read/write/edit are re-exported from the SDK)
 │   ├── plugins/       # built-in feature plugins: todos.ts, environment.ts
 │   ├── index.ts       # public barrel export
 │   ├── internal.ts    # `@strands-agents/harness/internal`: plumbing for the CLI (resolve*, normalize*)
