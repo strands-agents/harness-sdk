@@ -2063,6 +2063,84 @@ async def test_stream_guardrails_redacts_without_trace_non_streaming(bedrock_cli
     bedrock_client.converse_stream.assert_not_called()
 
 
+_NO_STREAMING_TOOL_USE = ModelInfo(capabilities=ModelCapabilities(streaming_tool_use=False))
+_TOOL_HISTORY = [
+    {"role": "user", "content": [{"text": "test"}]},
+    {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "name", "input": {}}}]},
+    {"role": "user", "content": [{"toolResult": {"toolUseId": "t1", "content": [{"text": "ok"}]}}]},
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_config", "with_tools", "stream_messages", "exp_method"),
+    [
+        ({"model_id": "mistral.mistral-large-2402-v1:0"}, True, None, "converse"),
+        ({"model_id": "us.mistral.pixtral-large-2502-v1:0"}, True, None, "converse"),
+        ({"model_id": "m1", "model_info": _NO_STREAMING_TOOL_USE}, True, None, "converse"),
+        ({"model_id": "m1", "model_info": _NO_STREAMING_TOOL_USE}, False, _TOOL_HISTORY, "converse"),
+        ({"model_id": "m1", "model_info": _NO_STREAMING_TOOL_USE}, False, None, "converse_stream"),
+        ({"model_id": "m1"}, True, None, "converse_stream"),
+        (
+            {
+                "model_id": "mistral.mistral-large-2402-v1:0",
+                "model_info": ModelInfo(capabilities=ModelCapabilities(streaming_tool_use=True)),
+            },
+            True,
+            None,
+            "converse_stream",
+        ),
+    ],
+)
+async def test_stream_sends_tools_unstreamed_when_model_cannot_stream_tool_use(
+    model_config, with_tools, stream_messages, exp_method, bedrock_client, alist, messages, tool_spec
+):
+    """A request with tools goes to Converse for a model that cannot call tools while streaming.
+
+    https://github.com/strands-agents/harness-sdk/issues/6241
+    """
+    bedrock_client.converse.return_value = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "test"}]}},
+        "stopReason": "end_turn",
+    }
+    bedrock_client.converse_stream.return_value = {"stream": [{"messageStop": {"stopReason": "end_turn"}}]}
+
+    model = BedrockModel(**model_config)
+    await alist(model.stream(stream_messages or messages, [tool_spec] if with_tools else None))
+
+    unused_method = "converse_stream" if exp_method == "converse" else "converse"
+    getattr(bedrock_client, exp_method).assert_called_once()
+    getattr(bedrock_client, unused_method).assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model_config", [{"streaming": False}, {"model_info": _NO_STREAMING_TOOL_USE}], ids=["streaming_off", "fallback"]
+)
+async def test_stream_without_streaming_drops_guardrail_stream_processing_mode(
+    model_config, bedrock_client, alist, messages, tool_spec
+):
+    bedrock_client.converse.return_value = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "test"}]}},
+        "stopReason": "end_turn",
+    }
+    model = BedrockModel(
+        model_id="m1",
+        guardrail_id="g1",
+        guardrail_version="v1",
+        guardrail_stream_processing_mode="async",
+        **model_config,
+    )
+
+    await alist(model.stream(messages, [tool_spec]))
+
+    assert bedrock_client.converse.call_args.kwargs["guardrailConfig"] == {
+        "guardrailIdentifier": "g1",
+        "guardrailVersion": "v1",
+        "trace": "enabled",
+    }
+
+
 @pytest.mark.asyncio
 async def test_stream_guardrails_redacts_exactly_once_across_metadata_events(bedrock_client, model, messages, alist):
     """Redaction fires at most once even when Bedrock emits multiple metadata events.

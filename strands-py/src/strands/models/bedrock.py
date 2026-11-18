@@ -279,6 +279,17 @@ DEFAULT_READ_TIMEOUT = 120
 _CANCEL_POLL_INTERVAL = 0.05
 
 
+def _without_stream_processing_mode(request: dict[str, Any]) -> dict[str, Any]:
+    """Return the request without the guardrail stream processing mode, which Converse does not accept."""
+    guardrail_config = request.get("guardrailConfig", {})
+    if "streamProcessingMode" not in guardrail_config:
+        return request
+    return {
+        **request,
+        "guardrailConfig": {key: value for key, value in guardrail_config.items() if key != "streamProcessingMode"},
+    }
+
+
 def _request_with_drop_block(request: dict[str, Any]) -> dict[str, Any] | None:
     """Return the request with stale thinking blocks dropped, or None if it cannot change."""
     fields = request.get("additionalModelRequestFields") or {}
@@ -341,7 +352,8 @@ class BedrockModel(Model):
                 Please check https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html for
                 supported service tiers, models, and regions
             stop_sequences: List of sequences that will stop generation when encountered
-            streaming: Flag to enable/disable streaming. Defaults to True.
+            streaming: Flag to enable/disable streaming. Defaults to True. A request with tools is sent without
+                streaming when ``model_info.capabilities.streaming_tool_use`` is False.
             strict_tools: Flag to enable structured output enforcement on tool definitions.
                 When True, adds strict: true to each tool spec and automatically injects
                 "additionalProperties": false into all object types in tool input schemas.
@@ -695,6 +707,17 @@ class BedrockModel(Model):
             return {}
 
         return {"additionalModelRequestFields": additional_fields}
+
+    def _streams(self, request: dict[str, Any]) -> bool:
+        """Whether the request goes to ConverseStream rather than Converse."""
+        if not self.config.get("streaming", True):
+            return False
+        if "toolConfig" not in request or self.model_info.capabilities.streaming_tool_use is not False:
+            return True
+        logger.debug(
+            "model_id=<%s> | model cannot stream tool use, sending request without streaming", request["modelId"]
+        )
+        return False
 
     def _converse(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
         """Invoke the model, retrying once with drop_block when an edit before replayed thinking made it stale.
@@ -1736,7 +1759,8 @@ class BedrockModel(Model):
         """Stream conversation with the Bedrock model.
 
         This method calls either the Bedrock converse_stream API or the converse API
-        based on the streaming parameter in the configuration.
+        based on the streaming parameter in the configuration and on whether the model
+        accepts tools on a streaming request.
 
         Args:
             messages: List of message objects to be processed by the model.
@@ -1746,7 +1770,8 @@ class BedrockModel(Model):
             system_prompt_content: System prompt content blocks to provide context to the model.
             cancel_signal: Event that aborts an in-flight streaming request. The caller stops
                 receiving events as soon as it is set, and the HTTP response is closed at the next
-                chunk boundary. A non-streaming request (``streaming=False``) is not abortable.
+                chunk boundary. A request sent without streaming (``streaming=False``, or one with tools
+                when ``streaming_tool_use`` is False) is not abortable.
             structured_output_model: Output model the call must produce; the request is then sent with the strongest
                 structured output mechanism the model supports.
             **kwargs: Additional keyword arguments for future extensibility.
@@ -1848,7 +1873,9 @@ class BedrockModel(Model):
             logger.debug("request=<%s>", request)
 
             logger.debug("invoking model")
-            streaming = self.config.get("streaming", True)
+            streaming = self._streams(request)
+            if not streaming:
+                request = _without_stream_processing_mode(request)
             converse_method = self.client.converse_stream if streaming else self.client.converse
 
             def send(request: dict[str, Any]) -> Any:

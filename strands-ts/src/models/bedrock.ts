@@ -76,6 +76,7 @@ import { ensureDefined } from '../types/validation.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { NOOP_TOOL_SPEC } from '../tools/noop-tool.js'
+import type { ToolSpec } from '../tools/types.js'
 import { ensureStrictJsonSchema, findUnsupportedStrictKeywords } from './strict-schema.js'
 import {
   handleRejectedMechanism,
@@ -323,7 +324,8 @@ export interface BedrockModelConfig extends BaseModelConfig {
   /**
    * Whether or not to stream responses from the model.
    *
-   * This will use the ConverseStream API instead of the Converse API.
+   * This will use the ConverseStream API instead of the Converse API. A request with tools uses the Converse API
+   * when `modelInfo.capabilities.streamingToolUse` is `false`.
    *
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html
@@ -921,7 +923,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    */
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      if (this._config.stream !== false) {
+      if (this._streams(messages, options)) {
         // Create and send the command
         const response = await this._sendRequest(messages, options, (input) => {
           const command = new ConverseStreamCommand(input)
@@ -1091,6 +1093,39 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Whether the request goes to ConverseStream rather than Converse.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options
+   * @returns False when streaming is off, or the request carries tools and the model cannot stream tool use
+   */
+  private _streams(messages: Message[], options?: StreamOptions): boolean {
+    if (this._config.stream === false) return false
+    if (this.modelInfo.capabilities?.streamingToolUse !== false) return true
+    if (this._requestToolSpecs(messages, options).length === 0) return true
+    logger.debug(`model_id=<${this._config.modelId}> | model cannot stream tool use, sending request without streaming`)
+    return false
+  }
+
+  /**
+   * Returns the tool specs the request carries. Bedrock requires toolConfig when messages contain tool use/result
+   * blocks, so when no tools were provided but messages reference past tool usage (e.g. during summarization), a
+   * noop tool satisfies the API requirement.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options
+   * @returns Tool specs for the request's toolConfig; empty when the request has none
+   */
+  private _requestToolSpecs(messages: Message[], options?: StreamOptions): ToolSpec[] {
+    const toolSpecs = options?.toolSpecs ?? []
+    if (toolSpecs.length > 0) return toolSpecs
+    const hasToolBlocks = messages.some((msg) =>
+      msg.content.some((block) => block.type === 'toolUseBlock' || block.type === 'toolResultBlock')
+    )
+    return hasToolBlocks ? [NOOP_TOOL_SPEC] : []
+  }
+
+  /**
    * Formats a request for the Bedrock Converse Stream API.
    *
    * @param messages - Conversation messages
@@ -1117,19 +1152,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     request.messages = this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0, systemCachePoints)
 
     // Add tool configuration
-    // Bedrock requires toolConfig when messages contain tool use/result blocks.
-    // When no tools were provided but messages reference past tool usage (e.g. during
-    // summarization), inject a noop tool to satisfy the API requirement.
-    let toolSpecs = options?.toolSpecs ?? []
-    if (toolSpecs.length === 0) {
-      const hasToolBlocks = messages.some((msg) =>
-        msg.content.some((block) => block.type === 'toolUseBlock' || block.type === 'toolResultBlock')
-      )
-      if (hasToolBlocks) {
-        toolSpecs = [NOOP_TOOL_SPEC]
-      }
-    }
-
+    const toolSpecs = this._requestToolSpecs(messages, options)
     if (toolSpecs.length > 0) {
       const strictTools = this._config.strictTools === true
       const tools: Tool[] = toolSpecs.map(

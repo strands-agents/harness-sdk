@@ -196,7 +196,7 @@ The `agent.cancel()` method provides a way to stop the loop from outside, such a
       print("Agent was cancelled due to timeout")
   ```
 
-  The signal is also forwarded to the model provider so it can abort the in-flight request instead of letting the response run on. Support is provider-dependent: Bedrock closes the streaming response at the next chunk boundary, but cannot abort a request that has not returned headers yet or a non-streaming (`streaming=False`) call. Providers that ignore the signal still cancel at the SDK's between-chunk checkpoint.
+  The signal is also forwarded to the model provider so it can abort the in-flight request instead of letting the response run on. Support is provider-dependent: Bedrock closes the streaming response at the next chunk boundary, but cannot abort a request that has not returned headers yet or a call sent without streaming (`streaming=False`, or a request with tools to a model that cannot stream tool use). Providers that ignore the signal still cancel at the SDK's between-chunk checkpoint.
 
   #### Cancellation within tool execution
 

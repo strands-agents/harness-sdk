@@ -41,6 +41,7 @@ _BOOLEAN_CAPABILITY_KEYS = (
     "nativeStructuredOutput",
     "serverSideSummary",
     "temporaryMessages",
+    "streamingToolUse",
 )
 
 

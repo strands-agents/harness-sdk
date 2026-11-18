@@ -30,7 +30,7 @@ This page covers running an agent on Bedrock: configuring AWS credentials, selec
 To use Amazon Bedrock with Strands, your IAM user or role needs the following permissions:
 
 - `bedrock:InvokeModelWithResponseStream` (for streaming mode)
-- `bedrock:InvokeModel` (for non-streaming mode)
+- `bedrock:InvokeModel` (for non-streaming mode, including requests with tools to models that cannot stream tool use)
 
 Here's a sample IAM policy that grants the necessary permissions:
 
@@ -351,7 +351,7 @@ Passing a fully-constructed handler instance (rather than an options bag) bypass
 
 ### Streaming vs Non-Streaming Mode
 
-Some Bedrock models only support non-streaming tool use. Set the streaming configuration to false to use those models. Both modes give your agent the same event structure and behavior, since Strands converts non-streaming responses to the streaming format internally.
+Some Bedrock models only support non-streaming tool use. For the ones listed in the [model info](./index.md#model-info), such as Mistral Large (24.02) and Pixtral Large, Strands sends requests that carry tools without streaming, so an agent with tools gets each response in one piece. For any other such model, set the streaming configuration to false. Both modes give your agent the same event structure and behavior, since Strands converts non-streaming responses to the streaming format internally.
 
 <Tabs>
 <Tab label="Python">
