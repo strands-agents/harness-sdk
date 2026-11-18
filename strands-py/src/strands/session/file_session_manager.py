@@ -75,8 +75,8 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
             storage_mode = stat.S_IMODE(os.stat(self.storage_dir).st_mode)
             if storage_mode & 0o077:
                 warnings.warn(
-                    f"storage_dir=<{self.storage_dir}>, mode=<{storage_mode:o}> | session storage directory is"
-                    " accessible by group or others; restrict it with chmod 700",
+                    f"Session storage directory {self.storage_dir} is accessible by group or others"
+                    f" (mode {storage_mode:o}); restrict it with chmod 700",
                     stacklevel=2,
                 )
 

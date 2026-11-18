@@ -4,6 +4,7 @@ import errno
 import json
 import os
 import platform
+import re
 import stat
 import tempfile
 import warnings
@@ -64,7 +65,8 @@ class TestDefaultStorageDir:
         """An existing storage directory open to group or others is reported, not modified."""
         os.chmod(temp_dir, mode)
 
-        with pytest.warns(UserWarning, match=f"mode=<{mode:o}> | session storage directory is accessible"):
+        expected = f"Session storage directory {temp_dir} is accessible by group or others (mode {mode:o})"
+        with pytest.warns(UserWarning, match=re.escape(expected)):
             FileSessionManager(session_id="test", storage_dir=temp_dir)
 
         assert stat.S_IMODE(os.stat(temp_dir).st_mode) == mode
