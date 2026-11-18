@@ -81,27 +81,14 @@ main model's family, Anthropic-on-Bedrock or OpenAI-on-Bedrock). Override it wit
 
 ## web_search
 
-`web_search` lets the agent look things up while it answers. Where the model provider has web
-search built in, it isn't a separate tool: it turns that search on. OpenAI, Anthropic,
+`web_search` lets the agent look things up while it answers. It isn't a separate tool: it
+turns on the web search built into the model provider. OpenAI, Anthropic,
 Google, and the GPT-5, GPT-6, and Daybreak models on `bedrock-mantle` have one.
 
-Everywhere else on Amazon Bedrock, the agent instead gets a `web_search` tool backed by
-[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html).
-That covers `bedrock/...` and the other `bedrock-mantle/...` models, a `BedrockModel` you build
-yourself, an `AnthropicModel` on Anthropic's Bedrock or Mantle client, an OpenAI model with a
-Bedrock Mantle config, and a `ModelRouter` of only those. Each query calls the
-`InvokeWebSearch` API, authorized by IAM and billed to your AWS account. Search is configured on
-its own and reads nothing from the model: it resolves its region the way `BedrockModel` does (your
-AWS environment, then `us-west-2`) and uses the default AWS credential chain. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
-`arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is available in a subset
-of regions. Without the permission, or in an unsupported region, the first search returns an
-error telling the model to answer without search, and later searches fail without a request. To
-search in another region or with other credentials, or to use your own `web_search` tool, turn
-the built-in off (set `web_search` to `False`) and pass yours in `tools`:
-`make_agentcore_web_search(boto_session=...)` (Python) or
-`makeAgentCoreWebSearch({ region, clientConfig })` (TypeScript), which take the same options as
-`BedrockModel`. A tool named `web_search` next to the built-in is a name collision, as with any
-built-in tool.
+Other Amazon Bedrock models have no search of their own, so the harness gives them a search
+tool backed by [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html).
+It runs with your AWS credentials and is billed to your account, so your role needs the
+`bedrock-agentcore:InvokeWebSearch` permission.
 
 For models that don't provide web search, the harness logs a message and builds the agent
 without it. If you asked for it explicitly in `builtin_tools`, you get an error instead, so

@@ -314,11 +314,9 @@ def create_harness(
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). On every other Bedrock API
-            (``supports_web_search``) it is a tool backed by Amazon Bedrock AgentCore web search. It
-            resolves its region and credentials on its own, as ``BedrockModel`` does (they need the
-            ``bedrock-agentcore:InvokeWebSearch`` IAM permission). Elsewhere (another provider's
-            ``Model`` instance) it is off, and naming it there raises. ``{"web_search": "exa"}``
+            GPT-5, GPT-6, and Daybreak models on bedrock-mantle), or a tool backed by Amazon Bedrock
+            AgentCore web search on other Bedrock models. Elsewhere (another provider's ``Model``
+            instance) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
             ``programmatic_tool_caller`` lets the model orchestrate its other tools by writing Python

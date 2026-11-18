@@ -323,27 +323,17 @@ await createHarness({ builtinTools: { web_fetch: { model: 'anthropic/claude-haik
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
-`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. On every other Amazon
-Bedrock API (Converse; Anthropic's Bedrock or Mantle client; OpenAI-compatible models on Mantle,
-including other `bedrock-mantle` models), the model gets a `web_search` tool backed by
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. Other
+Amazon Bedrock models get a `web_search` tool backed by
 [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
-(`InvokeWebSearch`), billed per query to your AWS account (model instances and all-Bedrock
-`ModelRouter`s get it too). The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM
-permission on `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is offered
-in a subset of regions; without them the first search returns an error telling the model to answer
-without search, and later ones fail without a request. Search is configured on its own and reads
-nothing from the model: it resolves its region the way `BedrockModel` does (your AWS environment,
-then `us-west-2`) and uses the default AWS credential chain. To use another region or identity, or
-your own `web_search` tool, turn the built-in off and pass yours:
-`builtinTools: { web_search: false }, tools: [makeAgentCoreWebSearch({ region, clientConfig })]`
-(`makeAgentCoreWebSearch` takes the same options as `BedrockModel`). A tool named `web_search`
-next to the built-in is a name collision, as with any built-in. Elsewhere (another provider's
-`Model` instance) `web_search` is off by default. To search there, opt into Exa with
+instead. In case of no native search (a `Model` instance from another provider) `web_search` is
+off by default. To enable web search for these providers, you can opt into Exa with
 `{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
-override a model's default search by adding `'exa'` explicitly to any model. If you are
-using Bedrock Web Search on Mantle, you'll need the `bedrock-websearch` IAM action (in
-`AmazonBedrockFullAccess`) to avoid failing search.
+override a provider's native web search by adding `'exa'` explicitly to any model. If you are
+using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
+`AmazonBedrockFullAccess`) to avoid failing search; AgentCore web search needs
+`bedrock-agentcore:InvokeWebSearch`.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
