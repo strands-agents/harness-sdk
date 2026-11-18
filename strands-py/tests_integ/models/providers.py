@@ -78,6 +78,10 @@ anthropic = ProviderInfo(
     ),
 )
 bedrock = ProviderInfo(id="bedrock", factory=lambda: BedrockModel())
+bedrock_messages = ProviderInfo(
+    id="bedrock_messages",
+    factory=lambda: BedrockModel.Messages(model_id="global.anthropic.claude-sonnet-4-6", max_tokens=4096),
+)
 cohere = ProviderInfo(
     id="cohere",
     environment_variable="COHERE_API_KEY",
@@ -177,6 +181,7 @@ all_providers = [
     provider
     for provider in [
         bedrock,
+        bedrock_messages,
         anthropic,
         cohere,
         gemini,
