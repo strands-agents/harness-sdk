@@ -2,7 +2,10 @@
 
 Converts fetched HTML into markdown suitable for a model to read. Non-content
 elements are removed and ``data:`` URI images are replaced with their alt text
-so large inline blobs do not bloat the output. The page title is prepended.
+so large inline blobs do not bloat the output. Images with a ``javascript:`` or
+``vbscript:`` source are dropped, and links with a ``javascript:``,
+``vbscript:``, or ``data:`` href are reduced to their text. The page title is
+prepended.
 """
 
 from __future__ import annotations
@@ -76,7 +79,7 @@ def _sanitize_tree(soup: BeautifulSoup) -> None:
         # Script sources are not useful to a model.
         elif scheme in _SCRIPT_SCHEMES:
             image.decompose()
-    # Unwrap script and data: links to their text so the scheme never reaches output.
+    # Unwrap script-scheme and data: links to their text so the scheme never reaches output.
     for anchor in soup.find_all("a"):
         scheme = _url_scheme(_tag_attribute(anchor, "href"))
         if scheme in _SCRIPT_SCHEMES or scheme == "data":
