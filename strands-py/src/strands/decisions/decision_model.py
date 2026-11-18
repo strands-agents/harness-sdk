@@ -124,7 +124,7 @@ def _validate_choices(question_id: str, question: Question) -> None:
     if choices == "boolean":
         return
     if not isinstance(choices, list) or not choices:
-        raise ValueError(f"question id=<{question_id}> | choices must be a non-empty list of strings")
+        raise ValueError(f"question id=<{question_id}> | choices must be 'boolean' or a non-empty list of strings")
     if any(not isinstance(choice, str) or not choice for choice in choices):
         raise ValueError(f"question id=<{question_id}> | choices must be non-empty strings")
     if len(set(choices)) != len(choices):
