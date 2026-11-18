@@ -37,7 +37,6 @@ const providers: readonly SystemOneProvider[] = [
   },
   {
     name: 'OpenAIDecisionModel',
-    // TEMPORARY: probe whether the CI OpenAI key can reach the Decisions API. Revert before review.
     skip: !process.env['OPENAI_API_KEY'],
     providerName: 'openai',
     create: () => new OpenAIDecisionModel(),
