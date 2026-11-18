@@ -442,17 +442,21 @@ class TestHtmlToMarkdown:
     def test_script_and_data_img_srcs_with_line_separator_prefix_are_dropped(self, prefix, src, expected):
         assert html_to_markdown(f'<img src="{prefix}{src}" alt="x">') == expected
 
+    @pytest.mark.parametrize("prefix", map(chr, (0x0890, 0x0891, *range(0x13439, 0x13440))))
+    def test_javascript_href_with_newer_format_character_prefix_is_dropped(self, prefix):
+        assert html_to_markdown(f'<a href="{prefix}javascript:alert(1)">click</a>') == "click"
+
     @pytest.mark.parametrize("url", ["javascript://\u2100%0aalert(1)", "vbscript://[x", "data://[x/text/html,x"])
     def test_script_and_data_hrefs_with_unparseable_host_are_dropped(self, url):
         assert html_to_markdown(f'<a href="{url}">click</a>') == "click"
 
     def test_unparseable_href_is_kept_and_rest_of_page_is_converted(self):
-        html = '<h1>Hi</h1><a href="javascript:alert(1)">js</a> <a href="http://[placeholder]/x">bad</a>'
-        assert html_to_markdown(html) == "# Hi\n\njs [bad](http://[placeholder]/x)"
+        html = '<h1>Hi</h1><a href="javascript:alert(1)">js</a> <a href="http://[bad">bad</a>'
+        assert html_to_markdown(html) == "# Hi\n\njs [bad](http://[bad)"
 
     def test_unparseable_img_src_is_kept(self):
-        html = '<img src="http://[placeholder]/a.png" alt="pic">'
-        assert html_to_markdown(html) == "![pic](http://[placeholder]/a.png)"
+        html = '<img src="http://[bad" alt="pic">'
+        assert html_to_markdown(html) == "![pic](http://[bad)"
 
     def test_preserves_headings_lists_and_links(self):
         html = """

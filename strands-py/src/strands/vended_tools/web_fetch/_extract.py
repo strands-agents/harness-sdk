@@ -50,11 +50,14 @@ _DROPPED_ELEMENTS = frozenset(
 
 _SCRIPT_SCHEMES = frozenset(["javascript", "vbscript"])
 
+# Format characters (Cf) that the Unicode tables of Python 3.10 and 3.11 predate.
+_NEWER_FORMAT_CHARACTERS = frozenset(map(chr, (0x0890, 0x0891, *range(0x13439, 0x13440))))
+
 
 def _url_scheme(url: str) -> str:
     """Return the URL scheme, stripping leading whitespace and invisible characters first."""
     for index, char in enumerate(url):
-        if unicodedata.category(char) not in ("Cc", "Cf", "Zs", "Zl", "Zp"):
+        if char not in _NEWER_FORMAT_CHARACTERS and unicodedata.category(char) not in ("Cc", "Cf", "Zs", "Zl", "Zp"):
             # A scheme ends before the first "/". urlparse can raise on what follows (a malformed host).
             return urlparse(url[index:].partition("/")[0]).scheme
     return ""
