@@ -4,6 +4,8 @@ description: "Hand Strands harness your own specialist Agent instances as tools,
 sourceLinks:
   - path: harness-py/src/strands_harness/agent.py
   - path: harness-py/src/strands_harness/tools/subagent.py
+  - path: harness-ts/src/agent.ts
+  - path: harness-ts/src/builtin-tools.ts
   - path: harness-ts/src/tools/subagent.ts
 sidebar:
   label: "Delegate to subagents"
@@ -62,11 +64,11 @@ runs with a generic role prompt instead of your `instructions`. It starts from a
 conversation, so the model must put everything the subtask needs into the call, and it
 returns a single self-contained answer.
 
-The generalist gets the same plugin instances you pass in `plugins`, so hooks registered by
-a plugin run in both agents. A hook you add to the parent after creating it, with
+The generalist gets the same plugin instances you pass in `plugins`, so a plugin's hooks
+run in both agents. A hook you add to the parent after creating it, with
 <Syntax py="agent.add_hook()" ts="agent.addHook()" />, does not run in the generalist. In
-Python, hooks passed to `create_harness` in `hooks` are forwarded too; the TypeScript
-`createHarness` has no `hooks` option.
+Python, the generalist also runs hooks you pass to `create_harness` in `hooks`; the
+TypeScript `createHarness` has no `hooks` option.
 
 Reach for it when a subtask would otherwise flood the main context: searching many files,
 a multi-step change, or open-ended exploration where you only need the conclusion. Because
