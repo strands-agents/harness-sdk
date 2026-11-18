@@ -53,9 +53,7 @@ describe('Box landing page', () => {
     expect(main?.getAttribute('data-pagefind-body')).not.toBeNull()
     expect(headings[0]?.tagName).toBe('H1')
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
-    expect(main?.querySelector('h1')?.text.replace(/\s+/g, ' ').trim()).toBe(
-      'The policy-enforced sandbox for AI agents.'
-    )
+    expect(main?.querySelector('h1')?.text.replace(/\s+/g, ' ').trim()).toBe('Put your agent in a box.')
     expect(main?.querySelector('.box-hero__product')?.text.trim()).toBe('/box')
     expect(main?.querySelector('.box-hero__description')).toBeNull()
     expect(page.querySelector('.box-hero__status')).toBeNull()
@@ -78,7 +76,7 @@ describe('Box landing page', () => {
     expect(html).not.toContain('<section class="box-capabilities')
     expect(page.querySelector('.box-boundary')).toBeNull()
     expect(page.querySelector('[data-boundary-trust]')).toBeNull()
-    expect(page.querySelector('.box-start__header h2')?.text.trim()).toBe('Sandbox your coding agent')
+    expect(page.querySelector('.box-start__header h2')?.text.trim()).toBe('Run the coding agent you already use')
     expect(page.querySelector('.box-start__header > span')).toBeNull()
     expect(page.text).not.toContain('Box creates a reusable profile on the first run.')
     expect(page.querySelector('.box-controls')).toBeNull()
@@ -123,6 +121,7 @@ describe('Box landing page', () => {
 
       const card = page.querySelector(`[data-box-capability="${capability.id}"]`)
       const title = page.querySelector(`[data-box-capability-title="${capability.id}"]`)
+      const category = page.querySelector(`[data-box-capability-category="${capability.id}"]`)
       const toggle = card?.querySelector(`[data-box-capability-toggle="${capability.id}"]`)
       const details = card?.querySelector(`[data-box-capability-code="${capability.id}"]`)
       const action = card?.querySelector(`[data-box-capability-action="${capability.id}"]`)
@@ -132,9 +131,12 @@ describe('Box landing page', () => {
         .map((line) => line.textContent)
         .join('\n')
 
-      expect(card?.querySelector('.box-start__slug')?.text.trim()).toBe(capability.slug)
+      expect(card?.querySelector('.box-start__slug')).toBeNull()
       expect(title?.text.trim()).toBe(capability.title)
-      expect(card?.querySelector('.box-start__capability-compact > p')?.text.trim()).toBe(capability.description)
+      expect(category?.text.trim()).toBe(capability.label)
+      expect(card?.querySelector('.box-start__capability-label')).toBeNull()
+      expect(card?.querySelector('.box-start__capability-description')?.text.trim()).toBe(capability.description)
+      expect(card?.getAttribute('data-box-capability-label')).toBe(capability.title)
       expect(card?.getAttribute('data-box-capability-card')).not.toBeNull()
       expect(details?.getAttribute('id')).toBe(`box-capability-${capability.id}-details`)
       expect(details?.hasAttribute('hidden')).toBe(false)
@@ -150,7 +152,7 @@ describe('Box landing page', () => {
       expect(toggle?.getAttribute('type')).toBe('button')
       expect(toggle?.getAttribute('aria-expanded')).toBe('false')
       expect(toggle?.getAttribute('aria-controls')).toBe(`box-capability-${capability.id}-details`)
-      expect(toggle?.getAttribute('aria-label')).toBe(`Show ${capability.slug} code example`)
+      expect(toggle?.getAttribute('aria-label')).toBe(`Show ${capability.title} example`)
       expect(toggle?.querySelector('[aria-hidden="true"] svg')).not.toBeNull()
       expect(action?.text.replace(/\s+/g, ' ').trim()).toContain(panel.linkLabel)
       expect(action?.getAttribute('href')).toBe(configuredHref(panel.href))
@@ -191,9 +193,9 @@ describe('Box landing page', () => {
         configuredHref(example.href)
       )
       expect(panel?.querySelector('[data-box-example-boundary]')?.getAttribute('aria-label')).toBe(
-        `${example.title} example scoped Box boundary`
+        `${example.title} example Box controls`
       )
-      expect(panel?.querySelector('.box-start__session-header')?.text).toContain('Example scoped boundary')
+      expect(panel?.querySelector('.box-start__session-header')?.text).toContain('What Box allows')
       expect(decisionRows).toHaveLength(BOX_EXAMPLE_BOUNDARY.length)
 
       for (const decision of BOX_EXAMPLE_BOUNDARY) {
@@ -276,7 +278,7 @@ describe('Box landing page', () => {
     expect(product).toMatchObject({
       name: 'Strands Box',
       description:
-        'Run AI agents and the code they launch inside an OS-enforced boundary, locally with Box CLI or in deployed workloads with Box Core.',
+        'Run AI agents in a sandbox that limits the files, programs, websites, and credentials they can access locally or in supported cloud deployments.',
       url: configuredCanonical('/box/'),
       applicationCategory: 'DeveloperApplication',
       license: 'https://www.apache.org/licenses/LICENSE-2.0',
@@ -297,16 +299,18 @@ describe('Box landing page', () => {
     expect(markdown).toContain(`## Install Box CLI`)
     expect(markdown).toContain(BOX_INSTALL_COMMAND)
     expect(markdown).toContain(BOX_VERIFY_COMMAND)
-    expect(markdown).toContain('## Sandbox your coding agent')
-    expect(markdown).toContain('choose Claude Code, Codex, Kiro CLI, or pi')
+    expect(markdown).toContain('## Run the coding agent you already use')
+    expect(markdown).toContain('Open a terminal in the project where you want to run the agent.')
     expect(markdown).not.toContain('## Get running')
     expect(markdown).toContain('The first `box run` creates a reusable profile')
-    expect(markdown.indexOf('## Sandbox your coding agent')).toBeLessThan(markdown.indexOf('## What Box does'))
+    expect(markdown.indexOf('## Run the coding agent you already use')).toBeLessThan(
+      markdown.indexOf('## What Box does')
+    )
     expect(markdown.indexOf('## What Box does')).toBeLessThan(markdown.indexOf('## How it works'))
     expect(markdown).toContain('## What Box does')
     expect(markdown).toContain(BOX_CAPABILITIES_HEADLINE)
     expect(markdown).toContain(BOX_CAPABILITIES_SUMMARY)
-    expect(markdown).toContain('### Example scoped boundary')
+    expect(markdown).toContain('### What Box allows')
 
     for (const capability of BOX_CAPABILITIES) {
       expect(markdown).toContain(`### ${capability.title}`)

@@ -22,7 +22,7 @@ const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
   description={BOX_LANDING_DESCRIPTION}
   canonicalPath="/box/"
   markdownPath="/box/index.md"
-  ogImageAlt="Strands Box, a policy-enforced sandbox for AI agents"
+  ogImageAlt="Strands Box: put your agent in a box"
   structuredData={[productSchema(boxProduct, siteUrl)]}
   footerTopShape={false}
 >
@@ -31,11 +31,11 @@ const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
     <BoxGettingStarted />
   </div>
   <NextSteps
-    title="Start with Box CLI or Box Core."
+    title="Start with Box"
     ctas={[
-      { label: 'Install Box CLI', href: BOX_LINKS.install, external: true },
-      { label: 'Deploy Box Core', href: BOX_LINKS.deployment },
-      { label: 'Security model', href: BOX_LINKS.security },
+      { label: 'Install Box', href: BOX_LINKS.install, external: true },
+      { label: 'Deploy Box', href: BOX_LINKS.deployment },
+      { label: 'How Box protects your agent', href: BOX_LINKS.security },
     ]}
   />
 </ProductLandingLayout>

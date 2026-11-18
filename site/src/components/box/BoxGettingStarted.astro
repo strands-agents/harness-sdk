@@ -34,7 +34,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 <section class="box-start" aria-labelledby="box-start-title">
   <div class="box-start__inner">
     <header class="box-start__header">
-      <h2 id="box-start-title">Sandbox your coding agent</h2>
+      <h2 id="box-start-title">Run the coding agent you already use</h2>
     </header>
 
     <div class="box-start__body" data-box-agent-selector>
@@ -99,7 +99,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 
                     <div
                       class="box-start__session"
-                      aria-label={`${example.title} example scoped Box boundary`}
+                      aria-label={`${example.title} example Box controls`}
                       data-box-example-boundary
                     >
                       <header class="box-start__session-header">
@@ -108,7 +108,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
                           <span></span>
                           <span></span>
                         </span>
-                        <span>Example scoped boundary</span>
+                        <span>What Box allows</span>
                         <span>{example.slug}</span>
                       </header>
 
@@ -161,17 +161,20 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
         {
           capabilityCards.map((capability) => (
             <div class="box-start__capability-group">
-              <h3 class="box-start__capability-title" data-box-capability-title={capability.id}>
-                {capability.title}
-              </h3>
+              <p class="box-start__capability-label" data-box-capability-category={capability.id}>
+                {capability.label}
+              </p>
               <article
                 class="box-start__capability"
                 data-box-capability={capability.id}
+                data-box-capability-label={capability.title}
                 data-box-capability-card
               >
                 <div class="box-start__capability-compact" data-box-capability-compact>
-                  <h4 class="box-start__slug">{capability.slug}</h4>
-                  <p>{capability.description}</p>
+                  <h3 class="box-start__capability-title" data-box-capability-title={capability.id}>
+                    {capability.title}
+                  </h3>
+                  <p class="box-start__capability-description">{capability.description}</p>
                 </div>
 
                 <div
@@ -200,7 +203,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
                 <button
                   type="button"
                   class="box-start__capability-toggle"
-                  aria-label={`Show ${capability.slug} code example`}
+                  aria-label={`Show ${capability.title} example`}
                   aria-expanded="false"
                   aria-controls={`box-capability-${capability.id}-details`}
                   data-box-capability-toggle={capability.id}
@@ -229,10 +232,15 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 <style>
   .box-start {
     --box-purple: var(--card-accent-purple);
+    --box-purple-button-fg: var(--strands-white);
 
     padding: 72px 48px;
     background: var(--bg);
     color: var(--fg);
+  }
+
+  :global([data-theme='dark']) .box-start {
+    --box-purple-button-fg: var(--strands-black);
   }
 
   .box-start__inner {
@@ -472,7 +480,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
   .box-start__run-command :global(.command-pill__copy) {
     border-color: var(--box-purple);
     background: var(--box-purple);
-    color: var(--strands-black);
+    color: var(--box-purple-button-fg);
     font-weight: 600;
   }
 
@@ -609,11 +617,10 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     margin: 0;
     color: var(--fg);
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 20px;
+    font-size: 15px;
     font-weight: 700;
     letter-spacing: normal;
     line-height: 1.3;
-    text-align: center;
   }
 
   .box-start__capability-compact {
@@ -627,16 +634,19 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     cursor: pointer;
   }
 
-  .box-start__slug {
+  .box-start__capability-label {
     margin: 0;
     color: var(--box-purple);
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 18px;
+    font-size: 12px;
     font-weight: 700;
-    line-height: 1.2;
+    letter-spacing: 0.08em;
+    line-height: 1.3;
+    text-align: center;
+    text-transform: uppercase;
   }
 
-  .box-start__capability-compact > p {
+  .box-start__capability-description {
     margin: 0;
     color: var(--fg);
     font-family: 'Space Grotesk', system-ui, sans-serif;
@@ -1124,10 +1134,10 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 
   function setCapabilityToggleState(card: HTMLElement, isOpen: boolean) {
     const toggle = card.querySelector<HTMLButtonElement>('[data-box-capability-toggle]')
-    const slug = card.querySelector<HTMLElement>('.box-start__slug')?.textContent?.trim() ?? card.dataset.boxCapability
+    const label = card.dataset.boxCapabilityLabel ?? card.dataset.boxCapability ?? 'details'
 
     toggle?.setAttribute('aria-expanded', String(isOpen))
-    toggle?.setAttribute('aria-label', `${isOpen ? 'Hide' : 'Show'} ${slug} code example`)
+    toggle?.setAttribute('aria-label', `${isOpen ? 'Hide' : 'Show'} ${label} example`)
   }
 
   function setCapabilityOpen(card: HTMLElement, willOpen: boolean) {

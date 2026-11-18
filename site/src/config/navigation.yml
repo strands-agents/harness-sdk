@@ -151,7 +151,7 @@ products:
     slug: "/box"
     href: /box/
     docsHref: /docs/user-guide/box/
-    description: Run AI agents and the code they launch inside an OS-enforced boundary, locally with Box CLI or in deployed workloads with Box Core.
+    description: Run AI agents in a sandbox that limits the files, programs, websites, and credentials they can access locally or in supported cloud deployments.
     repository: https://github.com/strands-agents/box
     languages:
       - Rust

@@ -1,8 +1,8 @@
 import { siteLink } from '../util/links'
 
-export const BOX_LANDING_TITLE = 'Strands Box | A policy-enforced sandbox for AI agents'
+export const BOX_LANDING_TITLE = 'Strands Box | Put your agent in a box'
 export const BOX_LANDING_DESCRIPTION =
-  'Strands Box runs AI agents and the code they launch inside an operating-system-enforced boundary, locally with Box CLI or in deployed workloads with Box Core.'
+  'Strands Box runs AI agents in a sandbox that limits the files, programs, websites, and credentials they can access locally or in supported cloud deployments.'
 
 export const BOX_CORE_REPOSITORY_URL = 'https://github.com/strands-agents/box'
 export const BOX_REPOSITORY_URL = BOX_CORE_REPOSITORY_URL
@@ -37,8 +37,8 @@ export const BOX_BOUNDARY_PANELS = [
   {
     id: 'profile',
     step: '01',
-    title: 'Define the workload',
-    summary: 'Combine packs for the agent, model provider, and tools with MCP imports and startup access.',
+    title: 'Choose what the agent can access',
+    summary: 'Give the agent the project files, programs, and connected tools it needs.',
     note: '`box profile create` writes the profile. `box profile show --full <profile>` prints the complete resolved boundary before you run it.',
     filename: 'profile.toml',
     language: 'toml',
@@ -53,13 +53,13 @@ bedrock.region = "us-east-1"
 claude.import-mcp = "false"
 claude.import-hooks = "false"`,
     href: BOX_LINKS.configuration,
-    linkLabel: 'Work with profiles',
+    linkLabel: 'Set up access',
   },
   {
     id: 'policy',
     step: '02',
-    title: 'Decide runtime requests',
-    summary: 'Permit or forbid shell, file, network, and MCP requests while the agent runs.',
+    title: 'Set limits on what the agent can do',
+    summary: 'Allow or block commands, file changes, network requests, and tool calls while the agent runs.',
     note: 'A forbid rule wins over a broader permit. If policy is off, turn it on before applying; with no banner or for startup access changes, restart.',
     filename: 'policy.dw',
     language: 'text',
@@ -79,14 +79,13 @@ when { context.input.host == "docs.example.com" && context.input.port == 443 };
 permit (principal, action == Box::Action::"http:request", resource)
 when { context.input.host == "docs.example.com" };`,
     href: BOX_LINKS.policy,
-    linkLabel: 'Policy reference',
+    linkLabel: 'Set up rules',
   },
   {
     id: 'credentials',
     step: '03',
-    title: 'Keep credentials outside the agent',
-    summary:
-      'Name a host and environment variable in the profile. The agent receives a stand-in value while the gateway adds the real token only to requests for that host.',
+    title: 'Keep credentials private',
+    summary: 'Let the agent call approved services without seeing the real API keys or tokens.',
     note: 'Every process in one box shares its routes. Use separate profiles when workloads need separate credential boundaries.',
     filename: 'profile.toml',
     language: 'toml',
@@ -97,7 +96,7 @@ secret.ref = "env://GITHUB_TOKEN"`,
 destinations = ["api.github.com"]
 secret.ref = "env://GITHUB_TOKEN"`,
     href: BOX_LINKS.credentialGuide,
-    linkLabel: 'Credential guide',
+    linkLabel: 'Protect credentials',
   },
 ] as const
 
@@ -130,7 +129,7 @@ export const BOX_AGENT_EXAMPLES = [
     id: 'claude-code',
     slug: '/claude-code',
     title: 'Claude Code',
-    description: 'Run Claude Code inside a reusable local project boundary.',
+    description: 'Run Claude Code through Box.',
     command: 'box run claude',
     href: `${BOX_PACKS_URL}/claude/README.md`,
   },
@@ -138,7 +137,7 @@ export const BOX_AGENT_EXAMPLES = [
     id: 'codex',
     slug: '/codex',
     title: 'Codex',
-    description: 'Give Codex this project without exposing the rest of your machine.',
+    description: 'Run Codex through Box.',
     command: 'box run codex',
     href: `${BOX_PACKS_URL}/codex/README.md`,
   },
@@ -146,7 +145,7 @@ export const BOX_AGENT_EXAMPLES = [
     id: 'kiro',
     slug: '/kiro-cli',
     title: 'Kiro CLI',
-    description: 'Keep Kiro CLI work inside the same local sandbox and policy boundary.',
+    description: 'Run Kiro CLI through Box.',
     command: 'box run kiro',
     href: `${BOX_PACKS_URL}/kiro/README.md`,
   },
@@ -154,7 +153,7 @@ export const BOX_AGENT_EXAMPLES = [
     id: 'pi',
     slug: '/pi',
     title: 'pi',
-    description: 'Run pi with only the tools and network access its profile allows.',
+    description: 'Run pi through Box.',
     command: 'box run pi',
     href: `${BOX_PACKS_URL}/pi/README.md`,
   },
@@ -162,32 +161,30 @@ export const BOX_AGENT_EXAMPLES = [
 
 export const BOX_FEATURED_AGENT_EXAMPLES = BOX_AGENT_EXAMPLES
 
-export const BOX_CAPABILITIES_HEADLINE = 'Control what agents can reach, do, and receive.'
+export const BOX_CAPABILITIES_HEADLINE = 'Control what your agent can access and do.'
 export const BOX_CAPABILITIES_SUMMARY =
-  'Box Core combines operating-system isolation with runtime policy enforced outside the agent. Box CLI applies this boundary locally; applications embed Box Core in supported deployments.'
+  'Give the agent only the access it needs, check sensitive actions as they happen, and keep real credentials outside the agent.'
 export const BOX_OVERVIEW_DESCRIPTION =
-  'Run the coding agent you already use, and the code it launches, inside an OS-enforced boundary it cannot change. Start locally without a container or VM, or use Box Core in deployed workloads.'
+  'Start your coding agent through Box. It gets the project access it needs while the rest of your computer stays out of reach.'
 
 export const BOX_CAPABILITIES = [
   {
     id: 'access',
-    slug: '/access',
-    title: 'Control agent access',
-    description: 'Give the agent and the code it launches access only to the project files and programs they need.',
+    label: 'Access',
+    title: 'Choose what it can access',
+    description: 'Give the agent the project files and programs it needs. Keep everything else out of reach.',
   },
   {
     id: 'policy',
-    slug: '/policy',
-    title: 'Set limits on actions',
-    description:
-      'Permit or block mediated shell, file, network, and MCP requests outside the agent. The coding agent’s approval prompts cannot bypass these controls.',
+    label: 'Policy',
+    title: 'Set limits on what it can do',
+    description: 'Allow or block commands, file changes, network requests, and tool calls while it runs.',
   },
   {
     id: 'credentials',
-    slug: '/credentials',
-    title: 'Protect credentials',
-    description:
-      'Let approved requests authenticate without exposing the real credential to the agent or the code it launches.',
+    label: 'Credentials',
+    title: 'Keep credentials private',
+    description: 'Let the agent call approved services without seeing the real API keys or tokens.',
   },
 ] as const
 
@@ -200,19 +197,19 @@ export const BOX_EXAMPLE_BOUNDARY = [
   },
   {
     id: 'private-read',
-    action: 'Read ~/.ssh',
+    action: 'Read private files',
     result: 'Blocked',
     tone: 'blocked',
   },
   {
     id: 'credential-route',
-    action: 'Request api.github.com',
-    result: 'Credential routed',
+    action: 'Connect to GitHub',
+    result: 'Credential protected',
     tone: 'routed',
   },
   {
     id: 'unknown-request',
-    action: 'Request unapproved.invalid',
+    action: 'Connect to an unknown site',
     result: 'Blocked',
     tone: 'blocked',
   },
@@ -233,7 +230,7 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     '',
     BOX_OVERVIEW_DESCRIPTION,
     '',
-    `- [Run a coding agent](${landingLink(BOX_LINKS.quickstart)})`,
+    `- [Run Box](${landingLink(BOX_LINKS.quickstart)})`,
     `- [Install Box CLI](${landingLink(BOX_LINKS.install)})`,
     `- [View Box Core on GitHub](${BOX_CORE_REPOSITORY_URL})`,
     '',
@@ -251,9 +248,9 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     `$ ${BOX_VERIFY_COMMAND}`,
     '```',
     '',
-    heading(root + 1, 'Sandbox your coding agent'),
+    heading(root + 1, 'Run the coding agent you already use'),
     '',
-    'Open a terminal in the project you want to contain, then choose Claude Code, Codex, Kiro CLI, or pi. The first `box run` creates a reusable profile and asks for its settings. Later runs reuse the same boundary.',
+    'Open a terminal in the project where you want to run the agent. The first `box run` creates a reusable profile and asks for its settings. Later runs reuse that profile.',
     '',
     ...BOX_AGENT_EXAMPLES.flatMap((example) => [
       heading(root + 2, example.title),
@@ -274,9 +271,9 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     BOX_CAPABILITIES_SUMMARY,
     '',
     ...BOX_CAPABILITIES.flatMap((capability) => [heading(root + 2, capability.title), '', capability.description, '']),
-    heading(root + 2, 'Example scoped boundary'),
+    heading(root + 2, 'What Box allows'),
     '',
-    'A scoped coding profile can produce boundary outcomes like these:',
+    'Box can allow or block requests like these:',
     '',
     ...BOX_EXAMPLE_BOUNDARY.map((outcome) => `- \`${outcome.action}\`: ${outcome.result.toLowerCase()}`),
     '',

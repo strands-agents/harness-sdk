@@ -25,10 +25,7 @@ const heroInstallCommand = 'brew install strands-agents/tap/box'
 
     <div class="box-hero__content">
       <p class="box-hero__product">/box</p>
-      <h1 id="box-hero-title" class="box-hero__title">
-        The policy-enforced<br />
-        sandbox for AI agents.
-      </h1>
+      <h1 id="box-hero-title" class="box-hero__title">Put your agent in a box.</h1>
       <div class="box-hero__actions">
         <div class="box-hero__links">
           <a
@@ -71,11 +68,16 @@ const heroInstallCommand = 'brew install strands-agents/tap/box'
 <style>
   .box-hero {
     --box-purple: var(--card-accent-purple);
+    --box-purple-button-fg: var(--strands-white);
 
     width: 100%;
     overflow: hidden;
     background: var(--bg);
     color: var(--fg);
+  }
+
+  :global([data-theme='dark']) .box-hero {
+    --box-purple-button-fg: var(--strands-black);
   }
 
   .box-hero__inner {
@@ -201,7 +203,7 @@ const heroInstallCommand = 'brew install strands-agents/tap/box'
   .box-hero__link--primary {
     border-color: var(--box-purple);
     background: var(--box-purple);
-    color: var(--strands-black);
+    color: var(--box-purple-button-fg);
   }
 
   .box-hero__link--github {
