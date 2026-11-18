@@ -105,7 +105,8 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   ├── layouts/                  # Custom layouts
 │   ├── pages/                    # Astro pages, including generated /examples routes
 │   │   ├── faq.astro             # Standalone FAQ page
-│   │   └── faq/index.md.ts       # Machine-readable FAQ endpoint
+│   │   ├── faq/index.md.ts       # Machine-readable FAQ endpoint
+│   │   └── openapi.json.ts       # OpenAPI description of public website data feeds
 │   ├── plugins/                  # Remark/Rehype plugins
 │   ├── styles/                   # Global styles
 │   └── util/                     # Utility functions
