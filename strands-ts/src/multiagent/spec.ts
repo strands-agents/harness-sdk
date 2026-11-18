@@ -23,7 +23,7 @@ import type { AttributeValue } from '@opentelemetry/api'
 import type { InterventionRegistry } from '../interventions/registry.js'
 
 /** Turns a resolved spec into a child agent, built the way the parent was. */
-export type AgentBuilder = (spec: AgentSpec) => Agent
+export type AgentBuilder = (spec: AgentSpec) => Agent | Promise<Agent>
 
 /**
  * Sentinel so `undefined` can be a legitimate {@link Option.value}.
@@ -453,11 +453,14 @@ export function _resolveSpecs(modelInputs: unknown, axes: ResolveSpecAxes, label
  * the parent's intervention handler instances, so tool calls made by a child are subject to
  * the same approval and authorization checks as the parent's.
  *
+ * The parent's hooks and plugins are not passed to children; a child that needs them
+ * requires a custom builder.
+ *
  * @param parent - The parent agent whose resources child agents inherit.
  * @returns An {@link AgentBuilder} that creates configured child agents from a spec.
  * @internal Not part of the public API.
  */
-export function _defaultBuilder(parent: Agent): AgentBuilder {
+export function _defaultBuilder(parent: Agent): (spec: AgentSpec) => Agent {
   return (spec: AgentSpec): Agent => {
     const parentTools: Map<string, Tool> = new Map()
     // The child's own context manager registers its tools (e.g. retrieve_context); skip the parent's.

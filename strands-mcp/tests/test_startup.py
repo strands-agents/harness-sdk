@@ -45,7 +45,7 @@ main()
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = await session.list_tools()
-                    assert {tool.name for tool in tools.tools} == {"search_docs", "fetch_doc"}
+                    assert {tool.name for tool in tools.tools} == {"search_docs", "fetch_doc", "find_integrations"}
 
                     for name, arguments in [("search_docs", {"query": "test"}), ("fetch_doc", {})]:
                         result = await session.call_tool(name, arguments)

@@ -331,6 +331,9 @@ def create_token_usage_middleware() -> MiddlewareInputHandler:
         }
         if "metadata" in last_message:
             new_message["metadata"] = last_message["metadata"]
+        # Later middleware, such as ContextInjector, finds the stored message by its tracking id.
+        if "tracking_id" in last_message:
+            new_message["tracking_id"] = last_message["tracking_id"]
         messages[-1] = new_message
 
         # The live token count makes this block per-call, so a cache point must stay ahead of it.

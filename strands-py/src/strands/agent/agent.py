@@ -81,6 +81,7 @@ from ..middleware.types import (
     MiddlewareStage,
     MiddlewareWrapPhase,
 )
+from ..models._model_proxy import ModelProxy
 from ..models.bedrock import BedrockModel
 from ..models.model import Model, _ModelPlugin
 from ..models.routing import ModelRouter
@@ -249,6 +250,7 @@ class Agent(AgentBase, LocalAgent):
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
         baggage_attributes: Mapping[str, str] | None = None,
+        sort_tools: bool = False,
         aux_model: Model | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
@@ -302,6 +304,10 @@ class Agent(AgentBase, LocalAgent):
             system_prompt: System prompt to guide model behavior.
                 Can be a string or a list of SystemContentBlock objects for advanced features like caching.
                 If None, the model will behave according to its default settings.
+            sort_tools: Send tool specifications to the model sorted by name, on every request (model calls,
+                context summaries, token counts), to keep prompt-cache prefixes stable when the same tools are
+                registered in a different order, e.g. from MCP servers. Sorting happens before middleware, which
+                can still reorder them. Defaults to False, which keeps registration order.
             structured_output_model: Pydantic model type(s) for structured output.
                 When specified, all agent calls will attempt to return structured output of this type.
                 This can be overridden on the agent invocation.
@@ -493,7 +499,7 @@ class Agent(AgentBase, LocalAgent):
         self._deferred_cancel = False
         self._cancel_message: str | None = None
 
-        self.tool_registry = ToolRegistry()
+        self.tool_registry = ToolRegistry(sort_tool_specs=sort_tools)
 
         # Process tool list if provided
         if tools is not None:
@@ -1203,7 +1209,9 @@ class Agent(AgentBase, LocalAgent):
                         f"gen_ai.{message['role']}.message",
                         attributes={"role": message["role"], "content": serialize(message["content"])},
                     )
-                events = self.model.structured_output(output_model, temp_messages, system_prompt=self.system_prompt)
+                events = ModelProxy(self.model).structured_output(
+                    output_model, temp_messages, system_prompt=self.system_prompt
+                )
                 async for event in events:
                     if isinstance(event, TypedEvent):
                         event.prepare(invocation_state={})
@@ -1964,12 +1972,7 @@ class Agent(AgentBase, LocalAgent):
                     and event.chunk.get("redactContent")
                     and event.chunk["redactContent"].get("redactUserContentMessage")
                 ):
-                    self.messages[-1]["content"] = self._redact_user_content(
-                        self.messages[-1]["content"],
-                        str(event.chunk["redactContent"]["redactUserContentMessage"]),
-                    )
-                    if self._session_manager:
-                        self._session_manager.redact_latest_message(self.messages[-1], self)
+                    self._redact_last_user_message(str(event.chunk["redactContent"]["redactUserContentMessage"]))
                 yield event
 
         return terminal
@@ -2320,6 +2323,22 @@ class Agent(AgentBase, LocalAgent):
             self._model_state = copy.deepcopy(data["model_state"])
         if self._background_tasks is not None and "state" in data:
             self._background_tasks.load_state()
+
+    def _redact_last_user_message(self, redact_message: str) -> None:
+        """Redact the last user message in history and in the session.
+
+        Args:
+            redact_message: redact message to be replaced
+        """
+        # Session managers and hooks may append other messages after the user turn.
+        last_user_message = next((message for message in reversed(self.messages) if message["role"] == "user"), None)
+        if last_user_message is None:
+            logger.warning("no user message found to redact | guardrail redaction skipped")
+            return
+
+        last_user_message["content"] = self._redact_user_content(last_user_message["content"], redact_message)
+        if self._session_manager:
+            self._session_manager.redact_latest_message(last_user_message, self)
 
     def _redact_user_content(self, content: list[ContentBlock], redact_message: str) -> list[ContentBlock]:
         """Redact user content preserving toolResult blocks.

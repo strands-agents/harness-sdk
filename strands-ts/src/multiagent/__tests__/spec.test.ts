@@ -23,6 +23,9 @@ import { McpClient } from '../../mcp/client.js'
 import { McpTool } from '../../tools/mcp-tool.js'
 import { InterventionHandler } from '../../interventions/handler.js'
 import type { InterventionAction } from '../../interventions/actions.js'
+import { BeforeToolCallEvent } from '../../hooks/events.js'
+import type { Plugin } from '../../plugins/plugin.js'
+import type { LocalAgent } from '../../types/agent.js'
 
 const AXES: ResolveSpecAxes = {
   presets: {},
@@ -339,5 +342,40 @@ describe('_defaultBuilder', () => {
     await child.invoke('run dangerTool')
 
     expect(dangerTool).not.toHaveBeenCalled()
+  })
+
+  it("gives the child a tool the parent's plugin added, without the parent's hooks or the plugin's", async () => {
+    const events: unknown[] = []
+    const pluginTool = createMockTool('pluginTool', () => {
+      events.push('tool ran')
+      return 'done'
+    })
+    const auditPlugin: Plugin = {
+      name: 'audit',
+      initAgent(agent: LocalAgent): void {
+        agent.addHook(BeforeToolCallEvent, (event) => {
+          events.push(['plugin hook', event.agent.id])
+        })
+      },
+      getTools: () => [pluginTool],
+    }
+    const callsPluginTool = (): MockMessageModel =>
+      new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'pluginTool', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'finished' })
+    const parent = new Agent({ id: 'parent', model: callsPluginTool(), printer: false, plugins: [auditPlugin] })
+    parent.addHook(BeforeToolCallEvent, (event) => {
+      events.push(['parent hook', event.agent.id])
+    })
+    await parent.initialize()
+
+    const child = _defaultBuilder(parent)(new AgentSpec({ name: 'child', model: callsPluginTool() }))
+
+    await parent.invoke('run pluginTool')
+    expect(events).toEqual([['parent hook', 'parent'], ['plugin hook', 'parent'], 'tool ran'])
+
+    events.length = 0
+    await child.invoke('run pluginTool')
+    expect(events).toEqual(['tool ran'])
   })
 })

@@ -35,7 +35,8 @@ from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
-from ._defaults import resolve_config_metadata
+from ._defaults import resolve_config_metadata, resolve_max_tokens
+from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -62,6 +63,12 @@ if TYPE_CHECKING:
 
 COMPACTION_BETA = "compact-2026-09-04"
 """Beta that enables on-demand compaction, and compaction blocks in later requests."""
+
+TURN_SCOPED_SYSTEM_BETA = "mid-conversation-system-clear-at-2026-08-21"
+"""Beta that lets a mid-conversation system message carry ``clear_at``.
+
+See https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
+"""
 
 
 def _format_usage(usage: Mapping[str, Any]) -> Usage:
@@ -174,6 +181,10 @@ _SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", ant
 # on anthropic 2.x, and later versions reject them outright; earlier versions such as 2023-06-01 accept them.
 # https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters
 _SAMPLING_PARAMS = frozenset({"temperature", "top_k", "top_p"})
+# InvokeModel on bedrock-runtime takes its own API version in the body, which still accepts the sampling parameters.
+# An anthropic_version set in params["extra_body"] wins.
+_BEDROCK_INVOKE_MODEL_API_VERSION = "bedrock-2023-05-31"
+_BEDROCK_THROTTLING_EVENTS = ("throttlingException", "serviceUnavailableException")
 _LEGACY_API_VERSION = "2023-06-01"
 _SAMPLING_PARAMS_REMOVED_VERSION = "2026-10-21"
 _API_VERSION_HEADER = "anthropic-version"
@@ -237,8 +248,11 @@ class AnthropicModel(Model):
                 caching everything before it. Caching is off when unset.
             cache_tools: Caches the tool definitions (deprecated, use CacheConfig(tools_ttl=...)). Superseded
                 by an explicitly set cache_config.tools_ttl.
-            max_tokens: Maximum number of tokens to generate.
-            model_id: Calude model ID (e.g., "claude-3-7-sonnet-latest").
+            max_tokens: Maximum number of tokens to generate. Defaults to the model's output limit from the
+                model info (``model_info.limits.max_output_tokens``), which can move when the shared model
+                info is updated; set it explicitly to pin it. Required when the model info has no output
+                limit for the model, since the Anthropic API needs the field.
+            model_id: Claude model ID (e.g., "claude-sonnet-4-6").
                 For a complete list of supported models, see
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
             params: Additional model parameters (e.g., metadata, stop_sequences).
@@ -258,7 +272,7 @@ class AnthropicModel(Model):
 
         cache_config: CacheConfig | None
         cache_tools: str | CacheToolsConfig | None
-        max_tokens: Required[int]
+        max_tokens: int
         model_id: Required[str]
         params: dict[str, Any] | None
         anthropic_tools: list[dict[str, Any]]
@@ -282,7 +296,8 @@ class AnthropicModel(Model):
             **model_config: Configuration options for the Anthropic model.
 
         Raises:
-            ValueError: If both ``client`` and ``client_args`` are provided.
+            ValueError: If both ``client`` and ``client_args`` are provided, or if max_tokens is not set and the
+                model info has no output limit for model_id.
         """
         if client is not None and client_args:
             raise ValueError("Only one of 'client' or 'client_args' should be provided, not both.")
@@ -290,6 +305,7 @@ class AnthropicModel(Model):
         validate_config_keys(model_config, self.AnthropicConfig)
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config = AnthropicModel.AnthropicConfig(**model_config)
+        self._resolve_max_tokens(self.config)
 
         if "anthropic_tools" in self.config:
             self._validate_anthropic_tools(self.config["anthropic_tools"])
@@ -305,23 +321,76 @@ class AnthropicModel(Model):
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If the merged config has no max_tokens and the model info has no output limit for
+                its model_id. The config is left unchanged.
         """
         validate_config_keys(model_config, self.AnthropicConfig)
 
         if "anthropic_tools" in model_config:
             self._validate_anthropic_tools(model_config["anthropic_tools"])
 
+        self._resolve_max_tokens(cast(AnthropicModel.AnthropicConfig, {**self.config, **model_config}))
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config.update(model_config)
 
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Everything the SDK knows about the configured model, with ``temporary_messages`` on for supported Claude.
+
+        ``temporary_messages`` follows the model id, not the client, so it is also on through the Bedrock and Vertex
+        clients. If those reject the turn-scoped system messages, set
+        ``model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))``.
+        See :attr:`strands.models.Model.model_info`.
+        """
+        temporary_messages = lookup_model_info(self.config.get("model_id")).capabilities.temporary_messages
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(temporary_messages=temporary_messages)),
+            self.get_config().get("model_info"),
+        )
+
     @override
     def get_config(self) -> AnthropicConfig:
-        """Get the Anthropic model configuration.
+        """Get the Anthropic model configuration, with ``max_tokens`` resolved when it was not set.
+
+        Passing the result back to ``update_config`` pins ``max_tokens`` to the resolved value, so it no longer
+        follows ``model_id`` changes.
 
         Returns:
             The Anthropic model configuration.
         """
-        return resolve_config_metadata(self.config, self.config["model_id"])
+        config = resolve_config_metadata(self.config, self.config["model_id"])
+        return {**config, "max_tokens": self._resolve_max_tokens(self.config)}
+
+    @staticmethod
+    def _resolve_max_tokens(config: AnthropicConfig) -> int:
+        """The ``max_tokens`` to send: ``params["max_tokens"]``, else configured, else the model info's limit.
+
+        ``params`` comes first because ``format_request`` spreads it last, so it is what goes on the wire.
+
+        Raises:
+            ValueError: If max_tokens is neither configured nor known from the model info.
+        """
+        params_max_tokens = (config.get("params") or {}).get("max_tokens")
+        if params_max_tokens is not None:
+            return cast(int, params_max_tokens)
+
+        if "max_tokens" in config and config["max_tokens"] is None:
+            raise ValueError(
+                "max_tokens=<None> | the Anthropic API requires max_tokens | omit the key to use the model's "
+                "output limit from the model info"
+            )
+
+        max_tokens = resolve_max_tokens(config, config["model_id"])
+        if max_tokens is None:
+            raise ValueError(
+                f"model_id=<{config['model_id']}> | max_tokens is required | the model info has no output token "
+                "limit for this model, set max_tokens explicitly"
+            )
+        return max_tokens
 
     def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
         """Format an Anthropic content block.
@@ -450,7 +519,7 @@ class AnthropicModel(Model):
             An Anthropic messages array.
         """
         configured_ttl = _messages_cache_ttl(self.config.get("cache_config"))
-        formatted_messages = []
+        formatted_messages: list[tuple[dict[str, Any], Message]] = []
         dropped_unsigned_reasoning = False
         skipped: Counter[str] = Counter()
         drop_assistant_documents = _is_current_api_version(self._api_version())
@@ -460,6 +529,9 @@ class AnthropicModel(Model):
             marked = False
 
             for content in message["content"]:
+                if "injected" in content:
+                    continue
+
                 if "cachePoint" in content:
                     ttl = content["cachePoint"].get("ttl")
                     if not ttl and message_idx == cache_target_idx:
@@ -505,13 +577,13 @@ class AnthropicModel(Model):
                     logger.debug("msg_idx=<%d> | no cacheable content block, skipped cache point", message_idx)
 
             if formatted_contents:
-                formatted_messages.append({"content": formatted_contents, "role": message["role"]})
+                formatted_messages.append(({"content": formatted_contents, "role": message["role"]}, message))
 
         if dropped_unsigned_reasoning:
             logger.warning("Unsigned reasoning content is not supported by Anthropic | skipped content blocks")
 
         _log_skipped_blocks(logger, skipped)
-        return formatted_messages
+        return _request_messages(formatted_messages, self.model_info.capabilities.temporary_messages is True)
 
     @classmethod
     def _attach_cache_control(
@@ -739,7 +811,7 @@ class AnthropicModel(Model):
         system = self._format_system_prompt(system_prompt, system_prompt_content)
 
         request = {
-            "max_tokens": self.config["max_tokens"],
+            "max_tokens": self._resolve_max_tokens(self.config),
             "messages": self._format_request_messages(messages, cache_target_idx, dynamic_trailing_blocks),
             "model": self.config["model_id"],
             **(self._format_tool_choice(tool_choice)),
@@ -752,8 +824,15 @@ class AnthropicModel(Model):
             _is_compaction(block) for message in messages for block in message["content"]
         ):
             request = self._with_beta(request, COMPACTION_BETA)
+        if any("clear_at" in message for message in request["messages"]):
+            request = self._with_beta(request, TURN_SCOPED_SYSTEM_BETA)
         if self._drop_stale_thinking_model_id == self.config["model_id"]:
             request = self._request_with_drop_block(request) or request
+        if isinstance(self.client, anthropic.AsyncAnthropicBedrock):
+            request["extra_body"] = {
+                "anthropic_version": _BEDROCK_INVOKE_MODEL_API_VERSION,
+                **request.get("extra_body", {}),
+            }
 
         return request
 
@@ -821,7 +900,8 @@ class AnthropicModel(Model):
 
     def _request_with_drop_block(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Return the request with stale thinking blocks dropped, or None if it cannot change."""
-        thinking = thinking_with_drop_block(request.get("thinking"))
+        tool_forced = request.get("tool_choice", {}).get("type") in ("any", "tool")
+        thinking = thinking_with_drop_block(request.get("thinking"), tool_forced)
         if thinking is None:
             return None
         return {**self._with_beta(request, THINKING_BINDING_BETA), "thinking": thinking}
@@ -1323,6 +1403,24 @@ class AnthropicModel(Model):
             if not (retry_with_drop_block or retry_with_next_mechanism):
                 raise error
 
+        except (anthropic.APIStatusError, ValueError) as error:
+            # Bedrock InvokeModel reports an error that arrives mid-stream as an event on the 200 response, not as
+            # an HTTP status: anthropic raises it as APIStatusError, or as a bare ValueError before 1.0.
+            message = str(error)
+            body = getattr(error, "body", None)
+            error_type = ((body.get("error") or {}) if isinstance(body, dict) else {}).get("type")
+            throttled = (
+                error_type in _BEDROCK_THROTTLING_EVENTS
+                if isinstance(error, anthropic.APIStatusError)
+                else any(name in message for name in _BEDROCK_THROTTLING_EVENTS)
+            )
+            if throttled:
+                raise ModelThrottledException(message) from error
+            if any(overflow in message.lower() for overflow in AnthropicModel.OVERFLOW_MESSAGES):
+                raise ContextWindowOverflowException(message) from error
+            raise
+
+        previous_drop_stale_thinking_model_id = self._drop_stale_thinking_model_id
         if retry_with_drop_block:
             # Stale blocks stay in history, so drop_block stays on for every later request to this model.
             logger.warning(
@@ -1331,16 +1429,24 @@ class AnthropicModel(Model):
             )
             self._drop_stale_thinking_model_id = self.config["model_id"]
         if retry_with_drop_block or retry_with_next_mechanism:
-            async for chunk in self.stream(
-                messages,
-                tool_specs,
-                system_prompt,
-                tool_choice=tool_choice,
-                system_prompt_content=system_prompt_content,
-                structured_output_model=structured_output_model,
-                **kwargs,
-            ):
-                yield chunk
+            yielded = False
+            try:
+                async for chunk in self.stream(
+                    messages,
+                    tool_specs,
+                    system_prompt,
+                    tool_choice=tool_choice,
+                    system_prompt_content=system_prompt_content,
+                    structured_output_model=structured_output_model,
+                    **kwargs,
+                ):
+                    yielded = True
+                    yield chunk
+            except Exception:
+                # A rejected retry must not leave drop_block on for later requests.
+                if not yielded:
+                    self._drop_stale_thinking_model_id = previous_drop_stale_thinking_model_id
+                raise
             return
 
         logger.debug("finished streaming response from model")
@@ -1533,3 +1639,46 @@ class AnthropicModel(Model):
             raise ValueError("No valid tool use or tool use input was found in the Anthropic response.")
 
         yield {"output": output_model(**output_response)}
+
+
+def _request_messages(kept: list[tuple[dict[str, Any], Message]], temporary_messages: bool) -> list[dict[str, Any]]:
+    """Return the formatted messages; with ``temporary_messages``, each user message's injected text follows it.
+
+    Args:
+        kept: The formatted messages left non-empty, each with the message it was formatted from.
+        temporary_messages: Whether to send injected text as turn-scoped system messages.
+
+    Returns:
+        The messages to send.
+    """
+    if not temporary_messages:
+        return [formatted for formatted, _ in kept]
+    request_messages: list[dict[str, Any]] = []
+    for index, (formatted, source) in enumerate(kept):
+        request_messages.append(formatted)
+        system_message = _turn_scoped_system_message(source)
+        next_is_user = index + 1 < len(kept) and kept[index + 1][0]["role"] == "user"
+        # The API rejects one followed directly by a user message. No assistant turn can have read it.
+        if system_message and formatted["role"] == "user" and not next_is_user:
+            request_messages.append(system_message)
+    return request_messages
+
+
+def _turn_scoped_system_message(message: Message) -> dict[str, Any] | None:
+    """The message's injected text as a system message the model reads only until a later user message exists.
+
+    Once cleared, it stays in the request but renders nothing, so the history before every later assistant turn is
+    sent unchanged. Never carries ``cache_control``: a cleared message is not part of any cache key.
+
+    Args:
+        message: A message of the conversation.
+
+    Returns:
+        The system message, or None when the message has no injected text.
+    """
+    content = [
+        {"type": "text", "text": block["injected"]["text"]} for block in message["content"] if "injected" in block
+    ]
+    if not content:
+        return None
+    return {"role": "system", "content": content, "clear_at": "next_user_message"}

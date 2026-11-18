@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_CONTEXT_WINDOW_LIMIT, lookupModelInfo, getContextWindowLimit, lookupModel } from '../model-info.js'
+import {
+  DEFAULT_CONTEXT_WINDOW_LIMIT,
+  lookupChatCompletionsTools,
+  lookupModelInfo,
+  getContextWindowLimit,
+  lookupModel,
+} from '../model-info.js'
 import modelInfoData from '../model-info.json' with { type: 'json' }
 
 describe('shared model info data', () => {
@@ -25,6 +31,20 @@ describe('shared model info data', () => {
   it('ignores a trailing Bedrock version suffix', () => {
     expect(lookupModel('anthropic.claude-3-5-haiku-20241022-v1:0')).toBe(lookupModel('claude-3-5-haiku-20241022'))
     expect(lookupModel('us.anthropic.claude-3-5-sonnet-20241022-v2:0')?.limits?.contextWindow).toBe(200_000)
+  })
+
+  it('keeps the typed fields and skips the rest', () => {
+    // The data entry also carries defaultEffort, which the SDK does not type.
+    expect(lookupModelInfo('claude-opus-5-5')).toStrictEqual({
+      capabilities: {
+        promptCaching: 'cachePoints',
+        forcedToolChoice: false,
+        nativeStructuredOutput: true,
+        serverSideSummary: true,
+        temporaryMessages: true,
+      },
+      limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+    })
   })
 
   it('returns undefined for unknown ids', () => {
@@ -57,8 +77,20 @@ describe('shared model info data', () => {
     expect(lookupModelInfo('')).toEqual({})
   })
 
+  it.each([
+    ['gpt-6-sol', 'reasoningOff'],
+    ['us.openai.gpt-6-luna', 'reasoningOff'],
+    ['gpt-6-astra', 'unsupported'],
+    ['openai.gpt-6.1-sol', 'unsupported'],
+    ['openai.gpt-6.2-sol', 'unsupported'],
+    ['gpt-5.4', undefined],
+    ['unknown-model', undefined],
+  ])('reads the chatCompletionsTools fact for %s from the entry the id resolves to', (modelId, support) => {
+    expect(lookupChatCompletionsTools(modelId)).toBe(support)
+  })
+
   it('keeps getContextWindowLimit working for ids the Python table already knew', () => {
-    expect(getContextWindowLimit('mistral-large-latest')).toBe(262_144)
+    expect(getContextWindowLimit('mistral-large-latest')).toBe(1_048_576)
     expect(getContextWindowLimit('o3')).toBe(200_000)
   })
 
@@ -85,7 +117,15 @@ describe('shared model info data', () => {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
-        else throw new Error(`${id}.capabilities.${key} is not a ModelCapabilities field`)
+        // Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
+        else if (key === 'chatCompletionsTools')
+          expect(['reasoningOff', 'unsupported'], `${id}.${key}`).toContain(value)
+        // A record that the model cannot call tools, not part of ModelCapabilities.
+        else if (key === 'toolUse') expect(value, `${id}.${key}`).toBe(false)
+        // Read by another consumer (the harness), not typed by the SDK.
+        else if (key === 'defaultEffort')
+          expect(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], `${id}.${key}`).toContain(value)
+        else throw new Error(`${id}.capabilities.${key} is not a known model info field`)
       }
     }
   })

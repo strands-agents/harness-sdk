@@ -1,8 +1,10 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
+import type { LocalAgent } from '../types/agent.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
 import { latestUserIndex } from './model.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
+import { wellFormedRequest } from './well-formed-request.js'
 
 /**
  * SDK-internal wrapper that sends a model call's messages in the form models accept and
@@ -16,7 +18,8 @@ import type { ModelStreamEvent } from './streaming.js'
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
  * of the earlier ones. A tool result whose content is all `UnknownBlock`s gets a placeholder text, since
- * providers skip unknown blocks and some reject an empty tool result.
+ * providers skip unknown blocks and some reject an empty tool result. Lone UTF-16 surrogates in the messages,
+ * system prompt, and tool specs are sent as U+FFFD, since some providers reject a whole request over one.
  *
  * @internal
  */
@@ -46,8 +49,7 @@ export class ModelProxy {
     // The cache point stays ahead of injected text, which the next call no longer sends.
     const keepsCachePoint = dynamicTrailingBlocks > (options?.dynamicTrailingBlocks ?? 0)
     const result = yield* this._model.streamAggregated(
-      prepared,
-      keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options
+      ...wellFormedRequest(prepared, keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options)
     )
     this._record(result, invocationContext)
     return result
@@ -61,7 +63,7 @@ export class ModelProxy {
    * @returns The wrapped model's count
    */
   countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
-    return this._model.countTokens(this._prepare(messages).messages, options)
+    return this._model.countTokens(...wellFormedRequest(this._prepare(messages).messages, options))
   }
 
   private _prepare(messages: Message[]): RenderedMessages {
@@ -95,6 +97,26 @@ export class ModelProxy {
       context.recordUsage(usage)
     }
   }
+}
+
+/**
+ * Counts what the next request carries: the messages, plus the system prompt and tool specs that occupy the same
+ * context window, so a utilization gate that leaves them out reads low. These are the same inputs behind
+ * `BeforeModelCallEvent.projectedInputTokens`.
+ *
+ * Counts that measure a single block or a subset rather than a whole request call `countTokens` directly — including
+ * the system prompt there would inflate every block against its threshold.
+ *
+ * @param agent - The agent whose system prompt and tool specs the request carries
+ * @param messages - The messages the request would send
+ * @returns Total input token count for the request
+ * @internal
+ */
+export async function countRequestTokens(agent: LocalAgent, messages: Message[]): Promise<number> {
+  return new ModelProxy(agent.model).countTokens(messages, {
+    ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
+    toolSpecs: agent.toolRegistry.toolSpecs(),
+  })
 }
 
 interface RenderedMessages {

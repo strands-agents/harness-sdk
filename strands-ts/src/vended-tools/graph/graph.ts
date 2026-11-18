@@ -156,7 +156,7 @@ export function makeGraph({
       const agents: Agent[] = []
       try {
         for (const spec of specs) {
-          const agent = build(spec)
+          const agent = await build(spec)
           // Strip every graph tool so graphs do not nest.
           for (const agentTool of agent.toolRegistry.list()) {
             if (GRAPH_TOOLS.has(agentTool)) agent.toolRegistry.remove(agentTool.name)

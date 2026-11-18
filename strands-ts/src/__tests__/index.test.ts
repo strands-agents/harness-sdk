@@ -35,6 +35,12 @@ describe('index', () => {
       expect(SDK).not.toHaveProperty('ToolExecutor')
     })
 
+    it('exports ModelInfo.merge', () => {
+      expect(SDK.ModelInfo.merge({ limits: { contextWindow: 1 } }, { limits: { contextWindow: 2 } })).toEqual({
+        limits: { contextWindow: 2 },
+      })
+    })
+
     it('exports model routing values', () => {
       expect(SDK.ClassifierStrategy).toBeDefined()
       expect(SDK.FallbackStrategy).toBeDefined()

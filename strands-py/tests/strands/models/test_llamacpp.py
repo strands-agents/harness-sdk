@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from strands.models.llamacpp import LlamaCppModel
 from strands.models.model import CacheConfig
@@ -691,6 +691,25 @@ async def test_structured_output_with_json_schema() -> None:
         assert output_event is not None
         assert output_event["output"].answer == "yes"
         assert output_event["output"].confidence == 0.95
+
+
+@pytest.mark.asyncio
+async def test_structured_output_shows_the_schema_to_the_model() -> None:
+    class TestOutput(BaseModel):
+        answer: str = Field(description="ANSWER-MARKER")
+
+    model = LlamaCppModel()
+    system_prompts = []
+
+    async def mock_stream(*_args, system_prompt=None, **_kwargs):
+        system_prompts.append(system_prompt)
+        yield {"contentBlockDelta": {"delta": {"text": '{"answer": "yes"}'}}}
+
+    with patch.object(model, "stream", side_effect=mock_stream):
+        [event async for event in model.structured_output(TestOutput, [{"role": "user", "content": [{"text": "hi"}]}])]
+
+    schema = json.dumps(TestOutput.model_json_schema())
+    assert system_prompts == [f"Respond with JSON that matches this JSON schema:\n{schema}"]
 
 
 @pytest.mark.asyncio

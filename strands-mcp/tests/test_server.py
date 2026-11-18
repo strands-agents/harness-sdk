@@ -21,11 +21,12 @@ def _listed_tools() -> dict[str, dict]:
 class TestServerMetadata:
     """Tests for what the server advertises to clients."""
 
-    def test_instructions_name_both_tools(self):
+    def test_instructions_name_every_tool(self):
         assert "search_docs" in mcp.instructions
         assert "fetch_doc" in mcp.instructions
+        assert "find_integrations" in mcp.instructions
 
-    @pytest.mark.parametrize("name", ["search_docs", "fetch_doc"])
+    @pytest.mark.parametrize("name", ["search_docs", "fetch_doc", "find_integrations"])
     def test_tools_are_titled_and_annotated_read_only(self, name):
         tool = _listed_tools()[name]
 
@@ -39,17 +40,24 @@ class TestServerMetadata:
 
     @pytest.mark.parametrize(
         ("name", "params"),
-        [("search_docs", ["query", "k", "alternate_queries"]), ("fetch_doc", ["uri", "section"])],
+        [
+            ("search_docs", ["query", "k", "alternate_queries"]),
+            ("fetch_doc", ["uri", "section"]),
+            ("find_integrations", ["query", "type", "language", "maintained_by", "sdk", "limit"]),
+        ],
     )
     def test_parameters_are_described_in_schema(self, name, params):
         properties = _listed_tools()[name]["inputSchema"]["properties"]
 
         assert all(properties[param].get("description") for param in params)
 
-    def test_search_result_limit_is_bounded(self):
-        k_schema = _listed_tools()["search_docs"]["inputSchema"]["properties"]["k"]
+    @pytest.mark.parametrize(
+        ("name", "param", "maximum"), [("search_docs", "k", 20), ("find_integrations", "limit", 50)]
+    )
+    def test_result_limit_is_bounded(self, name, param, maximum):
+        limit_schema = _listed_tools()[name]["inputSchema"]["properties"][param]
 
-        assert (k_schema["minimum"], k_schema["maximum"]) == (1, 20)
+        assert (limit_schema["minimum"], limit_schema["maximum"]) == (1, maximum)
 
     def test_alternate_queries_are_an_optional_bounded_string_array(self):
         input_schema = _listed_tools()["search_docs"]["inputSchema"]

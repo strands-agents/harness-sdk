@@ -224,6 +224,14 @@ describe('graph tool', () => {
       expect(result).toEqual(success('a: a done\nb: b done\nc: c done'))
     })
 
+    it('awaits an async builder', async () => {
+      const builder = async (spec: AgentSpec): Promise<Agent> => textBuilder(spec)
+
+      const { result } = await run(makeGraph({ builder }), { task: 'go', nodes: NODES, edges: EDGES })
+
+      expect(result).toEqual(success('a: a done\nb: b done'))
+    })
+
     it.each([
       [{}, { maxSteps: Infinity, timeout: 900_000, nodeTimeout: 300_000 }],
       [
