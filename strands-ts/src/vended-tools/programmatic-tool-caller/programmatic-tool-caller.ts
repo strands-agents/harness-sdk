@@ -89,6 +89,13 @@ export const DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION =
   'to chain, loop over, filter, or parallelize tool calls in a single turn instead of one tool call ' +
   'per model round-trip, keeping large intermediate results out of the conversation.'
 
+/** Data of the tool stream events the tool emits while the code runs: output as the code prints it. */
+export interface ProgrammaticToolCallerPrintEvent {
+  type: 'print'
+  /** The printed text, newlines included. */
+  text: string
+}
+
 /** Options for {@link makeProgrammaticToolCaller}. */
 export interface MakeProgrammaticToolCallerOptions {
   /**
@@ -524,6 +531,9 @@ function errorMessage(error: unknown): string {
 export class Output {
   readonly chunks: string[] = []
   private size = 0
+  private takenChunks = 0
+  private takenChars = 0
+  private wake: (() => void) | undefined
 
   write(_stream: 'stdout' | 'stderr', text: string): void {
     // Buffer one char past the cap so `cap` still sees that the output overflowed.
@@ -532,7 +542,26 @@ export class Output {
       const kept = text.slice(0, room)
       this.chunks.push(kept)
       this.size += kept.length
+      this.wake?.()
     }
+  }
+
+  /** What was printed since the last call, stopping at the cap. */
+  take(): string {
+    const text = this.chunks
+      .slice(this.takenChunks)
+      .join('')
+      .slice(0, MAX_OUTPUT_CHARS - this.takenChars)
+    this.takenChunks = this.chunks.length
+    this.takenChars += text.length
+    return text
+  }
+
+  /** Resolves when more output is buffered. Only the latest promise is kept. */
+  nextWrite(): Promise<void> {
+    return new Promise((resolve) => {
+      this.wake = resolve
+    })
   }
 
   text(): string {
@@ -580,9 +609,37 @@ function withDeadline<T>(run: Promise<T>, timeout: number, cancelSignal: AbortSi
 }
 
 /**
+ * Yield the output as the code prints it, until `run` settles.
+ *
+ * @internal Exported for tests.
+ */
+export async function* streamPrints(
+  output: Output,
+  run: Promise<unknown>
+): AsyncGenerator<ProgrammaticToolCallerPrintEvent, void, undefined> {
+  let settled = false
+  const done = run.then(
+    () => void (settled = true),
+    () => void (settled = true)
+  )
+  while (true) {
+    const finished = settled
+    const text = output.take()
+    if (text) {
+      yield { type: 'print', text }
+    } else if (finished) {
+      return
+    } else {
+      await Promise.race([done, output.nextWrite()])
+    }
+  }
+}
+
+/**
  * Create a programmatic-tool-caller tool. The returned tool executes agent-authored Python in a Monty
  * sandbox in which the agent's other tools are exposed as `async` functions. Only `print()` output is
- * returned.
+ * returned. While the code runs, the tool also streams that output as
+ * {@link ProgrammaticToolCallerPrintEvent} tool stream events.
  *
  * @param options - Exposed tools, tool name and description, and timeouts.
  * @returns A tool that runs code with access to the agent's other tools.
@@ -602,21 +659,76 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
     }
   }
 
+  /** Run the code until it ends, times out, or `controller` aborts; resolves with the printed output. */
+  const runCode = async (
+    code: string,
+    agent: LocalAgent,
+    context: ToolContext,
+    output: Output,
+    controller: AbortController
+  ): Promise<string> => {
+    const available = resolveAvailableTools(agent, allowedTools)
+    const externalLookup = buildExternalLookup(available, agent, context, controller.signal, toolTimeout)
+
+    const { monty, inProcess } = await loadMonty()
+    const { Monty, MontyError, MontyRuntimeError, MontySyntaxError } = monty
+    const limits = inProcess
+      ? { ...LIMITS, maxDurationSecs: Math.min(LIMITS.maxDurationSecs, WASM_MAX_DURATION_SECS) }
+      : LIMITS
+    const pool = await Monty.create()
+    try {
+      const session = await pool.checkout({ scriptName: USER_CODE_FILENAME, limits })
+      try {
+        const run = session.feedRun(code, {
+          externalLookup,
+          printCallback: (stream, text) => output.write(stream, text),
+        })
+        // On timeout/cancel the run is abandoned and its session closed; swallow the late rejection.
+        run.catch(() => {})
+        await withDeadline(run, timeout, controller.signal)
+      } catch (error) {
+        if (error instanceof Error && error.message === 'cancel') {
+          throw new Error('Execution cancelled.', { cause: error })
+        }
+        if (error instanceof Error && error.message === 'timeout') {
+          throw new Error(output.withError(`Execution error: timed out after ${timeout / 1000} seconds.`), {
+            cause: error,
+          })
+        }
+        if (error instanceof MontySyntaxError) {
+          throw new Error(cap(`Syntax error:\n${error.display('traceback')}`), { cause: error })
+        }
+        if (error instanceof MontyRuntimeError) {
+          throw new Error(output.withError(`Execution error:\n${error.display('traceback')}`), { cause: error })
+        }
+        if (error instanceof MontyError) {
+          throw new Error(output.withError(`Execution error: ${error.message}`), { cause: error })
+        }
+        throw error
+      } finally {
+        // Calls still queued or in flight must not outlive the run.
+        controller.abort()
+        await session.close()
+      }
+    } finally {
+      await pool.close()
+    }
+
+    return output.text() || '(no output)'
+  }
+
   const caller = tool({
     name,
     description,
     inputSchema: z.object({
       code: z.string().describe('Python code to execute. Use `await tool_name(...)` to call tools.'),
     }),
-    callback: async (input, context): Promise<string> => {
+    callback: async function* (input, context): AsyncGenerator<ProgrammaticToolCallerPrintEvent, string, never> {
       if (!context?.agent) {
         throw new Error('No agent available. The programmatic tool caller requires an agent context.')
       }
-      const agent = context.agent
-      const available = resolveAvailableTools(agent, allowedTools)
-
-      // Inner tool calls stop on a timeout or a parent cancel: forward the parent cancel into this one
-      // controller (rather than AbortSignal.any, which needs Node >= 20.3).
+      // One controller stops the run and its inner tool calls: on a parent cancel (forwarded here rather
+      // than with AbortSignal.any, which needs Node >= 20.3), on a timeout, and when the run ends.
       const controller = new globalThis.AbortController()
       const forwardCancel = (): void => controller.abort()
       if (context.cancelSignal?.aborted) {
@@ -624,56 +736,15 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
       } else {
         context.cancelSignal?.addEventListener('abort', forwardCancel, { once: true })
       }
+      const output = new Output()
+      const run = runCode(input.code, context.agent, context, output, controller)
+      // Awaited below unless the stream is closed first; keep that case from going unhandled.
+      run.catch(() => {})
       try {
-        const externalLookup = buildExternalLookup(available, agent, context, controller.signal, toolTimeout)
-        const output = new Output()
-
-        const { monty, inProcess } = await loadMonty()
-        const { Monty, MontyError, MontyRuntimeError, MontySyntaxError } = monty
-        const limits = inProcess
-          ? { ...LIMITS, maxDurationSecs: Math.min(LIMITS.maxDurationSecs, WASM_MAX_DURATION_SECS) }
-          : LIMITS
-        const pool = await Monty.create()
-        try {
-          const session = await pool.checkout({ scriptName: USER_CODE_FILENAME, limits })
-          try {
-            const run = session.feedRun(input.code, {
-              externalLookup,
-              printCallback: (stream, text) => output.write(stream, text),
-            })
-            // On timeout/cancel the run is abandoned and its session closed; swallow the late rejection.
-            run.catch(() => {})
-            await withDeadline(run, timeout, context.cancelSignal)
-          } catch (error) {
-            if (error instanceof Error && error.message === 'cancel') {
-              throw new Error('Execution cancelled.', { cause: error })
-            }
-            if (error instanceof Error && error.message === 'timeout') {
-              throw new Error(output.withError(`Execution error: timed out after ${timeout / 1000} seconds.`), {
-                cause: error,
-              })
-            }
-            if (error instanceof MontySyntaxError) {
-              throw new Error(cap(`Syntax error:\n${error.display('traceback')}`), { cause: error })
-            }
-            if (error instanceof MontyRuntimeError) {
-              throw new Error(output.withError(`Execution error:\n${error.display('traceback')}`), { cause: error })
-            }
-            if (error instanceof MontyError) {
-              throw new Error(output.withError(`Execution error: ${error.message}`), { cause: error })
-            }
-            throw error
-          } finally {
-            // Calls still queued or in flight must not outlive the run.
-            controller.abort()
-            await session.close()
-          }
-        } finally {
-          await pool.close()
-        }
-
-        return output.text() || '(no output)'
+        yield* streamPrints(output, run)
+        return await run
       } finally {
+        controller.abort()
         context.cancelSignal?.removeEventListener('abort', forwardCancel)
       }
     },

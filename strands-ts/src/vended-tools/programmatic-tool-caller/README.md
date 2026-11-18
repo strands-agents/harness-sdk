@@ -63,6 +63,25 @@ const caller = makeProgrammaticToolCaller({
 - A failing tool raises `RuntimeError`
 - A tool whose name is not a valid Python identifier (`fetch-url`) is also available with those characters replaced by underscores (`fetch_url`)
 
+### Streaming
+
+While the code runs, the tool emits what it prints as tool stream events whose `data` is a `ProgrammaticToolCallerPrintEvent`: `{ type: 'print', text }`. The model still receives the whole output once, as the tool result.
+
+```typescript
+import type { ProgrammaticToolCallerPrintEvent } from '@strands-agents/sdk/vended-tools/programmatic-tool-caller'
+
+for await (const event of agent.stream('Count the lines in every .ts file under src')) {
+  if (event.type === 'toolStreamUpdateEvent') {
+    const data = event.event.data as ProgrammaticToolCallerPrintEvent
+    if (data.type === 'print') {
+      process.stdout.write(data.text)
+    }
+  }
+}
+```
+
+One event can carry several `print()` calls, and streaming stops at the output limit. Stream events from the tools the code calls are not forwarded. On the WebAssembly fallback, events arrive when the code awaits a tool or ends, not while it computes.
+
 ### Limits
 
 The sandbox bounds the code's own compute time (60 seconds, not counting time spent waiting on tools), memory (256 MiB), and output (200,000 characters). Where the native Monty addon cannot load, the interpreter falls back to an in-process WebAssembly build that cannot be interrupted while the code computes, so compute time is capped at 5 seconds there.

@@ -8,4 +8,4 @@ export {
   makeProgrammaticToolCaller,
   programmaticToolCaller,
 } from './programmatic-tool-caller.js'
-export type { MakeProgrammaticToolCallerOptions } from './programmatic-tool-caller.js'
+export type { MakeProgrammaticToolCallerOptions, ProgrammaticToolCallerPrintEvent } from './programmatic-tool-caller.js'

@@ -105,6 +105,59 @@ Monty implements a subset of Python. The default description lists the standard 
 modules the code can import (`asyncio`, `json`, `re`, `math`, `datetime`, and a few more)
 and the features that are missing: generators, class inheritance, `match`, and `del`.
 
+## Stream the output
+
+While the code runs, the tool emits what it prints as
+[tool stream events](../custom-tools.mdx#tool-streaming), so an application can show
+progress before the run ends. The data of each event is an object with `type` set to
+`print` and the printed `text`:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/programmatic-tool-caller_imports.ts:programmatic_tool_caller_stream_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/programmatic-tool-caller.ts:programmatic_tool_caller_stream_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands import Agent
+from strands.vended_tools import programmatic_tool_caller, read
+
+agent = Agent(tools=[programmatic_tool_caller, read], callback_handler=None)
+
+
+async def main():
+    prompt = "Count the TODOs in /app/src/agent.py, /app/src/tools.py, and /app/src/hooks.py"
+    async for event in agent.stream_async(prompt):
+        data = event.get("tool_stream_event", {}).get("data")
+        if isinstance(data, dict) and data.get("type") == "print":
+            print(data["text"], end="")
+
+
+asyncio.run(main())
+```
+
+</Tab>
+</Tabs>
+
+- The text arrives as it was printed, newlines included. One event can carry several
+  `print()` calls, and streaming stops at the [output limit](#limits).
+- The model does not see these events. It receives the whole output once, as the tool
+  result.
+- Only the code's own output is streamed. Stream events from the tools the code calls
+  are not forwarded.
+- In Python, the last stream event of a call carries the tool result instead of a print,
+  so check `type` before reading `text`.
+- In TypeScript on the WebAssembly fallback (see [Limits](#limits)), events arrive when
+  the code awaits a tool or ends, not while it computes.
+
 ## Configuration
 
 <Syntax py="make_programmatic_tool_caller" ts="makeProgrammaticToolCaller" /> creates a

@@ -31,6 +31,7 @@ from strands.vended_tools.programmatic_tool_caller.programmatic_tool_caller impo
     _Output,
     _unwrap_result,
 )
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 @tool
@@ -73,6 +74,16 @@ def _run(agent, code, tool_name="programmatic_tool_caller"):
 
 def _text(result):
     return result["content"][0]["text"]
+
+
+def _context(agent, name="programmatic_tool_caller", **fields):
+    tool_use = {"toolUseId": "x", "name": name, "input": {}}
+    return ToolContext(tool_use=tool_use, agent=agent, **{"invocation_state": {}, **fields})
+
+
+async def _events(caller, code, context):
+    """Run the tool function directly and collect what it yields; the last item is the tool result."""
+    return [event async for event in caller._tool_func(code=code, tool_context=context)]
 
 
 @pytest.mark.parametrize("first_access", ["programmatic_tool_caller", "make_programmatic_tool_caller"])
@@ -188,7 +199,7 @@ def test_inner_calls_carry_the_parent_invocation_state_not_guest_kwargs():
     # A guest kwarg named like an invocation_state key must not override the parent's value (a Cedar
     # principal resolver reads from invocation_state), and the parent's state must reach the inner call.
     code = "print(await whoami(label='ok', principal='admin'))"
-    result = asyncio.run(programmatic_tool_caller._tool_func(code=code, tool_context=context))
+    result = asyncio.run(_events(programmatic_tool_caller, code, context))[-1]
     assert _text(result) == "ok"
     assert seen[0]["principal"] == "alice"
 
@@ -209,7 +220,7 @@ def test_inner_calls_join_the_parent_request():
         invocation_state={},
         invocation_context=request,
     )
-    asyncio.run(programmatic_tool_caller._tool_func(code="await whoami()", tool_context=context))
+    asyncio.run(_events(programmatic_tool_caller, "await whoami()", context))
     assert seen == [request]
 
 
@@ -226,7 +237,7 @@ def test_inner_calls_do_not_change_the_parent_state():
         agent=_agent(whoami),
         invocation_state=parent_state,
     )
-    result = asyncio.run(programmatic_tool_caller._tool_func(code="print(await whoami())", tool_context=context))
+    result = asyncio.run(_events(programmatic_tool_caller, "print(await whoami())", context))[-1]
     assert _text(result) == "ok"
     assert parent_state == {"principal": "alice"}
 
@@ -382,7 +393,7 @@ def test_no_agent_context_is_an_error():
     context = ToolContext(
         tool_use={"toolUseId": "x", "name": "programmatic_tool_caller", "input": {}}, agent=None, invocation_state={}
     )
-    result = asyncio.run(programmatic_tool_caller._tool_func(code="print(1)", tool_context=context))
+    result = asyncio.run(_events(programmatic_tool_caller, "print(1)", context))[-1]
     assert result["status"] == "error"
     assert "No agent available" in _text(result)
 
@@ -497,6 +508,125 @@ def test_hook_that_needs_approval_refuses_the_inner_call():
     assert result["status"] == "success"
     assert "approval" in _text(result)
     assert calls == []
+
+
+# --- streaming -------------------------------------------------------------------------------------
+
+
+def test_prints_are_streamed_while_the_code_runs():
+    async def scenario():
+        release = asyncio.Event()
+
+        @tool
+        async def gate() -> str:
+            """Block until the test has seen the first print."""
+            await release.wait()
+            return "open"
+
+        code = "print('before')\nawait gate()\nprint('after')"
+        stream = programmatic_tool_caller._tool_func(code=code, tool_context=_context(_agent(gate)))
+        first = await asyncio.wait_for(anext(stream), 5)
+        release.set()
+        return [first, *[event async for event in stream]]
+
+    assert asyncio.run(scenario()) == [
+        {"type": "print", "text": "before\n"},
+        {"type": "print", "text": "after\n"},
+        {"status": "success", "content": [{"text": "before\nafter"}]},
+    ]
+
+
+def test_a_print_from_the_sandbox_thread_reaches_the_loop_thread_safely(monkeypatch):
+    unsafe_calls = []
+
+    async def print_from_a_thread(code, tool_context, output, *limits):
+        loop, loop_thread = asyncio.get_running_loop(), threading.get_ident()
+        call_soon = loop.call_soon
+
+        def checked_call_soon(*args, **kwargs):
+            if threading.get_ident() != loop_thread:
+                unsafe_calls.append(args)
+            return call_soon(*args, **kwargs)
+
+        monkeypatch.setattr(loop, "call_soon", checked_call_soon)
+        await asyncio.to_thread(output, "stdout", "threaded\n")
+        return {"status": "success", "content": [{"text": "threaded"}]}
+
+    monkeypatch.setattr(_module, "_run_code", print_from_a_thread)
+    events = asyncio.run(_events(programmatic_tool_caller, "", _context(_agent(calculator))))
+    assert events == [{"type": "print", "text": "threaded\n"}, {"status": "success", "content": [{"text": "threaded"}]}]
+    assert unsafe_calls == []
+
+
+def test_output_printed_as_the_run_ends_is_streamed(monkeypatch):
+    async def print_and_finish(code, tool_context, output, *limits):
+        output("stdout", "late\n")
+        return {"status": "success", "content": [{"text": "late"}]}
+
+    monkeypatch.setattr(_module, "_run_code", print_and_finish)
+    events = asyncio.run(_events(programmatic_tool_caller, "", _context(_agent(calculator))))
+    assert events == [{"type": "print", "text": "late\n"}, {"status": "success", "content": [{"text": "late"}]}]
+
+
+def test_prints_reach_the_agent_stream_as_tool_stream_events():
+    code = "print('one')\nprint(await calculator(expression='1 + 1'))"
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"toolUse": {"toolUseId": "t1", "name": "programmatic_tool_caller", "input": {"code": code}}}
+                ],
+            },
+            {"role": "assistant", "content": [{"text": "done"}]},
+        ]
+    )
+    agent = Agent(model=model, tools=[programmatic_tool_caller, calculator], callback_handler=None)
+
+    async def collect():
+        return [event["tool_stream_event"] async for event in agent.stream_async("go") if "tool_stream_event" in event]
+
+    stream_events = asyncio.run(collect())
+    prints = [event["data"] for event in stream_events if event["data"].get("type") == "print"]
+    assert {event["tool_use"]["toolUseId"] for event in stream_events} == {"t1"}
+    assert {tuple(data) for data in prints} == {("type", "text")}
+    assert "".join(data["text"] for data in prints) == "one\n2\n"
+
+
+def test_streamed_prints_stop_at_the_output_cap():
+    output = _Output()
+    output("stdout", "x" * (_MAX_OUTPUT_CHARS - 10))
+    assert len(output.take()) == _MAX_OUTPUT_CHARS - 10
+    output("stdout", "y" * 500)
+    output("stdout", "z" * 500)
+    assert output.take() == "y" * 10
+    assert output.take() == ""
+
+
+def test_closing_the_stream_stops_the_run():
+    async def scenario():
+        started = asyncio.Event()
+        cancelled = []
+
+        @tool
+        async def hang() -> str:
+            """Never return."""
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+            return "unreachable"
+
+        code = "print('started')\nawait hang()"
+        stream = programmatic_tool_caller._tool_func(code=code, tool_context=_context(_agent(hang)))
+        first = await asyncio.wait_for(anext(stream), 5)
+        await asyncio.wait_for(started.wait(), 5)
+        await stream.aclose()
+        return first, cancelled, asyncio.all_tasks() - {asyncio.current_task()}
+
+    assert asyncio.run(scenario()) == ({"type": "print", "text": "started\n"}, [True], set())
 
 
 # --- output, timeout, cancellation -----------------------------------------------------------------
@@ -616,7 +746,7 @@ def test_no_tool_call_starts_or_keeps_running_after_the_run_ends():
     code = "import asyncio\nawait asyncio.gather(*[record(value=i) for i in range(30)])"
 
     async def run_then_wait() -> dict:
-        result = await quick._tool_func(code=code, tool_context=context)
+        result = (await _events(quick, code, context))[-1]
         await asyncio.sleep(0.6)
         return result
 
@@ -672,7 +802,7 @@ def test_in_flight_cancellation_stops_promptly():
     threading.Timer(0.1, agent.cancel).start()
     start = time.monotonic()
     loop = asyncio.new_event_loop()
-    result = loop.run_until_complete(programmatic_tool_caller._tool_func(code="await hang()", tool_context=context))
+    result = loop.run_until_complete(_events(programmatic_tool_caller, "await hang()", context))[-1]
     elapsed = time.monotonic() - start
     pending = asyncio.all_tasks(loop)
     loop.close()

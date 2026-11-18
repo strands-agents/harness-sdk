@@ -24,14 +24,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import logging
 import math
 import random
 import re
 import weakref
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from ...tools.decorator import tool
 from ...tools.executors._executor import ToolExecutor
@@ -74,6 +75,13 @@ _MAX_OUTPUT_CHARS = 200_000
 _DEFAULT_TIMEOUT = 3600.0
 _DEFAULT_TOOL_TIMEOUT = 1800.0
 _CANCEL_POLL_INTERVAL = 0.05
+
+
+class ProgrammaticToolCallerPrintEvent(TypedDict):
+    """Data of the tool stream events the tool emits while the code runs: output as the code prints it."""
+
+    type: Literal["print"]
+    text: str
 
 
 class _Cancelled(Exception):
@@ -308,11 +316,17 @@ def _build_external_lookup(
 
 
 class _Output:
-    """Collects the code's ``print()`` output, capped at ``_MAX_OUTPUT_CHARS``."""
+    """Collects the code's ``print()`` output, capped at ``_MAX_OUTPUT_CHARS``.
 
-    def __init__(self) -> None:
+    The sandbox calls it from its own thread; ``on_print`` runs there after each chunk is buffered.
+    """
+
+    def __init__(self, on_print: Callable[[], object] = lambda: None) -> None:
         self.chunks: list[str] = []
         self.size = 0
+        self._on_print = on_print
+        self._taken_chunks = 0
+        self._taken_chars = 0
 
     def __call__(self, stream: str, text: str) -> None:
         # Buffer one char past the cap so ``_cap`` still sees that the output overflowed.
@@ -320,6 +334,15 @@ class _Output:
         if room > 0:
             self.chunks.append(text[:room])
             self.size += len(text[:room])
+            self._on_print()
+
+    def take(self) -> str:
+        """Return what was printed since the last call, stopping at the cap."""
+        end = len(self.chunks)
+        text = "".join(self.chunks[self._taken_chunks : end])[: _MAX_OUTPUT_CHARS - self._taken_chars]
+        self._taken_chunks = end
+        self._taken_chars += len(text)
+        return text
 
     def text(self) -> str:
         return _cap("".join(self.chunks))
@@ -349,6 +372,37 @@ async def _run_sandboxed(code: str, external_lookup: dict[str, Any], output: _Ou
             await session.feed_run(code, external_lookup=external_lookup, print_callback=output)
 
 
+async def _run_code(
+    code: str,
+    tool_context: ToolContext,
+    output: _Output,
+    allowed_tools: list[str] | None,
+    timeout: float | None,
+    tool_timeout: float | None,
+) -> dict[str, Any]:
+    """Run the code to its end, timeout, or cancellation, and return the tool result."""
+    available_tools = _resolve_available_tools(tool_context.agent, allowed_tools)
+    run = _Run()
+    external_lookup = _build_external_lookup(available_tools, tool_context, run, tool_timeout)
+
+    try:
+        await _await_bounded(_run_sandboxed(code, external_lookup, output), timeout, tool_context.cancel_signal)
+    except _Cancelled:
+        return _error_result("Execution cancelled.")
+    except asyncio.TimeoutError:
+        return _error_result(output.with_error(f"Execution error: timed out after {timeout:g} seconds."))
+    except MontySyntaxError as error:
+        return _error_result(_cap(f"Syntax error:\n{error.display()}"))
+    except MontyRuntimeError as error:
+        return _error_result(output.with_error(f"Execution error:\n{error.display()}"))
+    except MontyError as error:
+        return _error_result(output.with_error(f"Execution error: {error}"))
+    finally:
+        await run.cancel_calls()
+
+    return {"status": "success", "content": [{"text": output.text() or "(no output)"}]}
+
+
 def make_programmatic_tool_caller(
     *,
     allowed_tools: list[str] | None = None,
@@ -361,7 +415,8 @@ def make_programmatic_tool_caller(
 
     The returned tool executes agent-authored Python code in a Monty sandbox in which the agent's
     other tools are exposed as ``async`` functions (``await tool_name(...)``). Only ``print()``
-    output is returned.
+    output is returned. While the code runs, the tool also streams that output as
+    :class:`ProgrammaticToolCallerPrintEvent` tool stream events.
 
     Args:
         allowed_tools: Registry names of the tools to expose to the code. ``None`` (the default)
@@ -390,42 +445,44 @@ def make_programmatic_tool_caller(
     resolved_allowed_tools = list(allowed_tools) if allowed_tools is not None else None
 
     @tool(name=name, description=description, context="tool_context")
-    async def programmatic_tool_caller_tool(code: str, tool_context: ToolContext) -> dict[str, Any]:
+    async def programmatic_tool_caller_tool(
+        code: str, tool_context: ToolContext
+    ) -> AsyncGenerator[ProgrammaticToolCallerPrintEvent | dict[str, Any], None]:
         """Execute Python code with the agent's other tools as async functions.
 
         Args:
             code: Python code to execute. Use ``await tool_name(...)`` to call tools.
             tool_context: Injected by the framework. Not user-facing.
 
-        Returns:
-            A tool result whose text is the code's captured ``print()`` output on success, or the
-            error/traceback on failure.
+        Yields:
+            A :class:`ProgrammaticToolCallerPrintEvent` for the output as the code prints it, then the
+            tool result: the whole ``print()`` output on success, or the error/traceback on failure.
         """
-        agent = tool_context.agent
-        if agent is None:
-            return _error_result("No agent available. The programmatic tool caller requires an agent context.")
+        if tool_context.agent is None:
+            yield _error_result("No agent available. The programmatic tool caller requires an agent context.")
+            return
 
-        available_tools = _resolve_available_tools(agent, resolved_allowed_tools)
-        run = _Run()
-        external_lookup = _build_external_lookup(available_tools, tool_context, run, tool_timeout)
-        output = _Output()
-
+        printed = asyncio.Event()
+        output = _Output(on_print=functools.partial(asyncio.get_running_loop().call_soon_threadsafe, printed.set))
+        run = asyncio.ensure_future(
+            _run_code(code, tool_context, output, resolved_allowed_tools, timeout, tool_timeout)
+        )
+        run.add_done_callback(lambda _: printed.set())
         try:
-            await _await_bounded(_run_sandboxed(code, external_lookup, output), timeout, tool_context.cancel_signal)
-        except _Cancelled:
-            return _error_result("Execution cancelled.")
-        except asyncio.TimeoutError:
-            return _error_result(output.with_error(f"Execution error: timed out after {timeout:g} seconds."))
-        except MontySyntaxError as error:
-            return _error_result(_cap(f"Syntax error:\n{error.display()}"))
-        except MontyRuntimeError as error:
-            return _error_result(output.with_error(f"Execution error:\n{error.display()}"))
-        except MontyError as error:
-            return _error_result(output.with_error(f"Execution error: {error}"))
+            while True:
+                await printed.wait()
+                printed.clear()
+                finished = run.done()
+                if text := output.take():
+                    yield {"type": "print", "text": text}
+                if finished:
+                    break
+            yield run.result()
         finally:
-            await run.cancel_calls()
-
-        return {"status": "success", "content": [{"text": output.text() or "(no output)"}]}
+            if not run.done():
+                run.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await run
 
     _INSTANCES.add(programmatic_tool_caller_tool)
     return programmatic_tool_caller_tool

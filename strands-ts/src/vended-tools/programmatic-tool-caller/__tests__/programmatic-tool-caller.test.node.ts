@@ -5,7 +5,8 @@ import { Agent } from '../../../agent/agent.js'
 import { AfterToolCallEvent, BeforeToolCallEvent } from '../../../hooks/events.js'
 import { InterventionActions, InterventionHandler } from '../../../interventions/index.js'
 import { tool } from '../../../tools/tool-factory.js'
-import type { Tool, ToolContext } from '../../../tools/tool.js'
+import { ToolStreamEvent } from '../../../tools/tool.js'
+import type { Tool, ToolContext, ToolStreamGenerator } from '../../../tools/tool.js'
 import { TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import {
   DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
@@ -14,7 +15,9 @@ import {
   Output,
   makeProgrammaticToolCaller,
   programmaticToolCaller,
+  streamPrints,
 } from '../programmatic-tool-caller.js'
+import type { ProgrammaticToolCallerPrintEvent } from '../programmatic-tool-caller.js'
 
 const calculator = tool({
   name: 'calculator',
@@ -58,9 +61,9 @@ async function run(agent: Agent, code: string, name = 'programmatic_tool_caller'
   return agent.tool[name]!.invoke({ code }, { recordDirectToolCall: false })
 }
 
-/** Run the default caller with a hand-built context, for what a direct tool call cannot set. */
-async function runWithContext(agent: Agent, code: string, extra: Partial<ToolContext>): Promise<ToolResultBlock> {
-  const generator = programmaticToolCaller.stream({
+/** Stream the default caller with a hand-built context, for what a direct tool call cannot set or observe. */
+function streamWithContext(agent: Agent, code: string, extra: Partial<ToolContext> = {}): ToolStreamGenerator {
+  return programmaticToolCaller.stream({
     toolUse: { toolUseId: 'x', name: 'programmatic_tool_caller', input: { code } },
     agent,
     invocationState: {},
@@ -70,6 +73,10 @@ async function runWithContext(agent: Agent, code: string, extra: Partial<ToolCon
     },
     ...extra,
   })
+}
+
+async function runWithContext(agent: Agent, code: string, extra: Partial<ToolContext>): Promise<ToolResultBlock> {
+  const generator = streamWithContext(agent, code, extra)
   let next = await generator.next()
   while (!next.done) {
     next = await generator.next()
@@ -317,6 +324,74 @@ describe('programmatic_tool_caller', () => {
     const result = await run(agentWith(calculator), "print('x' * 200500)")
     expect(text(result)).toMatch(/\[output truncated at 200000 characters\]$/)
     expect(text(result).length).toBeLessThan(200100)
+  })
+
+  it('streams prints while the code runs', async () => {
+    let release: (value: string) => void = () => {}
+    const gate = tool({
+      name: 'gate',
+      description: 'Block until the test has seen the first print.',
+      inputSchema: z.object({}),
+      callback: () => new Promise<string>((resolve) => (release = resolve)),
+    })
+    const generator = streamWithContext(agentWith(gate), "print('before')\nawait gate()\nprint('after')")
+    const first = await generator.next()
+    expect(first.value).toEqual(new ToolStreamEvent({ data: { type: 'print', text: 'before\n' } }))
+    release('open')
+    const second = await generator.next()
+    expect(second.value).toEqual(new ToolStreamEvent({ data: { type: 'print', text: 'after\n' } }))
+    const last = await generator.next()
+    expect(last.done).toBe(true)
+    expect(text(last.value as ToolResultBlock)).toBe('before\nafter')
+  })
+
+  it('surfaces prints on the agent stream as tool stream events', async () => {
+    const code = "print('one')\nprint(await calculator(expression='1 + 1'))"
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'programmatic_tool_caller', toolUseId: 't1', input: { code } })
+      .addTurn({ type: 'textBlock', text: 'done' })
+    const agent = new Agent({ model, tools: [programmaticToolCaller, calculator], printer: false })
+    const prints: ProgrammaticToolCallerPrintEvent[] = []
+    for await (const event of agent.stream('go')) {
+      if (event.type === 'toolStreamUpdateEvent') {
+        prints.push(event.event.data as ProgrammaticToolCallerPrintEvent)
+      }
+    }
+    expect(new Set(prints.map((print) => print.type))).toEqual(new Set(['print']))
+    expect(prints.map((print) => print.text).join('')).toBe('one\n2\n')
+  })
+
+  it('streams output printed as the run ends', async () => {
+    const output = new Output()
+    let finish = (): void => {}
+    const stream = streamPrints(output, new Promise<void>((resolve) => (finish = resolve)))
+    const first = stream.next()
+    output.write('stdout', 'late\n')
+    finish()
+    expect(await first).toEqual({ done: false, value: { type: 'print', text: 'late\n' } })
+    expect(await stream.next()).toEqual({ done: true, value: undefined })
+  })
+
+  it('streams output printed while the consumer handles an earlier event', async () => {
+    const output = new Output()
+    let finish = (): void => {}
+    const stream = streamPrints(output, new Promise<void>((resolve) => (finish = resolve)))
+    output.write('stdout', 'one\n')
+    expect((await stream.next()).value).toEqual({ type: 'print', text: 'one\n' })
+    output.write('stdout', 'two\n')
+    const second = await Promise.race([stream.next(), new Promise((resolve) => globalThis.setTimeout(resolve, 200))])
+    expect(second).toEqual({ done: false, value: { type: 'print', text: 'two\n' } })
+    finish()
+  })
+
+  it('stops streaming prints at the output cap', () => {
+    const output = new Output()
+    output.write('stdout', 'x'.repeat(200_000 - 10))
+    expect(output.take()).toHaveLength(200_000 - 10)
+    output.write('stdout', 'y'.repeat(500))
+    output.write('stdout', 'z'.repeat(500))
+    expect(output.take()).toBe('y'.repeat(10))
+    expect(output.take()).toBe('')
   })
 
   it('enforces the timeout', async () => {
