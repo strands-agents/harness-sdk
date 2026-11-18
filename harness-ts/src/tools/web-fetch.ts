@@ -138,7 +138,7 @@ function toText(data: Uint8Array, contentType: string): string {
 function redirected(location: string, url: string): Error {
   try {
     // The URL serializer leaves these raw in a query; encode them so the target passes validateUrl.
-    const target = validateUrl(new URL(location, url).href.replace(/[\^`{|}]/g, encodeURIComponent))
+    const target = validateUrl(new URL(location, url).href.replace(/[\\^`{|}]/g, encodeURIComponent))
     if (target.length <= MAX_REDIRECT_CHARS) {
       return new Error(
         `it redirects to ${target}, and web_fetch does not follow redirects. Call web_fetch with that URL to read it.`

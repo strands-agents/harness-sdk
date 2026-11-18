@@ -102,6 +102,13 @@ async def test_fetch_text_rejects_malformed_urls_before_touching_the_sandbox(url
     assert sandbox.commands == []
 
 
+def _redirect_notice(url, target):
+    return (
+        f"Failed to fetch {url}: it redirects to {target}, and web_fetch does not follow redirects. "
+        "Call web_fetch with that URL to read it."
+    )
+
+
 def test_validate_url_accepts_rfc3986_urls_and_strips_whitespace():
     assert web_fetch_module._validate_url(" https://e.com/a?b=c&d=%20#f ") == "https://e.com/a?b=c&d=%20#f"
     assert web_fetch_module._validate_url("http://[::1]:8080/x") == "http://[::1]:8080/x"
@@ -434,10 +441,7 @@ async def test_web_fetch_reports_a_redirect_from_either_shell_without_summarizin
         raise AssertionError("summarizer should not run for a redirect")
 
     monkeypatch.setattr(web_fetch_module, "Agent", fail_agent)
-    notice = (
-        "Failed to fetch https://example.com/docs: it redirects to https://other.example/landing, and web_fetch "
-        "does not follow redirects. Call web_fetch with that URL to read it."
-    )
+    notice = _redirect_notice("https://example.com/docs", "https://other.example/landing")
     for sandbox in (_Sandbox, _PowerShellSandbox):
         sandbox = sandbox(body=b"redirect body", redirect="https://other.example/landing")
         tool = make_web_fetch(model=object())
@@ -474,7 +478,7 @@ async def test_web_fetch_stops_at_a_same_host_or_cross_host_redirect(transport, 
                     "/docs/moved": (302, "/private"),
                     "/docs/away": (308, location),
                     # Raw UTF-8 bytes and a space, as servers send them.
-                    "/docs/odd": (301, "/a b/café?x=a|b".encode().decode("latin-1")),
+                    "/docs/odd": (301, "/a b/café?x=a|b\\c".encode().decode("latin-1")),
                 }.get(self.path)
                 self.send_response(redirect[0] if redirect else 200)
                 if redirect:
@@ -498,12 +502,12 @@ async def test_web_fetch_stops_at_a_same_host_or_cross_host_redirect(transport, 
     monkeypatch.setenv("CURL_HOME", str(tmp_path))
     try:
         moved = await tool._tool_func(url=f"{base}/docs/moved", tool_context=context)
-        assert f"Failed to fetch {base}/docs/moved: it redirects to {base}/private, and" in moved
+        assert moved == _redirect_notice(f"{base}/docs/moved", f"{base}/private")
         away = await tool._tool_func(url=f"{base}/docs/away", tool_context=context)
-        assert f"Failed to fetch {base}/docs/away: it redirects to {other}/landing?q=1, and" in away
+        assert away == _redirect_notice(f"{base}/docs/away", f"{other}/landing?q=1")
         # curl percent-encodes in lower case.
         odd = await tool._tool_func(url=f"{base}/docs/odd", tool_context=context)
-        assert f"it redirects to {base}/a%20b/caf%c3%a9?x=a%7cb, and" in odd.lower()
+        assert odd.lower() == _redirect_notice(f"{base}/docs/odd", f"{base}/a%20b/caf%C3%A9?x=a%7Cb%5Cc").lower()
         assert requests == ["base/docs/moved", "base/docs/away", "base/docs/odd"]
     finally:
         server.shutdown()

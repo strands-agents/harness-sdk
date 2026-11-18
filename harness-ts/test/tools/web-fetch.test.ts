@@ -96,6 +96,13 @@ beforeEach(() => {
   constructed.length = 0
 })
 
+function redirectNotice(url: string, target: string): string {
+  return (
+    `Failed to fetch ${url}: it redirects to ${target}, and web_fetch does not follow redirects. ` +
+    'Call web_fetch with that URL to read it.'
+  )
+}
+
 describe('web_fetch', () => {
   it('reduces HTML to text and answers via the summarizer model', async () => {
     const sandbox = new FakeSandbox({
@@ -372,9 +379,7 @@ describe('web_fetch', () => {
   })
 
   it('reports a redirect from either shell without summarizing or caching it', async () => {
-    const notice =
-      'Failed to fetch https://example.com/docs: it redirects to https://other.example/landing, and web_fetch ' +
-      'does not follow redirects. Call web_fetch with that URL to read it.'
+    const notice = redirectNotice('https://example.com/docs', 'https://other.example/landing')
     for (const Sandbox of [FakeSandbox, FakePowerShellSandbox]) {
       const sandbox = new Sandbox({ body: 'redirect body', redirect: 'https://other.example/landing' })
       const tool = makeWebFetch({ model })
@@ -407,7 +412,7 @@ describe('web_fetch', () => {
           else if (req.url === '/docs/away') res.writeHead(308, { Location: location() })
           // Raw UTF-8 bytes and a space, as servers send them.
           else if (req.url === '/docs/odd')
-            res.writeHead(301, { Location: Buffer.from('/a b/café?x=a|b').toString('latin1') })
+            res.writeHead(301, { Location: Buffer.from('/a b/café?x=a|b\\c').toString('latin1') })
           res.end('secret')
         })
         await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -424,12 +429,14 @@ describe('web_fetch', () => {
       vi.stubEnv('CURL_HOME', curlHome)
       try {
         const moved = await invoke(tool, { url: `${base}/docs/moved` }, sandbox)
-        expect(moved).toContain(`Failed to fetch ${base}/docs/moved: it redirects to ${base}/private, and`)
+        expect(moved).toBe(redirectNotice(`${base}/docs/moved`, `${base}/private`))
         const away = await invoke(tool, { url: `${base}/docs/away` }, sandbox)
-        expect(away).toContain(`Failed to fetch ${base}/docs/away: it redirects to ${other}/landing?q=1, and`)
+        expect(away).toBe(redirectNotice(`${base}/docs/away`, `${other}/landing?q=1`))
         // curl percent-encodes in lower case.
         const odd = await invoke(tool, { url: `${base}/docs/odd` }, sandbox)
-        expect(odd.toLowerCase()).toContain(`it redirects to ${base}/a%20b/caf%c3%a9?x=a%7cb, and`)
+        expect(odd.toLowerCase()).toBe(
+          redirectNotice(`${base}/docs/odd`, `${base}/a%20b/caf%C3%A9?x=a%7Cb%5Cc`).toLowerCase()
+        )
         expect(requests).toEqual(['base/docs/moved', 'base/docs/away', 'base/docs/odd'])
       } finally {
         vi.unstubAllEnvs()
