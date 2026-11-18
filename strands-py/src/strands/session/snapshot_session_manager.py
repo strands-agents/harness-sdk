@@ -457,14 +457,15 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         that stopped before a model call saw it) gets that message rewritten and is otherwise
         unchanged.
 
-        The original content stays at rest in:
+        Only messages with that ``tracking_id`` are rewritten. The original content stays at rest in:
 
         - an immutable snapshot that holds it under no ``tracking_id`` or under another one. A
           message passed to ``Agent(messages=...)`` or appended to ``agent.messages`` gets its id
           on the first invocation after it was added, and context management can merge a message
           into the one before it, which keeps its own id.
-        - the stash entries and pending tool results (``interrupt_state``) of any snapshot,
-          ``snapshot_latest`` included.
+        - any other part of a snapshot that holds a copy of it, such as stash entries (in
+          ``snapshot_latest`` too), pending tool results (``interrupt_state``), and background
+          task results that were not yet delivered (agent ``state``).
 
         This flush happens regardless of ``save_latest_on`` (including ``"trigger"``) because the
         Agent invokes this method directly, not through a hook the manager could decline to
@@ -477,9 +478,10 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             **kwargs: Additional keyword arguments for future extensibility.
 
         Raises:
-            Exception: The first storage error, raised after every other immutable snapshot was
-                attempted. A snapshot that failed keeps the original content; calling this method
-                again with the same message retries it.
+            Exception: A storage error, raised after ``snapshot_latest`` and every immutable snapshot
+                were attempted. If listing the snapshots fails, none is attempted. A snapshot that
+                failed keeps the original content; calling this method again with the same message
+                retries it.
         """
         run_async(lambda: self._flush_redaction(redact_message, agent))
 
@@ -626,8 +628,14 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
 
     async def _flush_redaction(self, redact_message: Message, agent: LocalAgent) -> None:
         """Overwrite ``snapshot_latest``, then rewrite the message in every immutable snapshot that holds it."""
-        await self._save_latest(agent)
+        try:
+            await self._save_latest(agent)
+        finally:
+            # A failed latest write must not leave the immutable snapshots unredacted.
+            await self._redact_immutable_snapshots(redact_message, agent)
 
+    async def _redact_immutable_snapshots(self, redact_message: Message, agent: LocalAgent) -> None:
+        """Rewrite the message in every immutable snapshot that holds it, then raise the first storage error."""
         if not redact_message.get("tracking_id"):
             return
         semaphore = asyncio.Semaphore(_REDACTION_CONCURRENCY)

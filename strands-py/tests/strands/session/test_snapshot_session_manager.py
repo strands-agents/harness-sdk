@@ -1391,6 +1391,36 @@ def test_redaction_storage_error_fails_invocation_after_other_rewrites(storage, 
     assert tru_snapshot == _redacted_snapshot(failed_data, 0)
 
 
+def test_redaction_latest_write_error_still_rewrites_immutable_snapshots(storage):
+    """A failed ``snapshot_latest`` write fails the invocation without leaving the checkpoints unredacted."""
+    manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="trigger")
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    exp_snapshots = []
+    write = storage.write
+
+    async def write_failing_on_latest(key, data):
+        if key == _on_disk_key("s1", "a1"):
+            raise OSError("disk full")
+        await write(key, data)
+
+    async def checkpoint(event):
+        snapshot_id = await manager.save_snapshot(event.agent, is_latest=False)
+        data = await storage.read(f"session/{_snapshot_key('s1', 'a1', snapshot_id=snapshot_id)}")
+        exp_snapshots.append(_redacted_snapshot(data, 0))
+        storage.write = write_failing_on_latest  # type: ignore[method-assign]
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    with pytest.raises(OSError, match="disk full"):
+        agent("sensitive prompt")
+
+    [snapshot_id] = asyncio.run(manager.list_snapshot_ids(agent))
+    tru_snapshots = [json.loads(_immutable_snapshot_data(storage, snapshot_id))]
+    assert tru_snapshots == exp_snapshots
+
+
 def test_redaction_rewrites_every_copy_of_message(storage):
     """A message sent twice shares one tracking id, and a checkpoint holding both copies has both rewritten."""
     manager = SnapshotSessionManager("s1", storage=storage)
