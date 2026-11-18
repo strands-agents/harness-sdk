@@ -27,6 +27,7 @@ from strands.hooks.events import (
     AfterMultiAgentInvocationEvent,
     AfterNodeCallEvent,
     BeforeMultiAgentInvocationEvent,
+    MessageAddedEvent,
     MultiAgentInitializedEvent,
 )
 from strands.hooks.registry import HookOrder
@@ -1192,6 +1193,91 @@ def test_redaction_flushes_even_under_trigger_strategy(temp_dir):
     tru_texts = [content["text"] for message in agent_2.messages for content in message["content"] if "text" in content]
     assert "sensitive prompt" not in tru_texts
     assert "REDACTED" in tru_texts
+
+
+def _immutable_snapshot_data(storage, snapshot_id: str) -> bytes:
+    """The raw stored bytes of an immutable snapshot."""
+    return asyncio.run(storage.read(f"session/{_snapshot_key('s1', 'a1', snapshot_id=snapshot_id)}"))
+
+
+def test_redaction_rewrites_immutable_snapshot_saved_before_model_call(storage):
+    """A checkpoint saved after the user message and before its redaction has only that message rewritten."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    agent.state.set("step", "before model call")
+
+    async def checkpoint(event):
+        if event.message["role"] == "user":
+            await manager.save_snapshot(event.agent, is_latest=False)
+
+    agent.add_hook(checkpoint, MessageAddedEvent)
+    agent("sensitive prompt")
+    agent.state.set("step", "after model call")
+
+    [snapshot_id] = asyncio.run(manager.list_snapshot_ids(agent))
+    assert b"sensitive prompt" not in _immutable_snapshot_data(storage, snapshot_id)
+
+    asyncio.run(manager.restore_snapshot(agent, snapshot_id=snapshot_id))
+    assert [message["content"] for message in agent.messages] == [[{"text": "REDACTED"}]]
+    assert agent.state.get("step") == "before model call"
+
+
+def test_redaction_rewrites_immutable_snapshot_from_stopped_invocation(storage):
+    """A trigger checkpoint of an invocation that stopped before the model saw its last message is rewritten.
+
+    The redaction arrives in a later invocation, on a new manager, so nothing in memory links it to the checkpoint.
+    """
+
+    @tool
+    def lookup() -> str:
+        """Return the record."""
+        return "sensitive record"
+
+    def session_agent():
+        manager = SnapshotSessionManager("s1", storage=storage, snapshot_trigger=lambda *, agent_data, **_: True)
+        return Agent(model=model, tools=[lookup], session_manager=manager, agent_id="a1"), manager
+
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {}}}]},
+            {"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."},
+        ]
+    )
+    agent, manager = session_agent()
+    agent("look up my record", limits={"turns": 1})
+    [stopped_id] = asyncio.run(manager.list_snapshot_ids(agent))
+    assert b"sensitive record" in _immutable_snapshot_data(storage, stopped_id)
+
+    agent, manager = session_agent()
+    agent()
+
+    for snapshot_id in asyncio.run(manager.list_snapshot_ids(agent)):
+        assert b"sensitive record" not in _immutable_snapshot_data(storage, snapshot_id)
+    asyncio.run(manager.restore_snapshot(agent, snapshot_id=stopped_id))
+    assert len(agent.messages) == 3
+    assert agent.messages[-1]["content"][0]["toolResult"]["content"] == [{"text": "REDACTED"}]
+
+
+def test_redaction_leaves_earlier_immutable_snapshots_untouched(storage):
+    """A checkpoint that does not end with the redacted message is not rewritten."""
+    manager = SnapshotSessionManager("s1", storage=storage, snapshot_trigger=lambda *, agent_data, **_: True)
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"text": "hi"}]},
+            {"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."},
+        ]
+    )
+    agent = Agent(model=model, session_manager=manager, agent_id="a1")
+    agent("hello")
+    [earlier_id] = asyncio.run(manager.list_snapshot_ids(agent))
+    exp_data = _immutable_snapshot_data(storage, earlier_id)
+
+    agent("sensitive prompt")
+
+    assert _immutable_snapshot_data(storage, earlier_id) == exp_data
 
 
 def test_snapshot_trigger_returning_false_appends_nothing(storage):

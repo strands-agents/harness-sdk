@@ -65,7 +65,8 @@ SaveLatestStrategy = Literal["message", "invocation", "trigger"]
 - ``"trigger"``: only when ``snapshot_trigger`` fires (or manually via ``save_snapshot``).
 
 Guardrail redactions are flushed immediately under every strategy, including ``"trigger"``,
-so pre-redaction content never sits at rest. This diverges from the TypeScript SDK, which
+to ``snapshot_latest`` and to the immutable snapshots that hold the redacted message, so
+pre-redaction content does not stay at rest. This diverges from the TypeScript SDK, which
 does not flush redactions under ``"trigger"``; see :meth:`SnapshotSessionManager.redact_latest_message`.
 """
 
@@ -445,18 +446,22 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
 
         The Agent has already applied the redaction to the last user message before
         calling this, so re-capturing the agent flushes pre-redaction content out of
-        the persisted latest snapshot. This flush happens regardless of ``save_latest_on``
-        (including ``"trigger"``) because the Agent invokes this method directly, not through
-        a hook the manager could decline to register — so pre-redaction content never sits at
-        rest. This diverges from the TypeScript SDK, which gates redaction persistence behind
-        an ``AfterModelCall`` hook it skips under ``"trigger"`` and therefore does not flush there.
+        the persisted latest snapshot. Immutable snapshots that hold the pre-redaction message
+        (saved before the model call, or by an invocation that stopped before a model call saw
+        the message) have that one message rewritten; the rest of the checkpoint is unchanged.
+
+        This flush happens regardless of ``save_latest_on`` (including ``"trigger"``) because the
+        Agent invokes this method directly, not through a hook the manager could decline to
+        register — so pre-redaction content does not stay at rest. This diverges from the
+        TypeScript SDK, which gates redaction persistence behind an ``AfterModelCall`` hook it
+        skips under ``"trigger"`` and therefore does not flush there.
 
         Args:
             redact_message: The redacted replacement message (already applied by the Agent).
             agent: Agent whose last user message was redacted.
             **kwargs: Additional keyword arguments for future extensibility.
         """
-        run_async(lambda: self._save_latest(agent))
+        run_async(lambda: self._flush_redaction(redact_message, agent))
 
     def append_message(self, message: Message, agent: LocalAgent, **kwargs: Any) -> None:
         """No-op — snapshots capture the whole agent.
@@ -598,6 +603,27 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
     async def _save_latest(self, agent: LocalAgent) -> None:
         """Capture the agent and overwrite ``snapshot_latest``."""
         await self.save_snapshot(agent, is_latest=True)
+
+    async def _flush_redaction(self, redact_message: Message, agent: LocalAgent) -> None:
+        """Overwrite ``snapshot_latest``, then rewrite the message in the immutable snapshots that captured it."""
+        await self._save_latest(agent)
+
+        tracking_id = redact_message.get("tracking_id")
+        if tracking_id is None:
+            return
+        for snapshot_id in reversed(await self.list_snapshot_ids(agent)):
+            key = _snapshot_key(self.session_id, agent.agent_id, snapshot_id=snapshot_id)
+            data = await self._resolved_storage.read(key)
+            if data is None:
+                continue
+            snapshot = _deserialize_snapshot(data)
+            messages = snapshot.data.get("messages", [])
+            index = next((i for i, message in enumerate(messages) if message.get("tracking_id") == tracking_id), None)
+            if index is None:
+                # Snapshots are time-ordered, so every older one predates the message too.
+                return
+            messages[index] = redact_message
+            await self._resolved_storage.write(key, _serialize_snapshot(snapshot))
 
     async def _save_immutable_and_latest(self, agent: LocalAgent) -> None:
         """Capture once and write the immutable snapshot, then ``snapshot_latest``.
