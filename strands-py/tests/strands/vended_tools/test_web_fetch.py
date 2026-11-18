@@ -442,7 +442,7 @@ class TestHtmlToMarkdown:
     def test_script_and_data_img_srcs_with_line_separator_prefix_are_dropped(self, prefix, src, expected):
         assert html_to_markdown(f'<img src="{prefix}{src}" alt="x">') == expected
 
-    @pytest.mark.parametrize("prefix", map(chr, (0x0890, 0x0891, *range(0x13439, 0x13440))))
+    @pytest.mark.parametrize("prefix", [chr(c) for c in (0x0890, 0x0891, *range(0x13439, 0x13440))])
     def test_javascript_href_with_newer_format_character_prefix_is_dropped(self, prefix):
         assert html_to_markdown(f'<a href="{prefix}javascript:alert(1)">click</a>') == "click"
 
