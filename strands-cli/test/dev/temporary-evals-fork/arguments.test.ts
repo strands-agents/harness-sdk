@@ -38,4 +38,14 @@ describe('TEMPORARY strands dev optimize arguments', () => {
     expect(help).toContain('Experimental: ')
     expect(help).not.toContain('TEMPORARY')
   })
+
+  it('shouldNameTheUpstreamCommandWhenDevOptimizePrintsItsHelp', () => {
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+
+    expect(() => parseTemporaryDevCommandArguments('optimize', ['--help'])).toThrow()
+    const help = write.mock.calls.map(([text]) => String(text)).join('')
+    write.mockRestore()
+
+    expect(help.replace(/\s+/gu, ' ')).toContain('Flags after -- go to strands-evals optimize run.')
+  })
 })

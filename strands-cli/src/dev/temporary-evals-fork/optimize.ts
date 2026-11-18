@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
+import { isRecord } from '../../values.js'
 import type { OptimizeObjective } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryModelDiscovery } from './knobs.js'
@@ -10,7 +11,6 @@ import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './exper
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment } from './environment.js'
 import type { TemporaryCommandRunner } from './environment.js'
 import {
-  assertTemporaryForkArguments,
   spawnTemporaryEvals,
   temporaryEvalsEnvironment,
   temporaryEvalsFailure,
@@ -28,6 +28,7 @@ import {
   type TemporaryOptimizationFiles,
 } from './layout.js'
 import { temporaryObjectiveArguments } from './objective.js'
+import { readTemporaryOptimizeFlags, type TemporaryOptimizeFlags } from './optimize-flags.js'
 import { TEMPORARY_OPTIMIZE_DEFAULTS, type TemporaryOptimizeSettings } from './plan.js'
 
 export interface TemporaryOptimizationRequest {
@@ -68,26 +69,13 @@ interface TemporaryTask {
   readonly spaceFile?: string
   readonly settings: readonly string[]
   readonly typescriptRunner?: string
+  readonly customEvaluators: readonly string[]
   readonly baselineOnly: boolean
 }
 
-const WRAPPER_OWNED_FLAGS = [
-  '--agent',
-  '--build-task',
-  '--space',
-  '--config',
-  '--rollout',
-  '--search',
-  '--base-dir',
-  '--name',
-  '--json',
-  '--rich',
-  '--record',
-  '--resume',
-  '--typescript-runner',
-]
 const TASK_IMPORT = 'from strands_evals.cli.commands._temporary_task import temporary_task'
 const TUNED_BY_DEFAULT: readonly string[] = ['instructions']
+const TEXT_SETTINGS: readonly string[] = ['instructions']
 const SEARCH_STOPPED_EXIT = 3
 const STARTING = 'Measuring the baseline. The optimizer reports each iteration when it finishes.'
 const CONTINUING = 'Continuing the run from where it stopped.'
@@ -108,6 +96,7 @@ const taskSource = (task: TemporaryTask): string =>
       ...(task.spaceFile ? [`space_file=${pythonText(task.spaceFile)}`] : []),
       `settings=${pythonTuple(task.settings)}`,
       ...(task.typescriptRunner ? [`typescript_runner=${pythonText(task.typescriptRunner)}`] : []),
+      ...(task.customEvaluators.length > 0 ? [`custom_evaluators=${pythonTuple(task.customEvaluators)}`] : []),
       `baseline_only=${task.baselineOnly ? 'True' : 'False'}`,
     ].map((argument) => `    ${argument},`),
     ')',
@@ -138,6 +127,23 @@ const settingArguments = (settings: TemporaryOptimizeSettings): string[] => [
   String(settings.seed),
 ]
 
+const tunesText = async (space: string | undefined, tuned: readonly string[]): Promise<boolean> => {
+  if (space === undefined) return tuned.some((setting) => TEXT_SETTINGS.includes(setting))
+  const document: unknown = JSON.parse(await readFile(space, 'utf8'))
+  return (
+    isRecord(document) &&
+    Array.isArray(document.variables) &&
+    document.variables.some((variable) => isRecord(variable) && variable.kind === 'text')
+  )
+}
+
+const reflectionArguments = async (
+  { reflectionModel }: TemporaryOptimizeFlags,
+  space: string | undefined,
+  tuned: readonly string[]
+): Promise<string[]> =>
+  reflectionModel !== undefined && (await tunesText(space, tuned)) ? ['--reflection-model', reflectionModel] : []
+
 const writeTask = async (file: string, task: TemporaryTask): Promise<string> => {
   await mkdir(dirname(file), { recursive: true })
   await writeFile(file, taskSource(task))
@@ -147,18 +153,25 @@ const writeTask = async (file: string, task: TemporaryTask): Promise<string> => 
 const newRunArguments = async (
   request: TemporaryOptimizationRequest,
   experiment: string,
-  files: TemporaryOptimizationFiles
+  files: TemporaryOptimizationFiles,
+  passed: TemporaryOptimizeFlags
 ): Promise<string[]> => {
-  const { workspace, space, objective, forkArguments = [] } = request
-  const settings = { ...TEMPORARY_OPTIMIZE_DEFAULTS, ...request.settings }
+  const { workspace, space, objective } = request
+  const settings = {
+    ...TEMPORARY_OPTIMIZE_DEFAULTS,
+    ...request.settings,
+    ...(passed.iterations === undefined ? {} : { iterations: passed.iterations }),
+  }
   const baselineOnly = isBaselineOnly(settings)
+  const tuned = passed.tuned ?? TUNED_BY_DEFAULT
   const runnable = await temporaryRunnableExperiment(experiment, files.copy)
   const task = await writeTask(files.task, {
     agentFile: resolve(workspace.entrypoint),
     experimentFile: resolve(runnable),
     ...(space ? { spaceFile: resolve(space) } : {}),
-    settings: TUNED_BY_DEFAULT,
+    settings: tuned,
     ...(workspace.config.language === 'typescript' ? { typescriptRunner: temporaryTypescriptRunnerCommand() } : {}),
+    customEvaluators: passed.customEvaluators,
     baselineOnly,
   })
   return [
@@ -174,7 +187,8 @@ const newRunArguments = async (
     '--rich',
     ...settingArguments(settings),
     ...(objective ? temporaryObjectiveArguments(objective) : []),
-    ...forkArguments,
+    ...passed.flags,
+    ...(baselineOnly ? [] : await reflectionArguments(passed, space, tuned)),
   ]
 }
 
@@ -224,7 +238,7 @@ export const runTemporaryOptimization = async (
 ): Promise<TemporaryOptimizationOutcome> => {
   const { workspace, forkArguments = [], environment = process.env, signal, onProgress = ignoreProgress } = request
   const directory = temporaryWorkspaceDirectory(workspace)
-  assertTemporaryForkArguments(forkArguments, WRAPPER_OWNED_FLAGS, 'strands dev')
+  const passed = readTemporaryOptimizeFlags(forkArguments)
   const experiment = await resolveTemporaryExperiment(
     temporaryExperimentsFolder(directory),
     request.experiment,
@@ -239,7 +253,7 @@ export const runTemporaryOptimization = async (
   const { record, log } = files
   const runFolder = request.continuing === undefined ? undefined : await temporaryRunFolder(record)
   await mkdir(files.folder, { recursive: true })
-  const args = runFolder ? resumeArguments(runFolder) : await newRunArguments(request, experiment, files)
+  const args = runFolder ? resumeArguments(runFolder) : await newRunArguments(request, experiment, files, passed)
   onProgress(`Optimizing ${workspace.entrypoint} against ${experiment}`)
   onProgress(`Record: ${record}`)
   onProgress(runFolder ? CONTINUING : STARTING)

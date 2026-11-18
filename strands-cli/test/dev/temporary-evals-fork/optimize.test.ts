@@ -216,6 +216,111 @@ describe('TEMPORARY dev optimization', () => {
     expect(await readFile(task, 'utf8')).toContain('    baseline_only=True,\n')
   })
 
+  const spawnedWith = async (
+    request: Partial<Parameters<typeof runTemporaryOptimization>[0]> = {}
+  ): Promise<{ args: string[]; task: string }> => {
+    const workspace = await workspaceFixture()
+    const spawnOptimizer = succeeding()
+    await runTemporaryOptimization(
+      { workspace, now: () => NOW, ...request },
+      { run: environmentRunner(), spawnOptimizer }
+    )
+    return {
+      args: spawnOptimizer.mock.calls[0]![0].args,
+      task: await readFile(optimizationFile(workspace, '.state/task.py'), 'utf8'),
+    }
+  }
+
+  const afterTheDefaults = (args: readonly string[]): string[] => args.slice(args.indexOf('--seed') + 2)
+
+  it.each([
+    { given: ['--width', '2'], passed: ['--proposals-per-iteration', '2'] },
+    { given: ['--repetitions=3'], passed: ['--runs-per-candidate', '3'] },
+    { given: ['--max-concurrency', '8'], passed: ['--max-workers', '8'] },
+    { given: ['--at-most', 'tokens=4000'], passed: ['--constraint', 'tokens<=4000'] },
+    { given: ['--at-least=Contains=0.8'], passed: ['--constraint', 'Contains>=0.8'] },
+    {
+      given: ['--objective', 'Pareto(Maximize(Contains), Minimize(tokens, scale=1000))'],
+      passed: ['--objective', 'maximize:Contains', '--objective', 'minimize:tokens:scale=1000', '--pareto'],
+    },
+    {
+      given: ['--objective', 'maximize:Contains', '--pareto'],
+      passed: ['--objective', 'maximize:Contains', '--pareto'],
+    },
+    { given: ['--seed', '7', '--split=0.6,0.2,0.2'], passed: ['--seed', '7', '--split=0.6,0.2,0.2'] },
+  ])('shouldPassUpstreamFlagsAfterTheDefaultsWhenStrandsDevOptimizeGets$given', async ({ given, passed }) => {
+    const { args } = await spawnedWith({ forkArguments: given })
+
+    expect(afterTheDefaults(args)).toEqual(passed)
+  })
+
+  it.each([
+    { given: ['--iterations', '2'], iterations: '2' },
+    { given: ['--max-iterations=6'], iterations: '6' },
+  ])('shouldGiveTheIterationsOnceWhenStrandsDevOptimizeGets$given', async ({ given, iterations }) => {
+    const { args } = await spawnedWith({ forkArguments: given })
+
+    expect(args.filter((argument) => argument === '--max-iterations')).toHaveLength(1)
+    expect(args[args.indexOf('--max-iterations') + 1]).toBe(iterations)
+  })
+
+  it.each([{ given: ['--iterations', '0'] }, { given: ['--max-iterations=0'] }])(
+    'shouldMeasureOnlyTheBaselineWhenStrandsDevOptimizeGets$given',
+    async ({ given }) => {
+      const { args, task } = await spawnedWith({ forkArguments: given })
+
+      expect(args).toContain('--search')
+      expect(args.some((argument) => argument.startsWith('--max-iterations'))).toBe(false)
+      expect(task).toContain('    baseline_only=True,\n')
+    }
+  )
+
+  it('shouldGiveTheTaskTheTunedSettingsAndTheCustomEvaluatorsWhenStrandsDevOptimizeGetsThem', async () => {
+    const { args, task } = await spawnedWith({
+      forkArguments: ['--tune', 'instructions, effort', '--custom-evaluator', 'evals.py:Tone'],
+    })
+
+    expect(afterTheDefaults(args)).toEqual(['--custom-evaluator', 'evals.py:Tone'])
+    expect(task).toContain('    settings=("instructions", "effort",),\n')
+    expect(task).toContain('    custom_evaluators=("evals.py:Tone",),\n')
+  })
+
+  it.each([
+    { given: ['--reflection-model', 'model-a'], passed: ['--reflection-model', 'model-a'] },
+    { given: ['--rewriter-model=model-a'], passed: ['--reflection-model', 'model-a'] },
+    { given: ['--tune', 'effort', '--reflection-model', 'model-a'], passed: [] },
+    { given: ['--iterations', '0', '--reflection-model', 'model-a'], passed: [] },
+  ])('shouldGiveTheReflectionModelOnlyWhenTheRunRewritesTextAndGets$given', async ({ given, passed }) => {
+    const { args } = await spawnedWith({ forkArguments: given })
+
+    expect(afterTheDefaults(args)).toEqual(passed)
+  })
+
+  it.each([
+    { kind: 'text', passed: ['--reflection-model', 'model-a'] },
+    { kind: 'choice', passed: [] },
+  ])('shouldReadTheSpaceForTextWhenTheReflectionModelIsGivenAndTheSpaceHasA$kind', async ({ kind, passed }) => {
+    const space = join(await temporaryDirectory(), 'space.json')
+    await writeFile(space, JSON.stringify({ variables: [{ key: 'tuned', kind, option: 'instructions' }] }))
+
+    const { args } = await spawnedWith({ space, forkArguments: ['--reflection-model', 'model-a'] })
+
+    expect(afterTheDefaults(args)).toEqual(passed)
+  })
+
+  it.each([
+    { given: ['--iterations', 'many'], message: '--iterations takes a whole number' },
+    { given: ['--at-most', 'tokens'], message: '--at-most takes METRIC=NUMBER' },
+    { given: ['--width'], message: '--width needs a value after it' },
+    { given: ['--objective', 'Maximize(Contains'], message: 'The objective must look like' },
+  ])('shouldRefuseAFlagBeforeTheEnvironmentIsPreparedWhenStrandsDevOptimizeGets$given', async ({ given, message }) => {
+    const workspace = await workspaceFixture()
+    const run = environmentRunner()
+
+    await expect(runTemporaryOptimization({ workspace, forkArguments: given }, { run })).rejects.toThrow(message)
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it('shouldGiveTheOptimizerACopyWithUniqueCaseNamesWhenCasesRepeatOrLackANameAndKeepTheExperimentFile', async () => {
     const workspace = await workspaceFixture()
     const experiment = experimentFile(workspace.directory!, 'support')
