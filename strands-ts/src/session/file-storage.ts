@@ -32,6 +32,7 @@ const PENDING_RENAMES = new Map<string, Promise<void>>()
 export class FileStorage implements SnapshotStorage {
   /** Absolute path to the root directory where all session data is stored. */
   private readonly _baseDir: string
+  private _rootChecked = false
 
   /**
    * @param baseDir - Absolute path to the root directory for storing session snapshots. A missing
@@ -188,17 +189,11 @@ export class FileStorage implements SnapshotStorage {
         if (await this._isSymlink(path)) {
           throw new SessionError(`Refusing to write to symbolic link at ${path}`)
         }
-        // Directories above the storage root keep the default mode.
-        await fs.mkdir(dirname(this._baseDir), { recursive: true })
+        // Directories above the storage root keep the default mode. Windows rejects mkdir on a drive
+        // root, and a real failure here also fails the mkdir below.
+        await fs.mkdir(dirname(this._baseDir), { recursive: true }).catch(() => {})
         await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
-        // An existing storage root keeps its mode. Windows does not report POSIX permission bits.
-        const rootMode = process.platform === 'win32' ? 0 : (await fs.stat(this._baseDir)).mode & 0o777
-        if (rootMode & 0o077) {
-          warnOnce(
-            logger,
-            `path=<${this._baseDir}>, mode=<${rootMode.toString(8)}> | session storage directory is accessible by group or others | restrict it with chmod 700`
-          )
-        }
+        await this._warnIfRootIsOpen()
         await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
       })()
       const pendingRename = Promise.allSettled([PENDING_RENAMES.get(target), written])
@@ -247,6 +242,30 @@ export class FileStorage implements SnapshotStorage {
         throw new SessionError(`Refusing to read symbolic link at ${path}`, { cause: error })
       }
       throw new SessionError(`File system error reading ${path}`, { cause: error })
+    }
+  }
+
+  /**
+   * Warns once if the storage root is accessible by group or others; an existing root keeps its mode.
+   * The check is advisory, so it never fails a save.
+   */
+  private async _warnIfRootIsOpen(): Promise<void> {
+    // Windows does not report POSIX permission bits.
+    if (this._rootChecked || process.platform === 'win32') return
+    this._rootChecked = true
+    try {
+      const { promises: fs } = await import('fs')
+      const { resolve } = await import('path')
+      const root = resolve(this._baseDir)
+      const mode = (await fs.stat(root)).mode & 0o777
+      if (mode & 0o077) {
+        warnOnce(
+          logger,
+          `path=<${root}>, mode=<${mode.toString(8)}> | session storage directory is accessible by group or others | restrict it with chmod 700`
+        )
+      }
+    } catch {
+      // Ignored: the write reports real filesystem errors.
     }
   }
 

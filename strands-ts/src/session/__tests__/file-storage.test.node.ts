@@ -295,6 +295,14 @@ describe('FileStorage', () => {
       expect(await storage.loadSnapshot({ location })).toEqual(snapshot)
     })
 
+    it('saves when the directory above the storage root cannot be created, as on a Windows drive root', async () => {
+      vi.spyOn(fs, 'mkdir').mockRejectedValueOnce(Object.assign(new Error('Not permitted'), { code: 'EPERM' }))
+
+      await storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshot)
+    })
+
     describe.skipIf(process.platform === 'win32')('on POSIX', () => {
       const mode = async (path: string): Promise<number> => (await fs.stat(path)).mode & 0o777
 
@@ -327,10 +335,14 @@ describe('FileStorage', () => {
         await fs.mkdir(snapshotsDir, { recursive: true })
         await fs.symlink(outsidePath, latestPath)
 
-        await expect(storage.loadSnapshot({ location })).rejects.toMatchObject({
+        const error = await storage.loadSnapshot({ location }).catch((caught: unknown) => caught)
+
+        expect(error).toMatchObject({
           name: 'SessionError',
           message: `Refusing to read symbolic link at ${latestPath}`,
         })
+        // The check before the read raises without a cause; the O_NOFOLLOW refusal carries ELOOP.
+        expect((error as Error).cause).toBeUndefined()
       })
 
       it('refuses to save over a symbolic link', async () => {
@@ -388,6 +400,14 @@ describe('FileStorage', () => {
           ],
         ])
         expect(await mode(testDir)).toBe(0o755)
+      })
+
+      it('saves when the storage root cannot be checked', async () => {
+        vi.spyOn(fs, 'stat').mockRejectedValueOnce(Object.assign(new Error('Not found'), { code: 'ENOENT' }))
+
+        await storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+
+        expect(await storage.loadSnapshot({ location })).toEqual(snapshot)
       })
 
       it('does not warn when the storage root is accessible to the owner only', async () => {
