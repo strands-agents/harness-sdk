@@ -370,8 +370,9 @@ def make_programmatic_tool_caller(
         name: Tool name. Defaults to ``"programmatic_tool_caller"``.
         description: Tool description shown to the model.
         timeout: Wall-clock ceiling in seconds for a run, tool calls included, or ``None`` to
-            disable it. Defaults to 3600 (60 minutes). The code's own compute time is bounded
-            separately by the sandbox.
+            disable it. Defaults to 3600 (60 minutes). When it expires, tool calls in flight are
+            cancelled and the run returns once they have unwound. The code's own compute time is
+            bounded separately by the sandbox.
         tool_timeout: Wall-clock ceiling in seconds for one tool call made by the code, or ``None``
             to disable it. Defaults to 1800 (30 minutes). A call that exceeds it raises a
             ``RuntimeError`` the code can catch. The tool is cancelled, but one that cannot be

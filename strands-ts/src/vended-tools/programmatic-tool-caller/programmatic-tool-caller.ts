@@ -196,6 +196,12 @@ function unwrapResult(result: ToolResultBlock): unknown {
   return text
 }
 
+/** The request an inner call runs in: a copy of the parent's invocation state, and its invocation context. */
+interface InnerRequest {
+  invocationState: ToolContext['invocationState']
+  invocationContext: ToolContext['invocationContext']
+}
+
 interface HookInvoker {
   invokeCallbacks<T>(event: T): Promise<T>
 }
@@ -219,9 +225,9 @@ async function afterInnerCall(
   toolUse: ToolUseData,
   tool: Tool,
   result: ToolResultBlock,
-  invocationState: ToolContext['invocationState']
+  request: InnerRequest
 ): Promise<ToolResultBlock> {
-  const event = new AfterToolCallEvent({ agent, toolUse, tool, result, invocationState })
+  const event = new AfterToolCallEvent({ agent, toolUse, tool, result, ...request })
   return (await hooks.invokeCallbacks(event)).result
 }
 
@@ -269,10 +275,10 @@ async function gateInnerCall(
   hooks: HookInvoker,
   toolUse: ToolUseData,
   registryTool: Tool,
-  invocationState: ToolContext['invocationState'],
+  request: InnerRequest,
   signal: AbortSignal
 ): Promise<{ tool: Tool; toolUse: ToolUseData }> {
-  const event = new BeforeToolCallEvent({ agent, toolUse, tool: registryTool, invocationState })
+  const event = new BeforeToolCallEvent({ agent, toolUse, tool: registryTool, ...request })
   let approval: string | undefined
   event.interrupt = <T>(params: { name: string; reason?: string; response?: JSONValue }): T => {
     if (params.response !== undefined) {
@@ -307,7 +313,7 @@ async function gateInnerCall(
       status: 'error',
       content: [new TextBlock(refusal)],
     })
-    const result = await afterInnerCall(agent, hooks, toolUse, registryTool, refused, invocationState)
+    const result = await afterInnerCall(agent, hooks, toolUse, registryTool, refused, request)
     throw new Error(extractText(result.content) || refusal)
   }
   // Hooks may rename in place (then `event.toolUse` is this same object), so compare against the tool
@@ -383,9 +389,6 @@ async function withToolTimeout<T>(
   timeout: number,
   call: (signal: AbortSignal) => Promise<T>
 ): Promise<T> {
-  if (timeout === Infinity) {
-    return call(parent)
-  }
   const controller = new globalThis.AbortController()
   let timer: ReturnType<typeof globalThis.setTimeout> | undefined
   const forwardCancel = (): void => {
@@ -394,10 +397,12 @@ async function withToolTimeout<T>(
   }
   parent.addEventListener('abort', forwardCancel, { once: true })
   const expired = new Promise<never>((_, reject) => {
-    timer = globalThis.setTimeout(() => {
-      controller.abort()
-      reject(new ToolTimedOut())
-    }, timeout)
+    if (timeout !== Infinity) {
+      timer = globalThis.setTimeout(() => {
+        controller.abort()
+        reject(new ToolTimedOut())
+      }, timeout)
+    }
   })
   const running = call(controller.signal)
   // Abandoned on timeout; swallow the late rejection.
@@ -419,7 +424,10 @@ async function runInnerCall(
   input: JSONValue
 ): Promise<ToolResultBlock> {
   // A copy, so an inner call cannot change the parent's invocation state.
-  const invocationState = { ...parent.invocationState }
+  const request: InnerRequest = {
+    invocationState: { ...parent.invocationState },
+    invocationContext: parent.invocationContext,
+  }
   const hooks = hookInvoker(agent, toolName)
   const registryTool = agent.toolRegistry.resolve(toolName)
   const requested: ToolUseData = {
@@ -427,13 +435,13 @@ async function runInnerCall(
     name: registryTool.name,
     input,
   }
-  const { tool, toolUse } = await gateInnerCall(agent, hooks, requested, registryTool, invocationState, signal)
+  const { tool, toolUse } = await gateInnerCall(agent, hooks, requested, registryTool, request, signal)
   const toolContext: ToolContext = {
     toolUse,
     agent,
-    invocationState,
+    invocationState: request.invocationState,
     cancelSignal: signal,
-    ...(parent.invocationContext && { invocationContext: parent.invocationContext }),
+    ...(request.invocationContext && { invocationContext: request.invocationContext }),
     interrupt: () => {
       throw new Error('Interrupts are not supported from programmatic_tool_caller.')
     },
@@ -443,7 +451,7 @@ async function runInnerCall(
   while (!next.done) {
     next = await generator.next()
   }
-  return afterInnerCall(agent, hooks, toolUse, tool, next.value, invocationState)
+  return afterInnerCall(agent, hooks, toolUse, tool, next.value, request)
 }
 
 /**

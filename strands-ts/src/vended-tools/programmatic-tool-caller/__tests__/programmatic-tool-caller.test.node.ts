@@ -382,17 +382,23 @@ describe('programmatic_tool_caller', () => {
     expect(text(await run(agentOf(quick, slow), code, 'quick'))).toBe(String(count))
   })
 
-  it('leaves only the run timeout when toolTimeout is Infinity', async () => {
+  it('sets no tool timer and leaves a finished tool alone when toolTimeout is Infinity', async () => {
+    let aborted = false
+    const listen = tool({
+      name: 'listen',
+      description: 'Watch the cancel signal, then return.',
+      inputSchema: z.object({}),
+      callback: (_input, context) => {
+        context?.cancelSignal?.addEventListener('abort', () => (aborted = true))
+        return 'done'
+      },
+    })
     const timers = vi.spyOn(globalThis, 'setTimeout')
     try {
       const unbounded = makeProgrammaticToolCaller({ name: 'unbounded', toolTimeout: Infinity })
-      const result = await run(
-        agentOf(unbounded, calculator),
-        "print(await calculator(expression='1 + 1'))",
-        'unbounded'
-      )
-      expect(text(result)).toBe('2')
-      expect(timers.mock.calls.map(([, delay]) => delay)).toEqual([3_600_000])
+      expect(text(await run(agentOf(unbounded, listen), 'print(await listen())', 'unbounded'))).toBe('done')
+      expect(timers.mock.calls.map(([, delay]) => delay)).not.toContain(1_800_000)
+      expect(aborted).toBe(false)
     } finally {
       timers.mockRestore()
     }
@@ -448,7 +454,7 @@ describe('programmatic_tool_caller', () => {
     expect(started.length).toBe(startedByTheEnd)
   })
 
-  it('runs inner calls in the parent request', async () => {
+  it('runs inner calls and their hooks in the parent request', async () => {
     const seen: unknown[] = []
     const whoami = tool({
       name: 'whoami',
@@ -459,9 +465,15 @@ describe('programmatic_tool_caller', () => {
         return 'ok'
       },
     })
+    const agent = agentWith(whoami)
+    agent.addHook(BeforeToolCallEvent, (event) => void seen.push(event.invocationContext))
+    agent.addHook(AfterToolCallEvent, (event) => void seen.push(event.invocationContext))
     const invocationContext = {} as NonNullable<ToolContext['invocationContext']>
-    await runWithContext(agentWith(whoami), 'await whoami()', { invocationContext })
-    expect(seen).toEqual([invocationContext])
+    await runWithContext(agent, 'await whoami()', { invocationContext })
+    expect(seen).toHaveLength(3)
+    for (const context of seen) {
+      expect(context).toBe(invocationContext)
+    }
   })
 
   it.each([

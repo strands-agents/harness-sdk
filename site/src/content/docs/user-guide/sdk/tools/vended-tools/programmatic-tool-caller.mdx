@@ -151,8 +151,9 @@ agent = Agent(tools=[programmatic_tool_caller, read, write])
 
 Timeouts are in seconds in Python (defaults `3600` and `1800`) and in milliseconds in
 TypeScript (defaults `3_600_000` and `1_800_000`). Pass
-<Syntax py="None" ts="Infinity" /> to disable one. Other values that are not positive
-numbers are rejected when the tool is created.
+<Syntax py="None" ts="Infinity" /> to disable one. Any other value must be a positive
+number, and in TypeScript a whole number of at most 2,147,483,647 ms (about 24.8 days), or
+the tool cannot be created.
 
 The defaults are long on purpose, so the code can drive slow tools such as subagents.
 Lower them when you want tighter bounds.

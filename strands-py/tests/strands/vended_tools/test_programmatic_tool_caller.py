@@ -75,11 +75,13 @@ def _text(result):
     return result["content"][0]["text"]
 
 
-def test_lazy_export_resolves_to_the_tool_on_every_access():
+@pytest.mark.parametrize("first_access", ["programmatic_tool_caller", "make_programmatic_tool_caller"])
+def test_lazy_export_resolves_to_the_tool_on_every_access(first_access):
     # A fresh interpreter: this module has already imported the subpackage, which hides the first access.
     code = (
         "import strands.vended_tools as vended\n"
         "from strands.tools.decorator import DecoratedFunctionTool\n"
+        f"vended.{first_access}\n"
         "first, second = vended.programmatic_tool_caller, vended.programmatic_tool_caller\n"
         "assert isinstance(first, DecoratedFunctionTool) and first is second, (first, second)\n"
         "assert callable(vended.make_programmatic_tool_caller)\n"
