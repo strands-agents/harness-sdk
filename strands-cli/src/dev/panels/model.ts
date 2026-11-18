@@ -444,8 +444,10 @@ export interface OptimizeSession {
 }
 
 export type EvalsBrowserPlace =
-  | { readonly view: 'runs' | 'opt-runs' }
+  | { readonly view: 'runs' }
+  | { readonly view: 'opt-runs' }
   | { readonly view: 'experiment' | 'report'; readonly experiment: string; readonly case?: string }
+  | { readonly view: 'optimization'; readonly record: string }
 
 export interface EvalsBrowserNotice {
   readonly tone: 'normal' | 'muted' | 'warning'

@@ -38,6 +38,7 @@ import {
   type OptimizeRunState,
   type OptimizeSession,
   type EvalsBrowser,
+  type EvalsBrowserPlace,
   type OptimizeState,
   type PastRun,
   type PastRuns,
@@ -86,6 +87,18 @@ export interface OptimizePanelProps extends DevChatPanelProps {
   readonly browser?: EvalsBrowser
 }
 
+const optimizationPlace = (state: OptimizeState): EvalsBrowserPlace => {
+  const record =
+    state.step === 'review'
+      ? state.review.record
+      : state.step === 'running'
+        ? state.progress.record
+        : state.step === 'failed'
+          ? state.record
+          : undefined
+  return record ? { view: 'optimization', record } : { view: 'opt-runs' }
+}
+
 const BROWSABLE_STEPS: ReadonlySet<OptimizeState['step']> = new Set([
   'pick',
   'running',
@@ -116,7 +129,7 @@ export const OptimizePanel = (props: OptimizePanelProps): ReactElement => {
   const browser = useBrowserNotice(props.browser)
   useInput((input, key) => {
     if (!browser.notice && BROWSABLE_STEPS.has(state.step) && shortcut(input, key) === BROWSER_KEY)
-      browser.open({ view: 'opt-runs' })
+      browser.open(optimizationPlace(state))
   })
   if (browser.notice)
     return (

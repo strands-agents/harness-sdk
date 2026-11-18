@@ -1768,6 +1768,23 @@ describe('OptimizePanel', () => {
     expect(session.accept).toHaveBeenCalledWith(0, true)
   })
 
+  it.each<[string, OptimizeState, unknown]>([
+    ['AReview', reviewWithEdits(), { view: 'optimization', record: '/w/record' }],
+    ['TheExperimentList', { step: 'pick', pastRuns: { loading: false, runs: [] } }, { view: 'opt-runs' }],
+  ])('shouldOpenTheMatchingPageOfTheEvalsUiWhenTheUserPressesOOn%s', async (_case, state, place) => {
+    const browser = {
+      subscribe: () => () => undefined,
+      snapshot: () => ({ status: 'ready' as const }),
+      open: vi.fn(async () => undefined),
+    }
+    const { session } = optimizeSession(state)
+    const { press } = await show(createElement(OptimizePanel, { ...panelProps, session, browser }))
+
+    await press('o')
+
+    await vi.waitFor(() => expect(browser.open).toHaveBeenCalledWith(place))
+  })
+
   it('shouldCopyTheNewTextOfTheEditWhenTheUserPressesC', async () => {
     const { session } = optimizeSession(
       reviewWithEdits({

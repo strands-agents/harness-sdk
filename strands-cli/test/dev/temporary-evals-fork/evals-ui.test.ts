@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
@@ -14,6 +15,9 @@ import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const URL = 'http://127.0.0.1:43210/?t=Secret_Token-1'
+const ORIGIN = 'http://127.0.0.1:43210'
+const TOKEN = '?t=Secret_Token-1'
+const page = (path: string): string => `${ORIGIN}${path}${TOKEN}`
 
 class FakeServer extends EventEmitter implements TemporaryUiProcess {
   readonly stdin = new PassThrough()
@@ -111,23 +115,52 @@ describe('TEMPORARY evals UI server', () => {
   })
 
   it.each([
-    [{ view: 'runs' as const }, '#tab=runs'],
-    [{ view: 'opt-runs' as const }, '#tab=opt-runs'],
-  ])('shouldLinkToTheListTabWhenThePlaceIs %o', async (place, hash) => {
+    [{ view: 'runs' as const }, '/runs'],
+    [{ view: 'opt-runs' as const }, '/optimization'],
+  ])('shouldLinkToTheListPageWhenThePlaceIs %o', async (place, path) => {
     const setup = await harness()
     await started(setup)
 
-    expect(setup.ui.link(place)).toBe(`${URL}${hash}`)
+    expect(setup.ui.link(place)).toBe(page(path))
   })
 
-  it('shouldLinkToTheExperimentAndCaseByTheirPathUnderTheFolderWhenTheExperimentIsInside', async () => {
+  it.each([
+    ['experiment' as const, '/runs/refunds/refunds.json/experiment/cases/late%20fee%20%26%20refund'],
+    ['report' as const, '/runs/refunds/refunds.json/report'],
+  ])('shouldLinkTheExperimentFileByItsPathUnderTheFolderWhenTheViewIs %s', async (view, path) => {
     const setup = await harness()
     await started(setup)
     const experiment = join(setup.workspace.directory!, 'experiments', 'refunds', 'refunds.json')
 
-    const link = setup.ui.link({ view: 'report', experiment, case: 'late fee & refund' })
+    const link = setup.ui.link({ view, experiment, case: 'late fee & refund' })
 
-    expect(link).toBe(`${URL}#tab=report&run=refunds%2Frefunds.json&case=late%20fee%20%26%20refund`)
+    expect(link).toBe(page(path))
+  })
+
+  it.each([
+    [
+      'ARunFolder',
+      true,
+      '/optimization/refunds/optimizations/20261117-101500/optimizer/20261117-101500-abc123/overview',
+    ],
+    ['NoRunFolderYet', false, '/optimization'],
+  ])('shouldLinkTheOptimizerRunByItsFolderWhenTheRecordHas%s', async (_case, made, path) => {
+    const openBrowser = vi.fn(async () => true)
+    const setup = await harness({ openBrowser })
+    await started(setup)
+    const record = join(
+      setup.workspace.directory!,
+      'experiments',
+      'refunds',
+      'optimizations',
+      '20261117-101500',
+      'optimizer'
+    )
+    await mkdir(made ? join(record, '20261117-101500-abc123') : record, { recursive: true })
+
+    await setup.ui.open({ view: 'optimization', record })
+
+    expect(openBrowser).toHaveBeenCalledWith(page(path))
   })
 
   it('shouldLinkWithoutARunWhenTheExperimentIsOutsideTheFolder', async () => {
@@ -135,7 +168,7 @@ describe('TEMPORARY evals UI server', () => {
     await started(setup)
 
     expect(setup.ui.link({ view: 'experiment', experiment: '/elsewhere/refunds.json', case: 'one' })).toBe(
-      `${URL}#tab=experiment`
+      page('/runs')
     )
   })
 
@@ -147,7 +180,7 @@ describe('TEMPORARY evals UI server', () => {
     const notice = await setup.ui.open({ view: 'runs' })
 
     expect(notice).toBeUndefined()
-    expect(openBrowser).toHaveBeenCalledWith(`${URL}#tab=runs`)
+    expect(openBrowser).toHaveBeenCalledWith(page('/runs'))
   })
 
   it('shouldShowTheLinkWhenNoBrowserOpens', async () => {
@@ -156,7 +189,7 @@ describe('TEMPORARY evals UI server', () => {
 
     const notice = await setup.ui.open({ view: 'runs' })
 
-    expect(notice?.lines).toEqual(['Open this link in a browser:', `${URL}#tab=runs`])
+    expect(notice?.lines).toEqual(['Open this link in a browser:', page('/runs')])
   })
 
   it('shouldGiveThePortForwardAndTheLinkWithoutOpeningABrowserWhenStrandsDevRunsOverSsh', async () => {
@@ -174,7 +207,7 @@ describe('TEMPORARY evals UI server', () => {
     expect(notice?.lines).toEqual([
       expect.stringContaining('another machine'),
       'ssh -N -L 43210:127.0.0.1:43210 dev-desk',
-      `Then open ${URL}#tab=opt-runs`,
+      `Then open ${page('/optimization')}`,
     ])
   })
 

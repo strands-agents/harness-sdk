@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 import { relative, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
+import { URL } from 'node:url'
 
 import { containsPath } from '../../paths.js'
 import { errorMessage } from '../../terminal/text.js'
@@ -10,6 +11,7 @@ import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions 
 import { temporaryEvalsEnvironment, temporaryWorkspaceDirectory } from './evals-process.js'
 import { announce, type TemporaryHost } from './host.js'
 import { ensureTemporaryExperimentsFolder, temporaryExperimentsFolder } from './layout.js'
+import { temporaryRunFolder } from './study.js'
 import { temporaryWorkspaceReady } from './layout-migration.js'
 
 export interface TemporaryUiProcess {
@@ -35,6 +37,9 @@ export interface TemporaryUiDependencies {
 }
 
 const UI_DEPTH = 6
+const RUNS_ROUTE = '/runs'
+const OPTIMIZATION_ROUTE = '/optimization'
+const OPTIMIZATION_VIEW = 'overview'
 const START_TIMEOUT_MS = 60_000
 const ERROR_LINES = 3
 const URL_LINE = /^\s*(http:\/\/127\.0\.0\.1:(\d+)\/\?t=[A-Za-z0-9_-]+)\s*$/u
@@ -79,6 +84,8 @@ const openBrowser = (url: string): Promise<boolean> =>
     child.unref()
   })
 
+const segments = (id: string): string => id.split('/').map(encodeURIComponent).join('/')
+
 const isRemote = (environment: NodeJS.ProcessEnv): boolean =>
   Boolean(environment.SSH_CONNECTION || environment.SSH_CLIENT || environment.SSH_TTY)
 
@@ -122,15 +129,10 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     server?.kill()
   }
 
-  link(place: EvalsBrowserPlace): string | undefined {
+  link(place: EvalsBrowserPlace, runFolder?: string): string | undefined {
     if (!this.url) return undefined
-    const run = place.view === 'experiment' || place.view === 'report' ? this.runId(place.experiment) : undefined
-    const parts = [
-      `tab=${place.view}`,
-      ...(run ? [`run=${encodeURIComponent(run)}`] : []),
-      ...('case' in place && place.case && run ? [`case=${encodeURIComponent(place.case)}`] : []),
-    ]
-    return `${this.url}#${parts.join('&')}`
+    const address = new URL(this.url)
+    return `${address.origin}${this.route(place, runFolder)}?t=${address.searchParams.get('t') ?? ''}`
   }
 
   open = async (place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined> => {
@@ -145,7 +147,9 @@ export class TemporaryEvalsUi implements EvalsBrowser {
         ],
       }
     }
-    const url = this.link(place)
+    const runFolder =
+      place.view === 'optimization' ? await temporaryRunFolder(place.record).catch(() => undefined) : undefined
+    const url = this.link(place, runFolder)
     if (state.status === 'starting' || !url || this.port === undefined)
       return {
         tone: 'muted',
@@ -163,6 +167,19 @@ export class TemporaryEvalsUi implements EvalsBrowser {
       }
     const opened = await (this.dependencies.openBrowser ?? openBrowser)(url).catch(() => false)
     return opened ? undefined : { tone: 'normal', lines: ['Open this link in a browser:', url] }
+  }
+
+  private route(place: EvalsBrowserPlace, runFolder: string | undefined): string {
+    if (place.view === 'runs' || place.view === 'opt-runs')
+      return place.view === 'runs' ? RUNS_ROUTE : OPTIMIZATION_ROUTE
+    if (place.view === 'optimization') {
+      const run = runFolder ? this.runId(runFolder) : undefined
+      return run ? `${OPTIMIZATION_ROUTE}/${segments(run)}/${OPTIMIZATION_VIEW}` : OPTIMIZATION_ROUTE
+    }
+    const run = this.runId(place.experiment)
+    if (!run) return RUNS_ROUTE
+    const opened = `${RUNS_ROUTE}/${segments(run)}/${place.view}`
+    return place.view === 'experiment' && place.case ? `${opened}/cases/${encodeURIComponent(place.case)}` : opened
   }
 
   private runId(experiment: string): string | undefined {
