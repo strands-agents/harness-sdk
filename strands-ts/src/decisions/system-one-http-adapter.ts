@@ -377,10 +377,19 @@ function parseUsage(value: unknown): { inputTokens: number; outputTokens: number
   const usage = requireRecord(value, 'decision provider usage')
   const inputTokens = usage['input_tokens']
   const outputTokens = usage['output_tokens']
-  if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
+  if (
+    typeof inputTokens !== 'number' ||
+    typeof outputTokens !== 'number' ||
+    !Number.isFinite(inputTokens) ||
+    !Number.isFinite(outputTokens) ||
+    inputTokens < 0 ||
+    outputTokens < 0
+  ) {
     return undefined
   }
-  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
+  const totalTokens = inputTokens + outputTokens
+  if (!Number.isFinite(totalTokens)) return undefined
+  return { inputTokens, outputTokens, totalTokens }
 }
 
 /** @internal */
