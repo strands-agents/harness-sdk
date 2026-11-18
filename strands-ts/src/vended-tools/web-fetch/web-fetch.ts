@@ -78,7 +78,12 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
     throw new Error(`maxContentChars must be a positive number, got ${maxContentChars}`)
   }
   if (typeof sandbox !== 'boolean') {
-    throw new Error(`sandbox must be a boolean, got ${JSON.stringify(sandbox)}; set the sandbox itself on the Agent`)
+    // An object is named by its class: serializing a sandbox instance could throw or leak its fields.
+    const got =
+      typeof sandbox === 'object' && sandbox !== null
+        ? ((sandbox as object).constructor?.name ?? 'object')
+        : JSON.stringify(sandbox)
+    throw new Error(`sandbox must be a boolean, got ${got}; set the sandbox itself on the Agent`)
   }
   const limits = { maxBytes, maxContentChars, sandbox }
 

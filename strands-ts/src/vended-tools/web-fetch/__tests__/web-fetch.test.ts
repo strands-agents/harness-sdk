@@ -102,9 +102,22 @@ describe('webFetch tool', () => {
       expect(() => makeWebFetch({ maxBytes })).toThrow('maxBytes must be a positive integer')
     })
 
-    it.each(['sandbox', 1, null])('rejects a non-boolean sandbox (%j)', (sandbox) => {
+    it.each([
+      ['a string', 'sandbox', '"sandbox"'],
+      ['a number', 1, '1'],
+      ['null', null, 'null'],
+      ['a sandbox instance', new (class CustomSandbox {})(), 'CustomSandbox'],
+      [
+        'a sandbox instance that refers to itself',
+        new (class CircularSandbox {
+          self = this
+        })(),
+        'CircularSandbox',
+      ],
+      ['an object with no prototype', Object.create(null), 'object'],
+    ])('rejects %s as sandbox', (_name, sandbox, got) => {
       expect(() => makeWebFetch({ sandbox: sandbox as unknown as boolean })).toThrow(
-        /sandbox must be a boolean, got .*; set the sandbox itself on the Agent/
+        `sandbox must be a boolean, got ${got}; set the sandbox itself on the Agent`
       )
     })
 
