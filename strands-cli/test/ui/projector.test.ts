@@ -446,32 +446,26 @@ describe('TurnProjector', () => {
 
   it.each([
     {
-      name: 'a typed prompt that starts with an envelope marker pair',
-      text: '<strands_reply_context>x</strands_reply_context> what is this tag for?',
-      shown: '<strands_reply_context>x</strands_reply_context> what is this tag for?',
+      name: 'the prompt shown live',
+      custom: displayPromptMetadata('<strands_reply_context>x</strands_reply_context> typed'),
+      prompt: '<strands_reply_context>x</strands_reply_context> typed',
     },
     {
-      name: 'a skill whose instructions contain the closing marker',
-      text: [
-        '<strands_skill_activation>',
-        'Never print </strands_skill_activation> to the user.',
-        '</strands_skill_activation>',
-        '',
-        '/review this change',
-      ].join('\n'),
-      shown: '/review this change',
+      name: 'the visible text when the stored prompt is not a string',
+      custom: { 'strands.displayPrompt': 42 },
+      prompt: 'typed',
     },
-  ])('restores the prompt shown live from persisted metadata for $name', ({ text, shown }) => {
+  ])('restores $name from persisted display metadata', ({ custom, prompt }) => {
     const turns = projectMessages([
       new Message({
         role: 'user',
-        content: [new TextBlock(text)],
-        metadata: { custom: displayPromptMetadata(shown) },
+        content: [new TextBlock('<strands_reply_context>x</strands_reply_context> typed')],
+        metadata: { custom },
       }),
       new Message({ role: 'assistant', content: [new TextBlock('Done.')] }),
     ])
 
-    expect(turns).toMatchObject([{ prompt: shown, entries: [{ type: 'assistant', text: 'Done.' }] }])
+    expect(turns).toMatchObject([{ prompt, entries: [{ type: 'assistant', text: 'Done.' }] }])
     expect(turns[0]).not.toHaveProperty('source')
   })
 })

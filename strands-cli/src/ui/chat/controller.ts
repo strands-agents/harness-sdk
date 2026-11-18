@@ -658,7 +658,8 @@ export class ChatController implements ChatControllerApi {
     const prompt =
       submission.attachments.length === 0 ? submission.text : attachmentContent(submission.text, submission.attachments)
     const shown = displayPrompt ?? submission.text
-    const restorable = visibleDesktopPrompt(sanitizeTerminalText(submission.text)) === sanitizeTerminalText(shown)
+    const restorable =
+      visibleDesktopPrompt(sanitizeTerminalText(submission.text)) === sanitizeTerminalText(shown).trim()
     return this._runStream(
       shown,
       restorable ? this._backend.stream(prompt) : this._backend.stream(prompt, shown),

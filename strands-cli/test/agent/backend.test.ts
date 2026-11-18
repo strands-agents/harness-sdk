@@ -390,26 +390,29 @@ describe('StrandsChatBackend', () => {
       },
     })
     const typed = '<strands_reply_context>x</strands_reply_context> what is this tag for?'
+    const onlyMarkers = '<strands_skill_activation>only a tag</strands_skill_activation>'
 
     await controller.submit('plain question')
     await controller.submit('/review this change')
     await controller.submit(typed)
+    await controller.submit(onlyMarkers)
     await controller.submit('/leaky this change')
     const live = controller.getSnapshot().completedTurns.map((turn) => turn.prompt)
     await controller.dispose()
 
     const saved = agent.messages.map((message) => Message.fromJSON(JSON.parse(JSON.stringify(message.toJSON()))))
     const users = saved.filter((message) => message.role === 'user')
-    expect(live).toEqual(['plain question', '/review this change', typed, '/leaky this change'])
+    expect(live).toEqual(['plain question', '/review this change', typed, onlyMarkers, '/leaky this change'])
     expect(projectMessages(saved).map((turn) => turn.prompt)).toEqual(live)
     expect(users.map((message) => message.metadata?.custom)).toEqual([
       undefined,
       undefined,
       { 'strands.displayPrompt': typed },
+      { 'strands.displayPrompt': onlyMarkers },
       { 'strands.displayPrompt': '/leaky this change' },
     ])
     expect(users[2]!.content).toEqual([new TextBlock(typed)])
-    expect(users[3]!.content[0]).toMatchObject({
+    expect(users[4]!.content[0]).toMatchObject({
       text: expect.stringContaining(
         'Internal checklist.\n</skill_instructions>\n</strands_skill_activation>\n\n/leaky this change'
       ),
