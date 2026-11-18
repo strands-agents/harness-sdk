@@ -54,7 +54,7 @@ describe('htmlToMarkdown', () => {
     expect(result).toContain('click')
   })
 
-  it.each(['vbscript:msgbox(1)', 'data:text/html,<script>alert(1)</script>'])(
+  it.each(['VBScript:msgbox(1)', 'data:text/html,<script>alert(1)</script>'])(
     'drops %s hrefs but keeps link text',
     async (href) => {
       expect((await htmlToMarkdown(`<a href="${href}">click</a>`)).trim()).toBe('click')
@@ -66,7 +66,7 @@ describe('htmlToMarkdown', () => {
   })
 
   it('drops vbscript: img srcs', async () => {
-    expect(await htmlToMarkdown('<img src="vbscript:msgbox(1)" alt="x">')).toBe('')
+    expect(await htmlToMarkdown('<img src="VBScript:msgbox(1)" alt="x">')).toBe('')
   })
 
   it('returns alt text for image with empty src', async () => {
@@ -82,6 +82,48 @@ describe('htmlToMarkdown', () => {
     const result = await htmlToMarkdown(`<img src="\u200bdata:image/png;base64,${blob}" alt="alt">`)
     expect(result).not.toContain(blob)
     expect(result).toContain('alt')
+  })
+
+  describe.each(['\u2028', '\u2029', '\u200b\u2028 '])('with the line separator prefix %j', (prefix) => {
+    it.each(['javascript:alert(1)', 'vbscript:msgbox(1)', 'data:text/html,x'])('drops %s hrefs', async (url) => {
+      expect(await htmlToMarkdown(`<a href="${prefix}${url}">click</a>`)).toBe('click\n')
+    })
+
+    it.each([
+      ['javascript:alert(1)', ''],
+      ['vbscript:msgbox(1)', ''],
+      ['data:image/png;base64,AAAA', 'x\n'],
+    ])('drops %s img srcs', async (src, expected) => {
+      expect(await htmlToMarkdown(`<img src="${prefix}${src}" alt="x">`)).toBe(expected)
+    })
+  })
+
+  it.each(['0890', '0891', '13439', '1343A', '1343B', '1343C', '1343D', '1343E', '1343F'])(
+    'drops javascript: href with the format character prefix U+%s',
+    async (codePoint) => {
+      const prefix = String.fromCodePoint(parseInt(codePoint, 16))
+      expect(await htmlToMarkdown(`<a href="${prefix}javascript:alert(1)">click</a>`)).toBe('click\n')
+    }
+  )
+
+  it('drops javascript: hrefs with a tab inside the scheme', async () => {
+    expect(await htmlToMarkdown('<a href="java\tscript:alert(1)">click</a>')).toBe('click\n')
+  })
+
+  it.each(['javascript://\u2100%0aalert(1)', 'vbscript://[x', 'data://[x/text/html,x'])(
+    'drops %s hrefs with an unparseable host',
+    async (url) => {
+      expect(await htmlToMarkdown(`<a href="${url}">click</a>`)).toBe('click\n')
+    }
+  )
+
+  it('keeps an unparseable href and converts the rest of the page', async () => {
+    const html = '<h1>Hi</h1><a href="javascript:alert(1)">js</a> <a href="http://[bad">bad</a>'
+    expect(await htmlToMarkdown(html)).toBe('# Hi\n\njs [bad](http://[bad)\n')
+  })
+
+  it('keeps an unparseable img src', async () => {
+    expect(await htmlToMarkdown('<img src="http://[bad" alt="pic">')).toBe('![pic](http://[bad)\n')
   })
 
   it('embeds the page title as a top-level heading', async () => {

@@ -570,9 +570,12 @@ def test_format_request_defaults_max_tokens_to_the_model_info_output_limit(bedro
     assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
 
 
-def test_format_request_defaults_max_tokens_for_a_cross_region_model_id(bedrock_client, messages):
+@pytest.mark.parametrize(
+    "model_id", ["us.anthropic.claude-sonnet-4-6", "us.openai.gpt-6.2-astra", "global.openai.gpt-6.2-sol"]
+)
+def test_format_request_defaults_max_tokens_for_a_cross_region_model_id(bedrock_client, messages, model_id):
     _ = bedrock_client
-    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-6")
+    model = BedrockModel(model_id=model_id)
 
     assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
 
