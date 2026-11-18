@@ -1116,18 +1116,38 @@ async def test_executor_stream_cancel_duration_is_none(
     assert after_event.duration is None
 
 
+@pytest.mark.parametrize(
+    ("cancel_tool", "exp_message"),
+    [(False, "Tool execution cancelled"), ("hook cancel message", "hook cancel message")],
+)
 @pytest.mark.asyncio
-async def test_executor_stream_skips_tool_when_agent_cancelled_during_before_hook(
-    executor, agent, tool_results, invocation_state, tool_events, alist
+async def test_executor_stream_with_trace_skips_tool_when_agent_cancelled_during_before_hook(
+    cancel_tool,
+    exp_message,
+    executor,
+    tracer,
+    agent,
+    tool_results,
+    cycle_trace,
+    cycle_span,
+    invocation_state,
+    tool_events,
+    alist,
 ):
     """An agent cancellation that lands while BeforeToolCallEvent hooks run skips the tool (#5665)."""
-    agent.hooks.add_callback(BeforeToolCallEvent, lambda event: agent._cancel_signal.set())
+
+    def cancel_callback(event):
+        event.cancel_tool = cancel_tool
+        agent._cancel_signal.set()
+
+    agent.hooks.add_callback(BeforeToolCallEvent, cancel_callback)
     tool_use: ToolUse = {"name": "thread_tool", "toolUseId": "1", "input": {}}
 
-    tru_events = await alist(executor._stream(agent, tool_use, tool_results, invocation_state))
+    stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
 
-    exp_result = {"toolUseId": "1", "status": "error", "content": [{"text": "Tool execution cancelled"}]}
-    exp_events = [ToolCancelEvent(tool_use, "Tool execution cancelled"), ToolResultEvent(exp_result)]
+    tru_events = await alist(stream)
+    exp_result = {"toolUseId": "1", "status": "error", "content": [{"text": exp_message}]}
+    exp_events = [ToolCancelEvent(tool_use, exp_message), ToolResultEvent(exp_result)]
     assert tru_events == exp_events
     assert tool_results == [exp_result]
     assert tool_events == []

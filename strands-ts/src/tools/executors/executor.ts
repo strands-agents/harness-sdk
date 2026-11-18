@@ -142,16 +142,8 @@ export abstract class ToolExecutor {
         beforeToolCallEvent.selectedTool ??
         (toolUse.name !== toolUseBlock.name ? options.agent.toolRegistry.get(toolUse.name) : registryTool)
 
-      // Hook cancel and a cancel that arrived while the before-hook awaited share
-      // one path: skip the tool the same way as the documented before-tool checkpoint.
-      const signalCancel = options.cancelSignal.aborted
-      const hookCancel = beforeToolCallEvent.cancel
-      if (hookCancel || signalCancel) {
-        const cancelMessage = hookCancel
-          ? typeof hookCancel === 'string'
-            ? hookCancel
-            : 'Tool cancelled by hook'
-          : 'Tool execution cancelled'
+      const cancelMessage = this._beforeToolCancelMessage(beforeToolCallEvent, options.cancelSignal)
+      if (cancelMessage) {
         const cancelResult = new ToolResultBlock({
           toolUseId: toolUse.toolUseId,
           status: 'error',
@@ -228,6 +220,18 @@ export abstract class ToolExecutor {
     })
     yield event
     return event
+  }
+
+  // A cancellation that lands while the hooks run skips the tool like a hook's cancel.
+  private _beforeToolCancelMessage(
+    beforeToolCallEvent: BeforeToolCallEvent,
+    cancelSignal: AbortSignal
+  ): string | undefined {
+    const hookCancel = beforeToolCallEvent.cancel
+    if (hookCancel) {
+      return typeof hookCancel === 'string' ? hookCancel : 'Tool cancelled by hook'
+    }
+    return cancelSignal.aborted ? 'Tool execution cancelled' : undefined
   }
 
   private _shouldRetry(afterToolCallEvent: AfterToolCallEvent, cancelSignal: AbortSignal): boolean {

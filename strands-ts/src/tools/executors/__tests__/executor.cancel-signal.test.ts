@@ -159,7 +159,7 @@ describe('ToolExecutor cancellation signal', () => {
     ['sequential', () => new SequentialToolExecutor()],
     ['concurrent', () => new ConcurrentToolExecutor()],
   ] as const) {
-    it(`skips the tool when cancel arrives during BeforeToolCallEvent (${label})`, async () => {
+    it(`skips the tool when cancel arrives during BeforeToolCallEvent (${label}) (#5665)`, async () => {
       const executionController = new AbortController()
       let toolCallCount = 0
       const tool = createMockTool('marker', () => {
@@ -189,4 +189,30 @@ describe('ToolExecutor cancellation signal', () => {
       ])
     })
   }
+
+  it('keeps the hook cancel message when the signal is also aborted', async () => {
+    const executionController = new AbortController()
+    const tool = createMockTool('marker', () => 'wrote')
+    const agent = new Agent({ model: new MockMessageModel(), tools: [tool], printer: false })
+
+    const results = await runExecutor(
+      new SequentialToolExecutor(),
+      createOptions(agent, executionController.signal),
+      [new ToolUseBlock({ name: 'marker', toolUseId: 'marker-1', input: {} })],
+      (event) => {
+        if (event instanceof BeforeToolCallEvent) {
+          event.cancel = 'hook cancel message'
+          executionController.abort()
+        }
+      }
+    )
+
+    expect(results).toEqual([
+      new ToolResultBlock({
+        toolUseId: 'marker-1',
+        status: 'error',
+        content: [new TextBlock('hook cancel message')],
+      }),
+    ])
+  })
 })

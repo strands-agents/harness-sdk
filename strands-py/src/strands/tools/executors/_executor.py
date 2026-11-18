@@ -65,16 +65,21 @@ class ToolExecutor(abc.ABC):
         return not cast("Agent", agent)._observe_cancellation()
 
     @staticmethod
-    def _before_tool_cancel_message(agent: LocalAgent, before_event: BeforeToolCallEvent[LocalAgent]) -> str | None:
+    def _before_tool_cancel_message(
+        agent: LocalAgent, before_event: BeforeToolCallEvent[LocalAgent], *, direct_call: bool
+    ) -> str | None:
         """Return the message for a tool call cancelled before it starts, or None when the tool should run.
 
-        A cancellation of a standard Agent that lands while the hooks run skips the tool like a hook's
-        ``cancel_tool``. BidiAgent observes cancellation only after a tool group completes.
+        A cancellation of a standard Agent that lands while the hooks run skips a model-requested tool like a
+        hook's ``cancel_tool``. Direct tool calls ignore agent cancellation, and BidiAgent observes it only
+        after a tool group completes.
         """
         cancel_tool = before_event.cancel_tool
         if cancel_tool:
             return cancel_tool if isinstance(cancel_tool, str) else "tool cancelled by user"
-        if ToolExecutor._is_agent(agent) and cast("Agent", agent)._observe_cancellation():
+        if direct_call or not ToolExecutor._is_agent(agent):
+            return None
+        if cast("Agent", agent)._observe_cancellation():
             return "Tool execution cancelled"
         return None
 
@@ -242,7 +247,8 @@ class ToolExecutor(abc.ABC):
                 yield ToolInterruptEvent(tool_use, interrupts)
                 return
 
-            cancel_message = ToolExecutor._before_tool_cancel_message(agent, before_event)
+            # Only the agent loop passes a tracer; direct tool calls pass none.
+            cancel_message = ToolExecutor._before_tool_cancel_message(agent, before_event, direct_call=tracer is None)
             if cancel_message:
                 yield ToolCancelEvent(tool_use, cancel_message)
 
