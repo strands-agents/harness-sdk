@@ -206,8 +206,9 @@ describe.skipIf(!inject('conformanceEnabled')).each(targets)('Model conformance:
   for (const caseId of Object.keys(cases)) {
     const known = knownFailure(target, caseId)
     // A known failure still runs and is recorded; the run goes red when it starts passing, unless it only fails
-    // some of the time. Slow reasoning models can take longer than the default timeout for a single case.
-    it(caseId, { fails: known !== undefined && !known.intermittent, timeout: 180_000 }, async (ctx) => {
+    // some of the time. A provider can be briefly unavailable and a model can answer differently from one call to
+    // the next, so every case gets three attempts, and slow reasoning models get a longer timeout.
+    it(caseId, { fails: known !== undefined && !known.intermittent, timeout: 180_000, retry: 2 }, async (ctx) => {
       // Recorded when the attempt finishes, so a timeout or a throw before the case body still leaves a record.
       let status: ConformanceStatus = 'failed'
       let reason: string | undefined
