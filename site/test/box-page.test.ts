@@ -11,6 +11,8 @@ import {
   BOX_CLI_REPOSITORY_URL,
   BOX_CORE_REPOSITORY_URL,
   BOX_EXAMPLE_BOUNDARY,
+  BOX_EXAMPLE_BOUNDARY_DESCRIPTION,
+  BOX_EXAMPLE_BOUNDARY_LABEL,
   BOX_FEATURED_AGENT_EXAMPLES,
   BOX_INSTALL_COMMAND,
   BOX_LANDING_DESCRIPTION,
@@ -58,7 +60,8 @@ describe('Box landing page', () => {
     expect(main?.querySelector('.box-hero__description')).toBeNull()
     expect(page.querySelector('.box-hero__status')).toBeNull()
     expect(page.text).not.toContain('Developer preview')
-    expect(page.text).toContain('brew install strands-agents/tap/box')
+    expect(page.text).not.toContain('brew install strands-agents/tap/box')
+    expect(main?.querySelector('.box-hero [data-command-pill]')?.getAttribute('data-command')).toBe(BOX_INSTALL_COMMAND)
     expect(page.querySelector('.sidebar')).toBeNull()
     expect(page.querySelector('starlight-menu-button')).toBeNull()
   })
@@ -85,6 +88,7 @@ describe('Box landing page', () => {
     expect(page.querySelector('[data-box-agent-selector]')?.getAttribute('data-capabilities-enhanced')).toBeUndefined()
     expect(page.querySelector('[data-box-agent-tablist]')?.getAttribute('aria-label')).toBe('Choose a coding agent')
     expect(page.querySelector('[data-box-agent-tablist]')?.getAttribute('role')).toBeUndefined()
+    expect(page.querySelector('[data-box-agent-tab="pi"]')).toBeNull()
     expect(page.querySelector('.box-start__launcher')?.querySelector('[data-box-agent-tablist]')).not.toBeNull()
     expect(page.querySelector('.box-start__launcher')?.querySelectorAll('[data-box-overview-command]')).toHaveLength(
       BOX_FEATURED_AGENT_EXAMPLES.length
@@ -93,7 +97,7 @@ describe('Box landing page', () => {
     expect(agentTabs).toHaveLength(BOX_FEATURED_AGENT_EXAMPLES.length)
     expect(agentPanels).toHaveLength(BOX_FEATURED_AGENT_EXAMPLES.length)
     expect(page.querySelectorAll('[data-box-agent-tab][data-default-active]')).toHaveLength(1)
-    expect(page.querySelectorAll('.box-start__terminal-dots')).toHaveLength(BOX_FEATURED_AGENT_EXAMPLES.length)
+    expect(page.querySelectorAll('.box-start__terminal-dots')).toHaveLength(1)
     expect(page.querySelector('[data-box-agent-selector] .box-start__capabilities')).not.toBeNull()
     expect(page.querySelectorAll('.box-start__connectors > span')).toHaveLength(BOX_CAPABILITIES.length)
     expect(page.querySelector('.box-start__experience [data-box-capability]')).toBeNull()
@@ -109,11 +113,13 @@ describe('Box landing page', () => {
     expect(page.querySelector('.box-start__summary')?.text.trim()).toBe(BOX_OVERVIEW_DESCRIPTION)
     expect(page.querySelector('[data-box-overview-install]')).toBeNull()
     expect(page.querySelectorAll('[data-box-overview-command]')).toHaveLength(BOX_FEATURED_AGENT_EXAMPLES.length)
+    expect(page.querySelector('.box-start__run-command')).toBeNull()
+    expect(page.querySelector('.box-start__experience [data-command-pill]')).toBeNull()
     expect(capabilityCards).toHaveLength(BOX_CAPABILITIES.length)
     expect(page.querySelectorAll('[data-box-capability-toggle]')).toHaveLength(BOX_CAPABILITIES.length)
     expect(page.querySelectorAll('[data-box-capability-code]')).toHaveLength(BOX_CAPABILITIES.length)
     expect(page.querySelectorAll('[data-box-capability-action]')).toHaveLength(BOX_CAPABILITIES.length)
-    expect(exampleDecisions).toHaveLength(BOX_EXAMPLE_BOUNDARY.length * BOX_FEATURED_AGENT_EXAMPLES.length)
+    expect(exampleDecisions).toHaveLength(BOX_EXAMPLE_BOUNDARY.length)
 
     for (const [index, capability] of BOX_CAPABILITIES.entries()) {
       const panel = BOX_BOUNDARY_PANELS[index]
@@ -160,50 +166,68 @@ describe('Box landing page', () => {
 
     expect(page.querySelector('[data-box-review-link]')).toBeNull()
 
-    for (const example of BOX_FEATURED_AGENT_EXAMPLES) {
+    for (const [index, example] of BOX_FEATURED_AGENT_EXAMPLES.entries()) {
       const tab = page.querySelector(`[data-box-agent-tab="${example.id}"]`)
       const panel = page.querySelector(`[data-box-agent-panel="${example.id}"]`)
       const overviewCommand = page.querySelector(`[data-box-overview-command="${example.id}"]`)
-      const command = panel?.querySelector('[data-command-pill]')
-      const decisionRows = panel?.querySelectorAll('[data-box-boundary-decision]') ?? []
 
       expect(tab?.text.trim()).toBe(example.title)
       expect(tab?.getAttribute('id')).toBe(`box-agent-tab-${example.id}`)
-      expect(tab?.getAttribute('href')).toBe(`#box-agent-panel-${example.id}`)
+      expect(tab?.getAttribute('href')).toBe(configuredHref(example.href))
+      expect(tab?.getAttribute('data-box-agent-panel-id')).toBe(`box-agent-panel-${example.id}`)
       expect(tab?.getAttribute('role')).toBeUndefined()
       expect(panel?.getAttribute('id')).toBe(`box-agent-panel-${example.id}`)
       expect(panel?.getAttribute('aria-labelledby')).toBe(`box-agent-tab-${example.id}`)
       expect(panel?.getAttribute('role')).toBeUndefined()
-      expect(panel?.hasAttribute('hidden')).toBe(false)
-      expect(overviewCommand?.hasAttribute('hidden')).toBe(example !== BOX_FEATURED_AGENT_EXAMPLES[0])
-      expect(overviewCommand?.querySelector('[data-command-pill]')?.getAttribute('data-command')).toBe(example.command)
-      expect(overviewCommand?.querySelector('[data-command-copy]')?.getAttribute('aria-label')).toBe(
-        `Copy the ${example.title} Box run command`
+      expect(panel?.hasAttribute('hidden')).toBe(index !== 0)
+      expect(overviewCommand?.hasAttribute('hidden')).toBe(index !== 0)
+      const commandParts = overviewCommand
+        ?.querySelectorAll('.box-start__start-command-display span')
+        .map((part) => part.text.trim())
+      expect(commandParts).toEqual(['$', example.command])
+      expect(overviewCommand?.querySelector('[data-command-pill]')).toBeNull()
+      expect(overviewCommand?.querySelector('[data-command-copy]')).toBeNull()
+      expect(panel?.querySelector('[data-command-pill]')).toBeNull()
+      expect(panel?.querySelector('[data-command-copy]')).toBeNull()
+      expect(panel?.querySelector('.box-start__launch-label')?.text.trim()).toBe(
+        `Once Box and ${example.title} are installed:`
       )
-      expect(command?.getAttribute('data-command')).toBe(example.command)
-      expect(command?.text).toContain(example.command)
-      expect(panel?.querySelector('.box-start__run-command [data-command-pill]')?.getAttribute('data-command')).toBe(
-        example.command
-      )
-      expect(panel?.querySelector('[data-box-example-boundary] [data-command-pill]')).toBeNull()
-      expect(command?.querySelector('[data-command-copy]')?.getAttribute('aria-label')).toBe(
-        `Copy the ${example.title} Box run command`
+      expect(panel?.querySelector('.box-start__launch-note')?.text.trim()).toBe(
+        'The first run creates a profile and asks for its settings.'
       )
       expect(panel?.querySelector(`[data-example-guide="${example.id}"]`)?.getAttribute('href')).toBe(
         configuredHref(example.href)
       )
-      expect(panel?.querySelector('[data-box-example-boundary]')?.getAttribute('aria-label')).toBe(
-        `${example.title} example Box controls`
+      expect(panel?.querySelector(`[data-example-guide="${example.id}"]`)?.text.replace(/\s+/g, ' ').trim()).toContain(
+        `Set up Box for ${example.title}`
       )
-      expect(panel?.querySelector('.box-start__session-header')?.text).toContain('What Box allows')
-      expect(decisionRows).toHaveLength(BOX_EXAMPLE_BOUNDARY.length)
+      expect(panel?.querySelector('[data-box-example-boundary]')).toBeNull()
+    }
 
-      for (const decision of BOX_EXAMPLE_BOUNDARY) {
-        const row = panel?.querySelector(`[data-box-boundary-decision="${decision.id}"]`)
+    const exampleBoundary = page.querySelector('[data-box-example-boundary]')
 
-        expect(row?.querySelector('code')?.text.trim()).toBe(decision.action)
-        expect(row?.querySelector('.box-start__decision-state')?.text).toContain(decision.result)
-      }
+    expect(page.querySelectorAll('[data-box-example-boundary]')).toHaveLength(1)
+    expect(exampleBoundary?.tagName).toBe('FIGURE')
+    expect(exampleBoundary?.getAttribute('aria-labelledby')).toBe('box-example-boundary-title')
+    expect(exampleBoundary?.getAttribute('aria-describedby')).toBe('box-example-boundary-description')
+    expect(exampleBoundary?.getAttribute('data-box-animate-boundary')).not.toBeNull()
+    expect(exampleBoundary?.querySelector('#box-example-boundary-title')?.text.trim()).toBe(BOX_EXAMPLE_BOUNDARY_LABEL)
+    expect(exampleBoundary?.querySelector('#box-example-boundary-description')?.text.trim()).toBe(
+      BOX_EXAMPLE_BOUNDARY_DESCRIPTION
+    )
+    expect(exampleBoundary?.querySelector('.box-start__session-header')?.text).toContain(BOX_EXAMPLE_BOUNDARY_LABEL)
+    expect(exampleBoundary?.querySelector('.box-start__session-header')?.text).toContain('Configured by you')
+    expect(exampleBoundary?.querySelector('.box-start__session-header')?.text).not.toContain('What Box allows')
+    expect(exampleBoundary?.querySelector('.box-start__session-description')?.text.trim()).toBe(
+      BOX_EXAMPLE_BOUNDARY_DESCRIPTION
+    )
+
+    for (const decision of BOX_EXAMPLE_BOUNDARY) {
+      const row = exampleBoundary?.querySelector(`[data-box-boundary-decision="${decision.id}"]`)
+
+      expect(row?.getAttribute('data-box-animate-row')).not.toBeNull()
+      expect(row?.querySelector('code')?.text.trim()).toBe(decision.action)
+      expect(row?.querySelector('.box-start__decision-state')?.text).toContain(decision.result)
     }
   })
 
@@ -211,11 +235,12 @@ describe('Box landing page', () => {
     const heroCommand = page.querySelector('.box-hero [data-command-pill]')
     const heroLinks = page.querySelectorAll('.box-hero__link')
     const githubLink = page.querySelector('.box-hero__link--github')
-    const githubStars = githubLink?.querySelector('.box-hero__github-stars')?.text.trim()
     const nextLinks = page.querySelectorAll('.next-steps__cta')
 
-    expect(heroCommand?.getAttribute('data-command')).toBe('brew install strands-agents/tap/box')
-    expect(heroCommand?.text).toContain('brew install strands-agents/tap/box')
+    expect(heroCommand?.getAttribute('data-command')).toBe(BOX_INSTALL_COMMAND)
+    expect(heroCommand?.querySelector('[data-command-copy]')?.getAttribute('aria-label')).toBe(
+      'Copy the Box install command'
+    )
     expect(BOX_LINKS.install).toContain(BOX_CLI_REPOSITORY_URL)
     expect(BOX_LINKS.quickstart).toContain(BOX_CLI_REPOSITORY_URL)
     expect(BOX_LINKS.install).not.toContain(BOX_CORE_REPOSITORY_URL)
@@ -230,8 +255,8 @@ describe('Box landing page', () => {
       BOX_CORE_REPOSITORY_URL,
     ])
     expect(page.querySelector('.box-hero__link--primary')?.text.replace(/\s+/g, ' ').trim()).toBe('Run Box')
-    expect(githubStars).toMatch(/^\d{1,3}(,\d{3})*\+?$/)
-    expect(githubLink?.getAttribute('aria-label')).toBe(`View Strands Box on GitHub, ${githubStars} stars`)
+    expect(githubLink?.querySelector('.box-hero__github-label')?.text.trim()).toBe('GitHub')
+    expect(githubLink?.getAttribute('aria-label')).toBe('View Strands Box on GitHub')
     expect(githubLink?.querySelector('.box-hero__github-icon svg')).not.toBeNull()
     expect(nextLinks.map((link) => link.getAttribute('href'))).toEqual([
       configuredHref(BOX_LINKS.install),
@@ -310,7 +335,9 @@ describe('Box landing page', () => {
     expect(markdown).toContain('## What Box does')
     expect(markdown).toContain(BOX_CAPABILITIES_HEADLINE)
     expect(markdown).toContain(BOX_CAPABILITIES_SUMMARY)
-    expect(markdown).toContain('### What Box allows')
+    expect(markdown).toContain(`### ${BOX_EXAMPLE_BOUNDARY_LABEL}`)
+    expect(markdown).toContain(BOX_EXAMPLE_BOUNDARY_DESCRIPTION)
+    expect(markdown).not.toContain('### What Box allows')
 
     for (const capability of BOX_CAPABILITIES) {
       expect(markdown).toContain(`### ${capability.title}`)
@@ -341,7 +368,8 @@ describe('Box landing page', () => {
     expect(markdown).toContain('Box::Action::"net:connect"')
     expect(markdown).toContain('[egress.github]')
     expect(markdown).toContain('box run codex')
-    expect(markdown).toContain('box run pi')
+    expect(markdown).not.toContain('box run pi')
+    expect(markdown).not.toContain('pi starter')
     expect(markdown).toContain(configuredSiteLink(BOX_LINKS.quickstart))
     expect(markdown).toContain(configuredSiteLink(BOX_LINKS.security))
     expect(markdown).toContain(BOX_REPOSITORY_URL)

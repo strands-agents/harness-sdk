@@ -4,11 +4,12 @@ import {
   BOX_BOUNDARY_PANELS,
   BOX_CAPABILITIES,
   BOX_EXAMPLE_BOUNDARY,
+  BOX_EXAMPLE_BOUNDARY_DESCRIPTION,
+  BOX_EXAMPLE_BOUNDARY_LABEL,
   BOX_FEATURED_AGENT_EXAMPLES,
   BOX_OVERVIEW_DESCRIPTION,
 } from '../../config/box-landing'
 import { pathWithBase } from '../../util/links'
-import CommandPill from '../CommandPill.astro'
 import ToolkitTerminal from '../ToolkitTerminal.astro'
 
 const isExternal = (href: string) => href.startsWith('http')
@@ -49,8 +50,11 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
                   BOX_FEATURED_AGENT_EXAMPLES.map((example, index) => (
                     <a
                       id={`box-agent-tab-${example.id}`}
-                      href={`#box-agent-panel-${example.id}`}
+                      href={linkHref(example.href)}
+                      target={isExternal(example.href) ? '_blank' : undefined}
+                      rel={isExternal(example.href) ? 'noopener' : undefined}
                       data-box-agent-tab={example.id}
+                      data-box-agent-panel-id={`box-agent-panel-${example.id}`}
                       data-default-active={index === 0 ? '' : undefined}
                     >
                       {example.title}
@@ -63,14 +67,30 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
                   BOX_FEATURED_AGENT_EXAMPLES.map((example, index) => (
                     <div
                       class="box-start__start-command"
+                      id={`box-agent-panel-${example.id}`}
+                      aria-labelledby={`box-agent-tab-${example.id}`}
+                      data-box-agent-panel={example.id}
                       data-box-overview-command={example.id}
                       hidden={index !== 0}
                     >
-                      <CommandPill
-                        command={example.command}
-                        label={`Copy the ${example.title} Box run command`}
-                        surface={`run:box:overview:${example.id}`}
-                      />
+                      <p class="box-start__launch-label">Once Box and {example.title} are installed:</p>
+                      <code class="box-start__start-command-display">
+                        <span aria-hidden="true">$</span>
+                        <span>{example.command}</span>
+                      </code>
+                      <p class="box-start__launch-note">
+                        The first run creates a profile and asks for its settings.
+                      </p>
+                      <a
+                        class="box-start__launch-action"
+                        href={linkHref(example.href)}
+                        target={isExternal(example.href) ? '_blank' : undefined}
+                        rel={isExternal(example.href) ? 'noopener' : undefined}
+                        data-example-guide={example.id}
+                      >
+                        Set up Box for {example.title}
+                        <span aria-hidden="true" set:html={arrow} />
+                      </a>
                     </div>
                   ))
                 }
@@ -79,74 +99,46 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
           </div>
 
           <div class="box-start__demo">
-            <div class="box-start__panels">
-              {
-                BOX_FEATURED_AGENT_EXAMPLES.map((example) => (
-                  <article
-                    class="box-start__agent-panel"
-                    id={`box-agent-panel-${example.id}`}
-                    aria-labelledby={`box-agent-tab-${example.id}`}
-                    data-box-agent-panel={example.id}
-                    data-box-animate-panel
-                  >
-                    <div class="box-start__run-command">
-                      <CommandPill
-                        command={example.command}
-                        label={`Copy the ${example.title} Box run command`}
-                        surface={`run:box:${example.id}`}
-                      />
-                    </div>
+            <figure
+              class="box-start__session"
+              aria-labelledby="box-example-boundary-title"
+              aria-describedby="box-example-boundary-description"
+              data-box-example-boundary
+              data-box-animate-boundary
+            >
+              <header class="box-start__session-header">
+                <span class="box-start__terminal-dots" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </span>
+                <span id="box-example-boundary-title">{BOX_EXAMPLE_BOUNDARY_LABEL}</span>
+                <span>Configured by you</span>
+              </header>
 
-                    <div
-                      class="box-start__session"
-                      aria-label={`${example.title} example Box controls`}
-                      data-box-example-boundary
-                    >
-                      <header class="box-start__session-header">
-                        <span class="box-start__terminal-dots" aria-hidden="true">
-                          <span></span>
-                          <span></span>
-                          <span></span>
-                        </span>
-                        <span>What Box allows</span>
-                        <span>{example.slug}</span>
-                      </header>
+              <p id="box-example-boundary-description" class="box-start__session-description">
+                {BOX_EXAMPLE_BOUNDARY_DESCRIPTION}
+              </p>
 
-                      <ul class="box-start__decisions">
-                        {
-                          BOX_EXAMPLE_BOUNDARY.map((decision) => (
-                            <li data-box-boundary-decision={decision.id} data-box-animate-row>
-                              <code>{decision.action}</code>
-                              <span
-                                class:list={[
-                                  'box-start__decision-state',
-                                  `box-start__decision-state--${decision.tone}`,
-                                ]}
-                              >
-                                <span aria-hidden="true">{decision.tone === 'blocked' ? '×' : '✓'}</span>
-                                {decision.result}
-                              </span>
-                            </li>
-                          ))
-                        }
-                      </ul>
-                    </div>
-
-                    <footer class="box-start__panel-footer">
-                      <a
-                        href={linkHref(example.href)}
-                        target={isExternal(example.href) ? '_blank' : undefined}
-                        rel={isExternal(example.href) ? 'noopener' : undefined}
-                        data-example-guide={example.id}
+              <ul class="box-start__decisions">
+                {
+                  BOX_EXAMPLE_BOUNDARY.map((decision) => (
+                    <li data-box-boundary-decision={decision.id} data-box-animate-row>
+                      <code>{decision.action}</code>
+                      <span
+                        class:list={[
+                          'box-start__decision-state',
+                          `box-start__decision-state--${decision.tone}`,
+                        ]}
                       >
-                        {example.title} setup
-                        <span aria-hidden="true" set:html={arrow} />
-                      </a>
-                    </footer>
-                  </article>
-                ))
-              }
-            </div>
+                        <span aria-hidden="true">{decision.tone === 'blocked' ? '×' : '✓'}</span>
+                        {decision.result}
+                      </span>
+                    </li>
+                  ))
+                }
+              </ul>
+            </figure>
           </div>
         </div>
       </div>
@@ -232,15 +224,10 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 <style>
   .box-start {
     --box-purple: var(--card-accent-purple);
-    --box-purple-button-fg: var(--strands-white);
 
     padding: 72px 48px;
     background: var(--bg);
     color: var(--fg);
-  }
-
-  :global([data-theme='dark']) .box-start {
-    --box-purple-button-fg: var(--strands-black);
   }
 
   .box-start__inner {
@@ -334,29 +321,106 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     margin-top: 12px;
   }
 
+  .box-start__start-command {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .box-start__start-command[hidden] {
     display: none;
   }
 
-  .box-start__start-command :global(.command-pill__prompt) {
+  .box-start__launch-label,
+  .box-start__launch-note {
+    margin: 0;
+    color: var(--use-case-muted);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .box-start__launch-label {
+    margin-bottom: 8px;
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .box-start__launch-note {
+    margin-top: 8px;
+  }
+
+  .box-start__start-command-display {
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+    gap: 9px;
+    overflow-x: auto;
+    padding: 12px 16px;
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 12px;
+    background: var(--toggle-bg);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.4;
+    scrollbar-width: none;
+    white-space: nowrap;
+  }
+
+  .box-start__start-command-display::-webkit-scrollbar {
+    display: none;
+  }
+
+  .box-start__start-command-display span:first-child {
+    flex: none;
     color: var(--box-purple);
   }
 
-  .box-start__start-command :global(.command-pill) {
-    box-sizing: border-box;
+  .box-start__launch-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 16px;
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    text-decoration: none;
+  }
+
+  .box-start__launch-action:hover {
+    opacity: 0.8;
+  }
+
+  .box-start__launch-action span {
+    display: inline-flex;
+    width: 10px;
+    transition: transform 150ms ease;
+  }
+
+  .box-start__launch-action:hover span {
+    transform: translateX(3px);
+  }
+
+  .box-start__launch-action span :global(svg) {
     width: 100%;
-    border-radius: 12px;
+    height: auto;
+    fill: currentColor;
   }
 
   .box-start__demo {
     display: flex;
-    align-self: stretch;
+    align-self: center;
     min-width: 0;
   }
 
   .box-start__agent-tabs {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0;
     margin: 0;
   }
@@ -409,29 +473,10 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     color: var(--use-case-muted);
   }
 
-  .box-start__panels {
-    display: grid;
-    flex: 1;
-    gap: 14px;
-  }
-
-  .box-start__agent-panel {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-  }
-
-  .box-start__agent-panel[hidden] {
-    display: none;
-  }
-
-  .box-start__agent-panel:focus-visible {
-    outline: 2px solid var(--box-purple);
-    outline-offset: 4px;
-  }
-
   .box-start__session {
+    flex: 1;
     min-width: 0;
+    margin: 0;
     overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -459,6 +504,16 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     white-space: nowrap;
   }
 
+  .box-start__session-description {
+    margin: 0;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--divider);
+    color: var(--terminal-fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
   .box-start__terminal-dots {
     display: inline-flex;
     gap: 5px;
@@ -477,35 +532,6 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 
   .box-start__terminal-dots span:nth-child(3) {
     background: var(--card-accent-green);
-  }
-
-  .box-start__run-command {
-    width: 100%;
-    margin-bottom: 14px;
-  }
-
-  .box-start__body[data-enhanced='true'] .box-start__run-command {
-    display: none;
-  }
-
-  .box-start__run-command :global(.command-pill) {
-    box-sizing: border-box;
-    width: 100%;
-    justify-content: space-between;
-    padding: 8px 8px 8px 16px;
-    border-color: var(--box-purple);
-    background: var(--toggle-bg);
-  }
-
-  .box-start__run-command :global(.command-pill__command) {
-    font-size: 15px;
-  }
-
-  .box-start__run-command :global(.command-pill__copy) {
-    border-color: var(--box-purple);
-    background: var(--box-purple);
-    color: var(--box-purple-button-fg);
-    font-weight: 600;
   }
 
   .box-start__decisions {
@@ -552,46 +578,6 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 
   .box-start__decision-state--blocked {
     color: var(--card-accent-red);
-  }
-
-  .box-start__panel-footer {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: auto;
-    padding-top: 22px;
-  }
-
-  .box-start__panel-footer a {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    width: max-content;
-    color: var(--fg);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 1.3;
-    text-decoration: none;
-  }
-
-  .box-start__panel-footer a:hover {
-    opacity: 0.8;
-  }
-
-  .box-start__panel-footer a span {
-    display: inline-flex;
-    width: 10px;
-    transition: transform 150ms ease;
-  }
-
-  .box-start__panel-footer a:hover span {
-    transform: translateX(3px);
-  }
-
-  .box-start__panel-footer a :global(svg) {
-    width: 100%;
-    height: auto;
-    fill: currentColor;
   }
 
   .box-start__capabilities {
@@ -912,6 +898,11 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
       font-size: 14px;
     }
 
+    .box-start__launch-label,
+    .box-start__launch-note {
+      font-size: 13px;
+    }
+
     .box-start__agent-tabs {
       gap: 0;
     }
@@ -992,7 +983,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     .box-start__connectors,
     .box-start__connectors::after,
     .box-start__agent-tabs a,
-    .box-start__panel-footer a span {
+    .box-start__launch-action span {
       transition: none;
     }
 
@@ -1005,74 +996,109 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 </style>
 
 <script>
+  const boxMotionAllowed = () => !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  const boxBoundarySteps = (boundary: HTMLElement) =>
+    [
+      boundary.querySelector<HTMLElement>('.box-start__session-header'),
+      boundary.querySelector<HTMLElement>('.box-start__session-description'),
+      ...boundary.querySelectorAll<HTMLElement>('[data-box-animate-row]'),
+    ].filter((step): step is HTMLElement => step !== null)
+
+  const revealBoxBoundaryStep = (step: HTMLElement) => {
+    step.style.opacity = '1'
+    step.style.transform = 'none'
+  }
+
+  const animateBoxBoundary = (boundary: HTMLElement, steps: HTMLElement[]) => {
+    if (boundary.dataset.animated === 'true') return
+
+    if (!boxMotionAllowed()) {
+      steps.forEach(revealBoxBoundaryStep)
+      delete boundary.dataset.animationReady
+      return
+    }
+
+    boundary.dataset.animated = 'true'
+
+    const animations = steps.map((step, index) =>
+      step.animate(
+        [
+          { opacity: 0, transform: 'translateY(7px)' },
+          { opacity: 1, transform: 'translateY(0)' },
+        ],
+        {
+          delay: index * 110,
+          duration: 320,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          fill: 'both',
+        }
+      )
+    )
+
+    void Promise.allSettled(animations.map((animation) => animation.finished)).then(() => {
+      steps.forEach(revealBoxBoundaryStep)
+      animations.forEach((animation) => animation.cancel())
+      delete boundary.dataset.animationReady
+    })
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-box-animate-boundary]').forEach((boundary) => {
+    const steps = boxBoundarySteps(boundary)
+    const canAnimate =
+      boxMotionAllowed() &&
+      typeof IntersectionObserver !== 'undefined' &&
+      steps.length > 0 &&
+      steps.every((step) => typeof step.animate === 'function')
+
+    if (!canAnimate) return
+
+    steps.forEach((step) => {
+      step.style.opacity = '0'
+      step.style.transform = 'translateY(7px)'
+    })
+    boundary.dataset.animationReady = 'true'
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return
+
+        animateBoxBoundary(boundary, steps)
+        observer.disconnect()
+      },
+      { threshold: 0.35 }
+    )
+
+    observer.observe(boundary)
+  })
+
   document.querySelectorAll<HTMLElement>('[data-box-agent-selector]').forEach((root) => {
     if (root.dataset.enhanced === 'true') return
 
     const tablist = root.querySelector<HTMLElement>('[data-box-agent-tablist]')
     const tabs = Array.from(root.querySelectorAll<HTMLAnchorElement>('[data-box-agent-tab]'))
     const panels = Array.from(root.querySelectorAll<HTMLElement>('[data-box-agent-panel]'))
-    const overviewCommands = Array.from(root.querySelectorAll<HTMLElement>('[data-box-overview-command]'))
-    if (
-      !tablist ||
-      tabs.length === 0 ||
-      tabs.length !== panels.length ||
-      tabs.length !== overviewCommands.length
-    )
-      return
+    if (!tablist || tabs.length === 0 || tabs.length !== panels.length) return
 
     root.dataset.enhanced = 'true'
     tablist.setAttribute('role', 'tablist')
     tablist.setAttribute('aria-orientation', 'horizontal')
 
     const panelFor = (tab: HTMLAnchorElement) => {
-      const panelId = tab.getAttribute('href')?.slice(1)
+      const panelId = tab.dataset.boxAgentPanelId
       return panels.find((panel) => panel.id === panelId)
     }
 
-    const overviewCommandFor = (tab: HTMLAnchorElement) =>
-      overviewCommands.find((command) => command.dataset.boxOverviewCommand === tab.dataset.boxAgentTab)
-
-    const motionAllowed = () => !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
     const animatePanel = (panel: HTMLElement) => {
-      if (!motionAllowed() || typeof panel.animate !== 'function') return
+      if (!boxMotionAllowed() || typeof panel.animate !== 'function') return
 
       panel.getAnimations().forEach((animation) => animation.cancel())
       panel.animate(
         [
-          { opacity: 0, transform: 'translateY(6px)' },
+          { opacity: 0, transform: 'translateY(5px)' },
           { opacity: 1, transform: 'translateY(0)' },
         ],
-        { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
-      )
-
-      panel.querySelectorAll<HTMLElement>('[data-box-animate-row]').forEach((row, index) => {
-        row.getAnimations().forEach((animation) => animation.cancel())
-        row.animate(
-          [
-            { opacity: 0, transform: 'translateY(5px)' },
-            { opacity: 1, transform: 'translateY(0)' },
-          ],
-          {
-            delay: index * 35,
-            duration: 190,
-            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-            fill: 'both',
-          }
-        )
-      })
-    }
-
-    const animateOverviewCommand = (command: HTMLElement) => {
-      if (!motionAllowed() || typeof command.animate !== 'function') return
-
-      command.getAnimations().forEach((animation) => animation.cancel())
-      command.animate(
-        [
-          { opacity: 0, transform: 'translateY(4px)' },
-          { opacity: 1, transform: 'translateY(0)' },
-        ],
-        { duration: 180, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+        { duration: 200, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
       )
     }
 
@@ -1081,8 +1107,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
       { focus = false, animate = true, updateHash = true } = {}
     ) => {
       const selectedPanel = panelFor(selectedTab)
-      const selectedCommand = overviewCommandFor(selectedTab)
-      if (!selectedPanel || !selectedCommand) return
+      if (!selectedPanel) return
 
       tabs.forEach((tab) => {
         const selected = tab === selectedTab
@@ -1094,15 +1119,8 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
         panel.hidden = panel !== selectedPanel
       })
 
-      overviewCommands.forEach((command) => {
-        command.hidden = command !== selectedCommand
-      })
-
       if (focus) selectedTab.focus()
-      if (animate) {
-        animatePanel(selectedPanel)
-        animateOverviewCommand(selectedCommand)
-      }
+      if (animate) animatePanel(selectedPanel)
       if (updateHash) history.replaceState(null, '', `#${selectedPanel.id}`)
     }
 
@@ -1111,6 +1129,9 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
       if (!panel) return
 
       tab.setAttribute('role', 'tab')
+      tab.setAttribute('href', `#${panel.id}`)
+      tab.removeAttribute('target')
+      tab.removeAttribute('rel')
       tab.setAttribute('aria-controls', panel.id)
       tab.setAttribute('aria-selected', 'false')
       tab.tabIndex = -1

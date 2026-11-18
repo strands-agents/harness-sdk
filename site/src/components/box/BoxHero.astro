@@ -4,16 +4,14 @@ import halftone from '../../assets/banner/halftone.svg?url'
 import github from '../../assets/nav/github.svg?raw'
 import {
   BOX_CORE_REPOSITORY_URL,
+  BOX_INSTALL_COMMAND,
   BOX_LINKS,
 } from '../../config/box-landing'
-import { getRepositoryStarCount } from '../../util/github'
 import { pathWithBase } from '../../util/links'
 import CommandPill from '../CommandPill.astro'
 
 const isExternal = (href: string) => href.startsWith('http')
 const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href))
-const boxStars = await getRepositoryStarCount('strands-agents/box', '550+')
-const heroInstallCommand = 'brew install strands-agents/tap/box'
 ---
 
 <section class="box-hero" aria-labelledby="box-hero-title">
@@ -40,17 +38,17 @@ const heroInstallCommand = 'brew install strands-agents/tap/box'
           <a
             href={BOX_CORE_REPOSITORY_URL}
             class="box-hero__link box-hero__link--github"
-            aria-label={`View Strands Box on GitHub, ${boxStars} stars`}
+            aria-label="View Strands Box on GitHub"
             target="_blank"
             rel="noopener"
           >
             <span class="box-hero__github-icon" set:html={github} />
-            <span class="box-hero__github-stars">{boxStars}</span>
+            <span class="box-hero__github-label">GitHub</span>
           </a>
         </div>
 
         <CommandPill
-          command={heroInstallCommand}
+          command={BOX_INSTALL_COMMAND}
           label="Copy the Box install command"
           surface="install:box"
         />
@@ -221,9 +219,9 @@ const heroInstallCommand = 'brew install strands-agents/tap/box'
     height: 100%;
   }
 
-  .box-hero__github-stars {
+  .box-hero__github-label {
     font-size: 15px;
-    opacity: 0.78;
+    opacity: 0.88;
   }
 
   .box-hero__arrow {
@@ -238,7 +236,8 @@ const heroInstallCommand = 'brew install strands-agents/tap/box'
   }
 
   .box-hero :global(.command-pill) {
-    width: max-content;
+    box-sizing: border-box;
+    width: 100%;
     max-width: 100%;
     background: var(--toggle-bg);
   }

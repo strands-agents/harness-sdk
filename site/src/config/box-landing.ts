@@ -105,7 +105,7 @@ export const BOX_GETTING_STARTED = [
     id: 'choose',
     eyebrow: '/01',
     title: 'Choose an agent',
-    description: 'Claude Code, Codex, Kiro CLI, or pi.',
+    description: 'Claude Code, Codex, or Kiro CLI.',
     href: BOX_LINKS.quickstart,
   },
   {
@@ -148,14 +148,6 @@ export const BOX_AGENT_EXAMPLES = [
     description: 'Run Kiro CLI through Box.',
     command: 'box run kiro',
     href: `${BOX_PACKS_URL}/kiro/README.md`,
-  },
-  {
-    id: 'pi',
-    slug: '/pi',
-    title: 'pi',
-    description: 'Run pi through Box.',
-    command: 'box run pi',
-    href: `${BOX_PACKS_URL}/pi/README.md`,
   },
 ] as const
 
@@ -215,6 +207,9 @@ export const BOX_EXAMPLE_BOUNDARY = [
   },
 ] as const
 
+export const BOX_EXAMPLE_BOUNDARY_LABEL = 'Example boundary'
+export const BOX_EXAMPLE_BOUNDARY_DESCRIPTION = 'Your profile and policy determine how Box handles each request.'
+
 function heading(level: number, text: string): string {
   return `${'#'.repeat(Math.min(level, 6))} ${text}`
 }
@@ -236,7 +231,7 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     '',
     heading(root + 1, 'Install Box CLI'),
     '',
-    'Box CLI is beta. The installer supports Apple silicon macOS 15 or later. ARM64 Linux support is experimental, and the pi starter does not run on Linux.',
+    'Box CLI is beta. The installer supports Apple silicon macOS 15 or later. ARM64 Linux support is experimental.',
     '',
     '```sh',
     BOX_INSTALL_COMMAND,
@@ -271,9 +266,9 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     BOX_CAPABILITIES_SUMMARY,
     '',
     ...BOX_CAPABILITIES.flatMap((capability) => [heading(root + 2, capability.title), '', capability.description, '']),
-    heading(root + 2, 'What Box allows'),
+    heading(root + 2, BOX_EXAMPLE_BOUNDARY_LABEL),
     '',
-    'Box can allow or block requests like these:',
+    BOX_EXAMPLE_BOUNDARY_DESCRIPTION,
     '',
     ...BOX_EXAMPLE_BOUNDARY.map((outcome) => `- \`${outcome.action}\`: ${outcome.result.toLowerCase()}`),
     '',
