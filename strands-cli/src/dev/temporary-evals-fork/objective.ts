@@ -277,6 +277,19 @@ const floors = (evaluators: readonly string[]): string =>
 const maximized = (evaluators: readonly string[]): string[] =>
   evaluators.map((evaluator) => `Maximize(${metricText(evaluator)})`)
 
+const FEWER_TOKENS = `Minimize(tokens, scale=${TOKEN_SCALE})`
+const LESS_TIME = `Minimize(seconds, scale=${SECONDS_SCALE})`
+
+const evaluatorTradeOff = (
+  label: string,
+  combination: Combination,
+  evaluators: readonly string[],
+  usageGoals: readonly string[]
+): ObjectivePreset => ({
+  label,
+  objective: { expression: `${combination}(${[...maximized(evaluators), ...usageGoals].join(', ')})`, constraints: '' },
+})
+
 export const temporaryObjectivePresets = (evaluators: readonly string[]): ObjectivePreset[] => {
   const names = [...new Set(evaluators)]
   const floor = names.length > 0 ? `, each evaluator at least ${DEFAULT_FLOOR}` : ''
@@ -294,27 +307,13 @@ export const temporaryObjectivePresets = (evaluators: readonly string[]): Object
     { label: `less time${floor}`, objective: { expression: 'Minimize(seconds)', constraints: floors(names) } },
     ...(names.length > 0
       ? [
-          {
-            label: 'the evaluators and fewer tokens',
-            objective: {
-              expression: `WeightedSum(${[...maximized(names), `Minimize(tokens, scale=${TOKEN_SCALE})`].join(', ')})`,
-              constraints: '',
-            },
-          },
-          {
-            label: 'the evaluators and less time',
-            objective: {
-              expression: `WeightedSum(${[...maximized(names), `Minimize(seconds, scale=${SECONDS_SCALE})`].join(', ')})`,
-              constraints: '',
-            },
-          },
-          {
-            label: 'the best trade-offs of the evaluators and tokens',
-            objective: {
-              expression: `Pareto(${[...maximized(names), `Minimize(tokens, scale=${TOKEN_SCALE})`].join(', ')})`,
-              constraints: '',
-            },
-          },
+          evaluatorTradeOff('the evaluators and fewer tokens', 'WeightedSum', names, [FEWER_TOKENS]),
+          evaluatorTradeOff('the evaluators and less time', 'WeightedSum', names, [LESS_TIME]),
+          evaluatorTradeOff('the evaluators, fewer tokens, and less time', 'WeightedSum', names, [
+            FEWER_TOKENS,
+            LESS_TIME,
+          ]),
+          evaluatorTradeOff('the best trade-offs of the evaluators and tokens', 'Pareto', names, [FEWER_TOKENS]),
         ]
       : []),
   ]

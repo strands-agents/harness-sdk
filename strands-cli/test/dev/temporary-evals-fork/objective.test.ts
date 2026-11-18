@@ -139,6 +139,14 @@ describe('TEMPORARY optimize objective', () => {
         },
       },
       {
+        label: 'the evaluators, fewer tokens, and less time',
+        objective: {
+          expression:
+            'WeightedSum(Maximize(Contains), Maximize(Equals), Minimize(tokens, scale=1000), Minimize(seconds, scale=10))',
+          constraints: '',
+        },
+      },
+      {
         label: 'the best trade-offs of the evaluators and tokens',
         objective: {
           expression: 'Pareto(Maximize(Contains), Maximize(Equals), Minimize(tokens, scale=1000))',
@@ -151,6 +159,23 @@ describe('TEMPORARY optimize objective', () => {
         ({ objective }) => !checkTemporaryObjective(objective, EVALUATORS).problem
       )
     ).toBe(true)
+  })
+
+  it('shouldSendEveryEvaluatorTokensAndTimeUpstreamWhenThePresetCombinesThemAll', () => {
+    const preset = temporaryObjectivePresets(EVALUATORS).find(
+      ({ label }) => label === 'the evaluators, fewer tokens, and less time'
+    )
+
+    expect(preset && temporaryObjectiveArguments(preset.objective)).toEqual([
+      '--objective',
+      'maximize:Contains',
+      '--objective',
+      'maximize:Equals',
+      '--objective',
+      'minimize:tokens:scale=1000',
+      '--objective',
+      'minimize:seconds:scale=10',
+    ])
   })
 
   it('shouldQuoteAnEvaluatorNameThatIsNotAPlainWordInThePresets', () => {
