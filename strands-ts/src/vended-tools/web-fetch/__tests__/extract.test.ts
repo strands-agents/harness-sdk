@@ -54,7 +54,7 @@ describe('htmlToMarkdown', () => {
     expect(result).toContain('click')
   })
 
-  it.each(['vbscript:msgbox(1)', 'data:text/html,<script>alert(1)</script>'])(
+  it.each(['VBScript:msgbox(1)', 'data:text/html,<script>alert(1)</script>'])(
     'drops %s hrefs but keeps link text',
     async (href) => {
       expect((await htmlToMarkdown(`<a href="${href}">click</a>`)).trim()).toBe('click')
@@ -66,7 +66,7 @@ describe('htmlToMarkdown', () => {
   })
 
   it('drops vbscript: img srcs', async () => {
-    expect(await htmlToMarkdown('<img src="vbscript:msgbox(1)" alt="x">')).toBe('')
+    expect(await htmlToMarkdown('<img src="VBScript:msgbox(1)" alt="x">')).toBe('')
   })
 
   it('returns alt text for image with empty src', async () => {
@@ -105,6 +105,10 @@ describe('htmlToMarkdown', () => {
       expect(await htmlToMarkdown(`<a href="${prefix}javascript:alert(1)">click</a>`)).toBe('click\n')
     }
   )
+
+  it('drops javascript: hrefs with a tab inside the scheme', async () => {
+    expect(await htmlToMarkdown('<a href="java\tscript:alert(1)">click</a>')).toBe('click\n')
+  })
 
   it.each(['javascript://\u2100%0aalert(1)', 'vbscript://[x', 'data://[x/text/html,x'])(
     'drops %s hrefs with an unparseable host',

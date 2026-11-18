@@ -36,7 +36,7 @@ const DROPPED_ELEMENTS = [
   'nav',
 ]
 
-// Read the scheme from the start of the URL, after stripping leading whitespace and invisible characters.
+// Read the scheme after stripping leading whitespace and invisible characters, and tab/CR/LF anywhere as browsers do.
 // The rest of the URL is not parsed: a malformed host must not hide the scheme.
 function _urlScheme(url: string): string {
   const stripped = url.replace(/^[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}]+/u, '').replace(/[\t\n\r]/g, '')
