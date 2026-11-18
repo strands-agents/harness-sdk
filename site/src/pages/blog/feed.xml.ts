@@ -8,8 +8,7 @@ export const GET: APIRoute = async (context) => {
 
   return rss({
     title: 'Strands Agents Blog',
-    description:
-      'Tutorials, architecture deep-dives, and production insights from the Strands Agents team.',
+    description: 'Tutorials, architecture deep-dives, and production insights from the Strands Agents team.',
     site: context.site!,
     items: posts.map((post) => ({
       title: post.data.title,

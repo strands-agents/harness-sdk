@@ -67,6 +67,23 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
     replacement: () => '',
   })
 
+  // <Diagram> renders an inline SVG whose <text> nodes would otherwise leak into
+  // the markdown as a jumble of labels. Emit the diagram's description instead.
+  service.addRule('diagram', {
+    filter: (node) => {
+      if (node.nodeName !== 'FIGURE') return false
+      const className = (node as Element).getAttribute?.('class') || ''
+      return className.split(/\s+/).includes('dg-figure')
+    },
+    replacement: (_content, node) => {
+      const el = node as Element
+      const alt = el.querySelector('svg')?.getAttribute('aria-label')?.trim() || ''
+      const caption = el.querySelector('figcaption')?.textContent?.trim() || ''
+      const lines = [alt && `> **Diagram:** ${alt}`, caption && `> ${caption}`].filter(Boolean)
+      return lines.length ? `\n\n${lines.join('\n>\n')}\n\n` : ''
+    },
+  })
+
   // Removes lite-youtube and its Play anchor so .md/llms-full.txt don't emit bare '[Play](url)' lines.
   service.addRule('removeLiteYouTube', {
     filter: (node) => {
@@ -188,7 +205,7 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
       }
       walk(node as Element)
 
-      const code = lines.length > 0 ? lines.join('\n') : (node.textContent || '')
+      const code = lines.length > 0 ? lines.join('\n') : node.textContent || ''
       return `\n\n${fence}${language}\n${code}\n${fence}\n\n`
     },
   })

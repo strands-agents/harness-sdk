@@ -198,7 +198,10 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       ['google.gemma-4-26b-a4b', '/openai/v1'],
       ['google.gemma-4-e2b', '/openai/v1'],
       ['openai.gpt-5.6-terra', '/openai/v1'],
+      ['openai.gpt-5.6-cyber', '/openai/v1'],
+      ['openai.gpt-daybreak-blue-5.6-sol', '/openai/v1'],
       ['openai.gpt-6-astra', '/openai/v1'],
+      ['openai.gpt-6.1-sol', '/openai/v1'],
       // Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
       ['google.gemma-3-27b-it', '/v1'],
       ['google.gemma-3-4b-it', '/v1'],
@@ -224,13 +227,89 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       ['xai.grok-4.9', '/openai/v1'],
       ['openai.gpt-5.9-unreleased', '/openai/v1'],
       ['openai.gpt-6-nova', '/openai/v1'],
+      ['openai.gpt-6.1-sol', '/openai/v1'],
       // New lines the prefixes deliberately do not cover.
       ['xai.grok-5', '/v1'],
       ['xai.grok-5-preview', '/v1'],
+      ['openai.gpt-6oss-20b', '/v1'],
     ])('resolves unverified %s to %s', (modelId, expected) => {
       expect(baseURLFor({ modelId, bedrockMantleConfig: { region: 'us-west-2' } })).toBe(
         `https://bedrock-mantle.us-west-2.api.aws${expected}`
       )
+    })
+
+    // #3667: a `modelId` swap across the base-path boundary rebuilds the Mantle
+    // client against the new base URL. The negative controls below pin the two
+    // ways that must NOT happen: within one base path, and off the Mantle path.
+    const clientCallCount = (): number => (OpenAI as unknown as { mock: { calls: unknown[][] } }).mock.calls.length
+    const lastClientArgs = (): { baseURL: string; apiKey: unknown } =>
+      (OpenAI as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(-1)![0] as {
+        baseURL: string
+        apiKey: unknown
+      }
+
+    it('reroutes the Mantle base URL when updateConfig moves modelId across base paths', () => {
+      const model = new OpenAIModel({
+        modelId: 'openai.gpt-oss-120b',
+        bedrockMantleConfig: { region: 'us-west-2' },
+      })
+      expect(lastClientArgs().baseURL).toBe('https://bedrock-mantle.us-west-2.api.aws/v1')
+      const before = clientCallCount()
+
+      model.updateConfig({ modelId: 'xai.grok-4.3' })
+
+      expect(model.getConfig().modelId).toBe('xai.grok-4.3')
+      expect(clientCallCount()).toBe(before + 1)
+      expect(lastClientArgs().baseURL).toBe('https://bedrock-mantle.us-west-2.api.aws/openai/v1')
+    })
+
+    // The memoized token provider lives in the setter's closure, so the rebuilt
+    // client must be handed the *same* setter rather than a fresh one.
+    it('reuses the construction-time api key setter when rerouting', () => {
+      const model = new OpenAIModel({
+        modelId: 'openai.gpt-oss-120b',
+        bedrockMantleConfig: { region: 'us-west-2' },
+      })
+      const originalApiKey = lastClientArgs().apiKey
+
+      model.updateConfig({ modelId: 'xai.grok-4.3' })
+
+      expect(lastClientArgs().apiKey).toBe(originalApiKey)
+    })
+
+    it('keeps the existing client when the new modelId stays on the same base path', () => {
+      const model = new OpenAIModel({
+        modelId: 'openai.gpt-oss-120b',
+        bedrockMantleConfig: { region: 'us-west-2' },
+      })
+      const before = clientCallCount()
+
+      model.updateConfig({ modelId: 'qwen.qwen3-32b' })
+
+      expect(model.getConfig().modelId).toBe('qwen.qwen3-32b')
+      expect(clientCallCount()).toBe(before)
+      expect(lastClientArgs().baseURL).toBe('https://bedrock-mantle.us-west-2.api.aws/v1')
+    })
+
+    it('keeps the existing client when updateConfig leaves modelId alone', () => {
+      const model = new OpenAIModel({
+        modelId: 'openai.gpt-oss-120b',
+        bedrockMantleConfig: { region: 'us-west-2' },
+      })
+      const before = clientCallCount()
+
+      model.updateConfig({ params: { temperature: 0.5 } })
+
+      expect(clientCallCount()).toBe(before)
+    })
+
+    it('does not touch the client when bedrockMantleConfig is not used', () => {
+      const model = new OpenAIModel({ modelId: 'gpt-5.4', client: {} as OpenAI })
+      const before = clientCallCount()
+
+      model.updateConfig({ modelId: 'openai.gpt-oss-120b' })
+
+      expect(clientCallCount()).toBe(before)
     })
   })
 

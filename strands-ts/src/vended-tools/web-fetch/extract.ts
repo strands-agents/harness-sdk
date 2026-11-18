@@ -4,8 +4,11 @@
  * Delegates HTML-to-markdown conversion to turndown with ATX headings and
  * fenced code blocks. Non-content elements (scripts, styles, media, forms,
  * etc.) are dropped entirely. `data:` URI images are replaced with their alt
- * text (or nothing) to avoid enormous blobs in the output. `javascript:`
- * hrefs and src values are stripped silently.
+ * text (or nothing) to avoid enormous blobs in the output. Images with a
+ * `javascript:` or `vbscript:` source are dropped, and links with a
+ * `javascript:`, `vbscript:`, or `data:` href are reduced to their text.
+ * Image alt text and sources are escaped so they cannot change the structure
+ * of the output.
  *
  * Requires `turndown` as an optional peer dependency.
  */
@@ -35,9 +38,39 @@ const DROPPED_ELEMENTS = [
   'nav',
 ]
 
-// Strip invisible characters before URL scheme detection.
-function _stripInvisible(value: string): string {
-  return value.replace(/^[\p{Cc}\p{Cf}\p{Zs}]+/u, '')
+// Read the scheme after stripping leading whitespace and invisible characters, and tab/CR/LF anywhere as browsers do.
+// The rest of the URL is not parsed: a malformed host must not hide the scheme.
+function _urlScheme(url: string): string {
+  const stripped = url.replace(/^[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}]+/u, '').replace(/[\t\n\r]/g, '')
+  return /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(stripped)?.[1]?.toLowerCase() ?? ''
+}
+
+// Strip what URL parsers strip from both ends of a URL. trim() differs from Python's strip().
+function _trimC0ControlOrSpace(value: string): string {
+  let start = 0
+  let end = value.length
+  while (start < end && value.charCodeAt(start) <= 0x20) start++
+  while (end > start && value.charCodeAt(end - 1) <= 0x20) end--
+  return value.slice(start, end)
+}
+
+// Collapse whitespace and control characters, and escape markdown and HTML syntax, so image text is plain text.
+// A "(" can only open a link destination at the start of the text or after a "]", so it is escaped only there.
+function _escapeImageText(text: string): string {
+  return text
+    .replace(/[\s\p{Cc}]+/gu, ' ')
+    .replace(/[\\[\]`~]|^\^/g, '\\$&')
+    .replace(/(^ ?|\\\] ?)\(/g, '$1\\(')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+// Drop tabs and newlines as URL parsers do, and percent-encode what a markdown parser could read as syntax.
+function _escapeImageSrc(src: string): string {
+  return src
+    .replace(/[\t\n\r]/g, '')
+    .replace(/[\s\p{Cc}<>\\"`]/gu, (char) => encodeURIComponent(char))
+    .replace(/[()']/g, (char) => `%${char.charCodeAt(0).toString(16)}`)
 }
 
 async function loadTurndown(): Promise<typeof TurndownService> {
@@ -74,35 +107,29 @@ async function _createTurndownService(): Promise<TurndownService> {
   })
 
   // Replace data: URI images with alt text only (they can be enormous blobs).
-  // Strip javascript: src values entirely.
+  // Strip javascript: and vbscript: src values entirely.
   td.addRule('safeImage', {
     filter: 'img',
     replacement: (_content, node) => {
       const element = node as HTMLImageElement
-      const src = (element.getAttribute('src') ?? '').trim()
-      const alt = element.getAttribute('alt') ?? ''
-      if (!src) return alt
-      try {
-        const scheme = new URL(_stripInvisible(src)).protocol
-        if (scheme === 'javascript:') return ''
-        if (scheme === 'data:') return alt
-      } catch {
-        // not an absolute URL — pass through as-is
-      }
-      return `![${alt}](${src})`
+      const src = _trimC0ControlOrSpace(element.getAttribute('src') ?? '')
+      const alt = _escapeImageText(element.getAttribute('alt') ?? '')
+      // Written as bare text, a trailing "!" would turn a link that follows into an image.
+      const bareAlt = alt.replace(/!(?= ?$)/, '\\!')
+      if (!src) return bareAlt
+      const scheme = _urlScheme(src)
+      if (scheme === 'javascript' || scheme === 'vbscript') return ''
+      if (scheme === 'data') return bareAlt
+      return `![${alt}](${_escapeImageSrc(src)})`
     },
   })
 
-  // Strip javascript: hrefs — render link text only.
+  // Render only the link text for javascript:, vbscript:, and data: hrefs.
   td.addRule('safeLink', {
     filter: (node) => {
       if (node.nodeName !== 'A') return false
-      const href = ((node as HTMLAnchorElement).getAttribute('href') ?? '').trim()
-      try {
-        return new URL(_stripInvisible(href)).protocol === 'javascript:'
-      } catch {
-        return false
-      }
+      const scheme = _urlScheme((node as HTMLAnchorElement).getAttribute('href') ?? '')
+      return scheme === 'javascript' || scheme === 'vbscript' || scheme === 'data'
     },
     replacement: (content) => content,
   })

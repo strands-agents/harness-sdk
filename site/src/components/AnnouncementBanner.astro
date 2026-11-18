@@ -1,0 +1,131 @@
+---
+import { getCollection } from 'astro:content';
+import frog from '../assets/nav/frog-hop.svg?raw';
+import arrow from '../assets/banner/arrow.svg?raw';
+import { homepageBanner, latestPostBanner } from '../util/announcements';
+import { getPublishedPosts } from '../util/blog';
+import { pathWithBase } from '../util/links';
+
+const [announcementEntries, posts] = await Promise.all([
+  getCollection('announcements'),
+  getPublishedPosts(),
+]);
+const today = new Date();
+const announcement = homepageBanner(
+  announcementEntries.map((entry) => entry.data),
+  posts,
+  today,
+);
+const fallback = announcement?.expires ? latestPostBanner(posts) : undefined;
+const isExternal = announcement && /^https?:\/\//.test(announcement.href);
+const href = announcement && (isExternal ? announcement.href : pathWithBase(announcement.href));
+const fallbackHref = fallback && pathWithBase(fallback.href);
+---
+
+{
+  announcement && (
+    <>
+      <aside class="announcement" aria-label="Announcement" data-expires={announcement.expires}>
+        <a class="announcement__link" href={href} {...(isExternal && {
+            target: '_blank',
+            rel: 'noopener',
+            'aria-label': `${announcement.title}: ${announcement.linkText} (opens in a new tab)`,
+          })}>
+          <span class="announcement__frog" set:html={frog} aria-hidden="true" />
+          <span class="announcement__title">{announcement.title}</span>
+          <span class="announcement__cta">
+            {announcement.linkText}
+            <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
+          </span>
+        </a>
+        {
+          fallback && (
+            <template class="announcement__fallback">
+              <a class="announcement__link" href={fallbackHref}>
+                <span class="announcement__frog" set:html={frog} aria-hidden="true" />
+                <span class="announcement__title">{fallback.title}</span>
+                <span class="announcement__cta">
+                  {fallback.linkText}
+                  <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
+                </span>
+              </a>
+            </template>
+          )
+        }
+      </aside>
+    </>
+  )
+}
+
+<script>
+  import { expireAnnouncement } from '../util/expire-announcement';
+
+  expireAnnouncement(document, new Date().toISOString().slice(0, 10));
+</script>
+
+<style>
+  .announcement {
+    background: var(--strands-green);
+    color: var(--strands-black);
+  }
+
+  .announcement__link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    max-width: 1442px;
+    margin: 0 auto;
+    padding: 8px clamp(16px, 5vw, 96px);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.4;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .announcement__frog {
+    display: inline-flex;
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+
+  .announcement__frog :global(svg),
+  .announcement__arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .announcement__cta {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .announcement__link:hover .announcement__cta {
+    text-decoration-thickness: 2px;
+  }
+
+  .announcement__arrow {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+  }
+
+  @media (max-width: 767px) {
+    .announcement__link {
+      flex-wrap: wrap;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .announcement__frog {
+      display: none;
+    }
+  }
+</style>

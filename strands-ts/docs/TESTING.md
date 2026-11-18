@@ -27,6 +27,7 @@ All test fixtures are located in `src/__fixtures__/`. Use these helpers to reduc
 | `MockMeter`            | `mock-meter.ts`         | Mock OTEL Meter that records all counter/histogram instrument calls for assertion        | [Telemetry Fixtures](#telemetry-fixtures-mock-spants-mock-meterts)          |
 | `expectLoopMetrics()`  | `metrics-helpers.ts`    | Assert on `AgentMetrics` with expected cycle count, tool names, and optional token usage | [Metrics Fixtures](#metrics-fixtures-metrics-helpersts)                     |
 | `findMetricValue()`    | `metrics-helpers.ts`    | Find the latest data point value for a named OTEL metric from ResourceMetrics            | [Metrics Fixtures](#metrics-fixtures-metrics-helpersts)                     |
+| `withDefaultLocale()`  | `locale-helpers.ts`     | Assert model-facing text formats numbers the same under any host locale                  | [Locale Fixtures](#locale-fixtures-locale-helpersts)                        |
 
 ## Test Organization
 
@@ -653,6 +654,17 @@ expect(cycleCount).toBeGreaterThanOrEqual(1)
 // Check a histogram was emitted
 const duration = findMetricValue(metrics, 'gen_ai.agent.cycle.duration')
 expect(duration).toBeDefined()
+```
+
+### Locale Fixtures (`locale-helpers.ts`)
+
+- **`withDefaultLocale(locale, fn)`** - Runs `fn` as if the host default locale were `locale`, so a `toLocaleString()` call without an explicit locale formats with it. Use it to prove that text sent to the model does not change with the machine it runs on.
+
+```typescript
+import { withDefaultLocale } from '../../__fixtures__/locale-helpers.js'
+
+const result = await withDefaultLocale('en-IN', () => middleware(context))
+expect(statusBlock.text).toContain('100,000') // not '1,00,000'
 ```
 
 ## Multi-Environment Testing

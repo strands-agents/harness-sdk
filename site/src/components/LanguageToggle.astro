@@ -1,7 +1,7 @@
 ---
 /**
  * Global Python/TypeScript language toggle, rendered identically in the header
- * right-cluster and the mobile menu. Reads/writes the shared AutoSyncTabs
+ * (full and collapsed), the mobile menu, and the mobile "On this page" bar. Reads/writes the shared AutoSyncTabs
  * localStorage key so the toggle and inline code tabs stay in sync, and on
  * language-specific pages navigates to the counterpart resolved at build time
  * (see util/language-switch.ts). Event-channel and key details are inline below.
@@ -11,6 +11,11 @@ import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-p
 import { getLanguageSwitchTarget, type LanguageSlug } from '../util/language-switch'
 import { getApiCounterpartMap } from '../util/api-counterparts'
 import { getBase, pathWithBase } from '../util/links'
+import {
+  sampleGuideLanguageFromPath,
+  sampleGuideSwitchPath,
+  sortSampleGuides,
+} from '../util/sample-guides'
 import typescriptIcon from '../assets/lang/typescript.svg?raw'
 import pythonIcon from '../assets/lang/python.svg?raw'
 
@@ -22,11 +27,27 @@ const apiCounterparts = getApiCounterpartMap(allDocs)
 const base = getBase()
 const rawPath = Astro.url.pathname
 const currentPath = base && rawPath.startsWith(base) ? rawPath.slice(base.length) || '/' : rawPath
+const sampleGuideLanguage = sampleGuideLanguageFromPath(rawPath)
+const sampleGuideSlug = sampleGuideLanguage
+  ? currentPath.replace(/^\/examples\//, '').replace(/\/$/, '')
+  : undefined
+const sampleGuides = sampleGuideLanguage ? sortSampleGuides(await getCollection('sampleGuides')) : []
+const currentSampleGuide = sampleGuideSlug
+  ? sampleGuides.find((guide) => guide.data.slug === sampleGuideSlug)
+  : undefined
 
 function switchHref(lang: LanguageSlug): string | undefined {
+  if (currentSampleGuide) {
+    const target = sampleGuideSwitchPath(sampleGuides, currentSampleGuide.data.slug, lang)
+    return target ? pathWithBase(target) : undefined
+  }
+
   const target = getLanguageSwitchTarget(currentPath, lang, docIds, apiCounterparts)
   return target ? pathWithBase(target) : undefined
 }
+
+const sampleGuideLanguageLabel =
+  sampleGuideLanguage === 'python' ? 'Python' : sampleGuideLanguage === 'typescript' ? 'TypeScript' : undefined
 
 // On single-language docs pages, disable the unavailable side.
 // `starlightRoute` is a getter that throws off non-Starlight pages — try/catch required.
@@ -40,8 +61,16 @@ const pageLanguages = routeData?.languages
   ? (Array.isArray(routeData.languages) ? routeData.languages : [routeData.languages]).map((l) => l.toLowerCase())
   : undefined
 const resolvedLanguages = pageLanguages?.length ? pageLanguages : undefined
-const pythonDisabled = resolvedLanguages !== undefined && !resolvedLanguages.includes('python')
-const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages.includes('typescript')
+const sampleLanguageAvailable = (language: LanguageSlug) =>
+  currentSampleGuide?.data.language === language ||
+  (currentSampleGuide !== undefined &&
+    sampleGuideSwitchPath(sampleGuides, currentSampleGuide.data.slug, language) !== undefined)
+const pythonDisabled = currentSampleGuide
+  ? !sampleLanguageAvailable('python')
+  : resolvedLanguages !== undefined && !resolvedLanguages.includes('python')
+const typescriptDisabled = currentSampleGuide
+  ? !sampleLanguageAvailable('typescript')
+  : resolvedLanguages !== undefined && !resolvedLanguages.includes('typescript')
 ---
 
 <language-toggle
@@ -80,7 +109,7 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
 <style>
   /* Icon pill toggle.
      One control with identical sizing everywhere it appears — the header, the
-     mobile menu, and the homepage code cards. Each option shows the language's
+     mobile menu, the "On this page" bar, and the homepage code cards. Each option shows the language's
      logo; the text label is kept for screen readers only. */
   .language-toggle {
     display: inline-flex;
@@ -158,7 +187,14 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
   }
 </style>
 
-<script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY, DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL }}>
+<script
+  is:inline
+  define:vars={{
+    STORAGE_KEY: LANGUAGE_STORAGE_KEY,
+    DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL,
+    PAGE_LANGUAGE: sampleGuideLanguageLabel,
+  }}
+>
   (function () {
     // Idempotency guard: multiple instances on one page, run logic once.
     if (window.__strandsLanguageToggleInit) return;
@@ -194,8 +230,9 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
       });
     }
 
-    /** On single-language pages, resolve to the available language (stored pref untouched). */
+    /** Sample routes win; other single-language pages resolve to their available language. */
     function effectiveLanguage(lang) {
+      if (PAGE_LANGUAGE) return PAGE_LANGUAGE;
       var enabled = Array.prototype.filter.call(
         document.querySelectorAll('language-toggle .lang-option'),
         function (btn) { return !btn.disabled; }
@@ -237,7 +274,7 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
       applying = false;
     }
 
-    var current = getPreference();
+    var current = PAGE_LANGUAGE || getPreference();
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
     } else {

@@ -1,0 +1,151 @@
+---
+title: 'Strands Decider adds four Gemma 4 models'
+date: 2026-10-15
+description: 'Four new Strands Decider models built on Gemma 4 let developers compare sizes for routing, guardrails, evaluation, and other agent decisions.'
+authors:
+  - tim-moreton
+  - strands-team
+tags:
+  - Open Source
+  - Announcement
+draft: false
+---
+
+You've probably noticed a wave of smaller, purpose-built models appearing
+across the industry. That's because not every agent decision needs a
+large, general-purpose LLM. For focused decisions like routing work, checking
+tool arguments, and applying guardrails, teams can choose a model size that
+fits their accuracy, latency, and deployment needs.
+
+That was the idea behind
+[Strands Decider 2B](/blog/introducing-strands-decider/), the small, open source
+decision model we released earlier this month. That first release led to a
+practical question: how much model do you need for the decisions in your
+workflow? Today, we're announcing E2B, E4B, 12B, and 26B-A4B, giving you four
+sizes within the Gemma 4 family to compare. The models and their evaluation
+artifacts are available now on
+[Hugging Face](https://huggingface.co/StrandsAgents).
+
+## Ask the same questions at every size
+
+All four models accept the same three question types, so you can switch sizes
+without rewriting the questions. Give the model some state, then ask:
+
+- `noul` returns the probability that the answer is true
+- `choice` selects one option and returns confidence and a probability for each option
+- `score` returns an expected value, confidence, and a probability for each ordered label
+
+## How do the models compare?
+
+| Model                                                                                  | Gemma 4 base                | JevBench v1 accuracy (231 tasks) | Brier | H100 median latency |
+| -------------------------------------------------------------------------------------- | --------------------------- | -------------------------------: | ----: | ------------------: |
+| [E2B](https://huggingface.co/StrandsAgents/strands-decider-E2B-gemma4-v1-2610)         | `google/gemma-4-E2B-it`     |                  180/231 (77.9%) | 0.313 |              102 ms |
+| [E4B](https://huggingface.co/StrandsAgents/strands-decider-E4B-gemma4-v1-2610)         | `google/gemma-4-E4B-it`     |                  187/231 (81.0%) | 0.243 |              139 ms |
+| [12B](https://huggingface.co/StrandsAgents/strands-decider-12B-gemma4-v1-2610)         | `google/gemma-4-12B-it`     |                  200/231 (86.6%) | 0.173 |              136 ms |
+| [26B-A4B](https://huggingface.co/StrandsAgents/strands-decider-26B-A4B-gemma4-v1-2610) | `google/gemma-4-26B-A4B-it` |                  207/231 (89.6%) | 0.162 |              245 ms |
+
+Gemma 4 uses `E` for effective parameters. The
+[26B-A4B mixture-of-experts model](https://huggingface.co/google/gemma-4-26B-A4B-it)
+activates about 4B of its 26B parameters during inference. E4B and 12B use
+different architectures. Their H100 medians in this release run were close:
+139 ms and 136 ms. Compare both on your own serving stack before drawing a
+general latency conclusion.
+
+<div style="overflow-x: auto;">
+  <div style="min-width: 640px;">
+
+![Scatter plot comparing JevBench accuracy and H100 median latency across the
+four Gemma 4 Decider
+models.](./resources/strands-decider/gemma4-accuracy-latency.svg)
+
+  </div>
+</div>
+
+_Figure 1: JevBench v1 accuracy and median latency per question on one NVIDIA
+H100 80 GB, as reported in the Strands Decider release results._
+
+We evaluated all four models on [JevBench](https://benchmarkheaven.com/jev-models)
+v1's 231 public tasks, using a 4,096-token window. JevBench now uses newer
+releases, so compare these numbers only with runs on the same task set. Higher
+accuracy and lower Brier scores are better. The
+[evaluation results](https://github.com/strands-labs/strands-decider/blob/0ac22a97e584f3ccf87cc9b8cc5fdbad57cdf534/evaluation/results.md#gemma-4-v1)
+and
+[Gemma 4 serving notes](https://github.com/strands-labs/strands-decider/blob/0ac22a97e584f3ccf87cc9b8cc5fdbad57cdf534/docs/inference.md#gemma-4-models)
+include the measurements and settings. Results vary with hardware, runtime,
+input length, and the number of questions per request.
+
+## Which model should you start with?
+
+Start by testing E2B on your workload. If it misses your target, try E4B and
+12B before 26B-A4B.
+
+On JevBench, 12B scored 86.6%, about three points behind 26B-A4B at 89.6%. Its
+median latency in this run was 136 ms, compared with 245 ms for 26B-A4B. It
+also matched or beat the larger model on several other release evaluation
+sets. Measure end-to-end latency on your serving stack.
+
+## What changed from the first release
+
+The Gemma 4 models keep the first release's three question types and
+LoRA-plus-pointer-head architecture. Each size has its own trained adapter and
+readout heads, while the loader downloads the corresponding Gemma base weights
+separately.
+
+The training set combines 123,339 rows from the
+[Hobson v21](https://huggingface.co/StrandsAgents/strands-decider-2B-hobson-v21)
+data recipe with 12,263 code-task rows. For each model, we trained three runs
+with different seeds and averaged their LoRA updates. At inference, each option
+score averages the three readout heads. We calibrated the resulting checkpoint.
+
+We used `Qwen/Qwen3.5-4B` output distributions as training targets when the
+teacher agreed with the gold label. Each model card lists the teacher, data
+inventory, training settings, provenance, and evaluation results.
+
+## Try a Gemma 4 Decider model
+
+Install version 0.2.0 or later of the `strands-decider` command line interface
+from PyPI. You'll need Python 3.10 or later:
+
+```bash
+pip install "strands-decider>=0.2.0"
+```
+
+Ask `choice` and `noul` questions about the same customer message:
+
+```bash
+strands-decider ask StrandsAgents/strands-decider-E4B-gemma4-v1-2610 \
+  --state "Help! My payouts have been failing for 3 days!" \
+  --choice "Which team should handle this?=billing,sales,retail" \
+  --noul "Does this convey urgency?"
+```
+
+Swap the model ID to run the same decision with E2B, 12B, or 26B-A4B. The
+[inference guide](https://github.com/strands-labs/strands-decider/blob/main/docs/inference.md)
+covers Python loading and the local HTTP server.
+
+## Validate the decision on your workload
+
+Build a test set from your own decisions before choosing a model or threshold.
+Results depend on how you frame the state and question, which options you
+offer, and where you set the action threshold.
+
+The models may return the same answer when you change the question but keep the
+state and options fixed. They also struggle with long documents that require
+several reasoning steps. We fit the calibration temperatures on short,
+held-out classification tasks, so test confidence thresholds on your own
+traffic.
+
+For decisions that can block actions or route sensitive work, track their inputs
+and outputs and review incorrect results.
+
+## Get the models and code
+
+Download the adapters and readout heads for all four models from the
+[StrandsAgents organization on Hugging Face](https://huggingface.co/StrandsAgents).
+Find the training and inference code in the
+[Strands Decider repository](https://github.com/strands-labs/strands-decider).
+The Strands Decider adapters, readout heads, and code use Apache 2.0; the data
+inventory records the source-specific terms.
+
+Try the family on one real agent decision and share the task, hardware, and
+results. We'll use those comparisons to choose what to train and measure next.

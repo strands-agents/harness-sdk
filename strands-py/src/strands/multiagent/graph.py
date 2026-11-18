@@ -19,6 +19,7 @@ import copy
 import inspect
 import logging
 import time
+import warnings
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeGuard, cast
@@ -26,8 +27,9 @@ from typing import Any, Protocol, TypeGuard, cast
 from opentelemetry import trace as trace_api
 
 from .._async import run_async
-from ..agent import Agent
+from ..agent import Agent, AgentResult
 from ..agent.base import AgentBase
+from ..agent.invocation_context import InvocationContext, _create_invocation_context, _unwrap_invocation_context
 from ..agent.state import AgentState
 from ..hooks.events import (
     AfterMultiAgentInvocationEvent,
@@ -52,7 +54,7 @@ from ..types._events import (
     MultiAgentResultEvent,
 )
 from ..types.content import ContentBlock, Messages
-from ..types.event_loop import Metrics, Usage
+from ..types.event_loop import _LIMIT_STOP_REASONS, Metrics, Usage, _limit_stop_message
 from ..types.multiagent import MultiAgentInput
 from ..types.session import decode_bytes_values, encode_bytes_values
 from ..types.traces import AttributeValue
@@ -494,9 +496,11 @@ class GraphBuilder:
         if invalid_entries:
             raise ValueError(f"Entry points not found in nodes: {invalid_entries}")
 
-        # Warn about potential infinite loops if no execution limits are set
         if self._max_node_executions is None and self._execution_timeout is None:
-            logger.warning("Graph without execution limits may run indefinitely if cycles exist")
+            warnings.warn(
+                "graph has no max_node_executions or execution_timeout set; execution is unbounded",
+                stacklevel=3,
+            )
 
 
 class Graph(MultiAgentBase):
@@ -565,6 +569,7 @@ class Graph(MultiAgentBase):
         self._resume_next_nodes: list[GraphNode] = []
         self._resume_from_session = False
         self._current_invocation_state: dict[str, Any] = {}
+        self._current_invocation_context = _create_invocation_context()
         self.id = id
 
         run_async(lambda: self.hooks.invoke_callbacks_async(MultiAgentInitializedEvent(self)))
@@ -584,7 +589,12 @@ class Graph(MultiAgentBase):
         self.hooks.add_callback(event_type, callback, order=order)
 
     def __call__(
-        self, task: MultiAgentInput, invocation_state: dict[str, Any] | None = None, **kwargs: Any
+        self,
+        task: MultiAgentInput,
+        invocation_state: dict[str, Any] | None = None,
+        *,
+        invocation_context: InvocationContext | None = None,
+        **kwargs: Any,
     ) -> GraphResult:
         """Invoke the graph synchronously.
 
@@ -592,15 +602,22 @@ class Graph(MultiAgentBase):
             task: The task to execute
             invocation_state: Additional state/context passed to underlying agents.
                 Defaults to None to avoid mutable default argument issues.
+            invocation_context: Runs the graph as a nested call in the request this handle belongs to,
+                so every node shares its limits and usage.
             **kwargs: Keyword arguments allowing backward compatible future changes.
         """
         if invocation_state is None:
             invocation_state = {}
 
-        return run_async(lambda: self.invoke_async(task, invocation_state))
+        return run_async(lambda: self.invoke_async(task, invocation_state, invocation_context=invocation_context))
 
     async def invoke_async(
-        self, task: MultiAgentInput, invocation_state: dict[str, Any] | None = None, **kwargs: Any
+        self,
+        task: MultiAgentInput,
+        invocation_state: dict[str, Any] | None = None,
+        *,
+        invocation_context: InvocationContext | None = None,
+        **kwargs: Any,
     ) -> GraphResult:
         """Invoke the graph asynchronously.
 
@@ -611,9 +628,11 @@ class Graph(MultiAgentBase):
             task: The task to execute
             invocation_state: Additional state/context passed to underlying agents.
                 Defaults to None to avoid mutable default argument issues.
+            invocation_context: Runs the graph as a nested call in the request this handle belongs to,
+                so every node shares its limits and usage.
             **kwargs: Keyword arguments allowing backward compatible future changes.
         """
-        events = self.stream_async(task, invocation_state, **kwargs)
+        events = self.stream_async(task, invocation_state, invocation_context=invocation_context, **kwargs)
         final_event = None
         async for event in events:
             final_event = event
@@ -624,7 +643,12 @@ class Graph(MultiAgentBase):
         return cast(GraphResult, final_event["result"])
 
     async def stream_async(
-        self, task: MultiAgentInput, invocation_state: dict[str, Any] | None = None, **kwargs: Any
+        self,
+        task: MultiAgentInput,
+        invocation_state: dict[str, Any] | None = None,
+        *,
+        invocation_context: InvocationContext | None = None,
+        **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream events during graph execution.
 
@@ -632,6 +656,8 @@ class Graph(MultiAgentBase):
             task: The task to execute
             invocation_state: Additional state/context passed to underlying agents.
                 Defaults to None to avoid mutable default argument issues.
+            invocation_context: Runs the graph as a nested call in the request this handle belongs to,
+                so every node shares its limits and usage. A fresh request starts when omitted.
             **kwargs: Keyword arguments allowing backward compatible future changes.
 
         Yields:
@@ -645,8 +671,13 @@ class Graph(MultiAgentBase):
             invocation_state = {}
 
         self._current_invocation_state = invocation_state
+        self._current_invocation_context = (
+            _unwrap_invocation_context(invocation_context) or _create_invocation_context()
+        )
 
-        await self.hooks.invoke_callbacks_async(BeforeMultiAgentInvocationEvent(self, invocation_state))
+        await self.hooks.invoke_callbacks_async(
+            BeforeMultiAgentInvocationEvent(self, invocation_state, invocation_context=self._current_invocation_context)
+        )
         self._interrupt_state.resume(task)
 
         logger.debug("task=<%s> | starting graph execution", task)
@@ -688,7 +719,9 @@ class Graph(MultiAgentBase):
                     yield event.as_dict()
 
                 # Set final status based on execution results
-                if self.state.failed_nodes:
+                if self.state.status == Status.INTERRUPTED:
+                    pass
+                elif self.state.failed_nodes:
                     self.state.status = Status.FAILED
                 elif self.state.status == Status.EXECUTING:
                     self.state.status = Status.COMPLETED
@@ -700,13 +733,29 @@ class Graph(MultiAgentBase):
                 self.state.status = Status.FAILED
                 raise
             finally:
+                # Before AfterMultiAgentInvocationEvent, so session managers persist the cleared state.
+                if self.state.status == Status.FAILED:
+                    self._clear_interrupts()
                 self.state.execution_time = self._commit_active_interval(self.state.execution_time)
-                await self.hooks.invoke_callbacks_async(AfterMultiAgentInvocationEvent(self, invocation_state))
+                await self.hooks.invoke_callbacks_async(
+                    AfterMultiAgentInvocationEvent(
+                        self, invocation_state, invocation_context=self._current_invocation_context
+                    )
+                )
                 self._resume_from_session = False
                 self._resume_next_nodes.clear()
 
             result = self._build_result(interrupts)
             yield MultiAgentResultEvent(result=result).as_dict()
+
+    def _clear_interrupts(self) -> None:
+        """Drop pending interrupts of this graph and of its node executors."""
+        for node in self.nodes.values():
+            if isinstance(node.executor, MultiAgentBase):
+                node.executor._clear_interrupts()
+            elif hasattr(node.executor, "_interrupt_state"):
+                node.executor._interrupt_state.deactivate()
+        super()._clear_interrupts()
 
     def _validate_graph(self, nodes: dict[str, GraphNode]) -> None:
         """Validate graph nodes for duplicate instances."""
@@ -738,6 +787,8 @@ class Graph(MultiAgentBase):
         node.execution_status = Status.INTERRUPTED
 
         self.state.status = Status.INTERRUPTED
+        # An interrupted node is not completed, including one interrupted on a revisit.
+        self.state.completed_nodes.discard(node)
         self.state.interrupted_nodes.add(node)
 
         self._interrupt_state.interrupts.update({interrupt.id: interrupt for interrupt in interrupts})
@@ -801,8 +852,6 @@ class Graph(MultiAgentBase):
             self._interrupt_state.deactivate()
 
             # Find newly ready nodes after batch execution
-            # We add all nodes in current batch as completed batch,
-            # because a failure would throw exception and code would not make it here
             newly_ready = self._find_newly_ready_nodes(current_batch)
 
             # Emit handoff event for batch transition if there are nodes to transition to
@@ -832,6 +881,10 @@ class Graph(MultiAgentBase):
             nodes = [node for node in nodes if node.execution_status == Status.INTERRUPTED]
 
         event_queue: asyncio.Queue[Any | None | Exception] = asyncio.Queue()
+
+        # Mark nodes DISPATCHED before scheduling so a serialize in the pre-EXECUTING window sees them as in-flight.
+        for node in nodes:
+            node.execution_status = Status.DISPATCHED
 
         # Start all node streams as independent tasks
         tasks = [asyncio.create_task(self._stream_node_to_queue(node, event_queue, invocation_state)) for node in nodes]
@@ -947,8 +1000,15 @@ class Graph(MultiAgentBase):
         """Find nodes that became ready after the last execution.
 
         Only evaluates destination nodes of outbound edges from the completed batch,
-        instead of iterating over all nodes in the graph.
+        instead of iterating over all nodes in the graph.  Failed nodes (e.g. a
+        cancelled agent) are excluded so they cannot nominate successors — their
+        downstream branch is pruned while sibling branches continue.
         """
+        # Strip failed/cancelled nodes so their outgoing edges are never walked.
+        completed_batch = [node for node in completed_batch if node.execution_status != Status.FAILED]
+        if not completed_batch:
+            return []
+
         # Collect unique candidate nodes reachable from the completed batch
         candidates = {edge.to_node for edge in self.edges if edge.from_node in completed_batch}
 
@@ -1018,7 +1078,9 @@ class Graph(MultiAgentBase):
             if isinstance(node.executor, MultiAgentBase):
                 # For nested multi-agent systems, stream their events and collect result
                 multi_agent_result = None
-                async for event in node.executor.stream_async(node_input, invocation_state):
+                async for event in node.executor.stream_async(
+                    node_input, invocation_state, invocation_context=self._current_invocation_context
+                ):
                     # Forward nested multi-agent events with node context
                     wrapped_event = MultiAgentNodeStreamEvent(node.node_id, event)
                     yield wrapped_event
@@ -1043,13 +1105,19 @@ class Graph(MultiAgentBase):
             elif isinstance(node.executor, AgentBase):
                 # For AgentBase implementations (Agent, A2AAgent, etc.), stream events and collect result
                 agent_response = None
-                async for event in node.executor.stream_async(node_input, invocation_state=invocation_state):
+                # Captured before stream_async's finally clears it.
+                node_cancel_signal_set = False
+                async for event in node.executor.stream_async(
+                    node_input, invocation_state=invocation_state, invocation_context=self._current_invocation_context
+                ):
                     # Forward agent events with node context
                     wrapped_event = MultiAgentNodeStreamEvent(node.node_id, event)
                     yield wrapped_event
                     # Capture the final result event
                     if "result" in event:
                         agent_response = event["result"]
+                        signal = getattr(node.executor, "cancel_signal", None)
+                        node_cancel_signal_set = signal is not None and signal.is_set()
 
                 # Use the captured result from streaming (no double execution)
                 if agent_response is None:
@@ -1065,11 +1133,26 @@ class Graph(MultiAgentBase):
                 # Handle stop_reason and interrupts (use getattr for AgentBase compatibility)
                 stop_reason = getattr(agent_response, "stop_reason", "end_turn")
                 interrupts = getattr(agent_response, "interrupts", None) or []
+                # Immediate cancel (signal set) is an abort → FAILED; the stop tool's deferred
+                # cancel never sets the signal and resolves as a normal completion.
+                if stop_reason == "cancelled":
+                    agent_status = Status.FAILED if node_cancel_signal_set else Status.COMPLETED
+                elif stop_reason == "interrupt":
+                    agent_status = Status.INTERRUPTED
+                else:
+                    agent_status = Status.COMPLETED
+
+                # A limit stop fails the node (keeping its usage) so an orchestrator never treats a
+                # truncated answer as complete.
+                node_outcome: AgentResult | Exception = agent_response
+                if stop_reason in _LIMIT_STOP_REASONS:
+                    agent_status = Status.FAILED
+                    node_outcome = Exception(_limit_stop_message(node.node_id, stop_reason))
 
                 node_result = NodeResult(
-                    result=agent_response,
+                    result=node_outcome,
                     execution_time=round((time.time() - start_time) * 1000),
-                    status=Status.INTERRUPTED if stop_reason == "interrupt" else Status.COMPLETED,
+                    status=agent_status,
                     accumulated_usage=usage,
                     accumulated_metrics=metrics,
                     execution_count=1,
@@ -1265,6 +1348,7 @@ class Graph(MultiAgentBase):
             edges=self.state.edges,
             entry_points=self.state.entry_points,
             interrupts=interrupts,
+            invocation_context=self._current_invocation_context,
         )
 
     def serialize_state(self) -> dict[str, Any]:
@@ -1295,9 +1379,10 @@ class Graph(MultiAgentBase):
         """Restore graph state from a session dict and prepare for execution.
 
         This method handles two scenarios:
-        1. If the graph execution ended (no next_nodes_to_execute, eg: Completed, or Failed with dead end nodes),
+        1. If the graph execution ended (no next_nodes_to_execute and no interrupted nodes, eg: Completed, or Failed
+           with dead end nodes),
         resets all nodes and graph state to allow re-execution from the beginning.
-        2. If the graph execution was interrupted mid-execution (has next_nodes_to_execute),
+        2. If the graph execution was interrupted mid-execution (has next_nodes_to_execute or interrupted nodes),
            restores the persisted state and prepares to resume execution from the next ready nodes.
 
         Args:
@@ -1308,7 +1393,7 @@ class Graph(MultiAgentBase):
             internal_state = payload["_internal_state"]
             self._interrupt_state = _InterruptState.from_dict(internal_state["interrupt_state"])
 
-        if not payload.get("next_nodes_to_execute"):
+        if not payload.get("next_nodes_to_execute") and not payload.get("interrupted_nodes"):
             # Reset all nodes
             for node in self.nodes.values():
                 node.reset_executor_state()
@@ -1354,11 +1439,12 @@ class Graph(MultiAgentBase):
         branch*, so a fan-in node stays not-ready while any parent that will still produce a result
         is outstanding. It has two seeds:
 
-        - In-flight nodes (``execution_status == EXECUTING``): serialize runs from the per-node
-          ``AfterNodeCallEvent`` while sibling nodes in the same parallel batch are still executing.
-          Their partial progress is not persisted, so they re-run on resume. This is the
-          authoritative in-flight signal, and it catches siblings with no completed ancestor (e.g.
-          two concurrent entry points feeding one join) that forward reachability alone would miss.
+        - In-flight nodes (``execution_status in (EXECUTING, DISPATCHED)``): serialize runs from the per-node
+          ``AfterNodeCallEvent`` while sibling nodes in the same parallel batch are still executing
+          or dispatched but not yet started. Their partial progress is not persisted, so they re-run
+          on resume. This is the authoritative in-flight signal, and it catches siblings with no
+          completed ancestor (e.g. two concurrent entry points feeding one join) that forward
+          reachability alone would miss.
         - Completed nodes: their traversable outgoing edges lead to nodes that will be scheduled
           next on resume.
 
@@ -1378,9 +1464,11 @@ class Graph(MultiAgentBase):
             The set of not-yet-completed nodes that will execute on resume — in-flight nodes plus
             everything reachable from the completed or in-flight frontier via traversable edges.
         """
-        executing_nodes = {node for node in self.nodes.values() if node.execution_status == Status.EXECUTING}
-        pending: set[GraphNode] = set(executing_nodes)
-        visited = completed_nodes | executing_nodes
+        in_flight_nodes = {
+            node for node in self.nodes.values() if node.execution_status in (Status.EXECUTING, Status.DISPATCHED)
+        }
+        pending: set[GraphNode] = set(in_flight_nodes)
+        visited = completed_nodes | in_flight_nodes
         frontier = list(visited)
         while frontier:
             source = frontier.pop()
@@ -1481,8 +1569,10 @@ class Graph(MultiAgentBase):
         for node in self.state.interrupted_nodes:
             node.execution_status = Status.INTERRUPTED
 
-        self.state.completed_nodes = set(
-            self.nodes[node_id] for node_id in (payload.get("completed_nodes") or []) if node_id in self.nodes
+        # An interrupted node is not completed, even if the payload lists it in both sets.
+        self.state.completed_nodes = (
+            set(self.nodes[node_id] for node_id in (payload.get("completed_nodes") or []) if node_id in self.nodes)
+            - self.state.interrupted_nodes
         )
         for node in self.state.completed_nodes:
             node.execution_status = Status.COMPLETED

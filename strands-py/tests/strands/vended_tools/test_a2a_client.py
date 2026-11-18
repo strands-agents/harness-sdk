@@ -25,7 +25,7 @@ _FAKE_CARD = {
 _FAKE_MESSAGE = {"role": "assistant", "content": [{"text": "Hello from agent"}]}
 
 _ENDPOINT = "https://agent.example.com"
-_ENDPOINTS: dict[str, ClientConfig | None] = {_ENDPOINT: None}
+_ENDPOINTS: list[str] = [_ENDPOINT]
 
 
 class _FakeAgentCard:
@@ -58,7 +58,7 @@ def fake_agent(monkeypatch):
 class TestAllowlist:
     @pytest.mark.asyncio
     async def test_rejects_endpoint_not_in_allowlist(self):
-        tool = make_a2a_client(allowed_endpoints={"https://a.example.com": None, "https://b.example.com": None})
+        tool = make_a2a_client(allowed_endpoints=["https://a.example.com", "https://b.example.com"])
         with pytest.raises(A2AClientError, match="not in the allowed endpoints list") as exc_info:
             await tool(operation="discover", endpoint="https://evil.example.com")
         assert "https://a.example.com" in str(exc_info.value)
@@ -84,19 +84,6 @@ class TestDiscover:
         with pytest.raises(A2AClientError, match="Failed to discover agent card") as exc_info:
             await tool(operation="discover", endpoint=_ENDPOINT)
         assert exc_info.value.__cause__ is original
-
-    @pytest.mark.asyncio
-    async def test_rejects_oversized_agent_card(self, monkeypatch):
-        class _BigCardAgent(_FakeA2AAgent):
-            async def get_agent_card(self) -> _FakeAgentCard:
-                card = _FakeAgentCard()
-                card.model_dump = lambda **_: {"data": "x" * 1000}
-                return card
-
-        monkeypatch.setattr(a2a_client_module, "A2AAgent", _BigCardAgent)
-        tool = make_a2a_client(allowed_endpoints=_ENDPOINTS, max_bytes=100)
-        with pytest.raises(A2AClientError, match="exceeds max_bytes limit"):
-            await tool(operation="discover", endpoint=_ENDPOINT)
 
 
 class TestSendMessage:
@@ -155,35 +142,26 @@ class TestSendMessage:
             await tool(operation="send_message", endpoint=_ENDPOINT, message="Hello")
         assert exc_info.value.__cause__ is original
 
-    @pytest.mark.asyncio
-    async def test_rejects_oversized_response(self, monkeypatch):
-        class _BigResponseAgent(_FakeA2AAgent):
-            async def invoke_async(self, prompt: str) -> _FakeAgentResult:
-                result = _FakeAgentResult()
-                result.message = {"role": "assistant", "content": [{"text": "x" * 1000}]}
-                return result
-
-        monkeypatch.setattr(a2a_client_module, "A2AAgent", _BigResponseAgent)
-        tool = make_a2a_client(allowed_endpoints=_ENDPOINTS, max_bytes=100)
-        with pytest.raises(A2AClientError, match="exceeds max_bytes limit"):
-            await tool(operation="send_message", endpoint=_ENDPOINT, message="Hello")
-
 
 class TestFactory:
     def test_empty_allowed_endpoints_raises(self):
         with pytest.raises(ValueError, match="allowed_endpoints must contain at least one endpoint"):
-            make_a2a_client(allowed_endpoints={})
+            make_a2a_client(allowed_endpoints=[])
 
-    def test_non_positive_max_bytes_raises(self):
-        with pytest.raises(ValueError, match="max_bytes must be positive"):
-            make_a2a_client(allowed_endpoints=_ENDPOINTS, max_bytes=0)
+    def test_non_string_endpoint_raises(self):
+        with pytest.raises(TypeError, match="Each allowed endpoint must be a string URL"):
+            make_a2a_client(allowed_endpoints=[123])
+
+    def test_non_string_tuple_endpoint_raises(self):
+        with pytest.raises(TypeError, match="Each allowed endpoint must be a string URL"):
+            make_a2a_client(allowed_endpoints=[(123, ClientConfig())])
 
     def test_custom_name(self):
         tool = make_a2a_client(name="my_agent", allowed_endpoints=_ENDPOINTS)
         assert tool.tool_name == "my_agent"
 
     def test_description_includes_endpoints(self):
-        tool = make_a2a_client(allowed_endpoints={"https://a.example.com": None, "https://b.example.com": None})
+        tool = make_a2a_client(allowed_endpoints=["https://a.example.com", "https://b.example.com"])
         desc = tool.tool_spec["description"]
         assert "https://a.example.com" in desc
         assert "https://b.example.com" in desc
@@ -206,7 +184,7 @@ class TestFactory:
 
         monkeypatch.setattr(a2a_client_module, "A2AAgent", _CapturingAgent)
         config = ClientConfig()
-        tool = make_a2a_client(allowed_endpoints={_ENDPOINT: config})
+        tool = make_a2a_client(allowed_endpoints=[(_ENDPOINT, config)])
         await tool(operation="discover", endpoint=_ENDPOINT)
         assert seen_config[0] is config
 

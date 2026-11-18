@@ -1,0 +1,40 @@
+{
+  "name": "strands",
+  "version": "0.2.0",
+  "description": "Build, extend, evaluate, and migrate applications with Strands Agents in Python or TypeScript.",
+  "author": {
+    "name": "Strands Agents",
+    "url": "https://github.com/strands-agents"
+  },
+  "homepage": "https://strandsagents.com/docs/user-guide/build-with-ai/",
+  "repository": "https://github.com/strands-agents/harness-sdk",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agents",
+    "agent-sdk",
+    "mcp",
+    "python",
+    "typescript"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Strands Agents",
+    "shortDescription": "Build agents with Strands",
+    "longDescription": "Choose Strands for an agent loop, scaffold Python or TypeScript agents, add tools or MCP servers, integrate with web frameworks, and migrate LangGraph applications.",
+    "developerName": "Strands Agents",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://strandsagents.com",
+    "supportURL": "https://github.com/strands-agents/harness-sdk/issues",
+    "privacyPolicyURL": "https://aws.amazon.com/privacy/",
+    "termsOfServiceURL": "https://aws.amazon.com/terms/",
+    "defaultPrompt": [
+      "Help me choose and build an agent with Strands",
+      "Add a Strands agent to this application",
+      "Migrate this agent loop to Strands"
+    ]
+  }
+}

@@ -10,7 +10,7 @@
 import { Sandbox } from './base.js'
 import type { ExecuteOptions } from './base.js'
 import { ENV_KEY_PATTERN, LANGUAGE_PATTERN, shellQuote } from './constants.js'
-import { SandboxPathNotFoundError } from './errors.js'
+import { SandboxIsADirectoryError, SandboxPathNotFoundError, SandboxPermissionError } from './errors.js'
 import type { ExecutionResult, FileInfo, StreamChunk } from './types.js'
 
 /**
@@ -77,7 +77,24 @@ export abstract class PosixShellSandbox extends Sandbox {
   }
 
   async readFile(path: string): Promise<Uint8Array> {
-    const result = await this.execute(`base64 < ${shellQuote(path)}`)
+    const quoted = shellQuote(path)
+    // Locale-independent exit codes: 77 = missing, 78 = directory, 79 = permission denied. `test -e` is also
+    // false under an unsearchable ancestor, so check the deepest existing one. The braces keep a backend's
+    // `cd ... &&` prefix out of the `||`.
+    const result = await this.execute(
+      `{ test -e ${quoted} || { p=${quoted}; while p=$(dirname -- "$p"); ! test -d "$p"; do :; done; ` +
+        `test -x "$p" || exit 79; exit 77; }; ` +
+        `test -r ${quoted} || exit 79; test -d ${quoted} && exit 78; base64 < ${quoted}; }`
+    )
+    if (result.exitCode === 77) {
+      throw new SandboxPathNotFoundError(path)
+    }
+    if (result.exitCode === 78) {
+      throw new SandboxIsADirectoryError(path)
+    }
+    if (result.exitCode === 79) {
+      throw new SandboxPermissionError(path)
+    }
     if (result.exitCode !== 0) {
       throw new Error(result.stderr || `Failed to read file: ${path}`)
     }

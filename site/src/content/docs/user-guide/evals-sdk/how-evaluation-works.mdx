@@ -5,53 +5,69 @@ sidebar:
   label: "How evaluation works"
 ---
 
-Before you wire up scorers, it helps to hold the shape of an evaluation in your
-head. Strands Evals is built from four pieces that fit together the same way every
-time: an experiment groups the cases you want to test, a task turns each case into
-an agent run, evaluators score what the run produced, and detectors explain why a
-run went wrong. Once you can name those four, every page in this section is a
-detail of one of them.
+import Diagram from '@components/Diagram.astro'
+
+Every evaluation in Strands Evals is built from the same parts. An experiment holds
+the cases you want to test. For each case, a task runs your agent and evaluators
+score the result. Optionally, detectors read failed runs and explain what went
+wrong. The rest of this section covers each part in detail.
 
 ## What an evaluation is made of
 
-An **experiment** is the unit you run. It holds a list of cases and the evaluators
-you want to apply to each one.
+An **experiment** is what you run. It holds a list of cases and the evaluators to apply
+to each one, and produces a report with every case's scores.
 
-A **case** is one input paired with what you expect back. It carries the prompt to
-send, an optional `expected_output` to compare against, and metadata you can filter
-and group by later.
+A **case** describes one test. It holds the input to send to your agent, plus
+optional fields that evaluators compare against, such as `expected_output`,
+`expected_trajectory`, or `expected_assertion`. You can also attach metadata to
+filter and group results later.
 
-A **task** turns a case into a result. It runs your agent (or any function) on the
-case's input and returns the output, and optionally the trajectory: the ordered
-record of the model responses and tool calls the agent produced along the way. The
-[`@eval_task` decorator](how-to/eval_task.md) handles the wiring so your task can
-just return an `Agent`.
+A **task** is a function that runs your agent on a case's input and returns the
+result. The result always includes the output and can also include a trajectory, a
+record of what the agent did along the way. A trajectory takes one of two forms: a
+list you build yourself, such as the names of the tools called, or a `Session`, the
+full trace of model and tool calls. With the
+[`@eval_task` decorator](how-to/eval_task.md), your task can simply return an
+`Agent`. Pass it a `TracedHandler` to capture a `Session` as well (see
+[Collecting traces](how-to/eval_task.md#collecting-traces-with-tracedhandler)).
 
-An **evaluator** scores one result. It takes the output, or the whole trajectory,
-and returns a score, a pass or fail, and the reasoning behind the call. Some
-evaluators run a model as the judge; others are plain code (see
+An **evaluator** scores one case's result and returns a score, a pass or fail, and
+its reasoning. Most evaluators use a model as a judge; pass `model=` to use a
+different one than the default. Others are plain code (see
 [Deterministic evaluators](evaluators/deterministic_evaluators.md)).
 
-A **detector** works the other direction. Instead of scoring against a bar, it
-reads a run that failed and tells you what broke and why.
+A **detector** explains failures instead of scoring them. When you turn on diagnosis
+with `Experiment(diagnosis_config=...)`, detectors read the `Session` of each failing
+case and report what went wrong and why (see [Diagnosis](detectors/diagnosis.md)).
 
-## The three levels an evaluator scores at
+## The levels an evaluator scores at
 
-Evaluators differ in how much of a run they look at. Each one operates at one of
-three levels, and picking the right level matters as much as picking the right
-check.
+Evaluators differ in how much of a run they judge. Output-level evaluators read what
+your task returns directly: the output, plus a list trajectory or interactions if the
+evaluator uses them. Every other built-in evaluator reads a `Session`, and its level
+decides which slice of that `Session` it judges.
 
-| Level | Scope | Answers |
-|-------|-------|---------|
-| OUTPUT_LEVEL | A single response | Was this one answer good? |
-| TRACE_LEVEL | A single turn | Was this turn correct, on topic, and safe? |
-| SESSION_LEVEL | A full conversation | Did the agent reach the user's goal end to end? |
+A `Session` holds one trace per agent invocation (a turn), and each trace holds the
+spans for that turn's model calls and tool executions.
 
-An output-level check like `OutputEvaluator` needs nothing but the final text. A
-session-level check like `GoalSuccessRateEvaluator` needs the full trajectory,
-which is why trajectory-aware tasks collect spans. When you combine evaluators in
-one experiment, you are usually mixing levels on purpose: a fast output check plus
-a trajectory check that reads the whole run. The
+| Level | Judges | Example |
+|-------|--------|---------|
+| Output | The final output | `OutputEvaluator` |
+| `TOOL_LEVEL` | Each tool call, in context | `ToolSelectionAccuracyEvaluator` |
+| `TRACE_LEVEL` | The latest turn, in context | `HelpfulnessEvaluator` |
+| `SESSION_LEVEL` | The whole conversation | `GoalSuccessRateEvaluator` |
+
+Output is a concept, not a setting: output-level evaluators leave `evaluation_level`
+unset. `TOOL_LEVEL`, `TRACE_LEVEL`, and `SESSION_LEVEL` are values of the
+`EvaluationLevel` enum. A tool-level evaluator returns one result per tool call, so a
+case passes only if every call passes, and its score is the average.
+
+Tool-, trace-, and session-level evaluators need your task to return a `Session`.
+Decorate the task with `@eval_task(TracedHandler())` to collect one. Without it,
+these evaluators fail the case with a score of 0 and an `Evaluator error` reason.
+
+When you combine evaluators in one experiment, you usually mix levels on purpose: a
+fast output check plus a check that reads the whole run. The
 [evaluators overview](evaluators/index.md) lists every built-in evaluator with its
 level.
 
@@ -64,23 +80,23 @@ you one turn; a real agent faces a back-and-forth. A [simulator](simulators/inde
 plays the user, or stands in for a tool the agent calls, so you can score
 multi-turn behavior without a human in the loop.
 
-**Detectors** run after a case fails. An evaluator tells you a run scored 0.2; a
-[detector](detectors/index.md) reads that run's trace, finds the span where things
-went wrong, and proposes a root cause. Scoring tells you *whether* a run failed;
-diagnosis tells you *why*.
+**Detectors** explain failures. An evaluator tells you a run scored 0.2; a
+[detector](detectors/index.md) reads that run's `Session`, finds the span where
+things went wrong, and proposes a root cause. Detectors run only when you pass a
+`DiagnosisConfig` to the experiment. By default they diagnose failing cases; set
+`trigger=DiagnosisTrigger.ALWAYS` to diagnose every case. Scoring tells you *whether*
+a run failed; diagnosis tells you *why*.
 
 ## How it fits together
 
 For a single case, the flow runs left to right: the task produces output and a
-trajectory, evaluators score them, and detectors diagnose any failures.
+trajectory, evaluators score them, and, if diagnosis is on, detectors diagnose the
+case when it fails.
 
-```mermaid
-flowchart LR
-    A[Cases] --> B[Task runs the agent]
-    B --> C[Output and trajectory]
-    C --> D[Evaluators score]
-    C --> E[Detectors diagnose failures]
-```
+<Diagram
+  name="evals-case-flow"
+  alt="How one case flows through an experiment, which repeats it for every case. The case (an input and what you expect back) goes to the task, which runs your agent. The task's result (its output and, optionally, its trajectory) goes to the evaluators, which score it. When a case fails, the optional detectors read the run's Session and diagnose why it failed."
+/>
 
 The experiment repeats this for every case, then aggregates the scores into a
 report you can print, save, and compare against a later run.

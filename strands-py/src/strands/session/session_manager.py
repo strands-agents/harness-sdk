@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
-from ..experimental.bidi.hooks import BidiAgentStopEvent
 from ..hooks.events import (
     AfterInvocationEvent,
     AfterMultiAgentInvocationEvent,
@@ -37,8 +36,7 @@ class SessionManager(HookProvider, ABC, Generic[_SessionAgentT]):
     they are changed. The different methods introduced in this class are called at important lifecycle events
     for an agent, and should be persisted in the session.
 
-    The agent type defaults to Agent. Managers supporting both Agent and BidiAgent
-    implement SessionManager[LocalAgent].
+    The agent type defaults to Agent.
     """
 
     session_id: str
@@ -62,11 +60,14 @@ class SessionManager(HookProvider, ABC, Generic[_SessionAgentT]):
         registry.add_callback(AfterNodeCallEvent, lambda event: self.sync_multi_agent(event.source))
         registry.add_callback(AfterMultiAgentInvocationEvent, lambda event: self.sync_multi_agent(event.source))
 
-        registry.add_callback(BidiAgentStopEvent, lambda event: self.sync_agent(event.agent))
-
     @abstractmethod
     def redact_latest_message(self, redact_message: Message, agent: _SessionAgentT, **kwargs: Any) -> None:
-        """Redact the message most recently appended to the agent in the session.
+        """Redact the agent's last user message in the session.
+
+        The message is not necessarily the one most recently appended to the session, so implementations
+        should locate the stored record by ``redact_message``'s identity or ``tracking_id``. When no stored
+        record matches, they should not overwrite a record with a different role: ``RepositorySessionManager``
+        falls back to the newest record only if its role matches, and otherwise stores nothing.
 
         Args:
             redact_message: New message to use that contains the redact content

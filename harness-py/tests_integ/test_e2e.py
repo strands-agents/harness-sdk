@@ -159,7 +159,8 @@ async def test_session_persists_with_minted_id(work_dir: Path, build_agent: Buil
     agent = build_agent(session={"dir": str(session_dir)})
     await agent.invoke_async(f"{_TESTING} Say hi in one word.")
     assert list(session_dir.rglob("snapshot_latest.json"))
-    minted = [path.name for path in session_dir.rglob("*") if path.is_dir() and re.fullmatch(r"[0-9a-f]{8}", path.name)]
+    # Sessions live under the ``session/`` namespace; the stash repeats the id under ``context/``.
+    minted = [path.name for path in (session_dir / "session").iterdir() if re.fullmatch(r"[0-9a-f]{8}", path.name)]
     assert len(minted) == 1
 
 

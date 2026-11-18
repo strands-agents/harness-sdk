@@ -2,7 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
 import { SpanStatusCode, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock, CachePointBlock } from '../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  CachePointBlock,
+  InjectedBlock,
+  SummaryBlock,
+  OffloadedBlock,
+} from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
 
@@ -193,6 +202,26 @@ describe('Tracer', () => {
       ])
     })
 
+    it('records an offloaded block as the text the model receives', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+
+      tracer.startAgentSpan({
+        messages: [
+          new Message({
+            role: 'user',
+            content: [new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })],
+          }),
+        ],
+        agentName: 'test-agent',
+      })
+
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      expect(JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))).toStrictEqual([
+        { role: 'user', parts: [{ type: 'text', content: '[Dropped] [ref: tu-1]' }] },
+      ])
+    })
+
     it('uses gen_ai.provider.name with latest conventions', () => {
       vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
       const tracer = new Tracer()
@@ -333,6 +362,17 @@ describe('Tracer', () => {
       tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')] })
 
       expect(mockSpan.getEvents('gen_ai.user.message')).toHaveLength(1)
+    })
+
+    // Regression test for #4666: traceAttributes were missing from chat spans.
+    it('includes constructor-level trace attributes, overriding standard ones', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1', 'gen_ai.request.model': 'override' })
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')], modelId: 'claude-3' })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
+      expect(options.attributes['gen_ai.request.model']).toBe('override')
     })
   })
 
@@ -563,6 +603,19 @@ describe('Tracer', () => {
       })
     })
 
+    // Regression test for #4666: traceAttributes were missing from execute_tool spans.
+    it('includes constructor-level trace attributes', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1' })
+
+      tracer.startToolCallSpan({
+        tool: { name: 'calculator', toolUseId: 'call-1', input: { expr: '2+2' } },
+      })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
+      expect(options.attributes['gen_ai.tool.name']).toBe('calculator')
+    })
+
     it('adds stable tool message event with serialized input', () => {
       const tracer = new Tracer()
 
@@ -728,6 +781,17 @@ describe('Tracer', () => {
       expect(options.attributes['agent_loop.cycle_id']).toBe('cycle-42')
     })
 
+    // Regression test for #4666: traceAttributes were missing from cycle spans.
+    it('includes constructor-level trace attributes', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1' })
+
+      tracer.startAgentLoopSpan({ cycleId: 'cycle-42', messages: [] })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
+      expect(options.attributes['agent_loop.cycle_id']).toBe('cycle-42')
+    })
+
     it('adds message events to loop span', () => {
       const tracer = new Tracer()
 
@@ -877,6 +941,36 @@ describe('Tracer', () => {
       const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
       expect(parsed[0].parts[0].type).toBe('tool_call_response')
       expect(parsed[0].parts[0].id).toBe('tu-1')
+    })
+
+    it('maps injected blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hi'), new InjectedBlock({ text: 'cwd: /repo', source: 'env' })],
+        }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([
+        { type: 'text', content: 'Hi' },
+        { type: 'text', content: 'cwd: /repo' },
+      ])
+    })
+
+    it('maps summary blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({ role: 'assistant', content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([{ type: 'text', content: 'compacted' }])
     })
 
     it('serializes text block content in stable convention events', () => {

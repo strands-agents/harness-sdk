@@ -46,7 +46,7 @@ pytest               # run the test suite
 
 ## Conventions
 
-- **Imports at the top of the file**, never inline within a function, except where a heavy optional dependency must stay lazy. Model providers are imported inside their builder functions in `models.py` so that installing `strands-harness` without a given provider extra still works; keep that pattern. Core `strands` deps (session manager, offloader, skills plugin) are always available, so they're imported at the top of `agent.py` like everything else.
+- **Imports at the top of the file**, never inline within a function, except where a heavy optional dependency must stay lazy. Model providers are imported inside their builder functions in `models.py` so that installing `strands-harness` without a given provider extra still works; keep that pattern. Core `strands` deps (session manager, skills plugin) are always available, so they're imported at the top of `agent.py` like everything else.
 - **Explicit-wins passthrough.** `create_harness(**agent_kwargs)` forwards any unrecognized keyword straight to `Agent`, and an explicit value always takes precedence over the harness default it corresponds to (e.g. a passed `session_manager`, `memory_manager`, or `system_prompt` wins). Preserve this when adding options.
 - **Provider effort config.** `models.py` maps one `effort` level to each provider's own request fields and validates it against that provider's supported levels, so an unsupported level fails in the harness rather than as a downstream request error. Keep the validation local.
 - **Ruff** governs style (line length 120; `E`, `F`, `I`, `UP`, `B`). Config is package-local in `pyproject.toml`, with a shared copy at the repo root.

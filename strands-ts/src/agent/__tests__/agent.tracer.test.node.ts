@@ -1,4 +1,6 @@
-import { describe, expect, it, vi, beforeEach, type MockInstance } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi, beforeEach, type MockInstance } from 'vitest'
+import { context, propagation } from '@opentelemetry/api'
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { Agent } from '../agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
@@ -10,7 +12,8 @@ import {
   StructuredOutputError,
   Message,
 } from '../../index.js'
-import { AfterToolsEvent, BeforeToolsEvent } from '../../hooks/events.js'
+import { AfterInvocationEvent, AfterToolsEvent, BeforeToolsEvent } from '../../hooks/events.js'
+import type { Tool } from '../../tools/tool.js'
 import { InvokeModelStage } from '../../middleware/stages.js'
 import { Tracer } from '../../telemetry/tracer.js'
 import { z } from 'zod'
@@ -937,6 +940,129 @@ describe('Agent tracer integration', () => {
         { mock: 'loopSpan' },
         expect.objectContaining({ error: expect.any(MaxTokensError) })
       )
+    })
+  })
+  describe('baggage propagation', () => {
+    const contextManager = new AsyncLocalStorageContextManager()
+
+    beforeAll(() => {
+      context.setGlobalContextManager(contextManager.enable())
+    })
+
+    afterAll(() => {
+      context.disable()
+    })
+
+    const tenant = (): string | undefined => propagation.getActiveBaggage()?.getEntry('tenant.id')?.value
+
+    // Tool that awaits `body` before returning an empty success result.
+    function asyncTool(name: string, body: () => Promise<void>): Tool {
+      return createMockTool(name, (ctx) =>
+        // eslint-disable-next-line require-yield
+        (async function* () {
+          await body()
+          return new ToolResultBlock({ toolUseId: ctx.toolUse.toolUseId, status: 'success', content: [] })
+        })()
+      )
+    }
+
+    // Agent that calls `tool` once and then ends its turn.
+    function toolAgent(tool: Tool, baggageAttributes?: Record<string, string>): Agent {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: tool.name, toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      return new Agent({ model, tools: [tool], printer: false, ...(baggageAttributes && { baggageAttributes }) })
+    }
+
+    it('defaults to an empty map and leaves the active baggage untouched', async () => {
+      let seen: string | undefined = 'unset'
+      const agent = toolAgent(createMockTool('probe', () => void (seen = tenant())))
+
+      await agent.invoke('Hi')
+
+      expect(agent.baggageAttributes).toStrictEqual({})
+      expect(seen).toBeUndefined()
+    })
+
+    it('is current inside tools and when the agent span starts, merged with ambient baggage', async () => {
+      let seen: Record<string, string | undefined> = {}
+      let atSpanStart: string | undefined
+      const agent = toolAgent(
+        createMockTool('probe', () => {
+          const baggage = propagation.getActiveBaggage()
+          seen = { tenant: baggage?.getEntry('tenant.id')?.value, ambient: baggage?.getEntry('ambient')?.value }
+        }),
+        { 'tenant.id': 'acme' }
+      )
+      // BaggageSpanProcessor copies the baggage active at span start onto the span.
+      getLatestTracer().startAgentSpan.mockImplementation(() => {
+        atSpanStart = tenant()
+        return { mock: 'agentSpan' }
+      })
+      const ambient = propagation.setBaggage(context.active(), propagation.createBaggage({ ambient: { value: 'up' } }))
+
+      await context.with(ambient, () => agent.invoke('Hi'))
+
+      expect(seen).toStrictEqual({ tenant: 'acme', ambient: 'up' })
+      expect(atSpanStart).toBe('acme')
+      expect(tenant()).toBeUndefined()
+    })
+
+    it('isolates baggage between interleaved concurrent agents', async () => {
+      const seen: Record<string, (string | undefined)[]> = { a: [], b: [] }
+      // Each tool samples baggage before and after yielding to the other agent.
+      const sampler = (name: 'a' | 'b'): Tool =>
+        asyncTool(`tool_${name}`, async () => {
+          seen[name]!.push(tenant())
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          seen[name]!.push(tenant())
+        })
+
+      await Promise.all([
+        toolAgent(sampler('a'), { 'tenant.id': 'acme' }).invoke('Hi'),
+        toolAgent(sampler('b'), { 'tenant.id': 'globex' }).invoke('Hi'),
+      ])
+
+      expect(seen).toStrictEqual({ a: ['acme', 'acme'], b: ['globex', 'globex'] })
+    })
+
+    it('lets a nested agent override baggage for its scope and restores the outer value after', async () => {
+      const seen: (string | undefined)[] = []
+      const inner = toolAgent(
+        createMockTool('inner_probe', () => void seen.push(tenant())),
+        { 'tenant.id': 'inner-corp' }
+      )
+      const outer = toolAgent(
+        asyncTool('outer_probe', async () => {
+          seen.push(tenant())
+          await inner.invoke('Hi')
+          seen.push(tenant())
+        }),
+        { 'tenant.id': 'outer-corp' }
+      )
+
+      await outer.invoke('Hi')
+
+      expect(seen).toStrictEqual(['outer-corp', 'inner-corp', 'outer-corp'])
+    })
+
+    it.each([
+      ['consumer throws', (stream: AsyncGenerator) => stream.throw(new Error('boom')).catch(() => {})],
+      ['consumer breaks early', (stream: AsyncGenerator) => stream.return(undefined)],
+    ])('keeps baggage current for invocation cleanup when the %s', async (_, stop) => {
+      let seen: string | undefined
+      const agent = toolAgent(
+        createMockTool('probe', () => {}),
+        { 'tenant.id': 'acme' }
+      )
+      agent.addHook(AfterInvocationEvent, () => void (seen = tenant()))
+
+      // Stop inside the model call so the invocation's cleanup (and AfterInvocationEvent) runs.
+      const stream = agent.stream('Hi')
+      while ((await stream.next()).value?.type !== 'beforeModelCallEvent');
+      await stop(stream)
+
+      expect(seen).toBe('acme')
     })
   })
 })

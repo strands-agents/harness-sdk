@@ -27,7 +27,9 @@ from pydoc_markdown.contrib.processors.smart import SmartProcessor
 from pydoc_markdown.contrib.renderers.markdown import MarkdownRenderer
 from pydoc_markdown.contrib.source_linkers.git import GitSourceLinker
 
-BIDI_PACKAGE = "strands.experimental.bidi"
+BIDI_PACKAGE = "strands.bidi"
+BIDI_PUBLIC_MODULES = ("agent", "hooks", "io", "models", "types")
+DEPRECATED_BIDI_PACKAGE = "strands.experimental.bidi"
 
 
 def _read_module_tree(source_root: Path, module_name: str) -> ast.Module:
@@ -113,11 +115,9 @@ def _read_public_sources(source_root: Path, module_name: str) -> dict[str, set[s
 
 
 def _read_bidi_public_api(source_root: Path) -> dict[str, dict[str, set[str]]]:
-    package_tree = _read_module_tree(source_root, BIDI_PACKAGE)
-    owner_names = _read_all_exports(package_tree, BIDI_PACKAGE)
     return {
         f"{BIDI_PACKAGE}.{owner_name}": _read_public_sources(source_root, f"{BIDI_PACKAGE}.{owner_name}")
-        for owner_name in owner_names
+        for owner_name in BIDI_PUBLIC_MODULES
     }
 
 
@@ -207,6 +207,9 @@ def generate_docs():
     # Write each module to a separate file
     for module in modules:
         module_name = module.name
+
+        if module_name == DEPRECATED_BIDI_PACKAGE or module_name.startswith(f"{DEPRECATED_BIDI_PACKAGE}."):
+            continue
 
         if module_name in bidi_public_api:
             continue

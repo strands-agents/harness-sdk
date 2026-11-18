@@ -10,6 +10,8 @@ import { currentProduct } from '../../util/current-product'
 const route = Astro.locals.starlightRoute
 const title = route.entry.data.title as string
 const currentPath = Astro.url.pathname
+// Dotted API module names break after "." and "_" rather than mid-word.
+const titleParts = /\s/.test(title) ? [title] : title.split(/(?<=[._])/)
 
 const product = currentProduct(currentPath)
 const onHub = !!product && currentPath === product.href
@@ -37,7 +39,7 @@ const ctaHref =
       )}
     </div>
   ) : (
-    <h1 id="_top">{title}</h1>
+    <h1 id="_top">{titleParts.map((part, i) => (i ? [<wbr />, part] : part))}</h1>
   )
 }
 

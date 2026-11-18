@@ -1,10 +1,12 @@
-import { Command } from 'commander'
 import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
+import { Command } from 'commander'
 
-import { readCliVersion } from '../tui/package-version.js'
+import { readCliVersion } from '../package-version.js'
+import { isRecord } from '../values.js'
 
 export interface ParsedArgs {
+  update: boolean
   request: string | undefined
   oneShot: boolean
   acpServer: boolean
@@ -34,6 +36,10 @@ export type CliRunMode = 'acp' | 'ink' | 'plain' | 'print'
 const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'interventions'] as const
 
 export function parseArgs(argv: string[]): ParsedArgs {
+  if (argv[0] === 'update') {
+    return parseUpdateArgs(argv.slice(1))
+  }
+
   const collect = (value: string, previous: string[]): string[] => [...previous, value]
   const program = new Command()
   program
@@ -68,6 +74,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     .option('--mcp-config <path>', 'additional MCP configuration file (repeatable)', collect, [])
     .allowExcessArguments(false)
     .exitOverride()
+    .addHelpText('after', '\nCommands:\n  update                    update the globally installed CLI\n')
 
   program.parse(argv, { from: 'user' })
   const opts = program.opts()
@@ -75,6 +82,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     program.error('error: pass the initial request either positionally or with --prompt, not both.')
   }
   return {
+    update: false,
     request: opts.prompt ?? program.args[0],
     oneShot: Boolean(opts.print),
     acpServer: Boolean(opts.acpServer),
@@ -100,6 +108,42 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 }
 
+function parseUpdateArgs(argv: string[]): ParsedArgs {
+  const program = new Command()
+  program
+    .name('strands update')
+    .description('Update the globally installed Strands CLI.')
+    .allowExcessArguments(false)
+    .exitOverride()
+    .parse(argv, { from: 'user' })
+
+  return {
+    update: true,
+    request: undefined,
+    oneShot: false,
+    acpServer: false,
+    setup: false,
+    agent: undefined,
+    configSet: [],
+    envFiles: [],
+    name: undefined,
+    description: undefined,
+    model: undefined,
+    effort: undefined,
+    instructions: undefined,
+    builtinTools: undefined,
+    builtinPlugins: undefined,
+    caching: undefined,
+    contextManager: undefined,
+    session: undefined,
+    sessionId: undefined,
+    skills: undefined,
+    memory: undefined,
+    interventions: undefined,
+    mcpConfig: [],
+  }
+}
+
 /** Apply arbitrary portable config values, followed by the dedicated CLI flag shorthands. */
 export function agentConfig(args: ParsedArgs, defaults: HarnessAgentConfig): HarnessAgentConfig {
   const config = globalThis.structuredClone(defaults) as unknown as Record<string, unknown>
@@ -113,6 +157,12 @@ export function agentConfig(args: ParsedArgs, defaults: HarnessAgentConfig): Har
   }
   if (args.model !== undefined) {
     config.model = modelSpecifier(args.model, '--model')
+  }
+  if (
+    (args.model !== undefined || args.configSet.some((assignment) => assignment.startsWith('model='))) &&
+    !args.configSet.some((assignment) => /^modelModule[.=]/u.test(assignment))
+  ) {
+    config.modelModule = null
   }
   if (args.builtinTools !== undefined) {
     config.builtinTools = commaSeparated(args.builtinTools)
@@ -199,7 +249,7 @@ function applyConfigAssignment(config: Record<string, unknown>, assignment: stri
   let target = config
   for (const key of keys.slice(0, -1)) {
     const value = target[key]
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!isRecord(value)) {
       target[key] = {}
     }
     target = target[key] as Record<string, unknown>
@@ -213,7 +263,10 @@ function applyConfigAssignment(config: Record<string, unknown>, assignment: stri
 }
 
 function commaSeparated(value: string): string[] {
-  return value.split(',').filter(Boolean)
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
 }
 
 function modelSpecifier(value: string, option: string): string {

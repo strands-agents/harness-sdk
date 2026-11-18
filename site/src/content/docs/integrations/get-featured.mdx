@@ -12,9 +12,9 @@ documentation page is optional.
 ## What we list
 
 Reusable packages published to PyPI or npm that extend Strands Agents: model providers,
-tools, session managers, memory stores, storage backends, plugins, integrations, agent
-extensions, and interventions. Vendor integrations documented by a dev guide (with no
-installable Strands package) also qualify — see the `docsUrl` field below.
+tools, session managers, memory stores, storage backends, plugins, observability backends,
+integrations, agent extensions, and interventions. Vendor integrations documented by a dev
+guide (with no installable Strands package) also qualify — see the `docsUrl` field below.
 
 **Out of scope:** example agents, demos, and applications *built with* Strands. The
 catalog lists building blocks you add to your own agent, not finished agents or one-off
@@ -38,7 +38,7 @@ Your entry:
 ```yaml
 name: your-package-name
 description: One sentence describing what it does
-integrationType: tool        # tool | model-provider | session-manager | memory-store | storage | integration | plugin | agent-extension | intervention
+integrationType: tool        # tool | model-provider | session-manager | memory-store | storage | integration | plugin | observability | agent-extension | intervention
 languages:
   python:                    # include the languages you publish for
     package: your-package-name
@@ -53,7 +53,7 @@ addedDate: 2026-07-31        # the date you open the PR
 |-------|----------|-------|
 | `name` | ✅ | Display name in the catalog |
 | `description` | ✅ | One sentence, ~160 characters max — the card clamps longer text |
-| `integrationType` | ✅ | One of the nine types above |
+| `integrationType` | ✅ | One of the ten types above |
 | `languages` | ✅ | At least one of `python` / `typescript`, each with the `package` name as published on PyPI / npm (use `pkg[extra]` for an extras-qualified install, e.g. `temporalio[strands-agents]`). For a vendor-guide integration with no Strands-specific package, leave the block empty (`python: {}`) and set `docsUrl` to your guide. |
 | `github` | ✅ | Public repository URL, starting with `https://github.com/` |
 | `addedDate` | ✅ | Date of submission (drives the "New" badge) |

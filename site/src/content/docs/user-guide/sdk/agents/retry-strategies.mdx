@@ -121,6 +121,9 @@ agent = Agent(
     retry_strategy=None
 )
 ```
+
+The agent loop still re-asks the model when a response stops for tool use
+but contains no tool use block. That retry is part of the loop, not the retry strategy.
 </Tab>
 <Tab label="TypeScript">
 

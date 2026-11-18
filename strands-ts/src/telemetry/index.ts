@@ -34,4 +34,4 @@
  */
 
 export { setupTracer, getTracer, setupMeter, getMeter } from './config.js'
-export type { TracerConfig, MeterConfig } from './config.js'
+export type { TracerConfig, MeterConfig, BaggageKeyPredicate, BaggageKeyPredicates } from './config.js'

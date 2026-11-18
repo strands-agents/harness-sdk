@@ -50,6 +50,31 @@ describe('McpClient.loadServers', () => {
     vi.clearAllMocks()
   })
 
+  it('skips invalid task settings when that server allows errors and keeps valid servers', async () => {
+    const clients = await McpClient.loadServers({
+      invalid: { url: 'https://invalid.example/mcp', tasksConfig: { ttl: 0 }, continueOnError: true },
+      valid: { url: 'https://valid.example/mcp' },
+    })
+    expect(clients).toHaveLength(1)
+    expect(clients[0]!.continueOnError).toBe(false)
+  })
+
+  it('rejects invalid task settings when that server overrides lenient defaults', async () => {
+    await expect(
+      McpClient.loadServers(
+        { invalid: { url: 'https://invalid.example/mcp', tasksConfig: { ttl: 0 }, continueOnError: false } },
+        { continueOnError: true }
+      )
+    ).rejects.toThrow('MCP task request timeout')
+  })
+
+  it('lets requestTimeout take precedence over the deprecated ttl alias', async () => {
+    const clients = await McpClient.loadServers({
+      server: { url: 'https://example.com/mcp', tasksConfig: { ttl: 0, requestTimeout: 100 } },
+    })
+    expect(clients).toHaveLength(1)
+  })
+
   describe('transport detection', () => {
     it('creates StdioClientTransport when command is present', async () => {
       const clients = await McpClient.loadServers({

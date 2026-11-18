@@ -13,6 +13,7 @@ from typing import Any
 
 from opentelemetry import trace as trace_api
 
+from ...models._model_proxy import ModelProxy
 from ...models.model import Model
 from ...telemetry.tracer import get_tracer
 from ...types.content import Message
@@ -20,14 +21,18 @@ from .types import ExtractionResult, ExtractorContext
 
 logger = logging.getLogger(__name__)
 
-# Default instruction guiding the model to emit discrete, durable facts as a JSON array.
+# Default guidance on what counts as a fact; a custom ``system_prompt`` replaces it.
 DEFAULT_SYSTEM_PROMPT = (
     "You extract durable facts worth remembering across future conversations from a transcript.\n"
     "\n"
-    'Return ONLY a JSON array of objects, each: {"content": string}. Each object is one discrete, '
-    "self-contained fact (a preference, decision, or stable detail about the user or task). Do not "
-    "include transient chit-chat, questions, or anything already obvious. If there is nothing worth "
-    "remembering, return []."
+    "Each entry is one discrete, self-contained fact (a preference, decision, or stable detail about "
+    "the user or task). Do not include transient chit-chat, questions, or anything already obvious."
+)
+
+# The response shape ``_parse_entries`` requires, appended after every system prompt so a custom
+# prompt cannot drop it.
+_OUTPUT_FORMAT = (
+    'Return ONLY a JSON array of objects, each: {"content": string}. If there is nothing worth remembering, return [].'
 )
 
 
@@ -50,14 +55,14 @@ class ModelExtractor:
         """Initialize the extractor.
 
         Args:
-            model: Model used to extract facts. Defaults to the agent's own model
-                (via :attr:`ExtractorContext.default_model`); set a cheaper one to
-                cut cost.
+            model: Model used to extract facts. Resolution order: this ``model`` >
+                :attr:`ExtractorContext.default_model` (``agent.aux_model`` > ``agent.model``).
             system_prompt: System prompt steering what counts as a fact. Defaults
-                to a general fact-extraction prompt.
+                to a general fact-extraction prompt. The JSON output format the
+                extractor parses is always appended after it.
         """
         self._model = model
-        self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+        self._system_prompt = f"{system_prompt or DEFAULT_SYSTEM_PROMPT}\n\n{_OUTPUT_FORMAT}"
 
     async def extract(self, messages: list[Message], context: ExtractorContext | None = None) -> list[ExtractionResult]:
         """Extract entries from a batch of messages.
@@ -79,9 +84,6 @@ class ModelExtractor:
             "content": [{"text": f"Extract facts from the following transcript:\n\n{transcript}"}],
         }
 
-        # Lazy import to avoid a circular import with ``event_loop.streaming``.
-        from ...event_loop.streaming import stream_messages
-
         tracer = get_tracer()
         model_id = model.config.get("model_id") if hasattr(model, "config") else None
         span = tracer.start_model_invoke_span(messages=[prompt], model_id=model_id, system_prompt=self._system_prompt)
@@ -90,7 +92,12 @@ class ModelExtractor:
         stop: Any = None
         try:
             with trace_api.use_span(span, end_on_exit=False):
-                async for event in stream_messages(model, self._system_prompt, [prompt], tool_specs=[]):
+                async for event in ModelProxy(model).stream(
+                    [prompt],
+                    [],
+                    self._system_prompt,
+                    invocation_context=context.invocation_context if context is not None else None,
+                ):
                     # The terminal ``ModelStopReason`` event carries
                     # ``{"stop": (stop_reason, message, usage, metrics)}``.
                     candidate = event.get("stop")

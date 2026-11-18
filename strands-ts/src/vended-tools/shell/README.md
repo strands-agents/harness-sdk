@@ -32,18 +32,19 @@ Without a bound sandbox, the tool reads `context.agent.sandbox` at call time.
 
 ### `makeShell(options?)` / `makeShell(sandbox, options?)`
 
-| Option        | Type        | Default    | Description                     |
-| ------------- | ----------- | ---------- | ------------------------------- |
-| `name`        | `string`    | `shell`    | Tool name.                      |
-| `description` | `string`    | (built-in) | Description shown to the model. |
-| `inputSchema` | `z.ZodType` | (built-in) | Override the input schema.      |
+| Option           | Type        | Default    | Description                                                                          |
+| ---------------- | ----------- | ---------- | ------------------------------------------------------------------------------------ |
+| `name`           | `string`    | `shell`    | Tool name.                                                                           |
+| `description`    | `string`    | (built-in) | Description shown to the model.                                                      |
+| `inputSchema`    | `z.ZodType` | (built-in) | Override the input schema.                                                           |
+| `defaultTimeout` | `number`    | `120`      | Timeout in seconds when the model omits `timeout`; an explicit `timeout` still wins. |
 
 ### Input
 
 ```typescript
 {
   command: string   // The shell command to execute
-  timeout?: number  // Timeout in seconds (default: 120)
+  timeout?: number  // Timeout in seconds (default: defaultTimeout, 120 unless configured)
 }
 ```
 

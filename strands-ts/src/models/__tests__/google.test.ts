@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
+import { ApiError, GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { GoogleModel } from '../google/model.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import {
   Message,
   CachePointBlock,
@@ -11,6 +11,8 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  OffloadedBlock,
+  UnknownBlock,
 } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import { formatMessages, mapChunkToEvents } from '../google/adapters.js'
@@ -86,6 +88,18 @@ function setupStreamTest(streamGenerator: () => AsyncGenerator<Record<string, un
 function formatBlock(block: ContentBlock, role: 'user' | 'assistant' = 'user'): ReturnType<typeof formatMessages> {
   return formatMessages([new Message({ role, content: [block] })])
 }
+
+describe('offloaded blocks', () => {
+  it('sends an offloaded block as the text the model receives, at top level and inside a tool result', () => {
+    const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+
+    expect(formatBlock(placeholder)[0]!.parts).toEqual([{ text: '[Dropped] [ref: tu-1]' }])
+    const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })
+    expect(formatBlock(toolResult)[0]!.parts![0]!.functionResponse?.response).toEqual({
+      output: [{ text: '[Dropped] [ref: tu-1]' }],
+    })
+  })
+})
 
 describe('GoogleModel', () => {
   beforeEach(() => {
@@ -551,6 +565,72 @@ describe('GoogleModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
     })
 
+    it('throws ModelNetworkError for a fetch network error', async () => {
+      const networkError = new TypeError('Failed to fetch')
+      const mockClient = {
+        models: {
+          generateContentStream: vi.fn(async () => {
+            throw networkError
+          }),
+        },
+      } as unknown as GoogleGenAI
+
+      const provider = new GoogleModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const error = await collectIterator(provider.stream(messages)).catch((caught: unknown) => caught)
+
+      expect(error).toBeInstanceOf(ModelNetworkError)
+      expect(error).toMatchObject({ message: 'Failed to fetch', cause: networkError })
+    })
+
+    it('throws ModelNetworkError when the connection drops while reading the stream', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield { candidates: [{ content: { parts: [{ text: 'Hel' }] } }] }
+        throw new TypeError('network error')
+      })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelNetworkError)
+    })
+
+    // #5744
+    const midStreamMessage =
+      'got status: RESOURCE_EXHAUSTED. {"error":{"code":429,"message":"Resource exhausted","status":"RESOURCE_EXHAUSTED"}}'
+    it.each([
+      [
+        'an ApiError with a non-JSON body wrapped by @google/genai',
+        new ApiError({
+          message: JSON.stringify({ error: { message: 'Rate limited', code: 429, status: 'Too Many Requests' } }),
+          status: 429,
+        }),
+      ],
+      ['a mid-stream ApiError', new ApiError({ message: midStreamMessage, status: 429 })],
+      [
+        'a mid-stream ApiError from another @google/genai module copy',
+        Object.assign(new Error(midStreamMessage), { name: 'ApiError', status: 429 }),
+      ],
+      [
+        'an error whose JSON message carries code 429',
+        new Error(JSON.stringify({ error: { message: 'Rate limited', code: 429, status: 'Too Many Requests' } })),
+      ],
+    ])('throws ModelThrottledError for HTTP 429 from %s', async (_, error) => {
+      const mockClient = {
+        models: {
+          generateContentStream: vi.fn(async () => {
+            throw error
+          }),
+        },
+      } as unknown as GoogleGenAI
+
+      const provider = new GoogleModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toMatchObject({
+        name: 'ModelThrottledError',
+        cause: error,
+      })
+    })
+
     it('rethrows unrecognized errors', async () => {
       const mockClient = {
         models: {
@@ -764,6 +844,12 @@ describe('GoogleModel', () => {
         warnSpy.mockRestore()
       })
 
+      it('skips unknown blocks', () => {
+        const contents = formatBlock(new UnknownBlock({ futureBlock: { value: 1 } }))
+
+        expect(contents).toHaveLength(0)
+      })
+
       it('formats tool use blocks as function calls', () => {
         const toolUseBlock = new ToolUseBlock({ toolUseId: 'test-id', name: 'testTool', input: { key: 'value' } })
 
@@ -972,7 +1058,7 @@ describe('GoogleModel', () => {
         })
       )
 
-      const config = captured.config as { tools?: unknown[] }
+      const config = captured.config as { tools?: unknown[]; toolConfig?: Record<string, unknown> }
       expect(config.tools).toHaveLength(2)
       expect(config.tools![0]).toEqual({
         functionDeclarations: [
@@ -984,6 +1070,82 @@ describe('GoogleModel', () => {
         ],
       })
       expect(config.tools![1]).toEqual({ googleSearch: {} })
+      expect(config.toolConfig?.includeServerSideToolInvocations).toBe(true)
+    })
+
+    it('sets includeServerSideToolInvocations and preserves functionCallingConfig when toolChoice is set', async () => {
+      const { client, captured } = createMockClientWithCapture()
+      const provider = new GoogleModel({ client, builtInTools: [{ googleSearch: {} }] })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await collectIterator(
+        provider.stream(messages, {
+          toolSpecs: [{ name: 'read', description: 'read' }],
+          toolChoice: { auto: {} },
+        })
+      )
+
+      const config = captured.config as { toolConfig?: unknown }
+      expect(config.toolConfig).toEqual({
+        functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO },
+        includeServerSideToolInvocations: true,
+      })
+    })
+
+    it('does not set includeServerSideToolInvocations on Vertex AI', async () => {
+      const captured: Record<string, unknown> = {}
+      const client = {
+        vertexai: true,
+        models: {
+          generateContentStream: vi.fn(async (params: Record<string, unknown>) => {
+            Object.assign(captured, params)
+            return (async function* () {
+              yield { candidates: [{ finishReason: 'STOP' }] }
+            })()
+          }),
+        },
+      } as unknown as GoogleGenAI
+      const provider = new GoogleModel({ client, builtInTools: [{ googleSearch: {} }] })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await collectIterator(
+        provider.stream(messages, {
+          toolSpecs: [{ name: 'read', description: 'read' }],
+        })
+      )
+
+      const config = captured.config as { toolConfig?: unknown }
+      expect(config.toolConfig).toBeUndefined()
+    })
+
+    it.each([
+      {
+        name: 'merges flag into params-supplied toolConfig',
+        paramsToolConfig: { functionCallingConfig: { mode: 'NONE' } },
+        expectedToolConfig: { functionCallingConfig: { mode: 'NONE' }, includeServerSideToolInvocations: true },
+      },
+      {
+        name: 'preserves explicit includeServerSideToolInvocations=false',
+        paramsToolConfig: { includeServerSideToolInvocations: false },
+        expectedToolConfig: { includeServerSideToolInvocations: false },
+      },
+    ])('$name', async ({ paramsToolConfig, expectedToolConfig }) => {
+      const { client, captured } = createMockClientWithCapture()
+      const provider = new GoogleModel({
+        client,
+        builtInTools: [{ googleSearch: {} }],
+        params: { toolConfig: paramsToolConfig },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await collectIterator(
+        provider.stream(messages, {
+          toolSpecs: [{ name: 'read', description: 'read' }],
+        })
+      )
+
+      const config = captured.config as { toolConfig?: unknown }
+      expect(config.toolConfig).toEqual(expectedToolConfig)
     })
 
     it('passes builtInTools when no toolSpecs provided', async () => {
