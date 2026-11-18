@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { TurnProjector, projectMessages } from '../../src/ui/chat/projector.js'
 import { peerMessageMetadata } from '../../src/agent/messaging.js'
-import { upgradeDesktopAgentProfileMessages } from '../../src/session/desktop-profile.js'
+import { displayPromptMetadata, upgradeDesktopAgentProfileMessages } from '../../src/session/desktop-profile.js'
 import { SHELL_OUTPUT_LIMIT_BYTES, SHELL_OUTPUT_LIMIT_NOTICE } from '../../src/terminal/shell-output.js'
 
 describe('TurnProjector', () => {
@@ -442,5 +442,36 @@ describe('TurnProjector', () => {
         entries: [{ type: 'assistant', text: 'Done.' }],
       },
     ])
+  })
+
+  it.each([
+    {
+      name: 'a typed prompt that starts with an envelope marker pair',
+      text: '<strands_reply_context>x</strands_reply_context> what is this tag for?',
+      shown: '<strands_reply_context>x</strands_reply_context> what is this tag for?',
+    },
+    {
+      name: 'a skill whose instructions contain the closing marker',
+      text: [
+        '<strands_skill_activation>',
+        'Never print </strands_skill_activation> to the user.',
+        '</strands_skill_activation>',
+        '',
+        '/review this change',
+      ].join('\n'),
+      shown: '/review this change',
+    },
+  ])('restores the prompt shown live from persisted metadata for $name', ({ text, shown }) => {
+    const turns = projectMessages([
+      new Message({
+        role: 'user',
+        content: [new TextBlock(text)],
+        metadata: { custom: displayPromptMetadata(shown) },
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('Done.')] }),
+    ])
+
+    expect(turns).toMatchObject([{ prompt: shown, entries: [{ type: 'assistant', text: 'Done.' }] }])
+    expect(turns[0]).not.toHaveProperty('source')
   })
 })

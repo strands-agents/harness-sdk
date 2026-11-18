@@ -89,7 +89,7 @@ export type TypescriptSetupChange = {
 
 /** @internal */
 export type TypescriptStream =
-  | { kind: 'model'; prompt: string | ContentBlockData[] }
+  | { kind: 'model'; prompt: string | ContentBlockData[]; displayPrompt?: string }
   | { kind: 'peer'; message: PeerMessage }
   | { kind: 'shell'; command: string }
   | { kind: 'background' }
@@ -694,8 +694,11 @@ export class TypescriptBackend implements ChatBackend {
     for (const listener of this._metadataListeners) listener()
   }
 
-  stream(prompt: string | ContentBlockData[]): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
-    return this._stream({ kind: 'model', prompt })
+  stream(
+    prompt: string | ContentBlockData[],
+    displayPrompt?: string
+  ): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+    return this._stream({ kind: 'model', prompt, ...(displayPrompt === undefined ? {} : { displayPrompt }) })
   }
   streamPeer(message: PeerMessage): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
     return this._stream({ kind: 'peer', message })

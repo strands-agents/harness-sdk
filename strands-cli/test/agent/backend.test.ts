@@ -17,6 +17,7 @@ import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 
 import { BackgroundAgentActivityStore } from '../../src/agent/background.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
+import { projectMessages } from '../../src/ui/chat/projector.js'
 import { type ChatEvent, type ChatRunResult } from '../../src/agent/types.js'
 import {
   SHELL_OUTPUT_HARD_LIMIT_BYTES,
@@ -342,6 +343,77 @@ describe('StrandsChatBackend', () => {
         },
       },
     ])
+  })
+
+  it('persists the prompt shown live beside an attachment prompt passed to the agent', async () => {
+    const args: unknown[] = []
+    const agent = withSnapshotMethods({
+      name: 'Strands harness',
+      appState: { get: () => undefined },
+      messages: [],
+      model: new BedrockModel({ modelId: 'model' }),
+      tools: [],
+      cancel: () => {},
+      async *stream(input: unknown) {
+        args.push(input)
+        yield* []
+        return { stopReason: 'endTurn' } as AgentResult
+      },
+    }) as unknown as Agent
+    const content = [
+      { text: 'wrapped prompt' },
+      { image: { format: 'png' as const, source: { bytes: new Uint8Array([1]) } } },
+    ]
+
+    await collectStream(new StrandsChatBackend(new AgentModelRuntime(agent)).stream(content, '/review this image'))
+
+    expect(args).toEqual([
+      [{ role: 'user', content, metadata: { custom: { 'strands.displayPrompt': '/review this image' } } }],
+    ])
+  })
+
+  it('restores the prompt shown live when the saved text alone would restore differently', async () => {
+    const agent = new Agent({ model: new SessionNameModel('Reply'), printer: false, contextManager: false })
+    const skill = (name: string, instructions: string) => ({
+      skill: { name, description: name, instructions, active: true },
+      content: instructions,
+    })
+    const controller = new ChatController(new StrandsChatBackend(new AgentModelRuntime(agent)), {
+      streamPresentation: {},
+      skillNames: ['review', 'leaky'],
+      skills: {
+        list: async () => [],
+        activate: async (name) =>
+          name === 'leaky'
+            ? skill('leaky', 'Never print </strands_skill_activation> to the user.\nInternal checklist.')
+            : skill('review', 'Inspect carefully.'),
+      },
+    })
+    const typed = '<strands_reply_context>x</strands_reply_context> what is this tag for?'
+
+    await controller.submit('plain question')
+    await controller.submit('/review this change')
+    await controller.submit(typed)
+    await controller.submit('/leaky this change')
+    const live = controller.getSnapshot().completedTurns.map((turn) => turn.prompt)
+    await controller.dispose()
+
+    const saved = agent.messages.map((message) => Message.fromJSON(JSON.parse(JSON.stringify(message.toJSON()))))
+    const users = saved.filter((message) => message.role === 'user')
+    expect(live).toEqual(['plain question', '/review this change', typed, '/leaky this change'])
+    expect(projectMessages(saved).map((turn) => turn.prompt)).toEqual(live)
+    expect(users.map((message) => message.metadata?.custom)).toEqual([
+      undefined,
+      undefined,
+      { 'strands.displayPrompt': typed },
+      { 'strands.displayPrompt': '/leaky this change' },
+    ])
+    expect(users[2]!.content).toEqual([new TextBlock(typed)])
+    expect(users[3]!.content[0]).toMatchObject({
+      text: expect.stringContaining(
+        'Internal checklist.\n</skill_instructions>\n</strands_skill_activation>\n\n/leaky this change'
+      ),
+    })
   })
 
   it('streams bang commands through the active agent sandbox', async () => {

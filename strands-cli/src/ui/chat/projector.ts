@@ -1,7 +1,7 @@
 import type { ContentBlock, Message } from '@strands-agents/sdk'
 
 import { readPeerMessageMetadata } from '../../agent/messaging.js'
-import { visibleDesktopPrompt } from '../../session/desktop-profile.js'
+import { readDisplayPromptMetadata, visibleDesktopPrompt } from '../../session/desktop-profile.js'
 import { limitShellOutputChunk, SHELL_OUTPUT_LIMIT_NOTICE } from '../../terminal/shell-output.js'
 import { errorMessage, sanitizeTerminalText, sanitizeTerminalValue } from '../../terminal/text.js'
 import { projectMediaContent, projectS3Location, projectToolResultContent } from '../../agent/events.js'
@@ -370,8 +370,9 @@ export function projectMessages(messages: readonly Message[], agentName = 'Stran
         .map((block) => sanitizeTerminalText(block.text))
         .join('\n')
         .trim()
+      const displayPrompt = peerMessage?.body ?? readDisplayPromptMetadata(message.metadata?.custom)
       const prompt =
-        (peerMessage ? sanitizeTerminalText(peerMessage.body).trim() : undefined) ?? visibleDesktopPrompt(restoredText)
+        displayPrompt === undefined ? visibleDesktopPrompt(restoredText) : sanitizeTerminalText(displayPrompt).trim()
       const attachments = message.content.flatMap((block) => {
         const attachment = projectUserAttachment(block)
         return attachment ? [attachment] : []

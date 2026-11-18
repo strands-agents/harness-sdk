@@ -1,4 +1,6 @@
-import { Message, TextBlock } from '@strands-agents/sdk'
+import { Message, TextBlock, type JSONValue } from '@strands-agents/sdk'
+
+import { isRecord } from '../values.js'
 
 const AGENT_PROFILE_OPEN = '<strands_agent_profile>'
 const AGENT_PROFILE_CLOSE = '</strands_agent_profile>'
@@ -14,6 +16,7 @@ const HIDDEN_DESKTOP_ENVELOPES = [
   ['<strands_reply_context>', '</strands_reply_context>'],
   ['<strands_skill_activation>', '</strands_skill_activation>'],
 ] as const
+const DISPLAY_PROMPT_METADATA_KEY = 'strands.displayPrompt'
 
 export function upgradeDesktopAgentProfileMessages(messages: Message[]): Message[] {
   let changed = false
@@ -63,6 +66,16 @@ export function visibleDesktopPrompt(text: string): string {
     visible = visible.slice(closingIndex + closing.length).trimStart()
   }
   return visible || (original ? 'Restored Desktop turn' : '')
+}
+
+/** Message metadata recording the prompt the transcript showed, for turns `visibleDesktopPrompt` would restore differently. */
+export function displayPromptMetadata(prompt: string): Record<string, JSONValue> {
+  return { [DISPLAY_PROMPT_METADATA_KEY]: prompt }
+}
+
+export function readDisplayPromptMetadata(value: unknown): string | undefined {
+  const prompt = isRecord(value) ? value[DISPLAY_PROMPT_METADATA_KEY] : undefined
+  return typeof prompt === 'string' ? prompt : undefined
 }
 
 function upgradeDesktopAgentProfile(text: string): string {
