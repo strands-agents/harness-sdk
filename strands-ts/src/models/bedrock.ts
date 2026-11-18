@@ -447,7 +447,7 @@ function stepBackToText(content: BedrockContentBlock[], idx: number): number {
 /** Converse rejects a request with more cache points than this. */
 const MAX_CACHE_POINTS = 4
 
-/** With the system prompt's point, the most a Nova request can carry. */
+/** With one point on the system prompt, that is the four Converse accepts. */
 const NOVA_CONVERSATION_CACHE_POINTS = 3
 
 /**
@@ -1463,6 +1463,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
         // Blocks after the caller's boundary are per-call content, so a fallback point never lands among them.
         let trailingBlocks = dynamicTrailingBlocks
+        const novaPoints = Math.min(NOVA_CONVERSATION_CACHE_POINTS, MAX_CACHE_POINTS - systemCachePoints)
         if (placedIdxs.length > 0) {
           // One boundary per message, so this message contributes a single cache point to the budget.
           // Extras are not worthless - a second point ahead of the per-call tail doubles the cached
@@ -1479,6 +1480,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           }
           const placedIdx = placedIdxs[0] as number
           if (this._honorPlacedCachePoint(content, placedIdx, lastUserIdx, ttl)) {
+            if (this._limitsCachePoints()) {
+              // The caller's point is the newest one, so the rest go on the user messages before it.
+              this._injectNovaCachePoints(messages, lastUserIdx - 1, 0, novaPoints - 1)
+            }
             return
           }
           trailingBlocks = Math.max(trailingBlocks, content.length - placedIdx)
@@ -1492,8 +1497,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (this._limitsCachePoints()) {
-          const count = Math.min(NOVA_CONVERSATION_CACHE_POINTS, MAX_CACHE_POINTS - systemCachePoints)
-          this._injectNovaCachePoints(messages, lastUserIdx, trailingBlocks, count)
+          this._injectNovaCachePoints(messages, lastUserIdx, trailingBlocks, novaPoints)
           return
         }
 

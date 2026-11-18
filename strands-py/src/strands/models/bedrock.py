@@ -120,7 +120,7 @@ _NOVA_CACHE_POINT_MODELS = (
 
 # Converse rejects a request with more cache points than this.
 _MAX_CACHE_POINTS = 4
-# With the system prompt's point, the most a Nova request can carry.
+# With one point on the system prompt, that is the four Converse accepts.
 _NOVA_CONVERSATION_CACHE_POINTS = 3
 
 _IMPLICIT_CACHE = ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto"))
@@ -980,6 +980,7 @@ class BedrockModel(Model):
 
             # Blocks after the caller's boundary are per-call content, so a fallback point never lands among them.
             trailing_blocks = dynamic_trailing_blocks
+            nova_points = min(_NOVA_CONVERSATION_CACHE_POINTS, _MAX_CACHE_POINTS - system_cache_points)
             placed_idxs = [idx for idx, block in enumerate(content) if "cachePoint" in block]
             if placed_idxs:
                 # One boundary per message, so this message contributes a single cache point to the budget.
@@ -996,6 +997,9 @@ class BedrockModel(Model):
                         extra_idx,
                     )
                 if self._honor_placed_cache_point(content, placed_idxs[0], last_user_idx):
+                    if self._limits_cache_points:
+                        # The caller's point is the newest one, so the rest go on the user messages before it.
+                        self._inject_nova_cache_points(messages, last_user_idx - 1, 0, nova_points - 1)
                     return
                 trailing_blocks = max(trailing_blocks, len(content) - placed_idxs[0])
                 if not content:
@@ -1007,14 +1011,7 @@ class BedrockModel(Model):
                 # The point could not legally stay, so fall through to automatic placement below.
 
             if self._limits_cache_points:
-                count = min(_NOVA_CONVERSATION_CACHE_POINTS, _MAX_CACHE_POINTS - system_cache_points)
-                positions = _nova_cache_point_positions(messages, last_user_idx, trailing_blocks, count)
-                if not positions:
-                    logger.debug("no user text to follow or no cache point left, skipped conversation cache point")
-                for msg_idx, block_idx in positions:
-                    # Nova takes no TTL, so its point is always the default one.
-                    messages[msg_idx]["content"].insert(block_idx, {"cachePoint": {"type": "default"}})
-                    logger.debug("msg_idx=<%s>, block_idx=<%s> | added cache point after text", msg_idx, block_idx)
+                self._inject_nova_cache_points(messages, last_user_idx, trailing_blocks, nova_points)
                 return
 
             if dynamic_trailing_blocks:
@@ -1048,6 +1045,17 @@ class BedrockModel(Model):
                 return
 
             logger.debug("msg_idx=<%s> | added cache point to last user message", last_user_idx)
+
+    def _inject_nova_cache_points(
+        self, messages: list[dict[str, Any]], last_user_idx: int, dynamic_trailing_blocks: int, count: int
+    ) -> None:
+        """Place up to ``count`` Nova conversation cache points, which take no TTL."""
+        positions = _nova_cache_point_positions(messages, last_user_idx, dynamic_trailing_blocks, count)
+        if not positions:
+            logger.debug("no user text to follow or no cache point left, skipped conversation cache point")
+        for msg_idx, block_idx in positions:
+            messages[msg_idx]["content"].insert(block_idx, {"cachePoint": {"type": "default"}})
+            logger.debug("msg_idx=<%s>, block_idx=<%s> | added cache point after text", msg_idx, block_idx)
 
     def _find_last_user_text_message_index(self, messages: Messages) -> int | None:
         """Find the index of the last user message containing text or image content.

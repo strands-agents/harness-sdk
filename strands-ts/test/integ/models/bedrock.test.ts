@@ -106,6 +106,29 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
         expect(metadata2?.usage?.cacheReadInputTokens).toBeGreaterThan(0)
       })
 
+      // An in-region model id keeps this deterministic: a cross-region profile only finds an entry in the region
+      // that wrote it. Two follow-up turns, because Nova's stream now and then reports no usage at all.
+      it.concurrent('reads the cache on a later user turn with Nova', async () => {
+        const provider = bedrock.createModel({
+          modelId: 'amazon.nova-pro-v1:0',
+          region: 'us-east-1',
+          maxTokens: 100,
+          cacheConfig: { strategy: 'auto' },
+        })
+        const agent = new Agent({ model: provider, printer: false })
+        const prefix = `Dossier ${Date.now()}-${Math.random()}. ${'The subject prefers concise answers. '.repeat(600)}`
+
+        const first = await agent.invoke(`${prefix} Reply ALPHA.`)
+        expect(first.metrics?.latestAgentInvocation?.usage.cacheWriteInputTokens).toBeGreaterThan(0)
+
+        const reads: number[] = []
+        for (const prompt of ['Reply BETA.', 'Reply GAMMA.']) {
+          const result = await agent.invoke(prompt)
+          reads.push(result.metrics?.latestAgentInvocation?.usage.cacheReadInputTokens ?? 0)
+        }
+        expect(Math.max(...reads)).toBeGreaterThan(0)
+      })
+
       it.concurrent('keeps per-call content behind a cache point out of the cached prefix', async () => {
         const provider = bedrock.createModel({
           modelId: CACHING_MODEL_ID,

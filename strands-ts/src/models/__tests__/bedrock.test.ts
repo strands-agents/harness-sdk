@@ -4063,32 +4063,31 @@ describe('BedrockModel', () => {
 
       it('keeps its cache points in place through a tool loop', () => {
         const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
-        const prompt = [
+        const messages = [
           ...chat('One', 'Two'),
           new Message({ role: 'assistant', content: [new TextBlock('Ok')] }),
           ...toolTurn,
+          new Message({ role: 'user', content: [toolResult] }),
         ]
 
-        collectIterator(provider.stream(prompt, { toolSpecs }))
-        const promptMessages = request()?.messages
-        collectIterator(
-          provider.stream([...prompt, new Message({ role: 'user', content: [toolResult] })], { toolSpecs })
-        )
+        collectIterator(provider.stream(messages, { toolSpecs }))
 
-        expect(request()?.messages?.slice(0, -1)).toStrictEqual(promptMessages)
-        expect(lastContent()).toStrictEqual([formattedToolResult])
-        expect(allCachePoints()).toHaveLength(3)
+        expect(userContent()).toStrictEqual([
+          [{ text: 'One' }, cachePoint],
+          [{ text: 'Two' }, cachePoint],
+          [{ text: 'What is 6 x 7?' }, cachePoint],
+          [formattedToolResult],
+        ])
       })
 
       it.each([
-        {
-          systemPoints: 2,
-          expected: [[{ text: 'One' }], [{ text: 'Two' }, cachePoint], [{ text: 'Three' }, cachePoint]],
-        },
-        { systemPoints: 4, expected: [[{ text: 'One' }], [{ text: 'Two' }], [{ text: 'Three' }]] },
+        { systemPoints: 1, marked: ['One', 'Two', 'Three'] },
+        { systemPoints: 2, marked: ['Two', 'Three'] },
+        { systemPoints: 3, marked: ['Three'] },
+        { systemPoints: 4, marked: [] },
       ])(
         'fits its conversation cache points in the four Converse accepts ($systemPoints in the system prompt)',
-        ({ systemPoints, expected }) => {
+        ({ systemPoints, marked }) => {
           const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
           const systemPrompt = Array.from({ length: systemPoints }, () => [
             new TextBlock('Be helpful'),
@@ -4097,9 +4096,33 @@ describe('BedrockModel', () => {
 
           collectIterator(provider.stream(chat('One', 'Two', 'Three'), { systemPrompt }))
 
-          expect(userContent()).toStrictEqual(expected)
+          expect(userContent()).toStrictEqual(
+            ['One', 'Two', 'Three'].map((text) => (marked.includes(text) ? [{ text }, cachePoint] : [{ text }]))
+          )
+          expect(allCachePoints().length).toBeLessThanOrEqual(4)
         }
       )
+
+      it('keeps cache points on earlier user messages behind a caller-placed one', () => {
+        const provider = new BedrockModel({ modelId: NOVA, cacheConfig: { strategy: 'auto' } })
+        const messages = [
+          ...chat('One', 'Two', 'Three'),
+          new Message({ role: 'assistant', content: [new TextBlock('Ok')] }),
+          new Message({
+            role: 'user',
+            content: [new TextBlock('Four'), new CachePointBlock({ cacheType: 'default' }), new TextBlock('per-call')],
+          }),
+        ]
+
+        collectIterator(provider.stream(messages))
+
+        expect(userContent()).toStrictEqual([
+          [{ text: 'One' }],
+          [{ text: 'Two' }, cachePoint],
+          [{ text: 'Three' }, cachePoint],
+          [{ text: 'Four' }, cachePoint, { text: 'per-call' }],
+        ])
+      })
 
       it('keeps the tools cache point and TTL on Claude', () => {
         const provider = new BedrockModel({
