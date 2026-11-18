@@ -25,14 +25,21 @@ class _MockState:
         self._data[key] = value
 
 
-def _make_event(tool_name: str = "search", tool_input: dict | None = None, invocation_state: dict | None = None):
-    """Create a mock BeforeToolCallEvent."""
+def _make_agent():
+    agent = MagicMock()
+    agent.state = _MockState()
+    return agent
+
+
+def _make_event(
+    tool_name: str = "search", tool_input: dict | None = None, invocation_state: dict | None = None, agent=None
+):
+    """Create a mock BeforeToolCallEvent, for a new agent unless one is given."""
     event = MagicMock()
     event.tool_use = {"toolUseId": "test-123", "name": tool_name, "input": tool_input or {}}
     event.invocation_state = invocation_state or {}
     event.selected_tool = None
-    event.agent = MagicMock()
-    event.agent.state = _MockState()
+    event.agent = agent or _make_agent()
     return event
 
 
@@ -152,9 +159,10 @@ class TestRateLimiting:
             permit(principal, action == Action::"search", resource);
             """
         )
-        assert cedar.before_tool_call(_make_event("send_email")).type == "proceed"
-        assert cedar.before_tool_call(_make_event("search")).type == "proceed"
-        assert cedar.before_tool_call(_make_event("send_email")).type == "deny"
+        agent = _make_agent()
+        assert cedar.before_tool_call(_make_event("send_email", agent=agent)).type == "proceed"
+        assert cedar.before_tool_call(_make_event("search", agent=agent)).type == "proceed"
+        assert cedar.before_tool_call(_make_event("send_email", agent=agent)).type == "deny"
 
     def test_reset_call_counts(self):
         cedar = CedarAuthorization(
@@ -163,11 +171,12 @@ class TestRateLimiting:
             when { context.session.call_count < 2 };
             """
         )
-        assert cedar.before_tool_call(_make_event("send_email")).type == "proceed"
-        assert cedar.before_tool_call(_make_event("send_email")).type == "deny"
+        event = _make_event("send_email")
+        assert cedar.before_tool_call(event).type == "proceed"
+        assert cedar.before_tool_call(event).type == "deny"
 
         cedar.reset_call_counts()
-        assert cedar.before_tool_call(_make_event("send_email")).type == "proceed"
+        assert cedar.before_tool_call(event).type == "proceed"
 
     def test_reset_call_counts_clears_agent_state(self):
         cedar = CedarAuthorization(
@@ -230,9 +239,67 @@ class TestRateLimiting:
             when { context.session.call_count < 2 };
             """
         )
-        assert cedar.before_tool_call(_make_event("send_email")).type == "proceed"  # count=1
-        assert cedar.before_tool_call(_make_event("send_email")).type == "deny"  # count was 2, decremented back to 1
-        assert cedar.before_tool_call(_make_event("send_email")).type == "deny"  # still count=2, decremented
+        event = _make_event("send_email")
+        assert cedar.before_tool_call(event).type == "proceed"  # count=1
+        assert cedar.before_tool_call(event).type == "deny"  # count was 2, decremented back to 1
+        assert cedar.before_tool_call(event).type == "deny"  # still count=2, decremented
+
+
+class TestSharedAcrossAgents:
+    """One handler instance shared by a parent and a child agent keeps a separate budget for each (#6278)."""
+
+    POLICIES = """
+    permit(principal, action == Action::"send_email", resource)
+    when { context.session.call_count < 3 };
+    """
+
+    def test_each_agent_has_its_own_counts(self):
+        cedar = CedarAuthorization(policies=self.POLICIES)
+        parent, child = _make_event("send_email"), _make_event("send_email")
+
+        assert cedar.before_tool_call(parent).type == "proceed"
+        assert cedar.before_tool_call(child).type == "proceed"
+        assert cedar.before_tool_call(child).type == "proceed"
+        assert cedar.before_tool_call(child).type == "deny"
+        assert parent.agent.state.get("cedar-authorization") == {"send_email": 1}
+        assert child.agent.state.get("cedar-authorization") == {"send_email": 2}
+
+        assert cedar.before_tool_call(parent).type == "proceed"
+        assert parent.agent.state.get("cedar-authorization") == {"send_email": 2}
+
+    def test_each_agent_restores_counts_from_its_own_state(self):
+        cedar = CedarAuthorization(policies=self.POLICIES)
+        parent, child = _make_event("send_email"), _make_event("send_email")
+        child.agent.state.set("cedar-authorization", {"send_email": 2})
+
+        assert cedar.before_tool_call(parent).type == "proceed"
+        assert cedar.before_tool_call(child).type == "deny"
+
+    def test_reset_call_counts_for_one_agent_keeps_the_others(self):
+        cedar = CedarAuthorization(policies=self.POLICIES)
+        parent, child = _make_event("send_email"), _make_event("send_email")
+        for event in (parent, parent, child, child):
+            assert cedar.before_tool_call(event).type == "proceed"
+
+        cedar.reset_call_counts(child.agent)
+
+        assert child.agent.state.get("cedar-authorization") == {}
+        assert parent.agent.state.get("cedar-authorization") == {"send_email": 2}
+        assert cedar.before_tool_call(child).type == "proceed"
+        assert cedar.before_tool_call(parent).type == "deny"
+
+    def test_reset_call_counts_without_agent_clears_every_agent(self):
+        cedar = CedarAuthorization(policies=self.POLICIES)
+        parent, child = _make_event("send_email"), _make_event("send_email")
+        for event in (parent, parent, child, child):
+            assert cedar.before_tool_call(event).type == "proceed"
+
+        cedar.reset_call_counts()
+
+        assert parent.agent.state.get("cedar-authorization") == {}
+        assert child.agent.state.get("cedar-authorization") == {}
+        assert cedar.before_tool_call(parent).type == "proceed"
+        assert cedar.before_tool_call(child).type == "proceed"
 
 
 class TestContextEnricher:
@@ -354,9 +421,10 @@ class TestFileLoading:
         """Load rate-limited policies from file."""
         cedar = CedarAuthorization(policies=str(FIXTURES / "rate-limited.cedar"))
         # send_email: call_count < 3
-        assert cedar.before_tool_call(_make_event("send_email")).type == "proceed"
-        assert cedar.before_tool_call(_make_event("send_email")).type == "proceed"
-        assert cedar.before_tool_call(_make_event("send_email")).type == "deny"
+        event = _make_event("send_email")
+        assert cedar.before_tool_call(event).type == "proceed"
+        assert cedar.before_tool_call(event).type == "proceed"
+        assert cedar.before_tool_call(event).type == "deny"
 
         # search: always permitted
         assert cedar.before_tool_call(_make_event("search")).type == "proceed"

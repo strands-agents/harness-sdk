@@ -9,7 +9,9 @@ sourceLinks:
 
 Lets your agent design and run a team of sub-agents as a [Graph](../../multi-agent/graph.mdx). The model supplies a `task`, a list of `nodes` (each with a unique `name` and its own `instructions`), and `edges` that order them. Nodes with no upstream nodes start in parallel, and each node receives its upstream outputs.
 
-Nodes inherit the caller's model and tools, including MCP tools, except graph tools. Child
+Nodes inherit the caller's model and tools, including MCP tools, except graph tools. They
+do not inherit its [hooks](../../agents/hooks.mdx) or [plugins](../../plugins/index.mdx);
+to give nodes either, [replace the default builder](index.mdx#multi-agent-tools). Child
 interrupts pause the tool call and resume with the user's response. An interrupted graph
 is saved in the parent agent's interrupt state, so it can resume after the parent is
 restored from a snapshot or session. By default, a call times out after 15 minutes and

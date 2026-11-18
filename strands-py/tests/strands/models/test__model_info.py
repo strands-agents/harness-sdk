@@ -20,6 +20,7 @@ from strands.models._model_info import (
     _load_data,
     _section,
     get_context_window_limit,
+    lookup_chat_completions_tools,
     lookup_model,
     lookup_model_info,
 )
@@ -193,6 +194,22 @@ def test_prompt_caching_value_map_covers_exactly_the_prompt_caching_type():
     assert set(_PROMPT_CACHING_VALUES.values()) == set(get_args(PromptCaching))
 
 
+@pytest.mark.parametrize(
+    ("model_id", "exp_support"),
+    [
+        ("gpt-6-sol", "reasoningOff"),
+        ("us.openai.gpt-6-luna", "reasoningOff"),
+        ("gpt-6-astra", "unsupported"),
+        ("openai.gpt-6.1-sol", "unsupported"),
+        ("openai.gpt-6.2-sol", "unsupported"),
+        ("gpt-5.4", None),
+        ("unknown-model", None),
+    ],
+)
+def test_lookup_chat_completions_tools_reads_the_fact_from_the_entry_the_id_resolves_to(model_id, exp_support):
+    assert lookup_chat_completions_tools(model_id) == exp_support
+
+
 def test_load_data_says_how_to_restore_the_package_copy_when_it_is_missing():
     """The copy is only written on install, so an environment installed without it needs the fix named."""
     with unittest.mock.patch("strands.models._model_info.resources") as mock_resources:
@@ -246,6 +263,12 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
         for key, value in entry.get("capabilities", {}).items():
             if key == "promptCaching":
                 assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
+            elif key == "chatCompletionsTools":
+                # Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
+                assert value in ("reasoningOff", "unsupported"), f"{model_id}.{key}"
+            elif key == "toolUse":
+                # A record that the model cannot call tools, not part of ModelCapabilities.
+                assert value is False, f"{model_id}.{key}"
             elif key == "defaultEffort":
                 assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
             else:

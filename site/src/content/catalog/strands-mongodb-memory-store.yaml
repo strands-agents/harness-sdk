@@ -1,0 +1,11 @@
+name: strands-mongodb-memory-store
+description: MongoDB Atlas as a Strands MemoryStore, with semantic recall over Atlas Vector Search plus text and hybrid search tiers.
+integrationType: memory-store
+maintainedBy: partner
+languages:
+  python:
+    package: strands-mongodb[memory]
+github: https://github.com/mongodb/strands-mongodb
+docsUrl: https://www.mongodb.com/docs/atlas/ai-integrations/strands/
+featured: true
+addedDate: 2026-11-18

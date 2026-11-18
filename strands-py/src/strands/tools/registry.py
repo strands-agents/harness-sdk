@@ -33,8 +33,14 @@ class ToolRegistry:
     This class manages tool registration, validation, discovery, and invocation.
     """
 
-    def __init__(self) -> None:
-        """Initialize the tool registry."""
+    def __init__(self, *, sort_tool_specs: bool = False) -> None:
+        """Initialize the tool registry.
+
+        Args:
+            sort_tool_specs: Return tool specs sorted by name from `get_all_tool_specs`. Defaults to False, which
+                keeps registration order.
+        """
+        self.sort_tool_specs = sort_tool_specs
         self.registry: dict[str, AgentTool] = {}
         self.dynamic_tools: dict[str, AgentTool] = {}
         self.tool_config: dict[str, Any] | None = None
@@ -560,14 +566,15 @@ class ToolRegistry:
                 logger.debug("tool_name=<%s> | import error | %s", tool_name, error)
 
     def get_all_tool_specs(self) -> list[ToolSpec]:
-        """Get all the tool specs for all tools in this registry..
+        """Get all the tool specs for all tools in this registry.
 
         Returns:
-            A list of ToolSpecs.
+            A list of ToolSpecs, sorted by name when `sort_tool_specs` is set, otherwise in registration order.
         """
-        all_tools = self.get_all_tools_config()
-        tools: list[ToolSpec] = [tool_spec for tool_spec in all_tools.values()]
-        return tools
+        tool_specs = list(self.get_all_tools_config().values())
+        if self.sort_tool_specs:
+            tool_specs.sort(key=lambda tool_spec: tool_spec["name"])
+        return tool_specs
 
     def register_dynamic_tool(self, tool: AgentTool) -> None:
         """Register a tool dynamically for temporary use.

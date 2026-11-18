@@ -5,6 +5,7 @@ import unittest.mock
 import pytest
 
 from strands import Agent
+from strands._context_manager.placeholder import REMOVED_MESSAGES, format_summarized, offload_placeholder
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.types import ContextState
 from strands.models import Model, ModelCapabilities, ModelInfo
@@ -115,16 +116,16 @@ async def test_custom_provider_with_a_listed_id_stores_its_summary_as_text():
     ]
     tokens = await model.count_tokens(messages[1:4])
     agent = Agent(model=model, messages=messages, callback_handler=None)
-    strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+    strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
 
     assert await strategy.apply(ContextState(messages=agent.messages, agent=agent, utilization=0.9)) is True
     await agent.invoke_async("next")
 
-    marker = f"[Summarized: 3 messages, ~{tokens:,} tokens]\n\na summary"
+    marker = offload_placeholder("summarize", format_summarized(REMOVED_MESSAGES, tokens, "a summary"), None, tokens)
     without_tracking_ids = [{k: v for k, v in message.items() if k != "tracking_id"} for message in agent.messages[:3]]
     assert without_tracking_ids == [
         Message(role="user", content=[ContentBlock(text="task")]),
-        Message(role="assistant", content=[ContentBlock(text=marker)]),
+        Message(role="assistant", content=[marker]),
         Message(role="user", content=[ContentBlock(text="recent")]),
     ]
     sent_blocks = [block for request in model.requests for message in request for block in message["content"]]
