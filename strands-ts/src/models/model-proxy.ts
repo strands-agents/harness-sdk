@@ -115,7 +115,7 @@ export class ModelProxy {
 export async function countRequestTokens(agent: LocalAgent, messages: Message[]): Promise<number> {
   return new ModelProxy(agent.model).countTokens(messages, {
     ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
-    toolSpecs: agent.toolRegistry.list().map((tool) => tool.toolSpec),
+    toolSpecs: agent.toolRegistry.toolSpecs(),
   })
 }
 

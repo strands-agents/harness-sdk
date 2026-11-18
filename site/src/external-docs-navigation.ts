@@ -13,12 +13,12 @@ export interface GeneratedExternalDocsNavigation {
   label: string
   groups: Array<{
     label: string
-    items: Array<{
-      label: string
-      slug: string
-    }>
+    items: GeneratedExternalDocsNavigationItem[]
   }>
 }
+
+export type GeneratedExternalDocsNavigationItem =
+  { label: string; slug: string } | { label: string; items: GeneratedExternalDocsNavigationItem[] }
 
 export function loadGeneratedExternalDocsNavigation(
   externalDocsDir: string,
@@ -68,5 +68,7 @@ function isGroup(input: unknown): boolean {
 function isItem(input: unknown): boolean {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return false
   const value = input as Record<string, unknown>
-  return typeof value.label === 'string' && typeof value.slug === 'string'
+  if (typeof value.label !== 'string') return false
+  if (typeof value.slug === 'string') return true
+  return Array.isArray(value.items) && value.items.every(isItem)
 }

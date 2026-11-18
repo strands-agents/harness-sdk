@@ -170,7 +170,7 @@
         "forcedToolChoice": false,
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
-        "temporaryMessages": true,
+        "temporaryMessages": false,
         "defaultEffort": "medium"
       }
     },
@@ -377,12 +377,35 @@
         "contextWindow": 1000000
       }
     },
+    "gpt-6.2-astra": {
+      "limits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
+        "defaultEffort": "low"
+      }
+    },
+    "gpt-6.2-sol": {
+      "limits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
+        "defaultEffort": "low"
+      }
+    },
     "gpt-6-astra": {
       "limits": {
         "contextWindow": 1050000
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
         "defaultEffort": "low"
       }
     },
@@ -392,6 +415,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
         "defaultEffort": "low"
       }
     },
@@ -401,6 +425,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
         "defaultEffort": "low"
       }
     },
@@ -410,6 +435,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "low"
       }
     },
@@ -418,6 +444,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
+        "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "low"
       }
     },
@@ -427,6 +454,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium"
       }
     },
@@ -436,6 +464,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium"
       }
     },
@@ -450,6 +479,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium"
       }
     },
@@ -459,6 +489,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "low"
       }
     },
@@ -468,6 +499,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium"
       }
     },
@@ -477,6 +509,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium"
       }
     },
@@ -798,6 +831,9 @@
     "mistral.magistral-small-2509": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "toolUse": false
       }
     },
     "mistral.pixtral-large-2502": {
