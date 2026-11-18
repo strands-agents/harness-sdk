@@ -64,8 +64,11 @@ flowchart TD
     E -->|yes| E1["Rung 4, Adaptive — or rung 2, In a mode, with<br/>the expansion conditional on where it wins"]
     E -->|no| E2["Rung 1, Available, recommended where<br/>it helps. Say so in the PR"]
 
-    D -->|yes| F["Publish the run to the benchmark record: tasks, revision,<br/>models, accuracy, tokens, spread. It is the baseline<br/>the next change to this default has to beat"]
-    F --> G["Ship it at the rung you set out for.<br/>How it ships has the release"]
+    D -->|yes| F
+    E1 --> F
+    E2 --> F
+    F["Publish the run to the benchmark record: tasks, revision, models,<br/>accuracy, tokens, spread — whether it won or lost. It is the baseline<br/>the next proposal for this default has to beat"]
+    F --> G["Ship it at the rung the evidence set.<br/>How it ships has the release"]
 ```
 
 ## The bar
@@ -103,9 +106,9 @@ Gaps this document exposes. Each needs an owner and an issue.
   has no single place to review. Until then, name the constant beside the type it configures.
 - **Adaptive (rung 4) is unbuilt.** Neither SDK can turn a capability on by observing the run, so a
   situational win has to settle for rung 1 or get forced to rung 3, where it loses.
-- **The benchmark record does not exist.** The tree says to publish a winning run so the next change
-  to that default has a baseline to beat, but today a PR description is the only record and nothing
-  indexes it. Defaults outlive their measurements.
+- **The benchmark record does not exist.** The tree says to publish every measured run, wins and
+  losses, so the next proposal for that default has a baseline to beat. Today a PR description is the
+  only record and nothing indexes it. Defaults outlive their measurements.
 - **No current default has cleared this bar.** Every `DEFAULT_*` value predates the document.
 
 ## Worked example: `todos`
