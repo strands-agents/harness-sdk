@@ -168,7 +168,6 @@ const homeItem = (row: HomeRow, now: number): ListItem => {
     return {
       key: 'new',
       label: 'New experiment',
-      detail: 'the agent asks what to test',
       mark: { text: '+' },
       tone: 'muted',
     }

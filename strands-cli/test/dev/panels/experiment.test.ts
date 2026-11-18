@@ -196,7 +196,12 @@ describe('ExperimentPanel new experiment', () => {
 
     await press(key)
 
-    expect(home).toMatch(/\+ New experiment\s+the agent asks what to test/u)
+    expect(
+      home
+        .split('\n')
+        .find((line) => line.includes('+ New experiment'))
+        ?.trim()
+    ).toMatch(/\+ New experiment$/u)
     expect(props.close).toHaveBeenCalledOnce()
     expect(session.startInChat).toHaveBeenCalledOnce()
     expect(session.generate).not.toHaveBeenCalled()
