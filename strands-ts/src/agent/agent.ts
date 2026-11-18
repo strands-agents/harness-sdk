@@ -2874,7 +2874,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Redacts the last message in the conversation history.
+   * Redacts the last user message in the conversation history.
    * Called when guardrails block user input and redaction is enabled.
    *
    * Follows the redaction strategy:
@@ -2886,44 +2886,43 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param redactMessage - The redaction message to replace the content with
    */
   private _redactLastMessage(redactMessage: string): void {
-    // Find and redact the last message
-    const lastIndex = this.messages.length - 1
-    if (lastIndex >= 0) {
-      const lastMessage = this.messages[lastIndex]
-      if (lastMessage && lastMessage.role === 'user') {
-        // Collect only tool result blocks with redacted content
-        const redactedContent: ContentBlock[] = []
-        for (const block of lastMessage.content) {
-          if (block.type === 'toolResultBlock') {
-            // Preserve tool result block structure, only redact its content
-            redactedContent.push(
-              new ToolResultBlock({
-                toolUseId: block.toolUseId,
-                status: block.status,
-                content: [new TextBlock(redactMessage)],
-              })
-            )
-          }
-        }
+    // Session managers and hooks may append non-user messages after the user turn.
+    let lastUserIndex = this.messages.length - 1
+    while (lastUserIndex >= 0 && this.messages[lastUserIndex]!.role !== 'user') {
+      lastUserIndex--
+    }
+    if (lastUserIndex < 0) {
+      logger.warn('received input redaction but no user message found | redaction skipped')
+      return
+    }
+    const lastUserMessage = this.messages[lastUserIndex]!
 
-        // If no tool result blocks were found, replace entire content with redaction message
-        if (redactedContent.length === 0) {
-          redactedContent.push(new TextBlock(redactMessage))
-        }
-
-        this.messages[lastIndex] = new Message({
-          role: 'user',
-          content: redactedContent,
-          // Redaction rewrites content but it's the same logical message, so keep its tracking id.
-          trackingId: lastMessage.trackingId,
-        })
-      } else if (lastMessage) {
-        // Unexpected state: redaction requested but last message is not from user
-        logger.warn(
-          `role=<${lastMessage.role}> | received input redaction but last message is not from user | redaction skipped`
+    // Collect only tool result blocks with redacted content
+    const redactedContent: ContentBlock[] = []
+    for (const block of lastUserMessage.content) {
+      if (block.type === 'toolResultBlock') {
+        // Preserve tool result block structure, only redact its content
+        redactedContent.push(
+          new ToolResultBlock({
+            toolUseId: block.toolUseId,
+            status: block.status,
+            content: [new TextBlock(redactMessage)],
+          })
         )
       }
     }
+
+    // If no tool result blocks were found, replace entire content with redaction message
+    if (redactedContent.length === 0) {
+      redactedContent.push(new TextBlock(redactMessage))
+    }
+
+    this.messages[lastUserIndex] = new Message({
+      role: 'user',
+      content: redactedContent,
+      // Redaction rewrites content but it's the same logical message, so keep its tracking id.
+      trackingId: lastUserMessage.trackingId,
+    })
   }
 
   /**
