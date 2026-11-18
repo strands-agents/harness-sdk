@@ -140,10 +140,13 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         self._stash = stash
 
     async def apply(self, context: ContextState) -> bool:
-        """Fire when overflow is set, or when recomputed utilization >= 1.0."""
+        """Fire when overflow is set, or when the messages alone fill the window."""
         if len(context.messages) <= 3:
             return False
         if not context.overflow:
+            # Only what this strategy can remove, never the pipeline's whole-request utilization: that also
+            # carries the system prompt and tool specs, which dropping messages cannot shrink, and it is
+            # anchored on the last call's usage, which a strategy earlier in the pass has already invalidated.
             tokens = await ModelProxy(context.agent.model).count_tokens(context.messages)
             utilization = context.agent.model.estimate_utilization(tokens)
             if utilization < 1.0:

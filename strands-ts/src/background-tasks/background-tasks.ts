@@ -38,7 +38,6 @@ const BACKGROUND_PROPERTY = '_background_execution'
 const MANAGE_TOOL_NAME = 'strands_manage_background_task'
 const COMPOSITE_SCHEMA_KEYS = ['$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'] as const
 const FOREGROUND_TOOL_NAMES = new Set([
-  MANAGE_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
   'summarize_context',
   'truncate_context',
@@ -70,7 +69,7 @@ export class BackgroundTasks implements Plugin {
     this._executeTool = executeTool
     this._policy = resolvePolicy(config)
     this._manageTool = tool({
-      name: MANAGE_TOOL_NAME,
+      name: config.manageToolName ?? MANAGE_TOOL_NAME,
       description:
         "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. Do not poll for results.",
       inputSchema: z.object({
@@ -107,7 +106,7 @@ export class BackgroundTasks implements Plugin {
       const policy = this._policyFor(tool)
       if (!policy?.exact || policy.mode === 'never') continue
       const toolName = tool.name
-      if (!canExecuteInBackground(tool)) throw new TypeError(`Tool '${toolName}' cannot run in the background`)
+      if (!this._canExecuteInBackground(tool)) throw new TypeError(`Tool '${toolName}' cannot run in the background`)
       if (policy.mode === 'agentic' && !canSelectBackground(tool)) {
         throw new TypeError(`Tool '${toolName}' cannot use agentic background selection`)
       }
@@ -127,7 +126,7 @@ export class BackgroundTasks implements Plugin {
         const tool = agent.toolRegistry.get(spec.name)
         const policy = this._policyFor(tool)
         if (policy?.mode !== 'agentic') return spec
-        if (!canExecuteInBackground(tool)) {
+        if (!this._canExecuteInBackground(tool)) {
           if (policy.exact) throw new TypeError(`Tool '${spec.name}' cannot use agentic background selection`)
           return spec
         }
@@ -173,7 +172,7 @@ export class BackgroundTasks implements Plugin {
 
     const policy = this._policyFor(effectiveTool)
     if (!policy || policy.mode === 'never') return
-    if (!canExecuteInBackground(effectiveTool)) {
+    if (!this._canExecuteInBackground(effectiveTool)) {
       return policy.exact
         ? toolError(toolUse.toolUseId, `Tool '${toolUse.name}' cannot run in the background`)
         : undefined
@@ -223,7 +222,7 @@ export class BackgroundTasks implements Plugin {
 
   assertToolCanRun(tool: Tool | undefined): void {
     const policy = this._policyFor(tool)
-    if (!canExecuteInBackground(tool) || !policy || policy.mode === 'never') {
+    if (!this._canExecuteInBackground(tool) || !policy || policy.mode === 'never') {
       throw new Error('Tool cannot run in the background')
     }
   }
@@ -319,7 +318,7 @@ export class BackgroundTasks implements Plugin {
             role: 'assistant',
             content: [
               new ToolUseBlock({
-                name: MANAGE_TOOL_NAME,
+                name: this._manageTool.name,
                 toolUseId: task.taskId,
                 input: { mode: 'get', taskId: task.taskId },
               }),
@@ -400,6 +399,15 @@ export class BackgroundTasks implements Plugin {
     const wildcard = this._policy.get('*')
     return wildcard ? { mode: wildcard, exact: false } : undefined
   }
+
+  private _canExecuteInBackground(tool: Tool | undefined): tool is Tool {
+    return (
+      tool !== undefined &&
+      tool.name !== this._manageTool.name &&
+      !FOREGROUND_TOOL_NAMES.has(tool.name) &&
+      !(tool instanceof AgentAsTool && tool.delegate)
+    )
+  }
 }
 
 function taskResultContent(task: BackgroundTask): ToolResultContent[] {
@@ -414,10 +422,6 @@ function toolError(toolUseId: string, message: string): ToolResultBlock {
     content: [new TextBlock(message)],
     error: new Error(message),
   })
-}
-
-function canExecuteInBackground(tool: Tool | undefined): tool is Tool {
-  return tool !== undefined && !FOREGROUND_TOOL_NAMES.has(tool.name) && !(tool instanceof AgentAsTool && tool.delegate)
 }
 
 function canSelectBackground(tool: Tool): boolean {

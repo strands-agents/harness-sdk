@@ -15,6 +15,7 @@ import {
 } from './multiagent.js'
 import type { ContentBlock } from '../types/messages.js'
 import { TextBlock, contentBlockFromData } from '../types/messages.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import type { InterruptResponseContent } from '../types/interrupt.js'
 import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
@@ -784,11 +785,30 @@ export class Graph implements MultiAgent {
     const deps: ContentBlock[] = []
     for (const edge of this.edges.filter((e) => e.target.id === node.id)) {
       const ns = state.node(edge.source.id)!
-      if (ns.content.length > 0) {
-        const content = ns.content.filter((block) => block.type !== 'reasoningBlock')
-        if (content.length > 0) {
-          deps.push(new TextBlock(`[node: ${edge.source.id}]`), ...content)
+      // User messages cannot carry tool blocks. Surface validated structuredOutput once;
+      // fall back to each toolUse input for nested MultiAgentNode (no validated value).
+      const validated = ns.results[ns.results.length - 1]?.structuredOutput
+      const content: ContentBlock[] = []
+      let validatedEmitted = false
+      for (const block of ns.content) {
+        if (block.type === 'reasoningBlock' || block.type === 'toolResultBlock') continue
+        if (block.type === 'toolUseBlock') {
+          if (block.name === STRUCTURED_OUTPUT_TOOL_NAME) {
+            if (validated !== undefined) {
+              if (!validatedEmitted) {
+                content.push(new TextBlock(JSON.stringify(validated)))
+                validatedEmitted = true
+              }
+            } else {
+              content.push(new TextBlock(JSON.stringify(block.input)))
+            }
+          }
+          continue
         }
+        content.push(block)
+      }
+      if (content.length > 0) {
+        deps.push(new TextBlock(`[node: ${edge.source.id}]`), ...content)
       }
     }
 

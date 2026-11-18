@@ -43,7 +43,6 @@ _BACKGROUND_PROPERTY = "_background_execution"
 _MANAGE_TOOL_NAME = "strands_manage_background_task"
 _COMPOSITE_SCHEMA_KEYS = {"$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"}
 _FOREGROUND_TOOL_NAMES = {
-    _MANAGE_TOOL_NAME,
     "summarize_context",
     "truncate_context",
     "pin_context",
@@ -81,14 +80,25 @@ class _BackgroundTasks(Plugin):
         self._tasks: dict[str, BackgroundTask] = {}
         self._tasks_lock = threading.Lock()
         super().__init__()
+        self._manage_tool = tool(
+            name=config.get("manage_tool_name", _MANAGE_TOOL_NAME),
+            description=(
+                "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
+                "Do not poll for results."
+            ),
+        )(self._manage_background_task)
+        self._tools.append(self._manage_tool)
 
     def init_agent(self, agent: Agent) -> None:
         """Validate exact policies, then attach the task manager, middleware, and lifecycle hooks.
 
         Raises:
+            ValueError: If the management tool name matches another registered tool.
             TypeError: If a tool declares the reserved ``_background_execution`` parameter or an explicitly
                 configured tool cannot honor its execution mode. Every violation is reported in the one message.
         """
+        if self._manage_tool.tool_name in agent.tool_registry.registry:
+            raise ValueError(f"manage_tool_name=<{self._manage_tool.tool_name}> | tool already registered")
         self._agent = agent
         errors: list[str] = []
         for tool_instance in agent.tool_registry.registry.values():
@@ -125,13 +135,6 @@ class _BackgroundTasks(Plugin):
         agent.add_hook(self._after_invocation, AfterInvocationEvent)
         agent.add_hook(lambda event: self.load_state(), AgentInitializedEvent, order=HookOrder.SDK_LAST)
 
-    @tool(
-        name=_MANAGE_TOOL_NAME,
-        description=(
-            "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
-            "Do not poll for results."
-        ),
-    )
     async def _manage_background_task(
         self, mode: Literal["list", "get", "cancel"], task_id: str | None = None
     ) -> dict[str, Any]:
@@ -407,7 +410,7 @@ class _BackgroundTasks(Plugin):
                     "content": [
                         {
                             "toolUse": {
-                                "name": _MANAGE_TOOL_NAME,
+                                "name": self._manage_tool.tool_name,
                                 "toolUseId": task["task_id"],
                                 "input": {"mode": "get", "task_id": task["task_id"]},
                             }
@@ -464,6 +467,7 @@ class _BackgroundTasks(Plugin):
             tool_instance is not None
             and policy is not None
             and policy.mode != "never"
+            and tool_instance.tool_name != self._manage_tool.tool_name
             and tool_instance.tool_name not in _FOREGROUND_TOOL_NAMES
             and tool_instance.tool_type != "structured_output"
             and not (isinstance(tool_instance, _AgentAsTool) and tool_instance.delegate)

@@ -113,13 +113,13 @@ Cancellation works identically in both modes. Call `agent.cancel()` to request c
 <Tab label="Python">
 
 - **Pre-launch cancel**: set `BeforeToolCallEvent.cancel_tool` on a per-tool hook to produce an error result for that tool, set `BeforeToolsEvent.cancel` on the batch-level hook to produce error results for every tool in the batch before any execute, or call `agent.cancel()` before the batch starts to cancel all pending tools.
-- **Mid-flight cancel** in sequential mode short-circuits not-yet-started tools. In concurrent mode, all tools have already launched, so each in-flight tool must cooperatively check for cancellation to stop early.
+- **Mid-flight cancel** in sequential mode short-circuits not-yet-started tools. In concurrent mode, all tools have already launched, so each in-flight tool must cooperatively check for cancellation to stop early. In either mode, a tool still waiting on its `BeforeToolCallEvent` hooks when the cancel lands is skipped with an error result.
 
 </Tab>
 <Tab label="TypeScript">
 
 - **Pre-launch cancel**: set `BeforeToolsEvent.cancel` on the batch-level hook, or call `agent.cancel()` before tools start, to produce error results for every tool in the batch.
-- **Mid-flight cancel** in sequential mode short-circuits not-yet-started tools. In concurrent mode, all tools have already launched, so each in-flight tool must cooperatively observe `context.cancelSignal` to stop early.
+- **Mid-flight cancel** in sequential mode short-circuits not-yet-started tools. In concurrent mode, all tools have already launched, so each in-flight tool must cooperatively observe `context.cancelSignal` to stop early. In either mode, a tool still waiting on its `BeforeToolCallEvent` hooks when the cancel lands is skipped with an error result.
 
 </Tab>
 </Tabs>

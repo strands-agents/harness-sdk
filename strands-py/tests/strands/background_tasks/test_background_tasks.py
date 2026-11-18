@@ -43,12 +43,12 @@ def _assistant_tool_use(tool_name: str, tool_use_id: str, tool_input: dict[str, 
     }
 
 
-def _deliveries(messages: Messages) -> list[ToolUse]:
+def _deliveries(messages: Messages, tool_name: str = _MANAGE_TOOL_NAME) -> list[ToolUse]:
     return [
         block["toolUse"]
         for message in messages
         for block in message["content"]
-        if "toolUse" in block and block["toolUse"]["name"] == _MANAGE_TOOL_NAME
+        if "toolUse" in block and block["toolUse"]["name"] == tool_name
     ]
 
 
@@ -147,6 +147,40 @@ def work() -> str:
 def test__init__registers_management_tool_only_when_enabled(background_tasks: Any, enabled: bool) -> None:
     agent = Agent(model=MockedModelProvider([]), background_tasks=background_tasks, callback_handler=None)
     assert (_MANAGE_TOOL_NAME in agent.tool_registry.registry) is enabled
+
+
+@pytest.mark.parametrize(
+    ("background_tasks", "tool_name"),
+    [(True, _MANAGE_TOOL_NAME), ({"manage_tool_name": "lookup"}, "lookup")],
+)
+def test__init__rejects_management_tool_name_collision(background_tasks: Any, tool_name: str) -> None:
+    existing_tool = tool(name=tool_name)(lambda: "original")
+    with pytest.raises(ValueError, match=rf"manage_tool_name=<{tool_name}> \| tool already registered"):
+        Agent(
+            model=MockedModelProvider([]),
+            tools=[existing_tool],
+            background_tasks=background_tasks,
+            callback_handler=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_manage_tool_name_controls_foreground_calls() -> None:
+    tool_name = "manage_background_task"
+    agent = Agent(
+        model=MockedModelProvider(
+            [_assistant_tool_use(tool_name, "management-use", {"mode": "list"}), _assistant_text("Listed.")]
+        ),
+        background_tasks={"manage_tool_name": tool_name, "always": ["*"]},
+        callback_handler=None,
+    )
+
+    await agent.invoke_async("List tasks.")
+
+    assert list(agent.tool_registry.registry) == [tool_name]
+    tru_result = _tool_result(agent, "management-use")
+    exp_result = {"toolUseId": "management-use", "status": "success", "content": [{"json": {"tasks": []}}]}
+    assert tru_result == exp_result
 
 
 @pytest.mark.parametrize(
@@ -377,6 +411,8 @@ async def test_surfaces_and_resumes_interrupts_raised_by_background_tools() -> N
 
 @pytest.mark.asyncio
 async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_results() -> None:
+    tool_name = "task_admin"
+
     @tool(name="work")
     def work(value: str) -> str:
         """Perform work."""
@@ -389,7 +425,12 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
             _assistant_text("Result received."),
         ]
     )
-    agent = Agent(model=model, tools=[work], background_tasks={"agentic": [work]}, callback_handler=None)
+    agent = Agent(
+        model=model,
+        tools=[work],
+        background_tasks={"manage_tool_name": tool_name, "agentic": [work]},
+        callback_handler=None,
+    )
     tool_specs = _capture_tool_specs(agent)
     middleware_calls = 0
     retried = False
@@ -426,13 +467,13 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
     exp_requested_input = {"value": "background", "_background_execution": True}
     assert tru_requested_input == exp_requested_input
 
-    tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _MANAGE_TOOL_NAME, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
+    tru_deliveries = _deliveries(agent.messages, tool_name)
+    exp_deliveries = [{"name": tool_name, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
     assert tru_deliveries == exp_deliveries
     assert tru_deliveries[0]["name"] in {spec["name"] for spec in tool_specs[0]}
     assert tru_deliveries[0]["input"]["task_id"] == tru_deliveries[0]["toolUseId"]
 
-    tru_result = _delivered_result(agent)
+    tru_result = _tool_result(agent, tru_deliveries[0]["toolUseId"])
     exp_result = {
         "toolUseId": ANY,
         "status": "success",

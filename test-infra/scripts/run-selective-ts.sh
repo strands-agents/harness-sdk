@@ -90,6 +90,7 @@ STRUCTURAL_PATTERNS=(
   '^strands-ts/test/integ/__resources__/'      # binary assets imported via Vite `?url` (not traced in reverse)
   '^test-infra/scripts/run-selective-ts\.sh$'  # this orchestration script
   '^\.github/workflows/typescript-'            # TypeScript CI workflows
+  '^shared/'                                   # data the SDK copies in at build; only the git-ignored copy is traced
 )
 STRUCTURAL="$(IFS='|'; echo "${STRUCTURAL_PATTERNS[*]}")"
 if echo "$CHANGED" | grep -qE "$STRUCTURAL"; then

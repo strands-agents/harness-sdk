@@ -2,12 +2,14 @@
 
 import asyncio
 import gc
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import anyio
 import pytest
 from mcp import ListToolsResult
 from mcp.types import CallToolResult as MCPCallToolResult
@@ -154,6 +156,39 @@ def test_tool_errors_are_not_retried(mock_transport, mock_session):
     assert result == _failure("tool blew up")
     mock_session.call_tool.assert_called_once()
     assert mock_transport["transport_callable"].call_count == 1
+
+
+@pytest.mark.parametrize("call_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [(make_mcp_error(-32000, "Connection closed"), "Connection closed"), (anyio.ClosedResourceError(), "")],
+    ids=["mcp-2x", "mcp-1x"],
+)
+def test_closed_connection_on_a_live_session_is_not_rebuilt(
+    mock_transport, mock_session, caplog, call_async, error, message
+):
+    """A stdio server that exits or a dropped SSE connection leaves the session looking ready, so it is not rebuilt.
+
+    See https://github.com/strands-agents/harness-sdk/issues/6174.
+    """
+    mock_session.call_tool.side_effect = error
+
+    with caplog.at_level(logging.WARNING, logger=mcp_client.__name__):
+        with MCPClient(mock_transport["transport_callable"], auto_reconnect=True) as client:
+            if call_async:
+                result = asyncio.run(
+                    client.call_tool_async(tool_use_id="tu-1", name="echo", arguments={"to_echo": "hi"})
+                )
+            else:
+                result = _call(client)
+
+    assert result == _failure(message)
+    assert mock_session.call_tool.call_count == 2
+    assert mock_transport["transport_callable"].call_count == 1
+    assert [record.getMessage() for record in caplog.records if record.name == mcp_client.__name__] == [
+        f"tool_name=<echo>, error=<{message}> | mcp session lost, retrying tool call once",
+        "tool execution failed on retry",
+    ]
 
 
 @pytest.mark.asyncio

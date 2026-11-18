@@ -339,6 +339,9 @@ def _default_builder(parent: Agent) -> AgentBuilder:
     the tools axis. The child shares the parent's intervention handler instances, so tool
     calls made by the child are subject to the same approval and authorization checks as
     the parent's.
+
+    The parent's hooks and plugins are not passed to the child; a child that needs them
+    requires a custom builder.
     """
 
     def build(spec: AgentSpec) -> Agent:

@@ -14,6 +14,8 @@ The configurable axes are `instructions`, `tools`, `model`, and `context`. The p
 
 By default, the child sees only the task (<Syntax py='context=Fixed("none")' ts="context: new Fixed('none')" />), but you can share the parent's conversation by setting `context` to a `Choice` over `"none"`, `"all"` (full history including tool calls), and `"no_tools"` (text turns only). When a non-`"none"` option is available, the model can also pass `last_messages` to limit how many parent messages to share.
 
+Unless you pass your own `builder`, the child inherits the parent's tools, model, and interventions, but not its [hooks](../../agents/hooks.mdx) or [plugins](../../plugins/index.mdx). A hook that logs the parent's tool calls does not see the child's. To give the child hooks or plugins, [replace the default builder](index.mdx#multi-agent-tools).
+
 _Supported in: Python, TypeScript (Node.js, browsers)._
 
 **Quickstart example:**
