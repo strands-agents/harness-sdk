@@ -7,6 +7,7 @@ import { apiErrorMessage, isUnsupportedMechanismMessage } from '$/sdk/models/nat
 import { ContextInjector } from '$/sdk/vended-plugins/context-injector/index.js'
 
 import {
+  AttemptTimeoutError,
   cachePrompt,
   cases,
   isTrackedFailure,
@@ -62,7 +63,7 @@ const forcedToolChoiceOutcome = async (model: Model): Promise<'accepted' | 'refu
 const withinAttemptLimit = <T>(work: Promise<T>): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined
   const limit = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('the attempt did not finish within 180 seconds')), 180_000)
+    timer = setTimeout(() => reject(new AttemptTimeoutError('the attempt did not finish within 180 seconds')), 180_000)
   })
   return Promise.race([work, limit]).finally(() => clearTimeout(timer))
 }

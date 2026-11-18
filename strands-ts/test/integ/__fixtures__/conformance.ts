@@ -177,6 +177,13 @@ function httpStatus(error: unknown): number | undefined {
 }
 
 /**
+ * An attempt that got no answer within its time limit.
+ */
+export class AttemptTimeoutError extends Error {
+  override readonly name = 'AttemptTimeoutError'
+}
+
+/**
  * Why a failure is the provider's (throttling, credentials, an outage, a model that is not served), or undefined
  * when the failure is a verdict on the case.
  *
@@ -184,6 +191,7 @@ function httpStatus(error: unknown): number | undefined {
  * @returns The error name and HTTP status, when the error or one of its causes is a provider error
  */
 export function providerErrorReason(error: unknown): string | undefined {
+  if (error instanceof AttemptTimeoutError) return `${error.name} (no response)`
   for (let current = error; current instanceof Error; current = current.cause) {
     if (current instanceof ModelThrottledError) return current.name
   }
