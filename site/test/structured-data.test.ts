@@ -5,6 +5,7 @@ import { pathWithBase } from '../src/util/links'
 import {
   articleSchema,
   buildBreadcrumbItems,
+  faqPageSchema,
   integrationsSchema,
   productSchema,
   releaseSchema,
@@ -286,6 +287,38 @@ describe('integrationsSchema', () => {
             url: 'https://vendor.example/strands',
             codeRepository: 'https://github.com/vendor/strands',
             programmingLanguage: ['Python', 'TypeScript'],
+          },
+        },
+      ],
+    })
+  })
+})
+
+describe('faqPageSchema', () => {
+  it('publishes questions with their accepted answers', () => {
+    const pageUrl = `${site}/faq/`
+
+    expect(
+      faqPageSchema(
+        [
+          {
+            question: 'Can I keep my current model?',
+            answer: 'Yes, when the provider supports the capabilities your agent needs.',
+          },
+        ],
+        pageUrl
+      )
+    ).toEqual({
+      '@type': 'FAQPage',
+      '@id': `${pageUrl}#faq`,
+      url: pageUrl,
+      mainEntity: [
+        {
+          '@type': 'Question',
+          name: 'Can I keep my current model?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Yes, when the provider supports the capabilities your agent needs.',
           },
         },
       ],

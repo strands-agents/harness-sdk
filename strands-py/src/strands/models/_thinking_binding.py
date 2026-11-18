@@ -15,11 +15,14 @@ def is_thinking_binding_error(error: BaseException) -> bool:
     return _THINKING_BINDING_ERROR in str(error)
 
 
-def thinking_with_drop_block(thinking: Any) -> dict[str, Any] | None:
+def thinking_with_drop_block(thinking: Any, tool_forced: bool = False) -> dict[str, Any] | None:
     """Return the thinking config with stale blocks dropped, or None if it cannot or should not change.
 
-    A caller-set ``block_binding`` is left as written.
+    A caller-set ``block_binding`` is left as written. Without a config, adaptive thinking is added, since these models
+    think adaptively by default and some reject a config without a type; a forced tool rules thinking out.
     """
+    if thinking is None and not tool_forced:
+        thinking = {"type": "adaptive"}
     if not isinstance(thinking, dict) or "block_binding" in thinking:
         return None
     return {**thinking, "block_binding": {"prefix_mismatch_behavior": "drop_block"}}

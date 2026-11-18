@@ -4,13 +4,15 @@ import { Agent, type ToolList } from '../agent.js'
 import { SessionManager } from '../../session/session-manager.js'
 import { McpClient } from '../../mcp/index.js'
 import { McpTool } from '../../tools/mcp-tool.js'
+import { logger } from '../../logging/logger.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
-import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool, createRandomTool } from '../../__fixtures__/tool-helpers.js'
 import { ConcurrentInvocationError } from '../../errors.js'
 import {
   MaxTokensError,
   TextBlock,
+  OffloadedBlock,
   JsonBlock,
   CachePointBlock,
   Message,
@@ -35,6 +37,7 @@ import {
   BeforeModelCallEvent,
   BeforeToolsEvent,
   InterruptEvent,
+  MessageAddedEvent,
 } from '../../hooks/events.js'
 import { BedrockModel } from '../../models/bedrock.js'
 import { ModelRouter } from '../../models/routing/router.js'
@@ -1936,7 +1939,14 @@ describe('Agent', () => {
         new ToolResultBlock({
           toolUseId: 'tool-1',
           status: 'success',
-          content: [new TextBlock(expect.stringContaining('[Truncated:'))],
+          content: [
+            new OffloadedBlock({
+              text: expect.any(String),
+              method: 'truncate',
+              ref: 'tool-1',
+              tokens: expect.any(Number),
+            }),
+          ],
         }),
       ])
     })
@@ -2242,7 +2252,7 @@ describe('Agent', () => {
   })
 })
 
-describe('Agent._redactLastMessage', () => {
+describe('Agent._redactLastUserMessage', () => {
   const redactMessage = '[REDACTED]'
 
   it('redacts last user message with only text blocks', () => {
@@ -2257,7 +2267,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('user')
@@ -2280,7 +2290,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     expect(agent['messages'][agent['messages'].length - 1]!.trackingId).toBe('durable-1')
   })
@@ -2310,7 +2320,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('user')
@@ -2334,31 +2344,59 @@ describe('Agent._redactLastMessage', () => {
     expect((toolResult2.content[0] as TextBlock).text).toBe(redactMessage)
   })
 
-  it('does not redact when last message is not from user', () => {
+  it('does not redact when there is no user message', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
     const agent = new Agent({ model })
-
-    // Add an assistant message
     const assistantMessage = new Message({
       role: 'assistant',
       content: [new TextBlock('assistant response')],
     })
     agent['messages'].push(assistantMessage)
 
-    const originalContent = assistantMessage.content
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactLastUserMessage'](redactMessage)
 
-    const lastMessage = agent['messages'][agent['messages'].length - 1]!
-    expect(lastMessage.role).toBe('assistant')
-    expect(lastMessage.content).toBe(originalContent)
+    expect(agent.messages).toEqual([assistantMessage])
+    expect(warnSpy).toHaveBeenCalledWith('received input redaction but no user message found | redaction skipped')
+  })
+
+  it('redacts the user message when a hook appends an assistant message after it', async () => {
+    const model = new TestModelProvider(async function* () {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'INPUT BLOCKED!' } }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'guardrailIntervened' }
+      yield { type: 'modelRedactionEvent', inputRedaction: { replaceContent: redactMessage } }
+    })
+    const agent = new Agent({ model, printer: false })
+    const contextMessage = new Message({
+      role: 'assistant',
+      content: [new TextBlock('<user_context>likes cats</user_context>')],
+    })
+    agent.addHook(MessageAddedEvent, (event) => {
+      if (event.message.role === 'user') {
+        agent.messages.push(contextMessage)
+      }
+    })
+
+    await agent.invoke('Tell me something bad')
+
+    expect(agent.messages).toEqual([
+      new Message({ role: 'user', content: [new TextBlock(redactMessage)], trackingId: anyTrackingId }),
+      contextMessage,
+      new Message({ role: 'assistant', content: [new TextBlock('INPUT BLOCKED!')], trackingId: anyTrackingId }),
+    ])
   })
 
   it('handles empty messages array gracefully', () => {
+    using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
     const agent = new Agent({ model })
 
-    expect(() => agent['_redactLastMessage'](redactMessage)).not.toThrow()
+    expect(() => agent['_redactLastUserMessage'](redactMessage)).not.toThrow()
     expect(agent['messages']).toHaveLength(0)
+    expect(warnSpy).toHaveBeenCalledWith('received input redaction but no user message found | redaction skipped')
   })
 })
 
@@ -2709,6 +2747,84 @@ describe('normalizeToolUseNames', () => {
       expect(agent.tools.find((t) => t.name === 'tool_b')!.description).toBe('B-updated')
 
       setterSpy.mockRestore()
+    })
+
+    describe('when a refreshed tool is invalid or taken', () => {
+      /** An agent with one MCP tool, a user tool and the context manager's retrieval tool, plus its refresh callback. */
+      async function setup(): Promise<{
+        agent: Agent
+        refresh: (oldTools: string[], newTools: McpTool[]) => void
+        mcpTool: (name: string) => McpTool
+        initial: McpTool
+      }> {
+        const mcpClient = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+        const mcpTool = (name: string): McpTool =>
+          new McpTool({ name, description: `MCP ${name}`, inputSchema: {}, client: mcpClient })
+        const initial = mcpTool('tool_a')
+        vi.spyOn(mcpClient, 'listTools').mockResolvedValue([initial])
+        let refresh: ((oldTools: string[], newTools: McpTool[]) => void) | undefined
+        const setterSpy = vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation((cb) => {
+          refresh = cb
+        })
+        const agent = new Agent({
+          model: new MockMessageModel(),
+          tools: [
+            mcpClient,
+            createMockTool('shell', () => new ToolResultBlock({ toolUseId: 'shell', status: 'success', content: [] })),
+          ],
+          contextManager: 'auto',
+          printer: false,
+        })
+        await agent.initialize()
+        setterSpy.mockRestore()
+        return { agent, refresh: refresh!, mcpTool, initial }
+      }
+
+      it.each(['retrieve_context', 'shell'])(
+        'skips a refreshed tool that takes the name %s from another source and applies the rest',
+        async (name) => {
+          using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+          const { agent, refresh, mcpTool } = await setup()
+          const before = agent.toolRegistry.get(name)
+          expect(before).toBeDefined()
+          const [toolA, toolC] = [mcpTool('tool_a'), mcpTool('tool_c')]
+
+          refresh(['tool_a'], [toolA, toolC, mcpTool(name)])
+
+          expect(agent.toolRegistry.get(name)).toBe(before)
+          expect(agent.toolRegistry.get('tool_a')).toBe(toolA)
+          expect(agent.toolRegistry.get('tool_c')).toBe(toolC)
+          expect(warnSpy).toHaveBeenCalledWith(
+            `client=<strands-agents-ts-sdk>, tool_name=<${name}>, error=<Tool with name '${name}' already registered> | skipping refreshed mcp tool`
+          )
+        }
+      )
+
+      it('skips an invalid refreshed tool and removes the tools the server dropped', async () => {
+        using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const { agent, refresh, mcpTool } = await setup()
+        const toolC = mcpTool('tool_c')
+
+        refresh(['tool_a'], [toolC, mcpTool('bad name!')])
+
+        expect(agent.toolRegistry.get('tool_a')).toBeUndefined()
+        expect(agent.toolRegistry.get('tool_c')).toBe(toolC)
+        expect(agent.toolRegistry.get('bad name!')).toBeUndefined()
+      })
+
+      it('keeps the other source tool on the next refresh, though the client reports it as an old tool', async () => {
+        using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const { agent, refresh, mcpTool } = await setup()
+        const retrieval = agent.toolRegistry.get('retrieve_context')
+        expect(retrieval).toBeDefined()
+        refresh(['tool_a'], [mcpTool('tool_a'), mcpTool('retrieve_context')])
+
+        refresh(['tool_a', 'retrieve_context'], [mcpTool('tool_d')])
+
+        expect(agent.toolRegistry.get('retrieve_context')).toBe(retrieval)
+        expect(agent.toolRegistry.get('tool_a')).toBeUndefined()
+        expect(agent.toolRegistry.get('tool_d')?.description).toBe('MCP tool_d')
+      })
     })
   })
 

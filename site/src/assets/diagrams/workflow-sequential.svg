@@ -17,23 +17,24 @@
 
   <!-- Edge labels -->
   <rect class="dg-mask is-on-zone" x="280" y="68" width="56" height="12" rx="2"/>
-  <text class="dg-label" x="308" y="77" text-anchor="middle">FINDINGS</text>
+  <text class="dg-label" x="308" y="77" text-anchor="middle">FACTS</text>
   <rect class="dg-mask is-on-zone" x="480" y="68" width="56" height="12" rx="2"/>
-  <text class="dg-label" x="508" y="77" text-anchor="middle">INSIGHTS</text>
+  <text class="dg-label" x="508" y="77" text-anchor="middle">ANALYSIS</text>
 
   <!-- Nodes -->
   <rect class="dg-node is-input" x="16" y="56" width="104" height="64" rx="6"/>
-  <text class="dg-name" x="68" y="93" text-anchor="middle">Topic</text>
+  <text class="dg-name" x="68" y="84" text-anchor="middle">Incident</text>
+  <text class="dg-name" x="68" y="103" text-anchor="middle">notes</text>
 
   <rect class="dg-node" x="152" y="56" width="112" height="64" rx="6"/>
-  <text class="dg-name" x="208" y="85" text-anchor="middle">Research</text>
+  <text class="dg-name" x="208" y="85" text-anchor="middle">Extract facts</text>
   <text class="dg-code" x="208" y="103" text-anchor="middle">researcher</text>
 
   <rect class="dg-node" x="352" y="56" width="112" height="64" rx="6"/>
-  <text class="dg-name" x="408" y="85" text-anchor="middle">Analysis</text>
+  <text class="dg-name" x="408" y="85" text-anchor="middle">Analyze</text>
   <text class="dg-code" x="408" y="103" text-anchor="middle">analyst</text>
 
   <rect class="dg-node" x="552" y="56" width="136" height="64" rx="6"/>
-  <text class="dg-name" x="620" y="85" text-anchor="middle">Report writing</text>
+  <text class="dg-name" x="620" y="85" text-anchor="middle">Write report</text>
   <text class="dg-code" x="620" y="103" text-anchor="middle">writer</text>
 </svg>

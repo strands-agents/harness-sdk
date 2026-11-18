@@ -36,7 +36,8 @@ _EXA_TOOL = "web_search_exa"
 _TIMEOUT = timedelta(seconds=30)
 _MAX_RESULTS = 10
 _SNIPPET_CHARS = 500
-_UNAVAILABLE = " web_search is unavailable here; answer without it."
+# Appended to a permanent failure's tool result, so the model stops retrying.
+_ANSWER_WITHOUT_SEARCH = " web_search is unavailable here; answer without it."
 
 
 class SearchResult(TypedDict):
@@ -114,17 +115,32 @@ def _unavailable(state: dict[str, Any], lock: threading.Lock, reason: str) -> st
     with lock:
         if "unavailable" not in state:
             logger.warning("web_search: AgentCore web search is unavailable, so every search will fail: %s", reason)
-            state["unavailable"] = reason + _UNAVAILABLE
+            state["unavailable"] = reason + _ANSWER_WITHOUT_SEARCH
         return str(state["unavailable"])
 
 
-def _agentcore_backend(region: str | None = None, boto_session: boto3.Session | None = None) -> SearchBackend:
+def _agentcore_backend(
+    boto_session: boto3.Session | None = None,
+    boto_client_config: Config | None = None,
+    region_name: str | None = None,
+    endpoint_url: str | None = None,
+) -> SearchBackend:
     """Search backend over Amazon Bedrock AgentCore's ``InvokeWebSearch`` API, authorized by IAM.
 
-    ``region`` defaults the way ``BedrockModel`` resolves its own. A missing permission, missing
-    credentials, or an unsupported region is permanent, so it is remembered (and logged once) and
-    later calls fail without a request.
+    Configured like ``BedrockModel`` (see ``make_agentcore_web_search``). A missing permission,
+    missing credentials, or an unsupported region is permanent, so it is remembered (and logged
+    once) and later calls fail without a request.
     """
+    if region_name and boto_session:
+        raise ValueError("Cannot specify both `region_name` and `boto_session`.")
+    # Bounded like the Exa path; a passed config overrides these.
+    config = Config(
+        connect_timeout=10,
+        read_timeout=int(_TIMEOUT.total_seconds()),
+        retries={"total_max_attempts": 2, "mode": "standard"},
+    )
+    if boto_client_config:
+        config = config.merge(boto_client_config)
     state: dict[str, Any] = {}  # the client is built on first search, so constructing a harness stays cheap
     lock = threading.Lock()  # parallel first searches run in separate threads
 
@@ -135,16 +151,10 @@ def _agentcore_backend(region: str | None = None, boto_session: boto3.Session | 
             if "client" not in state:
                 session = boto_session or boto3.Session()
                 state["region"] = (
-                    region or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
+                    region_name or session.region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
                 )
                 state["client"] = session.client(
-                    "bedrock-agentcore",
-                    region_name=state["region"],
-                    config=Config(
-                        connect_timeout=10,
-                        read_timeout=int(_TIMEOUT.total_seconds()),
-                        retries={"max_attempts": 2, "mode": "standard"},
-                    ),
+                    "bedrock-agentcore", region_name=state["region"], config=config, endpoint_url=endpoint_url
                 )
         try:
             response = state["client"].invoke_web_search(
@@ -183,14 +193,26 @@ def _agentcore_backend(region: str | None = None, boto_session: boto3.Session | 
     return search
 
 
-def make_agentcore_web_search(*, region: str | None = None, boto_session: boto3.Session | None = None) -> Any:
-    """Build a ``web_search`` tool over Amazon Bedrock AgentCore web search.
+def make_agentcore_web_search(
+    *,
+    boto_session: boto3.Session | None = None,
+    boto_client_config: Config | None = None,
+    region_name: str | None = None,
+    endpoint_url: str | None = None,
+) -> Any:
+    """Build a ``web_search`` tool over Amazon Bedrock AgentCore web search, configured like ``BedrockModel``.
 
-    ``region`` defaults the way ``BedrockModel`` resolves its own (the session, then ``AWS_REGION``,
-    then ``us-west-2``); ``boto_session`` (default: a new ``boto3.Session()``) supplies the credentials,
-    which need ``bedrock-agentcore:InvokeWebSearch``.
+    Args:
+        boto_session: Session supplying the credentials (which need ``bedrock-agentcore:InvokeWebSearch``)
+            and region. Defaults to a new ``boto3.Session()``.
+        boto_client_config: Client configuration, merged over the tool's timeouts and retry limit.
+        region_name: AWS region. Defaults to the session's, then ``AWS_REGION``, then ``us-west-2``.
+        endpoint_url: Custom endpoint, e.g. a VPC endpoint (PrivateLink).
+
+    Raises:
+        ValueError: If both ``region_name`` and ``boto_session`` are given.
     """
-    return _search_tool(_agentcore_backend(region, boto_session))
+    return _search_tool(_agentcore_backend(boto_session, boto_client_config, region_name, endpoint_url))
 
 
 def make_exa_web_search() -> Any:

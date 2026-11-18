@@ -521,13 +521,14 @@ def test_web_search_on_bedrock_is_the_agentcore_tool_in_the_model_region(monkeyp
     regions = []
     real = agent_module.make_agentcore_web_search
     monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region"]) or real(**kw)
+        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region_name"]) or real(**kw)
     )
+    # The default Claude model runs on Anthropic's Bedrock client; other families run on BedrockModel.
     agent = create_harness()
     assert "web_search" in agent.tool_names
-    assert regions == [agent.model.client.meta.region_name]
     explicit = create_harness(model="bedrock/us.amazon.nova-2-lite-v1:0", builtin_tools=["read", "web_search"])
     assert "web_search" in explicit.tool_names
+    assert regions == [agent.model.client.aws_region, explicit.model.client.meta.region_name]
 
 
 def test_web_search_on_an_all_bedrock_router_is_agentcore_in_the_default_models_region(monkeypatch, caplog):
@@ -536,7 +537,7 @@ def test_web_search_on_an_all_bedrock_router_is_agentcore_in_the_default_models_
     regions = []
     real = agent_module.make_agentcore_web_search
     monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region"]) or real(**kw)
+        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region_name"]) or real(**kw)
     )
     router = ModelRouter([BedrockModel(model_id="fast", region_name="eu-west-1"), BedrockModel(model_id="deep")])
     assert "web_search" in create_harness(model=router).tool_names
@@ -554,7 +555,7 @@ def test_web_search_on_other_bedrock_apis_is_agentcore_in_the_clients_region(mon
     regions = []
     real = agent_module.make_agentcore_web_search
     monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region"]) or real(**kw)
+        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region_name"]) or real(**kw)
     )
     model = AnthropicModel(model_id="claude", max_tokens=10)
     model.client = AsyncAnthropicBedrock(aws_region="eu-west-1")
@@ -569,7 +570,7 @@ def test_web_search_on_a_bedrock_model_instance_is_the_agentcore_tool_in_its_reg
     regions = []
     real = agent_module.make_agentcore_web_search
     monkeypatch.setattr(
-        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region"]) or real(**kw)
+        agent_module, "make_agentcore_web_search", lambda **kw: regions.append(kw["region_name"]) or real(**kw)
     )
     agent = create_harness(model=BedrockModel(model_id="x", region_name="eu-west-1"))
     assert "web_search" in agent.tool_names
@@ -771,12 +772,12 @@ def test_context_manager_config_builds_an_sdk_context_manager():
 
 def test_effort_auto_uses_recommended_level():
     agent = create_harness(effort="auto")
-    assert agent.model.config["additional_request_fields"]["output_config"]["effort"] == "high"
+    assert agent.model.config["params"]["output_config"]["effort"] == "medium"
 
 
 def test_effort_off_drops_reasoning():
     agent = create_harness(effort="off")
-    assert "additional_request_fields" not in agent.model.config
+    assert "params" not in agent.model.config
 
 
 def test_effort_level_is_validated_against_the_model():

@@ -58,7 +58,7 @@ agent("Find the slowest test in this repo and explain why it's slow")
 
 ```python
 create_harness(
-    model="bedrock/global.anthropic.claude-opus-5",  # "provider/name", a bare Bedrock id, or a Model instance
+    model="bedrock/global.anthropic.claude-opus-5-5",  # "provider/name", a bare Bedrock id, or a Model instance
     effort="auto",                          # "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
     instructions=None,                      # domain text appended to the system prompt
     tools=None,                             # your tools, added alongside the built-ins
@@ -66,7 +66,7 @@ create_harness(
     plugins=None,                           # your Strands plugins, added alongside the built-in ones
     builtin_tools=None,                     # None = the harness's defaults; a list pins names; a mapping edits (see below)
     background_tasks=None,                  # SDK Background Tasks policy; False to disable
-    builtin_plugins=["todos", "environment"],  # built-in feature plugins by name; [] for none
+    builtin_plugins=["environment"],        # built-in feature plugins by name; [] for none
     caching="auto",                         # cache system prompt, tools & history where supported; False off
     context_manager="auto",                 # "auto" | "agentic" | a ContextManager config/instance | False
     session=True,                           # True | {"id": ..., "dir": ...} | a SessionManager | False
@@ -93,7 +93,8 @@ or wrong-language references fail instead of being ignored.
 pip install strands-harness
 ```
 
-The default agent runs on Amazon Bedrock. To use another provider, grab the matching extra:
+The default agent runs on Amazon Bedrock (Claude through Anthropic's Bedrock client, which the harness
+installs). To use another provider, grab the matching extra:
 
 ```bash
 pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `google` provider), [ollama], [litellm]
@@ -104,7 +105,7 @@ pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `goog
 Out of the box, `create_harness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5.5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
@@ -125,10 +126,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```python
-create_harness(model="anthropic/claude-opus-5")  # Anthropic's API directly
+create_harness(model="anthropic/claude-opus-5-5")  # Anthropic's API directly
 create_harness(model="openai/gpt-5.6-sol")         # OpenAI
 create_harness(model="google/gemini-3.5-flash")    # Google
-create_harness(model="bedrock/global.anthropic.claude-opus-5")  # the default, spelled out
+create_harness(model="bedrock/global.anthropic.claude-opus-5-5")  # the default, spelled out
 create_harness(model="bedrock-mantle/openai.gpt-5.6-sol")  # Bedrock's OpenAI-compatible endpoint
 
 from strands.models.openai import OpenAIModel
@@ -142,7 +143,7 @@ for every provider:
 
 ```python
 create_harness(effort="high")     # minimal | low | medium | high | xhigh | max, as the provider offers them
-create_harness(effort="auto")     # the provider's recommended level (high where supported), the default
+create_harness(effort="auto")     # the model vendor's default level (e.g. medium on Opus 5.5, else high), the default
 create_harness(effort="off")      # no reasoning
 ```
 
@@ -314,11 +315,12 @@ including other `bedrock-mantle` models), the model gets a `web_search` tool bac
 per query to your AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM
 permission on `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is offered
 in a subset of regions; without them the first search returns an error telling the model to answer
-without search, and later ones fail without a request. Searches use the default AWS credential
-chain, not a `BedrockModel` instance's own `boto_session`. A `web_search` tool you pass yourself
-(including one from an MCP server) replaces this default, so
-`make_agentcore_web_search(region=..., boto_session=...)` in `tools=[...]` picks another region or
-credentials. Elsewhere (another provider's `Model` instance) `web_search` is off by default. To search there, opt into Exa with
+without search, and later ones fail without a request. Search has its own credentials: the default
+AWS credential chain, not a session you gave a model instance. A `web_search` tool you pass yourself
+(including one from an MCP server) replaces this default, and `make_agentcore_web_search` takes
+the same options as `BedrockModel`, so `tools=[make_agentcore_web_search(boto_session=session)]`
+searches with another profile or role (`region_name`, `boto_client_config` and `endpoint_url` work
+the same way). Elsewhere (another provider's `Model` instance) `web_search` is off by default. To search there, opt into Exa with
 `{"web_search": "exa"}`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
 override a model's default search by adding `"exa"` explicitly to any model. If you are
@@ -427,10 +429,12 @@ directories are skipped.
 
 ## Built-in plugins
 
-The harness ships two built-in feature plugins, both on by default:
+The harness ships two built-in feature plugins. `environment` is on by default; `todos` is opt-in:
 
 - **`todos`** lets the agent keep a structured task list and re-surfaces it before each step so it
   stays on plan through longer tasks. The list lives in agent state, never in durable history.
+  Because it re-injects on every turn, it costs tokens and breaks the cached prefix on providers
+  without explicit cache points — enable it where the task tracking earns that.
 - **`environment`** injects a short context block before each turn: the platform, current date,
   working directory, the project's `AGENTS.md` contents, and links to other `AGENTS.md`/`README.md`
   files a couple of levels down (links, not contents, so the block stays small). Everything is read

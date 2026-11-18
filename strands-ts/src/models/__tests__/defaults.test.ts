@@ -58,6 +58,7 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('gpt-oss-120b')).toBe(131_072)
     expect(getContextWindowLimit('gpt-oss-20b')).toBe(131_072)
     // Gemini
+    expect(getContextWindowLimit('gemini-4-hydrogen')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-4-argon')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-3.8-flash')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-3.7-flash')).toBe(1_048_576)
@@ -81,6 +82,11 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('anthropic.claude-haiku-5-5')).toBe(1_000_000)
     expect(getContextWindowLimit('eu.anthropic.claude-haiku-5-5')).toBe(1_000_000)
     expect(getContextWindowLimit('global.anthropic.claude-haiku-5-5')).toBe(1_000_000)
+    // Claude Fable 5.2 and Mythos 5.2 (#5986).
+    expect(getContextWindowLimit('claude-fable-5-2')).toBe(1_000_000)
+    expect(getContextWindowLimit('global.anthropic.claude-fable-5-2')).toBe(1_000_000)
+    expect(getContextWindowLimit('claude-mythos-5-2')).toBe(1_000_000)
+    expect(getContextWindowLimit('us.anthropic.claude-mythos-5-2')).toBe(1_000_000)
   })
 
   it('returns the Bedrock window for gpt-oss, not the OpenAI-hosted one', () => {

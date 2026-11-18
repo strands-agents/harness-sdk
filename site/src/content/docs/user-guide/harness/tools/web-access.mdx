@@ -90,14 +90,16 @@ Everywhere else on Amazon Bedrock, the agent instead gets a `web_search` tool ba
 That covers `bedrock/...` and the other `bedrock-mantle/...` models, a `BedrockModel` you build
 yourself, an `AnthropicModel` on Anthropic's Bedrock or Mantle client, an OpenAI model with a
 Bedrock Mantle config, and a `ModelRouter` of only those. It calls the `InvokeWebSearch` API in the
-model's region with the default AWS credential chain (not the model's own session or client
-config), so each query is authorized by IAM and billed to that AWS account. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
+model's region, and each query is authorized by IAM and billed to your AWS account. Search has its
+own credentials: the default AWS credential chain, not a session or client config you gave a model
+instance. The caller needs the `bedrock-agentcore:InvokeWebSearch` IAM permission on
 `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and the API is available in a subset
 of regions. Without the permission, or in an unsupported region, the first search returns an
 error telling the model to answer without search, and later searches fail without a request. A
 `web_search` tool you pass in `tools` replaces this default; to search in another region or with
-other credentials, pass `make_agentcore_web_search(region=..., boto_session=...)` (Python) or
-`makeAgentCoreWebSearch({ region, clientConfig })` (TypeScript). In TypeScript, an MCP server that
+other credentials, pass `make_agentcore_web_search(boto_session=...)` (Python) or
+`makeAgentCoreWebSearch({ clientConfig })` (TypeScript). Both take the same options as
+`BedrockModel`. In TypeScript, an MCP server that
 exposes `web_search` needs `web_search` turned off, since its tools are only listed once it connects.
 
 For models that don't provide web search, the harness logs a message and builds the agent

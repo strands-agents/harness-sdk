@@ -347,6 +347,7 @@ function requestPart(block: ContentBlock): string | undefined {
     case 'cachePointBlock':
     case 'citationsBlock':
     case 'injectedBlock': // Written by the SDK, not part of the user's request.
+    case 'unknownBlock': // Saved by a newer SDK; no provider sends it.
     case 'summaryBlock':
       return undefined
     default: {

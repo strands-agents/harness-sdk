@@ -52,7 +52,8 @@ async def test_summarize_round_trip(model):
     ]
     assert model.model_info.capabilities.server_side_summary is True
 
-    block = await model.summarize(messages, system_prompt="You are helpful.")
+    result = await model.summarize(messages, system_prompt="You are helpful.")
+    block = result.content[0]
 
     assert block["summary"]["provider"] == "anthropic"
     assert block["summary"]["signature"]

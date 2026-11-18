@@ -81,12 +81,13 @@ export interface HarnessAgentOptions extends Omit<
   /**
    * A `Model` or `ModelRouter` instance, a `"provider/name"` string (e.g.
    * `"anthropic/claude-fable-5"`), a bare Bedrock model id, or `undefined` for the harness default
-   * (Bedrock Opus 5).
+   * (Bedrock Opus 5.5).
    */
   model?: Model | ModelRouter | string
   /**
    * Reasoning effort applied to the resolved model, mapped to each provider's request fields.
-   * `'auto'` (the default) uses the provider's recommended level, `'off'` turns reasoning off
+   * `'auto'` (the default) uses the model vendor's default level (what Claude Code, Codex, or Gemini CLI run it
+   * at; the provider's `'high'` otherwise), `'off'` turns reasoning off
    * (the provider's `none` level where it has one), and a named level (`'minimal'`, `'low'`,
    * `'medium'`, `'high'`, `'xhigh'`, `'max'`) sets it explicitly; a level the resolved provider
    * does not support throws. Ignored when `model` is a `Model` or `ModelRouter` instance.
@@ -192,11 +193,11 @@ export interface HarnessAgentOptions extends Omit<
    */
   memory?: boolean | MemoryConfig | MemoryManager | null
   /**
-   * Names of the built-in feature plugins to enable. Defaults to `['todos', 'environment']`:
-   * `todos` adds a `todo_write` tool that tracks multi-step work and re-surfaces the list before
-   * each step; `environment` injects the platform, date, working directory, and the project's
-   * `AGENTS.md` (plus links to nearby `AGENTS.md`/`README.md` files) before each user turn. Pass
-   * `[]` to disable them.
+   * Names of the built-in feature plugins to enable. Defaults to `['environment']`, which injects
+   * the platform, date, working directory, and the project's `AGENTS.md` (plus links to nearby
+   * `AGENTS.md`/`README.md` files) before each user turn. `todos` is opt-in: it adds a `todo_write`
+   * tool that tracks multi-step work and re-surfaces the list before each step. Pass `[]` to
+   * disable them all.
    */
   builtinPlugins?: readonly BuiltinPluginName[]
   /**

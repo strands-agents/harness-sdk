@@ -270,9 +270,10 @@ def create_harness(
     Args:
         model: A ``Model`` or ``ModelRouter`` instance, a ``"provider/name"`` string (e.g.
             ``"anthropic/claude-fable-5"``), a bare Bedrock model id, or ``None`` for the
-            harness default (Bedrock Opus 5).
+            harness default (Bedrock Opus 5.5).
         effort: Reasoning effort applied to the resolved model, mapped to each provider's request
-            fields. ``"auto"`` (the default) uses the provider's recommended level, ``"off"`` turns
+            fields. ``"auto"`` (the default) uses the model vendor's default level (what Claude Code,
+            Codex, or Gemini CLI run it at; the provider's ``"high"`` otherwise), ``"off"`` turns
             reasoning off, and ``"minimal"``/``"low"``/``"medium"``/``"high"``/``"xhigh"``/``"max"``
             set it explicitly; a level the provider does not offer raises. When ``model`` is a
             ``Model`` or ``ModelRouter`` instance a non-``"auto"`` effort is ignored with a warning
@@ -382,10 +383,10 @@ def create_harness(
             run its shutdown on exit, or call ``agent.shutdown()`` (``await agent.shutdown_async()``
             from async code) at your shutdown boundary, to persist what's pending.
         builtin_plugins: Names of the built-in feature plugins to enable. Defaults to
-            ``["todos", "environment"]``: ``todos`` adds a ``todo_write`` tool that tracks
-            multi-step work and re-surfaces the list before each step; ``environment`` injects the
-            platform, date, working directory, and the project's ``AGENTS.md`` (plus links to nearby
-            ``AGENTS.md``/``README.md`` files) before each user turn. Pass ``[]`` to disable them.
+            ``["environment"]``, which injects the platform, date, working directory, and the
+            project's ``AGENTS.md`` (plus links to nearby ``AGENTS.md``/``README.md`` files) before
+            each user turn. ``todos`` is opt-in: it adds a ``todo_write`` tool that tracks multi-step
+            work and re-surfaces the list before each step. Pass ``[]`` to disable them all.
         interventions: Gate tool calls behind approval or a policy; defaults to ``None`` (off —
             every call runs). Accepts a preset (``"ask"`` approves every call, ``"smart"`` lets the
             SDK's LLM risk classifier flag risky ones), a natural-language policy used as that
@@ -469,7 +470,7 @@ def create_harness(
     builtin_tools_by_name = _builtin_tools(parent_config)
     default_agentcore = None
     if web_search == "agentcore":
-        builtin_tools_by_name["web_search"] = make_agentcore_web_search(region=_bedrock_region(resolved_model))
+        builtin_tools_by_name["web_search"] = make_agentcore_web_search(region_name=_bedrock_region(resolved_model))
         if not web_search_explicit:
             # A caller's own web_search (a tool, plugin, or MCP server) replaces the default, so it is
             # registered after the Agent loads theirs; naming web_search in builtin_tools still collides.

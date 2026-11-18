@@ -5,6 +5,8 @@ import { AfterToolCallEvent, BeforeModelCallEvent } from '../../../hooks/events.
 import { TextBlock, JsonBlock, ToolResultBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock, DocumentBlock } from '../../../types/media.js'
 import { createMockAgent, invokeTrackedHook } from '../../../__fixtures__/agent-helpers.js'
+import { collectGenerator } from '../../../__fixtures__/model-test-helpers.js'
+import { createMockContext } from '../../../__fixtures__/tool-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { AgentMetrics } from '../../../telemetry/meter.js'
 import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
@@ -365,15 +367,42 @@ describe('ContextOffloader', () => {
       expect((result as DocumentBlock).format).toBe('pdf')
     })
 
-    it('returns error string for missing reference', async () => {
+    it('throws for missing reference', async () => {
       const storage = new InMemoryStorage()
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
       const tools = plugin.getTools()
       const retrievalTool = tools[0]!
-      const result = await (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke({
+      const invoke = (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke({
         reference: 'nonexistent',
       })
-      expect(result).toContain('Error: reference not found')
+      await expect(invoke).rejects.toThrow('reference not found')
+    })
+
+    it('reports a storage failure that is not a missing key as itself', async () => {
+      // A throttle is recoverable: told "do not retry" the model abandons content the next call would fetch.
+      const storage = new InMemoryStorage()
+      vi.spyOn(storage, 'retrieve').mockRejectedValue(new Error('ThrottlingException: Rate exceeded'))
+      const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
+      const toolUse = { name: 'retrieve_offloaded_content', toolUseId: 'tu-1', input: { reference: 'mem_1_k1' } }
+
+      const { result } = await collectGenerator(plugin.getTools()[0]!.stream(createMockContext(toolUse)))
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toBe('Error: ThrottlingException: Rate exceeded')
+    })
+
+    it('tells the model a missing reference is terminal only once it was passed as listed', async () => {
+      // The placeholder lists each reference with a description, so a model can copy the decoration with it.
+      const plugin = new ContextOffloader({ storage: new InMemoryStorage(), includeRetrievalTool: true })
+      const toolUse = { name: 'retrieve_offloaded_content', toolUseId: 'tu-1', input: { reference: ' mem_1_k1 ' } }
+
+      const { result } = await collectGenerator(plugin.getTools()[0]!.stream(createMockContext(toolUse)))
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toBe(
+        'Error: reference not found: mem_1_k1. Pass the reference exactly as the placeholder lists it. ' +
+          'If that is what you passed, the content is unavailable — do not retry.'
+      )
     })
   })
 
@@ -460,12 +489,10 @@ describe('ContextOffloader', () => {
       const ref = await storage.store('k1', new Uint8Array([137, 80, 78, 71]), 'image/png')
 
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: ref,
-        pattern: 'test',
-      })) as string
 
-      expect(result).toContain('Error: cannot search binary content (image/png)')
+      await expect(getRetrievalTool(plugin).invoke({ reference: ref, pattern: 'test' })).rejects.toThrow(
+        'cannot search binary content (image/png)'
+      )
     })
 
     it('falls back to literal match on invalid regex', async () => {
@@ -485,15 +512,13 @@ describe('ContextOffloader', () => {
       expect(result).toContain('> 3| foo (bar again')
     })
 
-    it('returns error for missing reference', async () => {
+    it('throws for missing reference', async () => {
       const storage = new InMemoryStorage()
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: 'nonexistent',
-        pattern: 'test',
-      })) as string
 
-      expect(result).toContain('Error: reference not found')
+      await expect(getRetrievalTool(plugin).invoke({ reference: 'nonexistent', pattern: 'test' })).rejects.toThrow(
+        'reference not found'
+      )
     })
 
     it('searches JSON content', async () => {
@@ -570,12 +595,10 @@ describe('ContextOffloader', () => {
       const ref = await storage.store('k1', new TextEncoder().encode(content), 'text/plain')
 
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: ref,
-        line_range: { start: 100, end: 200 },
-      })) as string
 
-      expect(result).toContain('beyond content length (3 lines)')
+      await expect(
+        getRetrievalTool(plugin).invoke({ reference: ref, line_range: { start: 100, end: 200 } })
+      ).rejects.toThrow('beyond content length (3 lines)')
     })
 
     it('clamps line_range.end to actual content length', async () => {

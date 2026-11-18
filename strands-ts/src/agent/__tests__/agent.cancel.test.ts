@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../agent.js'
-import { AfterInvocationEvent, AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/index.js'
+import {
+  AfterInvocationEvent,
+  AfterModelCallEvent,
+  BeforeModelCallEvent,
+  BeforeToolCallEvent,
+} from '../../hooks/index.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { TextBlock, ToolResultBlock } from '../../types/messages.js'
@@ -171,6 +176,39 @@ describe('Agent Cancellation', () => {
       )
       expect(agent.messages[3]!.content[0]).toEqual(new TextBlock('Cancelled by user'))
       expect(result.lastMessage).toBe(agent.messages[3])
+    })
+  })
+
+  describe('cancel during BeforeToolCallEvent hooks', () => {
+    it.each([
+      ['sequential', 'agent.cancel()'],
+      ['sequential', 'external cancelSignal'],
+      ['concurrent', 'agent.cancel()'],
+      ['concurrent', 'external cancelSignal'],
+    ] as const)('skips the tool (%s, %s) (#5665)', async (toolExecutor, source) => {
+      const executedTools: string[] = []
+      const mockTool = createMockTool('firstTool', () => {
+        executedTools.push('firstTool')
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('Done')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'firstTool', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Should not reach' })
+
+      const controller = new AbortController()
+      const agent = new Agent({ model, tools: [mockTool], toolExecutor, printer: false })
+      agent.addHook(BeforeToolCallEvent, () => {
+        if (source === 'agent.cancel()') agent.cancel()
+        else controller.abort()
+      })
+
+      const result = await agent.invoke('Go', { cancelSignal: controller.signal })
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(executedTools).toEqual([])
+      expect(agent.messages[2]!.content).toEqual([
+        new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock('Tool execution cancelled')] }),
+      ])
     })
   })
 

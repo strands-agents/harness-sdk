@@ -323,6 +323,22 @@ class TestEndToEnd:
 
 class TestChildren:
     @pytest.mark.asyncio
+    async def test_awaits_async_builder(self):
+        children = []
+
+        async def builder(spec):
+            child = Mock(name=spec.name)
+            child.state = AgentState()
+            child.tool_registry = ToolRegistry()
+            children.append(child)
+            return child
+
+        with _patch() as cls:
+            await _run(make_swarm(builder=builder), task="t", agents=[_spec("a"), _spec("b")], tool_context=_ctx())
+
+        assert cls.call_args[1]["nodes"] == children
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("entry_point", [None, "b"])
     async def test_builds_children(self, entry_point):
         """Children get resolved specs, lose handoff_to_agent and every swarm tool, and honor entry_point."""

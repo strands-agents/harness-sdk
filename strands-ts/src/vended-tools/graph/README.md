@@ -49,21 +49,21 @@ The default tool, produced by `makeGraph()`: no presets, free-form `instructions
 
 ### `makeGraph(options?)`
 
-| Option          | Type                         | Default                     | Description                                                            |
-| --------------- | ---------------------------- | --------------------------- | ---------------------------------------------------------------------- |
-| `builder`       | `(spec: AgentSpec) => Agent` | (inherits from parent)      | Turns a resolved spec into an agent.                                   |
-| `presets`       | `Record<string, Preset>`     | `{}`                        | Named roles the model selects via `agent_type`.                        |
-| `defaultPreset` | `string`                     | first preset                | Preset used when the model omits both `agent_type` and `instructions`. |
-| `instructions`  | `Open \| Choice \| Fixed`    | `new Open()`                | Policy for each node's system prompt.                                  |
-| `tools`         | `Choice \| Fixed \| Inherit` | `new Inherit()`             | Policy for each node's tools. A `Choice` must be `multiple`.           |
-| `model`         | `Inherit \| Choice \| Fixed` | `new Inherit()`             | Policy for each node's model.                                          |
-| `maxNodes`      | `number`                     | `20`                        | Upper bound on nodes per call. Must be an integer >= 2.                |
-| `maxEdges`      | `number`                     | `50`                        | Upper bound on edges per call. Must be a positive integer.             |
-| `maxSteps`      | `number`                     | `Infinity`                  | Max total node executions.                                             |
-| `timeout`       | `number`                     | `900_000`                   | Wall-clock ceiling for the whole graph, in milliseconds.               |
-| `nodeTimeout`   | `number`                     | `300_000`                   | Per-node wall-clock ceiling, in milliseconds.                          |
-| `name`          | `string`                     | `graph`                     | Tool name.                                                             |
-| `description`   | `string`                     | `DEFAULT_GRAPH_DESCRIPTION` | Tool description.                                                      |
+| Option          | Type                                           | Default                     | Description                                                            |
+| --------------- | ---------------------------------------------- | --------------------------- | ---------------------------------------------------------------------- |
+| `builder`       | `(spec: AgentSpec) => Agent \| Promise<Agent>` | (inherits from parent)      | Turns a resolved spec into an agent.                                   |
+| `presets`       | `Record<string, Preset>`                       | `{}`                        | Named roles the model selects via `agent_type`.                        |
+| `defaultPreset` | `string`                                       | first preset                | Preset used when the model omits both `agent_type` and `instructions`. |
+| `instructions`  | `Open \| Choice \| Fixed`                      | `new Open()`                | Policy for each node's system prompt.                                  |
+| `tools`         | `Choice \| Fixed \| Inherit`                   | `new Inherit()`             | Policy for each node's tools. A `Choice` must be `multiple`.           |
+| `model`         | `Inherit \| Choice \| Fixed`                   | `new Inherit()`             | Policy for each node's model.                                          |
+| `maxNodes`      | `number`                                       | `20`                        | Upper bound on nodes per call. Must be an integer >= 2.                |
+| `maxEdges`      | `number`                                       | `50`                        | Upper bound on edges per call. Must be a positive integer.             |
+| `maxSteps`      | `number`                                       | `Infinity`                  | Max total node executions.                                             |
+| `timeout`       | `number`                                       | `900_000`                   | Wall-clock ceiling for the whole graph, in milliseconds.               |
+| `nodeTimeout`   | `number`                                       | `300_000`                   | Per-node wall-clock ceiling, in milliseconds.                          |
+| `name`          | `string`                                       | `graph`                     | Tool name.                                                             |
+| `description`   | `string`                                       | `DEFAULT_GRAPH_DESCRIPTION` | Tool description.                                                      |
 
 Throws if `name` or `description` is empty, `maxNodes` is not an integer >= 2, `maxEdges` is not a positive integer, `maxSteps` is not a positive integer or `Infinity`, a timeout is not a positive number, `defaultPreset` is not one of `presets`, or a `Choice` axis has no options, or a `tools` `Choice` is not `multiple`.
 
