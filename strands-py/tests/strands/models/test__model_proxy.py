@@ -171,6 +171,23 @@ def test_prepare_passes_messages_without_an_injected_block_through_as_they_are(m
     assert tru_messages is messages
 
 
+def test_prepare_leaves_an_offload_placeholders_bookkeeping_out_of_the_request(model):
+    placeholder = {"text": "[Dropped: ~5 tokens] [ref: tool-1]", "offloaded": {"method": "drop", "ref": "tool-1"}}
+    tool_result = {"toolUseId": "tool-1", "status": "success", "content": [dict(placeholder)]}
+    messages = [user(dict(placeholder), {"toolResult": tool_result})]
+    original = copy.deepcopy(messages)
+
+    sent, _ = ModelProxy(model)._prepare(messages)
+
+    assert sent == [
+        user(
+            {"text": "[Dropped: ~5 tokens] [ref: tool-1]"},
+            {"toolResult": {**tool_result, "content": [{"text": "[Dropped: ~5 tokens] [ref: tool-1]"}]}},
+        )
+    ]
+    assert messages == original
+
+
 @pytest.mark.parametrize(
     ("server_side_summary", "sent_block"),
     [(None, {"text": "SUMMARY"}), (False, {"text": "SUMMARY"}), (True, {"summary": {"text": "SUMMARY"}})],

@@ -12,6 +12,7 @@ from opentelemetry.trace import (
     StatusCode,  # type: ignore
 )
 
+from strands._context_manager.placeholder import offload_placeholder
 from strands.memory.types import MemoryEntry
 from strands.telemetry.tracer import JSONEncoder, Tracer, get_tracer, serialize
 from strands.types.content import ContentBlock
@@ -259,6 +260,57 @@ def test_start_model_invoke_span_maps_injected_blocks_to_text_parts_in_latest_co
         ]
         parsed = json.loads(detail_calls[0][1]["attributes"]["gen_ai.input.messages"])
         assert parsed[0]["parts"] == [{"type": "text", "content": "Hi"}, {"type": "text", "content": "cwd: /repo"}]
+
+
+def test_start_model_invoke_span_records_an_offloaded_block_as_text(mock_tracer, monkeypatch):
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+        placeholder = offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)
+
+        tracer.start_model_invoke_span(messages=[{"role": "user", "content": [placeholder]}])
+
+        detail_calls = [
+            call for call in mock_span.add_event.call_args_list if "gen_ai.input.messages" in call[1]["attributes"]
+        ]
+        parsed = json.loads(detail_calls[0][1]["attributes"]["gen_ai.input.messages"])
+        assert parsed == [
+            {"role": "user", "parts": [{"type": "text", "content": "[Dropped: ~1,200 tokens] [ref: tu-1]"}]}
+        ]
+
+
+def test_start_model_invoke_span_records_what_a_tool_results_placeholder_stands_for(mock_tracer, monkeypatch):
+    """A placeholder inside a tool result keeps its bookkeeping in the span, so a trace shows what was offloaded."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+        placeholder = offload_placeholder("truncate", "[Truncated: 1 block, ~900 tokens]", "tu-1", 900)
+        tool_result = {"toolUseId": "tu-1", "status": "success", "content": [placeholder]}
+
+        tracer.start_model_invoke_span(messages=[{"role": "user", "content": [{"toolResult": tool_result}]}])
+
+        detail_calls = [
+            call for call in mock_span.add_event.call_args_list if "gen_ai.input.messages" in call[1]["attributes"]
+        ]
+        parsed = json.loads(detail_calls[0][1]["attributes"]["gen_ai.input.messages"])
+        assert parsed[0]["parts"] == [
+            {
+                "type": "tool_call_response",
+                "id": "tu-1",
+                "response": [
+                    {
+                        "text": "[Truncated: 1 block, ~900 tokens] [ref: tu-1]",
+                        "offloaded": {"method": "truncate", "ref": "tu-1", "tokens": 900},
+                    }
+                ],
+            }
+        ]
 
 
 def test_start_model_invoke_span_latest_conventions(mock_tracer, monkeypatch):

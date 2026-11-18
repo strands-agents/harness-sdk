@@ -7,23 +7,23 @@ so the agent can retrieve it on demand via the retrieval tool.
 from __future__ import annotations
 
 import base64
+import builtins
 import json
 import logging
-import re
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from ..storage.storage import _NAMESPACED, _NamespacedStorage
 from ..types.content import ContentBlock
+from .placeholder import is_offloaded
 
 if TYPE_CHECKING:
     from ..storage.storage import Storage
-    from ..types.content import Message
+    from ..types.content import Message, Messages
 
 logger = logging.getLogger(__name__)
 
 STASH_PREFIX = "context"
-
-_STASH_REFS_SUFFIX = re.compile(r" \[refs?: [^\]]+\]$")
 
 
 class _BytesEncoder(json.JSONEncoder):
@@ -43,33 +43,15 @@ def _decode(data: bytes) -> object:
     return json.loads(data.decode("utf-8"))
 
 
-def _format_stash_refs(refs: list[str]) -> str:
-    """Format stash refs as a standalone bracket token for offload placeholders.
+def _parse_stash_key(key: str) -> tuple[str, int] | None:
+    """Split a ``<id>_<index>`` stash key.
 
-    Returns an empty string when refs is empty. With one ref returns
-    ``' [ref: <ref>]'``; with multiple returns ``' [refs: <r1>, <r2>]'``.
-    Note the leading space in non-empty returns.
+    The id may itself contain ``_``, so the index is whatever follows the last one.
     """
-    if not refs:
-        return ""
-    if len(refs) == 1:
-        return f" [ref: {refs[0]}]"
-    return f" [refs: {', '.join(refs)}]"
-
-
-def _is_offload_placeholder(block: object) -> bool:
-    """Whether a block's text ends with a ``_format_stash_refs`` token, marking it as an offload replacement."""
-    text = block.get("text") if isinstance(block, dict) else None
-    return isinstance(text, str) and _STASH_REFS_SUFFIX.search(text) is not None
-
-
-def _resolve_stash_namespace(
-    storage: Storage, session_id: str, agent_id: str, *, custom_stash_namespace: bool
-) -> Storage:
-    """Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent."""
-    if custom_stash_namespace and getattr(storage, "_namespaced", None) is _NAMESPACED:
-        return storage
-    return _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+    owner, separator, index = key.rpartition("_")
+    if not separator or not owner or not index.isdecimal():
+        return None
+    return owner, int(index)
 
 
 class Stash:
@@ -80,8 +62,11 @@ class Stash:
     ) -> None:
         self._base_storage = storage
         self._session_id = session_id
-        self._storage = _resolve_stash_namespace(
-            storage, session_id, agent_id, custom_stash_namespace=custom_stash_namespace
+        # A caller-scoped view is the exact stash root when allowed; otherwise namespace per session and agent.
+        self._storage = (
+            storage
+            if custom_stash_namespace and getattr(storage, "_namespaced", None) is _NAMESPACED
+            else _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
         )
 
     @property
@@ -100,12 +85,35 @@ class Stash:
         await self._storage.write(key, data)
         return key
 
-    def refs_for(self, block: ContentBlock, message: Message, block_index: int) -> list[str]:
-        """Compute deterministic reference keys for a content block."""
+    async def ensure_stashed(self, block: ContentBlock, message: Message, block_index: int) -> str:
+        """The reference an offload placeholder carries for the block it replaces, storing the block if it is not yet.
+
+        A tool result is referenced by its ``toolUseId``; the retrieval tool resolves it to every stored item
+        (``<toolUseId>_<i>``). Any other block is referenced by its position (``<tracking_id>_<block_index>``).
+        History edits move blocks between messages and positions, so the key a block was stored under on arrival
+        can differ from its key now; storing here keeps every emitted reference resolvable.
+        """
         if "toolResult" in block:
             tool_result = block["toolResult"]
-            return [f"{tool_result['toolUseId']}_{index}" for index in range(len(tool_result["content"]))]
-        return [f"{message.get('tracking_id', 'unknown')}_{block_index}"]
+            # A result holding a placeholder is not the original; its items were stored before it was offloaded.
+            if not any(is_offloaded(item) for item in tool_result["content"]):
+                if len(await self.keys_of(tool_result["toolUseId"])) < len(tool_result["content"]):
+                    await self._store_tool_result(block)
+            return tool_result["toolUseId"]
+
+        return await self.store(message.get("tracking_id", "unknown"), block_index, _encode(block), keep_existing=True)
+
+    async def store_removed(self, removed: Messages) -> str:
+        """Store messages removed from the context window as one entry.
+
+        The reference is fresh for every removal rather than derived from the messages, because two removals can
+        begin at the same message: a later pass removes the message an earlier marker was folded into, and a
+        server-side summary always stands for the messages after message 0. Deriving it would have the second
+        removal overwrite the first, leaving the earlier content unretrievable.
+        """
+        reference = f"removed-{uuid.uuid4()}"
+        await self.store(reference, 0, _encode(removed))
+        return reference
 
     async def store_message(
         self,
@@ -124,12 +132,12 @@ class Stash:
                 tool_result = block["toolResult"]
                 if skip_tool_use_ids and tool_result["toolUseId"] in skip_tool_use_ids:
                     continue
-                if any(_is_offload_placeholder(item) for item in tool_result["content"]):
+                if any(is_offloaded(item) for item in tool_result["content"]):
                     continue
                 await self._store_tool_result(block, keep_existing=keep_existing)
             elif "toolUse" in block or "reasoningContent" in block or "cachePoint" in block:
                 continue
-            elif _is_offload_placeholder(block):
+            elif is_offloaded(block):
                 continue
             else:
                 try:
@@ -151,9 +159,18 @@ class Stash:
             return None
         return _decode(data)
 
-    async def list(self) -> list[str]:
-        """List all stashed reference keys."""
-        return await self._storage.list("")
+    async def list(self, prefix: str = "") -> builtins.list[str]:
+        """List stashed reference keys, optionally only those starting with ``prefix``."""
+        return await self._storage.list(prefix)
+
+    async def keys_of(self, reference_id: str) -> builtins.list[str]:
+        """The keys stored under ``reference_id``, in index order.
+
+        A prefix list alone also returns ids that extend this one, so each key's parsed id has to match.
+        """
+        parsed = ((key, _parse_stash_key(key)) for key in await self.list(f"{reference_id}_"))
+        matching = [(key, entry[1]) for key, entry in parsed if entry and entry[0] == reference_id]
+        return [key for key, _ in sorted(matching, key=lambda entry: entry[1])]
 
     async def delete(self, reference: str) -> None:
         """Delete a stashed entry."""
