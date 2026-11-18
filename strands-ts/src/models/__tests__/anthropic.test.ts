@@ -217,6 +217,7 @@ describe('AnthropicModel', () => {
     it.each([
       ['claude-opus-5-5', true],
       ['claude-opus-5-5-20260401', true],
+      ['claude-haiku-5-5', false], // the API takes them, the model rarely uses their text (#6227)
       ['claude-sonnet-5', false],
       ['claude-sonnet-4-6', false],
     ])('reports temporary messages from the shared model info for %s: %s', (modelId, expected) => {
