@@ -22,11 +22,7 @@ function buildDOM({
 }): Document {
   const dom = new JSDOM(`
     <div class="bulletin">
-      ${
-        includeTickerEvent
-          ? `<span class="row" data-expires="${headlinerExpires ?? FUTURE}">Event A</span>`
-          : ''
-      }
+      ${includeTickerEvent ? `<span class="row" data-expires="${headlinerExpires ?? FUTURE}">Event A</span>` : ''}
     </div>
     <div class="poster">
       ${

@@ -1,4 +1,6 @@
-"""Tests for the indexer module with TF-IDF scoring and content hydration."""
+"""Tests for the indexer module with BM25 scoring and content hydration."""
+
+import math
 
 from strands_mcp_server.utils.indexer import Doc, IndexSearch
 
@@ -68,15 +70,15 @@ class TestIndexerBasic:
         assert index.doc_frequency["agent"] == 2
 
     def test_search_scores_each_posting_once(self):
-        """Regression test: TF-IDF scoring counts term frequency correctly."""
+        """Regression test: BM25 scoring counts term frequency correctly."""
         index = IndexSearch()
         index.add(Doc(uri="doc", display_title="Doc", content="agent agent agent", index_title=""))
 
         results = index.search("agent")
 
         assert len(results) == 1
-        # TF-IDF: tf=3 (content count), idf=log(2/2)+1=1.0, score=3.0
-        assert results[0][0] == 3.0
+        # body only, length == average so norm=1: idf=log(1 + 0.5/1.5), tf part=3*2.2/(3+1.2)
+        assert math.isclose(results[0][0], math.log(1 + 0.5 / 1.5) * 3 * 2.2 / 4.2)
 
 
 class TestContentHydration:
@@ -163,8 +165,8 @@ Use the guardrail configuration to define rules.
         assert len(index.search("orange")) == 1
 
 
-class TestTFIDFScoring:
-    """Tests for TF-IDF scoring behavior."""
+class TestBM25Scoring:
+    """Tests for BM25 scoring behavior."""
 
     def test_higher_term_frequency_ranks_higher(self):
         """Document with more occurrences of the query term should score higher."""
@@ -258,6 +260,37 @@ class TestTFIDFScoring:
 
         assert len(results) == 2
         assert results[0][1].uri == "https://example.com/agent"
+
+    def test_long_page_does_not_outrank_title_match(self):
+        """A long page repeating a term thousands of times saturates instead of winning on raw count."""
+        index = IndexSearch()
+        index.add(
+            Doc(uri="changelog", display_title="Changelog", content="agent release " * 5000, index_title="changelog")
+        )
+        index.add(Doc(uri="guide", display_title="Agent Guide", content="How to build one.", index_title="agent guide"))
+
+        results = index.search("agent")
+
+        assert [doc.uri for _, doc in results] == ["guide", "changelog"]
+
+    def test_shorter_body_scores_higher_for_same_term_frequency(self):
+        index = IndexSearch()
+        index.add(Doc(uri="short", display_title="A", content="streaming events", index_title="a"))
+        index.add(Doc(uri="long", display_title="B", content="streaming " + "filler " * 200, index_title="b"))
+
+        results = index.search("streaming")
+
+        assert [doc.uri for _, doc in results] == ["short", "long"]
+        assert results[0][0] > results[1][0]
+
+    def test_hydrated_body_repetition_stays_below_title_match(self):
+        index = IndexSearch()
+        index.add(Doc(uri="title", display_title="Sessions", content="", index_title="sessions"))
+        index.add(Doc(uri="body", display_title="Memory", content="", index_title="memory"))
+
+        index.update_content("body", "sessions " * 50)
+
+        assert [doc.uri for _, doc in index.search("sessions")] == ["title", "body"]
 
 
 class TestEdgeCases:

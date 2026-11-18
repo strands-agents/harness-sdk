@@ -25,23 +25,6 @@ import type {
 import { McpTool } from '../tools/mcp-tool.js'
 import { MAX_TOOL_NAME_LENGTH } from '../registry/tool-registry.js'
 import { ToolValidationError } from '../errors.js'
-import {
-  createApplicationInputHandler,
-  createTaskSessionFromClient,
-  resultFromTaskOutcome,
-  toolDeclaration,
-} from '@modelcontextprotocol/ext-tasks/client'
-import {
-  CallToolResultV2Schema,
-  CancelTaskResultV2Schema,
-  CreateTaskResultV2Schema,
-  ElicitResultV2Schema,
-  GetTaskResultV2Schema,
-  isCreateTaskResultV2,
-  InputResponsesV2Schema,
-  UpdateTaskResultV2Schema,
-} from '@modelcontextprotocol/ext-tasks/core/v2'
-
 import { logger } from '../logging/index.js'
 import { type McpLoadServersOptions, type McpServerConfig, mcpServerLoader } from './config.js'
 import { buildMcpParamHeaders, createTaskRoutingFetch, TaskTransport } from './task-transport.js'
@@ -143,6 +126,23 @@ const MINIMUM_POLL_INTERVAL_MS = 10
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const TASKS_EXTENSION = 'io.modelcontextprotocol/tasks'
 const TASKS_PROTOCOL_VERSION = '2026-07-28'
+
+interface ExtTasks {
+  client: typeof import('@modelcontextprotocol/ext-tasks/client')
+  core: typeof import('@modelcontextprotocol/ext-tasks/core/v2')
+}
+
+let extTasks: Promise<ExtTasks> | undefined
+
+// ext-tasks only declares the `import` export condition, so a static import fails under a
+// CommonJS loader (e.g. tsx in a CommonJS project); import() always uses the ESM resolver.
+function loadExtTasks(): Promise<ExtTasks> {
+  extTasks ??= Promise.all([
+    import('@modelcontextprotocol/ext-tasks/client'),
+    import('@modelcontextprotocol/ext-tasks/core/v2'),
+  ]).then(([client, core]) => ({ client, core }))
+  return extTasks
+}
 
 /**
  * Configuration for MCP task execution.
@@ -919,6 +919,7 @@ export class McpClient {
       if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
       this._assertTaskLifecycleAvailable()
 
+      const ext = await loadExtTasks()
       const params = this._prepareToolCall(tool, args)
       const definition = this._serverToolDefinitions.get(params.name)
       const response = await this._taskTransport!.request('tools/call', params as Record<string, unknown>, {
@@ -928,16 +929,16 @@ export class McpClient {
         resetTimeoutOnProgress: true,
         ...(!isBrowserRuntime() && { headers: buildMcpParamHeaders(definition?.inputSchema, params.arguments ?? {}) }),
       })
-      if (isCreateTaskResultV2(response)) {
+      if (ext.core.isCreateTaskResultV2(response)) {
         return parseTaskResponse(
           response,
-          (value) => CreateTaskResultV2Schema.parse(value),
+          (value) => ext.core.CreateTaskResultV2Schema.parse(value),
           'tools/call'
         ) as unknown as McpSubmitToolResult
       }
       const direct = parseTaskResponse(
         response,
-        (value) => CallToolResultV2Schema.parse(value),
+        (value) => ext.core.CallToolResultV2Schema.parse(value),
         'tools/call'
       ) as Record<string, unknown>
       delete direct.resultType
@@ -958,8 +959,9 @@ export class McpClient {
    */
   public async getTask(taskId: string, options?: McpTaskRequestOptions): Promise<McpGetTaskResult> {
     assertTaskId(taskId)
+    const ext = await loadExtTasks()
     const result = await this._requestTask('tasks/get', { taskId }, options)
-    const task = parseTaskResponse(result, (value) => GetTaskResultV2Schema.parse(value), 'tasks/get')
+    const task = parseTaskResponse(result, (value) => ext.core.GetTaskResultV2Schema.parse(value), 'tasks/get')
     if (task.taskId !== taskId) {
       throw new SdkError(SdkErrorCode.InvalidResult, 'MCP tasks/get response returned a different taskId')
     }
@@ -983,15 +985,16 @@ export class McpClient {
     options?: McpTaskRequestOptions
   ): Promise<McpUpdateTaskResult> {
     assertTaskId(taskId)
+    const ext = await loadExtTasks()
     const outbound = parseTaskResponse(
       inputResponses,
-      (value) => InputResponsesV2Schema.parse(value),
+      (value) => ext.core.InputResponsesV2Schema.parse(value),
       'tasks/update input'
     )
     const result = await this._requestTask('tasks/update', { taskId, inputResponses: outbound }, options)
     return parseTaskResponse(
       result,
-      (value) => UpdateTaskResultV2Schema.parse(value),
+      (value) => ext.core.UpdateTaskResultV2Schema.parse(value),
       'tasks/update'
     ) as unknown as McpUpdateTaskResult
   }
@@ -1008,10 +1011,11 @@ export class McpClient {
    */
   public async cancelTask(taskId: string, options?: McpTaskRequestOptions): Promise<McpCancelTaskResult> {
     assertTaskId(taskId)
+    const ext = await loadExtTasks()
     const result = await this._requestTask('tasks/cancel', { taskId }, options)
     return parseTaskResponse(
       result,
-      (value) => CancelTaskResultV2Schema.parse(value),
+      (value) => ext.core.CancelTaskResultV2Schema.parse(value),
       'tasks/cancel'
     ) as unknown as McpCancelTaskResult
   }
@@ -1118,7 +1122,8 @@ export class McpClient {
     operation: TaskOperation,
     requestTimeoutMs: number
   ): Promise<McpToolCallOutcome> {
-    const session = this._ensureTaskSession()
+    const ext = await loadExtTasks()
+    const session = this._ensureTaskSession(ext)
     const definition = this._serverToolDefinitions.get(params.name) ?? {
       ...(tool.toolSpec.inputSchema !== undefined && { inputSchema: tool.toolSpec.inputSchema }),
       ...(tool.toolSpec.outputSchema !== undefined && { outputSchema: tool.toolSpec.outputSchema }),
@@ -1132,7 +1137,7 @@ export class McpClient {
     })
     try {
       const { outcome } = await execution.settle()
-      const result = taskOutcomeResult(outcome)
+      const result = taskOutcomeResult(ext, outcome)
       await validateToolOutput(params.name, outputSchema, result)
       return { result }
     } finally {
@@ -1143,16 +1148,16 @@ export class McpClient {
     }
   }
 
-  private _ensureTaskSession(): TaskEnabledSession {
+  private _ensureTaskSession(ext: ExtTasks): TaskEnabledSession {
     if (this._taskSession) return this._taskSession
     const taskTransport = this._taskTransport!
-    this._taskSession = createTaskSessionFromClient(this._client, {
+    this._taskSession = ext.client.createTaskSessionFromClient(this._client, {
       endpointId: this._clientName,
       tools: {
         currentTool: (name) => {
           const definition = this._serverToolDefinitions.get(name)
           if (!definition) return undefined
-          return toolDeclaration({
+          return ext.client.toolDeclaration({
             name,
             inputSchema: (definition.inputSchema ?? {}) as Readonly<Record<string, JsonValue>>,
             ...(definition.outputSchema !== undefined && {
@@ -1195,7 +1200,7 @@ export class McpClient {
         clientInfo: { name: this._clientName, version: this._clientVersion },
         clientCapabilities: { extensions: { [TASKS_EXTENSION]: {} } },
       },
-      onInputRequest: createApplicationInputHandler({
+      onInputRequest: ext.client.createApplicationInputHandler({
         elicitation: async (request, context) => {
           const callback = this._elicitationCallback
           if (!callback) {
@@ -1214,7 +1219,7 @@ export class McpClient {
               ? { ...wireParams, elicitationId: inputId ?? 'task-input' }
               : wireParams
           const response = await callback(this._createTaskInputContext(inputId, context.signal), params)
-          const validated = ElicitResultV2Schema.safeParse(response)
+          const validated = ext.core.ElicitResultV2Schema.safeParse(response)
           if (!validated.success) {
             throw new SdkError(SdkErrorCode.InvalidResult, 'MCP elicitation callback returned a malformed response')
           }
@@ -1439,7 +1444,7 @@ class TaskClient extends Client {
   }
 }
 
-function taskOutcomeResult(outcome: TaskOutcome<unknown>): CallToolResult {
+function taskOutcomeResult(ext: ExtTasks, outcome: TaskOutcome<unknown>): CallToolResult {
   if (outcome.status === 'cancelled') throw new McpTaskCancelledError(outcome.task?.statusMessage)
   if (outcome.status === 'failed') {
     throw new McpTaskFailedError(outcome.error.message, {
@@ -1447,7 +1452,7 @@ function taskOutcomeResult(outcome: TaskOutcome<unknown>): CallToolResult {
       ...(outcome.error.data !== undefined && { data: outcome.error.data }),
     })
   }
-  const result = { ...(resultFromTaskOutcome(outcome) as Record<string, unknown>) }
+  const result = { ...(ext.client.resultFromTaskOutcome(outcome) as Record<string, unknown>) }
   delete result.resultType
   return result as CallToolResult
 }

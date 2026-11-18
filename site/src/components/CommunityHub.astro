@@ -4,15 +4,27 @@ import arrow from '../assets/banner/arrow.svg?raw';
 import { pathWithBase } from '../util/links';
 import { getPublishedPosts } from '../util/blog';
 import { formatEventDate, upcomingEvents } from '../util/learn';
+import { homepageBanner, homepageCommunityPost } from '../util/announcements';
 
 // The old /community/ hub is gone; its "what's new" and events feed now lives
 // here on the homepage. Events are filtered to upcoming ones at build time.
-const events = (await getCollection('events')).map((e) => e.data);
-const posts = await getPublishedPosts();
+const [eventEntries, announcementEntries, posts] = await Promise.all([
+  getCollection('events'),
+  getCollection('announcements'),
+  getPublishedPosts(),
+]);
 const today = new Date();
 
-const upcoming = upcomingEvents(events, today);
-const newestPost = posts[0];
+const upcoming = upcomingEvents(
+  eventEntries.map((entry) => entry.data),
+  today,
+);
+const banner = homepageBanner(
+  announcementEntries.map((entry) => entry.data),
+  posts,
+  today,
+);
+const featuredPost = homepageCommunityPost(posts, banner?.href);
 
 // External event hrefs pass through; internal ones get the base prefix.
 const eventHref = (href?: string) =>
@@ -38,13 +50,13 @@ const upcomingList = upcoming.slice(0, 4);
         </a>
       </div>
 
-      {newestPost && (
+      {featuredPost && (
         <div class="community__panel community__panel--divided">
           <h3 class="community__panel-title community__panel-title--accent">
-            What's new on the blog
+            More from the blog
           </h3>
-          <a class="community__blog-link" href={pathWithBase(`/blog/${newestPost.id}/`)}>
-            {newestPost.data.title}
+          <a class="community__blog-link" href={pathWithBase(`/blog/${featuredPost.id}/`)}>
+            {featuredPost.data.title}
           </a>
         </div>
       )}

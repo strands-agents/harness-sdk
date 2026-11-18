@@ -38,6 +38,8 @@ _DEFAULT_ENDPOINT: Literal["bedrock-mantle", "bedrock-runtime"] = "bedrock-mantl
 # integ test fails naming any id that routes wrong.
 _OPENAI_PATH_MODEL_PREFIXES: tuple[str, ...] = (
     "openai.gpt-5.",
+    # Not in the catalog the rest of this list was verified against; base path per the model card.
+    "openai.gpt-daybreak-",
     "openai.gpt-6-",
     "openai.gpt-6.",
     "xai.grok-4.",

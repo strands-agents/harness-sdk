@@ -40,6 +40,7 @@
 - bidi-streaming
 - caching
 - conversation-management
+- decision-models
 - error-handling
 - event-loop
 - failure-diagnosis

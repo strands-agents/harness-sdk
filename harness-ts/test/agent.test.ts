@@ -280,11 +280,7 @@ describe('createHarness', () => {
 
   it('starts from nothing when the builtinTools mapping sets "*" to false', async () => {
     const agent = await createHarness({ builtinTools: { '*': false, read: true, web_fetch: {} } })
-    expect(
-      toolNames(agent)
-        .filter((name) => name !== 'todo_write')
-        .sort()
-    ).toEqual(['read', 'web_fetch'])
+    expect(toolNames(agent).sort()).toEqual(['read', 'web_fetch'])
   })
 
   it('rejects an unknown name in a builtinTools mapping', async () => {
@@ -464,6 +460,24 @@ describe('createHarness', () => {
     expect(agent.model.getConfig().cacheConfig).toEqual({ strategy: 'auto' })
   })
 
+  it.each(
+    ['openai/gpt-5.6-sol', 'bedrock-mantle/openai.gpt-6-luna'].flatMap((model) =>
+      ([undefined, 'auto', true, false, null] as const).map((caching) => ({ model, caching }))
+    )
+  )('configures $model caching=$caching', async ({ model, caching }) => {
+    const agent = await createHarness({
+      model,
+      ...(caching !== undefined && { caching }),
+      session: false,
+      memory: false,
+      skills: false,
+      builtinTools: [],
+    })
+    expect(agent.model.getConfig().cacheConfig).toEqual(
+      caching === false || caching === null ? undefined : { strategy: 'auto' }
+    )
+  })
+
   it('builds silently with default caching on a Model instance', async () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
@@ -509,15 +523,15 @@ describe('createHarness', () => {
     expect(conversationManagerName(agent)).toBe('NullConversationManager')
   })
 
-  it('uses the recommended level when effort is auto', async () => {
+  it("uses the default model's vendor default level when effort is auto", async () => {
     const agent = await createHarness({ effort: 'auto' })
-    const fields = agent.model.getConfig().additionalRequestFields as { output_config: { effort: string } }
-    expect(fields.output_config.effort).toBe('high')
+    const params = agent.model.getConfig().params as { output_config: { effort: string } }
+    expect(params.output_config.effort).toBe('medium')
   })
 
   it('sends no reasoning fields when effort is off', async () => {
     const agent = await createHarness({ effort: 'off' })
-    expect(agent.model.getConfig().additionalRequestFields).toBeUndefined()
+    expect(agent.model.getConfig().params).toBeUndefined()
   })
 
   it('lets an explicit context manager win', async () => {
@@ -767,6 +781,11 @@ describe('createHarness', () => {
 
   it('frees a built-in plugin tool name when the plugin is dropped', async () => {
     const agent = await createHarness({ builtinPlugins: [], tools: [todoWriteTool] })
+    expect(toolNames(agent)).toContain('todo_write')
+  })
+
+  it('leaves the plugin tool name free when the defaults are used', async () => {
+    const agent = await createHarness({ tools: [todoWriteTool] })
     expect(toolNames(agent)).toContain('todo_write')
   })
 

@@ -12,9 +12,9 @@ the parameters the model sees and govern what values it can supply:
 
 from __future__ import annotations
 
+import inspect
 import logging
-import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,8 +23,8 @@ from ..models import Model, ModelRouter
 
 logger = logging.getLogger(__name__)
 
-# The builder turns a resolved spec into a child agent, built the way the parent was.
-AgentBuilder = Callable[["AgentSpec"], "Agent"]
+# The builder turns a resolved spec into a child agent, built the way the parent was; it may be async.
+AgentBuilder = Callable[["AgentSpec"], "Agent | Awaitable[Agent]"]
 
 _UNSET: Any = object()
 """Sentinel for :attr:`Option.value` so ``None`` can be a legitimate value."""
@@ -89,33 +89,6 @@ class Choice:
                 name = str(entry)
                 result.append(Option(name, name))
         return result
-
-    def to_schema_property(self, description: str = "") -> dict[str, Any]:
-        """Render this axis as a JSON Schema property for a tool's ``inputSchema``.
-
-        .. deprecated::
-            Will be removed in a future release; there is no public replacement.
-        """
-        warnings.warn(
-            "Choice.to_schema_property is deprecated and will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        options = self.normalized()
-        values = [option.name for option in options]
-        lines = [f"- {option.name}: {option.description}" for option in options if option.description]
-        desc = description
-        if lines:
-            block = "Options:\n" + "\n".join(lines)
-            desc = f"{description}\n{block}" if description else block
-        prop: dict[str, Any] = (
-            {"type": "array", "items": {"type": "string", "enum": values}}
-            if self.multiple
-            else {"type": "string", "enum": values}
-        )
-        if desc:
-            prop["description"] = desc
-        return prop
 
     def value_for(self, name: str) -> Any:
         """The resolved value behind ``name``, or ``name`` itself if unknown."""
@@ -278,6 +251,7 @@ def _resolve_specs(
     instructions: Open | Choice | Fixed,
     tools: Choice | Fixed | Inherit | None = None,
     model: Inherit | Choice | Fixed | None = None,
+    label: str = "agent",
 ) -> list[AgentSpec]:
     """Combine each model-supplied agent input with the axis policies into a spec.
 
@@ -292,6 +266,7 @@ def _resolve_specs(
         instructions: Axis policy for the ``instructions`` field.
         tools: Axis policy for tool selection. Defaults to ``Inherit()`` when not supplied.
         model: Axis policy for model selection. Defaults to ``Inherit()`` when not supplied.
+        label: Model-facing noun for one input in error messages, matching the tool's parameter name.
 
     Returns:
         The resolved ``AgentSpec`` for each input, in order.
@@ -306,20 +281,20 @@ def _resolve_specs(
         model = Inherit()
 
     if not isinstance(model_inputs, list):
-        raise ValueError(f"agents must be a list, got {type(model_inputs).__name__}")
+        raise ValueError(f"{label}s must be a list, got {type(model_inputs).__name__}")
 
     seen_names: set[str] = set()
     specs: list[AgentSpec] = []
     for index, model_input in enumerate(model_inputs):
         if not isinstance(model_input, Mapping):
-            raise ValueError(f"Agent at index {index} must be a dict, got {type(model_input).__name__}")
+            raise ValueError(f"{label.capitalize()} at index {index} must be a dict, got {type(model_input).__name__}")
 
         name = model_input.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise ValueError(f"Agent at index {index} must have a non-empty 'name' string")
+            raise ValueError(f"{label.capitalize()} at index {index} must have a non-empty 'name' string")
         name = name.strip()
         if name in seen_names:
-            raise ValueError(f"Duplicate agent name {name!r} at index {index}")
+            raise ValueError(f"Duplicate {label} name {name!r} at index {index}")
         seen_names.add(name)
 
         # agent_type is a closed enum: a provided value must be an exact preset name (absent = no role).
@@ -349,13 +324,21 @@ def _resolve_specs(
     return specs
 
 
+async def _build_agent(build: AgentBuilder, spec: AgentSpec) -> Agent:
+    """Call ``build`` and await its result when the builder is async."""
+    child = build(spec)
+    return await child if inspect.isawaitable(child) else child
+
+
 def _default_builder(parent: Agent) -> AgentBuilder:
-    """A builder that creates an Agent inheriting the parent's model and tools.
+    """A builder that creates an Agent inheriting the parent's model, tools, and interventions.
 
     Used by the vended multi-agent tools when no custom builder is supplied.
     Resolves ``spec.tools`` against the parent's tool registry, including MCP tools, which
     keep calling through the parent's MCP client. Memory tools are also inherited through
-    the tools axis.
+    the tools axis. The child shares the parent's intervention handler instances, so tool
+    calls made by the child are subject to the same approval and authorization checks as
+    the parent's.
     """
 
     def build(spec: AgentSpec) -> Agent:
@@ -385,6 +368,7 @@ def _default_builder(parent: Agent) -> AgentBuilder:
             sandbox=parent.sandbox if parent else None,
             callback_handler=parent.callback_handler if parent else None,
             trace_attributes=parent.trace_attributes if parent else None,
+            interventions=parent._intervention_registry.handlers if parent else None,
         )
 
     return build

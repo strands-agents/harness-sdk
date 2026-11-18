@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  AXIS_DESCRIPTIONS,
   UNSET,
   AgentSpec,
   Choice,
@@ -8,7 +9,8 @@ import {
   Open,
   Option,
   Preset,
-  _resolveSpec,
+  _resolveSpecs,
+  _toSchemaProperties,
   _defaultBuilder,
 } from '../spec.js'
 import type { ResolveSpecAxes } from '../spec.js'
@@ -19,14 +21,19 @@ import { logger } from '../../logging/logger.js'
 import type { Sandbox } from '../../sandbox/base.js'
 import { McpClient } from '../../mcp/client.js'
 import { McpTool } from '../../tools/mcp-tool.js'
+import { InterventionHandler } from '../../interventions/handler.js'
+import type { InterventionAction } from '../../interventions/actions.js'
 
 const AXES: ResolveSpecAxes = {
   presets: {},
   defaultPreset: undefined,
   instructions: new Open(),
   tools: new Choice(['read', 'shell'], true),
-  mcpServers: new Inherit(),
   model: new Inherit(),
+}
+
+function resolveOne(modelInput: Record<string, unknown>, axes: ResolveSpecAxes): AgentSpec {
+  return _resolveSpecs([{ name: 'a', ...modelInput }], axes)[0]!
 }
 
 describe('Choice', () => {
@@ -50,21 +57,6 @@ describe('Choice', () => {
     })
   })
 
-  describe('toSchemaProperty', () => {
-    it('produces single enum and array enum', () => {
-      expect(new Choice(['a', 'b']).toSchemaProperty()).toEqual({ type: 'string', enum: ['a', 'b'] })
-      const prop = new Choice(['a'], true).toSchemaProperty('desc')
-      expect(prop['type']).toBe('array')
-      expect(prop['description']).toBe('desc')
-    })
-
-    it('folds option descriptions', () => {
-      const prop = new Choice([new Option('x', UNSET, 'info'), 'y']).toSchemaProperty()
-      expect(prop['description']).toContain('- x: info')
-      expect(prop['description']).not.toContain('y:')
-    })
-  })
-
   describe('valueFor', () => {
     it('returns mapped value for known option and passthrough for unknown', () => {
       const c = new Choice([new Option('alias', 'real')])
@@ -74,15 +66,73 @@ describe('Choice', () => {
   })
 })
 
-describe('_resolveSpec', () => {
+describe('_toSchemaProperties', () => {
+  it('renders model-visible axes and an agent_type choice over the presets', () => {
+    const properties = _toSchemaProperties({
+      presets: { g: new Preset({ description: 'general', tools: ['a'] }) },
+      defaultPreset: 'g',
+      instructions: new Open(),
+      tools: new Choice(['a'], true),
+      model: new Fixed('x'),
+    })
+    expect(properties).toEqual({
+      agent_type: {
+        type: 'string',
+        enum: ['g'],
+        description: `${AXIS_DESCRIPTIONS.agent_type} Omit to use the default ('g').\nOptions:\n- g: general (sets tools: a)`,
+      },
+      instructions: { type: 'string', description: AXIS_DESCRIPTIONS.instructions },
+      tools: { type: 'array', items: { type: 'string', enum: ['a'] }, description: AXIS_DESCRIPTIONS.tools },
+    })
+    // No presets → no agent_type; omitted axes are hidden.
+    expect(_toSchemaProperties({ presets: {}, defaultPreset: undefined })).toEqual({})
+  })
+
+  it.each([
+    [{ tools: new Choice([]) }, /offers no options/],
+    [{ tools: new Choice(['read', 'shell']) }, /must set multiple to true/],
+    [{ instructions: new Choice([]) }, /offers no options/],
+    [{ model: new Choice([]) }, /offers no options/],
+  ])('rejects invalid choice %#', (axis, message) => {
+    expect(() => _toSchemaProperties({ ...AXES, ...axis })).toThrow(message)
+  })
+})
+
+describe('_resolveSpecs', () => {
+  it.each([
+    ['abc', /must be an array/],
+    [['not an object'], /must be an object/],
+    [[{}], /non-empty 'name'/],
+    [[{ name: '  ' }], /non-empty 'name'/],
+    [[{ name: 'a' }, { name: ' a ' }], /Duplicate/],
+  ])('rejects invalid input %j', (inputs, message) => {
+    expect(() => _resolveSpecs(inputs, AXES)).toThrow(message)
+  })
+
+  it('reuses a preset across agents and clamps its tools to the Choice set', () => {
+    const axes: ResolveSpecAxes = {
+      ...AXES,
+      presets: { w: new Preset({ tools: ['read', 'write'] }) },
+      defaultPreset: 'w',
+    }
+    const specs = _resolveSpecs([{ name: 'a', agent_type: 'w' }, { name: ' b ' }], axes)
+    expect(specs).toEqual([
+      new AgentSpec({ name: 'a', agentType: 'w', tools: ['read'] }),
+      new AgentSpec({ name: 'b', agentType: 'w', tools: ['read'] }),
+    ])
+    // Without a Choice to clamp to, preset tools pass through unchanged.
+    expect(resolveOne({}, { ...axes, tools: new Inherit() }).tools).toEqual(['read', 'write'])
+  })
+
   it('applies preset by default', () => {
     const axes: ResolveSpecAxes = {
       ...AXES,
       presets: { g: new Preset({ instructions: 'help' }) },
       defaultPreset: 'g',
     }
-    expect(_resolveSpec({ task: 'x' }, axes)).toEqual(
+    expect(resolveOne({ task: 'x' }, axes)).toEqual(
       new AgentSpec({
+        name: 'a',
         agentType: 'g',
         instructions: 'help',
         tools: ['read', 'shell'],
@@ -92,17 +142,17 @@ describe('_resolveSpec', () => {
 
   it('throws on unknown agent_type', () => {
     const axes: ResolveSpecAxes = { ...AXES, presets: { g: new Preset() }, defaultPreset: 'g' }
-    expect(() => _resolveSpec({ task: 'x', agent_type: 'nope' }, axes)).toThrow(/Unknown agent_type/)
+    expect(() => resolveOne({ task: 'x', agent_type: 'nope' }, axes)).toThrow(/Unknown agent_type/)
   })
 
   it('rejects prototype keys, null, and non-string agent_type values', () => {
     const axes: ResolveSpecAxes = { ...AXES, presets: { g: new Preset() }, defaultPreset: 'g' }
     for (const bad of ['constructor', 'toString', '__proto__', ['g']]) {
-      expect(() => _resolveSpec({ task: 'x', agent_type: bad }, axes)).toThrow(/Unknown agent_type/)
+      expect(() => resolveOne({ task: 'x', agent_type: bad }, axes)).toThrow(/Unknown agent_type/)
     }
     // null falls back to default preset instead of throwing
-    expect(_resolveSpec({ task: 'x', agent_type: null }, axes)).toEqual(
-      new AgentSpec({ agentType: 'g', tools: ['read', 'shell'] })
+    expect(resolveOne({ task: 'x', agent_type: null }, axes)).toEqual(
+      new AgentSpec({ name: 'a', agentType: 'g', tools: ['read', 'shell'] })
     )
   })
 
@@ -112,46 +162,38 @@ describe('_resolveSpec', () => {
       presets: { g: new Preset({ instructions: 'default' }) },
       defaultPreset: 'g',
     }
-    expect(_resolveSpec({ task: 'x', instructions: 'ad-hoc' }, axes)).toEqual(
-      new AgentSpec({ instructions: 'ad-hoc', tools: ['read', 'shell'] })
+    expect(resolveOne({ task: 'x', instructions: 'ad-hoc' }, axes)).toEqual(
+      new AgentSpec({ name: 'a', instructions: 'ad-hoc', tools: ['read', 'shell'] })
     )
   })
 
   it('clamps tools to allowed set', () => {
-    expect(_resolveSpec({ task: 'x', tools: ['read', 'write'] }, AXES)).toEqual(new AgentSpec({ tools: ['read'] }))
+    expect(resolveOne({ task: 'x', tools: ['read', 'write'] }, AXES)).toEqual(
+      new AgentSpec({ name: 'a', tools: ['read'] })
+    )
   })
 
   it('Fixed ignores model-supplied value', () => {
     const axes: ResolveSpecAxes = { ...AXES, instructions: new Fixed('pinned') }
-    expect(_resolveSpec({ task: 'x', instructions: 'override' }, axes)).toEqual(
-      new AgentSpec({ instructions: 'pinned', tools: ['read', 'shell'] })
+    expect(resolveOne({ task: 'x', instructions: 'override' }, axes)).toEqual(
+      new AgentSpec({ name: 'a', instructions: 'pinned', tools: ['read', 'shell'] })
     )
   })
 
   it('Choice maps option value', () => {
     const sentinel = { tag: 'model-sentinel' }
     const axes: ResolveSpecAxes = { ...AXES, model: new Choice([new Option('smart', sentinel)]) }
-    expect(_resolveSpec({ task: 'x', model: 'smart' }, axes).model).toBe(sentinel)
-  })
-
-  it('clamps preset tools to Choice set', () => {
-    const axes: ResolveSpecAxes = {
-      ...AXES,
-      presets: { worker: new Preset({ tools: ['read', 'write'] }) },
-      defaultPreset: 'worker',
-      tools: new Choice(['read', 'shell'], true),
-    }
-    expect(_resolveSpec({ task: 'x' }, axes)).toEqual(new AgentSpec({ agentType: 'worker', tools: ['read'] }))
+    expect(resolveOne({ task: 'x', model: 'smart' }, axes).model).toBe(sentinel)
   })
 
   it('resolves Fixed tools list', () => {
     const axes: ResolveSpecAxes = { ...AXES, tools: new Fixed(['a', 'b']) }
-    expect(_resolveSpec({ task: 'x' }, axes)).toEqual(new AgentSpec({ tools: ['a', 'b'] }))
+    expect(resolveOne({ task: 'x' }, axes)).toEqual(new AgentSpec({ name: 'a', tools: ['a', 'b'] }))
   })
 
   it('resolves Fixed([]) to empty array, not undefined', () => {
-    const axes: ResolveSpecAxes = { ...AXES, mcpServers: new Fixed([]) }
-    expect(_resolveSpec({ task: 'x' }, axes)).toEqual(new AgentSpec({ tools: ['read', 'shell'], mcpServers: [] }))
+    const axes: ResolveSpecAxes = { ...AXES, tools: new Fixed([]) }
+    expect(resolveOne({ task: 'x' }, axes)).toEqual(new AgentSpec({ name: 'a', tools: [] }))
   })
 })
 
@@ -171,31 +213,27 @@ describe('_defaultBuilder', () => {
     vi.restoreAllMocks()
   })
 
-  it('inherits MCP clients once per server and respects server selection', async () => {
+  it.each([
+    [undefined, ['read', 'gh_issue']],
+    [['gh_issue'], ['gh_issue']],
+  ])('selects MCP tools by name like any other parent tool (tools=%j)', (tools, expected) => {
     const client = new McpClient({ applicationName: 'server', url: 'https://example.invalid/mcp' })
-    const tools = ['read', 'search'].map((name) => new McpTool({ name, description: name, inputSchema: {}, client }))
-    const listTools = vi.spyOn(client, 'listTools').mockResolvedValue(tools)
-    const parent = new Agent({ model, tools, printer: false })
-    const builder = _defaultBuilder(parent)
+    const mcpTool = new McpTool({ name: 'gh_issue', description: 'Open an issue.', inputSchema: {}, client })
+    const parent = new Agent({ model, tools: [createMockTool('read', () => 'ok'), mcpTool], printer: false })
 
-    for (const mcpServers of [undefined, ['server'], [], ['unknown']]) {
-      listTools.mockClear()
-      const child = builder(new AgentSpec(mcpServers === undefined ? {} : { mcpServers }))
-      await child.initialize()
+    const child = _defaultBuilder(parent)(new AgentSpec(tools === undefined ? {} : { tools }))
 
-      const inheritsServer = mcpServers === undefined || mcpServers.includes('server')
-      expect(listTools).toHaveBeenCalledTimes(inheritsServer ? 1 : 0)
-      // Ignore tools the child's own context manager registers (e.g. retrieve_context).
-      expect(child.toolRegistry.list().filter((tool) => tool instanceof McpTool)).toEqual(inheritsServer ? tools : [])
-    }
+    expect(child.toolRegistry.list().map((tool) => tool.name)).toEqual(expected)
+    expect(child.toolRegistry.get('gh_issue')).toBe(mcpTool)
   })
 
-  it('builds a child Agent that inherits the parent model and forwards spec.name', () => {
+  it('builds a child Agent that inherits the parent model and takes spec.name as its name and id', () => {
     const parent = new Agent({ model, printer: false })
     const child = _defaultBuilder(parent)(new AgentSpec({ name: 'worker' }))
     expect(child).toBeInstanceOf(Agent)
     expect(child.model).toBe(model)
     expect(child.name).toBe('worker')
+    expect(child.id).toBe('worker')
   })
 
   it('inherits all parent tools when spec.tools is undefined', () => {
@@ -210,22 +248,19 @@ describe('_defaultBuilder', () => {
     expect(childToolNames).toEqual(['read', 'shell'])
   })
 
-  it('resolves only matching tools and warns about unknown tools and MCP servers', () => {
+  it('resolves only matching tools and warns about unknown tools', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const readTool = createMockTool('read', () => 'ok')
     const shellTool = createMockTool('shell', () => 'ok')
     const parent = new Agent({ model, tools: [readTool, shellTool], printer: false })
 
-    const childToolNames = _defaultBuilder(parent)(
-      new AgentSpec({ tools: ['read', 'nonexistent'], mcpServers: ['missing_server'] })
-    )
+    const childToolNames = _defaultBuilder(parent)(new AgentSpec({ tools: ['read', 'nonexistent'] }))
       .toolRegistry.list()
       .map((tool) => tool.name)
 
     expect(childToolNames).toEqual(['read'])
     expect(warn.mock.calls).toEqual([
       ['tool_name=<nonexistent> | subagent requested tool but parent does not own it, skipping'],
-      ['server_name=<missing_server> | subagent requested MCP server but parent does not own it, skipping'],
     ])
   })
 
@@ -269,4 +304,40 @@ describe('_defaultBuilder', () => {
       expect(internals._printer !== undefined).toBe(printer)
     }
   )
+
+  class DenyToolCalls extends InterventionHandler {
+    readonly name = 'deny-tool-calls'
+
+    override beforeToolCall(): InterventionAction {
+      return { type: 'deny', reason: 'not authorized' }
+    }
+  }
+
+  it("shares the parent's intervention handler instances", () => {
+    const handler = new DenyToolCalls()
+    const parent = new Agent({ model, printer: false, interventions: [handler] })
+
+    const child = _defaultBuilder(parent)(new AgentSpec({}))
+
+    const internals = child as unknown as { _interventionRegistry: { handlers: readonly InterventionHandler[] } }
+    expect(internals._interventionRegistry.handlers).toEqual([handler])
+  })
+
+  it("gates an inherited tool with the parent's interventions when the child's model calls it", async () => {
+    const dangerTool = vi.fn(() => 'done')
+    const childModel = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'dangerTool', toolUseId: 't1', input: {} })
+      .addTurn({ type: 'textBlock', text: 'finished' })
+    const parent = new Agent({
+      model,
+      printer: false,
+      tools: [createMockTool('dangerTool', dangerTool)],
+      interventions: [new DenyToolCalls()],
+    })
+
+    const child = _defaultBuilder(parent)(new AgentSpec({ model: childModel }))
+    await child.invoke('run dangerTool')
+
+    expect(dangerTool).not.toHaveBeenCalled()
+  })
 })

@@ -311,7 +311,7 @@ async def test_child_structured_output_datetime_serializes_cleanly():
         structured_output=S(at=datetime(2025, 1, 15, 9, 0)),
     )
 
-    async def stream(prompt, cancel_signal=None):
+    async def stream(prompt, cancel_signal=None, invocation_context=None):
         yield {"result": result}
 
     mock_agent.stream_async = stream
@@ -739,7 +739,7 @@ async def test_delegation_preserves_json_block_verbatim():
         state={},
     )
 
-    async def fake_stream(prompt, cancel_signal=None):
+    async def fake_stream(prompt, cancel_signal=None, invocation_context=None):
         yield {"result": fake_result}
 
     tool._agent.stream_async = fake_stream
@@ -780,7 +780,7 @@ async def test_delegation_preserves_citations_alongside_text():
         state={},
     )
 
-    async def fake_stream(prompt, cancel_signal=None):
+    async def fake_stream(prompt, cancel_signal=None, invocation_context=None):
         yield {"result": fake_result}
 
     tool._agent.stream_async = fake_stream
@@ -819,7 +819,7 @@ async def test_full_delegation_json_content_serialized_to_text():
         state={},
     )
 
-    async def fake_stream(prompt, cancel_signal=None):
+    async def fake_stream(prompt, cancel_signal=None, invocation_context=None):
         yield {"result": fake_result}
 
     tool._agent.stream_async = fake_stream

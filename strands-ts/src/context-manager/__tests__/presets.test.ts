@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { resolvePreset, resolveStrategies, STRATEGY_PRESET_NAMES } from '../presets.js'
 import { ContextManager } from '../context-manager.js'
+import { Offload } from '../strategies/offload/index.js'
+import type { ContextStrategy } from '../types.js'
 
 describe('presets', () => {
   describe('resolvePreset', () => {
@@ -25,10 +27,10 @@ describe('presets', () => {
       expect(strategies[0]!.name).toBe('offload:truncate')
     })
 
-    it('overflowProtection resolves to a truncate strategy', () => {
+    it('overflowProtection resolves to a drop strategy', () => {
       const strategies = resolvePreset('overflowProtection')
       expect(strategies).toHaveLength(1)
-      expect(strategies[0]!.name).toBe('offload:truncate')
+      expect(strategies[0]!.name).toBe('offload:drop')
     })
 
     it('staleToolCleanup resolves to a drop strategy', () => {
@@ -57,7 +59,7 @@ describe('presets', () => {
       expect(result).toHaveLength(3)
       expect(result[0]!.name).toBe('offload:truncate')
       expect(result[1]!.name).toBe('custom')
-      expect(result[2]!.name).toBe('offload:truncate')
+      expect(result[2]!.name).toBe('offload:drop')
     })
 
     it('preserves order of preset expansion', () => {
@@ -71,6 +73,17 @@ describe('presets', () => {
       expect(() => resolveStrategies(['proactiveSummarisation' as any])).toThrow(
         'Unknown strategy preset: "proactiveSummarisation"'
       )
+    })
+
+    it.each([null, undefined])('rejects a %s entry', (entry) => {
+      expect(() => resolveStrategies([entry as unknown as ContextStrategy])).toThrow(
+        `Strategy entries must be a strategy or a preset name, got ${String(entry)}`
+      )
+    })
+
+    it('accepts an Offload strategy without .when()', () => {
+      const strategy = Offload.drop('toolResults')
+      expect(resolveStrategies([strategy])).toStrictEqual([strategy])
     })
   })
 

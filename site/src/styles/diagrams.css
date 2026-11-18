@@ -20,8 +20,14 @@
   /* Accent: the text-safe green clears 4.5:1 in both themes */
   --dg-accent: var(--sl-color-text-accent);
   --dg-accent-tint: color-mix(in srgb, var(--dg-accent) 9%, var(--dg-paper));
+  /* Danger: errors only (a breach, a violation). Darker than the brand red in light mode for 4.5:1 */
+  --dg-danger: #c4161c;
 
   margin-block: 2rem;
+}
+
+:root[data-theme='dark'] .dg-figure {
+  --dg-danger: var(--strands-red);
 }
 
 .dg-figure svg {
@@ -72,6 +78,12 @@
 .dg-node.is-event {
   fill: color-mix(in srgb, var(--dg-ink) 7%, var(--dg-paper));
   stroke: color-mix(in srgb, var(--dg-ink) 40%, transparent);
+}
+
+
+/* Background for an SVG that also has to render outside the site. */
+.dg-bg {
+  fill: var(--dg-paper);
 }
 
 /* Grouping region: a scope, boundary, or "these belong together". */
@@ -184,4 +196,7 @@
 }
 .is-hub-text {
   fill: var(--dg-paper);
+}
+.is-danger-text {
+  fill: var(--dg-danger);
 }

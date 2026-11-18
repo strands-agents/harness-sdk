@@ -242,7 +242,11 @@ The <Syntax py="on_error" ts="onError" /> option controls what happens when your
 
 - `'throw'` (default): re-raises the exception to the caller
 - `'deny'`: treats the callback failure as a denial (fail-closed)
-- `'proceed'`: allows the tool call despite the callback error (fail-open, use with caution)
+- `'proceed'`: allows the tool call despite the callback error (fail-open)
+
+:::caution[Fail-open on callback errors]
+With `'proceed'`, any exception from <Syntax py="principal_resolver" ts="principalResolver" /> or <Syntax py="context_enricher" ts="contextEnricher" /> lets the tool call run without a Cedar authorization check. Don't use it when your agent relies on Cedar to enforce access. To block the tool call instead of failing the invocation, use `'deny'`.
+:::
 
 ## Installation
 

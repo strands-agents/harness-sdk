@@ -76,7 +76,7 @@ async function modelRoutingScope() {
   // --8<-- [start:model_routing]
   const agent = new Agent()
   const largeContextModel = new BedrockModel({
-    modelId: 'us.anthropic.claude-sonnet-4-20250514-v1:0',
+    modelId: 'global.anthropic.claude-sonnet-4-6',
   })
 
   agent.addMiddleware(InvokeModelStage.Input, (context) =>

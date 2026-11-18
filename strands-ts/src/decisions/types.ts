@@ -4,6 +4,7 @@
  * See `team/designs/0020-decision-models.md` for the design rationale.
  */
 
+import type { InvocationContext } from '../agent/invocation-context.js'
 import type { ContentBlock, Message } from '../types/messages.js'
 
 /**
@@ -13,6 +14,18 @@ import type { ContentBlock, Message } from '../types/messages.js'
  * question, a single-turn content list (multimodal), or a full message history.
  */
 export type DecisionInput = string | ContentBlock[] | Message[]
+
+/** Per-call options a {@link DecisionModel} implementation receives in `_ask`. */
+export interface DecisionCallOptions {
+  /** Aborts the underlying decision call when signalled. Built-in implementations honor it; the provider decides how promptly the call stops. */
+  cancelSignal?: AbortSignal
+}
+
+/** Per-call options for {@link DecisionModel.ask}. */
+export interface AskOptions extends DecisionCallOptions {
+  /** The request to add this decision's token usage to, such as a hook event's or tool context's `invocationContext`; the request's limits don't apply to the decision. */
+  invocationContext?: InvocationContext
+}
 
 /**
  * Identity helper that preserves the literal types of an inline question map
@@ -105,5 +118,13 @@ export interface DecisionResult<Q extends Record<string, Question> = Record<stri
   metadata: {
     /** Time spent in the underlying model call, in milliseconds. */
     latencyMs: number
+    /** Provider that served the decision. */
+    providerName?: string
+    /** Model identifier that served the decision, as reported by the provider, or the requested model when the provider reports none. */
+    modelId?: string
+    /** Per-question probability distributions, keyed by answer value. */
+    probabilities?: { readonly [K in keyof Q]: Readonly<Record<string, number>> }
+    /** Per-question confidence values in `[0.0, 1.0]`. */
+    confidence?: { readonly [K in keyof Q]: number }
   }
 }

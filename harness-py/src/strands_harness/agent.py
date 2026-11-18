@@ -264,9 +264,10 @@ def create_harness(
     Args:
         model: A ``Model`` or ``ModelRouter`` instance, a ``"provider/name"`` string (e.g.
             ``"anthropic/claude-fable-5"``), a bare Bedrock model id, or ``None`` for the
-            harness default (Bedrock Opus 5).
+            harness default (Bedrock Opus 5.5).
         effort: Reasoning effort applied to the resolved model, mapped to each provider's request
-            fields. ``"auto"`` (the default) uses the provider's recommended level, ``"off"`` turns
+            fields. ``"auto"`` (the default) uses the model vendor's default level (what Claude Code,
+            Codex, or Gemini CLI run it at; the provider's ``"high"`` otherwise), ``"off"`` turns
             reasoning off, and ``"minimal"``/``"low"``/``"medium"``/``"high"``/``"xhigh"``/``"max"``
             set it explicitly; a level the provider does not offer raises. When ``model`` is a
             ``Model`` or ``ModelRouter`` instance a non-``"auto"`` effort is ignored with a warning
@@ -308,7 +309,7 @@ def create_harness(
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5/GPT-6 models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
+            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). Elsewhere (Bedrock, other Mantle models,
             ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
@@ -330,9 +331,9 @@ def create_harness(
             compatible tool. The invocation waits for completion and continues with the result.
             Pass ``False`` to disable Background Tasks, or provide a policy to control other tools,
             concurrency, completion, and timeouts.
-        caching: Enables prompt caching to save cost and latency where the provider supports it
-            (Bedrock and Anthropic direct set cache points and cached tools; OpenAI, Gemini, and
-            bedrock-mantle cache automatically server-side). Defaults to on. ``False``/``None`` turns
+        caching: Enables prompt caching to save cost and latency where the provider supports it.
+            Bedrock, Anthropic direct, OpenAI, and bedrock-mantle receive an SDK cache config; Gemini
+            and litellm cache automatically server-side. Defaults to on. ``False``/``None`` turns
             off what the harness configures, and has no effect where caching is automatic. Explicitly
             enabling caching (``"auto"`` or ``True``) on a provider without it raises; on a pre-built
             ``Model`` instance it is ignored with a warning (configure it on the instance). Any other
@@ -360,7 +361,7 @@ def create_harness(
             used verbatim; ``False``/``None`` disables skills. Filesystem sources are read through the
             agent's sandbox when there is one. An ``AgentSkills`` in ``plugins`` wins.
         memory: File-backed long-term memory, on by default. When enabled, the agent distills durable
-            facts into markdown files, searches them before each turn, and folds the top matches into
+            facts into markdown files, searches them before each user turn, and folds the top matches into
             context; persistence is independent of any session, so memory survives across sessions.
             ``True`` (or ``{}``) uses a file store under ``./.agent/memory``; ``{"dir": ...}`` moves it;
             ``{"stores": [...]}`` swaps in your own store(s) under the harness's memory policy (injection on,
@@ -372,10 +373,10 @@ def create_harness(
             run its shutdown on exit, or call ``agent.shutdown()`` (``await agent.shutdown_async()``
             from async code) at your shutdown boundary, to persist what's pending.
         builtin_plugins: Names of the built-in feature plugins to enable. Defaults to
-            ``["todos", "environment"]``: ``todos`` adds a ``todo_write`` tool that tracks
-            multi-step work and re-surfaces the list before each step; ``environment`` injects the
-            platform, date, working directory, and the project's ``AGENTS.md`` (plus links to nearby
-            ``AGENTS.md``/``README.md`` files) before each user turn. Pass ``[]`` to disable them.
+            ``["environment"]``, which injects the platform, date, working directory, and the
+            project's ``AGENTS.md`` (plus links to nearby ``AGENTS.md``/``README.md`` files) before
+            each user turn. ``todos`` is opt-in: it adds a ``todo_write`` tool that tracks multi-step
+            work and re-surfaces the list before each step. Pass ``[]`` to disable them all.
         interventions: Gate tool calls behind approval or a policy; defaults to ``None`` (off —
             every call runs). Accepts a preset (``"ask"`` approves every call, ``"smart"`` lets the
             SDK's LLM risk classifier flag risky ones), a natural-language policy used as that

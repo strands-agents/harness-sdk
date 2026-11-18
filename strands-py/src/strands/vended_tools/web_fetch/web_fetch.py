@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 import httpx
 
+from ...agent.invocation_context import _create_auxiliary_invocation_context
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
 from ._extract import html_to_markdown
@@ -184,7 +185,13 @@ def make_web_fetch(
             content = content[:max_content_chars] + "\n\n[content truncated]"
         invoke_prompt = f"URL: {url}\n\nRequest: {prompt}\n\n--- Content ---\n{content}"
         try:
-            result = await analyst.invoke_async(invoke_prompt, cancel_signal=cancel_signal)
+            result = await analyst.invoke_async(
+                invoke_prompt,
+                cancel_signal=cancel_signal,
+                invocation_context=_create_auxiliary_invocation_context(
+                    tool_context.invocation_context if tool_context else None
+                ),
+            )
         except Exception as exc:
             raise WebFetchError(f"Web fetch analyst failed for {url}: {exc}") from exc
         return str(result)

@@ -28,7 +28,13 @@ export function namespaceSvgIds(svg: string, name: string): string {
  * name from `alt`.
  */
 export function prepareDiagramSvg(raw: string, name: string, alt: string): string {
-  const cleaned = raw.replace(/<\?xml[^>]*>\s*/, '').replace(/<!--[\s\S]*?-->/g, '')
+  let cleaned = raw.replace(/<\?xml[^>]*>\s*/, '')
+  // Repeat until stable so removing one comment can't leave a new `<!--` behind.
+  let previous
+  do {
+    previous = cleaned
+    cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, '')
+  } while (cleaned !== previous)
   return namespaceSvgIds(cleaned, name).replace(
     /<svg\b/,
     `<svg role="img" aria-label="${escapeAttr(alt)}" focusable="false"`

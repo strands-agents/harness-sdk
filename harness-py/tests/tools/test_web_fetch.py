@@ -7,12 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 from strands.models import BedrockModel, ModelRouter
+from strands.models.anthropic import AnthropicModel
 from strands.sandbox import ExecutionResult
 from strands.sandbox.errors import SandboxTimeoutError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 
 from strands_harness import create_harness
 from strands_harness.models import resolve_web_fetch_model
+from strands_harness.sandbox import _SHELL_PROBE, _shell_of
 from strands_harness.tools import make_web_fetch
 from strands_harness.tools import web_fetch as web_fetch_module
 
@@ -35,6 +37,8 @@ class _Sandbox:
 
     async def execute(self, command, **kwargs):
         self.commands.append(command)
+        if command == _SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout="\n", stderr="")
         if self.exit_code != 0:
             return ExecutionResult(exit_code=self.exit_code, stdout="", stderr=self.stderr)
         # What the shell pipeline prints: the two trailer lines, then base64(1) output (wrapped at 76 columns).
@@ -45,6 +49,23 @@ class _Sandbox:
     @property
     def curl(self):
         return next(c for c in self.commands if c.startswith("f=$(mktemp") and "curl " in c)
+
+
+class _PowerShellSandbox(_Sandbox):
+    """Fake sandbox whose shell is Windows PowerShell: the probe reports the edition and output lines end in CRLF."""
+
+    async def execute(self, command, **kwargs):
+        self.commands.append(command)
+        if command == _SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout="Desktop\r\n", stderr="")
+        if self.exit_code != 0:
+            return ExecutionResult(exit_code=self.exit_code, stdout="", stderr=self.stderr)
+        encoded = base64.b64encode(self.body).decode()
+        return ExecutionResult(exit_code=0, stdout=f"{self.content_type}\r\n{self.url}\r\n{encoded}\r\n", stderr="")
+
+    @property
+    def curl(self):
+        return next(c for c in self.commands if "curl.exe " in c)
 
 
 def _context(sandbox):
@@ -189,8 +210,9 @@ async def test_fetch_text_runs_curl_in_the_sandbox_and_reads_the_final_hop():
         " -- '",
     ):
         assert flag in command
-    # One round-trip: the shell picks the scratch file, returns the body as base64, and removes the file itself.
-    assert len(sandbox.commands) == 1
+    # One shell probe, then one round-trip: the shell picks the scratch file, returns the body as base64, and
+    # removes the file itself.
+    assert sandbox.commands == [_SHELL_PROBE, command]
     assert command.startswith("f=$(mktemp -t strands-web-fetch.XXXXXX) && ")
     assert command.endswith('| base64; s=$?; rm -f "$f"; exit $s')
 
@@ -230,7 +252,42 @@ async def test_fetch_text_surfaces_curl_errors_and_still_cleans_up():
     sandbox = _Sandbox(stderr="curl: (22) The requested URL returned error: 404\n", exit_code=22)
     with pytest.raises(RuntimeError, match=r"\(22\).*404"):
         await web_fetch_module._fetch_text(sandbox, "https://example.com/missing", "curl")
-    assert len(sandbox.commands) == 1
+    assert len(sandbox.commands) == 2
+
+
+async def test_fetch_text_probes_the_shell_once_per_sandbox():
+    sandbox = _Sandbox(body=b"page", content_type="text/plain")
+    await web_fetch_module._fetch_text(sandbox, "https://example.com/a", "curl")
+    await web_fetch_module._fetch_text(sandbox, "https://example.com/b", "curl")
+    assert sandbox.commands.count(_SHELL_PROBE) == 1
+    assert len(sandbox.commands) == 3
+    assert await _shell_of(_PowerShellSandbox()) == "powershell"
+
+
+async def test_fetch_text_runs_curl_exe_through_powershell_and_reads_crlf_output():
+    sandbox = _PowerShellSandbox(body="Hello wörld".encode(), content_type="text/plain; charset=utf-8")
+    resolved, text = await web_fetch_module._fetch_text(sandbox, "https://example.com/it's", "curl")
+    assert (resolved, text) == ("https://example.com/final", "Hello wörld")
+    command = sandbox.curl
+    assert "\n  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time " in command
+    # The URL is a single-quoted PowerShell literal (no expansion), with its own quotes doubled.
+    assert command.count("'https://example.com/it''s'") == 1
+    assert "$([guid]::NewGuid())" in command and "strands-web-fetch-" in command
+    assert f".ReadBytes([Math]::Min($in.Length, {web_fetch_module._MAX_BYTES}))" in command
+    assert command.endswith("exit $s")
+    # Failures reach stderr through the console handle rather than PowerShell's CLIXML-wrapped error stream, and a
+    # curl.exe that cannot run is exit 127.
+    assert "\n$s = 127\ntry {\n" in command
+    assert "} catch { if ($s -eq 0) { $s = 1 }; [Console]::Error.Write($_.Exception.Message) }" in command
+    # Both the stderr check and the cleanup take the temp path literally (%TEMP% may contain wildcards).
+    assert command.count("-LiteralPath") == 2
+    assert "mktemp" not in command and "&&" not in command
+
+
+async def test_fetch_text_surfaces_powershell_curl_errors():
+    sandbox = _PowerShellSandbox(stderr="curl: (22) The requested URL returned error: 404\r\n", exit_code=22)
+    with pytest.raises(RuntimeError, match=r"\(22\).*404"):
+        await web_fetch_module._fetch_text(sandbox, "https://example.com/missing", "curl")
 
 
 @pytest.mark.skipif(shutil.which("curl") is None, reason="curl not installed")
@@ -284,7 +341,13 @@ async def test_fetch_text_end_to_end_through_the_local_environment():
         _, huge = await web_fetch_module._fetch_text(sandbox, f"{base}/huge", "curl")
         assert huge == "x" * web_fetch_module._MAX_CHARS
         assert await web_fetch_module._fetch_text(sandbox, f"{base}/notype", "curl") == (f"{base}/notype", "a < b")
-        assert (await sandbox.execute('ls "${TMPDIR:-/tmp}" | grep -c strands-web-fetch')).stdout.strip() == "0"
+        # Same scratch directory the tool derives, asked in the shell the local environment actually runs.
+        leftovers = (
+            "(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'strands-web-fetch*' | Measure-Object).Count"
+            if await _shell_of(sandbox) == "powershell"
+            else 'ls "${TMPDIR:-/tmp}" | grep -c strands-web-fetch'
+        )
+        assert (await sandbox.execute(leftovers)).stdout.strip() == "0"
         with pytest.raises(RuntimeError, match="404"):
             await web_fetch_module._fetch_text(sandbox, f"{base}/missing", "curl")
     finally:
@@ -391,7 +454,7 @@ async def test_web_fetch_caches_within_ttl(monkeypatch):
 
 def test_resolve_web_fetch_model_defaults_to_provider_small_model():
     model = resolve_web_fetch_model("bedrock/global.anthropic.claude-opus-4-8", None)
-    assert isinstance(model, BedrockModel)
+    assert isinstance(model, AnthropicModel)
     assert model.get_config()["model_id"] == "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 

@@ -14,7 +14,14 @@ from strands.sandbox import FileInfo
 from strands.sandbox.errors import SandboxPathNotFoundError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell required")
+WINDOWS = sys.platform == "win32"
+# Commands run in ``sh`` on POSIX and in PowerShell on Windows; each pair means the same thing.
+PRINT_CWD = "(Get-Location).Path" if WINDOWS else "pwd"
+FAIL_WITH_STDERR = "[Console]::Error.WriteLine('oops'); exit 3" if WINDOWS else "echo oops >&2; exit 3"
+PRINT_GREETING = "echo $env:GREETING" if WINDOWS else "printenv GREETING"
+PYTHON = "python" if WINDOWS else "python3"
+# PowerShell and Windows Python end lines with \r\n.
+EOL = "\r\n" if WINDOWS else "\n"
 
 
 @pytest.fixture
@@ -29,26 +36,26 @@ def sandbox() -> NotASandboxLocalEnvironment:
 async def test_execute_runs_a_command(sandbox):
     result = await sandbox.execute("echo hello")
     assert result.exit_code == 0
-    assert result.stdout == "hello\n"
+    assert result.stdout == f"hello{EOL}"
 
 
 @pytest.mark.asyncio
 async def test_execute_respects_cwd_option(sandbox, tmp_path):
-    result = await sandbox.execute("pwd", cwd=str(tmp_path))
+    result = await sandbox.execute(PRINT_CWD, cwd=str(tmp_path))
     assert result.stdout.strip().endswith(os.path.basename(str(tmp_path)))
 
 
 @pytest.mark.asyncio
 async def test_execute_reports_nonzero_exit_and_stderr(sandbox):
-    result = await sandbox.execute("echo oops >&2; exit 3")
+    result = await sandbox.execute(FAIL_WITH_STDERR)
     assert result.exit_code == 3
-    assert result.stderr == "oops\n"
+    assert result.stderr == f"oops{EOL}"
 
 
 @pytest.mark.asyncio
 async def test_execute_applies_env_option(sandbox):
-    result = await sandbox.execute("printenv GREETING", env={"GREETING": "hi"})
-    assert result.stdout == "hi\n"
+    result = await sandbox.execute(PRINT_GREETING, env={"GREETING": "hi"})
+    assert result.stdout == f"hi{EOL}"
 
 
 # ---- execute_code ----
@@ -56,9 +63,9 @@ async def test_execute_applies_env_option(sandbox):
 
 @pytest.mark.asyncio
 async def test_execute_code_runs_interpreter(sandbox, tmp_path):
-    result = await sandbox.execute_code("print(2 + 2)", "python3", cwd=str(tmp_path))
+    result = await sandbox.execute_code("print(2 + 2)", PYTHON, cwd=str(tmp_path))
     assert result.exit_code == 0
-    assert result.stdout == "4\n"
+    assert result.stdout == f"4{EOL}"
 
 
 @pytest.mark.asyncio
@@ -69,8 +76,67 @@ async def test_execute_code_rejects_invalid_language(sandbox):
 
 @pytest.mark.asyncio
 async def test_execute_code_applies_env_option(sandbox):
-    result = await sandbox.execute_code('import os; print(os.environ["GREETING"])', "python3", env={"GREETING": "hi"})
-    assert result.stdout == "hi\n"
+    result = await sandbox.execute_code('import os; print(os.environ["GREETING"])', PYTHON, env={"GREETING": "hi"})
+    assert result.stdout == f"hi{EOL}"
+
+
+@pytest.mark.asyncio
+async def test_execute_code_reports_missing_interpreter_as_127(sandbox):
+    # ``sh`` says "command not found"; the direct spawn on Windows says "Language interpreter not found".
+    result = await sandbox.execute_code("x", "strands-definitely-not-an-interpreter")
+    assert result.exit_code == 127
+    assert "not found" in result.stderr
+
+
+# ---- execute on Windows (PowerShell) ----
+# PowerShell semantics the model relies on: native exit codes propagate, stderr output alone is not a
+# failure, a failing cmdlet is, a multi-KB command runs, and UTF-8 survives.
+
+
+@pytest.mark.skipif(not WINDOWS, reason="PowerShell semantics")
+@pytest.mark.asyncio
+async def test_windows_propagates_native_exit_code(sandbox):
+    assert (await sandbox.execute('cmd /c "exit 3"')).exit_code == 3
+
+
+@pytest.mark.skipif(not WINDOWS, reason="PowerShell semantics")
+@pytest.mark.asyncio
+async def test_windows_stderr_from_a_successful_native_command_is_not_failure(sandbox):
+    result = await sandbox.execute('cmd /c "echo warn 1>&2"')
+    assert result.exit_code == 0
+    assert "warn" in result.stderr
+
+
+@pytest.mark.skipif(not WINDOWS, reason="PowerShell semantics")
+@pytest.mark.asyncio
+async def test_windows_failing_cmdlet_is_exit_1_and_execution_continues(sandbox):
+    failed = await sandbox.execute("Get-Item C:\\strands-definitely-missing")
+    assert failed.exit_code == 1
+    assert failed.stderr != ""
+    continued = await sandbox.execute("Get-Item C:\\strands-definitely-missing; Write-Output after")
+    assert continued.exit_code == 0
+    assert "after" in continued.stdout
+
+
+@pytest.mark.skipif(not WINDOWS, reason="PowerShell semantics")
+@pytest.mark.asyncio
+async def test_windows_runs_an_8kb_command(sandbox):
+    result = await sandbox.execute(f"Write-Output '{'x' * 8_000}'")
+    assert len(result.stdout.strip()) == 8_000
+
+
+@pytest.mark.skipif(not WINDOWS, reason="PowerShell semantics")
+@pytest.mark.asyncio
+async def test_windows_round_trips_utf8_output(sandbox):
+    assert "\u20ac" in (await sandbox.execute('Write-Output "\u20ac"')).stdout
+
+
+@pytest.mark.skipif(not WINDOWS, reason="PowerShell semantics")
+@pytest.mark.asyncio
+async def test_windows_overrides_a_host_variable_whose_name_differs_only_by_case(sandbox, monkeypatch):
+    monkeypatch.setenv("Strands_Case_Probe", "host")
+    result = await sandbox.execute("echo $env:STRANDS_CASE_PROBE", env={"STRANDS_CASE_PROBE": "override"})
+    assert result.stdout.strip() == "override"
 
 
 # ---- read/write (native fs) ----
@@ -102,6 +168,18 @@ async def test_write_creates_missing_parent_directories(sandbox, tmp_path):
 async def test_read_nonexistent_file_raises(sandbox, tmp_path):
     with pytest.raises(FileNotFoundError):
         await sandbox.read_file(str(tmp_path / "nope.txt"))
+
+
+@pytest.mark.skipif(WINDOWS, reason="`\\` is a path separator on Windows, not a filename character")
+@pytest.mark.asyncio
+async def test_backslash_in_filename_is_literal(sandbox, tmp_path):
+    # Contract: on POSIX, ``\`` in a path is a legal filename character, not a
+    # separator. Containment logic in tools above the sandbox relies on this.
+    file = str(tmp_path / "weird\\name.txt")
+    await sandbox.write_text(file, "ok")
+    assert await sandbox.read_text(file) == "ok"
+    entries = await sandbox.list_files(str(tmp_path))
+    assert any(entry.name == "weird\\name.txt" for entry in entries)
 
 
 # ---- remove ----
