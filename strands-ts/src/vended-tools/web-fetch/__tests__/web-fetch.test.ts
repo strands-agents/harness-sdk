@@ -333,6 +333,21 @@ describe('webFetch tool', () => {
       expect(globalThis.fetch).toHaveBeenCalledTimes(21)
     })
 
+    it('cancels while the host is still being checked', async () => {
+      mockFetch('page')
+      vi.mocked(isPublicHost).mockReturnValueOnce(new Promise(() => {}))
+      const controller = new AbortController()
+
+      const result = makeWebFetch({ mode: 'markdown' }).invoke(
+        { url: 'https://example.com/' },
+        makeContext({ cancelSignal: controller.signal })
+      )
+      controller.abort()
+
+      await expect(result).rejects.toThrow('Web fetch tool request cancelled')
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
     it('keeps the check for a truthy allowPrivateAddresses that is not true', async () => {
       mockFetch('secret')
       vi.mocked(isPublicHost).mockResolvedValueOnce(false)

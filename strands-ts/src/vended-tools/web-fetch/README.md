@@ -11,7 +11,7 @@ Fetches an HTTP(S) URL and returns its relevant content. Distinct from the http-
 - For production deployments, consider running in a sandboxed environment (containers, VMs, etc.)
 - Never expose this tool to untrusted users or untrusted prompt input without additional security measures
 
-By default the tool refuses a URL whose host is, or resolves to, a loopback, link-local, private, or otherwise non-public address, and checks every redirect the same way. Pass `allowPrivateAddresses: true` to `makeWebFetch` to fetch local targets. The check resolves the host in the agent's process and needs Node.js: a host that process cannot resolve is refused, and on other runtimes every URL is refused, unless the option is set. If a proxy resolves names for `fetch`, set the option and enforce egress at the proxy. The host is resolved before the request is sent, so the check does not stop DNS rebinding; keep network-level egress controls in place.
+By default the tool refuses a URL whose host is, or resolves to, a loopback, link-local, private, or otherwise non-public address, and checks every redirect the same way. Pass `allowPrivateAddresses: true` to `makeWebFetch` to fetch local targets. The check resolves the host in the agent's process and needs Node.js: a host that process cannot resolve is refused, and on other runtimes every URL is refused, unless the option is set. If a proxy resolves names for `fetch`, set the option and enforce egress at the proxy. This check catches mistakes and simple attacks; it is not egress control. The host is resolved before the request is sent, so a hostname whose DNS answer changes between the check and the connection (DNS rebinding) still gets through. Keep network-level egress controls in place.
 
 ## Install
 

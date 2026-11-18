@@ -9,7 +9,6 @@ const NON_PUBLIC_NETWORKS = [
   '172.16.0.0/12', // private
   '192.0.0.0/24', // IETF protocol assignments
   '192.168.0.0/16', // private
-  '198.18.0.0/15', // benchmarking
   '224.0.0.0/4', // multicast
   '240.0.0.0/4', // reserved, broadcast
   '::/128', // unspecified
@@ -39,8 +38,11 @@ export async function isPublicHost(hostname: string): Promise<boolean> {
 
 async function _loadGuard(): Promise<{ lookup: Lookup; nonPublic: BlockList }> {
   try {
-    const [{ lookup }, net] = await Promise.all([import('node:dns/promises'), import('node:net')])
-    const nonPublic = new net.BlockList()
+    // Specifiers are held in variables so browser bundlers do not try to resolve them.
+    const [dns, net] = ['node:dns/promises', 'node:net']
+    const [{ lookup }, { BlockList }]: [typeof import('node:dns/promises'), typeof import('node:net')] =
+      await Promise.all([import(/* @vite-ignore */ dns), import(/* @vite-ignore */ net)])
+    const nonPublic = new BlockList()
     for (const network of NON_PUBLIC_NETWORKS) {
       const [address, prefix] = network.split('/')
       nonPublic.addSubnet(address!, Number(prefix), network.includes(':') ? 'ipv6' : 'ipv4')

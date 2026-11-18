@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import threading
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -270,7 +271,6 @@ class TestNonPublicAddresses:
             ("172.31.255.255", False),
             ("192.0.0.192", False),
             ("192.168.1.1", False),
-            ("198.18.0.1", False),
             ("224.0.0.1", False),
             ("255.255.255.255", False),
             ("::", False),
@@ -286,6 +286,7 @@ class TestNonPublicAddresses:
             ("8.8.8.8", True),
             ("172.15.255.255", True),
             ("172.32.0.1", True),
+            ("198.18.0.1", True),
             ("::ffff:8.8.8.8", True),
             ("2606:4700:4700::1111", True),
         ],
@@ -400,6 +401,36 @@ class TestNonPublicAddresses:
         }
 
     @pytest.mark.asyncio
+    async def test_credentials_in_a_redirect_location_are_not_sent_to_another_origin(self):
+        authorization: dict[str, str | None] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            authorization[request.url.host] = request.headers.get("authorization")
+            if request.url.host == "example.com":
+                return httpx.Response(302, headers={"location": "https://user:password@other.example/"})
+            return httpx.Response(200, headers={"content-type": "text/plain"}, text="ok")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
+
+        await make_web_fetch(client=client, mode="markdown")(url="https://example.com/")
+
+        assert authorization == {"example.com": None, "other.example": None}
+
+    @pytest.mark.asyncio
+    async def test_host_check_is_bound_by_the_client_connect_timeout(self, monkeypatch):
+        def slow_getaddrinfo(*args, **kwargs):
+            time.sleep(0.5)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", slow_getaddrinfo)
+        requests: list[str] = []
+        client = self._recording_client(requests, timeout=0.05)
+
+        with pytest.raises(WebFetchError, match="^Fetch timed out"):
+            await make_web_fetch(client=client, mode="markdown")(url="https://example.com/")
+        assert requests == []
+
+    @pytest.mark.asyncio
     async def test_multi_step_client_auth_completes_after_a_same_origin_redirect(self):
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/start":
@@ -417,9 +448,14 @@ class TestNonPublicAddresses:
 
         assert tru_result == "protected page"
 
-    def test_rejects_non_bool_allow_private_addresses(self):
-        with pytest.raises(ValueError, match="allow_private_addresses must be a bool"):
-            make_web_fetch(allow_private_addresses="false")
+    @pytest.mark.asyncio
+    async def test_truthy_allow_private_addresses_that_is_not_true_keeps_the_check(self):
+        requests: list[str] = []
+        tool = make_web_fetch(client=self._recording_client(requests), mode="markdown", allow_private_addresses="false")
+
+        with pytest.raises(WebFetchError, match="^Fetch refused"):
+            await tool(url="http://127.0.0.1:8080/")
+        assert requests == []
 
     @pytest.mark.asyncio
     async def test_does_not_follow_redirects_when_the_client_does_not(self):

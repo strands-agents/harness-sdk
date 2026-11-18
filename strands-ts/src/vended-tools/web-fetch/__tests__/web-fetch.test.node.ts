@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest'
+import { Buffer } from 'node:buffer'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { makeWebFetch } from '../web-fetch.js'
@@ -19,6 +20,8 @@ describe('webFetch against a loopback server', () => {
       requests.push(request.url!)
       if (request.url === '/redirect') {
         response.writeHead(302, { location: `http://127.0.0.1:${port}/secret` }).end()
+      } else if (request.url === '/utf8-redirect') {
+        response.writeHead(302, { location: Buffer.from('/café', 'utf8').toString('latin1') }).end()
       } else {
         response.writeHead(200, { 'content-type': 'text/plain' }).end('secret')
       }
@@ -55,6 +58,14 @@ describe('webFetch against a loopback server', () => {
       makeWebFetch({ mode: 'markdown' }).invoke({ url: `http://localhost:${port}/redirect` })
     ).rejects.toThrow(`url=<http://127.0.0.1:${port}/secret> | fetch refused`)
     expect(requests).toStrictEqual(['/redirect'])
+  })
+
+  it('follows a redirect whose Location is raw UTF-8 to the same URL fetch would', async () => {
+    vi.mocked(addressGuard.isPublicHost).mockResolvedValue(true)
+
+    await makeWebFetch({ mode: 'markdown' }).invoke({ url: `http://localhost:${port}/utf8-redirect` })
+
+    expect(requests).toStrictEqual(['/utf8-redirect', '/caf%C3%A9'])
   })
 
   it('fetches a loopback URL through a redirect when allowPrivateAddresses is set', async () => {

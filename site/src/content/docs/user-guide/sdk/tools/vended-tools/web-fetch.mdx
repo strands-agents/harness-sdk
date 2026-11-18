@@ -58,11 +58,14 @@ to the factory.
 
 The host is resolved in the agent's process, so a host that process cannot
 resolve is refused too. If a proxy or custom transport resolves names for
-you, set the option and enforce egress there. The host is also resolved
-before the request is sent, so the check does not stop DNS rebinding. Egress
-control belongs at the layer that encapsulates the agent (a sandbox, microVM,
-or network policy) where it can be enforced consistently across all tools,
-including `shell`.
+you, set the option and enforce egress there.
+
+This check catches mistakes and simple attacks; it is not egress control. The
+host is resolved before the request is sent, so a hostname whose DNS answer
+changes between the check and the connection (DNS rebinding) still gets
+through. Egress control belongs at the layer that encapsulates the agent (a
+sandbox, microVM, or network policy) where it can be enforced consistently
+across all tools, including `shell`.
 :::
 
 **Example:**

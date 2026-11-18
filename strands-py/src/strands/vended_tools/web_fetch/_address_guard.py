@@ -17,7 +17,6 @@ _NON_PUBLIC_NETWORKS = tuple(
         "172.16.0.0/12",  # private
         "192.0.0.0/24",  # IETF protocol assignments
         "192.168.0.0/16",  # private
-        "198.18.0.0/15",  # benchmarking
         "224.0.0.0/4",  # multicast
         "240.0.0.0/4",  # reserved, broadcast
         "::/128",  # unspecified

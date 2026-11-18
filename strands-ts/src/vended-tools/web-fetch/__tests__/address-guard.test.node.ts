@@ -22,7 +22,6 @@ describe('isPublicHost', () => {
     ['172.31.255.255', false],
     ['192.0.0.192', false],
     ['192.168.1.1', false],
-    ['198.18.0.1', false],
     ['224.0.0.1', false],
     ['255.255.255.255', false],
     ['::', false],
@@ -38,6 +37,7 @@ describe('isPublicHost', () => {
     ['8.8.8.8', true],
     ['172.15.255.255', true],
     ['172.32.0.1', true],
+    ['198.18.0.1', true],
     ['::ffff:8.8.8.8', true],
     ['2606:4700:4700::1111', true],
   ])('resolving to %s is public: %s', async (address, expected) => {
