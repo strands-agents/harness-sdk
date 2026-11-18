@@ -24,10 +24,8 @@ export const WEB_FETCH_DESCRIPTION_MARKDOWN =
   'other content types are returned as-is.'
 
 export const WEB_FETCH_DESCRIPTION_AGENTIC =
-  'Fetches an HTTP(S) URL and answers a prompt about its content. ' +
-  'The analyst processes the page directly so the full content never enters ' +
-  "the main agent's context. " +
-  'Leave the prompt empty to get the page content itself instead of an answer.'
+  'Fetches an HTTP(S) URL. With a prompt, an analyst reads the page and returns only its answer, ' +
+  'keeping the page out of your context. Without one, returns the page as markdown.'
 
 /**
  * Options for {@link makeWebFetch}.
@@ -49,8 +47,8 @@ export interface MakeWebFetchOptions {
   /** Extraction mode. Defaults to `'agentic'`. */
   mode?: 'markdown' | 'agentic'
   /**
-   * Where the HTTP request runs. `'direct'` (default) uses global `fetch` from the agent process;
-   * `'sandbox'` runs `curl` inside the host agent's sandbox, so the sandbox's network rules apply.
+   * When `true`, the request runs as `curl` through the host agent's sandbox and is confined only as
+   * far as that sandbox is. Defaults to `false`: global `fetch` from the agent process.
    */
-  transport?: 'direct' | 'sandbox'
+  sandbox?: boolean
 }

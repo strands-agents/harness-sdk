@@ -11,10 +11,10 @@ Fetches an HTTP(S) URL and returns its content. Two modes are available,
 configured at construction time via `make_web_fetch` / `makeWebFetch`:
 
 - **`agentic`** (default): HTML is converted to markdown and passed to an
-  analyst agent that answers a `prompt`, so the full page never enters the
-  main agent's context. Use when targeted answers are needed about potentially
+  analyst agent that answers a `prompt`, keeping the page out of the main
+  agent's context. Use when targeted answers are needed about potentially
   large pages. An empty `prompt` skips the analyst and returns the converted
-  page content.
+  page content to the main agent.
 - **`markdown`**: HTML is converted to clean markdown with scripts, styles,
   and noise stripped. Use when the agent needs full pages for reasoning.
 
@@ -24,17 +24,21 @@ analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
 the factory also accepts a `model` for the analyst; <Syntax py="agent.aux_model" ts="agent.auxModel" />
 is used when none is supplied.
 
-The `transport` option selects where the HTTP request runs:
+By default the request is sent from the agent process and does not go through
+the agent's [Sandbox](../../sandbox/index.mdx). The Python tool uses an
+`httpx.AsyncClient`; pass `client` to `make_web_fetch` to supply a
+pre-configured one with custom timeouts, redirects, proxies, or caching.
 
-- **`direct`** (default): from the agent process. The Python tool uses an
-  `httpx.AsyncClient`; pass `client` to `make_web_fetch` to supply a
-  pre-configured one with custom timeouts, redirects, proxies, or caching.
-- **`sandbox`**: as `curl` inside the agent's [Sandbox](../../sandbox/index.mdx),
-  so the sandbox's network isolation and egress rules also cover web fetch. The
-  sandbox must provide `curl`, and `client` cannot be combined with it.
+Set <Syntax py="sandbox=True" ts="sandbox: true" /> to run the request as `curl`
+through the agent's sandbox instead. The request is then confined only as far
+as that sandbox is: with no sandbox configured, the agent's default local
+environment runs `curl` on the host. The sandbox must provide `curl`, `head`,
+and `base64` when its shell is POSIX, or `curl.exe` when it is PowerShell. In
+Python, `client` cannot be combined with it.
 
-Both transports time out after 30 seconds (a `client` you supply keeps its own
-timeout).
+On both paths the request is stopped 30 seconds after it starts, however much
+of the response has arrived. A `client` you supply keeps its own timeout
+instead.
 
 _Supported in: Node.js (TypeScript); Python (all platforms)._
 
@@ -63,8 +67,10 @@ npm install turndown
 Web fetch accepts only `http://` and `https://` URLs and caps response bodies
 at 5 MiB by default. Egress control belongs at the layer that encapsulates the
 agent (a sandbox, microVM, or network policy) where it can be enforced
-consistently across all tools, including `shell`. With the `sandbox` transport
-the request runs inside the agent's sandbox, so that layer's rules apply to it.
+consistently across all tools, including `shell`. By default web fetch does
+not go through the agent's sandbox. With <Syntax py="sandbox=True" ts="sandbox: true" />
+the request leaves from the sandbox and is confined only as far as that
+sandbox is.
 :::
 
 **Example:**
@@ -94,6 +100,14 @@ Tighter response cap with a dedicated analyst model:
 --8<-- "user-guide/sdk/tools/vended-tools/web-fetch.ts:web_fetch_custom_example"
 ```
 
+Sending the request through the agent's sandbox:
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/web-fetch_imports.ts:web_fetch_sandbox_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/web-fetch.ts:web_fetch_sandbox_example"
+```
+
 </Tab>
 <Tab label="Python">
 
@@ -116,7 +130,7 @@ agent = Agent(tools=[web_fetch])
 agent("Read https://example.com/docs and then explain the architecture")
 ```
 
-Tighter response cap with a dedicated analyst model and custom transport:
+Tighter response cap with a dedicated analyst model and a custom client:
 
 ```python
 import httpx
@@ -132,6 +146,16 @@ web_fetch = make_web_fetch(
     model=BedrockModel(model_id="us.amazon.nova-micro-v1:0"),
 )
 agent = Agent(tools=[web_fetch])
+```
+
+Sending the request through the agent's sandbox:
+
+```python
+from strands import Agent
+from strands.sandbox.docker import DockerSandbox
+from strands.vended_tools import make_web_fetch
+
+agent = Agent(sandbox=DockerSandbox("my-container-id"), tools=[make_web_fetch(sandbox=True)])
 ```
 
 </Tab>

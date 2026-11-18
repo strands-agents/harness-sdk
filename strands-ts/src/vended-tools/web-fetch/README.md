@@ -7,7 +7,7 @@ Fetches an HTTP(S) URL and returns its relevant content. Distinct from the http-
 **This tool makes outbound HTTP requests to URLs chosen by the model.**
 
 - Only use with trusted input
-- Requests execute with the network access of the host process, or of the agent's sandbox with `transport: 'sandbox'`
+- Requests execute with the network access of the host process. With `sandbox: true` they run through the agent's sandbox instead and are confined only as far as that sandbox is
 - For production deployments, consider running in a sandboxed environment (containers, VMs, etc.)
 - Never expose this tool to untrusted users or untrusted prompt input without additional security measures
 
@@ -57,6 +57,19 @@ const webFetch = makeWebFetch({
 const agent = new Agent({ tools: [webFetch] })
 ```
 
+Sending the request through the agent's sandbox:
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
+import { makeWebFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
+
+const agent = new Agent({
+  sandbox: new DockerSandbox({ container: 'my-container-id' }),
+  tools: [makeWebFetch({ sandbox: true })],
+})
+```
+
 ## API
 
 ### `webFetch`
@@ -73,25 +86,25 @@ The default tool, produced by `makeWebFetch()` with `mode: 'agentic'` and defaul
 | `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                                 |
 | `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                              |
 | `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's `auxModel` when not provided. |
-| `transport`       | `'direct' \| 'sandbox'`   | `'direct'`    | Where the HTTP request runs (see below).                                                     |
+| `sandbox`         | `boolean`                 | `false`       | Run the request through the agent's sandbox (see below).                                     |
 
-Throws if `maxBytes` or `maxContentChars` is not a positive number, or `transport` is not one of the two values.
+Throws if `maxBytes` is not a positive integer, `maxContentChars` is not a positive number, or `sandbox` is not a boolean.
 
-### Transports
+### Where the request runs
 
-**`direct`**: sends the request with global `fetch` from the agent process.
+By default the request is sent with global `fetch` from the agent process and does not go through the agent's sandbox.
 
-**`sandbox`**: runs the request as `curl` inside the host agent's sandbox, so the sandbox's network isolation and egress rules also cover web fetch. The sandbox must provide `curl`.
+With `sandbox: true` the request runs as `curl` through the host agent's sandbox, so it is confined only as far as that sandbox is. With no sandbox configured, the agent's default local environment runs `curl` on the host. The sandbox must provide `curl`, `head`, and `base64` when its shell is POSIX, or `curl.exe` when it is PowerShell.
 
-Both transports follow redirects, reject bodies over `maxBytes`, and time out after 30 seconds.
+Both follow redirects, reject bodies over `maxBytes`, and stop the request 30 seconds after it starts.
 
 ### Modes
 
 **`markdown`** — Fetches the URL and returns the page content as clean markdown directly in the agent's context. HTML is converted with scripts, styles, and noise stripped; other content types are returned as-is.
 
-**`agentic`** — Fetches the URL and routes the content through a dedicated analyst agent that answers the `prompt` about the page. The full page content never enters the main agent's context window — only the analyst's answer is returned.
+**`agentic`** — Fetches the URL and routes the content through a dedicated analyst agent that answers the `prompt` about the page. Only the analyst's answer is returned, keeping the page out of the main agent's context window.
 
-In agentic mode an empty `prompt` skips the analyst and returns the converted page content.
+In agentic mode an empty `prompt` skips the analyst and returns the converted page content to the main agent.
 
 ### Input — markdown mode
 

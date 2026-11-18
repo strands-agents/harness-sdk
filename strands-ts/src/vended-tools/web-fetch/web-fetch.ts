@@ -26,6 +26,8 @@ const shells = new WeakMap<Sandbox, 'sh' | 'powershell'>()
 const TRAILER_BYTES = 1024
 const CURL_FILESIZE_EXCEEDED = 63
 const CURL_TIMED_OUT = 28
+const COMMAND_NOT_FOUND = 127
+const SANDBOX_NEEDS = '`sandbox: true` needs curl, head and base64 in a POSIX sandbox, or curl.exe under PowerShell'
 const NEWLINE = 0x0a
 
 const _HEADERS = {
@@ -64,18 +66,19 @@ const webFetchAgenticInputSchema = z.object({
  * with conservative limits; use this factory to tune them.
  */
 export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<typeof tool> {
-  const { mode = 'agentic', model: analystModel, transport = 'direct' } = options
+  const { mode = 'agentic', model: analystModel, sandbox = false } = options
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
   const maxContentChars = options.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS
-  if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
-    throw new Error(`maxBytes must be a positive number, got ${maxBytes}`)
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error(`maxBytes must be a positive integer, got ${maxBytes}`)
   }
   if (!Number.isFinite(maxContentChars) || maxContentChars <= 0) {
     throw new Error(`maxContentChars must be a positive number, got ${maxContentChars}`)
   }
-  if (transport !== 'direct' && transport !== 'sandbox') {
-    throw new Error(`transport must be 'direct' or 'sandbox', got ${JSON.stringify(transport)}`)
+  if (typeof sandbox !== 'boolean') {
+    throw new Error(`sandbox must be a boolean, got ${JSON.stringify(sandbox)}`)
   }
+  const limits = { maxBytes, maxContentChars, sandbox }
 
   const name = options.name ?? 'web_fetch'
   const description =
@@ -85,19 +88,7 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
     name,
     description,
     inputSchema: webFetchMarkdownInputSchema,
-    callback: async (input, context) => {
-      const { url } = input
-      const signal = context?.cancelSignal ?? null
-
-      const [contentType, raw] = await fetchOnce(url, maxBytes, signal, transportSandbox(transport, context))
-
-      const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
-      let content = isMarkup ? await htmlToMarkdown(raw) : raw
-      if (content.length > maxContentChars) {
-        content = content.slice(0, maxContentChars) + '\n\n[content truncated]'
-      }
-      return content
-    },
+    callback: (input, context) => fetchContent(input.url, limits, context),
   })
 
   const agenticTool = tool({
@@ -106,30 +97,21 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
     inputSchema: webFetchAgenticInputSchema,
     callback: async (input, context) => {
       const { url, prompt = '' } = input
+      if (!prompt.trim()) return fetchContent(url, limits, context)
 
       const effectiveModel = analystModel ?? context?.agent.auxModel
-      if (prompt.trim() && !effectiveModel) {
+      if (!effectiveModel) {
         throw new Error(
           'web_fetch: agentic mode requires a model. ' + 'Pass model to makeWebFetch or call the tool from an agent.'
         )
       }
 
-      const signal = context?.cancelSignal ?? null
       const auxiliaryInvocationContext = createAuxiliaryInvocationContext(context?.invocationContext)
       const invokeOptions: InvokeOptions = {
         ...(context?.cancelSignal && { cancelSignal: context.cancelSignal }),
         ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
       }
-      const [contentType, raw] = await fetchOnce(url, maxBytes, signal, transportSandbox(transport, context))
-
-      const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
-      let content = isMarkup ? await htmlToMarkdown(raw) : raw
-      if (content.length > maxContentChars) {
-        content = content.slice(0, maxContentChars) + '\n\n[content truncated]'
-      }
-      if (!prompt.trim() || !effectiveModel) {
-        return content
-      }
+      const content = await fetchContent(url, limits, context)
 
       // Fresh agent per call — no history from one fetch bleeds into the next.
       const analyst = new Agent({ model: effectiveModel, systemPrompt: _ANALYST_PROMPT, printer: false })
@@ -159,6 +141,21 @@ export const webFetch = makeWebFetch()
 
 // ---- Internals ----
 
+/** Fetch `url` and return its content: markup as markdown, cut to `maxContentChars`. */
+async function fetchContent(
+  url: string,
+  limits: { maxBytes: number; maxContentChars: number; sandbox: boolean },
+  context: ToolContext | undefined
+): Promise<string> {
+  const sandbox = limits.sandbox ? agentSandbox(context) : undefined
+  const [contentType, raw] = await fetchOnce(url, limits.maxBytes, context?.cancelSignal ?? null, sandbox)
+  const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
+  const content = isMarkup ? await htmlToMarkdown(raw) : raw
+  return content.length > limits.maxContentChars
+    ? content.slice(0, limits.maxContentChars) + '\n\n[content truncated]'
+    : content
+}
+
 async function fetchOnce(
   url: string,
   maxBytes: number,
@@ -169,13 +166,13 @@ async function fetchOnce(
   if (!URL.canParse(url)) {
     throw new Error(`url=<${url}> | fetch failed: invalid URL`)
   }
-  const { protocol } = new URL(url)
-  if (protocol !== 'http:' && protocol !== 'https:') {
+  const target = new URL(url)
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
     throw new Error(`url=<${url}> | fetch failed: only http and https URLs are supported`)
   }
 
   if (sandbox) {
-    const [contentType, body] = await fetchSandbox(sandbox, url, maxBytes, signal)
+    const [contentType, body] = await fetchSandbox(sandbox, target, maxBytes, signal)
     return [contentType, new TextDecoder(_parseCharset(contentType)).decode(body)]
   }
 
@@ -185,12 +182,12 @@ async function fetchOnce(
   try {
     response = await globalThis.fetch(url, { method: 'GET', headers: _HEADERS, signal: fetchSignal })
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Web fetch tool request cancelled', { cause: error })
-    }
-    throw new Error(`url=<${url}> | fetch failed: ${error instanceof Error ? error.message : String(error)}`, {
-      cause: error,
-    })
+    throw (
+      abortError(error, url) ??
+      new Error(`url=<${url}> | fetch failed: ${error instanceof Error ? error.message : String(error)}`, {
+        cause: error,
+      })
+    )
   }
 
   if (!response.ok) {
@@ -222,16 +219,21 @@ async function fetchOnce(
     }
     chunks.push(decoder.decode())
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Web fetch tool request cancelled', { cause: error })
-    }
-    throw error
+    throw abortError(error, url) ?? error
   } finally {
     reader.cancel().catch(() => {})
     reader.releaseLock()
   }
 
   return [contentType, chunks.join('')]
+}
+
+/** The tool's error for a cancelled or timed-out `fetch`, `undefined` for any other error. */
+function abortError(error: unknown, url: string): Error | undefined {
+  if (!(error instanceof Error)) return undefined
+  if (error.name === 'AbortError') return new Error('Web fetch tool request cancelled', { cause: error })
+  if (error.name === 'TimeoutError') return new Error(`url=<${url}> | fetch timed out`, { cause: error })
+  return undefined
 }
 
 function _parseCharset(contentType: string): string {
@@ -245,33 +247,29 @@ function _parseCharset(contentType: string): string {
   }
 }
 
-/** The host agent's sandbox for the `'sandbox'` transport, `undefined` for `'direct'`. */
-function transportSandbox(transport: string, context: ToolContext | undefined): Sandbox | undefined {
-  if (transport === 'direct') return undefined
+/** The host agent's sandbox. */
+function agentSandbox(context: ToolContext | undefined): Sandbox {
   const sandbox = context?.agent.sandbox
   if (!sandbox) {
-    throw new Error("web_fetch: transport 'sandbox' requires a sandbox. Call the tool from an agent.")
+    throw new Error('web_fetch: `sandbox: true` requires a sandbox. Call the tool from an agent.')
   }
   return sandbox
 }
 
-/** Perform one HTTP GET as `curl` inside `sandbox`, returning `[contentType, body]`. */
+/** Perform one HTTP GET as `curl` through `sandbox`, returning `[contentType, body]`. */
 async function fetchSandbox(
   sandbox: Sandbox,
-  url: string,
+  target: URL,
   maxBytes: number,
   signal: AbortSignal | null
 ): Promise<[string, Uint8Array]> {
-  url = url.trim()
-  if (!URL_CHARS.test(url)) {
+  // The parsed URL has spaces and non-ASCII characters percent-encoded, as `fetch` sends it. `fetch` refuses
+  // credentials in the URL, so they are refused here too.
+  const url = target.href
+  if (!URL_CHARS.test(url) || target.username || target.password) {
     throw new Error(
-      `url=<${url}> | fetch failed: the URL may only contain the characters RFC 3986 allows, ` +
-        'percent-encode spaces and non-ASCII characters'
+      `url=<${url}> | fetch failed: the URL may only contain the characters RFC 3986 allows, and no credentials`
     )
-  }
-  // The WHATWG parser repairs forms like `https:///host`; curl would not.
-  if (!/^https?:\/\/[^/?#]/i.test(url)) {
-    throw new Error(`url=<${url}> | fetch failed: only http and https URLs are supported`)
   }
   if (signal?.aborted) {
     throw new Error('Web fetch tool request cancelled')
@@ -281,7 +279,7 @@ async function fetchSandbox(
   const limit = maxBytes + TRAILER_BYTES
   let result
   try {
-    const build = (await shellOf(sandbox)) === 'powershell' ? powershellCurlCommand : curlCommand
+    const build = (await shellOf(sandbox, signal)) === 'powershell' ? powershellCurlCommand : curlCommand
     result = await sandbox.execute(build(url, maxBytes, limit), {
       timeout: TIMEOUT_SECONDS + 5,
       signal: signal ?? undefined,
@@ -316,7 +314,7 @@ function parseCurlResult(result: ExecutionResult, url: string, maxBytes: number,
     exitCode = data.length >= limit ? CURL_FILESIZE_EXCEEDED : status
   }
   if (Number.isNaN(exitCode)) {
-    throw new Error(`url=<${url}> | fetch failed: unexpected curl output from the sandbox`)
+    throw new Error(`url=<${url}> | fetch failed: unexpected curl output from the sandbox. ${SANDBOX_NEEDS}`)
   }
   if (exitCode === CURL_FILESIZE_EXCEEDED || body.length > maxBytes) {
     throw new Error(`Response body exceeded max_bytes=${maxBytes}. Refusing to buffer more.`)
@@ -324,20 +322,25 @@ function parseCurlResult(result: ExecutionResult, url: string, maxBytes: number,
   if (exitCode === CURL_TIMED_OUT) {
     throw new Error(`url=<${url}> | fetch timed out`)
   }
+  const needs = exitCode === COMMAND_NOT_FOUND ? `. ${SANDBOX_NEEDS}` : ''
   if (exitCode !== 0) {
-    throw new Error(`url=<${url}> | fetch failed: ${result.stderr.trim() || `curl exited with code ${exitCode}`}`)
+    throw new Error(
+      `url=<${url}> | fetch failed: ${result.stderr.trim() || `curl exited with code ${exitCode}`}${needs}`
+    )
   }
   return [contentType, body]
 }
 
 /** The shell `sandbox` runs commands in, probed once per sandbox. */
-async function shellOf(sandbox: Sandbox): Promise<'sh' | 'powershell'> {
+async function shellOf(sandbox: Sandbox, signal: AbortSignal | null): Promise<'sh' | 'powershell'> {
   let shell = shells.get(sandbox)
   if (!shell) {
-    const result = await sandbox.execute(SHELL_PROBE, { timeout: TIMEOUT_SECONDS })
-    // A failed probe is inconclusive: answer `sh` for this call and probe again next time.
-    if (result.exitCode !== 0) return 'sh'
-    shell = ['Desktop', 'Core'].includes(result.stdout.trim()) ? 'powershell' : 'sh'
+    const result = await sandbox.execute(SHELL_PROBE, { timeout: TIMEOUT_SECONDS, signal: signal ?? undefined })
+    const edition = result.stdout.trim()
+    if (result.exitCode !== 0 || !['', 'Desktop', 'Core'].includes(edition)) {
+      throw new Error('web_fetch: `sandbox: true` needs a POSIX shell or PowerShell in the sandbox')
+    }
+    shell = edition ? 'powershell' : 'sh'
     shells.set(sandbox, shell)
   }
   return shell
@@ -377,10 +380,10 @@ function powershellCurlCommand(url: string, maxBytes: number, limit: number): st
 }
 
 function curlArgs(maxBytes: number): string {
-  // -g keeps `[]` in the URL literal; --proto/--proto-redir keep the request and every redirect on http(s).
-  // Double quotes mean the same to sh and to a Windows command line.
+  // -q (first) ignores any .curlrc; -g keeps `[]` in the URL literal; --proto/--proto-redir keep the request and
+  // every redirect on http(s). Double quotes mean the same to sh and to a Windows command line.
   return (
-    `-sSL -g --fail --proto "=http,https" --proto-redir "=http,https" --max-time ${TIMEOUT_SECONDS} ` +
+    `-q -sSL -g --compressed --fail --proto "=http,https" --proto-redir "=http,https" --max-time ${TIMEOUT_SECONDS} ` +
     `--max-filesize ${maxBytes} -A "${_HEADERS['User-Agent']}" -H "Accept: ${_HEADERS.Accept}"`
   )
 }

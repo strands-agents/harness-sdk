@@ -98,8 +98,12 @@ describe('webFetch tool', () => {
       expect(() => makeWebFetch({ maxContentChars: -1 })).toThrow(/maxContentChars/)
     })
 
-    it('rejects an unknown transport', () => {
-      expect(() => makeWebFetch({ transport: 'wget' as 'direct' })).toThrow(/transport/)
+    it.each([1.5, 1e6 / 3])('rejects a fractional maxBytes (%d)', (maxBytes) => {
+      expect(() => makeWebFetch({ maxBytes })).toThrow('maxBytes must be a positive integer')
+    })
+
+    it.each(['sandbox', 1, null])('rejects a non-boolean sandbox (%j)', (sandbox) => {
+      expect(() => makeWebFetch({ sandbox: sandbox as unknown as boolean })).toThrow('sandbox must be a boolean')
     })
 
     it('rejects non-finite maxBytes', () => {
@@ -191,11 +195,14 @@ describe('webFetch tool', () => {
       )
     })
 
-    it('throws on abort signal', async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/' })).rejects.toThrow(
-        'Web fetch tool request cancelled'
-      )
+    const aborts = [
+      ['AbortError', 'Web fetch tool request cancelled'],
+      ['TimeoutError', 'url=<https://example.com/> | fetch timed out'],
+    ] as const
+
+    it.each(aborts)('maps a %s from fetch', async (name, message) => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new DOMException('aborted', name))
+      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/' })).rejects.toThrow(message)
     })
 
     it('decodes response body using charset from Content-Type', async () => {
@@ -217,7 +224,7 @@ describe('webFetch tool', () => {
       expect(result).toContain('©')
     })
 
-    it('aborts mid-body-read when the stream reader throws an AbortError', async () => {
+    it.each(aborts)('maps a %s from the stream reader mid-body', async (name, message) => {
       let readCount = 0
       const mockCancel = vi.fn().mockResolvedValue(undefined)
       globalThis.fetch = vi.fn().mockResolvedValue({
@@ -230,16 +237,14 @@ describe('webFetch tool', () => {
             read: vi.fn().mockImplementation(async () => {
               readCount += 1
               if (readCount === 1) return { done: false, value: new Uint8Array([0x61]) }
-              throw new DOMException('The operation was aborted', 'AbortError')
+              throw new DOMException('The operation was aborted', name)
             }),
             releaseLock: vi.fn(),
             cancel: mockCancel,
           }),
         },
       })
-      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/' })).rejects.toThrow(
-        'Web fetch tool request cancelled'
-      )
+      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/' })).rejects.toThrow(message)
       expect(mockCancel).toHaveBeenCalled()
     })
 
@@ -291,7 +296,10 @@ describe('webFetch tool', () => {
 
     it('tells the model the prompt is optional', () => {
       const { description, inputSchema } = makeWebFetch().toolSpec
-      expect(description).toContain('Leave the prompt empty')
+      expect(description).toBe(
+        'Fetches an HTTP(S) URL. With a prompt, an analyst reads the page and returns only its answer, ' +
+          'keeping the page out of your context. Without one, returns the page as markdown.'
+      )
       expect(inputSchema).toMatchObject({
         required: ['url'],
         properties: { prompt: { description: expect.stringContaining('Leave empty') } },
@@ -413,7 +421,7 @@ describe('webFetch tool', () => {
     })
   })
 
-  describe('sandbox transport', () => {
+  describe('sandbox option', () => {
     /** What the curl command sends back before base64: the body, then the content type and exit status. */
     function curlOutput(body: string | Uint8Array = '', contentType = 'text/html', status = 0): Uint8Array {
       const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body
@@ -435,13 +443,13 @@ describe('webFetch tool', () => {
       async execute(command: string, options?: unknown): Promise<ExecutionResult> {
         this.commands.push(command)
         this.options.push(options)
-        if (command === 'echo "${PSEdition}"') return this.result(this.probeOutput)
+        if (command === 'echo "${PSEdition}"') return this.result(this.probeOutput, '', 0)
         const lines = encodeBase64(this.response.output ?? new Uint8Array()).match(/.{1,76}/g) ?? []
-        return this.result(lines.map((line) => line + this.lineEnd).join(''))
+        const { stderr = '', exitCode = 0 } = this.response
+        return this.result(lines.map((line) => line + this.lineEnd).join(''), stderr, exitCode)
       }
 
-      private result(stdout: string): ExecutionResult {
-        const { stderr = '', exitCode = 0 } = this.response
+      private result(stdout: string, stderr: string, exitCode: number): ExecutionResult {
         return { type: 'executionResult', exitCode, stdout, stderr, outputFiles: [] }
       }
     }
@@ -457,15 +465,15 @@ describe('webFetch tool', () => {
     }
 
     function sandboxFetch(sandbox: FakeSandbox, url = 'https://example.com/', maxBytes?: number): Promise<unknown> {
-      const options = { mode: 'markdown' as const, transport: 'sandbox' as const, ...(maxBytes && { maxBytes }) }
+      const options = { mode: 'markdown' as const, sandbox: true, ...(maxBytes && { maxBytes }) }
       return makeWebFetch(options).invoke({ url }, sandboxContext(sandbox))
     }
 
     it.each([undefined, makeContext()])('requires a sandbox (%#)', async (context) => {
       globalThis.fetch = vi.fn()
       await expect(
-        makeWebFetch({ mode: 'markdown', transport: 'sandbox' }).invoke({ url: 'https://example.com/' }, context)
-      ).rejects.toThrow('requires a sandbox')
+        makeWebFetch({ mode: 'markdown', sandbox: true }).invoke({ url: 'https://example.com/' }, context)
+      ).rejects.toThrow('`sandbox: true` requires a sandbox')
       expect(globalThis.fetch).not.toHaveBeenCalled()
     })
 
@@ -481,7 +489,8 @@ describe('webFetch tool', () => {
       // Legal URL characters that mean something to a shell arrive single-quoted.
       expect(command).toContain(" -- 'https://example.com/a'\\''b$(id);c'; ")
       for (const flag of [
-        'curl -sSL -g --fail ',
+        // -q comes first so a .curlrc in the sandbox is ignored.
+        '{ curl -q -sSL -g --compressed --fail ',
         '--proto "=http,https"',
         '--proto-redir "=http,https"',
         '--max-time 30 ',
@@ -494,6 +503,7 @@ describe('webFetch tool', () => {
       }
       // head stops curl once the body cannot fit in maxBytes, with or without a Content-Length.
       expect(command).toMatch(/printf '\\n%s' "\$\?"; \} \| head -c 3024 \| base64$/)
+      expect(sandbox.options[0]).toMatchObject({ timeout: 30, signal: expect.any(AbortSignal) })
       expect(sandbox.options[1]).toMatchObject({ timeout: 35, signal: expect.any(AbortSignal) })
     })
 
@@ -529,15 +539,21 @@ describe('webFetch tool', () => {
       )
     })
 
-    it('reports the shell error when curl is missing', async () => {
+    it.each([
       // The shell could not start curl, so only the exit status follows the (empty) body.
-      const sandbox = new FakeSandbox({ output: new TextEncoder().encode('\n127'), stderr: 'sh: 1: curl: not found\n' })
-      await expect(sandboxFetch(sandbox)).rejects.toThrow('curl: not found')
-    })
-
-    it.each(['', 'not curl output'])('rejects unexpected output (%j)', async (output) => {
-      const sandbox = new FakeSandbox({ output: new TextEncoder().encode(output) })
-      await expect(sandboxFetch(sandbox)).rejects.toThrow('unexpected curl output')
+      ['curl', { output: new TextEncoder().encode('\n127'), stderr: 'sh: 1: curl: not found\n' }, 'curl: not found'],
+      ['base64', { stderr: 'sh: 1: base64: not found\n', exitCode: 127 }, 'base64: not found'],
+      // Without head the pipeline prints nothing and still exits 0.
+      ['head', { stderr: 'sh: 1: head: not found\n' }, 'unexpected curl output from the sandbox'],
+      [
+        'curl output',
+        { output: new TextEncoder().encode('not curl output') },
+        'unexpected curl output from the sandbox',
+      ],
+    ])('says what the sandbox needs when %s is missing', async (_name, response, error) => {
+      await expect(sandboxFetch(new FakeSandbox(response))).rejects.toThrow(
+        `${error}. \`sandbox: true\` needs curl, head and base64 in a POSIX sandbox, or curl.exe under PowerShell`
+      )
     })
 
     it.each([
@@ -576,7 +592,7 @@ describe('webFetch tool', () => {
     it('does not run a command when already cancelled', async () => {
       const sandbox = new FakeSandbox()
       await expect(
-        makeWebFetch({ mode: 'markdown', transport: 'sandbox' }).invoke(
+        makeWebFetch({ mode: 'markdown', sandbox: true }).invoke(
           { url: 'https://example.com/' },
           sandboxContext(sandbox, { cancelSignal: AbortSignal.abort() })
         )
@@ -588,18 +604,32 @@ describe('webFetch tool', () => {
       'ftp://example.com/file',
       'file:///etc/passwd',
       'javascript:alert(1)',
-      'https:///no-host',
-      'https://example.com/a b',
-      'https://example.com/x`id`',
-      'https://example.com/"x"',
-      'https://example.com/x\nrm -rf /',
-      'https://example.com/{a,b}',
-      'https://example.com/日本',
+      'https://exa`mple.com/',
+      'https://example.com/a|b',
+      'https://example.com/?q=`id`',
+      'https://example.com/?q={a,b}',
+      'https://user:pw@example.com/',
+      'https://user@example.com/',
       '',
     ])('rejects the URL %j before any command runs', async (url) => {
       const sandbox = new FakeSandbox()
       await expect(sandboxFetch(sandbox, url)).rejects.toThrow('fetch failed')
       expect(sandbox.commands).toStrictEqual([])
+    })
+
+    it.each([
+      ['https://example.com/a b', 'https://example.com/a%20b'],
+      ['https://example.com/日本?q=é', 'https://example.com/%E6%97%A5%E6%9C%AC?q=%C3%A9'],
+      ['https://bücher.example/', 'https://xn--bcher-kva.example/'],
+      ['https://example.com/`id`"x"{a,b}\n', 'https://example.com/%60id%60%22x%22%7Ba,b%7D'],
+      ['https:///example.com', 'https://example.com/'],
+    ])('sends the URL %j as fetch would send it', async (url, sent) => {
+      mockFetch('page')
+      expect(await makeWebFetch({ mode: 'markdown' }).invoke({ url })).toBe('page')
+      expect(new Request(vi.mocked(globalThis.fetch).mock.calls[0]![0] as string).url).toBe(sent)
+      const sandbox = new FakeSandbox({ output: curlOutput('page', 'text/plain') })
+      expect(await sandboxFetch(sandbox, url)).toBe('page')
+      expect(sandbox.commands[1]).toContain(` -- '${sent}'; `)
     })
 
     it('probes the shell once per sandbox', async () => {
@@ -610,18 +640,21 @@ describe('webFetch tool', () => {
       expect(sandbox.commands).toHaveLength(3)
     })
 
-    it('falls back to sh and probes again after a failed probe', async () => {
-      class FailingProbeSandbox extends FakeSandbox {
+    it.each([
+      ['cmd.exe echoing the probe', '"${PSEdition}"\r\n', 0],
+      ['an unknown edition', 'core\n', 0],
+      ['a failed probe', '', 1],
+    ])('rejects %s without running curl, and probes again', async (_name, stdout, exitCode) => {
+      class OtherShellSandbox extends FakeSandbox {
         override async execute(command: string, options?: unknown): Promise<ExecutionResult> {
-          const result = await super.execute(command, options)
-          return command.includes('PSEdition') ? { ...result, exitCode: 1 } : result
+          return { ...(await super.execute(command, options)), stdout, exitCode }
         }
       }
-      const sandbox = new FailingProbeSandbox({ output: curlOutput('page', 'text/plain') })
-      expect(await sandboxFetch(sandbox)).toBe('page')
-      expect(await sandboxFetch(sandbox)).toBe('page')
-      expect(sandbox.commands.filter((command) => command.includes('PSEdition'))).toHaveLength(2)
-      expect(sandbox.commands[1]).toContain('head -c')
+      const sandbox = new OtherShellSandbox({ output: curlOutput('page', 'text/plain') })
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(sandboxFetch(sandbox)).rejects.toThrow('needs a POSIX shell or PowerShell in the sandbox')
+      }
+      expect(sandbox.commands).toStrictEqual(['echo "${PSEdition}"', 'echo "${PSEdition}"'])
     })
 
     it('runs curl.exe through PowerShell', async () => {
@@ -631,7 +664,7 @@ describe('webFetch tool', () => {
       // The curl.exe command line is one single-quoted PowerShell literal (no expansion): the URL's own quote is
       // doubled, and curl.exe sees the URL double-quoted.
       expect(command).toContain(
-        "  $info = New-Object Diagnostics.ProcessStartInfo 'curl.exe', '-sSL -g --fail " +
+        "  $info = New-Object Diagnostics.ProcessStartInfo 'curl.exe', '-q -sSL -g --compressed --fail " +
           '--proto "=http,https" --proto-redir "=http,https" --max-time 30 --max-filesize 2000 ' +
           '-A "strands-agents-web-fetch/1.0" -H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" ' +
           '-w "\\n%{content_type}\\n0" -- "https://example.com/it\'\'s"\'\n'
@@ -667,7 +700,7 @@ describe('webFetch tool', () => {
     it('fetches through the sandbox in agentic mode', async () => {
       const sandbox = new FakeSandbox({ output: curlOutput('page content', 'text/plain') })
       mockInvoke.mockResolvedValue(makeAgentResult('the answer'))
-      const agentic = makeWebFetch({ model: {} as LocalAgent['model'], transport: 'sandbox' })
+      const agentic = makeWebFetch({ model: {} as LocalAgent['model'], sandbox: true })
       const context = sandboxContext(sandbox)
       expect(await agentic.invoke({ url: 'https://example.com/', prompt: 'Summarize' }, context)).toBe('the answer')
       expect(mockInvoke.mock.calls[0]?.[0]).toContain('page content')
