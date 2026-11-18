@@ -27,7 +27,11 @@ export interface ModelCapabilities {
   readonly stateful?: boolean | undefined
   /** Whether and how the model caches prompts. */
   readonly promptCaching?: PromptCaching | undefined
-  /** Whether the model accepts a `toolChoice` that forces a tool call (`any` or a named tool). */
+  /**
+   * Whether the Bedrock and Anthropic providers force the structured output tool (`any` or a named tool) on the
+   * structured output retry. False when the model rejects forcing, or when a forced call degrades the response (for
+   * example, it skips thinking).
+   */
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
