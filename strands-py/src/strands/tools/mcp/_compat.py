@@ -219,6 +219,8 @@ def client_credentials_auth(
         if not client_credentials_supports_issuer():
             raise ValueError("MCPClient: 'auth' key 'issuer' requires mcp>=1.30.0 on the 1.x line or mcp>=2.2.0")
         options["issuer"] = issuer
+    # The provider's own missing-issuer warning stays visible: catch_warnings() resets the
+    # once-per-location registry, so suppressing it would make MCPClient's warning repeat.
     return ClientCredentialsOAuthProvider(  # type: ignore[return-value]
         server_url=server_url,
         storage=storage,

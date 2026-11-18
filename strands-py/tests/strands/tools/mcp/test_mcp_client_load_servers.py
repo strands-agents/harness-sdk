@@ -438,6 +438,14 @@ def test_config_auth_issuer_passed_to_provider(mock_client, transports, monkeypa
     )
 
 
+def test_config_auth_null_issuer_is_treated_as_omitted(mock_client, transports):
+    auth = {"client_id": "id", "client_secret": "secret", "issuer": None}
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider") as provider_cls:
+        MCPClient.load_servers({"srv": {"url": "https://example.com/mcp", "auth": auth}})
+
+    assert "issuer" not in provider_cls.call_args.kwargs
+
+
 def test_config_auth_without_issuer_warns_at_the_caller(mock_client, transports):
     with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider"):
         with pytest.warns(UserWarning, match="'auth' has no 'issuer', so the MCP server at 'example.com'") as caught:
