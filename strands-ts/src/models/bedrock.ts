@@ -444,31 +444,42 @@ function stepBackToText(content: BedrockContentBlock[], idx: number): number {
   return 0
 }
 
+/** Converse rejects a request with more cache points than this. */
+const MAX_CACHE_POINTS = 4
+
+/** With the system prompt's point, the most a Nova request can carry. */
+const NOVA_CONVERSATION_CACHE_POINTS = 3
+
 /**
- * Where a Nova conversation cache point goes: directly after the last text block of the last user message that has
- * one, ahead of the final message's per-call blocks. Nova takes a cache point only directly after text and reads an
- * entry only when a point repeats the previous call's position, so in a tool loop, whose user messages hold tool
- * results, the point stays on the prompt that started the loop.
+ * Where the Nova conversation cache points go, newest first: directly after the last text block of each of the last
+ * `count` user messages that have one, ahead of the final message's per-call blocks. Nova takes a cache point only
+ * directly after text and reads an entry only at a position an earlier call marked too, so the points on earlier
+ * turns are what let a new turn read. More than one of them helps on a cross-region inference profile, where a call
+ * only finds entries written in the region that serves it. In a tool loop, whose user messages hold tool results,
+ * the points stay where they are.
  *
  * @param messages - Formatted messages
  * @param lastUserIdx - Index of the last user message
  * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message, kept out of the prefix
- * @returns The message and block index to insert the point at, or undefined when no user message has text
+ * @param count - The most positions to return
+ * @returns The message and block index to insert each point at, empty when no user message has text
  */
-function novaCachePointPosition(
+function novaCachePointPositions(
   messages: BedrockMessage[],
   lastUserIdx: number,
-  dynamicTrailingBlocks: number
-): { msgIdx: number; blockIdx: number } | undefined {
-  for (let msgIdx = lastUserIdx; msgIdx >= 0; msgIdx--) {
+  dynamicTrailingBlocks: number,
+  count: number
+): { msgIdx: number; blockIdx: number }[] {
+  const positions: { msgIdx: number; blockIdx: number }[] = []
+  for (let msgIdx = lastUserIdx; msgIdx >= 0 && positions.length < count; msgIdx--) {
     const message = messages[msgIdx]
     if (message?.role !== 'user') continue
     const content = message.content ?? []
     const end = msgIdx === lastUserIdx ? Math.max(0, content.length - dynamicTrailingBlocks) : content.length
     const blockIdx = stepBackToText(content, end)
-    if (blockIdx > 0) return { msgIdx, blockIdx }
+    if (blockIdx > 0) positions.push({ msgIdx, blockIdx })
   }
-  return undefined
+  return positions
 }
 
 /**
@@ -1087,10 +1098,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns Formatted Bedrock request
    */
   private _formatRequest(messages: Message[], options?: StreamOptions): ConverseStreamCommandInput {
-    const request: ConverseStreamCommandInput = {
-      modelId: this._config.modelId,
-      messages: this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0),
-    }
+    const request: ConverseStreamCommandInput = { modelId: this._config.modelId }
 
     // Add system prompt
     if (options?.systemPrompt !== undefined) {
@@ -1104,6 +1112,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (this._shouldCacheSystem(request.system)) {
       request.system!.push({ cachePoint: { type: 'default' } })
     }
+
+    const systemCachePoints = (request.system ?? []).filter((block) => 'cachePoint' in block).length
+    request.messages = this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0, systemCachePoints)
 
     // Add tool configuration
     // Bedrock requires toolConfig when messages contain tool use/result blocks.
@@ -1231,9 +1242,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Formats messages for Bedrock API.
    *
    * @param messages - SDK messages
+   * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param systemCachePoints - How many cache points the system prompt carries
    * @returns Bedrock-formatted messages
    */
-  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0): BedrockMessage[] {
+  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0, systemCachePoints = 0): BedrockMessage[] {
     // Pre-compute the index of the last user message containing text/image content
     // This ensures guardContent wrapping is maintained across tool execution cycles
     const lastUserTextIdx = this._config.guardrailConfig?.guardLatestUserMessage
@@ -1273,7 +1286,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       ? this._cacheSection(this._config.cacheConfig?.messagesTTL)
       : { enabled: false }
     if (messagesCache.enabled) {
-      this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks)
+      this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks, systemCachePoints)
     }
 
     return formattedMessages
@@ -1388,13 +1401,21 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * the cached prefix, so every request would write a new entry and none would ever read one.
    *
    * Cache points in earlier messages are still removed, so they cannot accumulate one per turn
-   * against the provider's cache-point budget. Nova is the exception: its point may land on an earlier
-   * user message (see `novaCachePointPosition`).
+   * against the provider's cache-point budget. Nova is the exception: it gets a point on each of its last
+   * few user messages with text (see `novaCachePointPositions`).
    *
    * @param messages - List of messages to inject cache point into (modified in place)
    * @param ttl - TTL for the injected cache point. Falsy leaves the Bedrock default.
+   * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param systemCachePoints - How many cache points the system prompt carries. Nova gets fewer conversation
+   * points when the full set would take the request past the cache points Converse accepts.
    */
-  private _injectCachePoint(messages: BedrockMessage[], ttl?: CacheTTL, dynamicTrailingBlocks = 0): void {
+  private _injectCachePoint(
+    messages: BedrockMessage[],
+    ttl?: CacheTTL,
+    dynamicTrailingBlocks = 0,
+    systemCachePoints = 0
+  ): void {
     if (messages.length === 0) {
       return
     }
@@ -1471,7 +1492,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (this._limitsCachePoints()) {
-          this._injectNovaCachePoint(messages, lastUserIdx, trailingBlocks)
+          const count = Math.min(NOVA_CONVERSATION_CACHE_POINTS, MAX_CACHE_POINTS - systemCachePoints)
+          this._injectNovaCachePoints(messages, lastUserIdx, trailingBlocks, count)
           return
         }
 
@@ -1525,20 +1547,27 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Places the Nova conversation cache point, which takes no TTL, at `novaCachePointPosition`.
+   * Places the Nova conversation cache points, which take no TTL, at `novaCachePointPositions`.
    *
    * @param messages - Formatted messages (modified in place)
    * @param lastUserIdx - Index of the last user message
    * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param count - The most points to place
    */
-  private _injectNovaCachePoint(messages: BedrockMessage[], lastUserIdx: number, dynamicTrailingBlocks: number): void {
-    const position = novaCachePointPosition(messages, lastUserIdx, dynamicTrailingBlocks)
-    if (!position) {
-      logger.debug('no user message has text to follow, skipped conversation cache point')
-      return
+  private _injectNovaCachePoints(
+    messages: BedrockMessage[],
+    lastUserIdx: number,
+    dynamicTrailingBlocks: number,
+    count: number
+  ): void {
+    const positions = novaCachePointPositions(messages, lastUserIdx, dynamicTrailingBlocks, count)
+    if (positions.length === 0) {
+      logger.debug('no user text to follow or no cache point left, skipped conversation cache point')
     }
-    messages[position.msgIdx]?.content?.splice(position.blockIdx, 0, { cachePoint: { type: 'default' } })
-    logger.debug(`msg_idx=<${position.msgIdx}>, block_idx=<${position.blockIdx}> | added cache point after text`)
+    for (const { msgIdx, blockIdx } of positions) {
+      messages[msgIdx]?.content?.splice(blockIdx, 0, { cachePoint: { type: 'default' } })
+      logger.debug(`msg_idx=<${msgIdx}>, block_idx=<${blockIdx}> | added cache point after text`)
+    }
   }
 
   /**
