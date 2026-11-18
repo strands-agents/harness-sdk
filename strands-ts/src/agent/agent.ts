@@ -1151,8 +1151,9 @@ export class Agent implements LocalAgent, InvokableAgent {
 
   /**
    * Whether a hook's `resume` starts another pass. Never once one of the
-   * request's limits is reached: it stays reached for the rest of the request,
-   * so that pass would stop at once.
+   * request's limits is reached, unless the pass finishes an interrupted turn:
+   * the limit stays reached for the rest of the request, so any other pass
+   * would stop at once.
    *
    * @param event - The event whose callbacks may have set `resume`
    * @param invocationContext - The state of the request the pass ran in
@@ -1162,6 +1163,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     if (event.resume === undefined) return false
     const limitStopReason = reachedLimit(invocationContext)
     if (limitStopReason === undefined) return true
+    if (this._interruptState.pendingToolExecution && invocationContext.hasInterruptedTurn) return true
     logger.debug(`limit=<${limitStopReason}> | ignoring resume because the request reached its limit`)
     return false
   }
@@ -2001,18 +2003,17 @@ export class Agent implements LocalAgent, InvokableAgent {
     const agentSpan = this._tracer.startAgentSpan(agentSpanOptions)
 
     let caughtError: Error | undefined
+    let turnStarted = false
     try {
       // Register structured output tool if schema provided
       if (structuredOutputTool) {
         this._toolRegistry.add(structuredOutputTool)
       }
 
-      // A resume into the request that raised the interrupt runs the pending tools of a turn
-      // that request already counted, so that cycle is not counted or checked against limits again.
+      // A resume in the request that counted the interrupted turn runs that turn's pending tools
+      // without counting it or checking limits again.
       let finishesInterruptedTurn =
-        this._interruptState.pendingToolExecution !== undefined &&
-        this._interruptedInvocationContext !== undefined &&
-        invocationContext.countsToward(this._interruptedInvocationContext)
+        this._interruptState.pendingToolExecution !== undefined && invocationContext.resumeInterruptedTurn()
 
       // Main agent loop - continues until model stops without requesting tools
       let stepRan = false
@@ -2024,6 +2025,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
         if (finishesInterruptedTurn) {
           finishesInterruptedTurn = false
+          turnStarted = true
         } else {
           const limitStopReason = reachedLimit(invocationContext)
           if (limitStopReason) {
@@ -2038,6 +2040,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
           // Count this turn before it runs, so nested calls started by its tools see it already counted.
           invocationContext.recordTurn()
+          turnStarted = true
         }
 
         // Start metrics cycle tracking
@@ -2411,6 +2414,9 @@ export class Agent implements LocalAgent, InvokableAgent {
       if (structuredOutputTool) {
         this._toolRegistry.remove(STRUCTURED_OUTPUT_TOOL_NAME)
       }
+
+      // Tools still pending belong to a turn this request counted; a resume finishes that turn.
+      if (turnStarted && this._interruptState.pendingToolExecution) invocationContext.recordInterruptedTurn()
     }
   }
 

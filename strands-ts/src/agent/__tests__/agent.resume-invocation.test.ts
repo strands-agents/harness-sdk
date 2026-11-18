@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Agent } from '../agent.js'
 import { unwrapInvocationContext, type InvocationContextImpl } from '../invocation-context.js'
-import { BeforeInvocationEvent } from '../../hooks/events.js'
+import { AfterInvocationEvent, BeforeInvocationEvent } from '../../hooks/events.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
@@ -17,7 +17,10 @@ function confirmTool() {
 /** An agent whose first turn interrupts; `invocations` records the invocation of every invoke. */
 function interruptingAgent(extraTurns: string[] = []) {
   const model = new MockMessageModel()
-    .addTurn({ type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} })
+    .addTurn(
+      { type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} },
+      { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
+    )
     .addTurn({ type: 'textBlock', text: 'done' })
   for (const text of extraTurns) model.addTurn({ type: 'textBlock', text })
   const agent = new Agent({ model, tools: [confirmTool()], printer: false })
@@ -47,14 +50,17 @@ describe('interrupt resume and the request invocation', () => {
     expect(invocations[0]!.usage.turnsTaken).toBe(2)
   })
 
-  it('a resume finishes the interrupted turn even when the turn limit is already reached', async () => {
+  it.each([
+    { limits: { turns: 1 }, stopReason: 'limitTurns' },
+    { limits: { totalTokens: 10 }, stopReason: 'limitTotalTokens' },
+  ])('a resume finishes the interrupted turn when $stopReason is already reached', async ({ limits, stopReason }) => {
     const { agent, invocations } = interruptingAgent(['next'])
-    const interrupted = await agent.invoke('go', { limits: { turns: 1 } })
+    const interrupted = await agent.invoke('go', { limits })
     expect(interrupted.stopReason).toBe('interrupt')
 
     const resumed = await agent.invoke([responseFor(interrupted)])
 
-    expect(resumed.stopReason).toBe('limitTurns')
+    expect(resumed.stopReason).toBe(stopReason)
     expect(invocations[0]!.usage.turnsTaken).toBe(1)
     expect(agent.messages.map((message) => message.content[0]!.type)).toEqual([
       'textBlock',
@@ -65,20 +71,61 @@ describe('interrupt resume and the request invocation', () => {
     expect((await agent.invoke('next')).stopReason).toBe('endTurn')
   })
 
-  it('a caller queued behind the interrupt runs after a resume that stops on the turn limit', async () => {
+  it('a resume through another nested call of the same request finishes the interrupted turn', async () => {
     const model = new MockMessageModel()
+      .addTurn({ type: 'textBlock', text: 'warm' })
       .addTurn({ type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} })
-      .addTurn({ type: 'textBlock', text: 'B' })
-    const agent = new Agent({ model, tools: [confirmTool()], printer: false, concurrentInvocationMode: 'queue' })
-    const interrupted = await agent.invoke('a', { limits: { turns: 1 } })
-    const queued = agent.invoke('b')
+    const agent = new Agent({ model, tools: [confirmTool()], printer: false })
+    const request = (await agent.invoke('warm up', { limits: { turns: 2 } })).invocationContext!
+    const nested = { invocationContext: request, limits: { turns: 5 } }
+    const interrupted = await agent.invoke('go', nested)
+    expect(interrupted.stopReason).toBe('interrupt')
 
-    const resumed = await agent.invoke([responseFor(interrupted)])
+    const resumed = await agent.invoke([responseFor(interrupted)], nested)
 
     expect(resumed.stopReason).toBe('limitTurns')
-    expect((await queued).stopReason).toBe('endTurn')
-    expect(agent.pendingInvocations).toHaveLength(0)
+    expect(request.usage.turnsTaken).toBe(2)
+    expect(agent.messages.at(-1)!.content[0]!.type).toBe('toolResultBlock')
   })
+
+  it("a hook's resume finishes the interrupted turn when the turn limit is already reached", async () => {
+    const { agent } = interruptingAgent()
+    agent.addHook(AfterInvocationEvent, (event) => {
+      if (event.result?.stopReason === 'interrupt') event.resume = [responseFor(event.result)]
+    })
+
+    const result = await agent.invoke('go', { limits: { turns: 1 } })
+
+    expect(result.stopReason).toBe('limitTurns')
+    expect(agent.messages.at(-1)!.content[0]!.type).toBe('toolResultBlock')
+  })
+
+  it.each([
+    { mode: 'queue', stopReason: 'limitTurns' },
+    { mode: 'stopPrevious', stopReason: 'cancelled' },
+    { mode: 'cancelPrevious', stopReason: 'cancelled' },
+  ] as const)(
+    'a $mode caller parked behind the interrupt runs after a resume at the turn limit',
+    async ({ mode, stopReason }) => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'B' })
+      const agent = new Agent({ model, tools: [confirmTool()], printer: false, concurrentInvocationMode: mode })
+      const interrupted = await agent.invoke('a', { limits: { turns: 1 } })
+      const parked = agent.invoke('b')
+
+      const resumed = await agent.invoke([responseFor(interrupted)])
+
+      expect(resumed.stopReason).toBe(stopReason)
+      expect((await parked).stopReason).toBe('endTurn')
+      expect(agent.pendingInvocations).toHaveLength(0)
+      expect(agent.messages.map((message) => message.content[0]!.type).slice(0, 3)).toEqual([
+        'textBlock',
+        'toolUseBlock',
+        'toolResultBlock',
+      ])
+    }
+  )
 
   it('a turn interrupted more than once is still counted once', async () => {
     const model = new MockMessageModel()
