@@ -4,8 +4,8 @@ Memory entries and other injected content are frequently user-derived, so interp
 raw into ``<entry>…</entry>`` both breaks the block structurally (a stray ``</entry>`` or
 ``"``) and opens a stored-prompt-injection surface. These helpers are deliberately tiny —
 enough to keep a ``<memory>`` block well-formed, not a general-purpose serializer.
-``_untrusted_json_block`` delimits a JSON value instead of escaping it, so an evaluator model
-reads the data unchanged.
+``_untrusted_json_block`` is the counterpart for a JSON value read by an evaluator model: the
+value stays JSON, written so that it cannot contain the closing delimiter.
 """
 
 from __future__ import annotations
@@ -45,7 +45,8 @@ def _escape_xml_attr(value: str) -> str:
 def _untrusted_json_block(tag: str, value: Any) -> str:
     r"""Serialize a value as JSON between ``<tag>`` and ``</tag>`` delimiters.
 
-    ``</`` is written as ``<\/``, which is the same JSON string, so the value cannot contain the closing delimiter.
+    ``</`` is written as ``<\/`` and non-ASCII characters as ``\uXXXX``. Both parse back to the same value, so
+    the body is ASCII and cannot contain the closing delimiter.
 
     Args:
         tag: The delimiter tag name.
@@ -54,5 +55,5 @@ def _untrusted_json_block(tag: str, value: Any) -> str:
     Returns:
         The delimited block.
     """
-    body = json.dumps(value, indent=2).replace("</", "<\\/")
+    body = json.dumps(value, indent=2, ensure_ascii=True).replace("</", "<\\/")
     return f"<{tag}>\n{body}\n</{tag}>"
