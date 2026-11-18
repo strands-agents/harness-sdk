@@ -38,9 +38,9 @@ def _task() -> Message:
 @pytest.mark.parametrize(
     "make_strategy",
     [
-        lambda: Offload.drop("*").when(utilization=0.5),
-        lambda: Offload.truncate("*").when(utilization=0.5),
-        lambda: Offload.summarize("*").when(utilization=0.5, preserve_recent=2),
+        lambda: Offload.drop("*").when(context_utilization="50%"),
+        lambda: Offload.truncate("*").when(context_utilization="50%"),
+        lambda: Offload.summarize("*").when(context_utilization="50%", preserve_recent=2),
     ],
     ids=["drop", "truncate", "summarize"],
 )
