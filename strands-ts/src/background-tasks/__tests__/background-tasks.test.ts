@@ -6,9 +6,7 @@ import { Agent } from '../../agent/agent.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
 import {
   AfterInvocationEvent,
-  AfterModelCallEvent,
   AfterToolCallEvent,
-  BeforeInvocationEvent,
   BeforeModelCallEvent,
   BeforeToolCallEvent,
   InitializedEvent,
@@ -654,77 +652,43 @@ describe('BackgroundTasks', () => {
       expect(toolResults).toEqual(expect.arrayContaining(['stop-use', 'after-use']))
     })
 
-    it('cancels the invocation when cancel lands while it waits for background completion', async () => {
-      const work = tool({
-        name: 'work',
-        description: 'Wait until cancelled.',
-        inputSchema: z.object({}),
-        callback: () => new Promise<string>(() => {}),
-      })
-      const model = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'work', toolUseId: 'work-use', input: { _background_execution: true } })
-        .addTurn({ type: 'textBlock', text: 'Task admitted.' })
-        .addTurn({ type: 'textBlock', text: 'Result received.' })
-      const agent = new Agent({ model, tools: [work], backgroundTasks: {}, printer: false })
-
-      const pending = agent.invoke('Run work.')
-      await expect.poll(() => agent.messages.at(-1)?.content[0]).toMatchObject({ text: 'Task admitted.' })
-      agent.cancel({ message: 'Stopped.', cancelBackgroundTasks: true })
-      const result = await pending
-
-      expect(result.stopReason).toBe('cancelled')
-      expect(result.lastMessage.content).toMatchObject([{ text: 'Stopped.' }])
-      expect(deliveries(agent)).toHaveLength(0)
-
-      const continued = await agent.invoke('Continue.')
-
-      expect(continued.stopReason).toBe('endTurn')
-      expect(deliveries(agent)).toHaveLength(1)
-      expect(persistedTasks(agent)).toBeUndefined()
-    })
-
-    it('ends cancelled when a plain cancel lands as a background task starts waiting for input', async () => {
-      let release!: () => void
-      const gate = new Promise<void>((resolve) => (release = resolve))
-      const approval = tool({
-        name: 'approval',
-        description: 'Wait for approval.',
-        inputSchema: z.object({}),
-        callback: () => 'approved',
-      })
-      const model = new MockMessageModel()
-        .addTurn({
-          type: 'toolUseBlock',
-          name: 'approval',
-          toolUseId: 'approval-use',
-          input: { _background_execution: true },
+    it.each([false, true])(
+      'returns without another model call when cancel lands while it waits for background completion (afterCurrentTools: %s)',
+      async (afterCurrentTools) => {
+        const work = tool({
+          name: 'work',
+          description: 'Wait until cancelled.',
+          inputSchema: z.object({}),
+          callback: () => new Promise<string>(() => {}),
         })
-        .addTurn({ type: 'textBlock', text: 'Task admitted.' })
-      const agent = new Agent({ model, tools: [approval], backgroundTasks: {}, printer: false })
-      agent.addMiddleware(ExecuteToolStage, async function* (context, next) {
-        await gate
-        context.interrupt<string>({ name: 'approve', reason: 'Approve work?' })
-        return yield* next(context)
-      })
-      let modelCalls = 0
-      agent.addHook(AfterModelCallEvent, async () => {
-        if (++modelCalls !== 2) return
-        release()
-        await expect.poll(() => persistedTasks(agent)?.[0]?.status).toBe('input_required')
-        agent.cancel()
-      })
-      let passes = 0
-      agent.addHook(BeforeInvocationEvent, () => {
-        if (++passes > 5) throw new Error('The cancelled invocation kept resuming')
-      })
+        const model = new MockMessageModel()
+          .addTurn({
+            type: 'toolUseBlock',
+            name: 'work',
+            toolUseId: 'work-use',
+            input: { _background_execution: true },
+          })
+          .addTurn({ type: 'textBlock', text: 'Task admitted.' })
+          .addTurn({ type: 'textBlock', text: 'Result received.' })
+        const agent = new Agent({ model, tools: [work], backgroundTasks: {}, printer: false })
 
-      const result = await agent.invoke('Run approval.')
-      const next = await agent.invoke('Continue.')
+        const pending = agent.invoke('Run work.')
+        await expect.poll(() => agent.messages.at(-1)?.content[0]).toMatchObject({ text: 'Task admitted.' })
+        agent.cancel({ afterCurrentTools, cancelBackgroundTasks: true })
+        const result = await pending
 
-      expect(result.stopReason).toBe('cancelled')
-      expect(next.stopReason).toBe('interrupt')
-      expect(next.interrupts).toMatchObject([{ name: 'approve' }])
-    })
+        expect(result.stopReason).toBe('endTurn')
+        expect(result.lastMessage.content).toMatchObject([{ text: 'Task admitted.' }])
+        expect(deliveries(agent)).toHaveLength(0)
+        expect(model.callCount).toBe(2)
+
+        const continued = await agent.invoke('Continue.')
+
+        expect(continued.stopReason).toBe('endTurn')
+        expect(deliveries(agent)).toHaveLength(1)
+        expect(persistedTasks(agent)).toBeUndefined()
+      }
+    )
 
     it('ignores cancelBackgroundTasks before the agent has initialized', () => {
       const agent = new Agent({ model: new MockMessageModel(), tools: [], backgroundTasks: {}, printer: false })

@@ -282,6 +282,8 @@ export class BackgroundTasks implements Plugin {
       event.resume ??= []
       return
     }
+    // Delivering would start another pass; after a cancel the results wait for the next invocation instead.
+    if (agent._cancelRequested) return
     this._deliverReady(event, tasks)
   }
 

@@ -50,6 +50,9 @@ them too, pass `cancelBackgroundTasks`:
 agent.cancel({ cancelBackgroundTasks: true })
 ```
 
+If the invocation had already finished its turn and was only waiting for background tasks, it
+returns that turn's result, and the cancelled task results are delivered on the next invocation.
+
 ## The CLI
 
 The Strands harness CLI runs on the TypeScript library, so the `generalist` runs in the background

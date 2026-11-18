@@ -1141,6 +1141,15 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Whether cancellation has been requested in any form, including a deferred cancel.
+   *
+   * @internal
+   */
+  get _cancelRequested(): boolean {
+    return this._deferredCancel || this.isAborted
+  }
+
+  /**
    * Assistant message carrying the message passed to {@link Agent.cancel},
    * or undefined when the cancellation carried none.
    */
@@ -1293,15 +1302,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       let currentArgs: InvokeArgs = args
 
       while (true) {
-        // Fresh AbortController per iteration, composed with any external signal. A cancel that landed
-        // between passes (e.g. during AfterInvocationEvent hooks) still cancels the next pass.
-        const cancelledBetweenPasses = this._abortController.signal.aborted
-        const cancelMessage = this._cancelMessage
+        // Fresh AbortController per iteration, composed with any external signal.
         this.resetCancelState()
-        if (cancelledBetweenPasses) {
-          this._cancelMessage = cancelMessage
-          this._abortController.abort()
-        }
         if (resolvedOptions?.cancelSignal) {
           this._abortSignal = AbortSignal.any([this._abortController.signal, resolvedOptions.cancelSignal])
         }
@@ -1398,9 +1400,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           )) !== undefined
         continuationEvent = hasContinuation ? afterInvocationEvent : undefined
 
-        // A cancelled pass is never resumed: the cancel stays set, so the next pass would stop at once.
-        const resumes = stopReason !== 'cancelled' && this._shouldResume(afterInvocationEvent, invocationContext)
-        if (hasContinuation || resumes) {
+        if (hasContinuation || this._shouldResume(afterInvocationEvent, invocationContext)) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue
         }

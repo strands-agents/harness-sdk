@@ -371,6 +371,9 @@ class _BackgroundTasks(Plugin):
             if event.resume is None:
                 event.resume = []
             return
+        # Delivering would start another pass; after a cancel the results wait for the next invocation instead.
+        if self._agent.cancel_signal.is_set() or self._agent._deferred_cancel:
+            return
         self._deliver_ready(event, tasks)
 
     async def _await_next_settlement(self, tasks: Sequence[BackgroundTask]) -> None:

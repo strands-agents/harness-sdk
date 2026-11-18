@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import threading
 import time
 from collections.abc import AsyncGenerator
@@ -1215,9 +1216,8 @@ async def test_cancel_background_tasks_from_another_thread_settles_the_waiting_i
 
     canceller = threading.Thread(target=cancel_once_started)
     canceller.start()
-    result = await asyncio.wait_for(agent.invoke_async("Run work."), timeout=2)
+    await asyncio.wait_for(agent.invoke_async("Run work."), timeout=2)
     canceller.join(timeout=1)
-    assert result.stop_reason == "cancelled"
     assert await asyncio.to_thread(cancelled.wait, 1)
 
     await agent.invoke_async("Continue.")
@@ -1365,6 +1365,43 @@ async def test_cancel_background_tasks_after_a_task_interrupt_is_raised_delivers
 
     assert continued.stop_reason == "end_turn"
     assert not agent._interrupt_state.activated
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("from_another_thread", "after_current_tools"), [(False, False), (True, False), (False, True)])
+async def test_cancel_background_tasks_while_waiting_for_completion_returns_without_another_model_call(
+    from_another_thread: bool, after_current_tools: bool
+) -> None:
+    @tool(name="work")
+    async def work() -> str:
+        """Wait until cancelled."""
+        await asyncio.Event().wait()
+        return "unreachable"
+
+    agent = _background_agent(work, responses=[_assistant_text("Task admitted."), _assistant_text("Result received.")])
+
+    async def admitted() -> None:
+        while not agent.messages or agent.messages[-1]["content"] != [{"text": "Task admitted."}]:
+            await asyncio.sleep(0)
+
+    invocation = asyncio.create_task(agent.invoke_async("Run work."))
+    await asyncio.wait_for(admitted(), timeout=2)
+    cancel = functools.partial(agent.cancel, after_current_tools=after_current_tools, cancel_background_tasks=True)
+    if from_another_thread:
+        await asyncio.to_thread(cancel)
+    else:
+        cancel()
+    result = await asyncio.wait_for(invocation, timeout=2)
+
+    assert result.stop_reason == "end_turn"
+    assert result.message["content"] == [{"text": "Task admitted."}]
+    assert _deliveries(agent.messages) == []
+    assert agent.model.index == 2
+
+    await agent.invoke_async("Continue.")
     tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
     exp_status = "cancelled"
     assert tru_status == exp_status

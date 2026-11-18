@@ -712,7 +712,9 @@ class Agent(AgentBase, LocalAgent):
         Background tasks keep running unless ``cancel_background_tasks=True``, which also cancels
         every queued, working, or input-required background task of this agent immediately, even with
         ``after_current_tools=True``. Their cancelled results are delivered like a cancel requested by the
-        model, and ``cancel()`` may block briefly (at most a few seconds) until the cancel has landed. On an
+        model, and ``cancel()`` may block briefly (at most a few seconds) until the cancel has landed. If the
+        invocation was only waiting for its background tasks, it returns its natural ``stop_reason`` and the
+        results are delivered on the next invocation. On an
         idle agent, ``cancel(cancel_background_tasks=True)`` cancels only the background tasks and leaves the
         next invocation alone, while plain ``cancel()`` cancels the next invocation. An invocation scheduled with
         ``asyncio.create_task`` counts as idle until it starts running, so in the example below the flagged call
