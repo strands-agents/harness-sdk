@@ -6,6 +6,7 @@ import unittest.mock
 
 import pytest
 
+import strands
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.summarize import (
     _BLOCK_SUMMARY_INSTRUCTIONS,
@@ -16,6 +17,7 @@ from strands._context_manager.types import ContextState
 from strands.agent.invocation_context import _create_invocation_context
 from strands.models import Model, SummarizeResult
 from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
+from strands.tools.registry import ToolRegistry
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.event_loop import Usage
 from strands.types.tools import ToolResult, ToolUse
@@ -528,6 +530,22 @@ class TestBatchSummaryReplaysTheAgentRequest:
             "cancel_signal": mock_agent._cancel_signal,
             "agent_metadata": mock_agent._metadata,
         }
+
+    @pytest.mark.asyncio
+    async def test_sends_the_tools_in_the_same_sorted_order_as_the_model_call(self, mock_agent):
+        # The summary must send the same tools block as the main loop to keep the cache and thinking valid (#5700).
+        mock_agent.tool_registry = ToolRegistry()
+        for name in ["zeta", "alpha", "mike"]:
+            mock_agent.tool_registry.register_tool(strands.tool(lambda a: a, name=name))
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        tru_tool_names = [spec["name"] for spec in mock_agent.model.summarize.await_args.kwargs["tool_specs"]]
+        exp_tool_names = ["alpha", "mike", "zeta"]
+        assert tru_tool_names == exp_tool_names
 
     @pytest.mark.asyncio
     async def test_counts_the_summarized_messages_as_the_model_receives_them(self, mock_agent):

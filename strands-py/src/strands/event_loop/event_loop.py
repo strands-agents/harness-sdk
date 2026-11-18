@@ -696,10 +696,6 @@ async def _handle_model_execution(
                     )
 
             tool_specs = agent.tool_registry.get_all_tool_specs()
-            if agent._sort_tools:
-                # Sort before middleware so identical catalogs produce a stable request, while
-                # middleware remains free to reorder the specs it passes on.
-                tool_specs = sorted(tool_specs, key=lambda spec: spec["name"])
 
             # Build middleware context with defensive copies to prevent accidental mutation.
             # invocation_state is intentionally shared by reference (hooks/tools write to it).

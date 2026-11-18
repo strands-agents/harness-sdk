@@ -560,14 +560,18 @@ class ToolRegistry:
                 logger.debug("tool_name=<%s> | import error | %s", tool_name, error)
 
     def get_all_tool_specs(self) -> list[ToolSpec]:
-        """Get all the tool specs for all tools in this registry..
+        """Get all the tool specs for all tools in this registry, sorted by name.
+
+        Specs are sorted so that identical tool catalogs always produce the same model request, regardless of
+        registration order (for example, MCP servers returning tools in a different order across restarts).
+        This keeps prompt-cache prefixes stable. Every model-facing path reads specs from here, so they all send
+        the same order. Middleware can still reorder the specs it passes to the model.
 
         Returns:
-            A list of ToolSpecs.
+            A list of ToolSpecs, sorted by name.
         """
         all_tools = self.get_all_tools_config()
-        tools: list[ToolSpec] = [tool_spec for tool_spec in all_tools.values()]
-        return tools
+        return sorted(all_tools.values(), key=lambda tool_spec: tool_spec["name"])
 
     def register_dynamic_tool(self, tool: AgentTool) -> None:
         """Register a tool dynamically for temporary use.

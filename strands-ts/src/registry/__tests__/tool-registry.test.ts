@@ -286,6 +286,17 @@ describe('ToolRegistry', () => {
     })
   })
 
+  describe('toolSpecs', () => {
+    it('returns specs sorted by name and leaves list() in registration order (#5700)', () => {
+      const tools = ['zeta', 'alpha', 'Mike'].map((name) =>
+        createMockTool({ name, toolSpec: { name, description: 'd', inputSchema: { type: 'object', properties: {} } } })
+      )
+      registry.add(tools)
+      expect(registry.toolSpecs().map((spec) => spec.name)).toStrictEqual(['Mike', 'alpha', 'zeta'])
+      expect(registry.list()).toStrictEqual(tools)
+    })
+  })
+
   describe('clear', () => {
     it('should remove all registered tools', () => {
       registry.add([createMockTool({ name: 'tool-1' }), createMockTool({ name: 'tool-2' })])

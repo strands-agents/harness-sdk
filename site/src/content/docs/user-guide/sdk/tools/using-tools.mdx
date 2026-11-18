@@ -3,10 +3,8 @@ title: Attach and invoke tools
 description: "Pass tools to a Strands agent at init or runtime, inspect what is loaded, and invoke them either through natural language or as direct method calls."
 tags: [tool-authoring]
 sourceLinks:
-  - path: strands-py/src/strands/agent/agent.py
-  - path: strands-py/src/strands/event_loop/event_loop.py
   - path: strands-py/src/strands/tools/registry.py
-  - path: strands-ts/src/agent/agent.ts
+  - path: strands-ts/src/registry/tool-registry.ts
   - path: strands-ts/src/tools/tool.ts
   - path: strands-ts/src/tools/tool-factory.ts
 ---
@@ -122,14 +120,15 @@ console.log(agent.tools)
 </Tabs>
 
 
-To keep identical tool catalogs stable across requests, agents sort tool
-definitions by name before each model call, before middleware runs. Tools remain in
-registration order in the tool registry, and middleware can still reorder the
-definitions it passes on. This helps avoid prompt-cache misses when MCP servers
-return the same tools in different orders; it does not enable caching.
+To keep identical tool catalogs stable across requests, agents send tool
+definitions to the model sorted by name. Every request the agent makes, including
+context summaries, uses the same order. This helps avoid prompt-cache misses when
+MCP servers return the same tools in different orders; it does not enable caching.
+The tool registry and `agent.tools` keep registration order.
 
-If your application relies on registration order, disable sorting with
-<Syntax py="Agent(sort_tools=False)" ts="new Agent({ sortTools: false })" />.
+Sorting happens before middleware runs, so middleware on the model-invocation stage
+receives the sorted list and can reorder it. The model receives whatever order the
+middleware passes on.
 
 ## Using Tools
 

@@ -1,4 +1,5 @@
 import type { Tool } from '../tools/tool.js'
+import type { ToolSpec } from '../tools/types.js'
 import { ToolValidationError, ToolNotFoundError } from '../errors.js'
 
 /** @internal Maximum tool-name length accepted by the registry. */
@@ -152,6 +153,23 @@ export class ToolRegistry {
    */
   list(): Tool[] {
     return Array.from(this._tools.values())
+  }
+
+  /**
+   * Returns the specs of all registered tools, sorted by name.
+   *
+   * Sorting makes identical tool catalogs produce the same model request regardless of registration order
+   * (for example, MCP servers returning tools in a different order across restarts), which keeps
+   * prompt-cache prefixes stable. Every model-facing path reads specs from here so they all send the
+   * same order. Middleware can still reorder the specs it passes to the model. {@link list} keeps
+   * registration order.
+   *
+   * @returns Array of tool specs, sorted by name
+   */
+  toolSpecs(): ToolSpec[] {
+    return this.list()
+      .map((tool) => tool.toolSpec)
+      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
   }
 
   private _validateProperties(tool: Tool): void {

@@ -202,8 +202,6 @@ export type AgentConfig = {
    * {@link Agent} instances are automatically wrapped as tools via {@link Agent.asTool}.
    */
   tools?: ToolList
-  /** Sort specs by name before middleware (default true); false keeps registry order. Middleware may still reorder. */
-  sortTools?: boolean
   /**
    * A system prompt which guides model behavior.
    */
@@ -549,7 +547,6 @@ export class Agent implements LocalAgent, InvokableAgent {
   private readonly _pluginRegistry: PluginRegistry
   private readonly _interventionRegistry: InterventionRegistry
   private _toolRegistry: ToolRegistry
-  private readonly _sortTools: boolean
   private _mcpClients: McpClient[]
   private _initialized: boolean
   private _isInvoking: boolean = false
@@ -578,7 +575,6 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param config - The configuration for the agent.
    */
   constructor(config?: AgentConfig) {
-    this._sortTools = config?.sortTools ?? true
     // Initialize public fields
     this.messages = (config?.messages ?? []).map((msg) => (msg instanceof Message ? msg : Message.fromMessageData(msg)))
     this.appState = new StateStore(config?.appState)
@@ -2587,17 +2583,6 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Deep-copies the registry's tool specs for a model call, sorted by name unless `sortTools` is false.
-   * Sorting happens before middleware so identical catalogs produce a stable request while middleware
-   * can still reorder the specs it passes on.
-   */
-  private _modelToolSpecs(): ToolSpec[] {
-    const specs = deepCopy(this._toolRegistry.list().map((tool) => tool.toolSpec)) as unknown as ToolSpec[]
-    if (!this._sortTools) return specs
-    return specs.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
-  }
-
-  /**
    * Invokes the model through the InvokeModelStage middleware chain.
    * Builds an InvokeModelContext from current agent state and composes the
    * middleware chain with a terminal function that calls _streamFromModel
@@ -2625,7 +2610,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       model: selectedModel,
       messages: this.messages.map((msg) => msg.clone()),
       ...(this.systemPrompt !== undefined && { systemPrompt: cloneSystemPrompt(this.systemPrompt) }),
-      toolSpecs: this._modelToolSpecs(),
+      toolSpecs: deepCopy(this._toolRegistry.toolSpecs()) as unknown as ToolSpec[],
       ...(toolChoice !== undefined && { toolChoice: deepCopy(toolChoice) as unknown as ToolChoice }),
       invocationState,
       ...(projectedInputTokens !== undefined && { projectedInputTokens }),

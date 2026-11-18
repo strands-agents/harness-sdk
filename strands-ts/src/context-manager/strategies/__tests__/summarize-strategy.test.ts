@@ -28,7 +28,8 @@ import type { ModelStreamEvent, Usage } from '../../../models/streaming.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
-import type { ToolRegistry } from '../../../registry/tool-registry.js'
+import { ToolRegistry } from '../../../registry/tool-registry.js'
+import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import type { Model } from '../../../models/model.js'
 
 const summaryResult = (text: string, provider?: string): SummarizeResult => ({
@@ -352,7 +353,7 @@ function mockAgent(
   const systemPrompt = options.systemPrompt === undefined ? AGENT_PROMPT : options.systemPrompt
   const agent = createMockAgent({
     messages,
-    toolRegistry: { list: () => [{ toolSpec: AGENT_TOOL }] } as unknown as ToolRegistry,
+    toolRegistry: { list: () => [{ toolSpec: AGENT_TOOL }], toolSpecs: () => [AGENT_TOOL] } as unknown as ToolRegistry,
     extra: {
       model: spies.model,
       cancelSignal: controller.signal,
@@ -837,7 +838,7 @@ describe('server-side summary', () => {
     const messages = serverSideMessages()
     const agent = createMockAgent({
       messages,
-      toolRegistry: { list: () => [{ toolSpec }] } as unknown as ToolRegistry,
+      toolRegistry: { list: () => [{ toolSpec }], toolSpecs: () => [toolSpec] } as unknown as ToolRegistry,
       extra: { model, systemPrompt: 'be terse' } as unknown as Partial<Agent>,
     })
     const strategy = Offload.summarize('*', config).when({ contextUtilization: '80%', preserveRecent: 1 })
@@ -850,6 +851,24 @@ describe('server-side summary', () => {
       cancelSignal: agent.cancelSignal,
       ...instructions,
     })
+  })
+
+  it('sends the server-side summary the same sorted tools as the model call (#5700)', async () => {
+    const { model } = baseModel(true)
+    const summarize = vi.spyOn(model, 'summarize').mockResolvedValue(summaryResult('compacted', 'anthropic'))
+    const messages = serverSideMessages()
+    const toolRegistry = new ToolRegistry()
+    toolRegistry.add(['zeta', 'alpha', 'mike'].map((name) => createMockTool(name, () => 'OK')))
+    const agent = createMockAgent({
+      messages,
+      toolRegistry,
+      extra: { model, systemPrompt: 'be terse' } as unknown as Partial<Agent>,
+    })
+    const strategy = Offload.summarize('*').when({ contextUtilization: '80%', preserveRecent: 1 })
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(summarize.mock.calls[0]![1]!.toolSpecs!.map((spec) => spec.name)).toEqual(['alpha', 'mike', 'zeta'])
   })
 
   it.each<{ name: string; other: Record<string, unknown> }>([

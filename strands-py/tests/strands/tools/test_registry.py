@@ -117,6 +117,21 @@ def test_get_all_tool_specs_returns_right_tool_specs():
     assert tru_tool_specs == exp_tool_specs
 
 
+def test_get_all_tool_specs_sorts_by_name_and_keeps_registration_order():
+    # Identical catalogs produce the same model request regardless of registration order (#5700).
+    names = ["zeta", "alpha", "Mike"]
+    tool_registry = ToolRegistry()
+    for name in names:
+        tool_registry.register_tool(strands.tool(lambda a: a, name=name))
+
+    tru_spec_names = [tool_spec["name"] for tool_spec in tool_registry.get_all_tool_specs()]
+    exp_spec_names = ["Mike", "alpha", "zeta"]
+    assert tru_spec_names == exp_spec_names
+    tru_config_names = list(tool_registry.get_all_tools_config())
+    exp_config_names = names
+    assert tru_config_names == exp_config_names
+
+
 def test_get_all_tool_specs_does_not_mutate_registered_tool_specs():
     """Reading tool configuration leaves the registered tools' own specs as their author defined them.
 
