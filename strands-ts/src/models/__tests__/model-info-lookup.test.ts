@@ -84,7 +84,7 @@ describe('shared model info data', () => {
     ['openai.gpt-6.1-sol', 'unsupported'],
     ['gpt-5.4', undefined],
     ['unknown-model', undefined],
-  ])('reads the untyped chatCompletionsTools fact for %s from the entry the id resolves to', (modelId, support) => {
+  ])('reads the chatCompletionsTools fact for %s from the entry the id resolves to', (modelId, support) => {
     expect(lookupChatCompletionsTools(modelId)).toBe(support)
   })
 
@@ -116,7 +116,7 @@ describe('shared model info data', () => {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
-        // Read by the OpenAI Chat Completions provider, not typed by the SDK.
+        // Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
         else if (key === 'chatCompletionsTools')
           expect(['reasoningOff', 'unsupported'], `${id}.${key}`).toContain(value)
         // Read by another consumer (the harness), not typed by the SDK.

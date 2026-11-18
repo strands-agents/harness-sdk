@@ -205,7 +205,7 @@ def test_prompt_caching_value_map_covers_exactly_the_prompt_caching_type():
         ("unknown-model", None),
     ],
 )
-def test_lookup_chat_completions_tools_reads_the_untyped_fact_from_the_entry_the_id_resolves_to(model_id, exp_support):
+def test_lookup_chat_completions_tools_reads_the_fact_from_the_entry_the_id_resolves_to(model_id, exp_support):
     assert lookup_chat_completions_tools(model_id) == exp_support
 
 
@@ -263,7 +263,7 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
             if key == "promptCaching":
                 assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
             elif key == "chatCompletionsTools":
-                # Read by the OpenAI Chat Completions provider, not typed by the SDK.
+                # Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
                 assert value in ("reasoningOff", "unsupported"), f"{model_id}.{key}"
             elif key == "defaultEffort":
                 assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"

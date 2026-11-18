@@ -1506,8 +1506,25 @@ describe('OpenAIModel', () => {
         params: { reasoning_effort: 'low' },
       },
       { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-astra' },
-    ])('passes a rejection through when the model is not one that takes no tools: $name', async (sent) => {
-      expect(await reject(sent, badRequest)).toBe(badRequest)
+      {
+        name: 'server error',
+        baseURL: OPENAI_URL,
+        modelId: 'gpt-6-astra',
+        error: Object.assign(new Error('500 Server error'), { status: 500 }),
+      },
+    ])(
+      'passes an error through unless tools are rejected for a model that takes none: $name',
+      async ({ error = badRequest, ...sent }) => {
+        expect(await reject(sent, error)).toBe(error)
+      }
+    )
+
+    it('still reports context overflow for a model that takes no tools', async () => {
+      const overflow = Object.assign(new Error("400 This model's maximum context length is exceeded"), { status: 400 })
+
+      expect(await reject({ baseURL: OPENAI_URL, modelId: 'gpt-6-astra' }, overflow)).toStrictEqual(
+        new ContextWindowOverflowError("400 This model's maximum context length is exceeded")
+      )
     })
 
     it('still reports throttling for a model that takes no tools', async () => {

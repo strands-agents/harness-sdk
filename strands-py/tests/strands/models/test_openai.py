@@ -1641,38 +1641,44 @@ async def test_stream_points_to_the_responses_api_when_tools_are_rejected_for_a_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("base_url", "model_id", "with_tools"),
+    ("base_url", "model_id", "with_tools", "error_type"),
     [
-        (_OPENAI_URL, "gpt-6-astra", False),
-        (_OPENAI_URL, "gpt-6-sol", True),
-        (_PROXY_URL, "gpt-6-astra", True),
+        (_OPENAI_URL, "gpt-6-astra", False, openai.BadRequestError),
+        (_OPENAI_URL, "gpt-6-sol", True, openai.BadRequestError),
+        (_PROXY_URL, "gpt-6-astra", True, openai.BadRequestError),
+        (_OPENAI_URL, "gpt-6-astra", True, openai.InternalServerError),
     ],
 )
-async def test_stream_passes_a_rejection_through_when_the_model_is_not_one_that_takes_no_tools(
-    openai_client, bad_request_error, messages, tool_specs, alist, base_url, model_id, with_tools
+async def test_stream_passes_an_error_through_unless_tools_are_rejected_for_a_model_that_takes_none(
+    openai_client, messages, tool_specs, alist, base_url, model_id, with_tools, error_type
 ):
+    error = error_type(message="Request failed", response=unittest.mock.MagicMock(), body={"error": {}})
     openai_client.base_url = httpx.URL(base_url)
-    openai_client.chat.completions.create.side_effect = bad_request_error
+    openai_client.chat.completions.create.side_effect = error
     model = OpenAIModel(model_id=model_id, params={"reasoning_effort": "low"})
 
-    with pytest.raises(openai.BadRequestError) as exc_info:
+    with pytest.raises(error_type) as exc_info:
         await alist(model.stream(messages, tool_specs if with_tools else None))
 
-    assert exc_info.value is bad_request_error
+    assert exc_info.value is error
 
 
 @pytest.mark.asyncio
-async def test_stream_still_reports_throttling_for_a_model_that_takes_no_tools(
+async def test_stream_still_reports_context_overflow_for_a_model_that_takes_no_tools(
     openai_client, messages, tool_specs, alist
 ):
     openai_client.base_url = httpx.URL(_OPENAI_URL)
-    openai_client.chat.completions.create.side_effect = openai.RateLimitError(
-        message="Rate limit exceeded", response=unittest.mock.MagicMock(), body={"error": {}}
+    openai_client.chat.completions.create.side_effect = openai.BadRequestError(
+        message="This model's maximum context length is exceeded",
+        response=unittest.mock.MagicMock(),
+        body={"error": {}},
     )
     model = OpenAIModel(model_id="gpt-6-astra")
 
-    with pytest.raises(ModelThrottledException):
+    with pytest.raises(ContextWindowOverflowException) as exc_info:
         await alist(model.stream(messages, tool_specs))
+
+    assert str(exc_info.value) == "This model's maximum context length is exceeded"
 
 
 def test_format_request_messages_excludes_reasoning_content():
