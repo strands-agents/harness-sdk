@@ -32,7 +32,7 @@ import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
 import { Model } from '../models/model.js'
-import { countRequestTokens, ModelProxy } from '../models/model-proxy.js'
+import { countRequestTokens, ModelProxy, type RequestTokenAnchor } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import type { AgentMetadata } from './agent-metadata.js'
@@ -560,6 +560,12 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _tracer: Tracer
   /** Meter instance for accumulating loop metrics during invocation. */
   private _meter: Meter
+  /**
+   * Whole-request token count recorded after a context strategy last rewrote the history.
+   *
+   * @internal
+   */
+  _requestTokenAnchor: RequestTokenAnchor | undefined
   /** Interrupt state for human-in-the-loop workflows. */
   _interruptState: InterruptState
   /** Executor for tool calls from a single assistant turn. */
@@ -2429,6 +2435,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         logger.debug(`error=<${error}> | token estimation failed, proceeding without estimate`)
       }
 
+      const anchorBeforeHooks = this._requestTokenAnchor
       const beforeModelCallEvent = new BeforeModelCallEvent({
         invocationContext,
         agent: this,
@@ -2483,14 +2490,9 @@ export class Agent implements LocalAgent, InvokableAgent {
       )
 
       if (modelContinuation !== undefined) {
-        try {
-          projectedInputTokens = await this._estimateInputTokens()
-        } catch (error) {
-          projectedInputTokens = undefined
-          logger.debug(
-            `error=<${error}> | token estimation failed after continuation input, proceeding without estimate`
-          )
-        }
+        projectedInputTokens = await this._reestimateInputTokens('continuation input')
+      } else if (this._requestTokenAnchor !== anchorBeforeHooks) {
+        projectedInputTokens = await this._reestimateInputTokens('context strategy')
       }
 
       const invokedModelRef: InvokedModelRef = {}
@@ -2928,39 +2930,76 @@ export class Agent implements LocalAgent, InvokableAgent {
   /**
    * Estimate the input token count for the next model call.
    *
-   * Uses the token counting strategy: reads the total prompt the model processed (including cached
-   * tokens) plus outputTokens from the last assistant message's metadata as a known baseline, then
-   * estimates only new messages added after it. Falls back to full estimation when no metadata is
-   * available (cold start or first call).
+   * Starts from a known whole-request count — the last assistant message's usage receipt (total prompt including
+   * cached tokens, plus outputTokens), or the count a context strategy recorded after rewriting the history when that
+   * covers at least as many messages — then counts only the messages after it. Falls back to a full count when
+   * neither exists (cold start or first call).
    *
    * @returns Estimated input token count
    */
   private async _estimateInputTokens(): Promise<number> {
-    // Find the last assistant message with usage metadata
-    let lastAssistantIdx = -1
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      if (this.messages[i]!.role === 'assistant' && this.messages[i]!.metadata?.usage) {
-        lastAssistantIdx = i
-        break
+    const baseline = this._knownBaseline()
+    if (baseline === undefined) {
+      return countRequestTokens(this, this.messages)
+    }
+    const [knownTokens, coveredCount] = baseline
+    const newMessages = this.messages.slice(coveredCount)
+    if (newMessages.length === 0) {
+      return knownTokens
+    }
+    // System prompt and tool spec tokens are already included in the baseline
+    return knownTokens + (await new ModelProxy(this.model).countTokens(newMessages))
+  }
+
+  /**
+   * The whole-request token count to project from, as `[tokens, messages covered]`.
+   *
+   * A strategy's recount overrides the usage receipt only while it still matches the history and the receipt
+   * covers no later message.
+   *
+   * @returns The baseline, or undefined when no count is known
+   */
+  private _knownBaseline(): [number, number] | undefined {
+    const receipt = this._receiptBaseline()
+    const anchor = this._requestTokenAnchor
+    if (anchor === undefined || !anchor.holdsFor(this.messages)) {
+      return receipt
+    }
+    if (receipt !== undefined && receipt[1] > anchor.messageCount) {
+      return receipt
+    }
+    return [anchor.inputTokens, anchor.messageCount]
+  }
+
+  /**
+   * The baseline from the last assistant message's usage receipt.
+   *
+   * @returns `[prompt + output tokens, messages covered]`, or undefined when no message carries usage
+   */
+  private _receiptBaseline(): [number, number] | undefined {
+    for (let index = this.messages.length - 1; index >= 0; index--) {
+      const message = this.messages[index]!
+      const usage = message.metadata?.usage
+      if (message.role === 'assistant' && usage) {
+        return [totalPromptTokens(usage) + usage.outputTokens, index + 1]
       }
     }
+    return undefined
+  }
 
-    let estimate: number
-    if (lastAssistantIdx >= 0) {
-      const usage = this.messages[lastAssistantIdx]!.metadata!.usage!
-      const knownBaseline = totalPromptTokens(usage) + usage.outputTokens
-      const newMessages = this.messages.slice(lastAssistantIdx + 1)
-      if (newMessages.length === 0) {
-        estimate = knownBaseline
-      } else {
-        // System prompt and tool spec tokens are already included in the baseline from the prior model call
-        estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
-      }
-    } else {
-      estimate = await countRequestTokens(this, this.messages)
+  /**
+   * Re-estimates input tokens, or returns undefined when the count fails.
+   *
+   * @param reason - What changed the history since the last estimate, for the log
+   * @returns Estimated input token count, or undefined
+   */
+  private async _reestimateInputTokens(reason: string): Promise<number | undefined> {
+    try {
+      return await this._estimateInputTokens()
+    } catch (error) {
+      logger.debug(`error=<${error}> | token estimation failed after ${reason}, proceeding without estimate`)
+      return undefined
     }
-
-    return estimate
   }
 
   /**

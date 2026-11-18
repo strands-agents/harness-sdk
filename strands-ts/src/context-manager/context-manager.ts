@@ -14,7 +14,7 @@ import { InMemoryStorage } from '../storage/in-memory-storage.js'
 import { EPHEMERAL } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
-import { countRequestTokens } from '../models/model-proxy.js'
+import { countRequestTokens, RequestTokenAnchor } from '../models/model-proxy.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
 import { resolveStrategies } from './presets.js'
@@ -230,7 +230,9 @@ export class ContextManager implements Plugin {
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
-          strategyContext.utilization = agent.model.estimateUtilization(await countRequestTokens(agent, messages))
+          const requestTokens = await countRequestTokens(agent, messages)
+          agent._requestTokenAnchor = RequestTokenAnchor.atEndOf(messages, requestTokens)
+          strategyContext.utilization = agent.model.estimateUtilization(requestTokens)
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {

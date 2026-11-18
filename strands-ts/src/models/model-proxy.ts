@@ -119,6 +119,51 @@ export async function countRequestTokens(agent: LocalAgent, messages: Message[])
   })
 }
 
+/**
+ * A whole-request token count taken right after a context strategy rewrote the history.
+ *
+ * It replaces the provider's usage receipt as the projection baseline when that receipt still sits in history but
+ * covers messages a strategy has since dropped or summarized.
+ *
+ * @internal
+ */
+export class RequestTokenAnchor {
+  /** Whole-request input tokens at the time of the count. */
+  readonly inputTokens: number
+  /** Number of messages the count covered. */
+  readonly messageCount: number
+  /** The last message the count covered, compared by identity. */
+  readonly lastMessage: Message | undefined
+
+  constructor(inputTokens: number, messageCount: number, lastMessage: Message | undefined) {
+    this.inputTokens = inputTokens
+    this.messageCount = messageCount
+    this.lastMessage = lastMessage
+  }
+
+  /**
+   * Anchors a count to the end of the given messages.
+   *
+   * @param messages - The messages the count covered
+   * @param inputTokens - Whole-request input tokens for those messages
+   * @returns The anchor
+   */
+  static atEndOf(messages: Message[], inputTokens: number): RequestTokenAnchor {
+    return new RequestTokenAnchor(inputTokens, messages.length, messages.at(-1))
+  }
+
+  /**
+   * Whether the messages still begin with the history this count covered.
+   *
+   * @param messages - The current messages
+   * @returns False once the history was cut below the anchor or replaced
+   */
+  holdsFor(messages: Message[]): boolean {
+    if (this.messageCount > messages.length) return false
+    return this.messageCount === 0 || messages[this.messageCount - 1] === this.lastMessage
+  }
+}
+
 interface RenderedMessages {
   /** The messages to send. */
   readonly messages: Message[]
