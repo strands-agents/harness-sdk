@@ -165,18 +165,22 @@ export class FileStorage implements SnapshotStorage {
 
   /**
    * Atomically writes JSON to a file using a `.tmp` intermediary to prevent partial writes.
-   * Creates parent directories if they do not exist.
+   * Creates parent directories if they do not exist. New directories and files are accessible
+   * to the owner only, and a symbolic link at `path` is refused.
    */
   private async _writeJSON(path: string, data: unknown): Promise<void> {
+    if (await this._isSymlink(path)) {
+      throw new SessionError(`Refusing to write to symbolic link at ${path}`)
+    }
     let tmpPath: string | undefined
     try {
       const { promises: fs } = await import('fs')
       const { dirname, resolve } = await import('path')
-      await fs.mkdir(dirname(path), { recursive: true })
+      await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
       const { randomUUID } = await import('node:crypto')
       const uniquePath = `${path}.${randomUUID()}.tmp`
       tmpPath = uniquePath
-      await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), 'utf8')
+      await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
       const target = resolve(path)
       const pendingRename = (PENDING_RENAMES.get(target) ?? Promise.resolve())
         .catch(() => {})
@@ -198,9 +202,12 @@ export class FileStorage implements SnapshotStorage {
 
   /**
    * Reads and parses a JSON file. Returns null if the file does not exist.
-   * Throws SessionError on parse failure or unexpected filesystem errors.
+   * Throws SessionError on a symbolic link, parse failure, or unexpected filesystem errors.
    */
   private async _readJSON<T>(path: string): Promise<T | null> {
+    if (await this._isSymlink(path)) {
+      throw new SessionError(`Refusing to read symbolic link at ${path}`)
+    }
     try {
       const { promises: fs } = await import('fs')
       const content = await fs.readFile(path, 'utf8')
@@ -214,6 +221,15 @@ export class FileStorage implements SnapshotStorage {
       }
       throw new SessionError(`File system error reading ${path}`, { cause: error })
     }
+  }
+
+  /** Returns true if `path` is a symbolic link. */
+  private async _isSymlink(path: string): Promise<boolean> {
+    const { promises: fs } = await import('fs')
+    return fs.lstat(path).then(
+      (stats) => stats.isSymbolicLink(),
+      () => false
+    )
   }
 
   /** Returns true if the error represents a missing file or directory (ENOENT). */

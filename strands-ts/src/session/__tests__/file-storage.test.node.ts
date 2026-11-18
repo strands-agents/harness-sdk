@@ -178,6 +178,96 @@ describe('FileStorage', () => {
     })
   })
 
+  // Regression: https://github.com/strands-agents/harness-sdk/issues/6248
+  describe('private storage', () => {
+    const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+    const snapshot = createTestSnapshot()
+    let snapshotsDir: string
+    let latestPath: string
+    let outsidePath: string
+
+    beforeEach(async () => {
+      snapshotsDir = join(testDir, location.sessionId, 'scopes', location.scope, location.scopeId, 'snapshots')
+      latestPath = join(snapshotsDir, 'snapshot_latest.json')
+      outsidePath = join(testDir, 'outside.json')
+      await fs.writeFile(outsidePath, JSON.stringify(createTestSnapshot({ appData: { outside: true } })))
+    })
+
+    it('leaves an existing .tmp file next to the target untouched', async () => {
+      await fs.mkdir(snapshotsDir, { recursive: true })
+      await fs.writeFile(`${latestPath}.tmp`, 'unrelated')
+
+      await storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+
+      expect(await fs.readFile(`${latestPath}.tmp`, 'utf8')).toBe('unrelated')
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshot)
+    })
+
+    describe.skipIf(process.platform === 'win32')('on POSIX', () => {
+      const mode = async (path: string): Promise<number> => (await fs.stat(path)).mode & 0o777
+
+      it('creates directories and files accessible to the owner only', async () => {
+        const baseDir = join(testDir, 'base')
+        await new FileStorage(baseDir).saveSnapshot({ location, snapshotId: '1', isLatest: false, snapshot })
+
+        const historyDir = join(
+          baseDir,
+          location.sessionId,
+          'scopes',
+          location.scope,
+          location.scopeId,
+          'snapshots',
+          'immutable_history'
+        )
+        let dir = historyDir
+        while (dir !== testDir) {
+          expect({ dir, mode: await mode(dir) }).toEqual({ dir, mode: 0o700 })
+          dir = join(dir, '..')
+        }
+        expect(await mode(join(historyDir, 'snapshot_1.json'))).toBe(0o600)
+      })
+
+      it('refuses to load through a symbolic link', async () => {
+        await fs.mkdir(snapshotsDir, { recursive: true })
+        await fs.symlink(outsidePath, latestPath)
+
+        await expect(storage.loadSnapshot({ location })).rejects.toMatchObject({
+          name: 'SessionError',
+          message: `Refusing to read symbolic link at ${latestPath}`,
+        })
+      })
+
+      it('refuses to save over a symbolic link', async () => {
+        const outside = await fs.readFile(outsidePath, 'utf8')
+        await fs.mkdir(snapshotsDir, { recursive: true })
+        await fs.symlink(outsidePath, latestPath)
+
+        await expect(
+          storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+        ).rejects.toMatchObject({
+          name: 'SessionError',
+          message: `Refusing to write to symbolic link at ${latestPath}`,
+        })
+        expect(await fs.readFile(outsidePath, 'utf8')).toBe(outside)
+        expect(await fs.readdir(snapshotsDir)).toEqual(['snapshot_latest.json'])
+      })
+
+      it('does not write through a symbolic link planted at the temporary path', async () => {
+        const outside = await fs.readFile(outsidePath, 'utf8')
+        const writeFile = fs.writeFile.bind(fs)
+        vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (path, ...rest) => {
+          await fs.symlink(outsidePath, path as string)
+          await writeFile(path, ...rest)
+        })
+
+        await expect(
+          storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+        ).rejects.toMatchObject({ name: 'SessionError', cause: expect.objectContaining({ code: 'EEXIST' }) })
+        expect(await fs.readFile(outsidePath, 'utf8')).toBe(outside)
+      })
+    })
+  })
+
   describe('saveSnapshot', () => {
     describe('FileSnapshotStorage_When_saveSnapshot_Then_CreatesFiles', () => {
       it('saves snapshot to history file', async () => {
