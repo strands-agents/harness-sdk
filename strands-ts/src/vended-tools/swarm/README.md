@@ -65,7 +65,7 @@ The default tool, produced by `makeSwarm()`: no presets, free-form `instructions
 
 Throws if `name` or `description` is empty, `maxAgents` is not a positive integer, `defaultPreset` is not one of `presets`, or a `Choice` axis has no options, or a `tools` `Choice` is not `multiple`.
 
-The default builder gives each agent the parent's model and tools (narrowed by the resolved spec), sandbox, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the agent's model is stateful. The agent's `name` and `id` are its spec name. The parent's hooks and plugins are not passed to the agents; pass a custom `builder` for agents that need them.
+The default builder gives each agent the parent's model and tools (narrowed by the resolved spec), sandbox, interventions, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the agent's model is stateful. The agent's `name` and `id` are its spec name. The parent's hooks and plugins are not passed to the agents; pass a custom `builder` for agents that need them.
 
 ### Input
 
