@@ -662,32 +662,47 @@ describe('createHarness', () => {
           ],
         },
       ],
+      [
+        'a plugin writes to storage while it initializes',
+        {
+          plugins: [
+            {
+              name: 'writes-on-init',
+              initAgent: async (agent): Promise<void> => {
+                await agent.storage?.write('probe', new Uint8Array([1]))
+              },
+            } satisfies Plugin,
+          ],
+        },
+      ],
     ])('is private when %s', async (_, options: HarnessAgentOptions) => {
       const parent = makeTempDir()
       mkdirSync(parent)
       const dir = join(parent, 'agent', 'sessions')
       // The SDK logs its warnings through the console by default.
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const agent = await createHarness({
-        ...options,
-        model: new RetrievingModel(),
-        tools: [readLargeTool],
-        session: { id: 'retrieval', dir },
-        builtinTools: [],
-        builtinPlugins: [],
-        memory: false,
-        skills: false,
-        printer: false,
-      })
-      expect(existsSync(dir)).toBe(false)
-      await agent.invoke('Read the document.', { limits: { turns: 4 } })
-      const openRootWarnings = warn.mock.calls.flat().filter((message) => String(message).includes('accessible by'))
-      warn.mockRestore()
+      try {
+        const agent = await createHarness({
+          ...options,
+          model: new RetrievingModel(),
+          tools: [readLargeTool],
+          session: { id: 'retrieval', dir },
+          builtinTools: [],
+          builtinPlugins: [],
+          memory: false,
+          skills: false,
+          printer: false,
+        })
+        expect(existsSync(dir)).toBe(false)
+        await agent.invoke('Read the document.', { limits: { turns: 4 } })
 
-      const mode = (path: string): number => statSync(path).mode & 0o777
-      expect(mode(dir)).toBe(0o700)
-      expect(mode(join(parent, 'agent'))).toBe(mode(parent))
-      expect(openRootWarnings).toEqual([])
+        const mode = (path: string): number => statSync(path).mode & 0o777
+        expect(mode(dir)).toBe(0o700)
+        expect(mode(join(parent, 'agent'))).toBe(mode(parent))
+        expect(warn.mock.calls.flat().filter((message) => String(message).includes('accessible by'))).toEqual([])
+      } finally {
+        warn.mockRestore()
+      }
     })
   })
 

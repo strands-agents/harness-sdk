@@ -301,7 +301,7 @@ function checkNameCollisions(sources: ReadonlyArray<readonly [string, boolean, T
 function sessionDirectoryPlugin(dir: string): Plugin {
   return {
     name: 'strands:session-directory',
-    // A failure is left for the first write to report.
+    // A failure is left for the stores to report when they write.
     initAgent: async (): Promise<void> => {
       await mkdir(dirname(resolve(dir)), { recursive: true }).catch(() => {})
       await mkdir(dir, { recursive: true, mode: 0o700 }).catch(() => {})
