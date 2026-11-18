@@ -192,23 +192,7 @@ async function _send(url: string, signal: AbortSignal | null, allowPrivateAddres
   let target = url
   for (let hop = 0; hop <= _MAX_REDIRECTS; hop++) {
     await _checkUrl(target, allowPrivateAddresses)
-
-    let response: Response
-    try {
-      response = await globalThis.fetch(target, {
-        method: 'GET',
-        headers: _HEADERS,
-        signal,
-        redirect: allowPrivateAddresses ? 'follow' : 'manual',
-      })
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('Web fetch tool request cancelled', { cause: error })
-      }
-      throw new Error(`url=<${target}> | fetch failed: ${error instanceof Error ? error.message : String(error)}`, {
-        cause: error,
-      })
-    }
+    const response = await _get(target, signal, allowPrivateAddresses ? 'follow' : 'manual')
 
     const location = response.headers.get('location')
     if (allowPrivateAddresses || !_REDIRECT_STATUSES.includes(response.status) || location === null) {
@@ -221,6 +205,19 @@ async function _send(url: string, signal: AbortSignal | null, allowPrivateAddres
     target = new URL(location, target).href
   }
   throw new Error(`url=<${url}> | fetch failed: too many redirects`)
+}
+
+async function _get(url: string, signal: AbortSignal | null, redirect: RequestRedirect): Promise<Response> {
+  try {
+    return await globalThis.fetch(url, { method: 'GET', headers: _HEADERS, signal, redirect })
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Web fetch tool request cancelled', { cause: error })
+    }
+    throw new Error(`url=<${url}> | fetch failed: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
+  }
 }
 
 // Throws unless `url` is http(s) and, when private addresses are not allowed, its host resolves only to public ones.
