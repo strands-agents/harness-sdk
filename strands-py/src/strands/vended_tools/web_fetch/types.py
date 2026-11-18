@@ -11,6 +11,6 @@ WEB_FETCH_DESCRIPTION_AGENTIC = (
     "Fetches an HTTP(S) URL and answers a prompt about its content. "
     "The analyst processes the page directly so the full content never enters "
     "the main agent's context. "
-    "The prompt parameter is required."
+    "Leave the prompt empty to get the page content itself instead of an answer."
 )
 """Description for the agentic web fetch tool."""

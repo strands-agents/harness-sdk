@@ -7,13 +7,13 @@ Fetches an HTTP(S) URL and returns its relevant content. Distinct from the http-
 **This tool makes outbound HTTP requests to URLs chosen by the model.**
 
 - Only use with trusted input
-- Requests execute with the network access of the host process
+- Requests execute with the network access of the host process, or of the agent's sandbox with `transport: 'sandbox'`
 - For production deployments, consider running in a sandboxed environment (containers, VMs, etc.)
 - Never expose this tool to untrusted users or untrusted prompt input without additional security measures
 
 ## Install
 
-HTML conversion requires the optional `turndown` peer dependency:
+HTML conversion requires the optional `turndown` peer dependency, which is loaded on the first HTML conversion:
 
 ```bash
 npm install turndown
@@ -73,14 +73,25 @@ The default tool, produced by `makeWebFetch()` with `mode: 'agentic'` and defaul
 | `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                                 |
 | `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                              |
 | `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's `auxModel` when not provided. |
+| `transport`       | `'direct' \| 'sandbox'`   | `'direct'`    | Where the HTTP request runs (see below).                                                     |
 
-Throws if `maxBytes` or `maxContentChars` is not a positive number.
+Throws if `maxBytes` or `maxContentChars` is not a positive number, or `transport` is not one of the two values.
+
+### Transports
+
+**`direct`**: sends the request with global `fetch` from the agent process.
+
+**`sandbox`**: runs the request as `curl` inside the host agent's sandbox, so the sandbox's network isolation and egress rules also cover web fetch. The sandbox must provide `curl`.
+
+Both transports follow redirects, reject bodies over `maxBytes`, and time out after 30 seconds.
 
 ### Modes
 
 **`markdown`** — Fetches the URL and returns the page content as clean markdown directly in the agent's context. HTML is converted with scripts, styles, and noise stripped; other content types are returned as-is.
 
 **`agentic`** — Fetches the URL and routes the content through a dedicated analyst agent that answers the `prompt` about the page. The full page content never enters the main agent's context window — only the analyst's answer is returned.
+
+In agentic mode an empty `prompt` skips the analyst and returns the converted page content.
 
 ### Input — markdown mode
 
@@ -93,11 +104,11 @@ Throws if `maxBytes` or `maxContentChars` is not a positive number.
 | Property | Type     | Required | Description                                     |
 | -------- | -------- | -------- | ----------------------------------------------- |
 | `url`    | `string` | Yes      | URL to fetch. Must be `http://` or `https://`.  |
-| `prompt` | `string` | Yes      | Question or instruction about the page content. |
+| `prompt` | `string` | No       | Question or instruction about the page content. |
 
 ### Output
 
-Both modes return a string. Markdown mode returns the extracted page content; agentic mode returns the analyst's answer.
+Both modes return a string. Markdown mode returns the extracted page content; agentic mode returns the analyst's answer, or the extracted page content when `prompt` is empty.
 
 ## What it does not do
 

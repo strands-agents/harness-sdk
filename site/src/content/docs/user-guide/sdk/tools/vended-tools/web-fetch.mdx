@@ -13,7 +13,8 @@ configured at construction time via `make_web_fetch` / `makeWebFetch`:
 - **`agentic`** (default): HTML is converted to markdown and passed to an
   analyst agent that answers a `prompt`, so the full page never enters the
   main agent's context. Use when targeted answers are needed about potentially
-  large pages.
+  large pages. An empty `prompt` skips the analyst and returns the converted
+  page content.
 - **`markdown`**: HTML is converted to clean markdown with scripts, styles,
   and noise stripped. Use when the agent needs full pages for reasoning.
 
@@ -23,23 +24,33 @@ analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
 the factory also accepts a `model` for the analyst; <Syntax py="agent.aux_model" ts="agent.auxModel" />
 is used when none is supplied.
 
-The Python tool delegates all networking to an `httpx.AsyncClient`. Use the
-`make_web_fetch` factory to supply a pre-configured client with custom
-timeouts, redirects, proxies, or caching.
+The `transport` option selects where the HTTP request runs:
+
+- **`direct`** (default): from the agent process. The Python tool uses an
+  `httpx.AsyncClient`; pass `client` to `make_web_fetch` to supply a
+  pre-configured one with custom timeouts, redirects, proxies, or caching.
+- **`sandbox`**: as `curl` inside the agent's [Sandbox](../../sandbox/index.mdx),
+  so the sandbox's network isolation and egress rules also cover web fetch. The
+  sandbox must provide `curl`, and `client` cannot be combined with it.
+
+Both transports time out after 30 seconds (a `client` you supply keeps its own
+timeout).
 
 _Supported in: Node.js (TypeScript); Python (all platforms)._
 
 :::note[Install required]
 <Tabs>
 <Tab label="Python">
-`web_fetch` requires the optional `web-fetch` extra:
+HTML conversion requires the optional `web-fetch` extra, which is loaded on the
+first HTML conversion:
 
 ```bash
 pip install 'strands-agents[web-fetch]'
 ```
 </Tab>
 <Tab label="TypeScript">
-HTML conversion requires the optional `turndown` peer dependency:
+HTML conversion requires the optional `turndown` peer dependency, which is
+loaded on the first HTML conversion:
 
 ```bash
 npm install turndown
@@ -52,7 +63,8 @@ npm install turndown
 Web fetch accepts only `http://` and `https://` URLs and caps response bodies
 at 5 MiB by default. Egress control belongs at the layer that encapsulates the
 agent (a sandbox, microVM, or network policy) where it can be enforced
-consistently across all tools, including `shell`.
+consistently across all tools, including `shell`. With the `sandbox` transport
+the request runs inside the agent's sandbox, so that layer's rules apply to it.
 :::
 
 **Example:**

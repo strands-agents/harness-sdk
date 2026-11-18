@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import shutil
+import subprocess
+import sys
 import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 
 import httpx
@@ -12,6 +17,9 @@ from bs4 import BeautifulSoup
 
 import strands.agent.agent as agent_module
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
+from strands.sandbox import ExecutionResult
+from strands.sandbox.errors import SandboxTimeoutError
+from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.types.tools import ToolContext, ToolUse
 from strands.vended_tools.web_fetch import (
     WebFetchError,
@@ -19,7 +27,7 @@ from strands.vended_tools.web_fetch import (
 )
 from strands.vended_tools.web_fetch import _extract as extract_module
 from strands.vended_tools.web_fetch._extract import _tag_attribute, html_to_markdown
-from strands.vended_tools.web_fetch.web_fetch import _parse_charset
+from strands.vended_tools.web_fetch.web_fetch import _SHELL_PROBE, _parse_charset
 
 
 def _transport(handler):
@@ -55,6 +63,46 @@ class TestLazyLoad:
 
         with pytest.raises(AttributeError):
             _ = vt.not_a_real_tool
+
+    def test_import_does_not_load_the_markdown_packages(self):
+        # Needs a fresh interpreter: this test module has already imported bs4.
+        code = (
+            "import sys; from strands.vended_tools import make_web_fetch; "
+            "from strands.vended_tools.web_fetch import web_fetch; "
+            "assert not {'bs4', 'markdownify'} & set(sys.modules), sorted(sys.modules)"
+        )
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
+
+class TestWithoutMarkdownPackages:
+    """The optional ``web-fetch`` extra is needed only to convert HTML."""
+
+    @pytest.fixture(autouse=True)
+    def _packages_missing(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "bs4", None)
+        monkeypatch.setitem(sys.modules, "markdownify", None)
+        monkeypatch.delitem(sys.modules, extract_module.__name__)
+
+    @staticmethod
+    def _tool(mode: str, content_type: str, body: str):
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"content-type": content_type}, text=body)
+
+        return make_web_fetch(client=_client(handler), mode=mode)
+
+    @pytest.mark.parametrize("mode", ["markdown", "agentic"])
+    @pytest.mark.asyncio
+    async def test_non_html_response_is_returned(self, mode):
+        tool = self._tool(mode, "application/json", '{"a": 1}')
+        assert await tool(url="https://example.com/data.json") == '{"a": 1}'
+
+    @pytest.mark.parametrize("mode", ["markdown", "agentic"])
+    @pytest.mark.asyncio
+    async def test_html_response_fails_with_the_install_hint(self, mode):
+        tool = self._tool(mode, "text/html", "<p>page</p>")
+        with pytest.raises(ImportError, match=r"pip install 'strands-agents\[web-fetch\]'"):
+            await tool(url="https://example.com/")
 
 
 class TestWebFetchToolCall:
@@ -164,6 +212,21 @@ class TestWebFetchToolCall:
         tool = make_web_fetch(client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), mode="markdown")
         with pytest.raises(WebFetchError, match="timed out"):
             await tool(url="https://example.com/")
+
+    @pytest.mark.asyncio
+    async def test_default_client_times_out_after_30_seconds(self, monkeypatch):
+        created: list[httpx.AsyncClient] = []
+        async_client = httpx.AsyncClient
+
+        def make_client(**kwargs):
+            created.append(
+                async_client(transport=_transport(lambda _request: httpx.Response(200, text="ok")), **kwargs)
+            )
+            return created[-1]
+
+        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+        assert await make_web_fetch(mode="markdown")(url="https://example.com/") == "ok"
+        assert created[0].timeout == httpx.Timeout(30)
 
     @pytest.mark.asyncio
     async def test_html_extraction_failure_falls_back_to_raw(self, monkeypatch):
@@ -319,12 +382,23 @@ class TestAnalyst:
         assert not invoked
         assert "page content" in tru_result
 
-    @pytest.mark.parametrize("prompt", ["", "   "])
+    @pytest.mark.parametrize("kwargs", [{}, {"prompt": ""}, {"prompt": "   "}], ids=["omitted", "empty", "blank"])
     @pytest.mark.asyncio
-    async def test_agentic_mode_with_empty_prompt_raises(self, prompt):
-        tool = make_web_fetch(client=self._page_client(), model=SimpleNamespace(), mode="agentic")
-        with pytest.raises(WebFetchError, match="agentic mode requires a non-empty prompt"):
-            await tool(url="https://example.com/", prompt=prompt)
+    async def test_agentic_mode_with_empty_prompt_returns_page_content_without_a_model(self, monkeypatch, kwargs):
+        def _no_agent(**_kwargs):
+            raise AssertionError("the analyst should not be created for an empty prompt")
+
+        monkeypatch.setattr(agent_module, "Agent", _no_agent)
+        tool = make_web_fetch(
+            client=self._page_client("<p>" + "x" * 100 + "</p>"), mode="agentic", max_content_chars=50
+        )
+        assert await tool(url="https://example.com/", **kwargs) == "x" * 50 + "\n\n[content truncated]"
+
+    def test_agentic_prompt_is_optional_in_the_tool_spec(self):
+        tool_spec = make_web_fetch().tool_spec
+        assert tool_spec["inputSchema"]["json"]["required"] == ["url"]
+        assert "Leave the prompt empty" in tool_spec["description"]
+        assert "Leave empty" in tool_spec["inputSchema"]["json"]["properties"]["prompt"]["description"]
 
     @pytest.mark.asyncio
     async def test_prompt_with_model_invokes_analyst(self, monkeypatch):
@@ -596,3 +670,378 @@ class TestWebFetchRequestUsage:
         handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
         assert _reached_limit(handed) is None
         assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+
+def _curl_output(body: bytes = b"", content_type: str = "text/html", status: int = 0) -> bytes:
+    """What the curl command sends back before base64: the body, then the content type and exit status."""
+    return body + f"\n{content_type}\n{status}".encode()
+
+
+class _Sandbox:
+    """Fake sandbox whose shell is ``sh``: the curl command prints ``output`` as wrapped base64."""
+
+    probe_output = "\n"
+    line_end = "\n"
+
+    def __init__(self, output: bytes = b"", stderr: str = "", exit_code: int = 0):
+        self.output = output
+        self.stderr = stderr
+        self.exit_code = exit_code
+        self.commands: list[str] = []
+        self.timeouts: list[float | None] = []
+
+    async def execute(self, command, *, timeout=None, **kwargs):
+        self.commands.append(command)
+        self.timeouts.append(timeout)
+        if command == _SHELL_PROBE:
+            return ExecutionResult(exit_code=0, stdout=self.probe_output, stderr="")
+        encoded = base64.b64encode(self.output).decode()
+        lines = [encoded[i : i + 76] for i in range(0, len(encoded), 76)]
+        stdout = "".join(line + self.line_end for line in lines)
+        return ExecutionResult(exit_code=self.exit_code, stdout=stdout, stderr=self.stderr)
+
+
+class _PowerShellSandbox(_Sandbox):
+    """Fake sandbox whose shell is Windows PowerShell: the probe reports the edition and lines end in CRLF."""
+
+    probe_output = "Desktop\r\n"
+    line_end = "\r\n"
+
+
+def _sandbox_ctx(sandbox, cancel: threading.Event | None = None) -> ToolContext:
+    tool_use = ToolUse(toolUseId="test-wf", name="web_fetch", input={})
+    agent = SimpleNamespace(sandbox=sandbox)
+    return ToolContext(tool_use=tool_use, agent=agent, invocation_state={}, cancel_signal=cancel or threading.Event())
+
+
+async def _sandbox_fetch(sandbox, url: str = "https://example.com/", **kwargs) -> str:
+    tool = make_web_fetch(mode="markdown", transport="sandbox", **kwargs)
+    return await tool(url=url, tool_context=_sandbox_ctx(sandbox))
+
+
+class TestSandboxTransport:
+    """``transport="sandbox"`` runs the request as curl inside the host agent's sandbox."""
+
+    def test_unknown_transport_is_rejected(self):
+        with pytest.raises(ValueError, match="transport"):
+            make_web_fetch(transport="wget")
+
+    def test_client_with_sandbox_transport_is_rejected(self):
+        with pytest.raises(ValueError, match="client"):
+            make_web_fetch(client=httpx.AsyncClient(), transport="sandbox")
+
+    @pytest.mark.parametrize("tool_context", [None, _make_ctx()], ids=["no_context", "agent_without_sandbox"])
+    @pytest.mark.asyncio
+    async def test_missing_sandbox_raises(self, tool_context):
+        tool = make_web_fetch(mode="markdown", transport="sandbox")
+        with pytest.raises(WebFetchError, match="requires a sandbox"):
+            await tool(url="https://example.com/", tool_context=tool_context)
+
+    @pytest.mark.asyncio
+    async def test_runs_curl_in_the_sandbox(self):
+        sandbox = _Sandbox(_curl_output(b"<html><head><title>T</title></head><body><h1>Hi</h1></body></html>"))
+        tru_result = await _sandbox_fetch(sandbox, " https://example.com/a'b$(id);c ", max_bytes=2000)
+        assert tru_result == "# T\n\n# Hi"
+        # One shell probe, then one round-trip.
+        probe, command = sandbox.commands
+        assert probe == _SHELL_PROBE
+        # Legal URL characters that mean something to a shell arrive single-quoted.
+        assert " -- 'https://example.com/a'\"'\"'b$(id);c'; " in command
+        for flag in (
+            "curl -sSL -g --fail ",
+            '--proto "=http,https"',
+            '--proto-redir "=http,https"',
+            "--max-time 30 ",
+            "--max-filesize 2000 ",
+            '-A "strands-agents-web-fetch/1.0"',
+            '-H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"',
+            "-w '\\n%{content_type}'",
+        ):
+            assert flag in command
+        # head stops curl once the body cannot fit in max_bytes, with or without a Content-Length.
+        assert command.endswith("printf '\\n%s' \"$?\"; } | head -c 3024 | base64")
+        assert sandbox.timeouts[1] == 35
+
+    @pytest.mark.asyncio
+    async def test_non_html_response_returns_body(self):
+        sandbox = _Sandbox(_curl_output(b"raw <b>text</b>\n", content_type="text/plain"))
+        assert await _sandbox_fetch(sandbox) == "raw <b>text</b>\n"
+
+    @pytest.mark.asyncio
+    async def test_missing_content_type_returns_body(self):
+        sandbox = _Sandbox(_curl_output(b"a < b <i>", content_type=""))
+        assert await _sandbox_fetch(sandbox) == "a < b <i>"
+
+    @pytest.mark.asyncio
+    async def test_body_is_decoded_with_the_response_charset(self):
+        sandbox = _Sandbox(_curl_output("日本語".encode("shift_jis"), content_type="text/plain; charset='Shift_JIS'"))
+        assert await _sandbox_fetch(sandbox) == "日本語"
+
+    @pytest.mark.asyncio
+    async def test_unknown_charset_falls_back_to_utf8(self):
+        sandbox = _Sandbox(_curl_output("é".encode(), content_type="text/plain; charset=not-a-codec"))
+        assert await _sandbox_fetch(sandbox) == "é"
+
+    @pytest.mark.asyncio
+    async def test_error_status_raises(self):
+        sandbox = _Sandbox(_curl_output(status=22), stderr="curl: (22) The requested URL returned error: 404\n")
+        with pytest.raises(WebFetchError, match=r"Fetch failed: curl: \(22\).*404"):
+            await _sandbox_fetch(sandbox, "https://example.com/missing")
+
+    @pytest.mark.asyncio
+    async def test_missing_curl_reports_the_shell_error(self):
+        # The shell could not start curl, so only the exit status follows the (empty) body.
+        sandbox = _Sandbox(b"\n127", stderr="sh: 1: curl: not found\n")
+        with pytest.raises(WebFetchError, match="curl: not found"):
+            await _sandbox_fetch(sandbox)
+
+    @pytest.mark.parametrize("output", [b"", b"not curl output"])
+    @pytest.mark.asyncio
+    async def test_unexpected_output_raises(self, output):
+        with pytest.raises(WebFetchError, match="unexpected curl output"):
+            await _sandbox_fetch(_Sandbox(output))
+
+    @pytest.mark.parametrize(
+        "output",
+        [
+            _curl_output(content_type="text/plain", status=63),
+            _curl_output(b"x" * 51, content_type="text/plain"),
+            b"x" * (50 + 1024),
+        ],
+        ids=["content_length_over_cap", "body_over_cap", "body_fills_the_limit"],
+    )
+    @pytest.mark.asyncio
+    async def test_body_over_cap_is_rejected(self, output):
+        with pytest.raises(WebFetchError, match="exceeded 50 bytes"):
+            await _sandbox_fetch(_Sandbox(output), max_bytes=50)
+
+    @pytest.mark.asyncio
+    async def test_body_at_cap_is_returned(self):
+        sandbox = _Sandbox(_curl_output(b"x" * 50, content_type="text/plain"))
+        assert await _sandbox_fetch(sandbox, max_bytes=50) == "x" * 50
+
+    @pytest.mark.asyncio
+    async def test_curl_timeout_is_wrapped_as_web_fetch_error(self):
+        sandbox = _Sandbox(_curl_output(status=28), stderr="curl: (28) Operation timed out\n")
+        with pytest.raises(WebFetchError, match="timed out"):
+            await _sandbox_fetch(sandbox)
+
+    @pytest.mark.asyncio
+    async def test_sandbox_timeout_is_wrapped_as_web_fetch_error(self):
+        class _TimingOutSandbox(_Sandbox):
+            async def execute(self, command, **kwargs):
+                if command == _SHELL_PROBE:
+                    return await super().execute(command, **kwargs)
+                raise SandboxTimeoutError(35)
+
+        with pytest.raises(WebFetchError, match="timed out"):
+            await _sandbox_fetch(_TimingOutSandbox())
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "ftp://example.com/file",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https:///no-host",
+            "https://example.com/a b",
+            "https://example.com/x`id`",
+            'https://example.com/"x"',
+            "https://example.com/x\nrm -rf /",
+            "https://example.com/{a,b}",
+            "https://example.com/日本",
+            "",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_invalid_url_is_rejected_before_any_command_runs(self, url):
+        sandbox = _Sandbox()
+        with pytest.raises(WebFetchError, match="Fetch failed"):
+            await _sandbox_fetch(sandbox, url)
+        assert sandbox.commands == []
+
+    @pytest.mark.asyncio
+    async def test_shell_is_probed_once_per_sandbox(self):
+        sandbox = _Sandbox(_curl_output(b"page", content_type="text/plain"))
+        await _sandbox_fetch(sandbox, "https://example.com/a")
+        await _sandbox_fetch(sandbox, "http://[::1]:8080/b")
+        assert sandbox.commands.count(_SHELL_PROBE) == 1
+        assert len(sandbox.commands) == 3
+
+    @pytest.mark.asyncio
+    async def test_failed_probe_falls_back_to_sh_and_probes_again(self):
+        class _FailingProbeSandbox(_Sandbox):
+            async def execute(self, command, **kwargs):
+                result = await super().execute(command, **kwargs)
+                return ExecutionResult(exit_code=1, stdout="", stderr="") if command == _SHELL_PROBE else result
+
+        sandbox = _FailingProbeSandbox(_curl_output(b"page", content_type="text/plain"))
+        assert await _sandbox_fetch(sandbox) == "page"
+        assert await _sandbox_fetch(sandbox) == "page"
+        assert sandbox.commands.count(_SHELL_PROBE) == 2
+        assert "head -c" in sandbox.commands[1]
+
+    @pytest.mark.asyncio
+    async def test_runs_curl_exe_through_powershell(self):
+        sandbox = _PowerShellSandbox(_curl_output("Hello wörld".encode(), content_type="text/plain; charset=utf-8"))
+        assert await _sandbox_fetch(sandbox, "https://example.com/it's", max_bytes=2000) == "Hello wörld"
+        command = sandbox.commands[1]
+        # The curl.exe command line is one single-quoted PowerShell literal (no expansion): the URL's own quote is
+        # doubled, and curl.exe sees the URL double-quoted.
+        assert (
+            "  $info = New-Object Diagnostics.ProcessStartInfo 'curl.exe', '-sSL -g --fail "
+            '--proto "=http,https" --proto-redir "=http,https" --max-time 30 --max-filesize 2000 '
+            '-A "strands-agents-web-fetch/1.0" -H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" '
+            '-w "\\n%{content_type}\\n0" -- "https://example.com/it\'\'s"\'\n'
+        ) in command
+        # .NET stops reading (and kills curl.exe) once the body cannot fit in max_bytes.
+        assert ".ReadBytes(3024)" in command and "$process.Kill()" in command
+        # A curl.exe that cannot start is exit 127, reported through the console handle.
+        assert command.startswith("$status = 127\ntry {\n")
+        assert "} catch { if ($status -eq 0) { $status = 1 }; [Console]::Error.Write($_.Exception.Message) }" in command
+        assert command.endswith("exit $status")
+        assert "head -c" not in command
+        assert sandbox.timeouts[1] == 35
+
+    @pytest.mark.asyncio
+    async def test_powershell_error_status_raises(self):
+        sandbox = _PowerShellSandbox(stderr="curl: (22) The requested URL returned error: 404\r\n", exit_code=22)
+        with pytest.raises(WebFetchError, match=r"Fetch failed: curl: \(22\).*404$"):
+            await _sandbox_fetch(sandbox, "https://example.com/missing")
+
+    @pytest.mark.asyncio
+    async def test_powershell_content_length_over_cap_is_rejected(self):
+        sandbox = _PowerShellSandbox(stderr="curl: (63) Maximum file size exceeded\r\n", exit_code=63)
+        with pytest.raises(WebFetchError, match="exceeded 50 bytes"):
+            await _sandbox_fetch(sandbox, max_bytes=50)
+
+    @pytest.mark.asyncio
+    async def test_agentic_mode_fetches_through_the_sandbox(self, monkeypatch):
+        received_prompt: list[str] = []
+
+        class _FakeAgent:
+            def __init__(self, **kwargs):
+                pass
+
+            async def invoke_async(self, prompt: str, **kwargs):
+                received_prompt.append(prompt)
+                return "the answer"
+
+        monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
+        sandbox = _Sandbox(_curl_output(b"page content", content_type="text/plain"))
+        tool = make_web_fetch(model=SimpleNamespace(), transport="sandbox")
+        ctx = _sandbox_ctx(sandbox)
+        assert await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx) == "the answer"
+        assert "page content" in received_prompt[0]
+        assert await tool(url="https://example.com/", tool_context=ctx) == "page content"
+
+    @pytest.mark.asyncio
+    async def test_pre_flight_cancel_short_circuits(self):
+        cancel = threading.Event()
+        cancel.set()
+        sandbox = _Sandbox()
+        tool = make_web_fetch(mode="markdown", transport="sandbox")
+        with pytest.raises(asyncio.CancelledError):
+            await tool(url="https://example.com/", tool_context=_sandbox_ctx(sandbox, cancel))
+        assert sandbox.commands == []
+
+    @pytest.mark.asyncio
+    async def test_mid_flight_cancel_stops_the_command(self):
+        cancel = threading.Event()
+        stopped: list[bool] = []
+
+        class _HangingSandbox(_Sandbox):
+            async def execute(self, command, **kwargs):
+                if command == _SHELL_PROBE:
+                    return await super().execute(command, **kwargs)
+                cancel.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    stopped.append(True)
+
+        tool = make_web_fetch(mode="markdown", transport="sandbox")
+        with pytest.raises(asyncio.CancelledError):
+            await tool(url="https://example.com/", tool_context=_sandbox_ctx(_HangingSandbox(), cancel))
+        await asyncio.sleep(0)
+        assert stopped == [True]
+
+    @pytest.mark.skipif(shutil.which("curl") is None, reason="curl not installed")
+    @pytest.mark.asyncio
+    async def test_end_to_end_through_the_local_environment(self):
+        stream_total = 64 * 1024 * 1024
+        stream_sent: list[int] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/redirect":
+                    self.send_response(302)
+                    self.send_header("Location", "/page")
+                    self.end_headers()
+                    return
+                if self.path == "/huge":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain")
+                    self.send_header("Content-Length", "500000")
+                    self.end_headers()
+                    self.wfile.write(b"x" * 500000)
+                    return
+                if self.path == "/stream":
+                    # No Content-Length: the size is unknown until the connection closes.
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    sent = 0
+                    try:
+                        while sent < stream_total:
+                            sent += self.wfile.write(b"x" * 65536)
+                    except OSError:
+                        pass
+                    stream_sent.append(sent)
+                    return
+                if self.path == "/notype":
+                    self.send_response(200)
+                    self.send_header("Content-Length", "5")
+                    self.end_headers()
+                    self.wfile.write(b"a < b")
+                    return
+                if self.path == "/big":
+                    # Well past the sandbox's 64 KiB read chunks: multi-byte characters must survive intact.
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(("日" * 100_000).encode())
+                    return
+                if self.path == "/sjis":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=Shift_JIS")
+                    self.end_headers()
+                    self.wfile.write("日本語".encode("shift_jis"))
+                    return
+                self.send_response(404 if self.path == "/missing" else 200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write("<html><body><script>x</script><p>Hello <b>wörld</b></p></body></html>".encode())
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        sandbox = NotASandboxLocalEnvironment()
+        try:
+            assert await _sandbox_fetch(sandbox, f"{base}/redirect") == "Hello **wörld**"
+            assert await _sandbox_fetch(sandbox, f"{base}/big", max_content_chars=400_000) == "日" * 100_000
+            assert await _sandbox_fetch(sandbox, f"{base}/sjis") == "日本語"
+            assert await _sandbox_fetch(sandbox, f"{base}/notype") == "a < b"
+            with pytest.raises(WebFetchError, match="exceeded 100000 bytes"):
+                await _sandbox_fetch(sandbox, f"{base}/huge", max_bytes=100_000)
+            with pytest.raises(WebFetchError, match="exceeded 100000 bytes"):
+                await _sandbox_fetch(sandbox, f"{base}/stream", max_bytes=100_000)
+            with pytest.raises(WebFetchError, match="404"):
+                await _sandbox_fetch(sandbox, f"{base}/missing")
+        finally:
+            server.shutdown()
+        # curl was stopped long before the server ran out of body to send.
+        assert stream_sent[0] < stream_total

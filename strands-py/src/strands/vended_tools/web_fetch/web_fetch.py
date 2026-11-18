@@ -10,23 +10,31 @@ construction time:
 * ``markdown``: HTML is converted to clean markdown with scripts, styles, and
   noise stripped. Use when the agent needs full pages for reasoning.
 
-The tool delegates all networking to the ``httpx.AsyncClient`` instance
-provided by the operator, giving full control over transport configuration,
-caching, proxies, redirects, and connection pooling.
+The factory's ``transport`` parameter selects where the HTTP request runs:
+
+* ``direct`` (default): from the agent process, through the ``httpx.AsyncClient``
+  provided by the operator, giving full control over transport configuration,
+  caching, proxies, redirects, and connection pooling.
+* ``sandbox``: as ``curl`` inside the host agent's sandbox, so the sandbox's
+  network isolation and egress rules cover the request.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import re
+import shlex
 import threading
+import weakref
 from typing import TYPE_CHECKING, Literal
 
 import httpx
 
 from ...agent.invocation_context import _create_auxiliary_invocation_context
+from ...sandbox.errors import SandboxTimeoutError
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
-from ._extract import html_to_markdown
 from .types import WEB_FETCH_DESCRIPTION_AGENTIC, WEB_FETCH_DESCRIPTION_MARKDOWN
 
 
@@ -36,6 +44,8 @@ class WebFetchError(ValueError):
 
 if TYPE_CHECKING:
     from ...models.model import Model
+    from ...sandbox.base import Sandbox
+    from ...sandbox.types import ExecutionResult
     from ...tools.decorator import DecoratedFunctionTool
 
 _HEADERS = {
@@ -45,6 +55,18 @@ _HEADERS = {
 
 _DEFAULT_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB
 _DEFAULT_MAX_CONTENT_CHARS = 50_000
+_TIMEOUT_SECONDS = 30
+
+# The characters RFC 3986 allows in a URL; anything else is rejected before the URL reaches a shell.
+_URL_CHARS = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
+# PowerShell prints its edition (Desktop or Core); sh expands the unset variable to an empty line.
+_SHELL_PROBE = 'echo "${PSEdition}"'
+_shells: weakref.WeakKeyDictionary[Sandbox, Literal["sh", "powershell"]] = weakref.WeakKeyDictionary()
+# Room for the content type and exit status that follow the body in the curl output.
+_TRAILER_BYTES = 1024
+_CURL_FILESIZE_EXCEEDED = 63
+_CURL_TIMED_OUT = 28
+_CANCEL_POLL_SECONDS = 0.05
 
 _ANALYST_PROMPT = (
     "You answer a request about a single fetched web page. Use only the provided "
@@ -63,6 +85,7 @@ def make_web_fetch(
     client: httpx.AsyncClient | None = None,
     model: Model | None = None,
     mode: Literal["markdown", "agentic"] = "agentic",
+    transport: Literal["direct", "sandbox"] = "direct",
 ) -> DecoratedFunctionTool:
     """Create a web fetch tool.
 
@@ -79,18 +102,23 @@ def make_web_fetch(
         client: Optional ``httpx.AsyncClient`` to use for requests. When
             provided, the tool uses it directly and will not close it.
             When ``None``, a new client is created per request with
-            ``follow_redirects=True`` and httpx's default timeout (5s).
+            ``follow_redirects=True`` and a 30 second timeout. Cannot be combined with
+            ``transport='sandbox'``.
         model: Optional model for the analyst. Only used when ``mode='agentic'``.
             Resolution order: this ``model`` > ``agent.aux_model`` > ``agent.model`` of the host
             agent; ``WebFetchError`` if none is available.
         mode: Extraction mode. Defaults to ``agentic``.
+        transport: Where the HTTP request runs. ``direct`` (default) sends it from the agent
+            process; ``sandbox`` runs it as ``curl`` inside the host agent's sandbox, so the
+            sandbox's network rules apply. Both time out after 30 seconds.
 
     Returns:
         A decorated tool that fetches a URL and extracts content according to
         the configured mode:
         - ``agentic`` (default): HTML is converted to markdown and passed to an
           analyst agent that answers a ``prompt``; the full page never enters
-          the main agent's context.
+          the main agent's context. An empty ``prompt`` returns the converted
+          page content instead.
         - ``markdown``: HTML converted to clean markdown; other content
           types returned as-is.
     """
@@ -100,6 +128,10 @@ def make_web_fetch(
         raise ValueError(f"max_content_chars must be positive, got {max_content_chars}")
     if mode not in ("markdown", "agentic"):
         raise ValueError(f"mode must be 'markdown' or 'agentic', got {mode!r}")
+    if transport not in ("direct", "sandbox"):
+        raise ValueError(f"transport must be 'direct' or 'sandbox', got {transport!r}")
+    if transport == "sandbox" and client is not None:
+        raise ValueError("client cannot be combined with transport='sandbox'")
     resolved_description = description or (
         WEB_FETCH_DESCRIPTION_MARKDOWN if mode == "markdown" else WEB_FETCH_DESCRIPTION_AGENTIC
     )
@@ -126,10 +158,11 @@ def make_web_fetch(
             max_bytes=max_bytes,
             client=external_client,
             cancel_signal=cancel_signal,
+            sandbox=_transport_sandbox(transport, tool_context),
         )
 
         is_markup = "html" in content_type.lower() or "xml" in content_type.lower()
-        content = html_to_markdown(raw) if is_markup else raw
+        content = _html_to_markdown(raw) if is_markup else raw
         if len(content) > max_content_chars:
             content = content[:max_content_chars] + "\n\n[content truncated]"
         return content
@@ -137,29 +170,27 @@ def make_web_fetch(
     @tool(name=name, description=resolved_description, context=True)
     async def web_fetch_tool_agentic(
         url: str,
-        prompt: str,
+        prompt: str = "",
         tool_context: ToolContext | None = None,
     ) -> str:
-        """Fetches an HTTP(S) URL and returns an analyst's answer about it.
+        """Fetches an HTTP(S) URL and returns an analyst's answer about it, or the page content for an empty prompt.
 
         Raises ``WebFetchError`` if the request fails or the client's timeout is exceeded.
 
         Args:
             url: The URL to fetch. Must be ``http://`` or ``https://``.
-            prompt: The question or instruction about the page content.
+            prompt: The question or instruction about the page content. Leave empty to get
+                the page content itself instead of an answer.
             tool_context: Framework-injected. Not model-visible. Carries the
                 agent so the tool can read its cancel signal.
         """
         # Local import to avoid circular dependency
         from ...agent.agent import Agent
 
-        if not prompt.strip():
-            raise WebFetchError("web_fetch: agentic mode requires a non-empty prompt.")
-
         host_agent = tool_context.agent if tool_context else None
         host_model = getattr(host_agent, "aux_model", None) or getattr(host_agent, "model", None)
         effective_model = analyst_model or host_model
-        if effective_model is None:
+        if prompt.strip() and effective_model is None:
             raise WebFetchError(
                 "web_fetch: agentic mode requires a model. "
                 "Pass model= to make_web_fetch or call the tool from an agent."
@@ -171,7 +202,15 @@ def make_web_fetch(
             max_bytes=max_bytes,
             client=external_client,
             cancel_signal=cancel_signal,
+            sandbox=_transport_sandbox(transport, tool_context),
         )
+
+        is_markup = "html" in content_type.lower() or "xml" in content_type.lower()
+        content = _html_to_markdown(raw) if is_markup else raw
+        if len(content) > max_content_chars:
+            content = content[:max_content_chars] + "\n\n[content truncated]"
+        if not prompt.strip():
+            return content
 
         # Fresh agent per call — no history from one fetch bleeds into the next.
         analyst = Agent(
@@ -179,10 +218,6 @@ def make_web_fetch(
             system_prompt=_ANALYST_PROMPT,
             callback_handler=None,
         )
-        is_markup = "html" in content_type.lower() or "xml" in content_type.lower()
-        content = html_to_markdown(raw) if is_markup else raw
-        if len(content) > max_content_chars:
-            content = content[:max_content_chars] + "\n\n[content truncated]"
         invoke_prompt = f"URL: {url}\n\nRequest: {prompt}\n\n--- Content ---\n{content}"
         try:
             result = await analyst.invoke_async(
@@ -212,8 +247,11 @@ async def _fetch_once(
     max_bytes: int,
     client: httpx.AsyncClient | None,
     cancel_signal: threading.Event | None,
+    sandbox: Sandbox | None = None,
 ) -> tuple[str, str]:
     """Perform one HTTP GET, returning ``(content_type, body_text)``.
+
+    The request runs as ``curl`` inside ``sandbox`` when one is given, otherwise through ``client``.
 
     Raises:
         asyncio.CancelledError: When the agent cancel signal is set.
@@ -223,8 +261,12 @@ async def _fetch_once(
     if cancel_signal is not None and cancel_signal.is_set():
         raise asyncio.CancelledError("Web fetch tool request cancelled")
 
+    if sandbox is not None:
+        content_type, body = await _fetch_sandbox(sandbox, url, max_bytes, cancel_signal)
+        return content_type, _decode(body, content_type)
+
     owns_client = client is None
-    active_client = client if client is not None else httpx.AsyncClient(follow_redirects=True)
+    active_client = client if client is not None else httpx.AsyncClient(follow_redirects=True, timeout=_TIMEOUT_SECONDS)
     try:
         try:
             request = active_client.build_request("GET", url, headers=_HEADERS)
@@ -253,13 +295,15 @@ async def _fetch_once(
         if owns_client:
             await active_client.aclose()
 
-    charset = _parse_charset(content_type)
-    try:
-        raw = body.decode(charset, errors="replace")
-    except LookupError:
-        raw = body.decode("utf-8", errors="replace")
+    return content_type, _decode(body, content_type)
 
-    return content_type, raw
+
+def _decode(body: bytes, content_type: str) -> str:
+    """Decode ``body`` with the charset of ``content_type``, falling back to ``utf-8``."""
+    try:
+        return body.decode(_parse_charset(content_type), errors="replace")
+    except LookupError:
+        return body.decode("utf-8", errors="replace")
 
 
 def _parse_charset(content_type: str) -> str:
@@ -271,3 +315,136 @@ def _parse_charset(content_type: str) -> str:
             if value:
                 return value
     return "utf-8"
+
+
+def _html_to_markdown(html: str) -> str:
+    # Imported on first conversion so the tool loads without the optional ``web-fetch`` extra.
+    from ._extract import html_to_markdown
+
+    return html_to_markdown(html)
+
+
+def _transport_sandbox(transport: str, tool_context: ToolContext | None) -> Sandbox | None:
+    """Return the host agent's sandbox for the ``sandbox`` transport, ``None`` for ``direct``."""
+    if transport == "direct":
+        return None
+    sandbox: Sandbox | None = getattr(getattr(tool_context, "agent", None), "sandbox", None)
+    if sandbox is None:
+        raise WebFetchError("web_fetch: transport='sandbox' requires a sandbox. Call the tool from an agent.")
+    return sandbox
+
+
+async def _fetch_sandbox(
+    sandbox: Sandbox, url: str, max_bytes: int, cancel_signal: threading.Event | None
+) -> tuple[str, bytes]:
+    """Perform one HTTP GET as ``curl`` inside ``sandbox``, returning ``(content_type, body)``.
+
+    Raises the same errors as :func:`_fetch_once`.
+    """
+    url = url.strip()
+    if not _URL_CHARS.fullmatch(url):
+        raise WebFetchError(
+            "Fetch failed: the URL may only contain the characters RFC 3986 allows. "
+            "Percent-encode spaces and non-ASCII characters."
+        )
+    if not re.match(r"https?://[^/?#]", url, re.IGNORECASE):
+        raise WebFetchError(f"Fetch failed: only http and https URLs are supported, got {url!r}")
+
+    # A body that fills ``limit`` bytes has pushed the trailer out, so it is over ``max_bytes``.
+    limit = max_bytes + _TRAILER_BYTES
+    try:
+        build = _powershell_curl_command if await _shell_of(sandbox) == "powershell" else _curl_command
+        result = await _execute(sandbox, build(url, max_bytes, limit), cancel_signal)
+    except SandboxTimeoutError as error:
+        raise WebFetchError(f"Fetch timed out: {url!r}") from error
+
+    return _parse_curl_result(result, url, max_bytes, limit)
+
+
+def _parse_curl_result(result: ExecutionResult, url: str, max_bytes: int, limit: int) -> tuple[str, bytes]:
+    """Split the curl command's output into ``(content_type, body)``, raising ``WebFetchError`` if curl failed."""
+    exit_code, body, content_type = result.exit_code, b"", b""
+    if exit_code == 0:
+        try:
+            data = base64.b64decode("".join(result.stdout.split()))
+            head, _, status = data.rpartition(b"\n")
+            body, _, content_type = head.rpartition(b"\n")
+            exit_code = _CURL_FILESIZE_EXCEEDED if len(data) >= limit else int(status)
+        except ValueError as error:
+            raise WebFetchError("Fetch failed: unexpected curl output from the sandbox") from error
+    if exit_code == _CURL_FILESIZE_EXCEEDED or len(body) > max_bytes:
+        raise WebFetchError(f"Response body exceeded {max_bytes} bytes. Refusing to buffer more.")
+    if exit_code == _CURL_TIMED_OUT:
+        raise WebFetchError(f"Fetch timed out: {url!r}")
+    if exit_code != 0:
+        raise WebFetchError(f"Fetch failed: {result.stderr.strip() or f'curl exited with code {exit_code}'}")
+    return content_type.decode("latin-1").strip(), body
+
+
+async def _execute(sandbox: Sandbox, command: str, cancel_signal: threading.Event | None) -> ExecutionResult:
+    """Run ``command`` in ``sandbox``, killing it when ``cancel_signal`` is set."""
+    task = asyncio.ensure_future(sandbox.execute(command, timeout=_TIMEOUT_SECONDS + 5))
+    try:
+        while not (await asyncio.wait([task], timeout=_CANCEL_POLL_SECONDS))[0]:
+            if cancel_signal is not None and cancel_signal.is_set():
+                raise asyncio.CancelledError("Web fetch tool request cancelled")
+        return task.result()
+    finally:
+        task.cancel()
+
+
+async def _shell_of(sandbox: Sandbox) -> Literal["sh", "powershell"]:
+    """Return the shell ``sandbox`` runs commands in, probing it the first time."""
+    if sandbox not in _shells:
+        result = await sandbox.execute(_SHELL_PROBE, timeout=_TIMEOUT_SECONDS)
+        # A failed probe is inconclusive: answer ``sh`` for this call and probe again next time.
+        if result.exit_code != 0:
+            return "sh"
+        _shells[sandbox] = "powershell" if result.stdout.strip() in ("Desktop", "Core") else "sh"
+    return _shells[sandbox]
+
+
+def _curl_command(url: str, max_bytes: int, limit: int) -> str:
+    # stdout is base64 of the body, a newline, the content type, a newline, and curl's exit status. ``head`` stops
+    # curl at ``limit`` bytes, which --max-filesize alone does not when the response has no Content-Length.
+    return (
+        f"{{ curl {_curl_args(max_bytes)} -w '\\n%{{content_type}}' -- {shlex.quote(url)}; "
+        f"printf '\\n%s' \"$?\"; }} | head -c {limit} | base64"
+    )
+
+
+def _powershell_curl_command(url: str, max_bytes: int, limit: int) -> str:
+    # Same stdout as ``_curl_command``. ``curl.exe`` because ``curl`` is an Invoke-WebRequest alias in Windows
+    # PowerShell; .NET reads the raw bytes and writes errors, both of which PowerShell's own pipeline would re-encode.
+    quoted_url = url.replace("'", "''")
+    arguments = f'{_curl_args(max_bytes)} -w "\\n%{{content_type}}\\n0" -- "{quoted_url}"'
+    return "\n".join(
+        [
+            "$status = 127",
+            "try {",
+            f"  $info = New-Object Diagnostics.ProcessStartInfo 'curl.exe', '{arguments}'",
+            "  $info.UseShellExecute = $false",
+            "  $info.RedirectStandardOutput = $true",
+            "  $info.RedirectStandardError = $true",
+            "  $process = [Diagnostics.Process]::Start($info)",
+            "  $errors = $process.StandardError.ReadToEndAsync()",
+            f"  $bytes = (New-Object IO.BinaryReader $process.StandardOutput.BaseStream).ReadBytes({limit})",
+            f"  $full = $bytes.Length -ge {limit}",
+            "  if ($full) { try { $process.Kill() } catch { } }",
+            "  $process.WaitForExit()",
+            "  $status = if ($full) { 0 } else { $process.ExitCode }",
+            "  if ($status -eq 0) { [Convert]::ToBase64String($bytes) } "
+            "else { [Console]::Error.Write($errors.Result) }",
+            "} catch { if ($status -eq 0) { $status = 1 }; [Console]::Error.Write($_.Exception.Message) }",
+            "exit $status",
+        ]
+    )
+
+
+def _curl_args(max_bytes: int) -> str:
+    # -g keeps ``[]`` in the URL literal; --proto/--proto-redir keep the request and every redirect on http(s).
+    # Double quotes mean the same to sh and to a Windows command line.
+    return (
+        f'-sSL -g --fail --proto "=http,https" --proto-redir "=http,https" --max-time {_TIMEOUT_SECONDS} '
+        f'--max-filesize {max_bytes} -A "{_HEADERS["User-Agent"]}" -H "Accept: {_HEADERS["Accept"]}"'
+    )

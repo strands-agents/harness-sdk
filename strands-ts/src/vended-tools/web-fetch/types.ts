@@ -14,8 +14,8 @@ export interface WebFetchMarkdownInput {
 export interface WebFetchAgenticInput {
   /** URL to fetch. Must be http:// or https://. */
   url: string
-  /** Question or instruction about the page content. */
-  prompt: string
+  /** Question or instruction about the page content. Empty returns the page content itself. */
+  prompt?: string
 }
 
 export const WEB_FETCH_DESCRIPTION_MARKDOWN =
@@ -27,7 +27,7 @@ export const WEB_FETCH_DESCRIPTION_AGENTIC =
   'Fetches an HTTP(S) URL and answers a prompt about its content. ' +
   'The analyst processes the page directly so the full content never enters ' +
   "the main agent's context. " +
-  'The prompt parameter is required.'
+  'Leave the prompt empty to get the page content itself instead of an answer.'
 
 /**
  * Options for {@link makeWebFetch}.
@@ -48,4 +48,9 @@ export interface MakeWebFetchOptions {
   model?: Model
   /** Extraction mode. Defaults to `'agentic'`. */
   mode?: 'markdown' | 'agentic'
+  /**
+   * Where the HTTP request runs. `'direct'` (default) uses global `fetch` from the agent process;
+   * `'sandbox'` runs `curl` inside the host agent's sandbox, so the sandbox's network rules apply.
+   */
+  transport?: 'direct' | 'sandbox'
 }

@@ -23,9 +23,9 @@ The :data:`http_request` tool makes raw HTTP calls; use
 with custom timeouts, redirects, authentication, or proxies.
 The :data:`web_fetch` tool fetches an HTTP(S) URL and by default returns an
 analyst's answer to a prompt about the page content (``mode='agentic'``); use
-``make_web_fetch(mode='markdown')`` for clean markdown output. It
-requires the optional ``web-fetch`` extra (``pip install 'strands-agents[web-fetch]'``)
-and is imported lazily, so accessing it without that extra raises :class:`ImportError`.
+``make_web_fetch(mode='markdown')`` for clean markdown output. Converting an
+HTML page requires the optional ``web-fetch`` extra (``pip install 'strands-agents[web-fetch]'``),
+which is loaded on the first conversion.
 
 The :data:`python_repl` tool runs Python through the agent's sandbox; use :func:`make_python_repl`
 to bind a sandbox or choose the interpreter. Each call runs in a fresh process,
@@ -107,8 +107,8 @@ def __getattr__(name: str) -> Any:
         from ._bash import bash
 
         return bash
-    # web_fetch pulls the optional ``web-fetch`` extra, so it is lazy-loaded to keep
-    # the base import free of those dependencies.
+    # web_fetch is loaded on first access; its optional ``web-fetch`` extra is imported only when
+    # an HTML page is converted.
     if name in ("make_web_fetch", "web_fetch"):
         from .web_fetch import make_web_fetch, web_fetch
 
