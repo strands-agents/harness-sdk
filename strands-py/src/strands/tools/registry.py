@@ -568,13 +568,8 @@ class ToolRegistry:
     def get_all_tool_specs(self) -> list[ToolSpec]:
         """Get all the tool specs for all tools in this registry.
 
-        Every model-facing path reads specs from here, so they all send the same order. When `sort_tool_specs`
-        is set, specs are sorted by name so identical tool catalogs produce the same model request regardless of
-        registration order (for example, MCP servers returning tools in a different order across restarts),
-        which keeps prompt-cache prefixes stable. Middleware can still reorder the specs it passes to the model.
-
         Returns:
-            A list of ToolSpecs, in registration order or sorted by name when `sort_tool_specs` is set.
+            A list of ToolSpecs, sorted by name when `sort_tool_specs` is set, otherwise in registration order.
         """
         tool_specs = list(self.get_all_tools_config().values())
         if self.sort_tool_specs:

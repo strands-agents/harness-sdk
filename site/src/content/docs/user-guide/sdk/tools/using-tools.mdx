@@ -126,7 +126,7 @@ return the same tools in different orders, turn on sorting with
 <Syntax py="Agent(sort_tools=True)" ts="new Agent({ sortTools: true })" />.
 Tool definitions are then sorted by name on every request the agent makes,
 including context summaries. This helps avoid prompt-cache misses; it does not
-enable caching. The tool registry and `agent.tools` keep registration order either way.
+enable caching.
 
 Sorting happens before middleware runs, so middleware on the model-invocation stage
 receives the sorted list and can reorder it. The model receives whatever order the

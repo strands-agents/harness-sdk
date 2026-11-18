@@ -162,15 +162,9 @@ export class ToolRegistry {
   }
 
   /**
-   * Returns the specs of all registered tools, as sent to the model.
+   * Returns the specs of all registered tools, sorted by name when {@link sortToolSpecs} is set.
    *
-   * Every model-facing path reads specs from here so they all send the same order. When
-   * {@link sortToolSpecs} is set, specs are sorted by name so identical tool catalogs produce the same
-   * model request regardless of registration order (for example, MCP servers returning tools in a
-   * different order across restarts), which keeps prompt-cache prefixes stable. Middleware can still
-   * reorder the specs it passes to the model. {@link list} always keeps registration order.
-   *
-   * @returns Array of tool specs, in registration order or sorted by name when `sortToolSpecs` is set
+   * @returns Array of tool specs, sorted by name or in registration order
    */
   toolSpecs(): ToolSpec[] {
     const specs = this.list().map((tool) => tool.toolSpec)
