@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+import strands
 from strands._context_manager.placeholder import (
     REMOVED_MESSAGES,
     format_offloaded,
@@ -20,6 +21,7 @@ from strands._context_manager.types import ContextState
 from strands.agent.invocation_context import _create_invocation_context
 from strands.models import Model, SummarizeResult
 from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
+from strands.tools.registry import ToolRegistry
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.event_loop import Usage
 from strands.types.tools import ToolResult, ToolUse
@@ -623,6 +625,22 @@ class TestRunSummaryReplaysTheAgentRequest:
             "cancel_signal": mock_agent._cancel_signal,
             "agent_metadata": mock_agent._metadata,
         }
+
+    @pytest.mark.asyncio
+    async def test_sends_the_tools_in_the_same_sorted_order_as_the_model_call(self, mock_agent):
+        # The summary must send the same tools block as the main loop to keep the cache and thinking valid (#5700).
+        mock_agent.tool_registry = ToolRegistry(sort_tool_specs=True)
+        for name in ["zeta", "alpha", "mike"]:
+            mock_agent.tool_registry.register_tool(strands.tool(lambda a: a, name=name))
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        tru_tool_names = [spec["name"] for spec in mock_agent.model.summarize.await_args.kwargs["tool_specs"]]
+        exp_tool_names = ["alpha", "mike", "zeta"]
+        assert tru_tool_names == exp_tool_names
 
     @pytest.mark.asyncio
     async def test_summarizes_each_side_of_a_kept_pin_on_its_own(self):
