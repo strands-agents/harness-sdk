@@ -26,17 +26,8 @@ class Profile(BaseModel):
     occupation: str
 
 
-# A provider can be unavailable for a short while, so an error gets three attempts half a minute apart. A failed
-# assertion is the case's verdict and is not retried. Slow reasoning models can take longer than the suite's
-# default timeout.
-pytestmark = [
-    pytest.mark.flaky(reruns=2, reruns_delay=30, rerun_except=["AssertionError", "^assert "]),
-    pytest.mark.timeout(180),
-]
-
-# On a single call a model can skip a tool or ignore injected text, so these cases also retry a failed assertion.
-# A target that does it often belongs in knownFailures as intermittent.
-retries_assertions = pytest.mark.flaky(reruns=2, reruns_delay=30)
+# A case can take three attempts half a minute apart, and slow reasoning models take over a minute per call.
+pytestmark = pytest.mark.timeout(600)
 
 PROFILE_PROMPT = "Create a profile for John who is a 25 year old dentist."
 EXPECTED_PROFILE = Profile(name="John", age=25, occupation="dentist")
@@ -96,7 +87,6 @@ def test_known_failures_name_a_live_target_and_a_case():
 
 
 @conformance.case("tool-use")
-@retries_assertions
 def test_tool_use(model):
     agent = _agent(model, tools=[echo])
 
@@ -116,7 +106,6 @@ def test_context_window(model, target):
 
 
 @conformance.case("structured-output")
-@retries_assertions
 def test_structured_output(model):
     result = _agent(model)(PROFILE_PROMPT, structured_output_model=Profile)
 
@@ -144,7 +133,6 @@ async def _forced_tool_choice_outcome(model, alist):
 
 
 @conformance.case("forced-tool-choice")
-@retries_assertions
 @pytest.mark.asyncio
 async def test_forced_tool_choice(model, alist):
     tru_outcome = await _forced_tool_choice_outcome(model, alist)
@@ -219,7 +207,6 @@ async def test_server_side_summary(model):
 
 
 @conformance.case("temporary-messages")
-@retries_assertions
 def test_temporary_messages(model):
     order_number = uuid.uuid4().hex[:8]
     agent = _agent(model, plugins=[ContextInjector(lambda context: f"The user's order number is {order_number}.")])

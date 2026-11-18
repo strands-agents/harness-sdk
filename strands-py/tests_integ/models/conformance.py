@@ -3,11 +3,15 @@
 See shared/README.md for the file format, how a case applies to a model, and the result record.
 """
 
+import asyncio
+import functools
+import inspect
 import itertools
 import json
 import os
 import pathlib
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -48,6 +52,13 @@ CACHE_PROMPT = "\n".join(
 )
 
 NOT_APPLICABLE = "not applicable"
+
+# On a single call a model can skip a tool or ignore injected text, so these cases also retry a failed assertion.
+# A target that does it often belongs in knownFailures as intermittent.
+_RETRIES_ASSERTIONS = {"tool-use", "structured-output", "forced-tool-choice", "temporary-messages"}
+# A provider can be unavailable for a short while, so an error that may clear gets a few spaced attempts.
+_ATTEMPTS = 3
+_RETRY_DELAY_SECONDS = 30
 # The cases call every listed model, so they only run when asked: "core" runs the targets marked core and any
 # other value runs them all. See shared/README.md for when CI sets each.
 MODE = os.environ.get("STRANDS_CONFORMANCE", "")
@@ -138,13 +149,43 @@ TARGETS = [
 IMPLEMENTED: set[str] = set()
 
 
+def _may_pass_on_retry(case_id: str, error: Exception) -> bool:
+    if isinstance(error, AssertionError):
+        return case_id in _RETRIES_ASSERTIONS
+    return not _will_not_clear(error)
+
+
 def case(case_id: str) -> Callable:
-    """Mark a test as the implementation of a shared case."""
+    """Mark a test as the implementation of a shared case, retried when another attempt may pass."""
 
     def decorator(test: Callable) -> Callable:
-        test.conformance_case = case_id
+        def give_up(attempt: int, error: Exception) -> bool:
+            return attempt == _ATTEMPTS or not _may_pass_on_retry(case_id, error)
+
+        @functools.wraps(test)
+        def sync_test(*args: Any, **kwargs: Any) -> Any:
+            for attempt in itertools.count(1):
+                try:
+                    return test(*args, **kwargs)
+                except Exception as error:
+                    if give_up(attempt, error):
+                        raise
+                time.sleep(_RETRY_DELAY_SECONDS)
+
+        @functools.wraps(test)
+        async def async_test(*args: Any, **kwargs: Any) -> Any:
+            for attempt in itertools.count(1):
+                try:
+                    return await test(*args, **kwargs)
+                except Exception as error:
+                    if give_up(attempt, error):
+                        raise
+                await asyncio.sleep(_RETRY_DELAY_SECONDS)
+
+        wrapped = async_test if inspect.iscoroutinefunction(test) else sync_test
+        wrapped.conformance_case = case_id
         IMPLEMENTED.add(case_id)
-        return test
+        return wrapped
 
     return decorator
 
@@ -191,6 +232,16 @@ def provider_error_reason(error: BaseException | None) -> str | None:
             return f"{type(error).__name__} (HTTP {status})"
         error = error.__cause__ or error.__context__
     return None
+
+
+def _will_not_clear(error: BaseException | None) -> bool:
+    """Whether the provider rejected the request with a 4xx that is neither a timeout nor a throttle."""
+    while error is not None:
+        status = _http_status(error)
+        if status is not None:
+            return 400 <= status < 500 and status not in (408, 429)
+        error = error.__cause__ or error.__context__
+    return False
 
 
 def _known_failure(item: pytest.Item) -> dict[str, Any] | None:
