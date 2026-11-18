@@ -15,13 +15,13 @@ namespace Drupe {
 
   type searchOutput = {  };
 
-  entity Gateway;
+  entity Resource;
 
   entity User;
 
   action "CallTool" in [Action::"Mcp"] appliesTo {
     principal: [User],
-    resource: [Gateway],
+    resource: [Resource],
     context: {
       isOutput: Bool,
       output?: {      },
@@ -31,7 +31,7 @@ namespace Drupe {
 
   action "Mcp" appliesTo {
     principal: [User],
-    resource: [Gateway],
+    resource: [Resource],
     context: {
       isOutput: Bool,
       output?: {      },
@@ -41,7 +41,7 @@ namespace Drupe {
 
   action "delete_file" in [Action::"CallTool"] appliesTo {
     principal: [User],
-    resource: [Gateway],
+    resource: [Resource],
     context: {
       input: delete_fileInput,
       output?: delete_fileOutput,
@@ -51,7 +51,7 @@ namespace Drupe {
 
   action "search" in [Action::"CallTool"] appliesTo {
     principal: [User],
-    resource: [Gateway],
+    resource: [Resource],
     context: {
       input: searchInput,
       output?: searchOutput,

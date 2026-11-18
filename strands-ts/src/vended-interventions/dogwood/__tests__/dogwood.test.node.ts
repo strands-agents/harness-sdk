@@ -403,7 +403,7 @@ describe('DogwoodAuthorization', () => {
       const dogwood = new DogwoodAuthorization({
         policies: `
           permit(principal == Acme::User::"anonymous", action == Acme::Action::"search",
-                 resource == Acme::Gateway::"agent")
+                 resource == Acme::Resource::"agent")
           when { context.input.query == "test" };
 
           permit(principal, action == Acme::Action::"delete_file", resource)
@@ -456,6 +456,32 @@ describe('DogwoodAuthorization', () => {
 
       expect(authed).toEqual({ type: 'proceed' })
       expect(anonymous).toMatchObject({ type: 'deny' })
+    })
+
+    // Renaming the generator's resource entity must not touch a tool that
+    // carries the same word in its own name, or the action it declares becomes
+    // unreachable and no rule can ever apply to it.
+    it('decides a tool named after the entity the generated schema renames', () => {
+      const dogwood = new DogwoodAuthorization({
+        policies: `permit(principal, action == Action::"Gateway_admin", resource == Resource::"agent");
+                   forbid(principal, action == Action::"Gateway_admin", resource)
+                   when { context.input.Gateway == "root" };`,
+        tools: [
+          {
+            name: 'Gateway_admin',
+            description: 'Administer the gateway',
+            inputSchema: { type: 'object', properties: { Gateway: { type: 'string' } }, required: ['Gateway'] },
+          },
+        ],
+      })
+
+      const permitted = dogwood.beforeToolCall(beforeEvent('Gateway_admin', { input: { Gateway: 'staging' } }))
+      const forbidden = dogwood.beforeToolCall(
+        beforeEvent('Gateway_admin', { toolUseId: 'tool-2', input: { Gateway: 'root' } })
+      )
+
+      expect(permitted).toEqual({ type: 'proceed' })
+      expect(forbidden).toMatchObject({ type: 'deny' })
     })
 
     // An undeclared principal type passes validation and allows the call,

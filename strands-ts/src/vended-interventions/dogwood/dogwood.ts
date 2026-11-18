@@ -17,6 +17,12 @@ const ENRICHED_GROUP = 'session'
 /** The namespace Dogwood's schema generator emits. It takes no namespace of its own. */
 const GENERATED_NAMESPACE = 'Drupe'
 
+/** The resource entity Dogwood's schema generator emits, from its MCP-gateway template. */
+const GENERATED_RESOURCE = 'Gateway'
+
+/** The resource entity a schema declares, matching `CedarAuthorization`. */
+const RESOURCE = 'Resource'
+
 /** A Cedar namespace: one or more `::`-separated identifiers. */
 const CEDAR_NAMESPACE = /^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*$/
 
@@ -59,7 +65,7 @@ export interface DogwoodAuthorizationConfig {
    *
    * The handler reads the namespace from the schema's actions and derives the
    * default principal and the resource from it, so the schema must declare its
-   * user entity as `User` and its gateway entity as `Gateway`.
+   * user entity as `User` and its resource entity as `Resource`.
    */
   actionSchema?: string
 
@@ -67,7 +73,7 @@ export interface DogwoodAuthorizationConfig {
    * Entities supplied to every decision — attributes and hierarchy a policy reads.
    *
    * Requires `actionSchema`; a non-empty list alongside `tools` throws, because a
-   * generated schema declares `entity User;` / `entity Gateway;` with no
+   * generated schema declares `entity User;` / `entity Resource;` with no
    * attributes and no membership, so an entity carrying either fails
    * conformance at decision time and denies every call.
    */
@@ -266,7 +272,7 @@ export class DogwoodAuthorization extends InterventionHandler {
       this._authorizer.actions.map((action) => [action.slice(action.lastIndexOf('::') + 2), action])
     )
     this._declaredKinds = new Set(this._authorizer.eventKinds)
-    this._resource = { type: `${namespace}Gateway`, id: 'agent' }
+    this._resource = { type: `${namespace}${RESOURCE}`, id: 'agent' }
     this._principalType = config.actionSchema ? undefined : `${namespace}User`
     this._defaultPrincipal = config.principalResolver
       ? undefined
@@ -528,7 +534,21 @@ function loadSource(value: string, extension: string): string {
  */
 function generateActionSchema(tools: (Tool | ToolSpec)[] | undefined): string {
   const specs = tools?.map((tool) => ('toolSpec' in tool ? tool.toolSpec : tool))
-  return mcpToCedarSchema(JSON.stringify(specs, retypeForRawArguments))
+  return renameResource(mcpToCedarSchema(JSON.stringify(specs, retypeForRawArguments)))
+}
+
+/**
+ * Renames the generator's resource entity to the one `CedarAuthorization` uses,
+ * so a policy naming the resource reads the same against either handler.
+ *
+ * Only the declaration and the action references are rewritten: a tool or
+ * parameter whose own name contains {@link GENERATED_RESOURCE} must keep it, or
+ * the action it declares becomes unreachable.
+ */
+function renameResource(schema: string): string {
+  return schema
+    .replace(`entity ${GENERATED_RESOURCE};`, `entity ${RESOURCE};`)
+    .replaceAll(`resource: [${GENERATED_RESOURCE}]`, `resource: [${RESOURCE}]`)
 }
 
 /**

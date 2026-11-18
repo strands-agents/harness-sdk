@@ -30,7 +30,7 @@ event if the tool threw, which is what later temporal rules match against.
 |---|---|---|
 | **Principal** | User identity | `User::"alice"` |
 | **Action** | Tool name | `Action::"search"` |
-| **Resource** | The agent gateway | `Gateway::"agent"` |
+| **Resource** | The agent itself | `Resource::"agent"` |
 | **context.input** | Tool arguments | `{ query: "quarterly report" }` |
 | **Event history** | Calls and results so far | `formerly within 1h …::response{}` |
 
@@ -60,7 +60,7 @@ Generated action ids are the tool names verbatim, so every tool name must be a l
 identifier. A name containing `-`, `.`, or a space fails schema generation and throws.
 
 A hand-written `actionSchema` must declare the entity types the handler actually sends:
-`Gateway` for the resource, which is always `Gateway::"agent"` under whatever namespace
+`Resource` for the resource, which is always `Resource::"agent"` under whatever namespace
 the schema declares, and `User` for the default principal. A policy that names an entity
 type the schema does not declare fails validation in the constructor.
 
@@ -153,6 +153,9 @@ scopes the principal simply never matches, so a `forbid` would silently not appl
 
 --8<-- "user-guide/sdk/agents/interventions/dogwood-authorization.ts:file_policy"
 ```
+
+The extension is what selects file over text, so a path with any other suffix is read as
+source and fails to parse rather than reporting a missing file.
 
 Files are read, parsed, and validated in the constructor. There is no re-read at runtime,
 so an edited policy file takes effect the next time the handler is constructed.
