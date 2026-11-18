@@ -88,34 +88,58 @@ describe('FileStorage', () => {
       expect(await fs.readdir(directory)).toEqual([kind === 'snapshot' ? 'snapshot_latest.json' : 'manifest.json'])
     })
 
-    it('continues queued saves after a rename fails', async () => {
+    it('starts a rename only after the previous one to the same file settles, even if it failed', async () => {
       const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
       const snapshots = createTestSnapshots(2)
-      const writeFile = fs.writeFile.bind(fs)
-      let arrived = 0
-      let release!: () => void
-      const writesFinished = new Promise<void>((resolve) => {
-        release = resolve
-      })
-      vi.spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
-        await writeFile(...args)
-        if (++arrived === snapshots.length) release()
-        await writesFinished
-      })
       const error = new Error('Rename failed')
-      vi.spyOn(fs, 'rename').mockRejectedValueOnce(error)
-
-      const results = await Promise.allSettled(
-        snapshots.map((snapshot) => storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot }))
+      let failFirstRename!: () => void
+      const rename = vi.spyOn(fs, 'rename').mockImplementationOnce(
+        () =>
+          new Promise<void>((_, reject) => {
+            failFirstRename = () => reject(error)
+          })
       )
+      const writeFile = vi.spyOn(fs, 'writeFile')
 
-      expect(results.filter((result) => result.status === 'fulfilled')).toEqual([
-        { status: 'fulfilled', value: undefined },
-      ])
+      const saves = snapshots.map((snapshot) =>
+        storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+      )
+      await vi.waitFor(() => expect(writeFile).toHaveBeenCalledTimes(2))
+      await Promise.all(writeFile.mock.results.map((result) => result.value))
+      await new Promise((resolve) => setTimeout(resolve))
+      expect(rename).toHaveBeenCalledTimes(1)
+
+      failFirstRename()
+      const results = await Promise.allSettled(saves)
       expect(results.filter((result) => result.status === 'rejected')).toEqual([
         { status: 'rejected', reason: expect.objectContaining({ name: 'SessionError', cause: error }) },
       ])
+      expect(rename).toHaveBeenCalledTimes(2)
       expect(snapshots).toContainEqual(await storage.loadSnapshot({ location }))
+    })
+
+    it('persists complete JSON for many overlapping saves on the real filesystem', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const snapshots = Array.from({ length: 20 }, (_, index) =>
+        createTestSnapshot({ appData: { value: 'x'.repeat((index + 1) * 1000) } })
+      )
+      const manifests = Array.from({ length: 20 }, (_, index) =>
+        createTestManifest({ updatedAt: new Date(Date.UTC(2024, 0, index + 1)).toISOString() })
+      )
+      const stores = [storage, new FileStorage(testDir)]
+
+      const results = await Promise.allSettled([
+        ...snapshots.map((snapshot, index) =>
+          stores[index % 2]!.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+        ),
+        ...manifests.map((manifest, index) => stores[index % 2]!.saveManifest({ location, manifest })),
+      ])
+
+      expect(results.filter((result) => result.status === 'rejected')).toEqual([])
+      expect(snapshots).toContainEqual(await storage.loadSnapshot({ location }))
+      expect(manifests).toContainEqual(await storage.loadManifest({ location }))
+      const directory = join(testDir, location.sessionId, 'scopes', location.scope, location.scopeId, 'snapshots')
+      expect((await fs.readdir(directory)).sort()).toEqual(['manifest.json', 'snapshot_latest.json'])
     })
   })
 
@@ -174,7 +198,7 @@ describe('FileStorage', () => {
       await expect(
         storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: createTestSnapshot() })
       ).rejects.toMatchObject({ name: 'SessionError', message: `Failed to write file ${path}`, cause: error })
-      expect(fs.rm).toHaveBeenCalledWith(expect.any(String), { force: true })
+      expect(fs.rm).toHaveBeenCalledWith(expect.stringMatching(/snapshot_latest\.json\..+\.tmp$/), { force: true })
     })
   })
 

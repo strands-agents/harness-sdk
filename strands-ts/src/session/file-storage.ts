@@ -177,7 +177,7 @@ export class FileStorage implements SnapshotStorage {
       const { promises: fs } = await import('fs')
       const { dirname, resolve } = await import('path')
       await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
-      const { randomUUID } = await import('node:crypto')
+      const { randomUUID } = await import('crypto')
       const uniquePath = `${path}.${randomUUID()}.tmp`
       tmpPath = uniquePath
       await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
