@@ -53,7 +53,7 @@ The second row is the best anyone can do with the totals alone. It is 78% too hi
 | Tool | What changes | Tracked in |
 |---|---|---|
 | `subagent` | The harness calls the SDK's `make_subagent`. Its own copy (about 800 lines per language) is deleted. | [#5276](https://github.com/strands-agents/harness-sdk/issues/5276), PR [#6088](https://github.com/strands-agents/harness-sdk/pull/6088) |
-| `web_fetch` | The harness copy differs from the SDK's in three ways: it fetches inside the agent's sandbox, caches pages for 15 minutes, and returns the page text when the prompt is empty. The SDK's `make_web_fetch` gains a `transport="sandbox"` option; the other two are ported or dropped. Then the harness calls it and deletes its copy. | [#5277](https://github.com/strands-agents/harness-sdk/issues/5277) |
+| `web_fetch` | The harness copy differs from the SDK's in three ways: it fetches inside the agent's sandbox, caches pages for 15 minutes, and returns the page text when the prompt is empty. The SDK's `make_web_fetch` gains a `sandbox=True` option and returns the page on an empty prompt; the cache is dropped. Then the harness calls it and deletes its copy. | [#5277](https://github.com/strands-agents/harness-sdk/issues/5277), PR [#6316](https://github.com/strands-agents/harness-sdk/pull/6316) |
 
 The harness keeps only its policy: which small model summarizes for which provider, and the defaults it passes to the builders.
 
