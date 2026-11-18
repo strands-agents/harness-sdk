@@ -105,6 +105,10 @@ async function _createTurndownService(): Promise<TurndownService> {
   // Cast needed because svg/noscript/template are absent from HTMLElementTagNameMap.
   td.remove(DROPPED_ELEMENTS as unknown as import('turndown').Filter)
 
+  // turndown escapes "1. " at the start of text but not "1) ", which starts an ordered list too.
+  const escape = td.escape.bind(td)
+  td.escape = (text: string): string => escape(text).replace(/^(\d+)\) /, '$1\\) ')
+
   // Render the <title> as a top-level heading so it appears in the document
   // body rather than being silently dropped (turndown ignores <head> elements).
   td.addRule('title', {

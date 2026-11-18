@@ -488,6 +488,8 @@ class TestHtmlToMarkdown:
             ("<title>snake_case *bold* &lt;b&gt;</title>", r"# snake\_case \*bold\* &lt;b&gt;"),
             ("<title>\n(1) Inbox\xa0</title>", "# (1) Inbox"),
             ("<html><head><title>\n My Page\n</title></head><body><p>body</p></body></html>", "# My Page\n\nbody"),
+            # the first title starts the output, where TypeScript writes it where it stands
+            ("<p>a</p><title>Mid</title><p>b</p>", "# Mid\n\na\n\nb"),
             # every title with text is a heading, and a title in a dropped element is dropped
             ("<title> </title><title>One</title><p>body</p><title># Two</title>", "# One\n\nbody\n\n# # Two"),
             (
@@ -536,6 +538,7 @@ class TestHtmlToMarkdown:
         [
             ("<p># Not a heading</p>", r"\# Not a heading"),
             ("<p>> quote</p><p>- a</p><p>+ b</p><p>12. c</p>", "\\> quote\n\n\\- a\n\n\\+ b\n\n12\\. c"),
+            ("<p>1) Not a list</p>", r"1\) Not a list"),
             ("<p>Title</p><p>===</p><p>~~~</p>", "Title\n\n\\===\n\n\\~~~"),
             ("<p>use `rm -rf` now</p>", r"use \`rm -rf\` now"),
             ("<div>1. one<br>2. two</div>", "1\\. one  \n2\\. two"),
@@ -589,7 +592,7 @@ class TestHtmlToMarkdown:
             ("<main> > x</main>", r"\> x"),
             ("a<figcaption><i> - x</i></figcaption>", "a\n\n*\\- x*"),
             ("<p>#<span> x</span></p><p>1.</p>", "\\# x\n\n1\\."),
-            ("<p>1) x</p>", r"1\) x"),
+            ("<p>1)</p>", r"1\)"),
             ("<p><del>~100</del> 80</p><p>~<span>~~</span></p>", "~~\\~100~~ 80\n\n\\~~~"),
             # a table cell follows "|", and text after other output on its line is not escaped as turndown does
             ("<table><tr><th>#</th><th>1.</th></tr></table>", "| # | 1. |\n| --- | --- |"),

@@ -194,6 +194,8 @@ describe('htmlToMarkdown', () => {
     ['<title>snake_case *bold* &lt;b&gt;</title>', '# snake\\_case \\*bold\\* &lt;b&gt;'],
     ['<title>\n(1) Inbox\xa0</title>', '# (1) Inbox'],
     ['<html><head><title>\n My Page\n</title></head><body><p>body</p></body></html>', '# My Page\n\nbody'],
+    // the first title is written where it stands, where Python starts the output with it
+    ['<p>a</p><title>Mid</title><p>b</p>', 'a\n\n# Mid\n\nb'],
     // every title with text is a heading, and a title in a dropped element is dropped
     ['<title> </title><title>One</title><p>body</p><title># Two</title>', '# One\n\nbody\n\n# # Two'],
     [
@@ -231,6 +233,7 @@ describe('htmlToMarkdown', () => {
   it.each([
     ['<p># Not a heading</p>', '\\# Not a heading'],
     ['<p>> quote</p><p>- a</p><p>+ b</p><p>12. c</p>', '\\> quote\n\n\\- a\n\n\\+ b\n\n12\\. c'],
+    ['<p>1) Not a list</p>', '1\\) Not a list'],
     ['<p>Title</p><p>===</p><p>~~~</p>', 'Title\n\n\\===\n\n\\~~~'],
     ['<p>use `rm -rf` now</p>', 'use \\`rm -rf\\` now'],
     ['<div>1. one<br>2. two</div>', '1\\. one  \n2\\. two'],
