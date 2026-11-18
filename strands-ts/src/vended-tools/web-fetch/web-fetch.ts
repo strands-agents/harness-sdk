@@ -243,8 +243,7 @@ function _parseHttpUrl(url: string): URL {
 async function _checkPublic(url: URL, signal: AbortSignal | null): Promise<void> {
   let isPublic: boolean
   try {
-    signal?.throwIfAborted()
-    isPublic = await _orAborted(isPublicHost(url.hostname), signal)
+    isPublic = await _orAborted(() => isPublicHost(url.hostname), signal)
   } catch (error) {
     if (signal?.aborted) {
       throw new Error('Web fetch tool request cancelled', { cause: error })
@@ -263,13 +262,16 @@ async function _checkPublic(url: URL, signal: AbortSignal | null): Promise<void>
   }
 }
 
-// Settles like `promise`, or rejects as soon as `signal` aborts.
-function _orAborted<T>(promise: Promise<T>, signal: AbortSignal | null): Promise<T> {
-  if (!signal) return promise
+// Settles like `start()`, or rejects as soon as `signal` aborts. `start` is not called if it already has.
+function _orAborted<T>(start: () => Promise<T>, signal: AbortSignal | null): Promise<T> {
+  if (!signal) return start()
   return new Promise<T>((resolve, reject) => {
     const onAbort = (): void => reject(signal.reason)
+    if (signal.aborted) return onAbort()
     signal.addEventListener('abort', onAbort, { once: true })
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+    start()
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', onAbort))
   })
 }
 
