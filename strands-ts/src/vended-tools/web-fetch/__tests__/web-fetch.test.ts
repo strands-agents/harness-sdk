@@ -38,6 +38,7 @@ describe('webFetch tool', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(isPublicHost).mockReset()
   })
 
   afterEach(() => {

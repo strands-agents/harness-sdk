@@ -88,12 +88,10 @@ def make_web_fetch(
             Resolution order: this ``model`` > ``agent.aux_model`` > ``agent.model`` of the host
             agent; ``WebFetchError`` if none is available.
         mode: Extraction mode. Defaults to ``agentic``.
-        allow_private_addresses: Allow URLs whose host is, or resolves to, a loopback,
-            link-local, private, or otherwise non-public address. Defaults to ``False``:
-            such a URL is refused with ``WebFetchError``, as is a redirect to one and a
-            host this process cannot resolve. Set it when a proxy or custom transport
-            resolves names for the client. The host is resolved before connecting, so a
-            hostname whose DNS answer changes in between (DNS rebinding) still gets through.
+        allow_private_addresses: Allow URLs whose host is, or resolves to, a loopback, link-local,
+            private, or otherwise non-public address. Defaults to ``False``: such a URL, a redirect
+            to one, and a host this process cannot resolve are refused with ``WebFetchError``. Set
+            it when a proxy or custom transport resolves names. The check does not stop DNS rebinding.
 
     Returns:
         A decorated tool that fetches a URL and extracts content according to
