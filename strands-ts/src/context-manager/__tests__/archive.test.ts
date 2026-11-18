@@ -58,6 +58,19 @@ describe('Archive', () => {
       const result = await archive.retrieve(ref)
       expect(result).toBeNull()
     })
+
+    it('drops the window index with the entry it was derived from', async () => {
+      const storage = new InMemoryStorage()
+      const archive = new Archive(storage, 'test-session', 'test-agent')
+      const lines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}: the connection pool was exhausted`)
+      const ref = await archive.store('tool-x', 0, new TextEncoder().encode(JSON.stringify(lines.join('\n'))))
+
+      await archive.rankWindows(ref, lines, 'connection pool', 0, lines.length - 1)
+      expect(await storage.list('context/test-session/scopes/agent/test-agent/windows/')).not.toEqual([])
+
+      await archive.delete(ref)
+      expect(await storage.list('context/test-session/scopes/agent/test-agent/windows/')).toEqual([])
+    })
   })
 
   describe('namespacing', () => {
