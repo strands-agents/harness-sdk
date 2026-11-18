@@ -96,8 +96,14 @@ export interface DevChatJobGroup {
   readonly jobs: readonly DevChatJob[]
 }
 
+export interface DevJobTarget {
+  readonly command: string
+  readonly id: string
+}
+
 export interface DevPanelOpening {
   readonly restore?: boolean
+  readonly job?: string
 }
 
 export interface DevChatCommand {

@@ -143,6 +143,14 @@ describe('TestPanel', () => {
     expect(text()).not.toContain('broken')
   })
 
+  it('shouldShowTheProgressOfARunWhenThePanelOpensOnIt', async () => {
+    const { session } = testSession(withRuns())
+
+    const { text } = await show(createElement(TestPanel, { ...panelProps, session, initialRun: capital.path }), 24)
+
+    expect(text()).toContain('s stop the run')
+  })
+
   it('shouldStopTheRunWhenTheUserPressesSInTheProgressView', async () => {
     const { session } = testSession(withRuns())
     const { press, text } = await show(createElement(TestPanel, { ...panelProps, session }), 24)

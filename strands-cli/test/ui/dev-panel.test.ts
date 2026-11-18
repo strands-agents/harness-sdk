@@ -44,8 +44,8 @@ const probe = (): { command: DevChatCommand; sizes: { width: number; height: num
   }
 }
 
-const mount = async (command: DevChatCommand | readonly DevChatCommand[], rows = 40) => {
-  const controller = new ChatController(idleBackend(), {
+const mount = async (command: DevChatCommand | readonly DevChatCommand[], rows = 40, backend = idleBackend()) => {
+  const controller = new ChatController(backend, {
     settings: { animations: false },
     runtime: { model: 'model-00', cwd: '/work' },
     devCommands: [command].flat(),
@@ -99,14 +99,37 @@ const jobFeed = (): DevChatJobs & { set: (jobs: readonly DevChatJob[]) => void }
   }
 }
 
-const experimentWithJobs = (): { command: DevChatCommand; jobs: ReturnType<typeof jobFeed> } => {
+const experimentWithJobs = () => {
   const { command } = probe()
   const jobs = jobFeed()
+  const open = vi.fn(command.open)
   return {
-    command: { ...command, spec: { name: 'experiment', usage: '/experiment', description: 'Experiments' }, jobs },
+    command: {
+      ...command,
+      spec: { name: 'experiment', usage: '/experiment', description: 'Experiments' },
+      open,
+      jobs,
+    } satisfies DevChatCommand,
     jobs,
+    open,
   }
 }
+
+const TWO_JOBS: readonly DevChatJob[] = [
+  { id: 'a', label: 'refunds', done: 3, total: 20 },
+  { id: 'b', label: 'edge-cases', done: 0, total: 10 },
+]
+
+const DOWN = '\u001b[B'
+const RIGHT = '\u001b[C'
+
+const reviewerTask = () =>
+  idleBackend({
+    watchTasks(listener) {
+      listener([{ id: 'review', label: 'Reviewer', status: 'working', source: 'background' }])
+      return () => {}
+    },
+  })
 
 describe('dev command panels', () => {
   it('shouldDrawTheDevPanelAboveThePromptWhenADevCommandOpens', async () => {
@@ -214,18 +237,16 @@ describe('dev panel hover', () => {
 })
 
 describe('dev jobs row', () => {
-  it('shouldShowRunningJobsBelowThePromptWhenADevCommandReportsThem', async () => {
+  it('shouldStackTheRunningJobsInOneRowBelowThePromptWhenADevCommandReportsThem', async () => {
     const { command, jobs } = experimentWithJobs()
-    const { instance, row } = await mount(command)
+    const { instance, row, screen } = await mount(command)
 
-    jobs.set([
-      { id: 'a', label: 'refunds', done: 3, total: 20 },
-      { id: 'b', label: 'edge-cases', done: 0, total: 10 },
-    ])
+    jobs.set(TWO_JOBS)
     await instance.waitUntilRenderFlush()
 
-    expect(row('/experiment refunds 3/20 · edge-cases 0/10')).toBeGreaterThan(row('Enter to send'))
-    expect(row('click to open')).toBe(row('/experiment refunds 3/20'))
+    expect(row('/experiment 1/2 · ● refunds 3/20')).toBeGreaterThan(row('Enter to send'))
+    expect(row('↓ view')).toBe(row('/experiment 1/2'))
+    expect(screen()).not.toContain('edge-cases')
   })
 
   it('shouldHideTheRowWhenNoJobRuns', async () => {
@@ -237,23 +258,72 @@ describe('dev jobs row', () => {
     jobs.set([])
     await instance.waitUntilRenderFlush()
 
-    expect(screen()).not.toContain('click to open')
+    expect(screen()).not.toContain('refunds 3/20')
   })
 
   it.each([
     ['no panel', undefined],
     ['another panel', '/help'],
-  ])('shouldOpenTheCommandPanelWhenTheUserClicksItsJobOver%s', async (_case, before) => {
-    const { command, jobs } = experimentWithJobs()
+  ])('shouldOpenTheShownJobWhenTheUserClicksTheRowOver%s', async (_case, before) => {
+    const { command, jobs, open } = experimentWithJobs()
     const { controller, instance, click, screen } = await mount(command)
     jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
     if (before) await controller.submit(before)
     await instance.waitUntilRenderFlush()
 
-    await click('/experiment refunds')
+    await click('refunds 3/20')
 
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/experiment' }))
     await vi.waitFor(() => expect(screen()).toContain('probe panel'))
+    expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'a' })
+  })
+
+  it('shouldOpenTheChosenJobWhenTheUserPressesDownThenRightThenEnter', async () => {
+    const { command, jobs, open } = experimentWithJobs()
+    const { controller, instance, press, row } = await mount(command)
+    jobs.set(TWO_JOBS)
+    await instance.waitUntilRenderFlush()
+
+    await press(DOWN)
+    expect(row('←→ Enter Esc')).toBe(row('/experiment 1/2 · ● refunds 3/20'))
+    await press(RIGHT)
+    expect(row('←→ Enter Esc')).toBe(row('/experiment 2/2 · ● edge-cases 0/10'))
+    await press('\r')
+
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/experiment' }))
+    expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'b' })
+  })
+
+  it('shouldGiveTheKeysBackToThePromptWhenTheUserPressesEscapeOnTheRow', async () => {
+    const { command, jobs, open } = experimentWithJobs()
+    const { controller, instance, press, row } = await mount(command)
+    jobs.set(TWO_JOBS)
+    await instance.waitUntilRenderFlush()
+
+    await press(DOWN)
+    expect(row('←→ Enter Esc')).toBe(row('/experiment 1/2 · ● refunds 3/20'))
+    await press('\u001b')
+
+    await vi.waitFor(() => expect(row('↓ view')).toBe(row('/experiment 1/2 · ● refunds 3/20')))
+    expect(row('/experiment 1/2')).toBeGreaterThan(0)
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('shouldMoveFromTheBackgroundTaskToTheJobWhenTheUserPressesRight', async () => {
+    const { command, jobs, open } = experimentWithJobs()
+    const { controller, press, row } = await mount(command, 40, reviewerTask())
+    jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
+    await vi.waitFor(() => expect(row('Background · ● Reviewer')).toBeGreaterThan(0))
+
+    await press(DOWN)
+    expect(row('←→ Enter Esc')).toBe(row('Background · ● Reviewer'))
+    await press(RIGHT)
+    expect(row('←→ Enter Esc')).toBe(row('/experiment · ● refunds 3/20'))
+    await press('\r')
+
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/experiment' }))
+    expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'a' })
   })
 
   it.each([40, 24])('shouldFitTheScreenWithTheRowAndAnOpenPanelAt%iRows', async (rows) => {
@@ -267,6 +337,6 @@ describe('dev jobs row', () => {
 
     expect(lines.length).toBeLessThanOrEqual(rows)
     expect(screen()).toContain('probe panel')
-    expect(screen()).toContain('click to open')
+    expect(screen()).toContain('/experiment · ● refunds 3/20')
   })
 })

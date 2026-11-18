@@ -51,6 +51,7 @@ import { CaseReport } from './report.js'
 export interface TestPanelProps extends DevChatPanelProps {
   readonly session: TestSession
   readonly browser?: EvalsBrowser
+  readonly initialRun?: string
 }
 
 type OpenInBrowser = (place: EvalsBrowserPlace) => void
@@ -108,7 +109,7 @@ export const TestPanel = (props: TestPanelProps): ReactElement => {
   const { session } = props
   const tests = useSyncExternalStore(session.subscribe, session.snapshot)
   const experiments = useSyncExternalStore(session.experiments.subscribe, session.experiments.snapshot)
-  const [open, setOpen] = useState<string | undefined>()
+  const [open, setOpen] = useState<string | undefined>(props.initialRun)
   const browser = useBrowserNotice(props.browser)
   const confirm = usePaidRunConfirm()
   const shown = tests.runs.find(({ experiment }) => experiment.path === open)

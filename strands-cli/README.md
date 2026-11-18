@@ -351,7 +351,9 @@ In the panels, a paid run starts only after a confirm step. The confirm step sho
 You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-tests`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. These skills are not slash commands: dev adds only `/experiment`, `/test`, and `/optimize`. Reading cases or past results does not start a new run. Tests support one or several experiments; optimization returns proposed edits for explicit acceptance, and can be stopped or its pending proposals discarded on request.
 
 Generation, testing, and optimization call models and can incur charges. Review and approve the proposed run before it starts.
-Running jobs show progress below the chat input. Dev keeps each experiment and its history in one folder:
+Running jobs show below the chat input in one row, one job at a time, as background tasks do.
+With an empty input, ↓ selects the first background task or job. ←→ selects the next one, Enter opens its progress, and Esc goes back.
+A click on the row opens the job that the row shows. Dev keeps each experiment and its history in one folder:
 
 ```text
 strands-dev/

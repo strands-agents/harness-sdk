@@ -3056,7 +3056,7 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openDevPanel(devCommand: DevChatCommand, opening?: DevPanelOpening): void {
-    if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name) return
+    if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name && !opening?.job) return
     const opened = this._openPanel({
       kind: 'dev',
       command: devCommand.spec.name,

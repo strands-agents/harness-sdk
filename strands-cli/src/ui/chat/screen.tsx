@@ -16,8 +16,9 @@ import type {
   ChatConfigurationLanguage,
   ChatConfigurationSource,
   ChatDiffPreview,
+  ChatTask,
 } from '../../agent/types.js'
-import type { ChatControllerApi, ChatSnapshot } from './controller.js'
+import type { ChatControllerApi, ChatSnapshot, DevChatJobGroup, DevJobTarget } from './controller.js'
 import { commandAssistance, parseCommandInvocation } from './commands.js'
 import { isActiveTask, isConfigurationTool } from './state.js'
 import { filePathsFromPaste, loadAttachments } from './attachments.js'
@@ -53,7 +54,13 @@ import { isCopyShortcut, useClipboard } from '../clipboard.js'
 import { openExternalUrl } from '../../terminal/open-url.js'
 import { openAgentProject } from '../../terminal/open-editor.js'
 import { canUseNativePicker, chooseFiles } from '../../terminal/directory-picker.js'
-import { ChatView, QUEUED_PROMPT_ACTIONS, type QueuedPromptAction, type QueuedPromptTarget } from './view.js'
+import {
+  ChatView,
+  QUEUED_PROMPT_ACTIONS,
+  stackedDevJobs,
+  type QueuedPromptAction,
+  type QueuedPromptTarget,
+} from './view.js'
 import {
   agentGridLayout,
   moveAgentGridSelection,
@@ -189,9 +196,11 @@ export function ChatApp({
   const [updatePromptVersion, setUpdatePromptVersion] = useState<string>()
   const [pressedQueuedPrompt, setPressedQueuedPrompt] = useState<QueuedPromptTarget>()
   const [focusedQueuedPrompt, setFocusedQueuedPrompt] = useState<QueuedPromptTarget>()
-  const [focusedBackgroundTask, setFocusedBackgroundTask] = useState<string>()
+  const [focusedStatus, setFocusedStatus] = useState<StatusFocus>()
   const [hoveredBackgroundTask, setHoveredBackgroundTask] = useState(false)
-  const [hoveredDevJob, setHoveredDevJob] = useState<string | undefined>(undefined)
+  const [hoveredDevJobs, setHoveredDevJobs] = useState(false)
+  const focusedBackgroundTask = focusedStatus?.kind === 'background' ? focusedStatus.id : undefined
+  const focusedDevJob = focusedStatus?.kind === 'dev' ? focusedStatus.job : undefined
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
   const [screenSelection, setScreenSelection] = useState<readonly ScreenSelectionSegment[]>([])
   const { copyText, clipboardNotice } = useClipboard()
@@ -251,7 +260,7 @@ export function ChatApp({
   const [queuedPromptElements, registerQueuedPromptElement] = useElementMap<QueuedPromptTarget>()
   const statusElement = useRef<DOMElement | undefined>(undefined)
   const backgroundTaskElement = useRef<DOMElement | undefined>(undefined)
-  const devJobElements = useRef(new Map<string, DOMElement>())
+  const devJobsElement = useRef<DOMElement | undefined>(undefined)
   const [devPanelClicks] = useState(() => new DevPanelClicks())
   const [toolGroupElements, registerToolGroupElement] = useElementMap<string>()
   const frogElement = useRef<DOMElement | undefined>(undefined)
@@ -451,7 +460,7 @@ export function ChatApp({
     setHoveredJumpToBottom(false)
     setHoveredMetadata(undefined)
     setHoveredBackgroundTask(false)
-    setHoveredDevJob(undefined)
+    setHoveredDevJobs(false)
   }, [])
   const resetPressed = useCallback((): void => {
     setPressedMetadata(undefined)
@@ -498,16 +507,16 @@ export function ChatApp({
   useEffect(() => {
     setStatusScroll(0)
     setFocusedQueuedPrompt(undefined)
-    setFocusedBackgroundTask(undefined)
+    setFocusedStatus(undefined)
   }, [controller, snapshot.conversationId])
   useEffect(() => {
     if (
-      focusedBackgroundTask &&
-      !snapshot.tasks.some((task) => task.id === focusedBackgroundTask && isActiveTask(task.status))
+      focusedStatus &&
+      !statusTargets(snapshot.tasks, snapshot.devJobs).some((target) => sameStatus(target, focusedStatus))
     ) {
-      setFocusedBackgroundTask(undefined)
+      setFocusedStatus(undefined)
     }
-  }, [focusedBackgroundTask, snapshot.tasks])
+  }, [focusedStatus, snapshot.tasks, snapshot.devJobs])
   useEffect(() => {
     if (!focusedQueuedPrompt) return
     const target = parseQueuedPromptTarget(focusedQueuedPrompt)
@@ -561,7 +570,8 @@ export function ChatApp({
     attachments,
     ...(focusedBackgroundTask ? { focusedBackgroundTask } : {}),
     hoveredBackgroundTask,
-    ...(hoveredDevJob ? { hoveredDevJob } : {}),
+    ...(focusedDevJob ? { focusedDevJob } : {}),
+    hoveredDevJobs,
   }
   const viewPropsRef = useRef(viewProps)
   viewPropsRef.current = viewProps
@@ -577,9 +587,8 @@ export function ChatApp({
   const registerBackgroundTaskElement = useCallback((element: DOMElement | null): void => {
     backgroundTaskElement.current = element ?? undefined
   }, [])
-  const registerDevJobElement = useCallback((command: string, element: DOMElement | null): void => {
-    if (element) devJobElements.current.set(command, element)
-    else devJobElements.current.delete(command)
+  const registerDevJobsElement = useCallback((element: DOMElement | null): void => {
+    devJobsElement.current = element ?? undefined
   }, [])
   const registerPanelSearchElement = useCallback((element: DOMElement | null): void => {
     panelSearchElement.current = element ?? undefined
@@ -817,7 +826,7 @@ export function ChatApp({
     resetHover()
     setPressedQueuedPrompt(undefined)
     setFocusedQueuedPrompt(undefined)
-    setFocusedBackgroundTask(undefined)
+    setFocusedStatus(undefined)
     setDetailScroll(0)
     panelSliderDraggingRef.current = false
     panelSliderValueRef.current = activeSliderOption(snapshot.panel)
@@ -1062,7 +1071,8 @@ export function ChatApp({
           ? elementContainsMouse(backgroundTaskElement.current, mouse)
           : false
       const toolGroupTarget = !snapshot.panel ? elementAtMouse(toolGroupElements, mouse) : undefined
-      const devJobTarget = snapshot.devJobs?.length ? elementAtMouse(devJobElements.current, mouse) : undefined
+      const devJobsHit =
+        snapshot.devJobs?.length && devJobsElement.current ? elementContainsMouse(devJobsElement.current, mouse) : false
       const devPanelClick = snapshot.panel?.kind === 'dev' ? devPanelClicks.at(mouse) : undefined
       const sliderElement =
         snapshot.panel?.kind === 'effort' || snapshot.panel?.kind === 'permissions' || snapshot.panel?.kind === 'voice'
@@ -1092,7 +1102,7 @@ export function ChatApp({
         setHoveredJumpToBottom(jumpToBottomHit)
         setHoveredMetadata(metadataTarget)
         setHoveredBackgroundTask(backgroundTaskHit)
-        setHoveredDevJob(devJobTarget)
+        setHoveredDevJobs(devJobsHit)
       }
       if (mouse.action === 'press' && button === 0) {
         resetHover()
@@ -1107,7 +1117,7 @@ export function ChatApp({
           toolGroupTarget ||
           queuedPromptTarget ||
           backgroundTaskHit ||
-          devJobTarget ||
+          devJobsHit ||
           jumpToBottomHit
             ? undefined
             : {
@@ -1130,7 +1140,7 @@ export function ChatApp({
         setPressedSuggestion(suggestionIndex)
         setPressedQueuedPrompt(queuedPromptTarget)
         setFocusedQueuedPrompt(undefined)
-        if (!backgroundTaskHit) setFocusedBackgroundTask(undefined)
+        if (!backgroundTaskHit && !devJobsHit) setFocusedStatus(undefined)
         if (searchHit) {
           setModelPanelFocus('search')
         } else if (sliderHit && snapshot.panel?.kind === 'permissions') {
@@ -1240,8 +1250,10 @@ export function ChatApp({
       if (mouse.action !== 'release' || (!leftRelease && button !== 0)) {
         return
       }
-      if (devJobTarget) {
-        controller.openDevCommand?.(devJobTarget)
+      if (devJobsHit) {
+        const [first] = stackedDevJobs(snapshot.devJobs ?? [])
+        const shown = viewPropsRef.current.focusedDevJob ?? (first && { command: first.command, id: first.job.id })
+        if (shown) openStatus(controller, { kind: 'dev', job: shown })
       } else if (devPanelClick) {
         devPanelClick()
       } else if (jumpToBottomHit) {
@@ -1982,44 +1994,42 @@ export function ChatApp({
         if (prompts[next]) editQueuedPrompt(prompts[next].id)
         return
       }
-      const backgroundTasks = snapshot.tasks.filter((task) => task.source === 'background' && isActiveTask(task.status))
+      const statuses = statusTargets(snapshot.tasks, snapshot.devJobs)
       if (
         key.tab &&
         (focusedQueuedPrompt ||
-          focusedBackgroundTask ||
+          focusedStatus ||
           (suggestions.length === 0 &&
             !currentEditor.input.startsWith('/') &&
-            (queuedPromptElements.size > 0 || backgroundTasks.length > 0)))
+            (queuedPromptElements.size > 0 || statuses.length > 0)))
       ) {
-        const targets: (QueuedPromptTarget | 'background' | undefined)[] = [
+        const targets: (QueuedPromptTarget | 'status' | undefined)[] = [
           undefined,
           ...snapshot.queuedPrompts.flatMap((prompt) =>
             QUEUED_PROMPT_ACTIONS.map(({ action }): QueuedPromptTarget => `${prompt.id}:${action}`)
           ),
-          ...(backgroundTasks.length > 0 ? (['background'] as const) : []),
+          ...(statuses.length > 0 ? (['status'] as const) : []),
         ]
-        let index = Math.max(0, targets.indexOf(focusedBackgroundTask ? 'background' : focusedQueuedPrompt))
+        let index = Math.max(0, targets.indexOf(focusedStatus ? 'status' : focusedQueuedPrompt))
         let selected: (typeof targets)[number]
         do {
           index = (index + (key.shift ? -1 : 1) + targets.length) % targets.length
           selected = targets[index]
-        } while (selected && selected !== 'background' && !queuedPromptElements.has(selected))
-        setFocusedQueuedPrompt(selected === 'background' ? undefined : selected)
-        setFocusedBackgroundTask(selected === 'background' ? backgroundTasks[0]!.id : undefined)
+        } while (selected && selected !== 'status' && !queuedPromptElements.has(selected))
+        setFocusedQueuedPrompt(selected === 'status' ? undefined : selected)
+        setFocusedStatus(selected === 'status' ? statuses[0] : undefined)
         return
       }
-      if (focusedBackgroundTask) {
+      if (focusedStatus) {
         if (key.escape || key.upArrow) {
-          setFocusedBackgroundTask(undefined)
+          setFocusedStatus(undefined)
         } else if (key.return) {
-          controller.openTask(focusedBackgroundTask)
-          setFocusedBackgroundTask(undefined)
+          openStatus(controller, focusedStatus)
+          setFocusedStatus(undefined)
         } else if (key.leftArrow || key.rightArrow || key.downArrow) {
-          const index = backgroundTasks.findIndex((task) => task.id === focusedBackgroundTask)
+          const index = statuses.findIndex((target) => sameStatus(target, focusedStatus))
           const direction = key.leftArrow ? -1 : 1
-          setFocusedBackgroundTask(
-            backgroundTasks[(index + direction + backgroundTasks.length) % backgroundTasks.length]?.id
-          )
+          setFocusedStatus(statuses[(index + direction + statuses.length) % statuses.length])
         }
         return
       }
@@ -2029,7 +2039,7 @@ export function ChatApp({
         return
       }
       if (
-        backgroundTasks.length > 0 &&
+        statuses.length > 0 &&
         suggestions.length === 0 &&
         !editingQueuedPromptId &&
         !key.ctrl &&
@@ -2037,7 +2047,7 @@ export function ChatApp({
         key.downArrow &&
         currentEditor.input === ''
       ) {
-        setFocusedBackgroundTask(backgroundTasks[0]!.id)
+        setFocusedStatus(statuses[0])
         return
       }
       if (editingQueuedPromptId && key.escape) {
@@ -2135,7 +2145,7 @@ export function ChatApp({
       editQueuedPrompt,
       finishQueuedPromptEdit,
       focusedQueuedPrompt,
-      focusedBackgroundTask,
+      focusedStatus,
       frog,
       handleExit,
       handleMouse,
@@ -2273,7 +2283,7 @@ export function ChatApp({
       {...(clipboardNotice ? { clipboardNotice } : {})}
       onQueuedPromptElement={registerQueuedPromptElement}
       onBackgroundTaskElement={registerBackgroundTaskElement}
-      onDevJobElement={registerDevJobElement}
+      onDevJobsElement={registerDevJobsElement}
       devPanelClicks={devPanelClicks}
       onStatusElement={registerStatusElement}
       onFrogElement={registerFrogElement}
@@ -2282,6 +2292,28 @@ export function ChatApp({
       onToolGroupElement={registerToolGroupElement}
     />
   )
+}
+
+type StatusFocus =
+  { readonly kind: 'background'; readonly id: string } | { readonly kind: 'dev'; readonly job: DevJobTarget }
+
+function statusTargets(tasks: readonly ChatTask[], devJobs: readonly DevChatJobGroup[] = []): StatusFocus[] {
+  return [
+    ...tasks
+      .filter((task) => task.source === 'background' && isActiveTask(task.status))
+      .map(({ id }): StatusFocus => ({ kind: 'background', id })),
+    ...stackedDevJobs(devJobs).map(({ command, job }): StatusFocus => ({ kind: 'dev', job: { command, id: job.id } })),
+  ]
+}
+
+function sameStatus(left: StatusFocus, right: StatusFocus): boolean {
+  if (left.kind === 'background') return right.kind === 'background' && left.id === right.id
+  return right.kind === 'dev' && left.job.command === right.job.command && left.job.id === right.job.id
+}
+
+function openStatus(controller: ChatControllerApi, focus: StatusFocus): void {
+  if (focus.kind === 'background') controller.openTask(focus.id)
+  else controller.openDevCommand?.(focus.job.command, { job: focus.job.id })
 }
 
 function useElementMap<K>(): [Map<K, DOMElement>, (key: K, element: DOMElement | null) => void] {

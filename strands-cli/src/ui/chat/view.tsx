@@ -10,6 +10,7 @@ import type {
   ChatVoiceStore,
   DevChatJob,
   DevChatJobGroup,
+  DevJobTarget,
 } from './controller.js'
 import { isActiveTask, isConfigurationTool } from './state.js'
 import {
@@ -132,8 +133,9 @@ function ChatViewContent({
   focusedQueuedPrompt,
   focusedBackgroundTask,
   hoveredBackgroundTask,
-  hoveredDevJob,
-  onDevJobElement,
+  focusedDevJob,
+  hoveredDevJobs,
+  onDevJobsElement,
   devPanelClicks,
   onMetadataElement,
   onPanelElement,
@@ -207,8 +209,9 @@ function ChatViewContent({
   focusedQueuedPrompt?: QueuedPromptTarget
   focusedBackgroundTask?: string
   hoveredBackgroundTask?: boolean
-  hoveredDevJob?: string
-  onDevJobElement?: (command: string, element: DOMElement | null) => void
+  focusedDevJob?: DevJobTarget
+  hoveredDevJobs?: boolean
+  onDevJobsElement?: (element: DOMElement | null) => void
   devPanelClicks?: DevPanelClicks
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
@@ -265,6 +268,7 @@ function ChatViewContent({
     activeBackgroundTasks.findIndex((task) => task.id === focusedBackgroundTask)
   )
   const backgroundTask = activeBackgroundTasks[backgroundTaskIndex]
+  const statusHint = input.startsWith('/') ? 'click view' : input ? 'Tab view' : '↓ view'
   const composerSpinner = useSpinner(Boolean(snapshot.composerStatus), snapshot.settings.animations)
   const mcpStartupSpinner = useSpinner(snapshot.mcpStartup !== undefined, snapshot.settings.animations)
   const partyFrame = usePartyFrame((party || maxEffort) && snapshot.settings.animations)
@@ -640,7 +644,7 @@ function ChatViewContent({
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
               {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
               {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
-              {...(focusedBackgroundTask ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}
+              {...(focusedBackgroundTask || focusedDevJob ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}
               party={party}
               partyFrame={partyFrame}
               energy={maxEffort}
@@ -676,16 +680,17 @@ function ChatViewContent({
                 total={activeBackgroundTasks.length}
                 focused={focusedBackgroundTask !== undefined}
                 hovered={hoveredBackgroundTask === true}
-                hint={input.startsWith('/') ? 'click view' : input ? 'Tab view' : '↓ view'}
+                hint={statusHint}
                 {...(onBackgroundTaskElement ? { onElement: onBackgroundTaskElement } : {})}
               />
             ) : null}
             {snapshot.devJobs?.length ? (
               <DevJobsStatus
                 groups={snapshot.devJobs}
-                animate={settings.animations}
-                {...(hoveredDevJob ? { hovered: hoveredDevJob } : {})}
-                {...(onDevJobElement ? { onElement: onDevJobElement } : {})}
+                {...(focusedDevJob ? { focused: focusedDevJob } : {})}
+                hovered={hoveredDevJobs === true}
+                hint={statusHint}
+                {...(onDevJobsElement ? { onElement: onDevJobsElement } : {})}
               />
             ) : null}
           </Box>
@@ -819,38 +824,50 @@ function McpStartupStatus({ startup, spinner }: { startup: ChatMcpStartup; spinn
   )
 }
 
+export const stackedDevJobs = (groups: readonly DevChatJobGroup[]): { command: string; job: DevChatJob }[] =>
+  groups.flatMap(({ command, jobs }) => jobs.map((job) => ({ command, job })))
+
 function DevJobsStatus({
   groups,
-  animate,
+  focused,
   hovered,
+  hint,
   onElement,
 }: {
   groups: readonly DevChatJobGroup[]
-  animate: boolean
-  hovered?: string
-  onElement?: (command: string, element: DOMElement | null) => void
+  focused?: DevJobTarget
+  hovered: boolean
+  hint: string
+  onElement?: (element: DOMElement | null) => void
 }): ReactElement {
   const { accent, selection } = useTheme()
-  const spinner = useSpinner(true, animate)
+  const stacked = stackedDevJobs(groups)
+  const index = Math.max(
+    0,
+    stacked.findIndex(({ command, job }) => command === focused?.command && job.id === focused.id)
+  )
+  const shown = stacked[index]!
   return (
-    <Box height={1} flexShrink={0} paddingX={1} overflow="hidden">
-      {groups.map(({ command, jobs }) => (
-        <Box
-          key={command}
-          ref={(element) => onElement?.(command, element)}
-          flexShrink={1}
-          marginRight={2}
-          overflow="hidden"
-          {...(hovered === command ? { backgroundColor: selection } : {})}
-        >
-          <Text wrap="truncate-end">
-            <Text color={accent}>{spinner}</Text> /{command} {jobs.map(devJobText).join(' · ')}
-          </Text>
-        </Box>
-      ))}
-      <Box flexGrow={1} />
+    <Box
+      ref={onElement}
+      height={1}
+      flexShrink={0}
+      paddingX={1}
+      backgroundColor={focused || hovered ? selection : undefined}
+    >
       <Box flexShrink={0}>
-        <Text dimColor>click to open</Text>
+        <Text dimColor>
+          /{shown.command}
+          {stacked.length > 1 ? ` ${index + 1}/${stacked.length}` : ''} ·{' '}
+        </Text>
+      </Box>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">
+        <Text wrap="truncate-end">
+          <Text color={accent}>●</Text> {devJobText(shown.job)}
+        </Text>
+      </Box>
+      <Box marginLeft={1} flexShrink={0}>
+        <Text dimColor>{focused ? '←→ Enter Esc' : hint}</Text>
       </Box>
     </Box>
   )
