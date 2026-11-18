@@ -12,7 +12,7 @@ Users want to know roughly what a request cost in dollars. This proposal adds th
 
 1. **Every model call a request makes is counted in that request's usage.** Today the harness's own `subagent` and `web_fetch` tools are not. The harness moves to the SDK's versions of those tools, and its duplicates are deleted.
 2. **Core reports token usage per model.** It is a fact about the request, like the totals it already reports. Core gets no prices.
-3. **An opt-in plugin, `GenAIPricesCostEstimator`, turns that usage into a USD estimate.** It reads list prices from the `genai-prices` package, and the class name says so. It makes no network calls. You can supply your own prices.
+3. **An opt-in plugin, `GenAIPricesEstimator`, turns that usage into a USD estimate.** It reads list prices from the `genai-prices` package, and the class name says so. It makes no network calls. You can supply your own prices.
 
 The number is an estimate: tokens times list price. The API, the type names, and the docs all say "estimate". Strands does not ship, maintain, or vouch for a price table.
 
@@ -80,7 +80,7 @@ This step is useful with no plugin. You can price a request with your own table,
 
 **Step 2: the plugin.**
 
-`GenAIPricesCostEstimator` has one job: `cost.estimate(result)` returns the estimated cost of that request, in total and per model.
+`GenAIPricesEstimator` has one job: `cost.estimate(result)` returns the estimated cost of that request, in total and per model.
 
 Where a price comes from, in order:
 
@@ -113,14 +113,11 @@ How prices stay current:
 
 What attaching the plugin to an agent does in this version: nothing yet. The estimate works on any result. It is a plugin so that a stream event or a spend limit can be added later without changing how you set it up.
 
-**Step 3: one shared spec for every language.**
+The same numbers in every language:
 
-`shared/` already holds data that each SDK copies and tests against. Cost estimation adds:
-
-- The provider names, and the genai-prices provider ID each one maps to.
-- Test cases: a usage record, a price, and the expected USD. Every SDK runs the same cases.
-
-genai-prices publishes Python, JavaScript, Go, and Rust packages from one data file, at the same version on the same day. A new Strands language in that set implements the formula and passes the shared cases.
+- genai-prices publishes Python, JavaScript, Go, and Rust packages from one data file, at the same version on the same day.
+- What each SDK writes itself is small: the formula above and a map from provider name to genai-prices provider ID.
+- Both SDKs run the same test cases, kept in `shared/`: a usage record, a price, and the expected USD.
 
 **Pros:**
 
@@ -134,13 +131,40 @@ genai-prices publishes Python, JavaScript, Go, and Rust packages from one data f
 **Cons:**
 
 - Prices are as recent as the installed package. A model released this week can be unpriced.
-- genai-prices needs Python 3.11. Strands declares 3.10, so the plugin is unavailable there. Python 3.10 reached end of life in October 2026.
+- genai-prices needs Python 3.11. Strands declares 3.10, so the plugin is unavailable there. Python 3.10 is 8.6% of `strands-agents` downloads and reached end of life in October 2026. On 3.10 you still get `usage_by_model` and can price it yourself.
 - One new dependency per language. Python adds `httpx2`. The JavaScript package has no dependencies and is 3.7 MB unpacked.
 - The package is in beta (0.2.x), and the Rust crate was first published in October 2026.
 - It covers fewer non-Anthropic models on Bedrock than models.dev (14 of 32 in our list, against 24), and it uses one price for all regional profiles.
 - No package for the JVM, .NET, or Swift.
 - `provider_name` on `Model` is a public, permanent addition. It needs an API review.
 - The estimate ignores several things that change the real price (see "What the estimate leaves out").
+
+### Alternative: models.dev, bundled with Strands
+
+No maintained Python package carries models.dev data. The only one on PyPI is third-party and last released in May 2026. models.dev publishes an official npm package, and the Rust crates are third-party. So offline models.dev prices mean Strands builds a snapshot of the catalog at release time and ships it inside its own packages. A `ModelsDevEstimator` reads that snapshot.
+
+| | genai-prices package (recommended) | models.dev snapshot in Strands |
+|---|---|---|
+| Who ships the prices | Pydantic, in their package | Strands, in its own packages |
+| Python | 3.11 and later | 3.10 and later |
+| New dependency | One per language | None |
+| Code we own | The formula and a provider map | Those, plus the snapshot build, the ID matching, and the lookup, in each language |
+| How you get new prices | Upgrade genai-prices (a release about every 7 days) | Upgrade Strands (a release about every 6 days) |
+| How Bedrock prices get in | Imported from the AWS Price List by an hourly job | Edited by hand |
+| 31 Bedrock prices checked against the AWS Price List | 30 right, 0 wrong, 1 missing | 27 right, 4 wrong, 0 missing |
+| Non-Anthropic Bedrock models in our list | 14 of 32 | 24 of 32 |
+| Bedrock profiles outside the US | One price for every region | An entry per profile |
+| How prices are checked | A check date on every model, hourly importers for about 30 providers, a weekly review PR | Schema validation. 83% of data commits in the last 90 days came from bots, and the sync bot merges its own safe changes |
+
+- **Pros:**
+  - Works on Python 3.10.
+  - No dependency. The snapshot for the providers Strands supports is 38 KB.
+  - More Bedrock models, with an entry for each regional profile.
+- **Cons:**
+  - Strands ships the prices. That is what this proposal sets out to avoid, and wrong prices become our bug reports.
+  - We own the snapshot build and the lookup in every language.
+  - Less accurate on Bedrock in our check. It prices Nova cache writes at the input rate, where AWS lists $0.
+  - New prices arrive only with a Strands upgrade.
 
 ### Alternative: models.dev over HTTP
 
@@ -156,7 +180,7 @@ The plugin fetches `https://models.dev/api.json` at runtime, caches it on disk, 
   - We own a fetch, cache, and refresh client in each language. The prototype was 362 lines, and most of the defects found in testing were in that client.
   - `estimate()` gains a "prices still loading" state.
 
-The price lookup is one function inside the plugin. A `ModelsDevCostEstimator` can be added next to this one later if freshness matters more than offline.
+The price lookup is one function inside the plugin. A `ModelsDevEstimator` can be added next to this one later if freshness matters more than offline.
 
 ### Alternative: price the request total at the agent's model
 
@@ -188,9 +212,9 @@ Install the extra, then estimate a request:
 
 ```python
 from strands import Agent
-from strands.experimental.cost_estimator import GenAIPricesCostEstimator
+from strands.experimental.cost_estimator import GenAIPricesEstimator
 
-cost = GenAIPricesCostEstimator()
+cost = GenAIPricesEstimator()
 agent = Agent(plugins=[cost])
 
 result = agent("Compare the three proposals and recommend one.")
@@ -209,9 +233,9 @@ for model in estimate.models:
 Supply a price genai-prices does not have, or one you negotiated:
 
 ```python
-from strands.experimental.cost_estimator import GenAIPricesCostEstimator, ModelPrice
+from strands.experimental.cost_estimator import GenAIPricesEstimator, ModelPrice
 
-cost = GenAIPricesCostEstimator(
+cost = GenAIPricesEstimator(
     prices={
         "sagemaker/my-endpoint": ModelPrice(input_per_million=0.20, output_per_million=0.60),
     },
@@ -236,9 +260,9 @@ TypeScript has the same shape (not prototyped yet). `estimate()` is synchronous 
 
 ```typescript
 import { Agent } from '@strands-agents/sdk'
-import { GenAIPricesCostEstimator } from '@strands-agents/sdk/experimental/cost-estimator'
+import { GenAIPricesEstimator } from '@strands-agents/sdk/experimental/cost-estimator'
 
-const cost = new GenAIPricesCostEstimator()
+const cost = new GenAIPricesEstimator()
 const agent = new Agent({ plugins: [cost] })
 
 const result = await agent.invoke('Compare the three proposals and recommend one.')
@@ -271,7 +295,7 @@ For the billed cost on Bedrock, the docs point to application inference profiles
 
 0. **Harness on SDK tools:** switch `subagent` (#6088); add the sandbox transport to the SDK's `web_fetch` and switch the harness (#5277). Python and TypeScript.
 1. **Core:** `usage_by_model` and `provider_name`, after API review.
-2. **Plugin:** `GenAIPricesCostEstimator` in `strands.experimental`, with the shared spec in `shared/`.
+2. **Plugin:** `GenAIPricesEstimator` in `strands.experimental`, with shared test cases in `shared/`.
 3. **Docs:** one page with the usage above, the "leaves out" table, and the pointer to billed cost.
 
 Steps 0 and 1 do not depend on each other. Until step 0 lands, a harness request's estimate misses its subagent and web fetch tokens, and the docs page says so.
@@ -280,7 +304,7 @@ Not in this proposal: a stream event, a dollar limit, an OpenTelemetry cost attr
 
 ## Open questions
 
-1. **Python 3.11 for this feature.** Acceptable while Strands itself supports 3.10?
+1. **Python 3.11 for this feature.** Acceptable while Strands itself supports 3.10? Python 3.10 is 8.6% of downloads. If that share matters, the alternative is the bundled models.dev snapshot.
 2. **`provider_name` on `Model`.** Is the public property acceptable, and are the harness's names the right vocabulary? The other candidates are the Python module names and the OpenTelemetry provider names.
 3. **Unpriced models.** `total_usd` is `None` when any model has no price. The alternative is a partial total plus a flag.
 4. **No stream event in the first version.** Acceptable, given that attaching the plugin then does nothing yet?
@@ -298,7 +322,7 @@ The prototype is a branch off `main` at `d2c9f9840`. The code is linked from the
 - **Plugin** (`plugin.py`): one file, 193 lines. It lives under `vended_plugins` in the prototype.
 - **models.dev variant** (`models_dev_estimator.py`): the earlier plugin with the fetch, disk cache, and refresh, 362 lines. Kept for comparison.
 
-Runs with `GenAIPricesCostEstimator` (`demo.py`, network blocked):
+Runs with `GenAIPricesEstimator` (`demo.py`, network blocked):
 
 | Run | Result |
 |---|---|
@@ -334,7 +358,49 @@ Still open in the prototype:
 - **History:** Python since July 2025 (79 releases). The Rust crate since 2026-10-21.
 - **Dependencies:** Python needs 3.11 and adds `httpx2` and `pydantic`. JavaScript has none (Node 20 or later). Rust adds `fancy-regex`, `serde`, and `serde_json`.
 - **Network:** none by default in any language. Python and JavaScript have an opt-in updater. Rust and Go take a data file you download yourself.
+- **Bedrock prices:** an importer reads the public AWS Price List for us-east-1 and the global rate every hour (`prices/src/prices/source_aws.py`). Regional profiles outside the US get the us-east-1 regional price.
+- **Checks:** every model carries a `prices_checked` date. In `aws.yml`, 106 of 118 entries were checked in October or November 2026. A weekly agent-run check opens one PR for human review.
 - **Matching:** by rule, not exact key. It needs the provider ID, which `provider_name` supplies. A full inference profile ARN matches; an application inference profile ARN does not.
+
+</details>
+
+<details>
+<summary>genai-prices and models.dev compared as data</summary>
+
+**Accuracy on Bedrock.** 31 model and profile combinations, each checked for input, output, cache read, and cache write price against the AWS Price List for us-east-1 (standard on-demand, the November 2026 files). The set covers Claude from Sonnet 4.5 to Fable 5.2 on `us.` and `global.` profiles, Nova, OpenAI on Bedrock, Llama, Mistral, DeepSeek, GLM, and Palmyra.
+
+| | genai-prices | models.dev |
+|---|---|---|
+| All four prices right | 30 | 27 |
+| A wrong price | 0 | 4: Nova Pro, Nova Lite, Nova Micro, and Nova 2 Lite list cache writes at the input price; AWS lists $0 |
+| Missing | 1: GLM 5 | 0 |
+
+**When new models appeared.** Dates are the first commit that added a priced entry.
+
+| Model | models.dev | genai-prices | genai-prices release |
+|---|---|---|---|
+| Claude Opus 5.5 (direct and Bedrock) | 2026-09-22 | 2026-09-22 | 0.1.8, same day |
+| GPT-6 Luna (direct) | 2026-09-22 | 2026-09-22 | 0.1.8, same day |
+| GPT-6 Luna (Bedrock) | 2026-09-23 | 2026-09-23 | 0.1.9, next day |
+| Claude Haiku 5.5 (direct and Bedrock) | 2026-10-07 | 2026-10-08 | 0.1.10, 2026-10-09 |
+| Claude Fable 5.2 (direct and Bedrock) | 2026-11-09 | 2026-11-09 | 0.2.2, same day |
+| Gemini 4 Hydrogen | 2026-11-12 | 2026-11-16 | 0.2.4, 2026-11-17 |
+| GPT-6.2 Sol | 2026-11-17 | 2026-11-17 | 0.2.4, same day |
+| Nova 2 Lite | 2025-12-13 | 2026-06-15 | 0.0.67, 2026-06-24 |
+
+Flagship launches land in both on the same day, and genai-prices cuts a release that day. Smaller launches can take days or longer in genai-prices.
+
+**How each is maintained**, over the 90 days to 2026-11-18:
+
+| | genai-prices | models.dev |
+|---|---|---|
+| Commits to price data | 159 | 7,476 |
+| Share made by bots | 18% | 83% |
+| Bedrock prices | Imported from the AWS Price List | 47 of 73 commits by one maintainer; no importer |
+| Automated sources | Importers for about 30 providers, run hourly | Catalog sync from provider APIs every 6 hours |
+| Monthly downloads of the Python package | 37.5 million (Pydantic AI depends on it) | No official Python package |
+
+**Python 3.10.** genai-prices 0.2.4 fails at import on Python 3.10, and its `httpx2` dependency also requires 3.11. Python 3.10 was 8.6% of `strands-agents` downloads from PyPI between 2026-10-18 and 2026-11-17.
 
 </details>
 
