@@ -176,6 +176,8 @@ export class FileStorage implements SnapshotStorage {
     try {
       const { promises: fs } = await import('fs')
       const { dirname, resolve } = await import('path')
+      // Directories above the storage root keep the default mode.
+      await fs.mkdir(dirname(this._baseDir), { recursive: true })
       await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
       const { randomUUID } = await import('crypto')
       const uniquePath = `${path}.${randomUUID()}.tmp`
@@ -228,11 +230,12 @@ export class FileStorage implements SnapshotStorage {
 
   /** Returns true if `path` is a symbolic link. */
   private async _isSymlink(path: string): Promise<boolean> {
-    const { promises: fs } = await import('fs')
-    return fs.lstat(path).then(
-      (stats) => stats.isSymbolicLink(),
-      () => false
-    )
+    try {
+      const { promises: fs } = await import('fs')
+      return (await fs.lstat(path)).isSymbolicLink()
+    } catch {
+      return false
+    }
   }
 
   /** Returns true if the error represents a missing file or directory (ENOENT). */

@@ -230,8 +230,9 @@ describe('FileStorage', () => {
     describe.skipIf(process.platform === 'win32')('on POSIX', () => {
       const mode = async (path: string): Promise<number> => (await fs.stat(path)).mode & 0o777
 
-      it('creates directories and files accessible to the owner only', async () => {
-        const baseDir = join(testDir, 'base')
+      it('creates the storage root, its directories and its files accessible to the owner only', async () => {
+        const parentDir = join(testDir, 'parent')
+        const baseDir = join(parentDir, 'base')
         await new FileStorage(baseDir).saveSnapshot({ location, snapshotId: '1', isLatest: false, snapshot })
 
         const historyDir = join(
@@ -244,11 +245,12 @@ describe('FileStorage', () => {
           'immutable_history'
         )
         let dir = historyDir
-        while (dir !== testDir) {
+        while (dir !== parentDir) {
           expect({ dir, mode: await mode(dir) }).toEqual({ dir, mode: 0o700 })
           dir = join(dir, '..')
         }
         expect(await mode(join(historyDir, 'snapshot_1.json'))).toBe(0o600)
+        expect(await mode(parentDir)).toBe(await mode(testDir))
       })
 
       it('refuses to load through a symbolic link', async () => {
