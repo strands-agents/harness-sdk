@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+import re
 import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -47,12 +48,14 @@ class Client(Protocol):
         ...
 
 
+# The OpenAI API and Bedrock Mantle, where the tool limits in the shared model info were measured.
+_TOOL_LIMITS_HOST = re.compile(r"api\.openai\.com|bedrock-mantle\.[a-z0-9-]+\.api\.aws")
+
+
 def _has_openai_tool_limits(client: Any) -> bool:
-    """Whether the client targets the OpenAI API or Bedrock Mantle, where the shared tool limits were measured."""
+    """Whether the client targets an endpoint the shared tool limits were measured on."""
     host = getattr(getattr(client, "base_url", None), "host", None)
-    if not isinstance(host, str):
-        return False
-    return host == "api.openai.com" or (host.startswith("bedrock-mantle.") and host.endswith(".api.aws"))
+    return isinstance(host, str) and _TOOL_LIMITS_HOST.fullmatch(host.lower()) is not None
 
 
 def _apply_chat_completions_tools(request: dict[str, Any]) -> None:
@@ -786,7 +789,7 @@ class OpenAIModel(Model):
         # client. The asyncio event loop does not allow connections to be shared. For more details, please refer to
         # https://github.com/encode/httpx/discussions/2959.
         async with self._get_client() as client:
-            if request["tools"] and _has_openai_tool_limits(client):
+            if request.get("tools") and _has_openai_tool_limits(client):
                 _apply_chat_completions_tools(request)
             try:
                 response = await client.chat.completions.create(**request)

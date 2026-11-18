@@ -52,7 +52,15 @@ type OpenAIChatChoice = {
 }
 
 // The OpenAI API and Bedrock Mantle, where the tool limits in the shared model info were measured.
-const TOOL_LIMITS_BASE_URL = /^https:\/\/(api\.openai\.com|bedrock-mantle\.[a-z0-9-]+\.api\.aws)(\/|$)/
+const TOOL_LIMITS_HOST = /^(api\.openai\.com|bedrock-mantle\.[a-z0-9-]+\.api\.aws)$/
+
+function hasOpenAIToolLimits(baseURL: string | undefined): boolean {
+  try {
+    return TOOL_LIMITS_HOST.test(new URL(baseURL ?? '').hostname)
+  } catch {
+    return false
+  }
+}
 
 /**
  * Turns reasoning off in a request with tools when OpenAI's Chat Completions API needs that for the model.
@@ -68,7 +76,7 @@ export function applyChatCompletionsTools(
   request: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
   baseURL: string | undefined
 ): void {
-  if (!request.tools?.length || !TOOL_LIMITS_BASE_URL.test(baseURL ?? '')) return
+  if (!request.tools?.length || !hasOpenAIToolLimits(baseURL)) return
   const support = lookupChatCompletionsTools(request.model)
   if (support === 'unsupported') {
     throw new Error(

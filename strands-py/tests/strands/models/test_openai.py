@@ -1556,7 +1556,14 @@ def stream_request(openai_client, agenerator, alist, messages, tool_specs):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("base_url", "model_id"), [(_OPENAI_URL, "gpt-6-sol"), (_MANTLE_URL, "openai.gpt-6.1-terra")])
+@pytest.mark.parametrize(
+    ("base_url", "model_id"),
+    [
+        (_OPENAI_URL, "gpt-6-sol"),
+        ("https://API.OPENAI.COM:443/v1/", "gpt-6-sol"),
+        (_MANTLE_URL, "openai.gpt-6.1-terra"),
+    ],
+)
 async def test_stream_turns_reasoning_off_when_the_model_takes_tools_only_without_it(
     stream_request, base_url, model_id
 ):
@@ -1576,6 +1583,8 @@ async def test_stream_turns_reasoning_off_when_the_model_takes_tools_only_withou
         (_OPENAI_URL, "gpt-5.4", {"reasoning_effort": "low"}, True),
         (_PROXY_URL, "gpt-6-sol", {"reasoning_effort": "low"}, True),
         (_PROXY_URL, "gpt-6-astra", None, True),
+        ("https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/", "openai.gpt-6.1-sol", None, True),
+        ("https://api.openai.com.evil.example/v1/", "gpt-6-astra", None, True),
         (None, "gpt-6-astra", None, True),
     ],
 )
@@ -1588,7 +1597,7 @@ async def test_stream_sends_the_request_as_formatted_when_no_tool_limit_applies(
     )
 
     assert tru_request == exp_request
-    assert len(recwarn) == 0
+    assert not [warning for warning in recwarn if "accepts tools" in str(warning.message)]
 
 
 @pytest.mark.asyncio

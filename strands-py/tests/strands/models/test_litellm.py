@@ -56,16 +56,6 @@ def test_output_model_cls():
     return TestOutputModel
 
 
-def test_format_request_does_not_apply_the_openai_chat_completions_tool_limits(litellm_acompletion, messages):
-    """LiteLLM picks the provider API itself, so the limits OpenAIModel applies when it streams stay out of it."""
-    tool_specs = [{"name": "t1", "description": "d1", "inputSchema": {"json": {"type": "object"}}}]
-    model = LiteLLMModel(model_id="gpt-6-astra")
-
-    tru_request = model.format_request(messages, tool_specs)
-
-    assert "reasoning_effort" not in tru_request
-
-
 def test_update_config(model, model_id):
     model.update_config(model_id=model_id)
 

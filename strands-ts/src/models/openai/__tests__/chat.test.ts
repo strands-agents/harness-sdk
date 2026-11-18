@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
+import { formatChatRequest } from '../chat-adapter.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import {
@@ -1423,8 +1424,9 @@ describe('OpenAIModel', () => {
 
     it.each([
       { baseURL: OPENAI_URL, modelId: 'gpt-6-sol' },
+      { baseURL: 'https://API.OPENAI.COM:443/v1', modelId: 'gpt-6-sol' },
       { baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-terra' },
-    ])('turns reasoning off and warns when $modelId is sent tools', async (sent) => {
+    ])('turns reasoning off and warns when $modelId is sent tools at $baseURL', async (sent) => {
       const request = await send(sent)
 
       expect(request.reasoning_effort).toBe('none')
@@ -1441,12 +1443,22 @@ describe('OpenAIModel', () => {
       { name: 'older model', baseURL: OPENAI_URL, modelId: 'gpt-5.4', params: { reasoning_effort: 'low' } },
       { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'low' } },
       { name: 'other endpoint, tool-less model', baseURL: PROXY_URL, modelId: 'gpt-6-astra' },
+      {
+        name: 'bedrock-runtime',
+        baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
+        modelId: 'openai.gpt-6.1-sol',
+      },
+      { name: 'look-alike host', baseURL: 'https://api.openai.com.evil.example/v1', modelId: 'gpt-6-astra' },
       { name: 'client without a base URL', modelId: 'gpt-6-astra' },
     ])('sends the request as formatted when no tool limit applies: $name', async (sent) => {
       const request = await send(sent)
-      const unlimited = await send({ ...sent, baseURL: PROXY_URL })
+      const formatted = formatChatRequest(
+        { modelId: sent.modelId, ...(sent.params ? { params: sent.params } : {}) },
+        messages,
+        sent.withTools === false ? {} : { toolSpecs }
+      )
 
-      expect(request).toStrictEqual(unlimited)
+      expect(request).toStrictEqual(formatted)
       expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('accepts tools'))
     })
 
