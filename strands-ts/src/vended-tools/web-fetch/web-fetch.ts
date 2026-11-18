@@ -243,6 +243,7 @@ function _parseHttpUrl(url: string): URL {
 async function _checkPublic(url: URL, signal: AbortSignal | null): Promise<void> {
   let isPublic: boolean
   try {
+    signal?.throwIfAborted()
     isPublic = await _orAborted(isPublicHost(url.hostname), signal)
   } catch (error) {
     if (signal?.aborted) {
@@ -267,7 +268,6 @@ function _orAborted<T>(promise: Promise<T>, signal: AbortSignal | null): Promise
   if (!signal) return promise
   return new Promise<T>((resolve, reject) => {
     const onAbort = (): void => reject(signal.reason)
-    if (signal.aborted) return onAbort()
     signal.addEventListener('abort', onAbort, { once: true })
     promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
   })

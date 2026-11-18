@@ -323,6 +323,17 @@ class TestNonPublicAddresses:
             await tool(url=url)
         assert requests == []
 
+    @pytest.mark.asyncio
+    async def test_refusal_message_names_the_host_and_the_opt_in(self):
+        tool = make_web_fetch(client=self._recording_client([]), mode="markdown")
+
+        with pytest.raises(WebFetchError) as error:
+            await tool(url="http://127.0.0.1:8080/")
+        assert str(error.value) == (
+            "Fetch refused: '127.0.0.1' is or resolves to a loopback, link-local, private, or other non-public "
+            "address. Set allow_private_addresses=True on make_web_fetch to allow it."
+        )
+
     @pytest.mark.parametrize("addresses", [["10.0.0.5"], ["::1"], ["93.184.216.34", "169.254.169.254"]])
     @pytest.mark.asyncio
     async def test_refuses_hostname_resolving_to_a_non_public_address(self, dns, addresses):

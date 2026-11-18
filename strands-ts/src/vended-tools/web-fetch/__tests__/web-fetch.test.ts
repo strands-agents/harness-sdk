@@ -271,9 +271,13 @@ describe('webFetch tool', () => {
       mockFetch('secret')
       vi.mocked(isPublicHost).mockResolvedValueOnce(false)
 
-      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'http://169.254.169.254/latest' })).rejects.toThrow(
-        /fetch refused/
-      )
+      await expect(
+        makeWebFetch({ mode: 'markdown' }).invoke({ url: 'http://169.254.169.254/latest' })
+      ).rejects.toMatchObject({
+        message:
+          'url=<http://169.254.169.254/latest> | fetch refused: host is or resolves to a loopback, link-local, ' +
+          'private, or other non-public address. Set allowPrivateAddresses: true on makeWebFetch to allow it.',
+      })
       expect(isPublicHost).toHaveBeenCalledWith('169.254.169.254')
       expect(globalThis.fetch).not.toHaveBeenCalled()
     })
@@ -346,6 +350,21 @@ describe('webFetch tool', () => {
       controller.abort()
 
       await expect(result).rejects.toThrow('Web fetch tool request cancelled')
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it('cancels without starting the host check when the signal is already aborted', async () => {
+      mockFetch('page')
+      const controller = new AbortController()
+      controller.abort()
+
+      await expect(
+        makeWebFetch({ mode: 'markdown' }).invoke(
+          { url: 'https://unknown.example/' },
+          makeContext({ cancelSignal: controller.signal })
+        )
+      ).rejects.toThrow('Web fetch tool request cancelled')
+      expect(isPublicHost).not.toHaveBeenCalled()
       expect(globalThis.fetch).not.toHaveBeenCalled()
     })
 

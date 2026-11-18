@@ -26,7 +26,7 @@ describe('webFetch against a loopback server', () => {
         response.writeHead(200, { 'content-type': 'text/plain' }).end('secret')
       }
     })
-    await new Promise<void>((resolve) => server.listen(0, resolve))
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     port = (server.address() as AddressInfo).port
   })
 
@@ -50,13 +50,11 @@ describe('webFetch against a loopback server', () => {
   )
 
   it('refuses a redirect to a loopback address without requesting it', async () => {
-    const { isPublicHost } = await vi.importActual<typeof addressGuard>('../address-guard.js')
-    vi.mocked(addressGuard.isPublicHost).mockImplementation(async (hostname) =>
-      hostname === 'localhost' ? true : isPublicHost(hostname)
-    )
+    // Only the first hop is treated as public; the redirect target goes through the real check.
+    vi.mocked(addressGuard.isPublicHost).mockResolvedValueOnce(true)
 
     await expect(
-      makeWebFetch({ mode: 'markdown' }).invoke({ url: `http://localhost:${port}/redirect` })
+      makeWebFetch({ mode: 'markdown' }).invoke({ url: `http://127.0.0.1:${port}/redirect` })
     ).rejects.toThrow(`url=<http://127.0.0.1:${port}/secret> | fetch refused`)
     expect(requests).toStrictEqual(['/redirect'])
   })
@@ -64,7 +62,7 @@ describe('webFetch against a loopback server', () => {
   it('follows a redirect whose Location is raw UTF-8 to the same URL fetch would', async () => {
     vi.mocked(addressGuard.isPublicHost).mockResolvedValue(true)
 
-    await makeWebFetch({ mode: 'markdown' }).invoke({ url: `http://localhost:${port}/utf8-redirect` })
+    await makeWebFetch({ mode: 'markdown' }).invoke({ url: `http://127.0.0.1:${port}/utf8-redirect` })
 
     expect(requests).toStrictEqual(['/utf8-redirect', '/caf%C3%A9'])
   })
