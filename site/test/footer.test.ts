@@ -63,16 +63,19 @@ describe('compact docs footer output', () => {
     expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'harness-sdk', 'docs/user-guide/sdk')
   })
 
-  it('shows the single Box stream and links to the Box changelog and issue tracker', () => {
-    const footer = footerFor('docs/user-guide/box')
+  it.each([
+    ['Box', 'box'],
+    ['Shell', 'shell'],
+  ])('shows the single %s stream and links to its changelog and issue tracker', (label, slug) => {
+    const footer = footerFor(`docs/user-guide/${slug}`)
     const releases = [...footer.querySelectorAll<HTMLElement>('.site-footer__release')]
 
     expect(releases).toHaveLength(1)
     expect(releases[0]?.hasAttribute('data-release-lang')).toBe(false)
-    expect(releases[0]?.textContent?.trim()).toEqual(expect.stringMatching(/^Box v\S+.+$/))
-    expect(releases[0]?.querySelector('a')?.getAttribute('href')).toMatch(/^\/changelog\/box\/v[^/]+\/$/)
-    expect(linkByText(footer, 'Changelog →').getAttribute('href')).toBe('/changelog/?sdk=box')
-    expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'box', 'docs/user-guide/box')
+    expect(releases[0]?.textContent?.trim()).toEqual(expect.stringMatching(new RegExp(`^${label} v\\S+.+$`)))
+    expect(releases[0]?.querySelector('a')?.getAttribute('href')).toMatch(new RegExp(`^/changelog/${slug}/v[^/]+/$`))
+    expect(linkByText(footer, 'Changelog →').getAttribute('href')).toBe(`/changelog/?sdk=${slug}`)
+    expectDocumentationIssue(linkByText(footer, 'Open an issue'), slug, `docs/user-guide/${slug}`)
   })
 
   it('routes generated sample guides to the Samples issue tracker', () => {
@@ -82,14 +85,6 @@ describe('compact docs footer output', () => {
 
     expect(footer.querySelector('.site-footer__release')).toBeNull()
     expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'samples', route)
-  })
-
-  it('omits releases for Shell while keeping its issue tracker', () => {
-    const footer = footerFor('docs/user-guide/shell')
-
-    expect(footer.querySelector('.site-footer__release')).toBeNull()
-    expect(footer.querySelector('.site-footer__more')).toBeNull()
-    expectDocumentationIssue(linkByText(footer, 'Open an issue'), 'shell', 'docs/user-guide/shell')
   })
 
   it('omits releases on non-product docs and uses the site issue tracker', () => {

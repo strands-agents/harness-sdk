@@ -6,7 +6,10 @@ import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createCancellableAgent } from '../../__fixtures__/agent-helpers.js'
 import { AfterNodeCallEvent, BeforeNodeCallEvent, MultiAgentInitializedEvent } from '../events.js'
-import { ReasoningBlock, TextBlock, type ContentBlockData } from '../../types/messages.js'
+import { z } from 'zod'
+import { ReasoningBlock, TextBlock, ToolUseBlock, type ContentBlockData } from '../../types/messages.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
+import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { Status, MultiAgentState } from '../state.js'
 import { AgentNode, MultiAgentNode } from '../nodes.js'
 import { Graph } from '../graph.js'
@@ -402,6 +405,204 @@ describe('Graph', () => {
       const input = streamSpy.mock.calls[0]![0] as TextBlock[]
       expect(input.map((b) => b.text)).toStrictEqual(['task-input', '[node: a]', 'from-a'])
       expect(input.map((b) => b.type)).toStrictEqual(['textBlock', 'textBlock', 'textBlock'])
+    })
+
+    it('forwards a dependency structured output as a JSON TextBlock, not a toolUse block', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
+        ),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
+    })
+
+    it('strips a parallel regular toolUse emitted alongside the structured-output tool', async () => {
+      const search = createMockTool('search', () => 'ok')
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn([
+          new ToolUseBlock({ name: 'search', toolUseId: 's1', input: {} }),
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } }),
+        ]),
+        tools: [search],
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
+    })
+
+    it('forwards the validated structured output, not the raw tool input', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
+        ),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string(), priority: z.string().default('normal') }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing","priority":"normal"}'),
+      ])
+    })
+
+    it('emits the structured output only once when the turn contains multiple structured-output calls', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn([
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } }),
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't2', input: { category: 'other' } }),
+        ]),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
+    })
+
+    it('forwards a nested MultiAgentNode terminus structured output through the outer graph', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
+        ),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const inner = new Graph({ id: 'inner', nodes: [classifier], edges: [] })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [inner, specialist],
+        edges: [['inner', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: inner]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
+    })
+
+    it('forwards every terminus structured output from a nested graph with multiple termini', async () => {
+      const schema = z.object({ category: z.string() })
+      const c1 = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
+        ),
+        printer: false,
+        id: 'c1',
+        structuredOutputSchema: schema,
+      })
+      const c2 = new Agent({
+        model: new MockMessageModel().addTurn(
+          new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't2', input: { category: 'urgent' } })
+        ),
+        printer: false,
+        id: 'c2',
+        structuredOutputSchema: schema,
+      })
+      const inner = new Graph({ id: 'inner', nodes: [c1, c2], edges: [] })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [inner, specialist],
+        edges: [['inner', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: inner]'),
+        new TextBlock('{"category":"billing"}'),
+        new TextBlock('{"category":"urgent"}'),
+      ])
+    })
+
+    it('does not duplicate the structured output when the forced retry returned it as text', async () => {
+      const classifier = new Agent({
+        model: new MockMessageModel()
+          .addTurn(new TextBlock('thinking out loud'))
+          .addTurn(new TextBlock('{"category":"billing"}')),
+        printer: false,
+        id: 'classifier',
+        structuredOutputSchema: z.object({ category: z.string() }),
+      })
+      const specialist = makeAgent('billing')
+      const streamSpy = vi.spyOn(specialist, 'stream')
+
+      const graph = new Graph({
+        nodes: [classifier, specialist],
+        edges: [['classifier', 'billing']],
+      })
+
+      await graph.invoke('I was double charged')
+
+      expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
+        new TextBlock('I was double charged'),
+        new TextBlock('[node: classifier]'),
+        new TextBlock('{"category":"billing"}'),
+      ])
     })
 
     it('converts ContentBlockData[] input to ContentBlock instances for downstream nodes', async () => {

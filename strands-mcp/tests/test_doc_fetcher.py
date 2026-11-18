@@ -18,7 +18,7 @@ LLMS_TXT = """# Strands Agents
 
 
 def test_parse_llms_txt_returns_title_url_and_description():
-    with patch("strands_mcp_server.utils.doc_fetcher._get", return_value=LLMS_TXT):
+    with patch("strands_mcp_server.utils.doc_fetcher.fetch_text", return_value=LLMS_TXT):
         links = doc_fetcher.parse_llms_txt("https://strandsagents.com/llms.txt")
 
     assert links == [

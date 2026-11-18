@@ -53,6 +53,10 @@ function responseBody(answers: Record<string, unknown>, usage: unknown = { input
   return { model: 'resolved-model', answers, usage }
 }
 
+function envelope(result: unknown) {
+  return { code: 0, message: 'ok', data: { result, creditsUsed: 1 } }
+}
+
 function fakeFetch(
   payload: unknown,
   options: { status?: number; captured?: CapturedRequest[] } = {}
@@ -296,6 +300,19 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect((error as Error).cause).toBeDefined()
     })
 
+    it('sends an oversized request and maps the server HTTP 413 to ContextWindowOverflowError', async () => {
+      const fetch = fakeFetch({ error: 'request body too large' }, { status: 413 })
+      const decision = create({ apiKey: 'test-key', fetch })
+
+      const error = await decision.ask('x'.repeat(64 * 1024), { q: { question: 'ok?', choices: 'boolean' } }).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+
+      expect(error).toBeInstanceOf(ContextWindowOverflowError)
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
     it('wraps transport failures as ModelError with the original cause', async () => {
       const fetch = vi.fn(async (): Promise<Response> => {
         throw new Error('offline')
@@ -333,6 +350,17 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       )
     })
 
+    it('rejects a flat response that omits the model', async () => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ answers: { q: { type: 'noul', noul: 1 } } }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /model must be a non-empty string/
+      )
+    })
+
     it('rejects a Choice answer whose selection is not the most probable', async () => {
       const decision = create({
         apiKey: 'test-key',
@@ -354,6 +382,46 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
             q: { type: 'choice', choice: 'a', probabilities: { a: 0.4, b: 0.4 }, confidence: 0.1 },
           })
         ),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } })).rejects.toThrow(
+        /must sum to 1/
+      )
+    })
+
+    it('accepts Choice probabilities rounded to 4 decimals', async () => {
+      // Live strands-decider output: ten probabilities rounded to 4 decimals sum to 1.0001.
+      const probabilities = {
+        payments: 0.1056,
+        fraud: 0.0067,
+        onboarding: 0.0053,
+        tax: 0.0032,
+        identity: 0.0035,
+        payouts: 0.8215,
+        disputes: 0.0089,
+        refunds: 0.0076,
+        pricing: 0.0031,
+        support: 0.0347,
+      }
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody({ q: { type: 'choice', choice: 'payouts', probabilities, confidence: 0.8017 } })),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'pick?', choices: Object.keys(probabilities) } })
+
+      expect(result.answers).toEqual({ q: 'payouts' })
+    })
+
+    it.each([
+      // Rounded to 4 decimals, but the sum is past the rounding bound of 2 * 5e-5.
+      { a: 0.5001, b: 0.5001 },
+      // Within the rounding bound, but rounding can't produce values off the 4-decimal grid.
+      { a: 0.50003, b: 0.50003 },
+    ])('rejects Choice probabilities %o that sum just past the bound', async (probabilities) => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody({ q: { type: 'choice', choice: 'a', probabilities, confidence: 0 } })),
       })
 
       await expect(decision.ask('state', { q: { question: 'pick?', choices: ['a', 'b'] } })).rejects.toThrow(
@@ -436,17 +504,129 @@ describe('DecisionsAPIDecisionModel', () => {
       expect(fetch).not.toHaveBeenCalled()
     })
 
-    it('enforces the provider request-body limit before sending', async () => {
-      const fetch = fakeFetch(responseBody({}))
-      const decision = new DecisionsAPIDecisionModel({ apiKey: 'test-key', fetch })
+    it('reads the enveloped decisionapi.net response and reports the requested model', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({
+          code: 0,
+          message: 'ok',
+          data: {
+            result: {
+              answers: { q: { type: 'noul', noul: 0.99 } },
+              usage: { input_tokens: 281, output_tokens: 23 },
+              elapsedMs: 1879,
+            },
+            creditsUsed: 1,
+          },
+        }),
+      })
 
-      const error = await decision.ask('x'.repeat(33 * 1024), { q: { question: 'ok?', choices: 'boolean' } }).then(
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result).toEqual({
+        answers: { q: true },
+        usage: { inputTokens: 281, outputTokens: 23, totalTokens: 304 },
+        metadata: {
+          latencyMs: expect.any(Number),
+          providerName: 'decisionsApi',
+          modelId: '~typesafe/jev-latest',
+          probabilities: { q: { true: 0.99, false: expect.closeTo(0.01) } },
+          confidence: { q: expect.closeTo(0.98) },
+        },
+      })
+    })
+
+    it('reports a non-default requested model for an enveloped response', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        modelId: 'pinned-model',
+        fetch: fakeFetch(envelope({ answers: { q: { type: 'noul', noul: 0.99 } } })),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result.metadata.modelId).toBe('pinned-model')
+    })
+
+    it('reports the model named by an enveloped result', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        modelId: 'pinned-model',
+        fetch: fakeFetch(envelope({ model: 'served-model', answers: { q: { type: 'noul', noul: 0.99 } } })),
+      })
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result.metadata.modelId).toBe('served-model')
+    })
+
+    it('leaves TypeSafeDecisionModel rejecting the envelope', async () => {
+      const decision = new TypeSafeDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch(envelope({ answers: { q: { type: 'noul', noul: 0.99 } } })),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /model must be a non-empty string/
+      )
+    })
+
+    it.each([-1, false])('rejects an enveloped error body with code %s sent with HTTP 200', async (code) => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code, message: 'request rejected' }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        `error code ${String(code)}: request rejected`
+      )
+    })
+
+    it.each([
+      { payload: { code: 0 }, message: 'data must be an object' },
+      { payload: { code: 0, data: { result: [] } }, message: 'result must be an object' },
+    ])('rejects the malformed envelope $payload', async ({ payload, message }) => {
+      const decision = new DecisionsAPIDecisionModel({ apiKey: 'test-key', fetch: fakeFetch(payload) })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(message)
+    })
+
+    it('maps an enveloped HTTP 401 to an HTTP failure rather than an envelope error', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code: -1, message: 'Invalid API key.' }, { status: 401 }),
+      })
+
+      const error = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }).then(
         () => undefined,
         (caught: unknown) => caught
       )
 
-      expect(error).toBeInstanceOf(ContextWindowOverflowError)
-      expect(fetch).not.toHaveBeenCalled()
+      expect(error).toBeInstanceOf(ModelError)
+      expect((error as Error).message).toMatch(/HTTP 401: Invalid API key\./)
+      expect((error as Error).cause).toBeDefined()
+    })
+
+    it.each([429, 503, 529])('maps an enveloped HTTP %s to ModelThrottledError', async (status) => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code: -1, message: 'retry later' }, { status }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toBeInstanceOf(
+        ModelThrottledError
+      )
+    })
+
+    it('maps an enveloped HTTP 413 to ContextWindowOverflowError', async () => {
+      const decision = new DecisionsAPIDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ code: -1, message: 'request too large' }, { status: 413 }),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toBeInstanceOf(
+        ContextWindowOverflowError
+      )
     })
   })
 })

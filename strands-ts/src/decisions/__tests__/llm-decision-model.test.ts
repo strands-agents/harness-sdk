@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
+import { BedrockModel } from '../../models/bedrock.js'
 import { Model } from '../../models/model.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
 import { InjectedBlock, Message, TextBlock } from '../../types/messages.js'
@@ -356,6 +357,12 @@ describe('LLMDecisionModel', () => {
   describe('construction', () => {
     it('rejects a non-Model argument', () => {
       expect(() => new LLMDecisionModel({ model: {} as unknown as Model })).toThrow(TypeError)
+    })
+
+    it('defaults to a strict BedrockModel', () => {
+      const model = (new LLMDecisionModel() as unknown as { _model: BedrockModel })._model
+      expect(model).toBeInstanceOf(BedrockModel)
+      expect(model.getConfig().strictTools).toBe(true)
     })
   })
 })

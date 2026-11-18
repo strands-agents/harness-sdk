@@ -1,7 +1,7 @@
 import { BedrockModel, defineQuestions, LLMDecisionModel } from '@strands-agents/sdk'
 
 async function main() {
-  const decision = new LLMDecisionModel({ model: new BedrockModel() })
+  const decision = new LLMDecisionModel({ model: new BedrockModel({ strictTools: true }) })
 
   const questions = defineQuestions({
     color: {

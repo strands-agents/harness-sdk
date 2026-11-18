@@ -1,7 +1,7 @@
 import difflib
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any, Dict, List, Tuple
 from urllib.parse import urlparse
 
 from mcp.types import ToolAnnotations
@@ -14,7 +14,8 @@ except ImportError:
     FastMCP = import_module("mcp.server.mcpserver").MCPServer
     ToolError = import_module("mcp.server.mcpserver.exceptions").ToolError
 
-from .utils import cache, text_processor
+from .utils import cache, integrations, text_processor
+from .utils.indexer import Doc, IndexSearch, _tokenize
 
 APP_NAME = "strands-agents-mcp-server"
 
@@ -49,12 +50,16 @@ for general programming questions that do not involve Strands.
 How to use them:
 1. If you know the page, call fetch_doc with its URL directly, starting from the pages above.
 2. Otherwise call search_docs with short keywords. Exact names work best: a class such as \
-"BedrockModel", or a release such as "python v1.62.0" or "typescript v1.24.0".
+"BedrockModel", or a release such as "python v1.62.0" or "typescript v1.24.0". When the question is \
+conversational, also pass alternate_queries with the terms the docs likely use, in the same call.
 3. For long pages, fetch_doc(uri) returns a table of contents; read only the sections you need with \
 fetch_doc(uri, section). Short pages come back whole.
 4. Pages often show Python and TypeScript side by side; use only the language the user is working in.
 5. The docs describe the latest releases. If the user is on an older version, check its release notes.
 6. Avoid fetch_doc with an empty uri unless you need to browse: it lists every page, over 1,000 URLs.
+7. To choose an integration (model provider, memory store, tool, observability, and more), call \
+find_integrations to filter the catalog by type, language, and maintainer. Tell the user when a result is \
+community-maintained.
 
 Cite the page URLs you used in your answer."""
 
@@ -63,6 +68,10 @@ READ_ONLY_DOCS = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idemp
 SUGGESTION_LIMIT = 5
 # Every catalog path shares the /docs/ prefix, so lower cutoffs suggest unrelated pages.
 SUGGESTION_CUTOFF = 0.8
+
+ALTERNATE_QUERY_LIMIT = 4
+FUSION_DEPTH = 20
+RRF_K = 60
 
 
 def _is_valid_doc_url(uri: str) -> bool:
@@ -76,6 +85,28 @@ def _is_valid_doc_url(uri: str) -> bool:
 
 def _section_index(sections: list[dict]) -> list[dict]:
     return [{"id": s["id"], "title": s["title"], "children": s["children"]} for s in sections]
+
+
+def _distinct_queries(phrasings: List[str]) -> List[str]:
+    queries: Dict[Tuple[str, ...], str] = {}
+    for phrasing in phrasings:
+        tokens = tuple(_tokenize(phrasing))
+        if tokens:
+            queries.setdefault(tokens, phrasing)
+    return list(queries.values())
+
+
+def _fused_search(index: IndexSearch, queries: List[str], k: int) -> List[Tuple[float, Doc]]:
+    if len(queries) == 1:
+        return index.search(queries[0], k=k)
+    scores: Dict[str, float] = {}
+    docs: Dict[str, Doc] = {}
+    for query in queries:
+        for rank, (_, doc) in enumerate(index.search(query, k=FUSION_DEPTH)):
+            scores[doc.uri] = scores.get(doc.uri, 0.0) + 1.0 / (RRF_K + rank + 1)
+            docs[doc.uri] = doc
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:k]
+    return [(score, docs[uri]) for uri, score in ranked]
 
 
 def _catalog_path(uri: str) -> str:
@@ -114,21 +145,35 @@ def search_docs(
         ),
     ],
     k: Annotated[int, Field(ge=1, le=20, description="Maximum number of results to return.")] = 5,
+    alternate_queries: Annotated[
+        Tuple[str, ...],
+        Field(
+            max_length=ALTERNATE_QUERY_LIMIT,
+            description=(
+                "Optional other phrasings of the same question in the words the docs likely use: feature names, "
+                'API names, synonyms. For "stop the agent after 5 turns", pass ["turn limit", "max cycles", '
+                '"lifecycle controls"]. Pages matched by several phrasings rank first.'
+            ),
+        ),
+    ] = (),
 ) -> List[Dict[str, Any]]:
     """Search the official Strands Agents docs: user guides, API reference pages, and examples.
 
     Ranking uses page titles, URL paths, and catalog descriptions, plus a page's content once it has been
     fetched, so both title-like keywords and body terms work. The top results are fetched on demand to build
     snippets. Call fetch_doc with a result URL to read the page or one of its sections. If you already have a
-    strandsagents.com URL, call fetch_doc directly instead of searching.
+    strandsagents.com URL, call fetch_doc directly instead of searching. When the question is phrased
+    conversationally, pass alternate_queries with the terms the docs likely use instead of searching again.
 
-    Each result has url, title, snippet, and score. The score is an unbounded BM25 value: higher is better
-    within one result set; it is not a probability and is not comparable across queries. Returns an empty list
-    when nothing matches. If a result page cannot be fetched, its title is used as the snippet.
+    Each result has url, title, snippet, and score. The score is an unbounded BM25 value, or a fused rank score
+    when alternate_queries are given: higher is better within one result set; it is not a probability and is
+    not comparable across queries. Returns an empty list when nothing matches. If a result page cannot be
+    fetched, its title is used as the snippet.
     """
     cache.ensure_ready()
     index = cache.get_index()
-    results = index.search(query, k=k) if index else []
+    queries = _distinct_queries([query, *alternate_queries])
+    results = _fused_search(index, queries, k) if index and queries else []
     url_cache = cache.get_url_cache()
 
     top = results[: min(len(results), cache.SNIPPET_HYDRATE_MAX)]
@@ -253,6 +298,55 @@ def fetch_doc(
         "preamble": text_processor.extract_preamble(page.content),
         "sections": clean_sections,
     }
+
+
+@mcp.tool(title="Find Strands integrations", annotations=READ_ONLY_DOCS)
+def find_integrations(
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                'Keywords matched against integration names and descriptions, e.g. "langfuse", "postgres". '
+                "Leave empty to filter by the other parameters only."
+            )
+        ),
+    ] = "",
+    type: Annotated[integrations.IntegrationType | None, Field(description="Integration type to filter by.")] = None,
+    language: Annotated[
+        integrations.Language | None, Field(description="Only integrations that support this language.")
+    ] = None,
+    maintained_by: Annotated[
+        integrations.Maintainer | None,
+        Field(
+            description=(
+                'Who maintains the integration: "strands" (built into the SDK), "aws", "partner" (the vendor\'s '
+                'official org), or "community".'
+            )
+        ),
+    ] = None,
+    sdk: Annotated[
+        integrations.Sdk | None,
+        Field(
+            description='Strands product the integration is for: "agents" (Strands Agents) or "evals" (Strands Evals).'
+        ),
+    ] = None,
+    limit: Annotated[int, Field(ge=1, le=50, description="Maximum number of results to return.")] = 10,
+) -> Dict[str, Any]:
+    """Find Strands integrations in the catalog published at https://strandsagents.com/integrations/.
+
+    Every keyword in query must appear in the name or description; name matches rank first. Returns total, the
+    number of matching integrations, and results, the first limit of them; when total is larger, raise limit or
+    narrow the filters. Each result has name, description, type, sdk, maintained_by, languages, packages (each
+    with language, package, and an install command), docs_url, and github. A docs_url on strandsagents.com can be
+    read with fetch_doc. An integration listed for a language without a package is documented by a guide only.
+
+    The catalog is fetched on first use and refreshed every few minutes. If it has never loaded, the call fails
+    with a tool error; retry later or use search_docs.
+    """
+    try:
+        return integrations.find(query, type, language, maintained_by, sdk, limit)
+    except integrations.FeedUnavailableError as e:
+        raise ToolError(str(e)) from e
 
 
 def main() -> None:

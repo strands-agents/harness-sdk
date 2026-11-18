@@ -1,10 +1,13 @@
-"""Providers whose APIs have no server-side summary turn the capability off unless the caller sets it."""
+"""Which providers report a server-side summary, and what the summarize strategy stores for them."""
 
 import unittest.mock
 
 import pytest
 
-from strands.models import ModelCapabilities, ModelInfo
+from strands import Agent
+from strands._context_manager.strategies.offload import Offload
+from strands._context_manager.types import ContextState
+from strands.models import Model, ModelCapabilities, ModelInfo
 from strands.models.gemini import GeminiModel
 from strands.models.litellm import LiteLLMModel
 from strands.models.llamaapi import LlamaAPIModel
@@ -14,6 +17,7 @@ from strands.models.ollama import OllamaModel
 from strands.models.openai import OpenAIModel
 from strands.models.openai_responses import OpenAIResponsesModel
 from strands.models.writer import WriterModel
+from strands.types.content import ContentBlock, Message, Messages
 
 MODEL_ID = "claude-sonnet-5-5"
 
@@ -72,3 +76,56 @@ def test_providers_without_server_side_summary_turn_it_off_for_listed_models(mak
     assert make_model().model_info.capabilities.server_side_summary is False
     override = ModelInfo(capabilities=ModelCapabilities(server_side_summary=True))
     assert make_model(model_info=override).model_info.capabilities.server_side_summary is True
+
+
+class _ListedIdModel(Model):
+    """A custom provider whose model id is listed with a server-side summary but that does not override summarize."""
+
+    def __init__(self):
+        self.requests: list[Messages] = []
+
+    def update_config(self, **model_config):
+        pass
+
+    def get_config(self):
+        return {"model_id": MODEL_ID}
+
+    async def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):
+        yield {}
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.requests.append(messages)
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockStart": {"start": {}}}
+        yield {"contentBlockDelta": {"delta": {"text": "a summary"}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+@pytest.mark.asyncio
+async def test_custom_provider_with_a_listed_id_stores_its_summary_as_text():
+    model = _ListedIdModel()
+    assert model.model_info.capabilities.server_side_summary is True
+    messages: Messages = [
+        Message(role="user", content=[ContentBlock(text="task")]),
+        Message(role="assistant", content=[ContentBlock(text="old1")]),
+        Message(role="user", content=[ContentBlock(text="old2")]),
+        Message(role="assistant", content=[ContentBlock(text="old3")]),
+        Message(role="user", content=[ContentBlock(text="recent")]),
+    ]
+    tokens = await model.count_tokens(messages[1:4])
+    agent = Agent(model=model, messages=messages, callback_handler=None)
+    strategy = Offload.summarize("*").when(utilization=0.8, preserve_recent=1)
+
+    assert await strategy.apply(ContextState(messages=agent.messages, agent=agent, utilization=0.9)) is True
+    await agent.invoke_async("next")
+
+    marker = f"[Summarized: 3 messages, ~{tokens:,} tokens]\n\na summary"
+    without_tracking_ids = [{k: v for k, v in message.items() if k != "tracking_id"} for message in agent.messages[:3]]
+    assert without_tracking_ids == [
+        Message(role="user", content=[ContentBlock(text="task")]),
+        Message(role="assistant", content=[ContentBlock(text=marker)]),
+        Message(role="user", content=[ContentBlock(text="recent")]),
+    ]
+    sent_blocks = [block for request in model.requests for message in request for block in message["content"]]
+    assert not any("summary" in block for block in sent_blocks)

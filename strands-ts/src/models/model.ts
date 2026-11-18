@@ -29,8 +29,9 @@ import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
-import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
+import { summarizeWithStream, type SummarizeResult } from './summarize.js'
 
 /**
  * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
@@ -47,7 +48,7 @@ import { warnOnce } from '../logging/warn-once.js'
  */
 export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, modelId: string): T {
   if (config.contextWindowLimit !== undefined) return config
-  const contextWindow = mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
+  const contextWindow = ModelInfo.merge(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
   if (contextWindow === undefined) return config
   return { ...config, contextWindowLimit: contextWindow }
 }
@@ -64,7 +65,7 @@ export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, mode
  */
 export function resolveMaxTokens(config: BaseModelConfig, modelId: string): number | undefined {
   if (config.maxTokens !== undefined) return config.maxTokens
-  return mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
+  return ModelInfo.merge(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
 }
 
 class CitationAccumulator {
@@ -308,6 +309,38 @@ export interface CountTokensOptions {
 }
 
 /**
+ * Options for {@link Model.summarize}.
+ */
+export interface SummarizeOptions {
+  /**
+   * The request's system prompt.
+   */
+  systemPrompt?: SystemPrompt
+
+  /**
+   * The request's tool specifications.
+   */
+  toolSpecs?: ToolSpec[]
+
+  /**
+   * Summarization instructions replacing the default ones, which `undefined` or `''` keeps. The base
+   * implementation's instruction not to act on the request or call tools is always sent.
+   */
+  instructions?: string
+
+  /**
+   * Signal that aborts the call.
+   */
+  cancelSignal?: AbortSignal
+
+  /**
+   * Metadata of the invoking agent, as passed to `stream()`. A provider may consult it to derive a prompt-cache
+   * routing key, so a replay can share the agent's cache.
+   */
+  agentMetadata?: AgentMetadata
+}
+
+/**
  * Result interface for the streamAggregated method.
  * Contains the complete message, stop reason, and optional metadata.
  */
@@ -384,20 +417,22 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
   /**
    * Everything the SDK knows about the configured model, resolved on each read. Layers, later
-   * ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that can send them turns
-   * it back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new
-   * record, so do not compare reads by reference.
+   * ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that supports
+   * them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
    * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
-   * `{ ...info, capabilities: { ...info.capabilities, promptCaching: 'auto', ...config.modelInfo?.capabilities } }`.
+   * `ModelInfo.merge(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this.getConfig().modelInfo)`.
    * Do not read {@link stateful} inside the override; it reads this getter.
    */
   get modelInfo(): ModelInfo {
     const config = this.getConfig()
-    return mergeModelInfo(
+    return ModelInfo.merge(
       lookupModelInfo(this.modelId ?? ''),
-      { capabilities: { temporaryMessages: false }, limits: { contextWindow: config.contextWindowLimit } },
+      {
+        capabilities: { temporaryMessages: false },
+        limits: { contextWindow: config.contextWindowLimit },
+      },
       config.modelInfo
     )
   }
@@ -429,6 +464,31 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
     return estimateTokensHeuristic(messages, options)
+  }
+
+  /**
+   * Summarizes `messages`.
+   *
+   * `messages` is a request as the caller would send it to `stream()`, along with its tool specs and system
+   * prompt. The base implementation sends that request closed by an instruction not to act on it or call tools,
+   * followed by `instructions` (or default ones), and otherwise as given, so a caller that replays its own
+   * conversation can share its prompt cache. The summary is the reply's text, including a reply cut off at the
+   * output limit or a stop sequence. A reply that ends for another reason, such as a tool call, a cancellation or a
+   * guardrail, or that holds no text, gives an empty result.
+   *
+   * Every summary is a `summaryBlock`. The base implementation leaves its `provider` unset. A provider that reports
+   * `modelInfo.capabilities.serverSideSummary` as `true` overrides this method to summarize server-side and sets
+   * `provider` to its own name, using the base implementation when the capability is off or the server-side
+   * summary fails, as `AnthropicModel` does. A summary with a `provider` can stand in for the messages it
+   * summarized only when they start at the conversation's first message; a caller that summarizes anything else
+   * uses only its text.
+   *
+   * @param messages - The request to summarize, left unmodified
+   * @param options - The request's system prompt and tools, summarization instructions, cancel signal and agent metadata
+   * @returns The summary and the token usage of the calls made for it
+   */
+  async summarize(messages: Message[], options?: SummarizeOptions): Promise<SummarizeResult> {
+    return summarizeWithStream(this, messages, options)
   }
 
   /**
@@ -753,6 +813,9 @@ function estimateContentBlockTokens(block: ContentBlock): number {
       break
     case 'injectedBlock':
       total += heuristicText(block.injected.text)
+      break
+    case 'summaryBlock':
+      total += heuristicText(block.text)
       break
     default:
       break

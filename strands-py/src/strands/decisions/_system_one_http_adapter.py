@@ -10,6 +10,7 @@ import math
 import os
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, NoReturn, TypeGuard
 
@@ -26,21 +27,34 @@ from .types import DecisionInput, DecisionMetadata, DecisionResult, Question, Un
 
 _MAX_CHOICE_COUNT = 255
 _PROBABILITY_TOLERANCE = 1e-6
+# System One servers such as strands-decider round each probability to 4 decimals,
+# so a distribution over N choices may sum to 1 within N * 5e-5.
+_PROBABILITY_ROUNDING_TOLERANCE = 5e-5
 _BINARY_MEDIA_KEYS = ("audio", "image", "video", "document")
 
+# Sends a serialized System One request and resolves to the parsed JSON response payload. Raises a
+# model-error exception when the request fails.
+_SystemOneTransport = Callable[[str], Awaitable[Any]]
 
-@dataclass
-class _SystemOneProviderConfig:
-    """Resolved per-provider transport configuration."""
+
+@dataclass(kw_only=True)
+class _SystemOneRequestConfig:
+    """Request mapping and limits shared by every System One transport."""
 
     provider_name: str
+    default_min_confidence: float
+    # Sent as the request's ``model``; omitted when None so the server uses its own.
+    model_id: str | None = None
+    max_questions: int | None = None
+
+
+@dataclass(kw_only=True)
+class _SystemOneProviderConfig(_SystemOneRequestConfig):
+    """Resolved configuration for an HTTP-backed System One provider."""
+
     endpoint: str
     api_key: str = field(repr=False)
-    model_id: str
-    default_min_confidence: float
-    max_body_bytes: int
     http_client: httpx.AsyncClient | None = None
-    max_questions: int | None = None
 
 
 def _resolve_system_one_provider_config(
@@ -49,7 +63,6 @@ def _resolve_system_one_provider_config(
     provider_name: str,
     endpoint: str,
     api_key_environment_variable: str,
-    max_body_bytes: int,
     max_questions: int | None = None,
     api_key: str | None,
     model_id: str,
@@ -67,24 +80,26 @@ def _resolve_system_one_provider_config(
     if http_client is not None and not isinstance(http_client, httpx.AsyncClient):
         raise TypeError(f"{class_name} http_client must be an httpx.AsyncClient")
 
-    if (
-        not isinstance(min_confidence, (int, float))
-        or isinstance(min_confidence, bool)
-        or not math.isfinite(min_confidence)
-        or not 0 <= min_confidence <= 1
-    ):
-        raise ValueError(f"{class_name} default_min_confidence must be in [0.0, 1.0]")
-
     return _SystemOneProviderConfig(
         provider_name=provider_name,
         endpoint=endpoint,
         api_key=resolved_api_key,
         model_id=resolved_model_id,
-        default_min_confidence=min_confidence,
-        max_body_bytes=max_body_bytes,
+        default_min_confidence=_resolve_default_min_confidence(min_confidence, class_name),
         http_client=http_client,
         max_questions=max_questions,
     )
+
+
+def _resolve_default_min_confidence(value: float, class_name: str) -> float:
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or not 0 <= value <= 1
+    ):
+        raise ValueError(f"{class_name} default_min_confidence must be in [0.0, 1.0]")
+    return value
 
 
 @dataclass
@@ -104,37 +119,28 @@ class _ParsedResult:
 
 
 async def _ask_system_one(
-    config: _SystemOneProviderConfig,
+    config: _SystemOneRequestConfig,
+    transport: _SystemOneTransport,
     state: DecisionInput,
     questions: dict[str, Question],
 ) -> DecisionResult:
     if config.max_questions is not None and len(questions) > config.max_questions:
         raise ValueError(f"{config.provider_name} accepts at most {config.max_questions} questions per request")
 
+    request: dict[str, Any] = {"state": _to_wire_state(state)}
+    if config.model_id is not None:
+        request["model"] = config.model_id
+    request["questions"] = _to_wire_questions(questions)
     body = json.dumps(
-        {
-            "state": _to_wire_state(state),
-            "model": config.model_id,
-            "questions": _to_wire_questions(questions),
-        },
+        request,
         ensure_ascii=False,
         separators=(",", ":"),
         allow_nan=False,
         default=_reject_non_serializable,
     )
-    body_bytes = len(body.encode("utf-8"))
-    if body_bytes > config.max_body_bytes:
-        raise ContextWindowOverflowException(
-            f"{config.provider_name} decision request is {body_bytes} bytes; "
-            f"the provider limit is {config.max_body_bytes}"
-        )
 
     started_at = time.perf_counter()
-    response = await _post(config, body)
-
-    payload = _read_payload(response)
-    if not response.is_success:
-        _raise_http_error(config.provider_name, response, payload)
+    payload = await transport(body)
 
     parsed = _parse_result(payload, questions, config.default_min_confidence)
     latency_ms = round((time.perf_counter() - started_at) * 1000)
@@ -149,6 +155,19 @@ async def _ask_system_one(
             confidence=parsed.confidence,
         ),
     )
+
+
+def _http_transport(config: _SystemOneProviderConfig) -> _SystemOneTransport:
+    """Build the HTTP transport for hosted System One APIs: POSTs the request with the API key."""
+
+    async def transport(body: str) -> Any:
+        response = await _post(config, body)
+        payload = _read_payload(response)
+        if not response.is_success:
+            _raise_http_error(config.provider_name, response, payload)
+        return payload
+
+    return transport
 
 
 async def _post(config: _SystemOneProviderConfig, body: str) -> httpx.Response:
@@ -319,7 +338,14 @@ def _parse_choice_answer(answer: dict[str, Any], choices: list[str], question_id
         choice: _require_probability(raw_probabilities[choice], f"probability '{choice}' for id=<{question_id}>")
         for choice in choices
     }
-    if abs(sum(probabilities.values()) - 1) > _PROBABILITY_TOLERANCE:
+    # A server that rounds each probability to 4 decimals can make a distribution sum to 1 only
+    # within len(choices) * 5e-5, so widen the tolerance when every value sits on the 4-decimal grid.
+    values = probabilities.values()
+    rounded = all(abs(probability * 1e4 - round(probability * 1e4)) < 1e-6 for probability in values)
+    tolerance = _PROBABILITY_TOLERANCE
+    if rounded:
+        tolerance += len(choices) * _PROBABILITY_ROUNDING_TOLERANCE
+    if abs(sum(values) - 1) > tolerance:
         raise StructuredOutputException(f"probabilities for question id=<{question_id}> must sum to 1")
     if probabilities[selected] + _PROBABILITY_TOLERANCE < max(probabilities.values()):
         raise StructuredOutputException(f"choice for question id=<{question_id}> must have the highest probability")

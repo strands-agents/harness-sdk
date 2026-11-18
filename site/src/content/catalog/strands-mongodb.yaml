@@ -1,0 +1,11 @@
+name: strands-mongodb
+description: MongoDB as a Strands Storage backend, persisting sessions, offloaded context, and conversation history in one MongoDB deployment.
+integrationType: storage
+maintainedBy: partner
+languages:
+  python:
+    package: strands-mongodb[storage]
+github: https://github.com/mongodb/strands-mongodb
+docsUrl: https://www.mongodb.com/docs/atlas/ai-integrations/strands/
+featured: true
+addedDate: 2026-11-18

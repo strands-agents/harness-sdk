@@ -16,13 +16,17 @@ import type { AgentResult } from '../types/agent.js'
 import { InterruptResponseContent } from '../types/interrupt.js'
 import { deepCopy, type JSONValue } from '../types/json.js'
 import { LIMIT_STOP_REASONS, limitStopMessage, TextBlock, ToolResultBlock } from '../types/messages.js'
-import type { ToolResultContent } from '../types/messages.js'
+import type { StopReason, ToolResultContent } from '../types/messages.js'
 import { loadStateSerializable } from '../types/serializable.js'
 import type { Snapshot } from '../types/snapshot.js'
 import type { Graph } from './graph.js'
 import { loadSnapshot, takeSnapshot } from './snapshot.js'
 import { MultiAgentState, Status, type MultiAgentResult } from './state.js'
 import type { Swarm } from './swarm.js'
+
+// The child produced no answer. `guardrailIntervened` stays a success: Bedrock also reports it for masked
+// output, which is a complete answer.
+const NO_ANSWER_STOP_REASONS: ReadonlySet<StopReason> = new Set<StopReason>(['contentFiltered', 'refusal'])
 
 const INTERRUPTED_TURNS_KEY = 'subAgentInterruptedTurns'
 
@@ -98,6 +102,11 @@ export class ChildAgentAdapter implements ChildAdapter<Agent, AgentResult> {
     }
     if (LIMIT_STOP_REASONS.has(result.stopReason)) {
       return limitStopMessage(this._name, result.stopReason)
+    }
+    if (NO_ANSWER_STOP_REASONS.has(result.stopReason)) {
+      const partial = result.toString().replace(/\n+$/, '')
+      const message = `${this.label} stopped before finishing (stopReason=${result.stopReason}).`
+      return partial ? `${message}\n\nPartial output:\n${partial}` : message
     }
     return undefined
   }

@@ -30,7 +30,7 @@ class Page:
     content: str  # Cleaned text content
 
 
-def _get(url: str) -> str:
+def fetch_text(url: str) -> str:
     """Fetch content from a URL with proper headers and timeout.
 
     Args:
@@ -57,7 +57,7 @@ def parse_llms_txt(url: str) -> list[tuple[str, str, str]]:
         List of (title, url, description) tuples extracted from markdown links; description is empty when absent
 
     """
-    txt = _get(url)
+    txt = fetch_text(url)
     return [
         (match.group(1).strip() or match.group(2).strip(), match.group(2).strip(), (match.group(3) or "").strip())
         for match in _MD_LINK.finditer(txt)
@@ -115,7 +115,7 @@ def fetch_and_clean(page_url: str) -> Page:
         Page object with URL, title, and cleaned content
 
     """
-    raw = _get(page_url)
+    raw = fetch_text(page_url)
     lower = raw.lower()
     if "<html" in lower or "<head" in lower or "<body" in lower:
         extracted_title = _extract_html_title(raw)

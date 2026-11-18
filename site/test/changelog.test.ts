@@ -82,7 +82,7 @@ describe('changelogFrontmatterSchema', () => {
     ).toThrow()
   })
 
-  it('requires a language on harness releases and forbids one on cli and box', () => {
+  it('requires a language on harness releases and forbids one on cli, box, and shell', () => {
     const base = {
       version: '0.1.0',
       tag: 'v0.1.0',
@@ -95,6 +95,8 @@ describe('changelogFrontmatterSchema', () => {
     expect(changelogFrontmatterSchema.parse({ ...base, sdk: 'box' }).language).toBeUndefined()
     expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'cli', language: 'typescript' })).toThrow()
     expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'box', language: 'python' })).toThrow()
+    expect(changelogFrontmatterSchema.parse({ ...base, sdk: 'shell' }).language).toBeUndefined()
+    expect(() => changelogFrontmatterSchema.parse({ ...base, sdk: 'shell', language: 'python' })).toThrow()
   })
 
   it('rejects an evals release that sets a language', () => {
@@ -234,6 +236,7 @@ describe('latestPerStream', () => {
 describe('footerReleasesForProduct', () => {
   const sdk = mkRelease('2026-10-21', [], { sdk: 'sdk', language: 'python', version: '1.62.0' })
   const box = mkRelease('2026-10-07', [], { sdk: 'box', version: '0.1.0' })
+  const shell = mkRelease('2026-11-04', [], { sdk: 'shell', version: '0.6.0' })
   const releases: FooterReleases = {
     byProduct: {
       sdk: [sdk],
@@ -241,6 +244,7 @@ describe('footerReleasesForProduct', () => {
       cli: [],
       evals: [],
       box: [box],
+      shell: [shell],
     },
   }
 
@@ -250,6 +254,7 @@ describe('footerReleasesForProduct', () => {
 
   it('shows the product stream', () => {
     expect(footerReleasesForProduct(releases, 'box')).toEqual([box])
+    expect(footerReleasesForProduct(releases, 'shell')).toEqual([shell])
   })
 
   it('shows no release for a product without a stream rather than another product', () => {

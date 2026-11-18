@@ -35,7 +35,7 @@ async function loadApiKeysFromSecretsManager(): Promise<void> {
     if (response.SecretString) {
       const secret = JSON.parse(response.SecretString)
       // Only add API keys for currently supported providers
-      const supportedProviders = ['openai', 'anthropic', 'gemini']
+      const supportedProviders = ['openai', 'anthropic', 'gemini', 'typesafe', 'jev']
       Object.entries(secret).forEach(([key, value]) => {
         if (supportedProviders.includes(key.toLowerCase())) {
           process.env[`${key.toUpperCase()}_API_KEY`] = String(value)

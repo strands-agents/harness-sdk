@@ -98,16 +98,14 @@ async def test_records_successful_decision_span_without_active_parent(exporter):
     assert decision_span.parent is None
     assert dict(decision_span.attributes or {}) == {
         "gen_ai.operation.name": "decision",
+        "gen_ai.decision.questions": ("q",),
+        "gen_ai.decision.answers": '{"q": true}',
         "gen_ai.decision.latency_ms": 1,
         "gen_ai.usage.input_tokens": 3,
         "gen_ai.usage.output_tokens": 2,
     }
     assert decision_span.status.status_code == StatusCode.OK
-
-    events = {event.name: event for event in decision_span.events}
-    assert list(events) == ["gen_ai.decision.questions", "gen_ai.decision.answers"]
-    assert dict(events["gen_ai.decision.questions"].attributes or {}) == {"ids": ("q",)}
-    assert dict(events["gen_ai.decision.answers"].attributes or {}) == {"answers": '{"q": true}'}
+    assert not decision_span.events
 
 
 @pytest.mark.asyncio
@@ -123,9 +121,10 @@ async def test_records_error_status_and_exception_event(exporter):
     assert decision_span.status.description is not None
     assert decision_span.status.description.startswith("decision model returned an invalid answer set")
 
+    assert (decision_span.attributes or {})["gen_ai.decision.questions"] == ("q",)
+
     events = {event.name: event for event in decision_span.events}
-    assert list(events) == ["gen_ai.decision.questions", "exception"]
-    assert dict(events["gen_ai.decision.questions"].attributes or {}) == {"ids": ("q",)}
+    assert list(events) == ["exception"]
 
     exception_attributes = dict(events["exception"].attributes or {})
     assert str(exception_attributes["exception.type"]).endswith(".StructuredOutputException")
