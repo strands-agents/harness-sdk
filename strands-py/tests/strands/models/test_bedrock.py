@@ -2608,7 +2608,13 @@ def stream_structured_output(model, test_output_model_cls, alist):
     return stream_structured_output
 
 
-@pytest.mark.parametrize("model_id", ["us.anthropic.claude-opus-5-5", "global.anthropic.claude-haiku-5-5"])
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "us.anthropic.claude-opus-5-5",
+        "global.anthropic.claude-haiku-5-5",  # accepts forcing; False on purpose so the retry keeps thinking (#6236)
+    ],
+)
 @pytest.mark.asyncio
 async def test_stream_structured_output_starts_at_native_when_the_model_info_forbids_forcing(
     native_output_client, test_output_model_cls, messages, alist, model_id
