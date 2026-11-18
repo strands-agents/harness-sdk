@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import importlib.util
-import logging
 import re
 import shlex
 import threading
@@ -39,11 +37,6 @@ from ...sandbox.errors import SandboxTimeoutError
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
 from .types import WEB_FETCH_DESCRIPTION_AGENTIC, WEB_FETCH_DESCRIPTION_MARKDOWN
-
-logger = logging.getLogger(__name__)
-
-if not (importlib.util.find_spec("bs4") and importlib.util.find_spec("markdownify")):
-    logger.warning("extra=<strands-agents[web-fetch]> | extra is not installed | fetching an html page will fail")
 
 
 class WebFetchError(ValueError):
@@ -143,7 +136,7 @@ def make_web_fetch(
     if mode not in ("markdown", "agentic"):
         raise ValueError(f"mode must be 'markdown' or 'agentic', got {mode!r}")
     if not isinstance(sandbox, bool):
-        raise ValueError(f"sandbox must be a bool, got {sandbox!r}")
+        raise ValueError(f"sandbox must be a bool, got {sandbox!r}; set the sandbox itself on the Agent")
     if sandbox and client is not None:
         raise ValueError("client cannot be combined with sandbox=True: drop client, or leave sandbox=False to use it")
     resolved_description = description or (

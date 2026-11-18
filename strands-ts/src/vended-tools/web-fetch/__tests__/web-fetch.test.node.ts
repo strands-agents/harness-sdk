@@ -31,6 +31,11 @@ describe('webFetch sandbox option', () => {
         response.writeHead(302, { Location: '/page' }).end()
         return
       }
+      if (request.url === '/redirect-file') {
+        // --proto-redir must refuse this; without it curl -L would read a local file.
+        response.writeHead(302, { Location: 'file:///etc/passwd' }).end()
+        return
+      }
       if (request.url === '/huge') {
         response.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': 500_000 })
         response.end(Buffer.alloc(500_000, 'x'))
@@ -89,6 +94,7 @@ describe('webFetch sandbox option', () => {
 
     try {
       expect(await fetchPath('/redirect')).toBe('Hello **wörld**\n')
+      await expect(fetchPath('/redirect-file')).rejects.toThrow('curl: (1) Protocol "file"')
       expect(await fetchPath('/gzip')).toBe('wörld')
       await expect(fetchPath('/gzipbomb', { maxBytes: 100_000 })).rejects.toThrow('max_bytes=100000')
       expect(execute).toHaveBeenLastCalledWith(expect.stringContaining('curl'), expect.anything())

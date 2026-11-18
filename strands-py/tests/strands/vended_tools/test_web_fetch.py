@@ -110,18 +110,6 @@ class TestWithoutMarkdownPackages:
             await tool(url="https://example.com/")
 
 
-@pytest.mark.parametrize(("missing", "warnings"), [(True, 1), (False, 0)])
-def test_import_warns_once_when_the_markdown_packages_are_missing(missing, warnings):
-    code = (
-        "import logging, sys; logging.basicConfig(); "
-        + ("sys.modules.update(bs4=None, markdownify=None); " if missing else "")
-        + "from strands.vended_tools.web_fetch import make_web_fetch; make_web_fetch(); make_web_fetch()"
-    )
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert result.stderr.count("extra=<strands-agents[web-fetch]> | extra is not installed") == warnings
-
-
 @pytest.mark.parametrize("max_bytes", [0, -1, 1.5, True, float("inf"), float("nan"), "5", None])
 def test_max_bytes_must_be_a_positive_integer(max_bytes):
     with pytest.raises(ValueError, match="max_bytes must be a positive integer"):
@@ -795,7 +783,7 @@ class TestSandbox:
 
     @pytest.mark.parametrize("sandbox", ["sandbox", 1, None, NotASandboxLocalEnvironment()])
     def test_non_bool_sandbox_is_rejected(self, sandbox):
-        with pytest.raises(ValueError, match="sandbox must be a bool"):
+        with pytest.raises(ValueError, match="sandbox must be a bool, got .*; set the sandbox itself on the Agent"):
             make_web_fetch(sandbox=sandbox)
 
     def test_client_with_sandbox_is_rejected(self):
@@ -817,22 +805,16 @@ class TestSandbox:
         # One shell probe, then one round-trip.
         probe, command = sandbox.commands
         assert probe == _SHELL_PROBE
-        # Legal URL characters that mean something to a shell arrive single-quoted.
-        assert " -- 'https://example.com/a'\"'\"'b$(id);c'; " in command
-        for flag in (
+        assert command == (
             # -q comes first so a .curlrc in the sandbox is ignored.
-            "{ curl -q -sSL -g --compressed --fail ",
-            '--proto "=http,https"',
-            '--proto-redir "=http,https"',
-            "--max-time 30 ",
-            "--max-filesize 2000 ",
-            '-A "strands-agents-web-fetch/1.0"',
-            '-H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"',
-            "-w '\\n%{content_type}'",
-        ):
-            assert flag in command
-        # head stops curl once the body cannot fit in max_bytes, with or without a Content-Length.
-        assert command.endswith("printf '\\n%s' \"$?\"; } | head -c 3024 | base64")
+            '{ curl -q -sSL -g --compressed --fail --proto "=http,https" --proto-redir "=http,https" '
+            '--max-time 30 --max-filesize 2000 -A "strands-agents-web-fetch/1.0" '
+            '-H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" '
+            # Legal URL characters that mean something to a shell arrive single-quoted, after ``--``.
+            "-w '\\n%{content_type}' -- 'https://example.com/a'\"'\"'b$(id);c'; "
+            # head stops curl once the body cannot fit in max_bytes, with or without a Content-Length.
+            "printf '\\n%s' \"$?\"; } | head -c 3024 | base64"
+        )
         assert sandbox.timeouts[1] == 35
 
     @pytest.mark.asyncio
@@ -1036,19 +1018,29 @@ class TestSandbox:
         command = sandbox.commands[1]
         # The curl.exe command line is one single-quoted PowerShell literal (no expansion): the URL's own quote is
         # doubled, and curl.exe sees the URL double-quoted.
-        assert (
+        assert command == (
+            # A curl.exe that cannot start is exit 127, reported through the console handle.
+            "$status = 127\ntry {\n"
             "  $info = New-Object Diagnostics.ProcessStartInfo 'curl.exe', '-q -sSL -g --compressed --fail "
             '--proto "=http,https" --proto-redir "=http,https" --max-time 30 --max-filesize 2000 '
             '-A "strands-agents-web-fetch/1.0" -H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" '
             '-w "\\n%{content_type}\\n0" -- "https://example.com/it\'\'s"\'\n'
-        ) in command
-        # .NET stops reading (and kills curl.exe) once the body cannot fit in max_bytes.
-        assert ".ReadBytes(3024)" in command and "$process.Kill()" in command
-        # A curl.exe that cannot start is exit 127, reported through the console handle.
-        assert command.startswith("$status = 127\ntry {\n")
-        assert "} catch { if ($status -eq 0) { $status = 1 }; [Console]::Error.Write($_.Exception.Message) }" in command
-        assert command.endswith("exit $status")
-        assert "head -c" not in command
+            "  $info.UseShellExecute = $false\n"
+            "  $info.RedirectStandardOutput = $true\n"
+            "  $info.RedirectStandardError = $true\n"
+            "  $process = [Diagnostics.Process]::Start($info)\n"
+            "  $errors = $process.StandardError.ReadToEndAsync()\n"
+            # .NET stops reading (and kills curl.exe) once the body cannot fit in max_bytes.
+            "  $bytes = (New-Object IO.BinaryReader $process.StandardOutput.BaseStream).ReadBytes(3024)\n"
+            "  $full = $bytes.Length -ge 3024\n"
+            "  if ($full) { try { $process.Kill() } catch { } }\n"
+            "  $process.WaitForExit()\n"
+            "  $status = if ($full) { 0 } else { $process.ExitCode }\n"
+            "  if ($status -eq 0) { [Convert]::ToBase64String($bytes) } "
+            "else { [Console]::Error.Write($errors.Result) }\n"
+            "} catch { if ($status -eq 0) { $status = 1 }; [Console]::Error.Write($_.Exception.Message) }\n"
+            "exit $status"
+        )
         assert sandbox.timeouts[1] == 35
 
     @pytest.mark.asyncio
@@ -1138,6 +1130,12 @@ class TestSandbox:
                     self.send_header("Location", "/page")
                     self.end_headers()
                     return
+                if self.path == "/redirect-file":
+                    # --proto-redir must refuse this; without it curl -L would read a local file.
+                    self.send_response(302)
+                    self.send_header("Location", "file:///etc/passwd")
+                    self.end_headers()
+                    return
                 if self.path == "/huge":
                     self.send_response(200)
                     self.send_header("Content-Type", "text/plain")
@@ -1194,6 +1192,8 @@ class TestSandbox:
         monkeypatch.setenv("CURL_HOME", str(tmp_path))
         try:
             assert await _sandbox_fetch(sandbox, f"{base}/redirect") == "Hello **wörld**"
+            with pytest.raises(WebFetchError, match=r'curl: \(1\) Protocol "file"'):
+                await _sandbox_fetch(sandbox, f"{base}/redirect-file")
             assert await _sandbox_fetch(sandbox, f"{base}/gzip") == "wörld"
             with pytest.raises(WebFetchError, match="exceeded 100000 bytes"):
                 await _sandbox_fetch(sandbox, f"{base}/gzipbomb", max_bytes=100_000)

@@ -103,7 +103,9 @@ describe('webFetch tool', () => {
     })
 
     it.each(['sandbox', 1, null])('rejects a non-boolean sandbox (%j)', (sandbox) => {
-      expect(() => makeWebFetch({ sandbox: sandbox as unknown as boolean })).toThrow('sandbox must be a boolean')
+      expect(() => makeWebFetch({ sandbox: sandbox as unknown as boolean })).toThrow(
+        /sandbox must be a boolean, got .*; set the sandbox itself on the Agent/
+      )
     })
 
     it('rejects non-finite maxBytes', () => {
@@ -486,23 +488,16 @@ describe('webFetch tool', () => {
       // One shell probe, then one round-trip.
       const [probe, command] = sandbox.commands
       expect(probe).toBe('echo "${PSEdition}"')
-      // Legal URL characters that mean something to a shell arrive single-quoted.
-      expect(command).toContain(" -- 'https://example.com/a'\\''b$(id);c'; ")
-      for (const flag of [
+      expect(command).toBe(
         // -q comes first so a .curlrc in the sandbox is ignored.
-        '{ curl -q -sSL -g --compressed --fail ',
-        '--proto "=http,https"',
-        '--proto-redir "=http,https"',
-        '--max-time 30 ',
-        '--max-filesize 2000 ',
-        '-A "strands-agents-web-fetch/1.0"',
-        '-H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"',
-        "-w '\\n%{content_type}'",
-      ]) {
-        expect(command).toContain(flag)
-      }
-      // head stops curl once the body cannot fit in maxBytes, with or without a Content-Length.
-      expect(command).toMatch(/printf '\\n%s' "\$\?"; \} \| head -c 3024 \| base64$/)
+        '{ curl -q -sSL -g --compressed --fail --proto "=http,https" --proto-redir "=http,https" ' +
+          '--max-time 30 --max-filesize 2000 -A "strands-agents-web-fetch/1.0" ' +
+          '-H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" ' +
+          // Legal URL characters that mean something to a shell arrive single-quoted, after `--`.
+          "-w '\\n%{content_type}' -- 'https://example.com/a'\\''b$(id);c'; " +
+          // head stops curl once the body cannot fit in maxBytes, with or without a Content-Length.
+          'printf \'\\n%s\' "$?"; } | head -c 3024 | base64'
+      )
       expect(sandbox.options[0]).toMatchObject({ timeout: 30, signal: expect.any(AbortSignal) })
       expect(sandbox.options[1]).toMatchObject({ timeout: 35, signal: expect.any(AbortSignal) })
     })
@@ -669,22 +664,28 @@ describe('webFetch tool', () => {
       const command = sandbox.commands[1]!
       // The curl.exe command line is one single-quoted PowerShell literal (no expansion): the URL's own quote is
       // doubled, and curl.exe sees the URL double-quoted.
-      expect(command).toContain(
-        "  $info = New-Object Diagnostics.ProcessStartInfo 'curl.exe', '-q -sSL -g --compressed --fail " +
+      expect(command).toBe(
+        // A curl.exe that cannot start is exit 127, reported through the console handle.
+        '$status = 127\ntry {\n' +
+          "  $info = New-Object Diagnostics.ProcessStartInfo 'curl.exe', '-q -sSL -g --compressed --fail " +
           '--proto "=http,https" --proto-redir "=http,https" --max-time 30 --max-filesize 2000 ' +
           '-A "strands-agents-web-fetch/1.0" -H "Accept: text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" ' +
-          '-w "\\n%{content_type}\\n0" -- "https://example.com/it\'\'s"\'\n'
+          '-w "\\n%{content_type}\\n0" -- "https://example.com/it\'\'s"\'\n' +
+          '  $info.UseShellExecute = $false\n' +
+          '  $info.RedirectStandardOutput = $true\n' +
+          '  $info.RedirectStandardError = $true\n' +
+          '  $process = [Diagnostics.Process]::Start($info)\n' +
+          '  $errors = $process.StandardError.ReadToEndAsync()\n' +
+          // .NET stops reading (and kills curl.exe) once the body cannot fit in maxBytes.
+          '  $bytes = (New-Object IO.BinaryReader $process.StandardOutput.BaseStream).ReadBytes(3024)\n' +
+          '  $full = $bytes.Length -ge 3024\n' +
+          '  if ($full) { try { $process.Kill() } catch { } }\n' +
+          '  $process.WaitForExit()\n' +
+          '  $status = if ($full) { 0 } else { $process.ExitCode }\n' +
+          '  if ($status -eq 0) { [Convert]::ToBase64String($bytes) } else { [Console]::Error.Write($errors.Result) }\n' +
+          '} catch { if ($status -eq 0) { $status = 1 }; [Console]::Error.Write($_.Exception.Message) }\n' +
+          'exit $status'
       )
-      // .NET stops reading (and kills curl.exe) once the body cannot fit in maxBytes.
-      expect(command).toContain('.ReadBytes(3024)')
-      expect(command).toContain('$process.Kill()')
-      // A curl.exe that cannot start is exit 127, reported through the console handle.
-      expect(command.startsWith('$status = 127\ntry {\n')).toBe(true)
-      expect(command).toContain(
-        '} catch { if ($status -eq 0) { $status = 1 }; [Console]::Error.Write($_.Exception.Message) }'
-      )
-      expect(command.endsWith('exit $status')).toBe(true)
-      expect(command).not.toContain('head -c')
       expect(sandbox.options[1]).toMatchObject({ timeout: 35 })
     })
 
