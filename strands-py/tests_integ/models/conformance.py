@@ -161,7 +161,10 @@ running_item: pytest.Item | None = None
 
 
 def _within_attempt_limit(test: Callable, args: tuple, kwargs: dict[str, Any]) -> Any:
-    """Run a sync test on a daemon thread, so a call that never answers ends the attempt and not the whole test."""
+    """Run a sync test on a daemon thread, so a call that never answers ends the attempt and not the whole test.
+
+    Nothing can stop the hung call, so it is left to finish on its own while the next attempt runs.
+    """
     outcome: dict[str, Any] = {}
 
     def run() -> None:
@@ -266,6 +269,9 @@ def provider_error_reason(error: BaseException | None) -> str | None:
     while error is not None:
         if isinstance(error, ModelThrottledException):
             return type(error).__name__
+        # asyncio's timeout is a class of its own before Python 3.11.
+        if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+            return f"{type(error).__name__} (no response)"
         status = _http_status(error)
         if status is not None and (status in _PROVIDER_ERROR_STATUSES or status >= 500):
             return f"{type(error).__name__} (HTTP {status})"
