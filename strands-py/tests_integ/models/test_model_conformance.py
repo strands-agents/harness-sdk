@@ -26,8 +26,8 @@ class Profile(BaseModel):
     occupation: str
 
 
-# A case can take three attempts half a minute apart, and slow reasoning models take over a minute per call.
-pytestmark = pytest.mark.timeout(600)
+# Covers three attempts of up to three minutes each, half a minute apart.
+pytestmark = pytest.mark.timeout(630)
 
 PROFILE_PROMPT = "Create a profile for John who is a 25 year old dentist."
 EXPECTED_PROFILE = Profile(name="John", age=25, occupation="dentist")
