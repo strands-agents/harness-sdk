@@ -186,7 +186,7 @@ def _multi_agent_latest_key(session_id: str, orchestrator_id: str) -> str:
 
 def _cause_name(error: BaseException) -> str | None:
     """The type of the error a storage backend wrapped, without its message, which can quote stored content."""
-    return type(error.__cause__).__name__ if error.__cause__ else None
+    return type(error.__cause__).__name__ if error.__cause__ is not None else None
 
 
 def _serialize_snapshot(snapshot: Snapshot) -> bytes:
@@ -487,9 +487,9 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         Raises:
             Exception: A storage error, raised after ``snapshot_latest`` and every immutable snapshot
                 were attempted: the ``snapshot_latest`` error if that write failed, otherwise the
-                first immutable snapshot error. Each failure is logged. If listing the snapshots
-                fails, none is attempted. A snapshot that failed keeps the original content; calling
-                this method again with the same message retries it.
+                first immutable snapshot error. Each failure is logged by error type, without its
+                message. If listing the snapshots fails, none is attempted. A snapshot that failed
+                keeps the original content; calling this method again with the same message retries it.
         """
         run_async(lambda: self._flush_redaction(redact_message, agent))
 

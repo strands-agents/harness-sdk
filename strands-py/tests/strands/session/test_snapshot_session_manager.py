@@ -1479,7 +1479,13 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
         ),
     ],
 )
-def test_redaction_listing_error_is_logged(storage, caplog, latest_write_fails, exp_error, exp_latest_warnings):
+@pytest.mark.parametrize(
+    ("list_cause", "exp_cause"),
+    [(None, "None"), (PermissionError("cannot list: sensitive prompt"), "PermissionError")],
+)
+def test_redaction_listing_error_is_logged(
+    storage, caplog, latest_write_fails, exp_error, exp_latest_warnings, list_cause, exp_cause
+):
     """A failed listing leaves the checkpoints as they were and is logged, also when the latest error is raised."""
     manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="trigger")
     redaction_model = MockedModelProvider(
@@ -1495,7 +1501,7 @@ def test_redaction_listing_error_is_logged(storage, caplog, latest_write_fails, 
         await write(key, data)
 
     async def list_failing(prefix):
-        raise StorageError("listing failed: sensitive prompt") from PermissionError("cannot list: sensitive prompt")
+        raise OSError("listing failed: sensitive prompt") from list_cause
 
     async def checkpoint(event):
         snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
@@ -1506,17 +1512,18 @@ def test_redaction_listing_error_is_logged(storage, caplog, latest_write_fails, 
     agent.add_hook(checkpoint, BeforeModelCallEvent)
     manager_logger = "strands.session.snapshot_session_manager"
     with caplog.at_level(logging.WARNING, logger=manager_logger):
-        with pytest.raises((OSError, StorageError), match=exp_error):
+        with pytest.raises(OSError, match=exp_error):
             agent("sensitive prompt")
     storage.list = list_keys  # type: ignore[method-assign]
 
     tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
     exp_warnings = [
         *exp_latest_warnings,
-        "agent_id=<a1>, session_id=<s1>, error=<StorageError>, cause=<PermissionError>"
+        f"agent_id=<a1>, session_id=<s1>, error=<OSError>, cause=<{exp_cause}>"
         " | failed to list immutable snapshots while flushing a redaction | no immutable snapshot was rewritten",
     ]
     assert tru_warnings == exp_warnings
+    # The error messages quote the prompt, with and without a wrapped cause; the log names types only.
     assert "sensitive prompt" not in caplog.text
     assert b"sensitive prompt" in _immutable_snapshot_data(storage, snapshot_ids[0])
 
