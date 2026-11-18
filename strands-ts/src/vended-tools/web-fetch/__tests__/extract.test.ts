@@ -194,7 +194,7 @@ describe('htmlToMarkdown', () => {
     ['<title>snake_case *bold* &lt;b&gt;</title>', '# snake\\_case \\*bold\\* &lt;b&gt;'],
     ['<title>\n(1) Inbox\xa0</title>', '# (1) Inbox'],
     ['<html><head><title>\n My Page\n</title></head><body><p>body</p></body></html>', '# My Page\n\nbody'],
-    // every title with text is a heading where it is, and a title in a dropped element is dropped
+    // every title with text is a heading, and a title in a dropped element is dropped
     ['<title> </title><title>One</title><p>body</p><title># Two</title>', '# One\n\nbody\n\n# # Two'],
     [
       '<rss><channel><title>Blog</title><item><title>Post</title><description>Hello</description></item></channel></rss>',

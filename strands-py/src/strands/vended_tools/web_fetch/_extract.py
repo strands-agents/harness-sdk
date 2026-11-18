@@ -7,7 +7,7 @@ so large inline blobs do not bloat the output. Images with a ``javascript:`` or
 ``vbscript:``, or ``data:`` href are reduced to their text. The page title,
 image alt text, link and image titles and URLs, and link, image, code and
 block syntax in body text are escaped so they cannot change the structure of
-the output. Each ``<title>`` is written as a top-level heading.
+the output. The page title is prepended.
 """
 
 from __future__ import annotations
@@ -214,19 +214,28 @@ def _sanitize_tree(soup: BeautifulSoup) -> None:
 def html_to_markdown(html: str) -> str:
     """Convert HTML to markdown suitable for a model to read.
 
-    Each ``<title>`` is written as a top-level heading. Returns the original
-    HTML rather than failing on a parser error.
+    The page title is prepended when present. Returns the original HTML
+    rather than failing on a parser error.
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
         _sanitize_tree(soup)
-        for title in soup("title"):
+        title = ""
+        for element in soup("title"):
             # A title is one line of plain text.
-            text = _escape_text(title.get_text()).strip(" ")
-            heading = soup.new_tag("h1")
-            heading.append(_EscapedText(text))
-            title.replace_with(heading if text else "")
+            text = _escape_text(element.get_text()).strip(" ")
+            if title and text:
+                # A later title, as in a feed, is a heading where it stands.
+                heading = soup.new_tag("h1")
+                heading.append(_EscapedText(text))
+                element.replace_with(heading)
+            else:
+                # The first title starts the output. "*" and "_" are escaped as they are in body text.
+                title = title or re.sub(r"[*_]", r"\\\g<0>", text)
+                element.decompose()
         markdown = str(_Converter(heading_style="ATX", bullets="-", autolinks=False).convert_soup(soup)).strip()
+        if title:
+            markdown = f"# {title}\n\n{markdown}".strip()
     except (ValueError, RecursionError, ParserRejectedMarkup):
         logger.warning("html_to_markdown failed; returning raw html", exc_info=True)
         return html
