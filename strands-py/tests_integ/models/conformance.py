@@ -11,6 +11,7 @@ import json
 import os
 import pathlib
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -59,6 +60,8 @@ _RETRIES_ASSERTIONS = {"tool-use", "structured-output", "forced-tool-choice", "t
 # A provider can be unavailable for a short while, so an error that may clear gets a few spaced attempts.
 _ATTEMPTS = 3
 _RETRY_DELAY_SECONDS = 30
+# Slow reasoning models can take over a minute; a call that takes longer than this is treated as hung.
+_ATTEMPT_LIMIT_SECONDS = 180
 # The cases call every listed model, so they only run when asked: "core" runs the targets marked core and any
 # other value runs them all. See shared/README.md for when CI sets each.
 MODE = os.environ.get("STRANDS_CONFORMANCE", "")
@@ -153,6 +156,26 @@ IMPLEMENTED: set[str] = set()
 running_item: pytest.Item | None = None
 
 
+def _within_attempt_limit(test: Callable, args: tuple, kwargs: dict[str, Any]) -> Any:
+    """Run a sync test on a daemon thread, so a call that never answers ends the attempt and not the whole test."""
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = test(*args, **kwargs)
+        except BaseException as error:  # re-raised on the test's own thread below
+            outcome["error"] = error
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(_ATTEMPT_LIMIT_SECONDS)
+    if thread.is_alive():
+        raise TimeoutError(f"the attempt did not finish within {_ATTEMPT_LIMIT_SECONDS} seconds")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("value")
+
+
 def _note_attempt(attempt: int) -> None:
     if running_item is not None:
         running_item.conformance_attempts = attempt
@@ -160,7 +183,8 @@ def _note_attempt(attempt: int) -> None:
 
 def _give_up(case_id: str, attempt: int, error: Exception) -> bool:
     known = _known_failure(running_item) if running_item else None
-    if attempt == _ATTEMPTS or (known and not known.get("intermittent")):
+    # The tracked failure of a known failure is expected, so it is reported after one attempt.
+    if attempt == _ATTEMPTS or (known and _is_tracked_failure(known, error)):
         return True
     if isinstance(error, AssertionError):
         return case_id not in _RETRIES_ASSERTIONS
@@ -176,7 +200,7 @@ def case(case_id: str) -> Callable:
             for attempt in itertools.count(1):
                 _note_attempt(attempt)
                 try:
-                    return test(*args, **kwargs)
+                    return _within_attempt_limit(test, args, kwargs)
                 except Exception as error:
                     if _give_up(case_id, attempt, error):
                         raise
@@ -187,7 +211,7 @@ def case(case_id: str) -> Callable:
             for attempt in itertools.count(1):
                 _note_attempt(attempt)
                 try:
-                    return await test(*args, **kwargs)
+                    return await asyncio.wait_for(test(*args, **kwargs), _ATTEMPT_LIMIT_SECONDS)
                 except Exception as error:
                     if _give_up(case_id, attempt, error):
                         raise
