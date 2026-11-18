@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
-import { ImageBlock } from '../../types/media.js'
-import { Message, TextBlock } from '../../types/messages.js'
+import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+import { GuardContentBlock, JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { DecisionModel } from '../decision-model.js'
 import { DecisionsAPIDecisionModel } from '../decisions-api-decision-model.js'
 import { TypeSafeDecisionModel } from '../typesafe-decision-model.js'
@@ -240,6 +240,59 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
         /do not support binary ContentBlock state/
       )
       expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+      new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+      new DocumentBlock({ format: 'pdf', name: 'fixture', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+    ])('rejects a binary $type inside a tool result before sending', async (media) => {
+      const fetch = fakeFetch(responseBody({}))
+      const decision = create({ apiKey: 'test-key', fetch })
+      const toolResult = new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [media] })
+
+      for (const state of [[toolResult], [new Message({ role: 'user', content: [toolResult] })]]) {
+        await expect(decision.ask(state, { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+          /do not support binary ContentBlock state/
+        )
+      }
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('rejects byte-backed guard content before sending', async () => {
+      const fetch = fakeFetch(responseBody({}))
+      const decision = create({ apiKey: 'test-key', fetch })
+      const guard = new GuardContentBlock({
+        image: { format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } },
+      })
+
+      await expect(decision.ask([guard], { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /do not support binary ContentBlock state/
+      )
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('preserves JSON fields named bytes and text in tool results', async () => {
+      const captured: CapturedRequest[] = []
+      const fetch = fakeFetch(responseBody({ q: { type: 'noul', noul: 1 } }), { captured })
+      const decision = create({ apiKey: 'test-key', fetch })
+      const toolResult = new ToolResultBlock({
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [new JsonBlock({ json: { bytes: [1, 2, 3] } }), new TextBlock('hello')],
+      })
+
+      await decision.ask([toolResult], { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(captured[0]?.body['state']).toEqual([
+        {
+          toolResult: {
+            toolUseId: 'tool-1',
+            status: 'success',
+            content: [{ json: { bytes: [1, 2, 3] } }, { text: 'hello' }],
+          },
+        },
+      ])
     })
 
     it('honors an explicit model id', async () => {

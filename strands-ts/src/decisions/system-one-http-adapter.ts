@@ -1,5 +1,5 @@
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
-import { Message, type ContentBlock } from '../types/messages.js'
+import { Message, type ContentBlock, type ToolResultContent } from '../types/messages.js'
 import { Uncertain, type AnswerOf, type DecisionInput, type DecisionResult, type Question } from './types.js'
 
 const MAX_CHOICE_COUNT = 255
@@ -175,15 +175,24 @@ function toWireState(state: DecisionInput): unknown {
 }
 
 function toWireContentBlock(block: ContentBlock): unknown {
+  rejectBinaryContent(block)
+  return block.toJSON()
+}
+
+function rejectBinaryContent(block: ContentBlock | ToolResultContent): void {
+  if (block.type === 'toolResultBlock') {
+    block.content.forEach(rejectBinaryContent)
+    return
+  }
   const hasBinarySource =
     (block.type === 'audioBlock' && block.source.type === 'audioSourceBytes') ||
     (block.type === 'imageBlock' && block.source.type === 'imageSourceBytes') ||
     (block.type === 'videoBlock' && block.source.type === 'videoSourceBytes') ||
-    (block.type === 'documentBlock' && block.source.type === 'documentSourceBytes')
+    (block.type === 'documentBlock' && block.source.type === 'documentSourceBytes') ||
+    (block.type === 'guardContentBlock' && block.image !== undefined)
   if (hasBinarySource) {
     throw new Error('System One decision providers do not support binary ContentBlock state')
   }
-  return block.toJSON()
 }
 
 function toWireQuestions(questions: Record<string, Question>): Record<string, WireQuestion> {
