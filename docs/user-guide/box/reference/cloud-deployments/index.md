@@ -2,9 +2,7 @@ Use these profiles to prepare Box for AgentCore Runtime managed code, customer c
 
 ## Install and configure Box
 
-Linux release packages target ARM64 (`aarch64-unknown-linux-gnu`), with executables built against Amazon Linux 2023. If a [release](https://github.com/strands-agents/box/releases) includes Linux, follow its Linux download and checksum instructions. Otherwise, [build from source](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/README.md#build-from-source) on ARM64 Amazon Linux 2023. Use an ARM64 runtime, container, or MicroVM. Check that `uname -m` reports `aarch64`.
-
-Keep the main executable and both helpers from the same build in one directory. Release packages call the main executable `box`; source builds call it `strands-box`. The helpers are `strands-box-contain-trampoline` and `strands-box-sock-alias`. Both helpers must be regular executable files. Box refuses helper symlinks and files without executable permissions.
+The service profiles below describe ARM64 deployments. Select an ARM64 runtime, container, or MicroVM and check that `uname -m` reports `aarch64`. [Install Box](../../quickstart/index.md#step-1-download-box), keeping the main executable and both helpers from the same build together. Check the [Linux requirements](../linux-requirements/index.md) for required libraries, permissions to create the sandbox, and experimental x86-64 builds.
 
 Use the [configuration reference](../configuration/index.md) to configure Box.
 
@@ -12,20 +10,7 @@ Use the [configuration reference](../configuration/index.md) to configure Box.
 
 ## Shared requirements
 
-The cloud service must permit Box to create its namespaces and mounts. Installing dependencies cannot overcome an outer service restriction on those operations.
-
-| Requirement | Operator action | Reason |
-| --- | --- | --- |
-| Architecture | Select ARM64 for the service, Box executables, and application image. Check `uname -m`. | Executables and system-call filters depend on the architecture. |
-| System libraries | Provide the dynamic loader and libraries required by your Box build. | A package name alone does not establish binary compatibility. |
-| Namespaces | Permit user, mount, process, interprocess communication, and hostname namespaces. Permit a private network namespace for default networking. | A user-namespace probe alone does not test the full setup. |
-| Identity and mounts | Permit identity mapping, bind mounts, private temporary filesystems, a process filesystem, and root replacement. | Box constructs a separate filesystem and process view. |
-| Workload restrictions | Permit capability removal, `no_new_privs`, and seccomp filter installation. | Box removes setup privileges and restricts workload system calls. |
-| Private state | Provide writable temporary storage and separate directories for Box state and task workspaces. | Box control state must remain outside workload-writable grants. |
-| System interfaces | Provide `/dev/urandom`, `/dev/null`, required `/proc` interfaces, and Unix-domain sockets. | Setup uses these for process inspection, identity mapping, and local communication. |
-| Application dependencies | Include interpreters, libraries, certificates, and tool dependencies. Test their contained execution. | A program that starts outside Box can still fail inside its sandbox. |
-
-On Amazon Linux, record `rpm -q glibc` and `rpm -q libgcc` as part of the dependency inventory. Record `uname -r` separately from `/etc/os-release`: the cloud service supplies the kernel, even when you supply the image. These inventory commands do not establish a minimum package or kernel version.
+Use the shared [Linux requirements](../linux-requirements/index.md) for libraries, namespaces, mounts, workload restrictions, private storage, and application dependencies. Check them inside the deployed service using the Linux user account that starts Box. The service supplies the kernel and controls which system calls and namespace and mount operations Box can use. If you use a container, its image supplies the libraries. If setup fails, use the [permission troubleshooting table](../linux-requirements/index.md#operating-system-and-container-permissions).
 
 How Box uses Linux capabilities during startup
 

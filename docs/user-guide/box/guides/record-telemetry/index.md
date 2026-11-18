@@ -1,6 +1,6 @@
 A box records every policy decision it makes, every change to its own authority, each unmatched MCP route, and every span, log record, and metric the workload exports. A `[telemetry.*]` table in `box.toml` declares the target those records reach, and `include` states which records that target receives.
 
-This page covers a `file` target, which appends records to a path the operator names. A box that declares no table writes to a default target. See [The default target](#the-default-target).
+This page covers a `file` target, which appends records to a path the operator names, and the endpoints a box sends to directly: an `otlp` endpoint, Langfuse, LangSmith, and CloudWatch. A box that declares no table writes to a default target. See [The default target](#the-default-target).
 
 ## The default target
 
@@ -29,11 +29,11 @@ destination = "~/boxes/codex/records.jsonl"
 include     = ["deny", "permit", "trace", "logs"]
 ```
 
-Each table takes three keys. An unknown key is refused.
+A `file` table takes three keys. An unknown key is refused.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `kind` | string | none, required | `file`, which this page covers. |
+| `kind` | string | none, required | `file`. [Endpoints](#endpoints) lists the other kinds. |
 | `destination` | string | none, required | The file the records go to, as stated below. |
 | `include` | array of strings | every record | Which records reach this target: `deny`, `permit`, `trace`, `logs`, or `metrics`. |
 
@@ -73,6 +73,52 @@ So `include = ["deny"]` writes a file of refusals, and leaves out the permits, c
 
 An empty list is refused, and so is a repeated word.
 
+## Endpoints
+
+An endpoint target sends each batch from the box itself, over OTLP/HTTP with protobuf. The batch does not go through the egress gateway, and policy makes no decision for it. The workload never holds the target’s credential.
+
+Write the vendor’s kind, and Box sets the vendor’s path, headers, and credential placement:
+
+```toml
+[telemetry.langfuse]
+kind        = "langfuse"
+destination = "https://us.cloud.langfuse.com"
+secret.ref  = "env://LANGFUSE_AUTH"      # public-key:secret-key
+
+[telemetry.cloudwatch_logs]
+kind       = "cloudwatch_logs"
+region     = "us-west-2"
+log_group  = "my-group"
+log_stream = "my-stream"
+secret.ref = "aws://my-profile"
+```
+
+| Kind | What it receives | What the operator writes |
+| --- | --- | --- |
+| `otlp` | every payload, or the payloads `accepts` names | `destination`, and optionally `accepts`, `headers`, and `secret` |
+| `langfuse` | spans | `secret.ref`, and `destination` for a region or a self-hosted Langfuse |
+| `langsmith` | spans | `secret.ref`, and optionally `project` and `destination` |
+| `cloudwatch_logs` | log records | `region`, `log_group`, `log_stream`, and an `aws://` or `credsd://` `secret.ref` |
+| `cloudwatch_traces` | spans | `region`, and an `aws://` or `credsd://` `secret.ref` |
+
+A vendor that takes only spans is sent no log or metric batch. That is the one exception to the rule that the workload’s log records and metrics reach every target.
+
+[`config.md`](../../reference/configuration/index.md#telemetrylabel) lists every key, and what each kind sets.
+
+### The credential
+
+`secret.ref` names where the box reads the key: `env://NAME` or `secret://NAME` for a variable in the environment of `strands-box run`, or `aws://PROFILE` or `credsd://ENVIRONMENT` for a SigV4 signature. The box holds the key in a vault of its own for each target, and attaches it on each request. A literal key is refused, and so is a `file://` or `op://` reference.
+
+A credential needs an `https://` destination, unless the destination is loopback.
+
+### Failed sends
+
+Box sends each batch once, with one four-second deadline that covers the credential lookup and the send. A batch that fails is counted, and the box does not retry it. When the run ends, Box prints one line on stderr with the count (see [Errors and exit codes](#errors-and-exit-codes)). To see why a send failed, set `STRANDS_BOX_TELEMETRY_DEBUG` to any non-empty value in the environment of `strands-box run`. Box then also prints each failure on stderr as it happens, with its full cause and the start of the endpoint’s answer. Box redacts each credential it attached from that answer, so an endpoint that echoes a refused key does not put the key in your logs:
+
+```text
+strands-box: telemetry export failed: https://cloud.langfuse.com/api/public/otel/v1/traces answered 401 Unauthorized: ...
+```
+
 ## The workload’s own signals
 
 OpenTelemetry calls each kind of telemetry a signal. Three of them apply here: traces, logs, and metrics.
@@ -107,7 +153,7 @@ Each box record names its origin on its resource:
 | Key | Value |
 | --- | --- |
 | `service.name` | `strands-box` |
-| `strands.box.name` | this box’s generated identifier, as `box-` and 16 hexadecimal characters |
+| `strands.box.name` | this box’s ID: the one the library caller supplied, or a generated `box-` and 16 hexadecimal characters |
 | `strands.box.source` | `box` for a record the box wrote, and `agent` for a relayed payload |
 | `strands.box.run.id` | one identifier per `strands-box run` invocation |
 
@@ -130,7 +176,7 @@ The action value carries the vocabulary term alone, so a reader sees `fs:read` r
 
 Two keys are excluded: `url.full` and `process.command_line`.
 
-`process.command_args` reports an argument the script stated literally. For an argument that arrived from an expansion, the record reports:
+`process.command_args` reports each argument after expansion, because the Shell does not say which words the script stated literally. For each argument, the record reports:
 
 | The expanded argument | What the record carries |
 | --- | --- |
@@ -224,12 +270,27 @@ Exit `1` alone does not prove that Box refused, because a workload is free to ex
 | `` a file destination must be absolute or begin with `~/` `` | A file destination is relative. |
 | ``carries a `..` component`` | A destination carries `..`. |
 | `is inside the box directory ... but outside its private tree` | A file destination sits where a process could truncate it. |
+| ``a `<kind>` target sets `<key>` itself, so leave it out`` | A vendor kind names a key it sets. |
+| `` `<key>` does not apply to a `<kind>` target `` | A key belongs to another kind. |
+| `` a `cloudwatch_logs` target needs `log_group` and `log_stream` `` | A CloudWatch Logs target names no group or stream. |
+| `` needs `region`, an AWS region such as `us-west-2` `` | A CloudWatch target names no region, or an invalid one. |
+| `` `secret.ref` names no scheme this box reads `` | The reference is a literal value, or a scheme other than `env://`, `secret://`, `aws://`, or `credsd://`. |
+| `its destination is neither https nor loopback` | A credential would cross the network in the clear. |
+| ``the `aws://` credential cannot sign`` | The profile is missing, or holds no static keys. The run stops before the workload starts. |
 
 Each message names the table it came from.
 
-A target that fails while the box runs loses the record. Box reports no such loss, and it does not retry.
+A target that fails while the box runs loses the record, and Box does not retry. When the run ends, Box prints one line on stderr if an export to a configured target failed, or if the final export did not finish in time:
+
+```text
+strands-box: warning: telemetry records were lost: 2 exports to the configured targets failed
+```
+
+The count is exports, not records: one export can carry many records. The run’s exit code does not change. The line does not cover everything that can be lost: a record that the telemetry queue refuses when it is full, an agent payload that Box refuses, a batch that a slow target does not accept before its export deadline while the box runs, and a relayed payload still in flight at shutdown are not counted. So the absence of this line does not prove that nothing was lost.
+
+Set `STRANDS_BOX_TELEMETRY_DEBUG` to also print each failed export as it happens, with its cause. See [Failed sends](#failed-sends).
 
 ## See also
 
 -   [Getting started](../../quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

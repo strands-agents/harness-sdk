@@ -496,7 +496,7 @@ Agents under failure often burn tokens on retry storms (repeated failed tool cal
 - [Experiment generator](/docs/user-guide/evals-sdk/experiment_generator/index.md) (1 shared tag)
 - [Plan topics for coverage](/docs/user-guide/evals-sdk/topic_planning/index.md) (1 shared tag)
 - [Simulators](/docs/user-guide/evals-sdk/simulators/index.md) (1 shared tag)
-- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Customizing user simulation](/docs/user-guide/evals-sdk/simulators/customize_user_simulation/index.md) (1 shared tag)
 - [User simulation](/docs/user-guide/evals-sdk/simulators/user_simulation/index.md) (1 shared tag)
 - [Tool simulation](/docs/user-guide/evals-sdk/simulators/tool_simulation/index.md) (1 shared tag)
+- [Production Lifecycle Controls](/docs/user-guide/sdk/agents/lifecycle-controls/index.md) (1 shared tag)

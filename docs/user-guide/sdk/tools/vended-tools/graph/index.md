@@ -1,6 +1,6 @@
 Lets your agent design and run a team of sub-agents as a [Graph](/docs/user-guide/sdk/multi-agent/graph/index.md). The model supplies a `task`, a list of `nodes` (each with a unique `name` and its own `instructions`), and `edges` that order them. Nodes with no upstream nodes start in parallel, and each node receives its upstream outputs.
 
-Nodes inherit the caller’s model and tools, including MCP tools, except graph tools. Child interrupts pause the tool call and resume with the user’s response. An interrupted graph is saved in the parent agent’s interrupt state, so it can resume after the parent is restored from a snapshot or session. By default, a call times out after 15 minutes and each node after 5 minutes.
+Nodes inherit the caller’s model and tools, including MCP tools, except graph tools. They do not inherit its [hooks](/docs/user-guide/sdk/agents/hooks/index.md) or [plugins](/docs/user-guide/sdk/plugins/index.md); to give nodes either, [replace the default builder](/docs/user-guide/sdk/tools/vended-tools/index.md#multi-agent-tools). Child interrupts pause the tool call and resume with the user’s response. An interrupted graph is saved in the parent agent’s interrupt state, so it can resume after the parent is restored from a snapshot or session. By default, a call times out after 15 minutes and each node after 5 minutes.
 
 *Supported in: Python, TypeScript (Node.js, browsers).*
 

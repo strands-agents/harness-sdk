@@ -110,7 +110,7 @@ protected _storePendingToolExecution(
 ): void;
 ```
 
-Defined in: [src/tools/executors/executor.ts:245](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/executors/executor.ts#L245)
+Defined in: [src/tools/executors/executor.ts:256](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/executors/executor.ts#L256)
 
 #### Parameters
 

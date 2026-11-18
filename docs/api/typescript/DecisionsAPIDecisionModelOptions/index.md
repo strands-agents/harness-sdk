@@ -1,4 +1,4 @@
-Defined in: [src/decisions/decisions-api-decision-model.ts:16](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L16)
+Defined in: [src/decisions/decisions-api-decision-model.ts:20](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L20)
 
 Options for constructing a [DecisionsAPIDecisionModel](/docs/api/typescript/DecisionsAPIDecisionModel/index.md).
 
@@ -10,7 +10,7 @@ Options for constructing a [DecisionsAPIDecisionModel](/docs/api/typescript/Deci
 readonly apiKey?: string;
 ```
 
-Defined in: [src/decisions/decisions-api-decision-model.ts:18](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L18)
+Defined in: [src/decisions/decisions-api-decision-model.ts:22](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L22)
 
 Decisions API key. Defaults to `JEV_API_KEY`.
 
@@ -22,7 +22,7 @@ Decisions API key. Defaults to `JEV_API_KEY`.
 readonly modelId?: string;
 ```
 
-Defined in: [src/decisions/decisions-api-decision-model.ts:20](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L20)
+Defined in: [src/decisions/decisions-api-decision-model.ts:24](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L24)
 
 Decisions API model identifier. Defaults to `~typesafe/jev-latest`.
 
@@ -34,7 +34,7 @@ Decisions API model identifier. Defaults to `~typesafe/jev-latest`.
 readonly defaultMinConfidence?: number;
 ```
 
-Defined in: [src/decisions/decisions-api-decision-model.ts:22](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L22)
+Defined in: [src/decisions/decisions-api-decision-model.ts:26](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L26)
 
 Default minimum confidence. Defaults to `0.5`.
 
@@ -49,7 +49,7 @@ readonly fetch?: {
 };
 ```
 
-Defined in: [src/decisions/decisions-api-decision-model.ts:24](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L24)
+Defined in: [src/decisions/decisions-api-decision-model.ts:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L28)
 
 Custom fetch implementation, primarily for transport configuration and tests.
 

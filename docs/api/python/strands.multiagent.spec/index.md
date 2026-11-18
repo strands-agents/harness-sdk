@@ -14,7 +14,7 @@ Provides the authority-mode system for model-driven multi-agent patterns, where 
 class Fixed()
 ```
 
-Defined in: [src/strands/multiagent/spec.py:44](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L44)
+Defined in: [src/strands/multiagent/spec.py:45](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L45)
 
 The developer pins the value; the axis contributes no model-facing parameter.
 
@@ -25,7 +25,7 @@ The developer pins the value; the axis contributes no model-facing parameter.
 class Inherit()
 ```
 
-Defined in: [src/strands/multiagent/spec.py:51](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L51)
+Defined in: [src/strands/multiagent/spec.py:52](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L52)
 
 The child takes the parent’s value; the axis contributes no model-facing parameter.
 
@@ -36,7 +36,7 @@ The child takes the parent’s value; the axis contributes no model-facing param
 class Open()
 ```
 
-Defined in: [src/strands/multiagent/spec.py:56](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L56)
+Defined in: [src/strands/multiagent/spec.py:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L57)
 
 The model writes the value freely; the axis contributes a string parameter.
 
@@ -47,7 +47,7 @@ The model writes the value freely; the axis contributes a string parameter.
 class Option()
 ```
 
-Defined in: [src/strands/multiagent/spec.py:61](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L61)
+Defined in: [src/strands/multiagent/spec.py:62](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L62)
 
 A selectable entry in a `Choice`.
 
@@ -58,7 +58,7 @@ A selectable entry in a `Choice`.
 class Choice()
 ```
 
-Defined in: [src/strands/multiagent/spec.py:70](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L70)
+Defined in: [src/strands/multiagent/spec.py:71](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L71)
 
 The model picks from a developer-supplied set.
 
@@ -70,7 +70,7 @@ Each entry is a bare name or an `Option`. Set `multiple=True` to let the model p
 def normalized() -> list[Option]
 ```
 
-Defined in: [src/strands/multiagent/spec.py:80](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L80)
+Defined in: [src/strands/multiagent/spec.py:81](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L81)
 
 The options as `Option`s with `value` resolved, wrapping any bare name.
 
@@ -80,7 +80,7 @@ The options as `Option`s with `value` resolved, wrapping any bare name.
 def value_for(name: str) -> Any
 ```
 
-Defined in: [src/strands/multiagent/spec.py:92](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L92)
+Defined in: [src/strands/multiagent/spec.py:93](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L93)
 
 The resolved value behind `name`, or `name` itself if unknown.
 
@@ -95,7 +95,7 @@ Any authority mode an axis can take.
 class Preset()
 ```
 
-Defined in: [src/strands/multiagent/spec.py:105](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L105)
+Defined in: [src/strands/multiagent/spec.py:106](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L106)
 
 A named role: a partially applied child configuration selected via `agent_type`.
 
@@ -106,6 +106,6 @@ A named role: a partially applied child configuration selected via `agent_type`.
 class AgentSpec()
 ```
 
-Defined in: [src/strands/multiagent/spec.py:115](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L115)
+Defined in: [src/strands/multiagent/spec.py:116](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/spec.py#L116)
 
 The resolved child configuration handed to the builder.

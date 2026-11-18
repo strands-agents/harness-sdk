@@ -185,5 +185,5 @@ Running an agent in production comes down to pinning its configuration, restrict
 - [Observe your agent](/docs/user-guide/sdk/observability-evaluation/index.md) (1 shared tag)
 - [Task decorator](/docs/user-guide/evals-sdk/how-to/eval_task/index.md) (1 shared tag)
 - [Traces](/docs/user-guide/sdk/observability-evaluation/traces/index.md) (1 shared tag)
-- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Deploy to Kubernetes](/docs/user-guide/sdk/deploy/deploy_to_kubernetes/index.md) (1 shared tag)
+- [Deploy to production](/docs/user-guide/sdk/deploy/index.md) (1 shared tag)

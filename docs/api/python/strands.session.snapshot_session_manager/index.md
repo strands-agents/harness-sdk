@@ -180,12 +180,12 @@ Defined in: [src/strands/session/snapshot\_session\_manager.py:443](https://gith
 
 Persist immediately after a guardrail redaction, under every strategy.
 
-The Agent has already applied the redaction to `agent.messages[-1]` before calling this, so re-capturing the agent flushes pre-redaction content out of the persisted latest snapshot. This flush happens regardless of `save_latest_on` (including `"trigger"`) because the Agent invokes this method directly, not through a hook the manager could decline to register — so pre-redaction content never sits at rest. This diverges from the TypeScript SDK, which gates redaction persistence behind an `AfterModelCall` hook it skips under `"trigger"` and therefore does not flush there.
+The Agent has already applied the redaction to the last user message before calling this, so re-capturing the agent flushes pre-redaction content out of the persisted latest snapshot. This flush happens regardless of `save_latest_on` (including `"trigger"`) because the Agent invokes this method directly, not through a hook the manager could decline to register — so pre-redaction content never sits at rest. This diverges from the TypeScript SDK, which gates redaction persistence behind an `AfterModelCall` hook it skips under `"trigger"` and therefore does not flush there.
 
 **Arguments**:
 
 -   `redact_message` - The redacted replacement message (already applied by the Agent).
--   `agent` - Agent whose latest message was redacted.
+-   `agent` - Agent whose last user message was redacted.
 -   `**kwargs` - Additional keyword arguments for future extensibility.
 
 #### append\_message

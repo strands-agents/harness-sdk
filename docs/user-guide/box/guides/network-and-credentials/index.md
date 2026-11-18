@@ -1,8 +1,10 @@
 An `[egress.<name>]` table in `box.toml` binds a credential to a set of destinations. The box’s egress gateway adds the credential to each request to those destinations. Policy decides whether each request goes out.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/egress.md).
+Audience: an operator with a working box from [getting started](../../quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/egress.md).
 
 A tool or local MCP server with `network.contain_egress = false` can connect directly, outside gateway policy. On Linux, this includes IPv4 access to reachable private networks, loopback services, and instance metadata endpoints. See [server network settings](../add-an-mcp-server/index.md#network).
+
+Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
 
 ## Example
 
@@ -20,7 +22,7 @@ secret.ref   = "aws://my-profile"
 
 `box run` reads `GITHUB_TOKEN` from its own environment. The agent gets a placeholder in `GITHUB_TOKEN`, and sends it as it would send the token. The gateway replaces the placeholder with the real token on each request to `api.github.com`.
 
-> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
+> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
 
 To let the requests out, permit them in `policy.dw`:
 
@@ -45,7 +47,7 @@ when { context.input.host == "api.github.com" };
 | `secret.header` | string | `Authorization` | For `env://` with `placement = "header"`: the header name. |
 | `secret.prefix` | string | `Bearer` on `Authorization`, empty on any other header | For `env://` with `placement = "header"`: the text before the credential. |
 | `secret.param` | string | none | For `env://` with `placement = "query_param"`: the query parameter name. Required for that placement. |
-| `secret.inject` | string | `phantom` | For `env://`: `phantom` adds the credential only to a request that carries the placeholder, and refuses any other request to the destinations. `always` adds it to every request to the destinations. |
+| `secret.inject` | string | `phantom` | For `env://`: `phantom` adds the credential only to a request that carries the placeholder, and refuses any other request to the destinations. `always` adds it to every request to the destinations. Refused beside a backend, where the destination secret is phantom-only and the box injects nothing. |
 | `secret.phantom_prefix` | string | `strands_box_` | For `env://`: the start of the placeholder, such as `sk-ant-` for a client that checks the key’s format. 1 to 64 letters, digits, `-`, `_`, `.`, or `~`. |
 
 ### Placement
@@ -87,11 +89,15 @@ auth.ref = "env://BOX_GW_TOKEN"
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `backends.url` | string | required | The backend to dial, as `scheme://host[:port][/prefix]`. `https` or `http`. A path prefix is allowed; a query or fragment is not. |
+| `backends.url` | string | required | The backend to dial, as `scheme://host[:port][/prefix]`. `https` or `http`. An explicit port must be 1 to 65535. A path prefix is allowed; a query or fragment is not. A prefix adds a request-path restriction — see the note below. |
 | `backends.auth.ref` | string | none | The backend’s own credential: `env://NAME` for a static token (takes `backends.auth.header`, `backends.auth.placement`, `backends.auth.prefix`, `backends.auth.param`, but no `inject` or `phantom_prefix`), or `aws://PROFILE` to SigV4-sign the request over the backend host (requires `backends.auth.aws.service` and `backends.auth.aws.region`). |
 | `backends.auth.aws.service` / `backends.auth.aws.region` | string | none | The SigV4 service (e.g. `bedrock-agentcore`) and region (e.g. `us-east-1`) to sign under. Each must be non-empty and only lowercase letters, digits, or `-`, because the signer uses the value verbatim. Required for an `aws://` auth, refused otherwise. |
 
 The box dials the backend’s host and port, presents the backend host for TLS and in the `Host` header, and validates the backend’s certificate against the backend host. If the `url` has a path prefix, the box puts it in front of the agent’s request path, so a request to `api.github.com/zen` with a backend `url` of `https://gateway-1.example.com/github` leaves as `gateway-1.example.com/github/zen`. The original destination and the agent’s own path stay in policy and in the audit record. The box checks the backend’s address against policy before it connects, so a `forbid` on a metadata or private address refuses a backend that resolves there.
+
+A `secret` on the entry may sit beside a backend, but only as `env://`, and it is phantom-only: the box provisions a placeholder in the named variable (so the agent’s credential-shaped code works) and strips it from the request, and never sends the real value — the backend handles the destination’s auth downstream. Because the box never reads the real value, the named variable may be unset, and `secret.inject` is refused (there is nothing to inject). A signed destination `secret` (`aws://` or `credsd://`) is refused beside a backend, because it mints no placeholder to strip.
+
+When the backend `url` has a path prefix, the box refuses a request whose path contains an encoded slash (`%2F`) or backslash (`%5C`): joining a prefix in front of an escaped separator could change which path the backend sees, so the box fails the request rather than risk a traversal. This rejects some legitimate requests — for example a GitLab path such as `/api/v4/projects/1/repository/files/src%2FREADME.md`. If a destination needs encoded separators, give the backend a **dedicated host with no path prefix** (`url = "https://gw.example.com"`), which carries no join and so no restriction.
 
 A backend’s `auth` rides an `https` backend. An `env://` token is attached as-is; an `aws://` profile is SigV4-signed over the **backend** host — the box signs the request after it rewrites the `Host` to the backend, so the signature covers the bytes the backend receives. The service and region are **stated explicitly** in `backends.auth.aws` (e.g. `service = "bedrock-agentcore"`, `region = "us-east-1"`); the box does not guess them from the host, because a gateway or custom-domain host carries no standard AWS scope. A `credsd://` auth is refused.
 
@@ -111,31 +117,33 @@ A host that re-routes to a backend may be named by no other entry, on any port. 
 
 This version re-routes to one backend. More than one backend and routing rules are not yet available.
 
+A remote MCP server re-routes the same way: attach `[[mcp.<name>.backends]]` to a `type = "http"` server. See [Backends in the MCP guide](../add-an-mcp-server/index.md#backends).
+
 ## Credential sources
 
 | `secret.ref` | Read from | When |
 | --- | --- | --- |
 | `env://NAME` | The variable `NAME` in the environment of `box run` | Once, when the box starts. The agent, each tool, each stdio MCP server, and the Shell get a placeholder in `NAME`. Every destination that names `NAME`, in one route or in several, accepts the same placeholder. |
-| `aws://PROFILE` | The static access keys of `PROFILE` in the operator’s AWS configuration | On each request. The gateway signs the request with SigV4. |
+| `aws://PROFILE` | The named profile `PROFILE`, resolved through the AWS SDK | On each request. The gateway signs the request with SigV4. |
 | `aws://` (no profile) | The AWS SDK default credential provider chain on the host | On each request. The gateway signs the request with SigV4, under the host’s ambient identity. |
 
 An `aws://` route takes no placement, `header`, `prefix`, `param`, `inject`, or `phantom_prefix`. The gateway signs each request to the destinations. The service and region come from the host, which ends in `.amazonaws.com` or `.api.aws`.
 
-A bare `aws://` with no profile signs with the host’s **ambient** AWS identity. It resolves the AWS SDK default credential provider chain, in order: the `AWS_*` environment variables, the profile files (including `credential_process`), web identity, the ECS or EKS container endpoint, then EC2 instance metadata. `aws://PROFILE` instead reads the static keys of one named profile and nothing else.
+Both forms resolve through the AWS SDK, so they share one capability. A bare `aws://` resolves the default credential provider chain, in order: the `AWS_*` environment variables, the profile files (including `credential_process`), web identity, the ECS or EKS container endpoint, then EC2 instance metadata — the host’s **ambient** identity. `aws://PROFILE` resolves **only** the named profile: its static keys, `credential_process`, assume-role, or web identity. It never reads the ambient `AWS_*` keys or instance metadata, and a missing profile is refused rather than signing as the ambient identity — like the AWS CLI’s `--profile`. Naming a profile pins *which* identity signs; it does not avoid `credential_process` (see the writable-`~/.aws` note below).
 
-This build does **not** resolve **AWS SSO** or `aws login` profiles (the SDK’s `sso` provider is compiled out to keep the dependency surface small). A default profile from `aws configure sso` is refused, and the refusal names the missing provider. If your ambient identity is SSO, log in with a tool that writes static or session keys to `~/.aws/credentials`, or bind `aws://PROFILE` to a profile that carries keys.
+This build does **not** resolve **AWS SSO** or `aws login` profiles (the SDK’s `sso` provider is compiled out to keep the dependency surface small). Such a profile, named or default, is refused, and the refusal names the missing provider. If your identity is SSO, log in with a tool that writes static or session keys to `~/.aws/credentials`.
 
 Because a bare `aws://` signs with whatever identity the host carries, the box prints a warning on **every** request it signs that way:
 
 ```plaintext
 strands-box credentials [<tenant>]: signing with the host's ambient AWS identity: a bare aws://
-resolved the default credential provider chain, not a declared scoped profile. Prefer aws://PROFILE
-to pin the identity, and grant the workload no write access to ~/.aws
+resolved the default credential provider chain. Name a scoped profile (aws://PROFILE) to pin which
+identity signs, and grant the workload no write access to ~/.aws
 ```
 
-To pin the identity, name a profile: `aws://PROFILE` reads one profile’s static keys, never the ambient chain, and never warns. The shipped box has no setting that refuses a bare `aws://` outright — it always signs with a warning — so a deployment that must not sign with an ambient identity writes `aws://PROFILE` rather than a bare `aws://`.
+Naming a profile with `aws://PROFILE` pins *which* identity signs and does not warn. The shipped box has no setting that refuses a bare `aws://` outright — it always signs with a warning — so a deployment that must pin the identity writes `aws://PROFILE` rather than a bare `aws://`.
 
-> **Writable `~/.aws` is a remote-code-execution path.** The default chain reads the profile files, which include the `credential_process` setting — a program the AWS SDK **executes** to obtain credentials. That program runs inside the box’s trusted process, **outside** the sandbox. So if a filesystem list grants the workload (the agent, a tool, the interpreter, or the Shell) write access to `~/.aws` or any parent of it, the workload can write `credential_process = /path/to/its-own-program` and have the box run it outside containment on the next bare-`aws://` request. **Grant write access to `~/.aws` only when every process that can write there is trusted** — this is the box’s only mitigation for a bare `aws://`. `aws://PROFILE` does not read `credential_process`, so a named profile is not exposed to this path; prefer one when the workload may reach `~/.aws`.
+> **Writable `~/.aws` is a remote-code-execution path.** Both `aws://` forms read the profile files, which include the `credential_process` setting — a program the AWS SDK **executes** to obtain credentials. That program runs inside the box’s trusted process, **outside** the sandbox. So if a filesystem list grants the workload (the agent, a tool, the interpreter, or the Shell) write access to `~/.aws` or any parent of it, the workload can write `credential_process = /path/to/its-own-program` and have the box run it outside containment on the next `aws://` request. This covers a named profile as much as the bare form, since both resolve `credential_process` through the SDK. **Grant write access to `~/.aws` only when every process that can write there is trusted** — that is the box’s only mitigation for either form.
 
 The gateway adds a credential only over HTTPS. A plain `http://` request to a destination a route names is refused.
 
@@ -175,6 +183,7 @@ The list applies to every process in the box. An entry is a host name alone: the
 | A `backends.auth` uses `aws://` without a valid `aws.service`/`aws.region` (or sets them on a non-`aws://` auth) | An `aws://` backend auth signs over the backend host, so state `backends.auth.aws.service` and `backends.auth.aws.region`, each non-empty and only lowercase letters, digits, or `-`. They are valid only on an `aws://` auth. |
 | `secret.ref` has a scheme other than `env` or `aws` | Use one of the two schemes. |
 | `env://NAME` names a variable that is unset, blank, or reserved by the box | Set `NAME` in the host OS’s shell that runs `box run`, or choose another name. |
+| A bare `aws://` route whose default credential chain resolves no credentials at startup (no env keys, no default profile, no IMDS), or whose `credential_process` does not finish within the resolve timeout | Configure the host’s AWS credentials, or name a profile with `aws://PROFILE`. The box validates a bare `aws://` chain once at startup, so a broken one stops `box run` rather than the first request. |
 | An `aws://` route sets a placement, `header`, `prefix`, `param`, `inject`, or `phantom_prefix` | Remove the key. A signed route takes none. |
 | `placement` is not `header`, `basic_auth`, or `query_param`, or is set with a key it does not take | Use one of the three, with only its own keys. |
 | `placement = "query_param"` has no `param` | Name the query parameter. |
@@ -189,7 +198,7 @@ A request the gateway refuses while the box runs gets an HTTP 403 with the heade
 | Body | Cause |
 | --- | --- |
 | The policy decision, naming the rule | `net:connect` or `http:request` refused the request. |
-| `blocked by egress control` | A request to a route’s destinations lacks the placeholder, carries a different value, or can’t be signed. A bare `aws://` route whose default chain resolves no credentials can’t be signed and refuses here. |
+| `blocked by egress control` | A request to a route’s destinations lacks the placeholder, carries a different value, or can’t be signed. A bare `aws://` chain that resolved at startup but later stops (a rotated-away credential, a `credential_process` that begins to fail) can’t be signed and refuses here; one that is already broken at startup stops `box run` instead. |
 | `credential not permitted on a plaintext request` | A plain `http://` request went to a route’s destination, including one the gateway [upgrades to HTTPS](#upgrade-plain-http-to-https). |
 | `request authority rejected` | The request inside a `CONNECT` named a different host. |
 | `response blocked by egress control` | The server sent a compressed response to a credentialed request. |
@@ -200,5 +209,5 @@ Responses arrive progressively, including on credentialed routes. Credential red
 
 ## See also
 
--   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
+-   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
 -   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): a credential for an http MCP server.

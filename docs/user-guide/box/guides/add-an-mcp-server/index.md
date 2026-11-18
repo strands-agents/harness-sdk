@@ -1,4 +1,4 @@
-Each MCP server the agent uses is one `[mcp.<name>]` table in `box.toml`. A stdio server is a program that the box starts in its own sandbox. An http server runs somewhere else, and the agent reaches it through the box’s egress gateway.
+An `[mcp.<name>]` table in `box.toml` identifies an MCP server for Box’s tool restrictions. MCP means Model Context Protocol. A stdio server is a program that the box starts in its own sandbox. An http server runs somewhere else, and the agent reaches it through the box’s egress gateway.
 
 Audience: an operator with a working box from [getting started](../../quickstart/index.md) who adds an MCP server to it. To let the agent use the server, write its rules as in [write policy for an MCP server](../write-mcp-policy/index.md).
 
@@ -139,6 +139,8 @@ A server with no `filesystem` table reaches its own program and the runtime mini
 
 The table takes no `metadata` or `exec` list, and `box run` refuses either one by name. On macOS, a server can test whether a path exists and read its metadata across the operator’s home. Linux does not provide that same discovery access.
 
+For a local server that needs macOS FSEvents, set `file-watching = true` in its `[mcp.<name>]` table. The agent’s setting does not carry over, and remote HTTP servers refuse it. Read the [FSEvents limitations](../../reference/configuration/index.md#file-watching) before enabling it.
+
 On Linux and macOS, a server can execute helpers and load native code from its readable and writable grants. For a Python extension outside the runtime minimum, grant `read` to its directory or `read_file` to the extension file. Grant access to any additional libraries and helpers it needs. A directory grant includes its descendants, so it also permits execution of programs there. File permissions, explicit denials, and protected paths still apply.
 
 On Linux, each write grant also needs a covering read grant. Run Box as a non-root user for directory writes. See [direct access by operating system](../../reference/configuration/index.md#direct-access-by-operating-system). A server can execute code it writes within those grants. Automatic temporary directories do not acquire this execution permission. The agent retains its separate execution restrictions. A filesystem grant does not grant network access.
@@ -154,7 +156,7 @@ A grant in this table is direct access, outside every `fs:*` decision.
 | Value | The server’s own connections |
 | --- | --- |
 | `true` | Go through the egress gateway. The box sets `HTTPS_PROXY` for the server. Policy decides each `net:connect` and `http:request`, the gateway attaches credentials, and the decision log records each one. |
-| `false` | Can connect directly, outside gateway policy. Direct connections receive no gateway credential. The decision log records an `egress:native` entry when the server starts. |
+| `false` | Can connect directly, outside gateway policy. The box sets no proxy variable and no CA file, so the server uses its own defaults and checks the real certificate; its `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE` and the other proxy and CA names. Direct connections receive no gateway credential. The decision log records an `egress:native` entry when the server starts. |
 
 On Linux, `false` permits direct IPv4 connections through the surrounding OS. This includes reachable private networks, loopback services, and instance metadata endpoints.
 
@@ -185,7 +187,7 @@ In `filesystem` lists, `~` means your home directory. Box uses `env.PATH` as wri
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `type` | string | required | `"http"`. |
-| `destinations` | string array | required | The server’s hosts. Each is a host, `host:port`, a host with a path prefix, or a `*.` wildcard host. |
+| `destinations` | string array | required | Destinations for MCP identification and optional credential routing. Entries accept a host, `host:port`, or a host with a path prefix. A `*.` wildcard entry supports credential routing only. MCP identification uses the explicit host; see [remote destination matching](#remote-destination-matching). |
 | `secret.ref` | string | none | The credential the gateway attaches to each request to the server: `env://NAME`, `aws://PROFILE`, or a bare `aws://` for the AWS default credential chain. |
 | `secret.header` | string | `Authorization` | The header the credential goes in. |
 | `secret.prefix` | string | `Bearer` on `Authorization` | The text before the credential. |
@@ -193,17 +195,51 @@ In `filesystem` lists, `~` means your home directory. Box uses `env.PATH` as wri
 | `secret.param` | string | none | The query parameter’s name, for `placement = "query_param"`. |
 | `secret.inject` | string | `phantom` | For `env://`: `phantom` attaches the credential to a request that carries the placeholder, and `always` attaches it to every request to the destinations. |
 | `secret.phantom_prefix` | string | `strands_box_` | For `env://`: the start of the placeholder value. |
+| `backends` | table array | none | A backend to re-route the server’s requests to. At most one. See [Backends](#backends). |
 
 With `secret.ref = "env://NAME"`, `box run` reads `NAME` from its own environment. The agent gets a placeholder in `NAME`, and the gateway swaps in the real value on each request to the server.
 
+### Remote destination matching
+
+For MCP policy, Box compares the request’s host with the explicit host in each `destinations` entry. Hostname comparison ignores letter case and trailing dots. IP literals match by their parsed address. Box does not use DNS results to treat different hostnames, or a hostname and an IP address, as the same MCP server.
+
+Keep equivalent hostname spellings in the same `[mcp.<name>]` table. The configuration loader currently fails to reject different server entries for names such as `mcp.example.com` and `mcp.example.com.`. Runtime matching treats those spellings as one host. Requests to either spelling can therefore use one entry’s server name and tool rules, leaving the other entry’s rules unapplied. Use one server table for the host; its declared hostname already matches with and without trailing dots.
+
+MCP matching ignores an entry’s port and path. A request to the matching host enters MCP checks on any port and path that network and HTTP policy permit.
+
+A `*.` wildcard entry does not select the parent domain or any concrete subdomain for MCP checks. For example, `*.example.com` selects neither `example.com` nor `api.example.com`. If a server lists only wildcard destinations, requests to those hosts receive no `mcp:call` or per-tool checks for that server. Its configured credential can still attach when the credential pattern matches and network and HTTP policy permit the request. List each intended hostname or IP address explicitly.
+
+Credential routing uses the [destination patterns](../network-and-credentials/index.md#destinations), including their port, path, and wildcard rules. Attaching a credential does not establish an MCP server identity. Requests to destinations without an MCP match remain subject to network and HTTP policy. Follow [the remote-server policy guidance](../write-mcp-policy/index.md#scope-of-remote-server-rules) to restrict alternative routes to the same application.
+
+### Backends
+
+A backend re-routes the server’s requests to a gateway you control, such as a Bedrock AgentCore Gateway. The agent sends a request to the server’s `destinations`, and the box sends it to the backend instead. Policy still decides the original server, not the backend: it reads `context.input.server` as the server’s name, and decides `mcp:call` and `http:request` on the original host, before the re-route.
+
+```toml
+[mcp.github]
+type         = "http"
+destinations = ["api.githubcopilot.com"]
+
+[[mcp.github.backends]]
+url              = "https://abc.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+auth.ref         = "aws://bedrock"
+auth.aws.service = "bedrock-agentcore"
+auth.aws.region  = "us-east-1"
+```
+
+A remote MCP backend is the egress backend applied to a remote MCP server: the same `url` and `auth` keys, the same validation, and the same re-route on the wire. See [Backends in the egress guide](../network-and-credentials/index.md#backends) for the full rules — the backend `url` shape, the backend `auth`, the backend address check, and how a phantom-only `env://` `secret` rides beside a backend. The one difference is scope: a backend here re-routes a remote MCP server, and a `backends` key is refused on a `type = "stdio"` server, which is a local child with no remote endpoint.
+
+`policy generate-schema` cannot discover a re-routed server: the re-route and its backend `auth` apply only at `box run` time, in the egress gateway, and the offline command has no gateway. It refuses a `[mcp.<name>]` with a backend by name, which stops the whole run. Generate a schema from a `box.toml` without that server to get the rest, then write its `mcp:call` rules by hand.
+
 ## Errors and exit codes
 
-`box run` exits with an error before the agent starts when a table breaks a rule on this page.
+`box run` exits with an error before the agent starts when the configuration loader rejects a table.
 
 | Message | Cause |
 | --- | --- |
-| A configuration error that names `[mcp.<name>]` | A key is unknown, a required key is missing, or the name or the program breaks a rule on this page. |
+| A configuration error that names `[mcp.<name>]` | A key is unknown, a required key is missing, or the name or the program breaks a rule on this page. A `backends` key on a `type = "stdio"` table is an unknown field. |
 | `` `[mcp.<a>]` and `[mcp.<b>]` declare the same command "<command>" `` | Two tables declare the same exact command or wildcard pattern on one alias. Remove one, or change its arguments. |
+| A backend error (more than one backend, a bad backend `url`, a signed `secret` beside a backend, or a refused backend `auth`) | A remote MCP backend follows the egress backend rules. See [Errors in the egress guide](../network-and-credentials/index.md#errors-and-exit-codes). |
 | `MCP server "<name>" failed during <step>` | The server failed while the box read its tool list. stderr names the step. |
 | `modern MCP requests require ...` | The client omitted required protocol metadata. Update the client to one that sends the fields on every request. |
 | `Unsupported MCP protocol version` | The request names a modern version Box does not support. The error lists the supported version. |
@@ -231,6 +267,6 @@ For a request the policy refuses, see [troubleshooting](../write-mcp-policy/inde
 ## See also
 
 -   [Write policy for an MCP server](../write-mcp-policy/index.md): the rules that let the agent start, list, and call a server, and how to connect the harness.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
--   [macOS network restrictions](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
+-   [macOS network restrictions](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.

@@ -24,6 +24,7 @@
     -   [Decision Model](/docs/api/python/strands.decisions.decision_model)
     -   [Decisions Api Decision Model](/docs/api/python/strands.decisions.decisions_api_decision_model)
     -   [Llm Decision Model](/docs/api/python/strands.decisions.llm_decision_model)
+    -   [Sagemaker Decision Model](/docs/api/python/strands.decisions.sagemaker_decision_model)
     -   [Types](/docs/api/python/strands.decisions.types)
     -   [Typesafe Decision Model](/docs/api/python/strands.decisions.typesafe_decision_model)
 -   **Event Loop**
@@ -194,6 +195,8 @@
             -   **Llm**
                 -   [Llm Handler](/docs/api/python/strands.vended_plugins.steering.handlers.llm.llm_handler)
                 -   [Mappers](/docs/api/python/strands.vended_plugins.steering.handlers.llm.mappers)
+    -   **Todos**
+        -   [Plugin](/docs/api/python/strands.vended_plugins.todos.plugin)
 -   **Vended Tools**
     -   **A2a Client**
         -   [A2a Client](/docs/api/python/strands.vended_tools.a2a_client.a2a_client)

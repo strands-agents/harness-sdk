@@ -4,7 +4,7 @@ This is the lookup layer for the Strands harness factory (`create_harness` in Py
 
 | Python | TypeScript | Default | Purpose |
 | --- | --- | --- | --- |
-| `model` | `model` | `bedrock/global.anthropic.claude-opus-5` | A `provider/name` string, a bare Amazon Bedrock id, or a `Model` instance. See [choose a model](/docs/user-guide/harness/configure/model/index.md). |
+| `model` | `model` | `bedrock/global.anthropic.claude-opus-5-5` | A `provider/name` string, a bare Amazon Bedrock id, or a `Model` instance. See [choose a model](/docs/user-guide/harness/configure/model/index.md). |
 | `effort` | `effort` | `"auto"` | Reasoning effort: `"auto"`, `"low"`, `"medium"`, `"high"`, or off. Ignored for a `Model` instance. |
 | `instructions` | `instructions` | none | A domain block appended after the harness contract. Ignored when a full system prompt is passed. |
 | `tools` | `tools` | none | Consumer tools, added alongside the built-ins. See [add tools](/docs/user-guide/harness/configure/tools-and-instructions/index.md). |
@@ -26,7 +26,7 @@ This is the lookup layer for the Strands harness factory (`create_harness` in Py
 
 ## Value notes
 
--   **`effort`** accepts `"auto"` (provider recommended), `"low"`/`"medium"`/`"high"` (explicit; some providers accept finer levels), and `"off"`. A level the resolved provider rejects fails at construction.
+-   **`effort`** accepts `"auto"` (the model vendor’s default, else `high`), `"low"`/`"medium"`/`"high"` (explicit; some providers accept finer levels), and `"off"`. A level the resolved provider rejects fails at construction.
 -   **`caching`** accepts `"auto"`/`True` (on), `False`/`None` (off). Off has no effect where caching is automatic (OpenAI, Google, bedrock-mantle). Enabling it explicitly on a `Model` instance is ignored with a warning.
 -   **`context_manager`** accepts `"auto"`, `"agentic"`, and `False`/`None`. Off also disables context offloading.
 -   **`memory`** accepts `True` (on) and `False`/`None` (off). Ignored when a `memory_manager` is passed through.

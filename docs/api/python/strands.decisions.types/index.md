@@ -82,7 +82,7 @@ The `provider_name`, `model_id`, `probabilities`, and `confidence` fields are po
 
 -   `latency_ms` - Time spent in the underlying model call, in milliseconds.
 -   `provider_name` - Provider that served the decision, when API-backed.
--   `model_id` - Provider-reported model identifier that served the decision.
+-   `model_id` - Model identifier that served the decision, as reported by the provider, or the requested model when the provider reports none.
 -   `probabilities` - Per-question probability distributions, keyed first by question id and then by answer value. Boolean questions key by `"true"` / `"false"`; choice questions key by each choice string.
 -   `confidence` - Per-question confidence values in `[0.0, 1.0]`, keyed by question id.
 
@@ -93,7 +93,7 @@ The `provider_name`, `model_id`, `probabilities`, and `confidence` fields are po
 class DecisionResult()
 ```
 
-Defined in: [src/strands/decisions/types.py:95](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/types.py#L95)
+Defined in: [src/strands/decisions/types.py:96](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/types.py#L96)
 
 Result returned by `DecisionModel.ask`, keyed by the same identifiers as the question map.
 

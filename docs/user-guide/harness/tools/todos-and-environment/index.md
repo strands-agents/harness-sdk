@@ -1,12 +1,32 @@
-Two of Strands harness’s built-ins are plugins rather than tools: `environment` and `todos`. Both are selected through `builtin_plugins` and shape how the agent works without being things the model calls the way it calls `shell` or `read`. `environment` is on by default; `todos` is opt-in.
+Two of Strands harness’s built-ins are plugins rather than tools: `environment` and `todos`. Both are selected through `builtin_plugins` and shape how the agent works without being things the model calls the way it calls `shell` or `read`. `environment` is on by default; `todos` is opt-in and deprecated in favor of the SDK plugin.
 
 ## todos
 
-The `todos` plugin gives the agent a `todo_write` tool and keeps the current task list in view. When the agent writes a list, the plugin re-surfaces it to the model before each step, so on a longer task the agent keeps its plan in front of it without restating it.
+Moved to the SDK
 
-The list lives in agent state, not durable history: it is injected fresh before each step and never written into the conversation, so a constantly-changing plan does not stack stale copies in the transcript. Each item has a `content` (the task, imperative), an `activeForm` (shown while it is in progress), and a `status` of `pending`, `in_progress`, or `completed`. The agent is guided to keep one item in progress at a time and clear the list when the work is done.
+The harness `todos` built-in is deprecated and is removed in a later harness minor. The plugin now ships in the SDK as `Todos`: construct it yourself and pass it in `plugins`. [Todos](/docs/user-guide/sdk/plugins/todos/index.md) documents what it does and how to configure it, and [issue #5279](https://github.com/strands-agents/harness-sdk/issues/5279) tracks the move.
 
-`todos` is opt-in. Because it re-injects the list on every turn, it costs tokens and breaks the cached prefix on providers without explicit cache points, so enable it where the task tracking earns that.
+Naming `todos` in `builtin_plugins` still adds the `todo_write` tool and still keeps the list in view, but it warns on construction. The SDK plugin is the same plugin, so moving to it changes how you attach it and nothing about how the agent behaves:
+
+(( tab "Python" ))
+```python
+from strands import Agent
+from strands.vended_plugins.todos import Todos
+
+agent = Agent(plugins=[Todos()])
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { Todos } from '@strands-agents/sdk/vended-plugins/todos'
+
+const agent = new Agent({ plugins: [new Todos()] })
+```
+(( /tab "TypeScript" ))
+
+Drop `"todos"` from `builtin_plugins` when you do. Both register a `todo_write` tool, so keeping each one leaves them in conflict over that name.
 
 ## environment
 
@@ -23,7 +43,6 @@ Everything is read through the agent’s [sandbox](/docs/user-guide/sdk/sandbox/
 
 `builtin_plugins` selects these by name, defaulting to `["environment"]`. Name both to add todos, or pass an empty list to turn both off:
 
-(( tab "Strands harness" ))
 (( tab "Python" ))
 ```python
 from strands_harness import create_harness
@@ -39,36 +58,6 @@ import { createHarness } from '@strands-agents/harness'
 const agent = await createHarness({ builtinPlugins: ['todos', 'environment'] })
 ```
 (( /tab "TypeScript" ))
-(( /tab "Strands harness" ))
-
-(( tab "SDK" ))
-(( tab "Python" ))
-```python
-# pip install strands-agents
-from strands import Agent
-from strands.vended_tools import file_editor
-
-# No notebook tool; use file_editor for a plan file
-agent = Agent(
-    tools=[file_editor],
-    system_prompt="Track the task in a plan file and update it as you work.",
-)
-```
-(( /tab "Python" ))
-
-(( tab "TypeScript" ))
-```typescript
-// npm install @strands-agents/sdk
-import { Agent } from '@strands-agents/sdk'
-import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
-
-const agent = new Agent({
-  tools: [notebook],
-  systemPrompt: 'Create a notebook checklist and update it as you work.',
-})
-```
-(( /tab "TypeScript" ))
-(( /tab "SDK" ))
 
 For the plugin system these build on, see the Strands Harness SDK’s [plugins](/docs/user-guide/sdk/plugins/index.md) documentation.
 

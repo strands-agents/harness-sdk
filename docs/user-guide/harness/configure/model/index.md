@@ -2,7 +2,7 @@ Strands harness runs on the latest models across Amazon Bedrock, Anthropic, Open
 
 ## Point Strands harness at a model
 
-You pick a model by passing `model`, which accepts three forms: a `provider/name` string, a bare Bedrock model id, or a ready-made Strands `Model` instance. The `provider/` prefix has aliases for `bedrock`, `bedrock-mantle`, `anthropic`, `openai`, `google`, `ollama`, and `litellm`. A string with no provider prefix is treated as a bare Amazon Bedrock id.
+You pick a model by passing `model`, which accepts three forms: a `provider/name` string, a bare Bedrock model id, or a ready-made Strands `Model` instance. The `provider/` prefix has aliases for `bedrock`, `bedrock-mantle`, `anthropic`, `openai`, `google`, `ollama`, and `litellm`. A string with no provider prefix is treated as a bare Amazon Bedrock id. On `bedrock`, Claude models run through the Anthropic Messages API with Anthropic’s Bedrock client, so they get Anthropic API features that Converse doesn’t expose; every other Bedrock model uses Converse.
 
 (( tab "Strands harness" ))
 (( tab "Python" ))
@@ -47,7 +47,7 @@ For a provider Strands harness does not have an alias for, or for a model you ha
 from strands.models import BedrockModel
 from strands_harness import create_harness
 
-model = BedrockModel(model_id="global.anthropic.claude-opus-5", region_name="us-west-2")
+model = BedrockModel(model_id="global.anthropic.claude-opus-5-5", region_name="us-west-2")
 agent = create_harness(model=model)
 ```
 (( /tab "Python" ))
@@ -57,7 +57,7 @@ agent = create_harness(model=model)
 import { BedrockModel } from '@strands-agents/sdk'
 import { createHarness } from '@strands-agents/harness'
 
-const model = new BedrockModel({ modelId: 'global.anthropic.claude-opus-5' })
+const model = new BedrockModel({ modelId: 'global.anthropic.claude-opus-5-5' })
 const agent = await createHarness({ model })
 ```
 (( /tab "TypeScript" ))
@@ -68,7 +68,7 @@ An unknown provider prefix fails at construction with the list of supported prov
 
 `effort` maps one reasoning level onto whatever each provider’s API expects, so you set it once regardless of provider:
 
--   `"auto"` (the default) uses each provider’s recommended level.
+-   `"auto"` (the default) uses the level the model’s vendor runs it at in its own harness (Claude Code, Codex, Gemini CLI), taken from the [shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json): `medium` on Claude Opus 5.5, `high` on Opus 5, `low` on GPT-6.1 Sol. A model without a vendor default gets `high`.
 -   `"low"`, `"medium"`, and `"high"` set it explicitly.
 -   `"off"` (or `off` on the CLI) turns reasoning off.
 
@@ -77,7 +77,7 @@ An unknown provider prefix fails at construction with the list of supported prov
 ```python
 from strands_harness import create_harness
 
-agent = create_harness(model="anthropic/claude-opus-5", effort="high")
+agent = create_harness(model="anthropic/claude-opus-5-5", effort="high")
 ```
 (( /tab "Python" ))
 
@@ -85,7 +85,7 @@ agent = create_harness(model="anthropic/claude-opus-5", effort="high")
 ```typescript
 import { createHarness } from '@strands-agents/harness'
 
-const agent = await createHarness({ model: 'anthropic/claude-opus-5', effort: 'high' })
+const agent = await createHarness({ model: 'anthropic/claude-opus-5-5', effort: 'high' })
 ```
 (( /tab "TypeScript" ))
 (( /tab "Strands harness" ))

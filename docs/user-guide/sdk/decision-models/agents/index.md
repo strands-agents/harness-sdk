@@ -113,12 +113,17 @@ const agent = new Agent({
 
 [Human in the loop](/docs/user-guide/sdk/agents/interventions/human-in-the-loop/index.md#risk-classifier) covers the risk criteria and the other classifier options.
 
+## Route requests to a model
+
+When an agent can serve each request with one of several models, `ClassifierStrategy` picks the model before the first model call. Pass it a decision model, and it asks that decision model which candidate fits the request. The decision’s tokens count toward the request, the same as a decision asked from a tool. [Route with a decision model](/docs/user-guide/sdk/model-providers/model-routing/index.md#route-with-a-decision-model) shows the setup.
+
 ## Related pages
 
 - [Decision models](/docs/user-guide/sdk/decision-models/index.md) (1 shared tag)
 - [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) (1 shared tag)
 - [Questions and answers](/docs/user-guide/sdk/decision-models/questions/index.md) (1 shared tag)
 - [Supported decision models](/docs/user-guide/sdk/decision-models/models/index.md) (1 shared tag)
+- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Decision model observability](/docs/user-guide/sdk/decision-models/observability/index.md) (1 shared tag)
 - [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)
 
@@ -129,8 +134,10 @@ const agent = new Agent({
 
 - [harness-sdk/strands-py/src/strands/decisions/decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decision_model.py)
 - [harness-sdk/strands-py/src/strands/agent/invocation_context.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py)
+- [harness-sdk/strands-py/src/strands/models/routing/classifier_strategy.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/routing/classifier_strategy.py)
 
 ### TypeScript
 
 - [harness-sdk/strands-ts/src/decisions/decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts)
 - [harness-sdk/strands-ts/src/agent/invocation-context.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/invocation-context.ts)
+- [harness-sdk/strands-ts/src/models/routing/classifier-strategy.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/routing/classifier-strategy.ts)

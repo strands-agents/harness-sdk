@@ -6,11 +6,11 @@ Decision model backed by decisionapi.net.
 class DecisionsAPIDecisionModel(DecisionModel)
 ```
 
-Defined in: [src/strands/decisions/decisions\_api\_decision\_model.py:18](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decisions_api_decision_model.py#L18)
+Defined in: [src/strands/decisions/decisions\_api\_decision\_model.py:23](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decisions_api_decision_model.py#L23)
 
 Decision model backed by decisionapi.net.
 
-`ask` raises `ModelThrottledException` on provider throttling (HTTP 429/503/529, with the `httpx.HTTPStatusError` as `__cause__`), `ContextWindowOverflowException` when the request exceeds the provider’s size limit (HTTP 413 or the pre-send body-byte check), `ValueError` for request-level violations (more than eight questions, too many choices, binary content, state that is not JSON-serializable or contains NaN/infinity), `httpx.HTTPStatusError` for any other non-2xx response, and `StructuredOutputException` for a malformed provider response. Transport errors from the HTTP client (e.g. `httpx.TimeoutException`, `httpx.ConnectError`) propagate unchanged.
+`ask` raises `ModelThrottledException` on provider throttling (HTTP 429/503/529, with the `httpx.HTTPStatusError` as `__cause__`), `ContextWindowOverflowException` when the request exceeds the provider’s size limit (HTTP 413), `ValueError` for request-level violations (more than eight questions, too many choices, binary content, state that is not JSON-serializable or contains NaN/infinity), `httpx.HTTPStatusError` for any other non-2xx response, and `StructuredOutputException` for a malformed provider response or an HTTP 200 body that carries a non-zero error `code`. Transport errors from the HTTP client (e.g. `httpx.TimeoutException`, `httpx.ConnectError`) propagate unchanged.
 
 **Example**:
 
@@ -33,7 +33,7 @@ def __init__(
         http_client: httpx.AsyncClient | None = None) -> None
 ```
 
-Defined in: [src/strands/decisions/decisions\_api\_decision\_model.py:40](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decisions_api_decision_model.py#L40)
+Defined in: [src/strands/decisions/decisions\_api\_decision\_model.py:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decisions_api_decision_model.py#L46)
 
 Create a decisionapi.net-backed decision model.
 

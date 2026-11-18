@@ -119,6 +119,7 @@ The rendered text is a prompt-injection surface. If it interpolates attacker-inf
 
 ## Related pages
 
+- [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
 - [Context Estimation](/docs/user-guide/sdk/context-management/context-estimation/index.md) (1 shared tag)
 - [Context management](/docs/user-guide/sdk/context-management/index.md) (1 shared tag)

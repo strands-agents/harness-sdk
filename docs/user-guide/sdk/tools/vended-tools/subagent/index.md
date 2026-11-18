@@ -4,6 +4,8 @@ The `make_subagent``makeSubagent` factory uses [axis policies](/docs/user-guide/
 
 By default, the child sees only the task (`context=Fixed("none")``context: new Fixed('none')`), but you can share the parent’s conversation by setting `context` to a `Choice` over `"none"`, `"all"` (full history including tool calls), and `"no_tools"` (text turns only). When a non-`"none"` option is available, the model can also pass `last_messages` to limit how many parent messages to share.
 
+Unless you pass your own `builder`, the child inherits the parent’s tools, model, and interventions, but not its [hooks](/docs/user-guide/sdk/agents/hooks/index.md) or [plugins](/docs/user-guide/sdk/plugins/index.md). A hook that logs the parent’s tool calls does not see the child’s. To give the child hooks or plugins, [replace the default builder](/docs/user-guide/sdk/tools/vended-tools/index.md#multi-agent-tools).
+
 *Supported in: Python, TypeScript (Node.js, browsers).*
 
 **Quickstart example:**

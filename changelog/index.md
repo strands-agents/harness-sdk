@@ -1,5 +1,221 @@
 # Strands Agents Changelog
 
+## Box v0.2.3 — 2026-11-17
+Release: https://github.com/strands-agents/box/releases/tag/v0.2.3 · Package: https://github.com/strands-agents/box/releases/tag/v0.2.3
+
+### Features
+- support absolute executable commands (https://github.com/strands-agents/box/pull/377)
+- ingress relay for agent tcp communication (https://github.com/strands-agents/box/pull/272)
+- re-route a destination to a backend (https://github.com/strands-agents/box/pull/311)
+- sign a bare aws:// with the AWS default credential chain (https://github.com/strands-agents/box/pull/342)
+- make Shell input and output limits configurable (https://github.com/strands-agents/box/pull/401)
+- add experimental Linux x86-64 support (https://github.com/strands-agents/box/pull/398)
+- upgrade plain HTTP to HTTPS for listed hosts (https://github.com/strands-agents/box/pull/411)
+- record an MCP tool's output and read http tool replies (https://github.com/strands-agents/box/pull/416)
+- forward a Shell alias's stdin to its command (https://github.com/strands-agents/box/pull/397)
+- accept an optional box ID from library callers, and generate one as today when absent (https://github.com/strands-agents/box/pull/437)
+- set TCP\_NODELAY on the upstream socket (https://github.com/strands-agents/box/pull/457)
+- send python3 and each alias's folder to the shell (https://github.com/strands-agents/box/pull/417)
+- re-route a remote MCP server to a backend (https://github.com/strands-agents/box/pull/413)
+- let a read entry name a link to a file (https://github.com/strands-agents/box/pull/456)
+- export reserved\_env so a library caller can reuse Box's reserved env names (https://github.com/strands-agents/box/pull/460)
+- set TCP\_NODELAY on the workload-side sockets (https://github.com/strands-agents/box/pull/459)
+- add opt-in file watching on macOS (https://github.com/strands-agents/box/pull/430)
+- add Linux x86-64 release downloads (https://github.com/strands-agents/box/pull/475)
+- add Linux filesystem policy operations (https://github.com/strands-agents/box/pull/193)
+
+### Fixes
+- run a tool's own file for the bare name the agent types (https://github.com/strands-agents/box/pull/388)
+- preserve ordinary program execution beside MCP aliases (https://github.com/strands-agents/box/pull/357)
+- preserve empty HTTP resource queries (https://github.com/strands-agents/box/pull/299)
+- set ingress in the tool test helper's ProcessSpec (https://github.com/strands-agents/box/pull/394)
+- diagnose incompatible EKS sandbox settings (https://github.com/strands-agents/box/pull/384)
+- enforce tool grammar checks when a local server starts (https://github.com/strands-agents/box/pull/386)
+- record a finished MCP tool call under the tool's own action (https://github.com/strands-agents/box/pull/391)
+- enforce shell working-directory restrictions (https://github.com/strands-agents/box/pull/296)
+- enforce input limits for multiline commands (https://github.com/strands-agents/box/pull/403)
+- refuse translated and platform metadata addresses before transport (https://github.com/strands-agents/box/pull/393)
+- join continued source lines without empty words (https://github.com/strands-agents/box/pull/402)
+- refuse history stamped ahead of the clock (https://github.com/strands-agents/box/pull/410)
+- give the hosted Shell each route's phantom (https://github.com/strands-agents/box/pull/431)
+- refuse a frame that carries both method and a result (https://github.com/strands-agents/box/pull/438)
+- report lost records once on stderr when the run drains (https://github.com/strands-agents/box/pull/439)
+- let direct-egress tools verify TLS without the gateway (https://github.com/strands-agents/box/pull/412)
+- permit waitid so a Go program can wait for its child (https://github.com/strands-agents/box/pull/447)
+- permit copy\_file\_range and sendfile on Linux (https://github.com/strands-agents/box/pull/451)
+- fit a supplied box ID in the 32-byte name limit (https://github.com/strands-agents/box/pull/454)
+- permit pselect6 so cargo can download crates (https://github.com/strands-agents/box/pull/455)
+- resolve aws://PROFILE through the SDK and bound each resolve (https://github.com/strands-agents/box/pull/415)
+- default to the per-user macOS socket path (https://github.com/strands-agents/box/pull/441)
+- build x86 Linux packages against glibc 2.34 (https://github.com/strands-agents/box/pull/466)
+
+### Other
+- migrate Box to upstream Strands Shell (https://github.com/strands-agents/box/pull/414)
+- clarify HTTP budget recording time (https://github.com/strands-agents/box/pull/449)
+- propose secret providers (https://github.com/strands-agents/box/pull/395)
+- require native Linux x86-64 runtime tests (https://github.com/strands-agents/box/pull/446)
+- prepare locked dependencies for offline guards (https://github.com/strands-agents/box/pull/477)
+- add path locations design doc (https://github.com/strands-agents/box/pull/461)
+- pin that \`sh FILE\` is decided as \`shell:exec\` on \`sh\` (https://github.com/strands-agents/box/pull/472)
+
+## Evals v1.10.0 — 2026-11-16
+Release: https://github.com/strands-agents/evals/releases/tag/v1.10.0 · Package: https://pypi.org/project/strands-agents-evals/1.10.0/
+
+### Features
+- add context backfilling to session-converter [generators, tracing] (https://github.com/strands-agents/evals/pull/497)
+- add TypedRubricEvaluator for decision-model rubrics [evaluators] (https://github.com/strands-agents/evals/pull/493)
+- add validation and review steps to session-converter [generators] (https://github.com/strands-agents/evals/pull/505)
+- generalize session-converter to work with non-CLI session files [tracing] (https://github.com/strands-agents/evals/pull/525)
+- add synthetic case generation to session-converter (https://github.com/strands-agents/evals/pull/529)
+
+### Fixes
+- make EvaluationReport.to\_file() reject non-strict JSON [core, devx] (https://github.com/strands-agents/evals/pull/393)
+- cancel the workers when run\_evaluations\_async is cancelled [core] (https://github.com/strands-agents/evals/pull/521)
+- preserve embedded CloudWatch span events [tracing] (https://github.com/strands-agents/evals/pull/522)
+
+### Other
+- add integration tests for output-level judge evaluators [evaluators] (https://github.com/strands-agents/evals/pull/407)
+- skip multimodal evaluator tests pending reliable image host [multimodal] (https://github.com/strands-agents/evals/pull/536)
+
+## SDK Python v1.65.0 — 2026-11-13
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.65.0 · Package: https://pypi.org/project/strands-agents/1.65.0/
+
+### Features
+- write injected text into history as an InjectedBlock (typescript) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5569)
+- write injected text into history as an injected block (python) [context, memory] (https://github.com/strands-agents/harness-sdk/pull/5977)
+- organize sample guides by user goal (https://github.com/strands-agents/harness-sdk/pull/5761)
+- server-side summary capability with Anthropic on-demand compaction [context, model] (https://github.com/strands-agents/harness-sdk/pull/5840)
+- accept pre-built vendor clients in the Anthropic and OpenAI providers (Python + TypeScript) and document Bedrock InvokeModel / Mantle through them [model] (https://github.com/strands-agents/harness-sdk/pull/5914)
+- make the shell tool's default timeout configurable [devx, tool] (https://github.com/strands-agents/harness-sdk/pull/5796)
+- give Model.summarize() a client-side base implementation [context, model] (https://github.com/strands-agents/harness-sdk/pull/5962)
+- give Model.summarize() a client-side base implementation (TS port of #5962) [context, model] (https://github.com/strands-agents/harness-sdk/pull/6022)
+- let ClassifierStrategy route with any DecisionModel [multiagent, decisions] (https://github.com/strands-agents/harness-sdk/pull/5995)
+- add "auto" mode to HumanInTheLoop [hil, decisions] (https://github.com/strands-agents/harness-sdk/pull/5975)
+- handle Bedrock InvokeModel in AnthropicModel (mid-stream errors, API version); add defaultEffort to the shared model info (py + ts) [model] (https://github.com/strands-agents/harness-sdk/pull/6064)
+- async agent builders; report content-filtered and refused children as tool errors [async, multiagent] (https://github.com/strands-agents/harness-sdk/pull/6093)
+
+### Fixes
+- snapshot upstream content at deploy (https://github.com/strands-agents/harness-sdk/pull/5838)
+- accumulate metrics for hook retries [otel, hooks] (https://github.com/strands-agents/harness-sdk/pull/4345)
+- support anthropic SDK 1.x and 2.x in AnthropicModel [model] (https://github.com/strands-agents/harness-sdk/pull/5799)
+- restore a pending tool execution only for an activated state, and validate it (Python) [hil, persistence] (https://github.com/strands-agents/harness-sdk/pull/5654)
+- add GPT-6 Cyber context window (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5899)
+- apply the 2026-10-21 restrictions only from that API version on (Python) [model] (https://github.com/strands-agents/harness-sdk/pull/5909)
+- convert SageMaker tool results to user messages [model] (https://github.com/strands-agents/harness-sdk/pull/3305)
+- report directories and missing paths distinctly in PosixShellSandbox read\_file (Python + TypeScript) [server] (https://github.com/strands-agents/harness-sdk/pull/5818)
+- summarizer truncation fallback also shrinks text blocks under 3 × preserve\_chars [context] (https://github.com/strands-agents/harness-sdk/pull/5792)
+- warn when structured output drops non-text system prompt blocks [devx, structured-output] (https://github.com/strands-agents/harness-sdk/pull/3776)
+- reject None interrupt responses instead of silently re-interrupting [devx, hil] (https://github.com/strands-agents/harness-sdk/pull/4471)
+- mirror anthropic 2.7.0 enum/const schema handling (python) [model, structured-output] (https://github.com/strands-agents/harness-sdk/pull/5981)
+- include shell releases in the changelog (https://github.com/strands-agents/harness-sdk/pull/5918)
+- send tool result images and documents as media [model] (https://github.com/strands-agents/harness-sdk/pull/5941)
+- enforce tool\_filters on call\_tool (python) (https://github.com/strands-agents/harness-sdk/pull/5971)
+- add Claude Fable 5.2 and Mythos 5.2 model info (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5994)
+- used strands' tracer and use span\_attributes [otel, decisions] (https://github.com/strands-agents/harness-sdk/pull/6059)
+- preserve same-index signed reasoning blocks [model] (https://github.com/strands-agents/harness-sdk/pull/5708)
+- retry with drop\_block when no thinking config is set [model] (https://github.com/strands-agents/harness-sdk/pull/6061)
+- retry a 503 UNAVAILABLE as throttling (#5916) [model] (https://github.com/strands-agents/harness-sdk/pull/5947)
+- show the output schema to Ollama and llama.cpp models in structured\_output [model, structured-output] (https://github.com/strands-agents/harness-sdk/pull/6000)
+- send Claude Haiku 5.5 structured output to native output [model, structured-output] (https://github.com/strands-agents/harness-sdk/pull/6073)
+- suppress OpenSSH 10.1+ post-quantum warning on stderr (https://github.com/strands-agents/harness-sdk/pull/6069)
+- bump mistral-large-latest context window to 1,048,576 [model] (https://github.com/strands-agents/harness-sdk/pull/6104)
+- Report tool usage for streamed calls finishing with stop reason [model] (https://github.com/strands-agents/harness-sdk/pull/6049)
+
+### Other
+- add glama.json to claim the MCP server on Glama [mcp] (https://github.com/strands-agents/harness-sdk/pull/5832)
+- clarify that inputTokens may include cached tokens depending on provider [model] (https://github.com/strands-agents/harness-sdk/pull/5819)
+- cover RateLimitError mapping to ModelThrottledException (https://github.com/strands-agents/harness-sdk/pull/5964)
+- parametrize format\_chunk content\_block\_delta cases (https://github.com/strands-agents/harness-sdk/pull/5967)
+- cover RateLimitError mapping to ModelThrottledException (https://github.com/strands-agents/harness-sdk/pull/5965)
+- make the duplicate redacts\_output test enable output redaction (https://github.com/strands-agents/harness-sdk/pull/5968)
+- read the summary block from SummarizeResult in the Anthropic Bedrock test [context, model] (https://github.com/strands-agents/harness-sdk/pull/6032)
+- expect temporary messages for Claude Opus 5.5 in the model info lookup test [model] (https://github.com/strands-agents/harness-sdk/pull/6092)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/6047)
+- expect the new mistral-large-latest context window [model] (https://github.com/strands-agents/harness-sdk/pull/6122)
+- record the process list before a hung Windows test run is killed [cli] (https://github.com/strands-agents/harness-sdk/pull/6131)
+- cap the test job at 30 minutes and tolerate artifact upload failures (https://github.com/strands-agents/harness-sdk/pull/6130)
+- update mistral-large-latest context window assertions [model] (https://github.com/strands-agents/harness-sdk/pull/6133)
+
+## SDK TypeScript v1.25.0 — 2026-11-13
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/typescript/v1.25.0 · Package: https://www.npmjs.com/package/@strands-agents/sdk/v/1.25.0
+
+### Features
+- write injected text into history as an InjectedBlock (typescript) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5569)
+- offload conditions decide granularity (typescript) [context] (https://github.com/strands-agents/harness-sdk/pull/5325)
+- organize sample guides by user goal (https://github.com/strands-agents/harness-sdk/pull/5761)
+- support @anthropic-ai/sdk 0.110 through 1.x in the TypeScript SDK [model] (https://github.com/strands-agents/harness-sdk/pull/5798)
+- server-side summary capability with Anthropic on-demand compaction [context, model] (https://github.com/strands-agents/harness-sdk/pull/5840)
+- accept pre-built vendor clients in the Anthropic and OpenAI providers (Python + TypeScript) and document Bedrock InvokeModel / Mantle through them [model] (https://github.com/strands-agents/harness-sdk/pull/5914)
+- port server-side summary with Anthropic on-demand compaction to TypeScript [context, model] (https://github.com/strands-agents/harness-sdk/pull/5924)
+- make the shell tool's default timeout configurable [devx, tool] (https://github.com/strands-agents/harness-sdk/pull/5796)
+- give Model.summarize() a client-side base implementation (TS port of #5962) [context, model] (https://github.com/strands-agents/harness-sdk/pull/6022)
+- add SageMakerDecisionModel for System One models on SageMaker AI endpoints (TypeScript) [model, decisions] (https://github.com/strands-agents/harness-sdk/pull/5890)
+- add "auto" mode to HumanInTheLoop [hil, decisions] (https://github.com/strands-agents/harness-sdk/pull/5975)
+- handle Bedrock InvokeModel in AnthropicModel (mid-stream errors, API version); add defaultEffort to the shared model info (py + ts) [model] (https://github.com/strands-agents/harness-sdk/pull/6064)
+
+### Fixes
+- snapshot upstream content at deploy (https://github.com/strands-agents/harness-sdk/pull/5838)
+- map HTTP 503 from System One providers to ModelThrottledError (TypeScript) [model, decisions] (https://github.com/strands-agents/harness-sdk/pull/5784)
+- add GPT-6 Cyber context window (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5899)
+- report directories and missing paths distinctly in PosixShellSandbox read\_file (Python + TypeScript) [server] (https://github.com/strands-agents/harness-sdk/pull/5818)
+- reroute the Bedrock Mantle client when updateConfig crosses a base path [devx, model] (https://github.com/strands-agents/harness-sdk/pull/3988)
+- enable strict tool use on LLMDecisionModel's default BedrockModel [model, decisions] (https://github.com/strands-agents/harness-sdk/pull/5946)
+- enforce toolFilters on call\_tool (typescript) (https://github.com/strands-agents/harness-sdk/pull/5972)
+- include shell releases in the changelog (https://github.com/strands-agents/harness-sdk/pull/5918)
+- keep unknown content blocks when restoring saved data (typescript) [persistence, sessions] (https://github.com/strands-agents/harness-sdk/pull/5564)
+- add Claude Fable 5.2 and Mythos 5.2 model info (py + ts + cli) [model] (https://github.com/strands-agents/harness-sdk/pull/5994)
+- used strands' tracer and use span\_attributes [otel, decisions] (https://github.com/strands-agents/harness-sdk/pull/6059)
+- retry with drop\_block when no thinking config is set [model] (https://github.com/strands-agents/harness-sdk/pull/6061)
+- keep other sources' tools when an MCP server refreshes its list [mcp, tool] (https://github.com/strands-agents/harness-sdk/pull/6055)
+- send Claude Haiku 5.5 structured output to native output [model, structured-output] (https://github.com/strands-agents/harness-sdk/pull/6073)
+- mirror anthropic 1.7.0 enum/const schema handling (typescript) [model, structured-output] (https://github.com/strands-agents/harness-sdk/pull/6016)
+- suppress OpenSSH 10.1+ post-quantum warning on stderr (https://github.com/strands-agents/harness-sdk/pull/6069)
+
+### Other
+- add glama.json to claim the MCP server on Glama [mcp] (https://github.com/strands-agents/harness-sdk/pull/5832)
+- clarify that inputTokens may include cached tokens depending on provider [model] (https://github.com/strands-agents/harness-sdk/pull/5819)
+- remove duplicated media-block describe blocks (TS) (https://github.com/strands-agents/harness-sdk/pull/5966)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/6047)
+
+## Harness Python v0.4.0 — 2026-11-12
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-python/v0.4.0 · Package: https://pypi.org/project/strands-harness/0.4.0/
+
+### Features
+- drop todos from the default built-in plugins (https://github.com/strands-agents/harness-sdk/pull/5974)
+- write injected text into history as an injected block (python) [context, memory] (https://github.com/strands-agents/harness-sdk/pull/5977)
+- organize sample guides by user goal (https://github.com/strands-agents/harness-sdk/pull/5761)
+- pass the caching setting to OpenAI and Bedrock Mantle as an SDK cache config [model, harness] (https://github.com/strands-agents/harness-sdk/pull/5821)
+- merge feature/cli-0.3.0 into main [cli] (https://github.com/strands-agents/harness-sdk/pull/5194)
+
+### Fixes
+- snapshot upstream content at deploy (https://github.com/strands-agents/harness-sdk/pull/5838)
+- report Platform and Shell for a PowerShell sandbox [server, harness] (https://github.com/strands-agents/harness-sdk/pull/5625)
+- include shell releases in the changelog (https://github.com/strands-agents/harness-sdk/pull/5918)
+- bump mistral-large-latest context window to 1,048,576 [model] (https://github.com/strands-agents/harness-sdk/pull/6104)
+
+### Other
+- add glama.json to claim the MCP server on Glama [mcp] (https://github.com/strands-agents/harness-sdk/pull/5832)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/6047)
+
+## Harness TypeScript v0.4.0 — 2026-11-12
+Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-typescript/v0.4.0 · Package: https://www.npmjs.com/package/@strands-agents/harness/v/0.4.0
+
+### Features
+- write injected text into history as an InjectedBlock (typescript) [context, model] (https://github.com/strands-agents/harness-sdk/pull/5569)
+- drop todos from the default built-in plugins (https://github.com/strands-agents/harness-sdk/pull/5974)
+- organize sample guides by user goal (https://github.com/strands-agents/harness-sdk/pull/5761)
+- pass the caching setting to OpenAI and Bedrock Mantle as an SDK cache config [model, harness] (https://github.com/strands-agents/harness-sdk/pull/5821)
+
+### Fixes
+- snapshot upstream content at deploy (https://github.com/strands-agents/harness-sdk/pull/5838)
+- report Platform and Shell for a PowerShell sandbox [server, harness] (https://github.com/strands-agents/harness-sdk/pull/5625)
+- include shell releases in the changelog (https://github.com/strands-agents/harness-sdk/pull/5918)
+- bump mistral-large-latest context window to 1,048,576 [model] (https://github.com/strands-agents/harness-sdk/pull/6104)
+
+### Other
+- add glama.json to claim the MCP server on Glama [mcp] (https://github.com/strands-agents/harness-sdk/pull/5832)
+- bump actions/setup-python from 7.0.0 to 7.1.0 (https://github.com/strands-agents/harness-sdk/pull/6047)
+
 ## Harness CLI v0.3.0 — 2026-11-10
 Release: https://github.com/strands-agents/harness-sdk/releases/tag/harness-cli/v0.3.0 · Package: https://www.npmjs.com/package/@strands-agents/cli/v/0.3.0
 

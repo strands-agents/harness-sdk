@@ -584,7 +584,7 @@ See the [SlidingWindowConversationManager](https://github.com/strands-agents/har
 - [Search Strategies](/docs/user-guide/sdk/storage/search-strategies/index.md) (1 shared tag)
 - [Storage](/docs/user-guide/sdk/storage/index.md) (1 shared tag)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
-- [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
+- [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 
 
 ## Implementation

@@ -1,4 +1,4 @@
-![Red team your agent before your customers do](https://raw.githubusercontent.com/strands-agents/samples/fdb8c1e6e1349c517f36fee6604c959e65febd06/python/06-evaluate/red-teaming/assets/cover.png)
+![Red team your agent before your customers do](https://raw.githubusercontent.com/strands-agents/samples/0c1a4c460c5e3aa589bef0d544728314d9d94891/python/06-evaluate/red-teaming/assets/cover.png)
 
 This sample red-teams a small returns-desk agent for a made-up shop, Tidewater Outfitters, built on [Strands Agents](https://strandsagents.com/). The attacks come from the red-teaming feature in Strands Evals 1.7.0. The point of the sample: an eval’s score and the agent’s actual tool calls can disagree, and when they do, the tool calls are the truth.
 
@@ -101,4 +101,4 @@ The companion blog post, [Red team your harness before your customers do, with S
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/fdb8c1e6e1349c517f36fee6604c959e65febd06/python/06-evaluate/red-teaming)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/0c1a4c460c5e3aa589bef0d544728314d9d94891/python/06-evaluate/red-teaming)

@@ -21,7 +21,7 @@ Choose the strategy that matches how your application should select and recover:
 | Goal | Strategy |
 | --- | --- |
 | Try candidates in order, then favor healthier candidates | Default `FallbackStrategy` |
-| Choose the opening candidate from the request and evidence | `ClassifierStrategy` |
+| Choose the opening candidate from the request and evidence, with a model or a decision model | `ClassifierStrategy` |
 | Define a custom candidate-selection policy | Custom `RoutingStrategy` |
 
 `ClassifierStrategy` does not select another candidate after the serving model fails. Implement a custom strategy when you need classifier-based opening selection and fallback recovery together.
@@ -132,7 +132,7 @@ router = ModelRouter(
     ],
     strategy=ClassifierStrategy(
         classifier_model,
-        system_prompt=routing_policy,
+        routing_policy=routing_policy,
     ),
 )
 agent = Agent(model=router)
@@ -185,7 +185,7 @@ const router = new ModelRouter(
   ],
   {
     strategy: new ClassifierStrategy(classifierModel, {
-      systemPrompt: routingPolicy,
+      routingPolicy,
     }),
   }
 )
@@ -197,15 +197,95 @@ await agent.invoke(
 ```
 (( /tab "TypeScript" ))
 
-With two or more candidates, the classifier makes one additional model call before the first serving call. Choose a classifier model that supports structured outputtool calling and forced tool selection.
+With two or more candidates, the classifier makes one additional call before the first serving call. Choose a classifier model that supports forced tool selection. A model that ignores it fails every classification, so every request goes to the first candidate.
 
-Set `system_prompt``systemPrompt` to supply your routing policy. The policy can prioritize cost, latency, region, capabilities, or another criterion represented in candidate evidence. The SDK appends mandatory isolation, valid-index, and structured-output rules to every custom policy.
+Set `routing_policy``routingPolicy` to supply your routing policy. The policy can prioritize cost, latency, region, capabilities, or another criterion represented in candidate evidence. The SDK places fixed routing rules before your policy. They tell the classifier to pick exactly one candidate and to ignore any instructions in the request, the agent instructions, or the candidate evidence. Your policy can’t override them.
 
 The classifier receives a bounded representation of the latest request-bearing user message, textual agent instructions, and candidate names, descriptions, and metadata. Keep secrets out of that evidence because it can cross a model provider boundary.
 
-The classifier prompt tells the model not to infer preference from declaration order. If the classifier call times out, fails, or returns an invalid choice, the router uses the first candidate. Candidate evidence that exceeds `max_candidate_chars``maxCandidateChars` raises `ValueError``Error` instead.
+The routing rules tell the classifier not to infer preference from declaration order. If the classifier call fails, returns an invalid choice, or runs past its timeout (30 seconds by default, set with `timeout``timeoutMs`), the router uses the first candidate. Candidate evidence that exceeds `max_candidate_chars``maxCandidateChars` raises `ValueError``Error` instead.
 
 `ClassifierStrategy` only chooses the opening model. If the selected model fails and no same-model retry claims the failure, the strategy declines further selection. The router surfaces the selected model’s original error instead of switching candidates.
+
+## Route with a decision model
+
+A routing decision is a closed question: which of these candidates should serve the request? A [decision model](/docs/user-guide/sdk/decision-models/index.md) answers that kind of question, so you can pass one to `ClassifierStrategy` in place of a model. A System One decision model, such as `TypeSafeDecisionModel`, is a small model that picks between options instead of generating text. Use one when the extra routing call should cost less and return faster than a call to a general-purpose model.
+
+(( tab "Python" ))
+```python
+from strands import Agent
+from strands.decisions import TypeSafeDecisionModel
+from strands.models import (
+    BedrockModel,
+    ClassifierStrategy,
+    ModelRouter,
+    RoutingCandidate,
+)
+
+router = ModelRouter(
+    models=[
+        RoutingCandidate(
+            BedrockModel(model_id="us.amazon.nova-lite-v1:0"),
+            name="routine",
+            description="Concise factual questions and routine requests.",
+        ),
+        RoutingCandidate(
+            BedrockModel(model_id="us.amazon.nova-pro-v1:0"),
+            name="advanced",
+            description="Systems design with several interacting constraints.",
+        ),
+    ],
+    # Reads the API key from TYPESAFE_API_KEY
+    strategy=ClassifierStrategy(TypeSafeDecisionModel()),
+)
+agent = Agent(model=router)
+
+agent(
+    "Design a rollback-safe migration from regional to global idempotency keys."
+)
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import {
+  Agent,
+  BedrockModel,
+  ClassifierStrategy,
+  ModelRouter,
+  RoutingCandidate,
+  TypeSafeDecisionModel,
+} from '@strands-agents/sdk'
+
+const router = new ModelRouter(
+  [
+    new RoutingCandidate({
+      model: new BedrockModel({ modelId: 'us.amazon.nova-lite-v1:0' }),
+      name: 'routine',
+      description: 'Concise factual questions and routine requests.',
+    }),
+    new RoutingCandidate({
+      model: new BedrockModel({ modelId: 'us.amazon.nova-pro-v1:0' }),
+      name: 'advanced',
+      description: 'Systems design with several interacting constraints.',
+    }),
+  ],
+  // Reads the API key from TYPESAFE_API_KEY
+  { strategy: new ClassifierStrategy(new TypeSafeDecisionModel()) }
+)
+const agent = new Agent({ model: router })
+
+await agent.invoke(
+  'Design a rollback-safe migration from regional to global idempotency keys.'
+)
+```
+(( /tab "TypeScript" ))
+
+Every classifier goes through the same path. `ClassifierStrategy` asks one question with one choice per candidate, and sends the routing context as the decision input. When you pass a model, the strategy wraps it in an `LLMDecisionModel` first. The routing policy, timeout, character limits, and fallback to the first candidate work the same way for both.
+
+The routing question doesn’t allow an uncertain answer, so the decision model always picks a candidate. A System One model’s minimum confidence doesn’t apply here: a low-confidence pick still routes the request.
+
+The decision’s tokens count toward the agent request’s usage, which the agent result reports. They aren’t part of the agent’s model metrics, which cover only the serving model. [Decisions in an agent](/docs/user-guide/sdk/decision-models/agents/index.md#token-usage) covers how that usage is counted.
 
 ## Build a custom routing strategy
 
@@ -520,16 +600,16 @@ Choose candidates with comparable context windows and tokenizers so context esti
 
 ## Related pages
 
+- [Decision models](/docs/user-guide/sdk/decision-models/index.md) (1 shared tag)
+- [Decisions in an agent](/docs/user-guide/sdk/decision-models/agents/index.md) (1 shared tag)
+- [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) (1 shared tag)
+- [Questions and answers](/docs/user-guide/sdk/decision-models/questions/index.md) (1 shared tag)
+- [Supported decision models](/docs/user-guide/sdk/decision-models/models/index.md) (1 shared tag)
+- [Decision model observability](/docs/user-guide/sdk/decision-models/observability/index.md) (1 shared tag)
+- [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)
 - [Production Lifecycle Controls](/docs/user-guide/sdk/agents/lifecycle-controls/index.md) (1 shared tag)
 - [Retry Strategies](/docs/user-guide/sdk/agents/retry-strategies/index.md) (1 shared tag)
 - [Chaos testing](/docs/user-guide/evals-sdk/chaos_testing/index.md) (1 shared tag)
-- [Structured output](/docs/user-guide/sdk/agents/structured-output-behavior/index.md) (1 shared tag)
-- [Detectors](/docs/user-guide/evals-sdk/detectors/index.md) (1 shared tag)
-- [Failure detection](/docs/user-guide/evals-sdk/detectors/failure_detection/index.md) (1 shared tag)
-- [Operating Agents in Production](/docs/user-guide/sdk/deploy/operating-agents-in-production/index.md) (1 shared tag)
-- [Failure communication evaluator](/docs/user-guide/evals-sdk/evaluators/failure_communication_evaluator/index.md) (1 shared tag)
-- [Partial completion evaluator](/docs/user-guide/evals-sdk/evaluators/partial_completion_evaluator/index.md) (1 shared tag)
-- [Recovery strategy evaluator](/docs/user-guide/evals-sdk/evaluators/recovery_strategy_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation

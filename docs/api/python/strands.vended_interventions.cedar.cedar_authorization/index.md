@@ -18,15 +18,13 @@ Injects extra fields into context.session. Receives {‘tool\_name’, ‘tool\_
 class CedarAuthorization(InterventionHandler)
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:71](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L71)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:72](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L72)
 
 Cedar authorization intervention handler.
 
 Evaluates Cedar policies before each tool call. Each tool maps to a Cedar action, with context structured as `\{input: <tool_args>, session: \{hour_utc, call_count, ...}}`.
 
-Call counts are persisted to `agent.state` under the key `"cedar-authorization"` so they survive handler recreation and are included in session snapshots.
-
-.. note:: Each handler instance is scoped to a single agent. Sharing one instance across multiple agents will cause rate-limit counts to leak between them.
+Call counts are persisted to `agent.state` under the key `"cedar-authorization"` so they survive handler recreation and are included in session snapshots. Counts are tracked per agent, so agents that share one handler instance (such as a parent and its subagents) each have their own budget.
 
 Example::
 
@@ -39,7 +37,7 @@ cedar = CedarAuthorization( policies=‘permit(principal, action == Action::“s
 def on_error() -> OnError
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:95](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L95)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:94](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L94)
 
 What to do when this handler throws.
 
@@ -57,7 +55,7 @@ def __init__(*,
              on_error: OnError = "throw") -> None
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:99](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L99)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:98](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L98)
 
 Initialize the Cedar authorization handler.
 
@@ -89,7 +87,7 @@ def before_tool_call(event: BeforeToolCallEvent,
                      **kwargs: Any) -> Proceed | Deny
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:161](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L161)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:160](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L160)
 
 Evaluate Cedar policy before tool execution.
 
@@ -99,7 +97,7 @@ Evaluate Cedar policy before tool execution.
 def reload() -> None
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:236](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L236)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:235](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L235)
 
 Reload policies/entities/schema from disk. Validates before committing.
 
@@ -109,10 +107,10 @@ Reload policies/entities/schema from disk. Validates before committing.
 def reset_call_counts(agent: Agent | None = None) -> None
 ```
 
-Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:256](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L256)
+Defined in: [src/strands/vended\_interventions/cedar/cedar\_authorization.py:255](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_interventions/cedar/cedar_authorization.py#L255)
 
-Clear all rate-limit call counters.
+Clear rate-limit call counters, including those persisted in agent.state.
 
 **Arguments**:
 
--   `agent` - If provided, also clears persisted counts from agent.state.
+-   `agent` - Clear only this agent’s counts. If omitted, clears the counts of every agent this handler tracks.

@@ -1,90 +1,102 @@
-## Understanding Workflows
+Use a workflow when you know which steps should run and in what order. Your application calls each agent, passes its result to the next step, and decides how to handle failures. Each agent can have its own instructions, model, and tools.
 
-### What is an Agent Workflow?
+For a short sequence, ordinary function calls are enough. Define a [Graph](/docs/user-guide/sdk/multi-agent/graph/index.md) when you need to express dependencies across parallel branches or route results through conditional edges. To let an agent construct and run a task graph through a tool call, use the [vended `graph` tool](/docs/user-guide/sdk/tools/vended-tools/graph/index.md).
 
-An agent workflow coordinates tasks across multiple agents, where each agent performs a specialized function in a defined sequence. You break a complex problem into components, assign each to the agent best suited to it, and control the order, dependencies, and information flow between them. Use a workflow when a process needs a specific, repeatable execution pattern.
+## Pass results from one agent to the next
 
-### Components of a Workflow Architecture
+This workflow extracts facts from incident notes, analyzes those facts, and writes a report. The agents receive the information they need through their prompts; your code fixes the order of the calls.
 
-A workflow architecture consists of three key components:
+Before running the example, install the SDK and configure a model provider as shown in the [quickstart](/docs/user-guide/sdk/quickstart/overview/index.md).
 
-#### 1\. Task Definition and Distribution
+> **Diagram:** A sequential workflow controlled by application code. Incident notes go to the researcher to extract facts. Those facts go to the analyst to analyze. The analysis goes to the writer to write a report. The code calls each agent in turn.
 
--   **Task Specification**: Clear description of what each agent needs to accomplish
--   **Agent Assignment**: Matching tasks to agents with appropriate capabilities
--   **Priority Levels**: Determining which tasks should execute first when possible
-
-#### 2\. Dependency Management
-
--   **Sequential Dependencies**: Tasks that must execute in a specific order
--   **Parallel Execution**: Independent tasks that can run simultaneously
--   **Join Points**: Where multiple parallel paths converge before continuing
-
-#### 3\. Information Flow
-
--   **Input/Output Mapping**: Connecting one agent’s output to another’s input
--   **Context Preservation**: Maintaining relevant information throughout the workflow
--   **State Management**: Tracking the overall workflow progress
-
-### When to Use a Workflow
-
-Workflows excel in scenarios requiring structured execution and clear dependencies:
-
--   **Complex Multi-Step Processes**: Tasks with distinct sequential stages
--   **Specialized Agent Expertise**: Processes requiring different capabilities at each stage
--   **Dependency-Heavy Tasks**: When certain tasks must wait for others to complete
--   **Resource Optimization**: Running independent tasks in parallel while managing dependencies
--   **Error Recovery**: Retrying specific failed steps without restarting the entire process
--   **Long-Running Processes**: Tasks requiring monitoring, pausing, or resuming capabilities
--   **Audit Requirements**: When detailed tracking of each step is necessary
-
-Consider other approaches (swarms or graphs) for simple tasks, highly collaborative problems, or situations requiring extensive agent-to-agent communication.
-
-## Implementing Workflow Architectures
-
-### Creating Workflows with Strands Agents
-
-Strands Agents SDK allows you to create workflows using existing Agent objects, even when they use different model providers or have different configurations.
-
-#### Sequential Workflow Architecture
-
-> **Diagram:** A sequential workflow. Your code takes a topic and calls three agents in turn: the research agent (researcher) finds key information, its findings go into the prompt for the analysis agent (analyst), which extracts insights, and those insights go into the prompt for the report writing agent (writer), which produces the final report.
-
-In a sequential workflow, agents process tasks in a defined order, with each agent’s output becoming the input for the next:
-
+(( tab "Python" ))
 ```python
 from strands import Agent
 
-# Create specialized agents
-researcher = Agent(system_prompt="You are a research specialist. Find key information.", callback_handler=None)
-analyst = Agent(system_prompt="You analyze research data and extract insights.", callback_handler=None)
-writer = Agent(system_prompt="You create polished reports based on analysis.")
 
-# Sequential workflow processing
-def process_workflow(topic):
-    # Step 1: Research
-    research_results = researcher(f"Research the latest developments in {topic}")
+def process_workflow(notes: str) -> str:
+    researcher = Agent(
+        system_prompt="Extract the facts in the supplied incident notes.",
+        callback_handler=None,
+    )
+    analyst = Agent(
+        system_prompt="Analyze the supplied facts. Distinguish causes from guesses.",
+        callback_handler=None,
+    )
+    writer = Agent(
+        system_prompt="Write a concise incident report from the supplied analysis.",
+        callback_handler=None,
+    )
 
-    # Step 2: Analysis
-    analysis = analyst(f"Analyze these research findings: {research_results}")
+    facts = researcher(f"Extract facts from these notes:\n{notes}")
+    analysis = analyst(f"Analyze these incident facts:\n{facts}")
+    report = writer(f"Write a report from this analysis:\n{analysis}")
+    return str(report)
 
-    # Step 3: Report writing
-    final_report = writer(f"Create a report based on this analysis: {analysis}")
 
-    return final_report
+# Fictional notes keep the example independent of external data sources.
+notes = (
+    "09:00: deployed version 2.3. 09:05: checkout errors increased. "
+    "09:12: rolled back to version 2.2. 09:15: error rate returned to normal. "
+    "Root cause has not been confirmed."
+)
+print(process_workflow(notes))
 ```
+(( /tab "Python" ))
 
-This sequential workflow creates a pipeline where each agent’s output becomes the input for the next agent, allowing for specialized processing at each stage. For a functional example of sequential workflow implementation, see the [agents\_workflow.py](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/python/agents_workflow.py) example in the Strands Agents SDK documentation.
+(( tab "TypeScript" ))
+```typescript
+import { Agent } from '@strands-agents/sdk'
 
-## Conclusion
+async function processWorkflow(notes: string): Promise<string> {
+  const researcher = new Agent({
+    systemPrompt: 'Extract the facts in the supplied incident notes.',
+    printer: false,
+  })
+  const analyst = new Agent({
+    systemPrompt: 'Analyze the supplied facts. Distinguish causes from guesses.',
+    printer: false,
+  })
+  const writer = new Agent({
+    systemPrompt: 'Write a concise incident report from the supplied analysis.',
+    printer: false,
+  })
 
-Workflows give you explicit control over multi-step processes: a defined execution order, managed dependencies, and context passed between stages. Use the built-in `workflow` tool when you want that orchestration handled for you, or implement the coordination yourself when a step needs custom behavior.
+  const facts = await researcher.invoke(`Extract facts from these notes:\n${notes}`)
+  const analysis = await analyst.invoke(`Analyze these incident facts:\n${facts}`)
+  const report = await writer.invoke(`Write a report from this analysis:\n${analysis}`)
+  return report.toString()
+}
+
+// Fictional notes keep the example independent of external data sources.
+const notes =
+  '09:00: deployed version 2.3. 09:05: checkout errors increased. ' +
+  '09:12: rolled back to version 2.2. 09:15: error rate returned to normal. ' +
+  'Root cause has not been confirmed.'
+console.log(await processWorkflow(notes))
+```
+(( /tab "TypeScript" ))
+
+The researcher finishes before the analyst starts, and the analyst finishes before the writer starts. The report’s wording varies with the model; the order and inputs come from your application code. Creating the agents inside the function gives each run a fresh conversation.
+
+## Decide what happens when a step fails
+
+If an agent call raises an error in this example, the function exits and later steps do not run. Catch errors around a step when your application should retry it, ask for input, or return a partial result. Check the returned content before continuing when a successful call can still produce an unsuitable answer.
+
+A sequence of function calls does not add workflow persistence, a shared run status, or an overall deadline. Implement the controls your application needs, or use a [Graph](/docs/user-guide/sdk/multi-agent/graph/index.md) and its orchestration APIs. The [supervised orchestrator example](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/index.md#grow-into-a-supervised-orchestrator) shows node timeouts, an approval gate, and cancellation, including the limits of timeout enforcement.
+
+## Let an agent construct the workflow
+
+Use the [vended `graph` tool](/docs/user-guide/sdk/tools/vended-tools/graph/index.md) when the agent should decide how to divide a request into sub-tasks. The model supplies nodes and dependency edges; the tool creates the agents, runs independent nodes in parallel, and passes upstream outputs to downstream nodes.
+
+The tool accepts acyclic graphs. Configure it to constrain the graph’s size and the instructions, models, and tools available to its nodes. For a fixed sequence like the example above, keep the calls in your application. For cycles or conditional edges that your application defines, use the [Graph SDK API](/docs/user-guide/sdk/multi-agent/graph/index.md).
 
 ## Related pages
 
 - [A2A Server Configuration](/docs/user-guide/sdk/multi-agent/a2a-server-configuration/index.md) (1 shared tag)
 - [Agent-to-Agent (A2A) Protocol](/docs/user-guide/sdk/multi-agent/agent-to-agent/index.md) (1 shared tag)
-- [Coordinate multiple agents](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/index.md) (1 shared tag)
+- [Choose a multi-agent pattern](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/index.md) (1 shared tag)
 - [Graph Components](/docs/user-guide/sdk/multi-agent/graph-components/index.md) (1 shared tag)
 - [Graph Multi-Agent Pattern](/docs/user-guide/sdk/multi-agent/graph/index.md) (1 shared tag)
 - [Swarm Multi-Agent Pattern](/docs/user-guide/sdk/multi-agent/swarm/index.md) (1 shared tag)

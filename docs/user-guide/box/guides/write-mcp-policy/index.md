@@ -1,4 +1,4 @@
-Policy decides each request the agent makes to an MCP server. Permit the server’s startup or network connection, then permit its MCP calls. Use a `forbid` rule to block a tool or a specific argument value.
+Policy decides MCP requests routed through a declared server. MCP means Model Context Protocol. Permit the server’s startup or network connection, then permit its MCP calls. Use a `forbid` rule to block a tool or a specific argument value.
 
 Audience: an operator who has declared a server in [the `[mcp.<name>]` table](../add-an-mcp-server/index.md) and writes its rules in `policy.dw`.
 
@@ -6,6 +6,20 @@ Audience: an operator who has declared a server in [the `[mcp.<name>]` table](..
 
 -   A box from [getting started](../../quickstart/index.md).
 -   An `[mcp.<name>]` table for the server in its `box.toml`.
+
+### Scope of remote-server rules
+
+For an `http` server, Box applies MCP rules when the request’s host matches an explicit hostname or IP address in that server’s `destinations` list in `box.toml`. Box does not discover other hostnames or IP addresses for the same application. A request to an unmatched destination is subject to `net:connect` and `http:request`, without that server’s `mcp:call` or per-tool rules.
+
+For example, declaring `localhost` does not make a request to `127.0.0.1` use the same MCP rules. If both addresses reach your server and network and HTTP policy allow both, a tool forbidden through `localhost` can still run through `127.0.0.1`.
+
+To require the server’s tool restrictions on every permitted route to that application:
+
+-   List each intended hostname or IP address explicitly in the same server’s `destinations`.
+-   Restrict network and HTTP access to those destinations and the ports and paths the task needs. Check other permits too; adding a narrow permit does not remove access from a broader one.
+-   Check whether any other allowed destination can reach that application. Restrict that route if you cannot apply the required MCP rules to it.
+
+See [remote destination matching](../add-an-mcp-server/index.md#remote-destination-matching) for the matching rules.
 
 ## Step 1. Allow the server
 
@@ -84,7 +98,7 @@ If the table instead uses `command = ["/opt/node/bin/npx", "-y", "@playwright/mc
 
 A harness entry that sets only the program, `"command": "npx"` with no `args`, does not select this server. It attempts to run ordinary `npx` inside the agent’s sandbox. Add the declared arguments to the harness entry to select the MCP server. The same applies to every `stdio` server whose `command` has arguments.
 
-The server URL must match the server declared in `box.toml`.
+For an `http` server, use a URL whose hostname or IP address appears in that server’s `destinations` in `box.toml`. An unmatched host does not select that server’s MCP rules, even if it reaches the same application. The URL must also satisfy network and HTTP policy.
 
 ## Step 3. Find the tool and argument names
 
@@ -266,5 +280,5 @@ Read the startup warning as the signal that a rule went inert, then check it aga
 ## See also
 
 -   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/policy.md): how the engine decides, and what refuses to load.

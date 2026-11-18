@@ -29,7 +29,7 @@ def make_swarm(
 ) -> DecoratedFunctionTool
 ```
 
-Defined in: [src/strands/vended\_tools/swarm/swarm.py:72](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/swarm/swarm.py#L72)
+Defined in: [src/strands/vended\_tools/swarm/swarm.py:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/swarm/swarm.py#L73)
 
 Create a swarm tool with developer-controlled safety limits and authority modes.
 
@@ -41,7 +41,7 @@ A child’s interrupt is surfaced as an interrupt of this tool and can be resume
 
 -   `name` - Tool name shown to the model.
 -   `description` - Tool description shown to the model.
--   `builder` - Callable that turns an :class:`AgentSpec` into an `Agent`. When `None` a default builder is used that creates an `Agent` inheriting the caller’s model with the spec’s instructions and tools.
+-   `builder` - Callable, sync or async, that turns an :class:`AgentSpec` into an `Agent`. When `None` a default builder is used that creates an `Agent` inheriting the caller’s model with the spec’s instructions and tools.
 -   `presets` - Named roles the model can select via `agent_type`.
 -   `default_preset` - Preset used when the model omits `agent_type`.
 -   `instructions` - Authority mode for the instructions axis.

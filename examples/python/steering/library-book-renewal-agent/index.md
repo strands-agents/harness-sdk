@@ -158,4 +158,4 @@ tests/
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/fdb8c1e6e1349c517f36fee6604c959e65febd06/python/05-technical-use-cases/steering/library-book-renewal-agent)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/0c1a4c460c5e3aa589bef0d544728314d9d94891/python/05-technical-use-cases/steering/library-book-renewal-agent)

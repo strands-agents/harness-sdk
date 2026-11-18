@@ -298,13 +298,13 @@ The limit covers the whole request, like the other [invocation limits](/docs/use
 - [LiteLLM](/docs/user-guide/sdk/model-providers/litellm/index.md) (1 shared tag)
 - [Return structured output](/docs/user-guide/sdk/agents/structured-output/index.md) (1 shared tag)
 - [Structured output similarity evaluator](/docs/user-guide/evals-sdk/evaluators/structured_output_evaluator/index.md) (1 shared tag)
-- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [OpenAI](/docs/user-guide/sdk/model-providers/openai/index.md) (1 shared tag)
 - [Writer](/docs/user-guide/sdk/model-providers/writer/index.md) (1 shared tag)
 - [Anthropic](/docs/user-guide/sdk/model-providers/anthropic/index.md) (1 shared tag)
 - [Production Lifecycle Controls](/docs/user-guide/sdk/agents/lifecycle-controls/index.md) (1 shared tag)
 - [Retry Strategies](/docs/user-guide/sdk/agents/retry-strategies/index.md) (1 shared tag)
 - [Chaos testing](/docs/user-guide/evals-sdk/chaos_testing/index.md) (1 shared tag)
+- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 
 
 ## Implementation

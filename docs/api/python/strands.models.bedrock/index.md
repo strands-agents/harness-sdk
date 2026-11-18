@@ -8,7 +8,7 @@ AWS Bedrock model provider.
 class BedrockModel(Model)
 ```
 
-Defined in: [src/strands/models/bedrock.py:212](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L212)
+Defined in: [src/strands/models/bedrock.py:286](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L286)
 
 AWS Bedrock model provider implementation.
 
@@ -26,7 +26,7 @@ The implementation handles Bedrock-specific features such as:
 class BedrockConfig(BaseModelConfig)
 ```
 
-Defined in: [src/strands/models/bedrock.py:226](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L226)
+Defined in: [src/strands/models/bedrock.py:300](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L300)
 
 Configuration options for Bedrock models.
 
@@ -71,7 +71,7 @@ def __init__(*,
              **model_config: Unpack[BedrockConfig])
 ```
 
-Defined in: [src/strands/models/bedrock.py:304](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L304)
+Defined in: [src/strands/models/bedrock.py:378](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L378)
 
 Initialize provider instance.
 
@@ -92,11 +92,11 @@ Initialize provider instance.
 def model_info() -> ModelInfo
 ```
 
-Defined in: [src/strands/models/bedrock.py:382](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L382)
+Defined in: [src/strands/models/bedrock.py:456](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L456)
 
-Reports server-side summary as off and OpenAI models as implicitly cached.
+Reports server-side summary as off, and how Converse caches the model where the shared model info differs.
 
-A `model_info` override still wins over both. Converse has no server-side summary. The shared model info lists cache points for OpenAI models’ OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points.
+A `model_info` override still wins over both.
 
 #### update\_config
 
@@ -105,7 +105,7 @@ A `model_info` override still wins over both. Converse has no server-side summar
 def update_config(**model_config: Unpack[BedrockConfig]) -> None
 ```
 
-Defined in: [src/strands/models/bedrock.py:420](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L420)
+Defined in: [src/strands/models/bedrock.py:508](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L508)
 
 Update the Bedrock Model configuration with the provided arguments.
 
@@ -120,7 +120,7 @@ Update the Bedrock Model configuration with the provided arguments.
 def get_config() -> BedrockConfig
 ```
 
-Defined in: [src/strands/models/bedrock.py:432](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L432)
+Defined in: [src/strands/models/bedrock.py:520](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L520)
 
 Get the current Bedrock Model configuration.
 
@@ -140,7 +140,7 @@ def format_request(messages: Messages,
                    **kwargs: Any) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/bedrock.py:445](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L445)
+Defined in: [src/strands/models/bedrock.py:533](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L533)
 
 Format a Bedrock converse stream request.
 
@@ -168,7 +168,7 @@ async def count_tokens(
         system_prompt_content: list[SystemContentBlock] | None = None) -> int
 ```
 
-Defined in: [src/strands/models/bedrock.py:1471](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1471)
+Defined in: [src/strands/models/bedrock.py:1601](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1601)
 
 Count tokens using Bedrock’s native CountTokens API.
 
@@ -200,7 +200,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/bedrock.py:1553](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1553)
+Defined in: [src/strands/models/bedrock.py:1683](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1683)
 
 Stream conversation with the Bedrock model.
 
@@ -233,7 +233,7 @@ def convert_non_streaming_to_streaming(response: dict[str, Any],
                                        **kwargs: Any) -> Iterable[StreamEvent]
 ```
 
-Defined in: [src/strands/models/bedrock.py:1805](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1805)
+Defined in: [src/strands/models/bedrock.py:1935](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1935)
 
 Convert a non-streaming response to the streaming format.
 
@@ -257,7 +257,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/bedrock.py:1931](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1931)
+Defined in: [src/strands/models/bedrock.py:2061](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L2061)
 
 Get structured output from the model.
 

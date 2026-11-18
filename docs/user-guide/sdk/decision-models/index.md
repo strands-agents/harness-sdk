@@ -25,7 +25,7 @@ A decision model has one method, `ask`. You call it with the input and the quest
 
 [Questions and answers](questions/index.md)Define choices, control uncertainty, and read the result.
 
-[Decisions in an agent](agents/index.md)Ask from a tool and count the tokens toward the agent's request.
+[Decisions in an agent](agents/index.md)Ask from a tool, route requests, and count the tokens toward the request.
 
 [Choose a decision model](models/index.md)Use a model provider, or write your own decision model.
 
@@ -37,6 +37,7 @@ A decision model has one method, `ask`. You call it with the input and the quest
 - [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) (1 shared tag)
 - [Questions and answers](/docs/user-guide/sdk/decision-models/questions/index.md) (1 shared tag)
 - [Supported decision models](/docs/user-guide/sdk/decision-models/models/index.md) (1 shared tag)
+- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Decision model observability](/docs/user-guide/sdk/decision-models/observability/index.md) (1 shared tag)
 - [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)
 

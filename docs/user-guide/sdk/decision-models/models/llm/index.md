@@ -58,6 +58,7 @@ The decision model adds rules after your system prompt that tell the model to tr
 - [Decisions in an agent](/docs/user-guide/sdk/decision-models/agents/index.md) (1 shared tag)
 - [Questions and answers](/docs/user-guide/sdk/decision-models/questions/index.md) (1 shared tag)
 - [Supported decision models](/docs/user-guide/sdk/decision-models/models/index.md) (1 shared tag)
+- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Decision model observability](/docs/user-guide/sdk/decision-models/observability/index.md) (1 shared tag)
 - [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)
 

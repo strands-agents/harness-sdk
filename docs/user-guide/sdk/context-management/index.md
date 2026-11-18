@@ -116,9 +116,9 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 - [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (2 shared tags)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
 - [Conciseness evaluator](/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/index.md) (1 shared tag)
-- [Goal success rate evaluator](/docs/user-guide/evals-sdk/evaluators/goal_success_rate_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation

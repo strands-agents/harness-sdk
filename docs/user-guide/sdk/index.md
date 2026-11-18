@@ -55,7 +55,7 @@ Weighing Strands against other frameworks or a hand-written loop instead? See [c
 
 [Return structured output](./agents/structured-output/index.md)Get typed, schema-validated results back from the agent.
 
-[Coordinate multiple agents](./multi-agent/multi-agent-patterns/index.md)Compose agents as tools, graphs, and swarms.
+[Choose a multi-agent pattern](./multi-agent/multi-agent-patterns/index.md)Choose agents as tools, a workflow in your code, Graph, or Swarm, and learn when to use the vended graph tool.
 
 ## Run
 

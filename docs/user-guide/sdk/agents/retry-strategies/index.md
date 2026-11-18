@@ -108,6 +108,8 @@ agent = Agent(
     retry_strategy=None
 )
 ```
+
+The agent loop still re-asks the model when a response stops for tool use but contains no tool use block. That retry is part of the loop, not the retry strategy.
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))
@@ -235,13 +237,13 @@ See [Hooks](/docs/user-guide/sdk/agents/hooks/index.md#model-call-retry) for mor
 
 - [Production Lifecycle Controls](/docs/user-guide/sdk/agents/lifecycle-controls/index.md) (2 shared tags)
 - [Interrupts](/docs/user-guide/sdk/interrupts/index.md) (2 shared tags)
-- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Interrupts in Multi-Agent Systems](/docs/user-guide/sdk/interrupts-multi-agent/index.md) (2 shared tags)
 - [Middleware](/docs/user-guide/sdk/agents/middleware/index.md) (1 shared tag)
 - [Tool Executors](/docs/user-guide/sdk/tools/executors/index.md) (1 shared tag)
 - [Build a custom plugin](/docs/user-guide/sdk/plugins/custom-plugins/index.md) (1 shared tag)
 - [Plugins](/docs/user-guide/sdk/plugins/index.md) (1 shared tag)
 - [Chaos testing](/docs/user-guide/evals-sdk/chaos_testing/index.md) (1 shared tag)
+- [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Structured output](/docs/user-guide/sdk/agents/structured-output-behavior/index.md) (1 shared tag)
 
 

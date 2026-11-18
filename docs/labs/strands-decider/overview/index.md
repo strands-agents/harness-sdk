@@ -45,6 +45,6 @@ The result names the selected option, reports a probability for every option, an
 -   [Images](../images/index.md): ask questions about image inputs with supported models.
 -   [Architecture](../architecture/index.md): understand the pointer head, question types, calibration, and shared-prefix cache.
 -   [Model names](../model-names/index.md): choose and interpret a published model identifier.
--   [Strands Agents example](https://github.com/strands-labs/strands-decider/blob/1ace5aaa86a8c59d949ac97810f9f2e3b79a1ff8/examples/strands/README.md): gate a tool call with Decider inside a Strands agent.
+-   [Strands Agents example](https://github.com/strands-labs/strands-decider/blob/2230d342d16f65561e4d70ec2eb5c12541d96b44/examples/strands/README.md): gate a tool call with Decider inside a Strands agent.
 
 New to Decider? Continue with [Inference](../inference/index.md) to run the model locally.

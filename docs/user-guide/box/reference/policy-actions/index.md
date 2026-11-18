@@ -39,8 +39,8 @@ Ten actions in four categories, and one generated action per MCP tool:
 -   **[Shell](#shell)**, raised by Strands Shell.
     -   `shell:exec`: a command line that runs a program the shell implements, such as `cat` or `grep`.
     -   `shell:spawn`: a command line that runs a program of the surrounding OS, such as `git`. The box also raises it at startup, once for each stdio MCP server `box.toml` declares.
--   **[MCP](#mcp)**, raised by the MCP broker for a local server and by the egress gateway for a remote one.
-    -   `mcp:call`: each MCP request, on every method.
+-   **[MCP](#mcp)**, raised by the MCP broker for a local server and by the egress gateway for a remote server whose host matches its configured destinations.
+    -   `mcp:call`: each MCP request, except the protocol methods listed in [MCP](#mcp).
     -   `<server>::Action::"<tool>"`: a `tools/call`, after `mcp:call` permitted it.
 
 ## Filesystem
@@ -136,7 +136,7 @@ A rule that covers both actions names both, as `action in [Box::Action::"shell:e
 
 ## MCP
 
-**`mcp:call`**, once per request on any method:
+**`mcp:call`**, once per request through a declared MCP server, except the protocol methods listed below. Remote MCP checks require a [matching configured host](../../guides/add-an-mcp-server/index.md#remote-destination-matching).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -228,6 +228,8 @@ What each caller records as a response:
 | A tool grammar action, `Tool::<name>::Action::"<action>"` | When a program the Shell started ends | `status`, as on `shell:spawn` |
 | `mcp:call` | For `tools/call`, `prompts/get`, and `resources/read`: when the call completes or ends indeterminately over stdio, or when the upstream response completes, fails, or reaches its deadline over HTTP | none |
 | A per-tool action, `<server>::Action::"<tool>"` | Beside each `mcp:call::response` for a `tools/call` that the per-tool action decided and allowed. Its `input` is the call’s arguments, as its `::request` recorded them | `reply`, a string: `result`, `tool_error`, or `protocol_error` for the server’s answer; `cancelled`; or `indeterminate` when the connection ended, when the reply only accepted an MCP task or asked for input (`resultType` other than `complete`), or when Box couldn’t read an http reply in full (over 16 MiB, compressed, or cut off). `structured`, when the tool declares an `outputSchema` and the reply is a `result`: the reply’s `structuredContent`, keeping only the fields the `outputSchema` declares, converted like `input`. An optional field that doesn’t match its declared type is left out. Box records no `structured` when a required field doesn’t match |
+
+In the Shell, a content write (a redirect, `tee`, or `cp`) records `descriptor_issued` when it opens the file, and nothing when it finishes. A time change from `touch` records `completed`.
 
 An MCP outcome is always a response, so Box never records `mcp:call::error` or a per-tool `::error`. The load refuses a `when temporal` clause that names one, because it could never match. A `tools/call` to a tool that no per-tool action declares records only `mcp:call::response`.
 

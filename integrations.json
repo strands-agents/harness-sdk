@@ -1813,6 +1813,40 @@
       "addedDate": "2025-11-11"
     },
     {
+      "id": "strands-mongodb",
+      "name": "strands-mongodb",
+      "description": "MongoDB as a Strands Storage backend, persisting sessions, offloaded context, and conversation history in one MongoDB deployment.",
+      "integrationType": "storage",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-mongodb[storage]",
+          "registryUrl": "https://pypi.org/project/strands-mongodb/"
+        }
+      },
+      "github": "https://github.com/mongodb/strands-mongodb",
+      "docsUrl": "https://www.mongodb.com/docs/atlas/ai-integrations/strands/",
+      "addedDate": "2026-11-18"
+    },
+    {
+      "id": "strands-mongodb-memory-store",
+      "name": "strands-mongodb-memory-store",
+      "description": "MongoDB Atlas as a Strands MemoryStore, with semantic recall over Atlas Vector Search plus text and hybrid search tiers.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "strands-mongodb[memory]",
+          "registryUrl": "https://pypi.org/project/strands-mongodb/"
+        }
+      },
+      "github": "https://github.com/mongodb/strands-mongodb",
+      "docsUrl": "https://www.mongodb.com/docs/atlas/ai-integrations/strands/",
+      "addedDate": "2026-11-18"
+    },
+    {
       "id": "strands-neuraltrust",
       "name": "strands-neuraltrust",
       "description": "TrustGuard intervention that evaluates agent input, model responses, tool arguments, and tool results, with blocking and validated transformation.",
@@ -2295,6 +2329,21 @@
       "github": "https://github.com/temporalio/sdk-python",
       "docsUrl": "https://docs.temporal.io/develop/python/integrations/strands-agents",
       "addedDate": "2026-06-01"
+    },
+    {
+      "id": "todos",
+      "name": "Todos",
+      "description": "Give the agent a todo_write tool and keep its current task list in view across a multi-step run.",
+      "integrationType": "plugin",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/todos",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/plugins/todos/",
+      "addedDate": "2026-11-12"
     },
     {
       "id": "traceai",

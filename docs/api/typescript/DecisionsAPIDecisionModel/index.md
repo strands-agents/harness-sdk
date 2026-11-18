@@ -1,4 +1,4 @@
-Defined in: [src/decisions/decisions-api-decision-model.ts:38](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L38)
+Defined in: [src/decisions/decisions-api-decision-model.ts:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L42)
 
 Decision model backed by decisionapi.net.
 
@@ -23,7 +23,7 @@ const result = await decisions.ask('A customer needs a refund today.', {
 new DecisionsAPIDecisionModel(options?): DecisionsAPIDecisionModel;
 ```
 
-Defined in: [src/decisions/decisions-api-decision-model.ts:45](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L45)
+Defined in: [src/decisions/decisions-api-decision-model.ts:49](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L49)
 
 #### Parameters
 
@@ -103,7 +103,7 @@ protected _ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/decisions-api-decision-model.ts:58](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L58)
+Defined in: [src/decisions/decisions-api-decision-model.ts:62](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts#L62)
 
 Implementation-specific decision logic. Must return a complete [DecisionResult](/docs/api/typescript/DecisionResult/index.md), including `metadata.latencyMs` sourced from the underlying model provider. Implementations should forward `options.cancelSignal` to any cancellable work they start. The request’s `invocationContext` is not passed: `ask` records the reported usage itself.
 

@@ -12,7 +12,7 @@ Description for the default graph tool.
 class EdgeSpec(TypedDict)
 ```
 
-Defined in: [src/strands/vended\_tools/graph/graph.py:56](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/graph/graph.py#L56)
+Defined in: [src/strands/vended\_tools/graph/graph.py:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/graph/graph.py#L57)
 
 One directed edge in a graph topology.
 
@@ -37,7 +37,7 @@ def make_graph(
 ) -> DecoratedFunctionTool
 ```
 
-Defined in: [src/strands/vended\_tools/graph/graph.py:86](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/graph/graph.py#L86)
+Defined in: [src/strands/vended\_tools/graph/graph.py:87](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/graph/graph.py#L87)
 
 Create a graph tool with developer-controlled safety limits and authority modes.
 
@@ -49,7 +49,7 @@ A child’s interrupt is surfaced as an interrupt of this tool and can be resume
 
 -   `name` - Tool name shown to the model.
 -   `description` - Tool description shown to the model.
--   `builder` - Callable that turns an :class:`AgentSpec` into an `Agent`. When `None` a default builder is used that creates an `Agent` inheriting the caller’s model with the spec’s instructions and tools.
+-   `builder` - Callable, sync or async, that turns an :class:`AgentSpec` into an `Agent`. When `None` a default builder is used that creates an `Agent` inheriting the caller’s model with the spec’s instructions and tools.
 -   `presets` - Named roles the model can select via `agent_type`.
 -   `default_preset` - Preset used when the model omits both `agent_type` and `instructions`.
 -   `instructions` - Authority mode for the instructions axis.

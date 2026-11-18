@@ -38,6 +38,8 @@ Each call runs from the subagent’s construction-time baseline, a fresh convers
 
 Strands harness enables one built-in subagent, `generalist`, exposed to the agent as a tool. It is a full Strands harness agent that inherits the parent’s configuration (model, thinking, caching, context management, built-in tools, plugins, subagents, interventions, and sandbox) but runs with a generic role prompt instead of your `instructions`. It starts from a blank conversation, so the model must put everything the subtask needs into the call, and it returns a single self-contained answer.
 
+The generalist gets the same plugin instances you pass in `plugins`, so a plugin’s hooks run in both agents. Each plugin’s `init_agent``initAgent` runs for the parent and again for every delegation, so a plugin that keeps per-agent state must key it by agent instead of storing it on itself. A hook you add to the parent after creating it, with `agent.add_hook()``agent.addHook()`, does not run in the generalist. In Python, the generalist also runs hooks you pass to `create_harness` in `hooks`; the TypeScript `createHarness` has no `hooks` option.
+
 Reach for it when a subtask would otherwise flood the main context: searching many files, a multi-step change, or open-ended exploration where you only need the conclusion. Because the generalist inherits `interventions` and the sandbox, a delegate cannot become an approval or isolation bypass.
 
 ## Select or disable built-in subagents
@@ -99,4 +101,6 @@ For the full option list, see the [configuration reference](/docs/user-guide/har
 
 ### TypeScript
 
+- [harness-sdk/harness-ts/src/agent.ts](https://github.com/strands-agents/harness-sdk/blob/main/harness-ts/src/agent.ts)
+- [harness-sdk/harness-ts/src/builtin-tools.ts](https://github.com/strands-agents/harness-sdk/blob/main/harness-ts/src/builtin-tools.ts)
 - [harness-sdk/harness-ts/src/tools/subagent.ts](https://github.com/strands-agents/harness-sdk/blob/main/harness-ts/src/tools/subagent.ts)

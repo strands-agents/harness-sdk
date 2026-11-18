@@ -13,7 +13,23 @@ On the agent’s `PATH`, `zsh`, `bash`, and `sh` are each the alias, a client pr
 
 Any other form is refused with `Shell alias accepts only -c COMMAND, -lc COMMAND, -c -l COMMAND, or SCRIPT`.
 
-Each invocation is one command. A variable exported in one invocation is unset in the next. The Shell starts each command with `HOME` set to the agent’s `HOME`, and with the workspace as its working directory. It also gets the placeholder of each [credential route](../../guides/network-and-credentials/index.md), in the same variable as the agent. So `curl -H "Authorization: Bearer $GITHUB_TOKEN" ...` sends the placeholder. On a request to the route’s destination that policy permits, the gateway puts the real token in its place.
+### Standard input
+
+When the alias’s standard input is a pipe, a file, or a socket, the command reads it as its standard input while it runs. Bytes arrive unchanged. A terminal or `/dev/null` gives the command no input. A command that does not read its input is not held by it: the alias returns when the command exits, even when the writer keeps the pipe open. A command that does read such an input waits for it until the Shell’s timeout, or, with `shell.timeout = false`, until its caller stops it.
+
+A command receives at most `[limits.shell] max_stdin` bytes of this input, 1 MiB by default. Past that, the box discards the rest, so the limit never blocks the writer. Forwarding ends when the command exits, so a writer that is still writing then can get a broken pipe. A command that does not read its input is not affected. A command that reads past the limit gets no end of input: it waits until the Shell’s timeout and then fails, and it prints on standard error that its input was cut. A command that waits for the end of its input before it acts, such as `x=$(cat)` or `jq`, never acts on part of it. A command that acts as its input arrives, such as `while read -r line` or `cat > file`, has already acted on the first part when it fails. With `shell.timeout = false`, a command that reads past the limit waits until its caller stops it, like any blocked read. If reading the input fails, the alias stops the command and exits with status `125`.
+
+This limit applies only to input piped into the alias from outside the Shell, such as a hook’s event or a program that starts `bash` with input. A pipe inside a command, such as `cat big.json | jq .`, is not affected.
+
+Only commands that the Shell runs itself, such as `cat`, `read`, or `jq`, receive the input. A program that the Shell starts in its own sandbox gets no input. Text that a command reads from its input is still data: when a command runs it, as in `eval "$(cat)"`, or opens a file it names, policy decides that command or file.
+
+A Lua script that the Shell runs does not read the input piped into the alias: it reads it as empty and never waits for it. A pipe inside one command, such as `echo x | lua -e 'print(io.read())'`, still reaches the script.
+
+Each invocation is one command. A variable exported in one invocation is unset in the next. The Shell starts each command with `HOME` set to the agent’s `HOME`, in the directory the alias was run from. It also gets the placeholder of each [credential route](../../guides/network-and-credentials/index.md), in the same variable as the agent. So `curl -H "Authorization: Bearer $GITHUB_TOKEN" ...` sends the placeholder. On a request to the route’s destination that policy permits, the gateway puts the real token in its place.
+
+The alias takes the directory it was run from from `PWD` when `PWD` names it, and otherwise asks the operating system. A directory other than the workspace takes the same `fs:read` decision, with operation `change_dir`, that `cd` takes. The command doesn’t run, and the alias exits `126`, if policy refuses that decision, if the directory isn’t a directory, or if it is outside the operator’s home, the agent’s home, and the workspace. The last case covers `/` and `/tmp`, which the Shell holds only in memory. If the alias can’t tell which directory it was run from, or the directory’s name isn’t valid UTF-8, it exits `125` and runs nothing.
+
+The `python3` and `python` aliases send their arguments to the Shell’s own `python3` and `python` commands, as [Python in a box](../python/index.md#running-a-script) describes. They forward no standard input: the command reads its input as empty.
 
 ## What runs where
 
@@ -33,7 +49,7 @@ The Shell implements these, each in place of a program of the same name on the `
 -   Text: `cat`, `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `tee`.
 -   Files: `ls`, `cp`, `mv`, `rm`, `mkdir`, `rmdir`, `ln`, `chmod`, `touch`, `mktemp`, `readlink`.
 -   Data and network: `jq`, `curl`.
--   Interpreters: `lua`, and `python` and `python3`, which run in Monty, Box’s Python interpreter.
+-   Interpreters: `sh` and `lash`, which run a script in the Shell; `lua`; and `python` and `python3`, which run in Monty, Box’s Python interpreter. With [`monty = false`](../configuration/index.md#monty), `python` and `python3` are external programs instead. Policy sees `sh` and `lash` as two programs. `sh FILE` and `/bin/sh FILE` are both decided as `program == "sh"`, and `lash FILE` and `/bin/lash FILE` as `program == "lash"`, so a rule meant for the Shell’s script interpreter must name both. `.` and `source` also run a file.
 
 Paths outside the operator’s home, the agent’s home, and the workspace, such as `/tmp`, exist only in the Shell’s memory, for one command. A file written to `/tmp` is gone when the command ends.
 
@@ -44,7 +60,7 @@ Decided once for each command the Shell implements, after expansion, including e
 | Field | Type | Present | Value |
 | --- | --- | --- | --- |
 | `context.input.command` | String | Always | The command line, rebuilt from the expanded words. |
-| `context.input.program` | String | Always | The first word after expansion, such as `grep`. |
+| `context.input.program` | String | Always | The first word after expansion, such as `grep`. A command the Shell implements appears by its name, also when it is called by its `/bin/` path, so `/bin/sh` appears as `sh` and `/bin/cat` as `cat`. Another path, such as `/usr/bin/grep`, names a host program and is decided as `shell:spawn`. |
 | `context.input.arg1`, `arg2` | String | When the command has that many arguments | The first and second arguments. Test each with `has` first. |
 | `context.input.arg_count` | Long | Always | The number of arguments. |
 | `context.input.cwd` | String | Always | The Shell’s working directory: `~` for the operator’s home, `~/…` below it, and an absolute path elsewhere. |
@@ -100,6 +116,8 @@ Decided once for each file operation that one of the Shell’s commands makes, o
 | `fs:delete` | `Box::FsDeleteOperation::"remove_file"`, `"remove_dir"` |
 | `fs:move` | `Box::FsMoveOperation::"rename"` |
 
+`touch` changes a file’s times as a `write_content` write. It first reads the file’s metadata to see whether the file exists, so it also needs `fs:read` with `read_metadata`. Without that, a plain `touch` on an existing file in a host folder exits `0` and changes nothing. The macOS [`file-attributes`](../configuration/index.md#file-attributes) switch doesn’t apply to the Shell’s built-in `touch`, because the Shell runs outside the agent’s sandbox. A `touch` program that runs in a sandbox still needs it.
+
 | Field | Type | Present | Value |
 | --- | --- | --- | --- |
 | `context.input.path` | String | Always | The resolved path. A path under the operator’s home starts with `~/`, and the home itself is `~`. |
@@ -138,7 +156,7 @@ The allowance covers the full text sent in one call, including multiple commands
 
 With `false`, both the Shell execution deadline and the broker’s backup deadline are disabled. Calls remain cancellable, and connection and write operations retain their transport timeouts.
 
-Monty’s 120-second active execution limit and 180-second cumulative sleep limit also apply to Python called inside the Shell, including with `shell.timeout = false`. Synchronous Python execution can delay timeout reporting. The direct `python` and `python3` aliases use their [own limits](../python/index.md#limits-and-exit-statuses).
+Monty’s 120-second active execution limit and 180-second cumulative sleep limit also apply to Python called inside the Shell, including with `shell.timeout = false`. Synchronous Python execution can delay timeout reporting. The `python` and `python3` aliases reach Python through the Shell, so these limits apply to them too.
 
 ### `[tool.<name>]`
 
@@ -212,7 +230,7 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
 
 ## Exit statuses
 
@@ -221,8 +239,11 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 | `1` | Submitted command text exceeds 256 KiB, including text with line breaks. Split the text across several calls, for example by appending to a file. | `strands-shell: input too large` |
 | `1` | The Shell call exceeded its execution allowance. | `strands-shell: execution timeout exceeded` |
 | `125` | Box failed to serve the command. | The failure |
+| `125` | The alias can’t tell which directory it was run from. Set `PWD` to it. | `strands-box-sock-alias: read the working directory: <error>; set PWD to it` |
+| `125` | The name of the directory the alias was run from isn’t valid UTF-8. Run the command from another directory. | `strands-box-sock-alias: the working directory is not valid UTF-8` |
 | `125` | The call exceeded the broker’s backup deadline, five seconds after its finite Shell allowance. | `strands-box: the call exceeded its deadline` |
 | `125` | The deadline exceeds the platform’s clock range. Reduce `limits.shell.timeout`. | `strands-box: the call deadline exceeds this platform's clock range` |
+| `126` | Policy refused the directory the alias was run from, it isn’t a directory, or it is outside the operator’s home, the agent’s home, and the workspace. Nothing ran. | `strands-box: cannot start in <directory>: <error>` |
 | `126` | Policy refused the command. | `strands-shell: effect denied: policy denied this operation on '<program>'`, then `[policy: <id>]` or `[default-deny]`. A tool grammar action reads the same way. |
 | `126` | A tool grammar binds the program file, and Box refused the spawn before any rule decided it. | `strands-shell: effect denied: policy denied this operation on '<program>' [tool-grammar]: <reason>. No policy can permit it.` |
 | `126` | Policy permitted a program, and nothing in [Configuration](#configuration) covers it. | ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments`` |
@@ -238,6 +259,6 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 ## See also
 
 -   [Write policy for shell commands](../../guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/a2cf46ed6a9ea0a8144101bfdef3f2406390952b/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
 -   [The `[egress.<name>]` table](../../guides/network-and-credentials/index.md): credentials for the requests `curl` sends.

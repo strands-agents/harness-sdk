@@ -94,7 +94,7 @@ Provider that served the decision.
 modelId?: string;
 ```
 
-Provider-reported model identifier that served the decision.
+Model identifier that served the decision, as reported by the provider, or the requested model when the provider reports none.
 
 #### probabilities?
 

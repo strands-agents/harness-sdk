@@ -219,7 +219,6 @@
     -   [ModelContentBlockDeltaEventData](/docs/api/typescript/ModelContentBlockDeltaEventData/index.md)
     -   [ModelContentBlockStartEventData](/docs/api/typescript/ModelContentBlockStartEventData/index.md)
     -   [ModelExtractorOptions](/docs/api/typescript/ModelExtractorOptions/index.md)
-    -   [ModelInfo](/docs/api/typescript/ModelInfo/index.md)
     -   [ModelLimits](/docs/api/typescript/ModelLimits/index.md)
     -   [ModelMessageStartEventData](/docs/api/typescript/ModelMessageStartEventData/index.md)
     -   [ModelMessageStopEventData](/docs/api/typescript/ModelMessageStopEventData/index.md)

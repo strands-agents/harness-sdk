@@ -1,4 +1,28 @@
-<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>Harness CLI v0.3.0</title><link>https://strandsagents.com/changelog/cli/v0.3.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/cli/v0.3.0/</guid><description>• add glama.json to claim the MCP server on Glama
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>Box v0.2.3</title><link>https://strandsagents.com/changelog/box/v0.2.3/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.3/</guid><description>• support absolute executable commands
+• run a tool&apos;s own file for the bare name the agent types
+• ingress relay for agent tcp communication
+• preserve ordinary program execution beside MCP aliases
+• preserve empty HTTP resource queries</description><pubDate>Tue, 17 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Evals v1.10.0</title><link>https://strandsagents.com/changelog/evals/v1.10.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/evals/v1.10.0/</guid><description>• add integration tests for output-level judge evaluators
+• make EvaluationReport.to_file() reject non-strict JSON
+• cancel the workers when run_evaluations_async is cancelled
+• add context backfilling to session-converter
+• add TypedRubricEvaluator for decision-model rubrics</description><pubDate>Mon, 16 Nov 2026 00:00:00 GMT</pubDate><category>evaluators</category><category>core</category><category>devx</category><category>generators</category><category>tracing</category><category>multimodal</category></item><item><title>SDK Python v1.65.0</title><link>https://strandsagents.com/changelog/sdk/python-v1.65.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/python-v1.65.0/</guid><description>• add glama.json to claim the MCP server on Glama
+• snapshot upstream content at deploy
+• accumulate metrics for hook retries
+• support anthropic SDK 1.x and 2.x in AnthropicModel
+• clarify that inputTokens may include cached tokens depending on provider</description><pubDate>Fri, 13 Nov 2026 00:00:00 GMT</pubDate><category>mcp</category><category>otel</category><category>hooks</category><category>model</category><category>hil</category><category>persistence</category><category>context</category><category>server</category><category>devx</category><category>structured-output</category><category>tool</category><category>decisions</category><category>multiagent</category><category>memory</category><category>async</category><category>cli</category></item><item><title>SDK TypeScript v1.25.0</title><link>https://strandsagents.com/changelog/sdk/typescript-v1.25.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/sdk/typescript-v1.25.0/</guid><description>• add glama.json to claim the MCP server on Glama
+• snapshot upstream content at deploy
+• clarify that inputTokens may include cached tokens depending on provider
+• map HTTP 503 from System One providers to ModelThrottledError (TypeScript)
+• organize sample guides by user goal</description><pubDate>Fri, 13 Nov 2026 00:00:00 GMT</pubDate><category>mcp</category><category>model</category><category>decisions</category><category>context</category><category>server</category><category>devx</category><category>tool</category><category>persistence</category><category>sessions</category><category>otel</category><category>hil</category><category>structured-output</category></item><item><title>Harness Python v0.4.0</title><link>https://strandsagents.com/changelog/harness/python-v0.4.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/harness/python-v0.4.0/</guid><description>• add glama.json to claim the MCP server on Glama
+• snapshot upstream content at deploy
+• organize sample guides by user goal
+• pass the caching setting to OpenAI and Bedrock Mantle as an SDK cache config
+• report Platform and Shell for a PowerShell sandbox</description><pubDate>Thu, 12 Nov 2026 00:00:00 GMT</pubDate><category>mcp</category><category>model</category><category>harness</category><category>server</category><category>cli</category><category>context</category><category>memory</category></item><item><title>Harness TypeScript v0.4.0</title><link>https://strandsagents.com/changelog/harness/typescript-v0.4.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/harness/typescript-v0.4.0/</guid><description>• add glama.json to claim the MCP server on Glama
+• snapshot upstream content at deploy
+• organize sample guides by user goal
+• pass the caching setting to OpenAI and Bedrock Mantle as an SDK cache config
+• report Platform and Shell for a PowerShell sandbox</description><pubDate>Thu, 12 Nov 2026 00:00:00 GMT</pubDate><category>mcp</category><category>model</category><category>harness</category><category>server</category><category>context</category></item><item><title>Harness CLI v0.3.0</title><link>https://strandsagents.com/changelog/cli/v0.3.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/cli/v0.3.0/</guid><description>• add glama.json to claim the MCP server on Glama
 • snapshot upstream content at deploy
 • organize sample guides by user goal
 • add GPT-6 Cyber context window (py + ts + cli)

@@ -190,6 +190,41 @@ agent.auxModel = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
 
 Each side call resolves its model in this order: the component’s own `model` option (for example the summarizer’s or the classifier’s) > `agent.aux_model``agent.auxModel` > `agent.model`. Leaving `aux_model``auxModel` unset changes nothing. A `ModelRouter` is not accepted here: side calls run outside the agent loop the router attaches to.
 
+### Model info
+
+When the SDK can’t recognize your model ID, tell it the model’s limits and capabilities with `model_info``modelInfo`. Each provider reports what the SDK knows about its model as `model.model_info``model.modelInfo`: the context window, the output limit, and capabilities such as prompt caching. The SDK looks up the model ID in the [shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json). For an ID it can’t map, such as an application inference profile ARN or a proxy alias, the lookup finds nothing. The SDK then falls back to defaults such as a 200,000-token context window. Your `model_info``modelInfo` wins over everything else:
+
+(( tab "Python" ))
+```python
+from strands.models import BedrockModel, ModelCapabilities, ModelInfo, ModelLimits
+
+model = BedrockModel(
+    model_id="arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3",
+    model_info=ModelInfo(
+        limits=ModelLimits(context_window=1_000_000, max_output_tokens=64_000),
+        capabilities=ModelCapabilities(prompt_caching="cache_points"),
+    ),
+)
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+
+const model = new BedrockModel({
+  modelId:
+    'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3',
+  modelInfo: {
+    limits: { contextWindow: 1_000_000, maxOutputTokens: 64_000 },
+    capabilities: { promptCaching: 'cachePoints' },
+  },
+})
+```
+(( /tab "TypeScript" ))
+
+Fields you leave unset keep their looked-up values.
+
 ## Next Steps
 
 ### Explore Model Providers

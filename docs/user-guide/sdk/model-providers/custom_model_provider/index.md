@@ -22,6 +22,7 @@ The base class also provides optional methods you can override:
 
 -   `count_tokens()`: Estimate input token count (defaults to a character-based heuristic).
 -   `estimate_utilization()`: Compute the ratio of input tokens to `context_window_limit` (defaults to 200,000 when not configured). See [Utilization Estimation](/docs/user-guide/sdk/agents/conversation-management/index.md#utilization-estimation).
+-   `model_info`: Report what your service supports, such as turning off server-side summary. See [Model info](#model-info).
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))
@@ -35,6 +36,7 @@ The base class also provides optional methods you can override:
 
 -   `countTokens()`: Estimate input token count (defaults to a character-based heuristic).
 -   `estimateUtilization()`: Compute the ratio of input tokens to `contextWindowLimit` (defaults to 200,000 when not configured). See [Utilization Estimation](/docs/user-guide/sdk/agents/conversation-management/index.md#utilization-estimation).
+-   `modelInfo`: Report what your service supports, such as turning off server-side summary. See [Model info](#model-info).
 (( /tab "TypeScript" ))
 
 ## Implementing a Custom Model Provider
@@ -51,12 +53,12 @@ your\_org/models/custom\_model.py
 ```python
 import logging
 import os
-from typing import Any, AsyncIterable, Optional, TypedDict
+from typing import Any, AsyncIterable, Optional
 from typing_extensions import Unpack, override
 
 from custom.model import CustomModelClient
 
-from strands.models import Model
+from strands.models import BaseModelConfig, Model
 from strands.types.content import Messages
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolSpec
@@ -67,7 +69,7 @@ logger = logging.getLogger(__name__)
 class CustomModel(Model):
     """Your custom model provider implementation."""
 
-    class ModelConfig(TypedDict):
+    class ModelConfig(BaseModelConfig):
         """
         Configuration your model.
 
@@ -713,6 +715,45 @@ If your model API supports tool calling, format the tool specifications in `stre
 
 Map your API’s failures onto the SDK’s exceptions so the agent loop can react. Handle context window overflows (raise `ContextWindowOverflowException`), connection errors, authentication failures, rate limits, and malformed responses.
 
+### Model Info
+
+To tell the agent what your service supports, report it through `model_info``modelInfo`. The base `Model` class fills in what the SDK already knows about your configured model, such as its context window, by looking up the model ID in [`shared/model-info.json`](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json). Python reads the ID from `get_config()["model_id"]`; TypeScript reads the `modelId` getter. Store your default model ID in the config so an unconfigured provider still gets those facts.
+
+Override `model_info``modelInfo` for what your service does differently. Put your facts over the base result and the user’s `model_info``modelInfo` config over yours, so their override still wins. Most providers need at least this one: turn off `server_side_summary``serverSideSummary` unless your service summarizes server-side and you override `summarize``summarize` to use it. Every built-in provider except Anthropic turns it off.
+
+(( tab "Python" ))
+```python
+from strands.models import ModelCapabilities, ModelInfo
+
+
+class CustomModel(Model):
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(server_side_summary=False)),
+            self.get_config().get("model_info"),
+        )
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+```typescript
+import { ModelInfo } from '@strands-agents/sdk'
+
+override get modelInfo(): ModelInfo {
+  return ModelInfo.merge(
+    super.modelInfo,
+    { capabilities: { serverSideSummary: false } },
+    this.getConfig().modelInfo
+  )
+}
+```
+(( /tab "TypeScript" ))
+
+Report `stateful``stateful` as `true` only if your service keeps conversation state: the agent then sends only the latest message and rejects a conversation or context manager. Don’t read `self.stateful``this.stateful` inside the override, because it reads `model_info``modelInfo`. Limits you report win over the user’s `context_window_limit``contextWindowLimit`. If they don’t depend on your service, contribute the model to [`shared/model-info.json`](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json) so every provider and the user’s setting can use them; until that ships, reporting them in the override works.
+
 ## Related pages
 
 - [Tools](/docs/user-guide/sdk/bidi/tools/index.md) (1 shared tag)
@@ -732,7 +773,9 @@ Map your API’s failures onto the SDK’s exceptions so the agent loop can reac
 ### Python
 
 - [harness-sdk/strands-py/src/strands/models/model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py)
+- [harness-sdk/strands-py/src/strands/models/_model_info.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/_model_info.py)
 
 ### TypeScript
 
 - [harness-sdk/strands-ts/src/models/model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts)
+- [harness-sdk/strands-ts/src/models/model-info.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts)

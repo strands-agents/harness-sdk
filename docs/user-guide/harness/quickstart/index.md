@@ -92,7 +92,7 @@ Strands harness runs on the model of your choice and supports model providers ac
 Even a one-line call has a shell, file tools, and web access working out of the box. Strands harness can search the web, compare what it finds, and save the results to a file.
 
 (( tab "Amazon Bedrock" ))
-Bedrock is the default, using Claude Opus 5 in the region your AWS configuration selects.
+Bedrock is the default, using Claude Opus 5.5 in the region your AWS configuration selects.
 
 (( tab "Python" ))
 ```python

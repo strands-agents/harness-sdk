@@ -1,4 +1,4 @@
-Defined in: [src/models/bedrock.ts:438](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L438)
+Defined in: [src/models/bedrock.ts:504](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L504)
 
 AWS Bedrock model provider implementation.
 
@@ -41,7 +41,7 @@ for await (const event of provider.stream(messages)) {
 new BedrockModel(options?): BedrockModel;
 ```
 
-Defined in: [src/models/bedrock.ts:483](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L483)
+Defined in: [src/models/bedrock.ts:549](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L549)
 
 Creates a new BedrockModel instance.
 
@@ -95,9 +95,9 @@ const provider = new BedrockModel({
 get modelInfo(): ModelInfo;
 ```
 
-Defined in: [src/models/bedrock.ts:535](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L535)
+Defined in: [src/models/bedrock.ts:600](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L600)
 
-Turns `serverSideSummary` off, and reports OpenAI models as implicitly cached; a `modelInfo` override still wins over both. The shared model info lists cache points for their OpenAI-compatible APIs, but Converse caches them implicitly and rejects cache points.
+Turns `serverSideSummary` off, and reports how Converse caches the model where that differs from the shared model info; a `modelInfo` override still wins over both.
 
 ##### Returns
 
@@ -165,7 +165,7 @@ Reads `modelInfo.capabilities.stateful`, so a provider that keeps state server-s
 updateConfig(modelConfig): void;
 ```
 
-Defined in: [src/models/bedrock.ts:659](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L659)
+Defined in: [src/models/bedrock.ts:798](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L798)
 
 Updates the model configuration. Merges the provided configuration with existing settings.
 
@@ -201,7 +201,7 @@ provider.updateConfig({
 getConfig(): BedrockModelConfig;
 ```
 
-Defined in: [src/models/bedrock.ts:674](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L674)
+Defined in: [src/models/bedrock.ts:813](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L813)
 
 Retrieves the current model configuration.
 
@@ -230,7 +230,7 @@ console.log(config.modelId)
 countTokens(messages, options?): Promise<number>;
 ```
 
-Defined in: [src/models/bedrock.ts:691](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L691)
+Defined in: [src/models/bedrock.ts:830](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L830)
 
 Count tokens using Bedrock’s native CountTokens API.
 
@@ -261,7 +261,7 @@ Total input token count
 stream(messages, options?): AsyncIterable<ModelStreamEvent>;
 ```
 
-Defined in: [src/models/bedrock.ts:772](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L772)
+Defined in: [src/models/bedrock.ts:911](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L911)
 
 Streams a conversation with the Bedrock model. Returns an async iterable that yields streaming events as they occur.
 

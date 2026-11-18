@@ -174,7 +174,7 @@ Handle a hook event.
 class HookRegistry()
 ```
 
-Defined in: [src/strands/hooks/registry.py:186](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L186)
+Defined in: [src/strands/hooks/registry.py:190](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L190)
 
 Registry for managing hook callbacks associated with event types.
 
@@ -188,7 +188,7 @@ The registry handles callback ordering, including reverse ordering for cleanup e
 def __init__() -> None
 ```
 
-Defined in: [src/strands/hooks/registry.py:197](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L197)
+Defined in: [src/strands/hooks/registry.py:201](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L201)
 
 Initialize an empty hook registry.
 
@@ -201,7 +201,7 @@ def add_callback(event_type: type[TEvent] | list[type[TEvent]] | None,
                  order: float = HookOrder.DEFAULT) -> None
 ```
 
-Defined in: [src/strands/hooks/registry.py:201](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L201)
+Defined in: [src/strands/hooks/registry.py:205](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L205)
 
 Register a callback function for a specific event type.
 
@@ -248,7 +248,7 @@ registry.add_callback([BeforeModelCallEvent, AfterModelCallEvent], multi_handler
 def add_hook(hook: HookProvider) -> None
 ```
 
-Defined in: [src/strands/hooks/registry.py:296](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L296)
+Defined in: [src/strands/hooks/registry.py:300](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L300)
 
 Register all callbacks from a hook provider.
 
@@ -276,7 +276,7 @@ async def invoke_callbacks_async(
         event: TInvokeEvent) -> tuple[TInvokeEvent, list[Interrupt]]
 ```
 
-Defined in: [src/strands/hooks/registry.py:318](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L318)
+Defined in: [src/strands/hooks/registry.py:322](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L322)
 
 Invoke all registered callbacks for the given event.
 
@@ -310,7 +310,7 @@ def invoke_callbacks(
         event: TInvokeEvent) -> tuple[TInvokeEvent, list[Interrupt]]
 ```
 
-Defined in: [src/strands/hooks/registry.py:364](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L364)
+Defined in: [src/strands/hooks/registry.py:367](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L367)
 
 Invoke all registered callbacks for the given event.
 
@@ -328,7 +328,7 @@ The event dispatched to registered callbacks and any interrupts raised by the us
 
 **Raises**:
 
--   `RuntimeError` - If at least one callback is async.
+-   `RuntimeError` - If at least one callback is async, or a synchronous callback returns a coroutine.
 -   `ValueError` - If interrupt name is used more than once.
 
 **Example**:
@@ -344,7 +344,7 @@ registry.invoke_callbacks(event)
 def has_callbacks() -> bool
 ```
 
-Defined in: [src/strands/hooks/registry.py:411](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L411)
+Defined in: [src/strands/hooks/registry.py:421](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L421)
 
 Check if the registry has any registered callbacks.
 
@@ -366,7 +366,7 @@ def get_callbacks_for(
         event: TEvent) -> Generator[HookCallback[TEvent], None, None]
 ```
 
-Defined in: [src/strands/hooks/registry.py:425](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L425)
+Defined in: [src/strands/hooks/registry.py:435](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/registry.py#L435)
 
 Get callbacks registered for the given event in the appropriate order.
 

@@ -36,6 +36,8 @@ Inaccurate compression with default fallback
 
 If `context_window_limit``contextWindowLimit` is not set and the model ID is not in the shared model info, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
 
+See [Model info](/docs/user-guide/sdk/model-providers/index.md#model-info) for how the SDK resolves this and other facts about the model.
+
 ## Token estimation
 
 The agent estimates input tokens using the following strategy:
@@ -81,9 +83,9 @@ Both the built-in [context management modes](/docs/user-guide/sdk/context-manage
 - [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (2 shared tags)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
 - [Conciseness evaluator](/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/index.md) (1 shared tag)
-- [Goal success rate evaluator](/docs/user-guide/evals-sdk/evaluators/goal_success_rate_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation

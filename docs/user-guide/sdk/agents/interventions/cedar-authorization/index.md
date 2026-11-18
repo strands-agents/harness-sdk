@@ -308,7 +308,7 @@ const agent = new Agent({
 ```
 (( /tab "TypeScript" ))
 
-Call counts persist with the agent’s state and survive session reloads. Only successful tool calls increment the counter.
+Call counts persist with the agent’s state and survive session reloads. Only successful tool calls increment the counter. Counts are tracked per agent, so when several agents share one handler, each has its own budget. By default, the agents that the `subagent`, `swarm`, and `graph` tools create share the intervention handlers of the agent that calls the tool. A `call_count` limit therefore caps each agent rather than the whole delegation tree. To bound the total, also limit calls to these tools with `call_count`.
 
 ## Schema validation
 

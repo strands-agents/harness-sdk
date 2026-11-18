@@ -80,9 +80,9 @@ Timeouts are enforced via `AbortSignal` and are cooperative. A tool that neither
 ## Related pages
 
 - [A2A Server Configuration](/docs/user-guide/sdk/multi-agent/a2a-server-configuration/index.md) (1 shared tag)
-- [Agent Workflows: Building Multi-Agent Systems with Strands Agents SDK](/docs/user-guide/sdk/multi-agent/workflow/index.md) (1 shared tag)
 - [Agent-to-Agent (A2A) Protocol](/docs/user-guide/sdk/multi-agent/agent-to-agent/index.md) (1 shared tag)
-- [Coordinate multiple agents](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/index.md) (1 shared tag)
+- [Build a sequential workflow](/docs/user-guide/sdk/multi-agent/workflow/index.md) (1 shared tag)
+- [Choose a multi-agent pattern](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/index.md) (1 shared tag)
 - [Graph Multi-Agent Pattern](/docs/user-guide/sdk/multi-agent/graph/index.md) (1 shared tag)
 - [Swarm Multi-Agent Pattern](/docs/user-guide/sdk/multi-agent/swarm/index.md) (1 shared tag)
 - [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)

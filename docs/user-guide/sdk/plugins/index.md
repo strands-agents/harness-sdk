@@ -8,6 +8,8 @@ Plugins change the typical behavior of an agent. They let you introduce concepts
 
 [Context Injector](context-injector/index.md)Fold real-time text into the model input before each call, without persisting it to history.
 
+[Todos](todos/index.md)Give the agent a task list it maintains itself and keeps in view across a multi-step run.
+
 [GoalLoop](goal-loop/index.md)Validate responses against a goal and loop with feedback until they satisfy it.
 
 [Build a custom plugin](custom-plugins/index.md)Write your own plugin: register hooks and tools, manage state, and initialize it.
@@ -53,7 +55,7 @@ From here you attach the plugins your application needs, or build your own.
 
 ## Where to go next
 
-New to plugins? Attach a built-in one from the grid above—[Skills](/docs/user-guide/sdk/plugins/skills/index.md), [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md), [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md), or [GoalLoop](/docs/user-guide/sdk/plugins/goal-loop/index.md)—and see it change the agent’s behavior.
+New to plugins? Attach a built-in one from the grid above—[Skills](/docs/user-guide/sdk/plugins/skills/index.md), [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md), [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md), [Todos](/docs/user-guide/sdk/plugins/todos/index.md), or [GoalLoop](/docs/user-guide/sdk/plugins/goal-loop/index.md)—and see it change the agent’s behavior.
 
 Ready to write your own? [Build a custom plugin](/docs/user-guide/sdk/plugins/custom-plugins/index.md) walks through registering hooks and tools, managing state, and async initialization. [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) covers how the hook system works, and [Hook events](/docs/user-guide/sdk/agents/hooks-events/index.md) is the reference for every lifecycle event a plugin can react to.
 
