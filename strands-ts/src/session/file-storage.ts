@@ -178,7 +178,7 @@ export class FileStorage implements SnapshotStorage {
       const uniquePath = `${path}.${randomUUID()}.tmp`
       tmpPath = uniquePath
       const target = resolve(path)
-      // No I/O is awaited before this save takes its place in the queue, which keeps call order.
+      // Only the imports above are awaited before this save takes its place in the queue, which keeps call order.
       const written = fs
         .mkdir(dirname(path), { recursive: true })
         .then(() => fs.writeFile(uniquePath, JSON.stringify(data, null, 2), 'utf8'))
