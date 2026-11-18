@@ -150,7 +150,7 @@ describe('htmlToMarkdown', () => {
       '<img alt="x" src="pic.png) [click](https://example.com/z">',
       '![x](pic.png%29%20[click]%28https://example.com/z)',
     ],
-    ['<img alt="x" src=" a\tb<c>d\\e\x01\x7f\x85.png\n">', '![x](ab%3Cc%3Ed%5Ce%01%7F%C2%85.png)'],
+    ['<img alt="x" src=" a\tb<c>d\\e\x01\x7f\x85.png\n">', '![x](ab%3Cc%3Ed/e%01%7F%C2%85.png)'],
     ['<img alt="x" src="p.png&quot;t&quot;&#39;u&#39;`v">', '![x](p.png%22t%22%27u%27%60v)'],
     // a trailing "!" is escaped only where the alt text is written bare, so a following link stays a link
     [
@@ -194,6 +194,14 @@ describe('htmlToMarkdown', () => {
     ['<title>snake_case *bold* &lt;b&gt;</title>', '# snake\\_case \\*bold\\* &lt;b&gt;'],
     ['<title>\n(1) Inbox\xa0</title>', '# (1) Inbox'],
     ['<html><head><title>\n My Page\n</title></head><body><p>body</p></body></html>', '# My Page\n\nbody'],
+    // every title with text is a heading where it is, and a title in a dropped element is dropped
+    ['<title> </title><title>One</title><p>body</p><title># Two</title>', '# One\n\nbody\n\n# # Two'],
+    [
+      '<rss><channel><title>Blog</title><item><title>Post</title><description>Hello</description></item></channel></rss>',
+      '# Blog\n\n# Post\n\nHello',
+    ],
+    ['<html><head><title>T</title><body><p>body</p></body></html>', '# T\n\nbody'],
+    ['<svg><title>icon</title></svg><p>body</p>', 'body'],
     [
       '<a href="https://example.com/a" title=\'path C:\\" end\'>link</a>',
       '[link](https://example.com/a "path C:\\\\\\" end")',
@@ -204,12 +212,47 @@ describe('htmlToMarkdown', () => {
     ],
     ['<a href="https://example.com/a)b">odd</a>', '[odd](https://example.com/a%29b)'],
     ['<a href="https://example.com/a b">space</a>', '[space](https://example.com/a%20b)'],
-    ['<a href="https://example.com/a\\)b">odd</a>', '[odd](https://example.com/a%5C%29b)'],
+    ['<a href="https://example.com/a\\)b">odd</a>', '[odd](https://example.com/a/%29b)'],
+    // a backslash is a slash before the query of an http(s) or relative URL, as URL parsers read it
+    [
+      '<a href="docs\\page.htm?q=a\\b">x</a> <a href="mailto:a\\b">m</a>',
+      '[x](docs/page.htm?q=a%5Cb) [m](mailto:a%5Cb)',
+    ],
+    ['<a href="10.0.0.1:80\\a">x</a>', '[x](10.0.0.1:80/a)'],
     ['<a href=" \n">blank</a>', 'blank'],
     ['<a href="b">b</a>', '[b](b)'],
-    // ordinary links are unchanged
+    // an ordinary href and title are not escaped
     ['<a href=" /a?b=1&amp;c=2#d " title="(Plain) title">link [1]</a>', '[link \\[1\\]](/a?b=1&c=2#d "(Plain) title")'],
   ])('escapes text, the title and links in %s', async (html, expected) => {
+    expect(await htmlToMarkdown(html)).toBe(expected + '\n')
+  })
+
+  // guards against body text starting a heading, list, quote, fence or code span (#6302)
+  it.each([
+    ['<p># Not a heading</p>', '\\# Not a heading'],
+    ['<p>> quote</p><p>- a</p><p>+ b</p><p>12. c</p>', '\\> quote\n\n\\- a\n\n\\+ b\n\n12\\. c'],
+    ['<p>Title</p><p>===</p><p>~~~</p>', 'Title\n\n\\===\n\n\\~~~'],
+    ['<p>use `rm -rf` now</p>', 'use \\`rm -rf\\` now'],
+    ['<div>1. one<br>2. two</div>', '1\\. one  \n2\\. two'],
+    ['a<div><span> # x</span></div>', 'a\n\n\\# x'],
+    ['<ul><li>- a</li></ul><blockquote>> b</blockquote><h2># c</h2>', '-   \\- a\n\n> \\> b\n\n## \\# c'],
+    // text that does not start a line, and text in code, is unchanged
+    [
+      '<p><a href="/">Home</a> > <a href="/p">Products</a> - all, C# 1. x</p>',
+      '[Home](/) > [Products](/p) - all, C# 1. x',
+    ],
+    ['<p>#hashtag</p><p>+1</p><p>3.14</p>', '#hashtag\n\n+1\n\n3.14'],
+    ['<p>a<i class="icon"></i> - b</p>', 'a - b'],
+    [
+      '<h2>Intro<a href="#i">#</a></h2><p><span>Step</span> <span>1.</span> Open</p>',
+      '## Intro[#](#i)\n\nStep 1. Open',
+    ],
+    ['<p><code>a\n# b\n[c](u)</code></p>', '`a # b [c](u)`'],
+    // image alt text written without the image
+    ['<p><img src="data:image/png;base64,AA" alt="# x"></p>', '\\# x'],
+    // a line of backticks in a code block does not close its fence
+    ['<pre><code>```\ncode\n```</code></pre><p><a href="u">link</a></p>', '````\n```\ncode\n```\n````\n\n[link](u)'],
+  ])('escapes block markers and backticks in %s', async (html, expected) => {
     expect(await htmlToMarkdown(html)).toBe(expected + '\n')
   })
 

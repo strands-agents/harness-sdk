@@ -72,8 +72,12 @@ function _escapeAltText(text: string): string {
 
 // Drop tabs and newlines as URL parsers do, and percent-encode what a markdown parser could read as syntax.
 function _escapeUrl(url: string): string {
-  return url
-    .replace(/[\t\n\r]/g, '')
+  let stripped = url.replace(/[\t\n\r]/g, '')
+  // URL parsers read "\" as "/" before the query of an http(s) or relative URL.
+  if (/^(?:https?:|(?![a-z][a-z0-9+.-]*:))/i.test(stripped)) {
+    stripped = stripped.replace(/^[^?#]*/, (path) => path.replace(/\\/g, '/'))
+  }
+  return stripped
     .replace(/[\s\p{Cc}<>\\"`]/gu, (char) => encodeURIComponent(char))
     .replace(/[()']/g, (char) => `%${char.charCodeAt(0).toString(16)}`)
 }
@@ -110,7 +114,7 @@ async function _createTurndownService(): Promise<TurndownService> {
       const text = _escapeText((node as HTMLElement).textContent ?? '')
         .replace(/[*_]/g, '\\$&')
         .trim()
-      return text ? `# ${text}\n\n` : ''
+      return text ? `\n\n# ${text}\n\n` : ''
     },
   })
 
@@ -122,8 +126,11 @@ async function _createTurndownService(): Promise<TurndownService> {
       const element = node as HTMLImageElement
       const src = _trimC0ControlOrSpace(element.getAttribute('src') ?? '')
       const alt = _escapeAltText(element.getAttribute('alt') ?? '')
-      // Written as bare text, a trailing "!" would turn a link that follows into an image.
-      const bareAlt = alt.replace(/!(?= ?$)/, '\\!')
+      // Written as bare text, a trailing "!" would turn a link that follows into an image, and a block marker at
+      // the start could start a heading, list or quote.
+      const bareAlt = alt
+        .replace(/!(?= ?$)/, '\\!')
+        .replace(/^ ?(?=[-=>]|(?:\+|#{1,6}|[0-9]+[.)])(?: |$))[0-9]*/, '$&\\')
       if (!src) return bareAlt
       const scheme = _urlScheme(src)
       if (scheme === 'javascript' || scheme === 'vbscript') return ''

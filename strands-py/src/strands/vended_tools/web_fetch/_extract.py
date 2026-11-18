@@ -5,9 +5,9 @@ elements are removed and ``data:`` URI images are replaced with their alt text
 so large inline blobs do not bloat the output. Images with a ``javascript:`` or
 ``vbscript:`` source are dropped, and links with a ``javascript:``,
 ``vbscript:``, or ``data:`` href are reduced to their text. The page title,
-image alt text, link and image titles and URLs, and link and image syntax in
-body text are escaped so they cannot change the structure of the output. The
-page title is prepended.
+image alt text, link and image titles and URLs, and link, image, code and
+block syntax in body text are escaped so they cannot change the structure of
+the output. Each ``<title>`` is written as a top-level heading.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import unicodedata
 from urllib.parse import quote, urlparse
 
 try:
-    from bs4 import BeautifulSoup, NavigableString, Tag
+    from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
     from bs4.exceptions import ParserRejectedMarkup
     from markdownify import MarkdownConverter
 except ImportError as e:
@@ -80,6 +80,11 @@ def _tag_attribute(tag: Tag, name: str) -> str:
     return value or ""
 
 
+# A block marker at the start of a line: what turndown escapes at the start of text, and "1)" and "~". The marker is
+# escaped whether a space or the end of the line follows it. Whitespace before it is stripped later or is indentation.
+_BLOCK_MARKER = re.compile(r"^([^\S\n]*)(?=[-=>~]|(?:\+|#{1,6}|[0-9]+[.)])(?: |\s*$))([0-9]*)", re.MULTILINE)
+
+
 def _escape_text(text: str) -> str:
     """Collapse whitespace and control characters, and escape markdown and HTML syntax, so the text is plain text."""
     text = re.sub(r"[\\\[\]`~]", r"\\\g<0>", re.sub(rf"[{_WHITESPACE_OR_CONTROL}]+", " ", text))
@@ -93,15 +98,25 @@ def _escape_alt_text(text: str) -> str:
     return re.sub(r"^(?=\^)|^ ?(?=\()", r"\g<0>\\", _escape_text(text))
 
 
-def _escape_trailing_bang(text: str) -> str:
-    """Escape a final "!" in image alt text written bare, so a link that follows does not become an image."""
-    return re.sub(r"!(?= ?$)", r"\\!", text)
+def _escape_bare_alt_text(text: str) -> str:
+    """Escape image alt text written bare: a block marker at its start, and a final "!" so a link is not an image."""
+    return _BLOCK_MARKER.sub(r"\g<0>\\", re.sub(r"!(?= ?$)", r"\\!", text))
 
 
 def _escape_url(url: str) -> str:
     """Drop tabs and newlines as URL parsers do, and percent-encode what a markdown parser could read as syntax."""
     url = re.sub(r"[\t\n\r]", "", url)
+    # URL parsers read "\" as "/" before the query of an http(s) or relative URL.
+    if re.match(r"https?:|(?![a-z][a-z0-9+.-]*:)", url, re.IGNORECASE | re.ASCII):
+        url = re.sub(r"^[^?#]*", lambda match: match[0].replace("\\", "/"), url)
     return re.sub(rf"[{_WHITESPACE_OR_CONTROL}()<>\\\"'`]", lambda match: quote(match[0], safe=""), url)
+
+
+# Elements whose content markdownify starts on a new line. A table row starts with "|".
+_BLOCK_ELEMENTS = frozenset(
+    "article blockquote caption dd div dl dt figcaption h1 h2 h3 h4 h5 h6 li ol p pre section table tbody tfoot thead"
+    " tr ul".split()
+)
 
 
 class _EscapedText(NavigableString):
@@ -109,23 +124,61 @@ class _EscapedText(NavigableString):
 
 
 class _Converter(MarkdownConverter):
-    """MarkdownConverter that escapes link syntax in text and a trailing "!" in an image written as its alt text."""
+    """MarkdownConverter that escapes markdown syntax in text and a trailing "!" in an image written as its alt text."""
+
+    # Whether output precedes the next text on its line.
+    _in_line = False
+
+    def process_element(self, node: PageElement, parent_tags: set[str] | None = None) -> str:
+        if isinstance(node, Tag) and node.name in _BLOCK_ELEMENTS:
+            self._in_line = node.name == "tr"
+        markdown = str(super().process_element(node, parent_tags))  # type: ignore[misc]
+        last_line = markdown.rpartition("\n")[2]
+        if last_line.strip() or last_line != markdown:
+            self._in_line = bool(last_line.strip())
+        return markdown
 
     def process_text(self, el: NavigableString, parent_tags: set[str] | None = None) -> str:
+        parent_tags = parent_tags or set()
         if isinstance(el, _EscapedText):
-            parent_tags = {*(parent_tags or ()), "_escaped"}
-        return str(super().process_text(el, parent_tags))  # type: ignore[misc]
+            parent_tags = {*parent_tags, "_escaped"}
+        text = str(super().process_text(el, parent_tags))  # type: ignore[misc]
+        if parent_tags & {"_noformat", "_escaped"}:
+            # A carriage return in code ends a line in markdown too.
+            return re.sub(r"\r\n?", "\n", text)
+        # The start of the text does not start a line when other output precedes it.
+        return _BLOCK_MARKER.sub(
+            lambda match: match[0] if self._in_line and match.start() == 0 else f"{match[0]}\\", text
+        )
 
     def escape(self, text: str, parent_tags: set[str]) -> str:
         # markdownify escapes only "*" and "_".
         if "_escaped" not in parent_tags:
-            text = re.sub(r"[\\\[\]]", r"\\\g<0>", text)
+            text = re.sub(r"[\\\[\]`]", r"\\\g<0>", text)
         return str(super().escape(text, parent_tags))  # type: ignore[misc]
 
     def convert_img(self, el: Tag, text: str, parent_tags: set[str]) -> str:
         markdown = str(super().convert_img(el, text, parent_tags))  # type: ignore[misc]
         # Inside a heading or table cell markdownify writes only the alt text.
-        return _escape_trailing_bang(markdown) if "_inline" in parent_tags else markdown
+        return _escape_bare_alt_text(markdown) if "_inline" in parent_tags else markdown
+
+    def convert_code(self, el: Tag, text: str, parent_tags: set[str]) -> str:
+        # A line break would end a code span, and the lines after it would be read as markdown.
+        if "_noformat" not in parent_tags:
+            text = text.replace("\n", " ")
+        return str(super().convert_code(el, text, parent_tags))  # type: ignore[misc]
+
+    convert_kbd = convert_samp = convert_code
+
+    def convert_pre(self, el: Tag, text: str, parent_tags: set[str]) -> str:
+        markdown = str(super().convert_pre(el, text, parent_tags))  # type: ignore[misc]
+        runs = re.findall(r"`{3,}", text)
+        if not runs:
+            return markdown
+        # Backticks in the code must not close the block, so the fence is longer than any run of them.
+        fence = "`" * (len(max(runs, key=len)) + 1)
+        head, _, tail = markdown.replace("```", fence, 1).rpartition("```")
+        return f"{head}{fence}{tail}"
 
 
 def _sanitize_tree(soup: BeautifulSoup) -> None:
@@ -138,7 +191,7 @@ def _sanitize_tree(soup: BeautifulSoup) -> None:
         scheme = _url_scheme(src)
         # data: URI blobs can be enormous, so replace them with their alt text.
         if scheme == "data":
-            image.replace_with(_EscapedText(_escape_trailing_bang(alt)))
+            image.replace_with(_EscapedText(_escape_bare_alt_text(alt)))
         # Script sources are not useful to a model.
         elif scheme in _SCRIPT_SCHEMES:
             image.decompose()
@@ -161,22 +214,19 @@ def _sanitize_tree(soup: BeautifulSoup) -> None:
 def html_to_markdown(html: str) -> str:
     """Convert HTML to markdown suitable for a model to read.
 
-    The page title is prepended when present. Returns the original HTML
-    rather than failing on a parser error.
+    Each ``<title>`` is written as a top-level heading. Returns the original
+    HTML rather than failing on a parser error.
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
-        title = ""
-        if soup.title:
-            # The title is one line of plain text. "*" and "_" are escaped as they are in body text.
-            title = re.sub(r"[*_]", r"\\\g<0>", _escape_text(soup.title.get_text())).strip(" ")
-            soup.title.decompose()
-        if soup.head is not None:
-            soup.head.decompose()
         _sanitize_tree(soup)
+        for title in soup("title"):
+            # A title is one line of plain text.
+            text = _escape_text(title.get_text()).strip(" ")
+            heading = soup.new_tag("h1")
+            heading.append(_EscapedText(text))
+            title.replace_with(heading if text else "")
         markdown = str(_Converter(heading_style="ATX", bullets="-", autolinks=False).convert_soup(soup)).strip()
-        if title:
-            markdown = f"# {title}\n\n{markdown}".strip()
     except (ValueError, RecursionError, ParserRejectedMarkup):
         logger.warning("html_to_markdown failed; returning raw html", exc_info=True)
         return html
