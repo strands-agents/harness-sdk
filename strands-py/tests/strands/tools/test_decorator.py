@@ -2317,3 +2317,28 @@ def test_dict_parameter_is_copied_from_tool_input():
     validated["config"]["tags"].append("mutated")
     assert tool_input["config"]["db"]["host"] == "PROD-DB"
     assert tool_input["config"]["tags"] == ["a"]
+
+
+def test_live_object_is_not_deep_copied():
+    """Objects that are not containers stay shared. Deep copy would reject a live handle."""
+
+    class Live:
+        def __deepcopy__(self, memo):
+            raise TypeError("cannot copy live handle")
+
+    @strands.tool
+    def takes_handle(handle: Any, config: dict) -> str:
+        """Accept a live handle.
+
+        Args:
+            handle: An open resource.
+            config: A mapping.
+        """
+        return "ok"
+
+    handle = Live()
+    tool_input = {"handle": handle, "config": {"n": 1}}
+    validated = takes_handle._metadata.validate_input(tool_input)
+    assert validated["handle"] is handle
+    validated["config"]["n"] = 2
+    assert tool_input["config"]["n"] == 1
