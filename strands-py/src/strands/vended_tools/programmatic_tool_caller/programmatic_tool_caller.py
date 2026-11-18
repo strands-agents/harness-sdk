@@ -361,7 +361,7 @@ def make_programmatic_tool_caller(
     """
     for option, value in (("timeout", timeout), ("tool_timeout", tool_timeout)):
         if value is not None and not (math.isfinite(value) and value > 0):
-            raise ValueError(f"{option}=<{value}> | must be a positive, finite number of seconds or None")
+            raise ValueError(f"{option} must be a positive, finite number or None, got {value}")
     resolved_allowed_tools = list(allowed_tools) if allowed_tools is not None else None
 
     @tool(name=name, description=description, context="tool_context")
