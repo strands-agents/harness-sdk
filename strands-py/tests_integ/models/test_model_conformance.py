@@ -56,6 +56,8 @@ def model(request, target):
     model = target.create_model()
     case_id = request.function.conformance_case
     reason = conformance.not_applicable_reason(case_id, model)
+    if conformance.PROBE_TARGET:
+        return conformance.prepare_probe(request.node, case_id, model, reason)
     known = conformance.KNOWN_FAILURES.get((target.provider, target.model_id, case_id))
     if reason and known:
         pytest.fail(

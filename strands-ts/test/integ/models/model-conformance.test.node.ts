@@ -12,6 +12,9 @@ import {
   isTrackedFailure,
   knownFailure,
   knownFailures,
+  listedTargets,
+  probeOverride,
+  probeTarget,
   notApplicableReason,
   omittedCases,
   omittedProviders,
@@ -23,7 +26,7 @@ import {
 } from '../__fixtures__/conformance.js'
 import { echoTool, hasToolUse } from '../__fixtures__/test-helpers.js'
 import type { Model } from '@strands-agents/sdk'
-import type { ConformanceConfig, ConformanceStatus } from '../__fixtures__/conformance.js'
+import type { ConformanceConfig, ConformanceResult, ConformanceStatus } from '../__fixtures__/conformance.js'
 
 /**
  * Model conformance: every case in shared/conformance.json runs on every target it lists. A case whose `requires`
@@ -193,12 +196,12 @@ describe('Model conformance coverage', () => {
   it('maps or leaves out every shared provider', () => {
     const known = new Set([...Object.keys(providers), ...Object.keys(omittedProviders)])
 
-    expect(targets.filter((target) => !known.has(target.provider))).toStrictEqual([])
+    expect(listedTargets.filter((target) => !known.has(target.provider))).toStrictEqual([])
   })
 
   it('names a live target and a case in every known failure', () => {
     const live = new Set(
-      targets.filter((target) => !target.endOfLife).map(({ provider, model }) => `${provider} ${model}`)
+      listedTargets.filter((target) => !target.endOfLife).map(({ provider, model }) => `${provider} ${model}`)
     )
 
     expect(
@@ -211,20 +214,21 @@ describe('Model conformance coverage', () => {
 // other value runs them all. See shared/README.md for when CI sets each.
 const mode = process.env.STRANDS_CONFORMANCE
 
-describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (target) => {
+describe.skipIf(!mode && !probeTarget).each(targets)('Model conformance: $provider $model', (target) => {
   const provider = providers[target.provider]
 
   // Why no case can run on this target, as a result status and reason.
   const unavailable = (): ['skipped' | 'not-applicable', string] | undefined => {
     if (target.endOfLife) return ['not-applicable', 'end of life']
-    if (mode === 'core' && !target.core) return ['skipped', 'not in the core set that pull requests run']
+    if (mode === 'core' && !probeTarget && !target.core)
+      return ['skipped', 'not in the core set that pull requests run']
     if (!provider) return ['not-applicable', omittedProviders[target.provider] ?? 'provider is not mapped']
     if (provider.skip) return ['skipped', 'credentials are not available']
     return undefined
   }
 
   for (const caseId of Object.keys(cases)) {
-    const known = knownFailure(target, caseId)
+    const known = probeTarget ? undefined : knownFailure(target, caseId)
     const stale = (problem: string): Error =>
       new Error(`known failure #${known?.issue} ${problem}; remove it from knownFailures in shared/conformance.json`)
 
@@ -239,39 +243,45 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
     // The attempts happen inside the test, so vitest's own retry is off and the timeout covers all three.
     it(caseId, { timeout: 630_000, retry: 0 }, async (ctx) => {
       // Recorded when the test finishes, so a timeout or a throw before the case body still leaves a record.
-      let status: ConformanceStatus = 'failed'
-      let reason: string | undefined
-      let attempt = 0
-      ctx.onTestFinished(() => recordResult(target, caseId, status, reason, attempt))
+      const result: ConformanceResult = { status: 'failed', attempts: 0 }
+      ctx.onTestFinished(() => recordResult(target, caseId, result))
 
-      const skip = (skipStatus: ConformanceStatus, skipReason: string | undefined): void => {
-        status = skipStatus
-        reason = skipReason
-        ctx.skip(skipReason)
+      const skip = (status: ConformanceStatus, reason: string | undefined): void => {
+        Object.assign(result, { status, reason })
+        ctx.skip(reason)
       }
       const [unavailableStatus, unavailableReason] = unavailable() ?? []
       if (unavailableStatus) return skip(unavailableStatus, unavailableReason)
 
       const run = implementations[caseId]
-      const model = provider!.create(target.model)
-      const notApplicable = run ? notApplicableReason(cases[caseId]!, model.modelInfo) : omittedCases[caseId]
+      const notApplicable = run
+        ? notApplicableReason(cases[caseId]!, provider!.create(target.model).modelInfo)
+        : omittedCases[caseId]
+      // A probe runs a case the model does not declare, with the model info set to what the case requires.
+      const override = probeTarget ? probeOverride(cases[caseId]!) : undefined
       if (known && notApplicable) throw stale(`no longer applies (${notApplicable})`)
-      if (!run || notApplicable) return skip('not-applicable', notApplicable)
+      if (!run || (notApplicable && !override)) return skip('not-applicable', notApplicable)
+      if (probeTarget) result.declared = !notApplicable
 
-      while (status !== 'passed') {
-        attempt++
+      const create = (config?: ConformanceConfig): Model =>
+        provider!.create(target.model, { ...(override && { modelInfo: override }), ...config })
+      while (result.status !== 'passed') {
+        result.attempts = (result.attempts ?? 0) + 1
         try {
-          await withinAttemptLimit(
-            run({ modelId: target.model, model, create: (config) => provider!.create(target.model, config) })
-          )
-          status = 'passed'
+          await withinAttemptLimit(run({ modelId: target.model, model: create(), create }))
+          result.status = 'passed'
         } catch (error) {
-          reason = providerErrorReason(error)
-          status = reason ? 'error' : 'failed'
+          result.reason = providerErrorReason(error)
+          result.status = result.reason ? 'error' : 'failed'
           // Only the tracked failure is expected. Any other error on a known failure still fails the run.
           if (known && isTrackedFailure(known, error)) return
-          if (attempt === 3 || !mayPassOnRetry(error)) throw error
-          await new Promise((resolve) => setTimeout(resolve, 30_000))
+          if (result.attempts < 3 && mayPassOnRetry(error)) {
+            await new Promise((resolve) => setTimeout(resolve, 30_000))
+            continue
+          }
+          // In a probe, a case the model does not declare failing is a finding, not a failure.
+          if (result.declared === false) return ctx.skip('the model does not support this')
+          throw error
         }
       }
       if (known && !known.intermittent) throw stale('now passes')

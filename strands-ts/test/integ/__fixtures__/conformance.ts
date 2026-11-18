@@ -31,6 +31,7 @@ export interface KnownFailure extends ConformanceTarget {
 
 export interface ConformanceConfig {
   cacheConfig?: CacheConfig
+  modelInfo?: ModelInfo
 }
 
 export interface ConformanceProvider {
@@ -41,7 +42,18 @@ export interface ConformanceProvider {
 export type ConformanceStatus = 'passed' | 'failed' | 'error' | 'skipped' | 'not-applicable'
 
 export const cases: Record<string, ConformanceCase> = conformance.cases
-export const targets: ConformanceTarget[] = conformance.targets
+/**
+ * `<provider>:<model id>` probes that one pair, listed or not: every case runs with the model info set to what the
+ * case requires, to learn what the model supports beyond what the table declares.
+ */
+export const probeTarget = process.env.STRANDS_CONFORMANCE_TARGET
+
+export const listedTargets: ConformanceTarget[] = conformance.targets
+
+const [probeProvider, ...probeModel] = (probeTarget ?? '').split(':')
+export const targets: ConformanceTarget[] = probeTarget
+  ? [{ provider: probeProvider ?? '', model: probeModel.join(':') }]
+  : listedTargets
 export const knownFailures: KnownFailure[] = conformance.knownFailures
 
 const { intro, topics, actions } = conformance.cachePrompt
@@ -144,6 +156,18 @@ export const omittedProviders: Record<string, string> = {
 export const omittedCases: Record<string, string> = {}
 
 /**
+ * The model info that turns on what a case requires, or undefined when the case names no capability value.
+ *
+ * @param conformanceCase - The case from the shared file
+ * @returns The override to build the probed model with
+ */
+export function probeOverride(conformanceCase: ConformanceCase): ModelInfo | undefined {
+  const [section, field] = (conformanceCase.requires ?? '').split('.')
+  if (section !== 'capabilities' || !field || conformanceCase.equals === undefined) return undefined
+  return { capabilities: { [field]: conformanceCase.equals } }
+}
+
+/**
  * Why a case does not apply to a model, or undefined when it applies.
  *
  * @param conformanceCase - The case from the shared file
@@ -206,21 +230,26 @@ export function willNotClear(error: unknown): boolean {
   return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429
 }
 
+export interface ConformanceResult {
+  status: ConformanceStatus
+  /** Why the case errored, was skipped or does not apply. */
+  reason?: string | undefined
+  attempts?: number
+  /** In a probe, whether the model declares what the case requires. */
+  declared?: boolean | undefined
+}
+
 /**
  * Appends a result record to the file named by STRANDS_CONFORMANCE_RESULTS. Does nothing when the variable is unset.
  *
  * @param target - The provider and model the case ran on
  * @param caseId - The case id
- * @param status - The outcome
- * @param reason - Why the case errored, was skipped or does not apply
- * @param attempts - How many attempts the case took
+ * @param result - The outcome
  */
 export async function recordResult(
   target: ConformanceTarget,
   caseId: string,
-  status: ConformanceStatus,
-  reason?: string,
-  attempts = 1
+  result: ConformanceResult
 ): Promise<void> {
   const file = process.env.STRANDS_CONFORMANCE_RESULTS
   if (!file) return
@@ -229,9 +258,10 @@ export async function recordResult(
     provider: target.provider,
     model: target.model,
     case: caseId,
-    status,
-    ...(reason && { reason }),
-    ...(attempts > 1 && { attempts }),
+    status: result.status,
+    ...(result.reason && { reason: result.reason }),
+    ...((result.attempts ?? 1) > 1 && { attempts: result.attempts }),
+    ...(result.declared !== undefined && { declared: result.declared }),
   }
   await appendFile(file, `${JSON.stringify(record)}\n`)
 }

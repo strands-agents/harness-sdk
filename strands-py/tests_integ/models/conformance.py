@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from strands.models import BedrockModel, Model
+from strands.models import BedrockModel, Model, ModelCapabilities, ModelInfo
 from strands.models.anthropic import AnthropicModel
 from strands.models.gemini import GeminiModel
 from strands.models.mistral import MistralModel
@@ -62,6 +62,9 @@ _RETRY_DELAY_SECONDS = 30
 # The cases call every listed model, so they only run when asked: "core" runs the targets marked core and any
 # other value runs them all. See shared/README.md for when CI sets each.
 MODE = os.environ.get("STRANDS_CONFORMANCE", "")
+# "<provider>:<model id>" probes that one pair, listed or not: every case runs with the model info set to what
+# the case requires, to learn what the model supports beyond what the table declares.
+PROBE_TARGET = os.environ.get("STRANDS_CONFORMANCE_TARGET", "")
 # HTTP statuses that mean the provider could not serve the call, which says nothing about the case.
 _PROVIDER_ERROR_STATUSES = frozenset({401, 403, 404, 408, 429})
 _MANTLE_CONFIG = {"region": "us-east-1"}
@@ -121,9 +124,9 @@ class Target:
 
 def _marks(row: dict[str, Any]) -> list[pytest.MarkDecorator]:
     provider = row["provider"]
-    if not MODE:
+    if not MODE and not PROBE_TARGET:
         return [pytest.mark.skip(reason="set STRANDS_CONFORMANCE to run the model conformance cases")]
-    if MODE == "core" and not row.get("core"):
+    if MODE == "core" and not PROBE_TARGET and not row.get("core"):
         return [pytest.mark.skip(reason="not in the core set that pull requests run")]
     if row.get("endOfLife"):
         return [pytest.mark.skip(reason=f"{NOT_APPLICABLE}: end of life")]
@@ -137,13 +140,14 @@ def _marks(row: dict[str, Any]) -> list[pytest.MarkDecorator]:
 
 TARGET_PROVIDERS = {row["provider"] for row in _SHARED["targets"]}
 LIVE_TARGETS = {(row["provider"], row["model"]) for row in _SHARED["targets"] if not row.get("endOfLife")}
+_PROBE_ROW = dict(zip(("provider", "model"), PROBE_TARGET.split(":", 1), strict=True)) if PROBE_TARGET else None
 TARGETS = [
     pytest.param(
         Target(row["provider"], row["model"]),
         id=f"{row['provider']}-{row['model']}",
         marks=_marks(row),
     )
-    for row in _SHARED["targets"]
+    for row in ([_PROBE_ROW] if _PROBE_ROW else _SHARED["targets"])
 ]
 
 IMPLEMENTED: set[str] = set()
@@ -255,9 +259,37 @@ def _will_not_clear(error: BaseException | None) -> bool:
     return False
 
 
+def _probe_override(case_id: str) -> ModelInfo | None:
+    """The model info that turns on what the case requires, or None when the case names no capability value."""
+    spec = CASES[case_id]
+    section, _, field = spec.get("requires", "").partition(".")
+    if section != "capabilities" or "equals" not in spec:
+        return None
+    value = _snake(spec["equals"]) if isinstance(spec["equals"], str) else spec["equals"]
+    return ModelInfo(capabilities=ModelCapabilities(**{_snake(field): value}))
+
+
+def prepare_probe(item: pytest.Item, case_id: str, model: Model, reason: str | None) -> Model:
+    """Set the model up for a probe of the case, noting on the test whether the model declares it."""
+    override = _probe_override(case_id)
+    if reason and override is None:
+        pytest.skip(f"{NOT_APPLICABLE}: {reason}")
+    item.conformance_declared = reason is None
+    if override is not None:
+        model.update_config(model_info=override)
+    return model
+
+
+def apply_probe(item: pytest.Item, call: pytest.CallInfo, report: pytest.TestReport) -> None:
+    """Report a failed case the model does not declare as skipped: in a probe that is a finding, not a failure."""
+    if call.when == "call" and report.failed and getattr(item, "conformance_declared", True) is False:
+        report.outcome = "skipped"
+        report.longrepr = (str(item.path), 0, "Skipped: the model does not support this")
+
+
 def _known_failure(item: pytest.Item) -> dict[str, Any] | None:
     case_id = getattr(getattr(item, "function", None), "conformance_case", None)
-    if case_id is None:
+    if case_id is None or PROBE_TARGET:
         return None
     target: Target = item.callspec.params["target"]
     return KNOWN_FAILURES.get((target.provider, target.model_id, case_id))
@@ -320,6 +352,8 @@ def record(item: pytest.Item, report: pytest.TestReport, error: BaseException | 
     attempts = getattr(item, "conformance_attempts", 1)
     if attempts > 1:
         result["attempts"] = attempts
+    if hasattr(item, "conformance_declared"):
+        result["declared"] = item.conformance_declared
 
     with open(path, "a", encoding="utf-8") as results:
         results.write(json.dumps(result) + "\n")

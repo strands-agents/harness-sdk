@@ -36,6 +36,8 @@ Every SDK implements every case and maps every provider, or lists the ones it le
 
 The cases make live calls to every target, so they run only when `STRANDS_CONFORMANCE` is set: `core` runs the core targets and any other value, by convention `all`, runs every target. CI uses `all` for the weekly run on main, and `core` for pull requests that change the model providers, their client libraries, the shared model data or the cases themselves. To run them locally, set it yourself.
 
+To check a single model, for example a new one, set `STRANDS_CONFORMANCE_TARGET` to `<provider>:<model id>`; the weekly workflow takes the same value as an input when started by hand. The pair does not have to be listed. Every case then runs on it, with the model info set to what the case requires, so the run shows what the model supports beyond what `model-info.json` declares. A case the model does not declare is reported, not failed, when it does not work.
+
 ### Results
 
 When `STRANDS_CONFORMANCE_RESULTS` names a file, each run appends one JSON object per line to it, one per case and target:
@@ -48,5 +50,6 @@ When `STRANDS_CONFORMANCE_RESULTS` names a file, each run appends one JSON objec
 - `status`: `passed`, `failed`, `error` (the provider could not serve the call: throttling, credentials, an outage, a model that is not served), `skipped` (the case applies but did not run, for example missing credentials) or `not-applicable` (the case's `requires` does not hold for the model, or the SDK leaves the case or provider out). Only `failed` is a verdict against the model; report `error` and `skipped` as not validated.
 - `reason`: present for `error`, `skipped` and `not-applicable`.
 - `attempts`: present when the case took more than one attempt, so a target that often needs a retry shows up in the results.
+- `declared`: present in a probe of a single model. Whether the model's own model info met the case's `requires`, so `passed` with `declared: false` is a capability that works but is not declared.
 
 When a line repeats an earlier `sdk`, `provider`, `model` and `case`, the later line wins.

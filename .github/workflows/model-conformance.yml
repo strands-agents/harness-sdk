@@ -2,10 +2,17 @@ name: "Model Conformance"
 
 # Runs every case in shared/conformance.json against every listed model, on main. Pull requests run the
 # same cases through the integration workflows, only when they change something that can affect a model.
+# Started by hand with a target, it probes that one model instead: see shared/README.md.
 on:
   schedule:
     - cron: '23 8 * * 1'
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Probe one pair, given as <provider>:<model id> and listed or not, instead of running the whole list'
+        required: false
+        type: string
+        default: ''
 
 concurrency:
   group: model-conformance
@@ -55,8 +62,13 @@ jobs:
           AWS_REGION_NAME: us-east-1
           STRANDS_TEST_API_KEYS_SECRET_NAME: ${{ secrets.STRANDS_TEST_API_KEYS_SECRET_NAME }}
           STRANDS_CONFORMANCE: all
+          STRANDS_CONFORMANCE_TARGET: ${{ inputs.target }}
           STRANDS_CONFORMANCE_RESULTS: ${{ runner.temp }}/conformance-python.jsonl
         run: hatch test tests_integ/models/test_model_conformance.py
+
+      - name: Summarize
+        if: always()
+        run: python ../.github/scripts/conformance-summary.py "$RUNNER_TEMP/conformance-python.jsonl" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
         if: always()
@@ -105,8 +117,13 @@ jobs:
       - name: Run the conformance cases
         env:
           STRANDS_CONFORMANCE: all
+          STRANDS_CONFORMANCE_TARGET: ${{ inputs.target }}
           STRANDS_CONFORMANCE_RESULTS: ${{ runner.temp }}/conformance-typescript.jsonl
         run: npm run test:integ -- test/integ/models/model-conformance.test.node.ts
+
+      - name: Summarize
+        if: always()
+        run: python3 .github/scripts/conformance-summary.py "$RUNNER_TEMP/conformance-typescript.jsonl" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
         if: always()
