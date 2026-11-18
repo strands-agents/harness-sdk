@@ -27,6 +27,13 @@ analyst's answer to a prompt about the page content (``mode='agentic'``); use
 requires the optional ``web-fetch`` extra (``pip install 'strands-agents[web-fetch]'``)
 and is imported lazily, so accessing it without that extra raises :class:`ImportError`.
 
+The :data:`programmatic_tool_caller` tool runs model-authored Python in a sandboxed interpreter with the
+agent's other tools exposed as ``async`` functions, so one call can chain, loop over, and parallelize
+tool calls; use :func:`make_programmatic_tool_caller` to limit the exposed tools or change the timeouts.
+It requires the optional ``programmatic-tool-caller`` extra
+(``pip install 'strands-agents[programmatic-tool-caller]'``) and is imported lazily, so accessing it
+without that extra raises :class:`ImportError`.
+
 The :data:`python_repl` tool runs Python through the agent's sandbox; use :func:`make_python_repl`
 to bind a sandbox or choose the interpreter. Each call runs in a fresh process,
 so in-memory state does not persist between calls.
@@ -115,6 +122,18 @@ def __getattr__(name: str) -> Any:
         if name == "web_fetch":
             return web_fetch
         return make_web_fetch
+    # programmatic_tool_caller pulls the optional ``programmatic-tool-caller`` extra, so it is
+    # lazy-loaded to keep the base import free of that dependency. Importing the submodule binds
+    # it to this package under the tool's name, so both names are rebound to the real objects.
+    if name in ("make_programmatic_tool_caller", "programmatic_tool_caller"):
+        from .programmatic_tool_caller import make_programmatic_tool_caller, programmatic_tool_caller
+
+        loaded = {
+            "make_programmatic_tool_caller": make_programmatic_tool_caller,
+            "programmatic_tool_caller": programmatic_tool_caller,
+        }
+        globals().update(loaded)
+        return loaded[name]
     # a2a_client pulls the optional ``a2a`` extra, so it is lazy-loaded to keep
     # the base import free of those dependencies.
     if name == "make_a2a_client":
