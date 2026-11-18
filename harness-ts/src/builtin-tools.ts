@@ -18,7 +18,7 @@ import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL } from './defaults.js'
 import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
 import { resolveWebFetchModel, supportsMedia, webSearchKind } from './models.js'
-import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
+import { edit, exaWebSearch, makeAgentCoreWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
 import { type AgentBuilder, type AgentSpec, Choice, CONTEXT_MODES, GENERALIST, makeSubagent } from './tools/subagent.js'
 import type { BuiltinToolsConfig, ToolConfig, WebSearchSetting } from './types/agent.js'
@@ -152,12 +152,13 @@ export function webSearchMode(
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
 // `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` swaps in
-// the AgentCore tool on Bedrock.
+// parent config to rebuild a child. `web_search` is the AgentCore tool when that is its mode
+// (`webSearchMode`) and the Exa tool otherwise.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
-  builtins: ResolvedBuiltinTools
+  builtins: ResolvedBuiltinTools,
+  webSearch?: WebSearchMode
 ): Promise<Record<BuiltinToolName, Tool>> {
   const webFetch = builtinToolConfig(builtins, 'web_fetch')
   const caller = builtinToolConfig(builtins, 'programmatic_tool_caller') ?? {}
@@ -175,7 +176,7 @@ export async function buildBuiltinTools(
       model: await resolveWebFetchModel(parentConfig.model, webFetch?.model),
       transport: webFetch?.transport,
     }),
-    web_search: exaWebSearch,
+    web_search: webSearch === 'agentcore' ? makeAgentCoreWebSearch() : exaWebSearch,
     // The portable config spells the bound in seconds (`timeout`); the factory takes `timeoutMs`.
     programmatic_tool_caller: makeProgrammaticToolCaller({
       ...(caller.allowedTools === undefined || caller.allowedTools === null

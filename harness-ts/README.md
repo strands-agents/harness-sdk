@@ -333,11 +333,11 @@ permission on `arn:aws:bedrock-agentcore:<region>:aws:tool/web-search.v1`, and t
 in a subset of regions; without them the first search returns an error telling the model to answer
 without search, and later ones fail without a request. Search is configured on its own and reads
 nothing from the model: it resolves its region the way `BedrockModel` does (your AWS environment,
-then `us-west-2`) and uses the default AWS credential chain. A `web_search` tool you pass
-yourself replaces this default, and `makeAgentCoreWebSearch` takes the same `region` and
-`clientConfig` options as `BedrockModel`, so
-`tools: [makeAgentCoreWebSearch({ clientConfig: { credentials } })]` searches with other credentials. An MCP server that exposes `web_search` needs
-`builtinTools: { web_search: false }`, since its tool names are only known once it connects. Elsewhere (another provider's
+then `us-west-2`) and uses the default AWS credential chain. To use another region or identity, or
+your own `web_search` tool, turn the built-in off and pass yours:
+`builtinTools: { web_search: false }, tools: [makeAgentCoreWebSearch({ region, clientConfig })]`
+(`makeAgentCoreWebSearch` takes the same options as `BedrockModel`). A tool named `web_search`
+next to the built-in is a name collision, as with any built-in. Elsewhere (another provider's
 `Model` instance) `web_search` is off by default. To search there, opt into Exa with
 `{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can

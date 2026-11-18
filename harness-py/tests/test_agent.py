@@ -565,48 +565,16 @@ def test_web_search_on_a_mixed_router_is_off_and_names_the_router(caplog):
     assert any("A pre-built ModelRouter has no built-in web search" in r.getMessage() for r in caplog.records)
 
 
-def test_web_search_default_on_bedrock_yields_to_a_passed_web_search_tool(caplog):
-    import logging
-
+def test_web_search_on_bedrock_collides_with_a_passed_web_search_tool_like_any_built_in():
     @tool(name="web_search")
     def my_search(query: str) -> str:
         """Search."""
         return query
 
-    with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
-        agent = create_harness(tools=[my_search])
+    with pytest.raises(ValueError, match=r"Tool name 'web_search' is registered more than once"):
+        create_harness(tools=[my_search])
+    agent = create_harness(tools=[my_search], builtin_tools={"web_search": False})
     assert agent.tool_registry.registry["web_search"] is my_search
-    assert any("A web_search tool was passed" in r.getMessage() for r in caplog.records)
-    with pytest.raises(ValueError, match="'web_search'"):
-        create_harness(builtin_tools=["read", "web_search"], tools=[my_search])
-    from strands_harness.tools import AgentSpec
-
-    builder = agent.tool_registry.registry["subagent"]._builder
-    narrowed = builder(AgentSpec(task="x", tools=["read"]))
-    assert "web_search" not in narrowed.tool_names
-    assert builder(AgentSpec(task="x")).tool_registry.registry["web_search"] is my_search
-
-
-def test_web_search_default_on_bedrock_yields_to_an_mcp_web_search_tool():
-    from mcp.types import Tool as McpTool
-    from strands.tools import ToolProvider
-    from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
-
-    mcp_tool = MCPAgentTool(McpTool(name="web_search", inputSchema={"type": "object"}), mcp_client=None)
-
-    class FakeMcp(ToolProvider):
-        # Like MCPClient: the tool's name is only known once the Agent loads the provider.
-        async def load_tools(self, **kwargs):
-            return [mcp_tool]
-
-        def add_consumer(self, *args, **kwargs):
-            pass
-
-        def remove_consumer(self, *args, **kwargs):
-            pass
-
-    agent = create_harness(tools=[FakeMcp()])
-    assert agent.tool_registry.registry["web_search"] is mcp_tool
 
 
 def test_web_search_default_without_a_backend_logs_info_not_warning_and_builds(caplog):

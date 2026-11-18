@@ -48,10 +48,8 @@ import {
 } from './defaults.js'
 import { type InterventionsOption, resolveInterventions } from './interventions.js'
 import { resolveMemory } from './memory.js'
-import { logger } from './logging.js'
 import { resolveModel } from './models.js'
 import { buildSystemPrompt } from './prompt.js'
-import { makeAgentCoreWebSearch } from './tools/web-search.js'
 import { setupTelemetry } from './telemetry.js'
 import type { BuiltinPluginName, BuiltinToolName } from './config.js'
 import type { BuiltinToolsConfig, ContextManagerOption, Effort, MemoryConfig, SessionConfig } from './types/agent.js'
@@ -375,7 +373,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
 
   // A `subagent` child inherits this record, so it only ever sees the normalized shape.
   const resolvedBuiltins: ResolvedBuiltinTools = resolveBuiltinTools(builtinTools)
-  let webSearch = webSearchMode(resolvedBuiltins.web_search, webSearchExplicit(builtinTools), model)
+  const webSearch = webSearchMode(resolvedBuiltins.web_search, webSearchExplicit(builtinTools), model)
   const webFetch = builtinToolConfig(resolvedBuiltins, 'web_fetch')
 
   // Not passing `caching` uses the default (on) and warns on unsupported providers; passing any
@@ -404,16 +402,6 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
       : []),
   ]
 
-  if (webSearch === 'agentcore' && !webSearchExplicit(builtinTools)) {
-    // A caller's own web_search replaces the default; naming web_search in builtinTools still collides.
-    // MCP tool names are only known once the agent connects, so those need `web_search: false`.
-    const theirs = ([...consumer, ...pluginTools(consumerPluginsOption ?? [])] as unknown[]).flat(Infinity)
-    if (theirs.some((t) => t instanceof Tool && t.name.replaceAll('-', '_') === 'web_search')) {
-      logger.info('A web_search tool was passed, so the built-in AgentCore web_search is not added.')
-      // Forwarded off below, so a delegate that leaves the caller's tool out doesn't get AgentCore back.
-      webSearch = undefined
-    }
-  }
   // The config a `subagent` child is rebuilt from (see buildDefaultSubagent). Sessions are forced
   // off so a throwaway delegate never persists its own session state.
   const memoryInstance = memory instanceof MemoryManager || agentConfig.memoryManager !== undefined
@@ -442,14 +430,9 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     ...(agentConfig.sandbox !== undefined && { sandbox: agentConfig.sandbox }),
   }
 
-  const builtinToolsByName = await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
-  if (webSearch === 'agentcore') {
-    // Search resolves its own region and credentials, as BedrockModel does; nothing is read off the model.
-    builtinToolsByName.web_search = makeAgentCoreWebSearch()
-  }
   const builtin = selectBuiltinTools(
     enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' || webSearch === 'agentcore' }),
-    builtinToolsByName
+    await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins, webSearch)
   )
 
   // Assemble plugins before the collision check so plugin-vended tools are checked too; consumer

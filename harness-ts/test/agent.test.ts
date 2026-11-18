@@ -441,23 +441,16 @@ describe('createHarness', () => {
     expect(regions).toEqual(['us-east-2'])
   })
 
-  it('yields the default bedrock web_search to a passed one, but not a named one', async () => {
-    const info = vi.fn()
-    configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
+  it('collides with a passed web_search tool on bedrock, like any built-in', async () => {
     const mine = tool({
       name: 'web_search',
       description: 'Search.',
       inputSchema: z.object({ query: z.string() }),
       callback: ({ query }) => query,
     })
-    const agent = await createHarness({ tools: [mine] })
+    await expect(createHarness({ tools: [mine] })).rejects.toThrow('registered more than once')
+    const agent = await createHarness({ tools: [mine], builtinTools: { web_search: false } })
     expect(agent.tools.find((t) => t.name === 'web_search')).toBe(mine)
-    const nested = await createHarness({ tools: [[mine]] })
-    expect(nested.tools.find((t) => t.name === 'web_search')).toBe(mine)
-    expect(info).toHaveBeenCalledWith(expect.stringContaining('A web_search tool was passed'))
-    await expect(createHarness({ builtinTools: ['read', 'web_search'], tools: [mine] })).rejects.toThrow(
-      'registered more than once'
-    )
   })
 
   it('serves an explicit Exa selection on bedrock instead of AgentCore', async () => {
@@ -1115,20 +1108,6 @@ describe('subagent delegate (built child)', () => {
     spec.tools = ['read']
     const child = await buildChild({ model: 'openai/gpt-5.6-sol' }, spec)
     expect((child.model.getConfig().params as { tools: unknown }).tools).toEqual([{ type: 'web_search' }])
-  })
-
-  it("doesn't give a narrowed delegate AgentCore search when the parent has the caller's web_search", async () => {
-    const mine = tool({
-      name: 'web_search',
-      description: 'Search.',
-      inputSchema: z.object({ query: z.string() }),
-      callback: ({ query }) => query,
-    })
-    const parent = await createHarness({ tools: [mine] })
-    const spec = new AgentSpec('x')
-    spec.tools = ['read']
-    expect(toolNames(await buildChildFrom(parent, spec))).not.toContain('web_search')
-    expect((await buildChildFrom(parent, new AgentSpec('x'))).tools.find((t) => t.name === 'web_search')).toBe(mine)
   })
 
   it('gives a narrowed delegate of a default bedrock parent AgentCore web search', async () => {
