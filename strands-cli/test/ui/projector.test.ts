@@ -1,4 +1,4 @@
-import { DocumentBlock, ImageBlock, Message, TextBlock } from '@strands-agents/sdk'
+import { DocumentBlock, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { TurnProjector, projectMessages } from '../../src/ui/chat/projector.js'
@@ -447,25 +447,73 @@ describe('TurnProjector', () => {
   it.each([
     {
       name: 'the prompt shown live',
+      text: '<strands_reply_context>x</strands_reply_context> typed',
       custom: displayPromptMetadata('<strands_reply_context>x</strands_reply_context> typed'),
       prompt: '<strands_reply_context>x</strands_reply_context> typed',
     },
     {
+      name: 'the prompt after an envelope that contains its own closing marker',
+      text: '<strands_skill_activation>a</strands_skill_activation> b\n</strands_skill_activation>\n\n/review',
+      custom: displayPromptMetadata('/review'),
+      prompt: '/review',
+    },
+    {
       name: 'the visible text when the stored prompt is not a string',
+      text: '<strands_reply_context>x</strands_reply_context> typed',
       custom: { 'strands.displayPrompt': 42 },
       prompt: 'typed',
     },
-  ])('restores $name from persisted display metadata', ({ custom, prompt }) => {
+    {
+      name: 'the visible text when the stored prompt is empty',
+      text: '<strands_reply_context>x</strands_reply_context> typed',
+      custom: displayPromptMetadata(''),
+      prompt: 'typed',
+    },
+    {
+      name: 'the visible text when the stored prompt is not the end of the saved text',
+      text: '<strands_reply_context>x</strands_reply_context> typed',
+      custom: displayPromptMetadata('unrelated'),
+      prompt: 'typed',
+    },
+    {
+      name: 'the saved text when it does not start with an envelope marker',
+      text: 'ordinary typed',
+      custom: displayPromptMetadata('typed'),
+      prompt: 'ordinary typed',
+    },
+  ])('restores $name from persisted display metadata', ({ text, custom, prompt }) => {
     const turns = projectMessages([
+      new Message({ role: 'user', content: [new TextBlock('Earlier.')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('Reply.')] }),
+      new Message({ role: 'user', content: [new TextBlock(text)], metadata: { custom } }),
+      new Message({ role: 'assistant', content: [new TextBlock('Done.')] }),
+    ])
+
+    expect(turns).toMatchObject([
+      { prompt: 'Earlier.', entries: [{ type: 'assistant', text: 'Reply.' }] },
+      { prompt, entries: [{ type: 'assistant', text: 'Done.' }] },
+    ])
+    expect(turns[1]).not.toHaveProperty('source')
+  })
+
+  it('keeps a tool result that carries display metadata in its own turn', () => {
+    const turns = projectMessages([
+      new Message({ role: 'user', content: [new TextBlock('Run it.')] }),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ name: 'shell', toolUseId: 'tool-1', input: {} })],
+      }),
       new Message({
         role: 'user',
-        content: [new TextBlock('<strands_reply_context>x</strands_reply_context> typed')],
-        metadata: { custom },
+        content: [new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('ok')] })],
+        metadata: { custom: displayPromptMetadata('injected') },
       }),
       new Message({ role: 'assistant', content: [new TextBlock('Done.')] }),
     ])
 
-    expect(turns).toMatchObject([{ prompt, entries: [{ type: 'assistant', text: 'Done.' }] }])
-    expect(turns[0]).not.toHaveProperty('source')
+    expect(turns).toMatchObject([
+      { prompt: 'Run it.', entries: [{ type: 'tool', toolUseId: 'tool-1', status: 'success' }, { type: 'assistant' }] },
+    ])
+    expect(turns).toHaveLength(1)
   })
 })

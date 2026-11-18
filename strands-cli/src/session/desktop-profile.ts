@@ -1,5 +1,6 @@
 import { Message, TextBlock, type JSONValue } from '@strands-agents/sdk'
 
+import { sanitizeTerminalText } from '../terminal/text.js'
 import { isRecord } from '../values.js'
 
 const AGENT_PROFILE_OPEN = '<strands_agent_profile>'
@@ -50,7 +51,7 @@ export function upgradeDesktopAgentProfileMessages(messages: Message[]): Message
   return changed ? upgraded : messages
 }
 
-export function visibleDesktopPrompt(text: string): string {
+function visibleDesktopPrompt(text: string): string {
   const original = text.trim()
   let visible = original
   for (let index = 0; index < HIDDEN_DESKTOP_ENVELOPES.length; index += 1) {
@@ -68,7 +69,18 @@ export function visibleDesktopPrompt(text: string): string {
   return visible || (original ? 'Restored Desktop turn' : '')
 }
 
-/** Message metadata recording the prompt the transcript showed, for turns `visibleDesktopPrompt` would restore differently. */
+/**
+ * The prompt a restored transcript shows for a saved user message's text.
+ * `displayPrompt` is used only when it is the tail of text that starts with an envelope marker.
+ */
+export function restoredPrompt(text: string, displayPrompt?: string): string {
+  const saved = sanitizeTerminalText(text).trim()
+  const shown = sanitizeTerminalText(displayPrompt ?? '').trim()
+  const enveloped = HIDDEN_DESKTOP_ENVELOPES.some(([opening]) => saved.startsWith(opening))
+  return shown && enveloped && saved.endsWith(shown) ? shown : visibleDesktopPrompt(saved)
+}
+
+/** Message metadata recording the prompt the transcript showed, for turns the saved text alone would restore differently. */
 export function displayPromptMetadata(prompt: string): Record<string, JSONValue> {
   return { [DISPLAY_PROMPT_METADATA_KEY]: prompt }
 }
