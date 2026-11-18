@@ -25,7 +25,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._defaults import resolve_config_metadata
-from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo, lookup_chat_completions_tools
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
 from ._openai_cache import apply_cache_config
 from ._openai_errors import classify_openai_error
@@ -45,6 +45,41 @@ class Client(Protocol):
     def chat(self) -> Any:
         """Chat completions interface."""
         ...
+
+
+def _has_openai_tool_limits(client: Any) -> bool:
+    """Whether the client targets the OpenAI API or Bedrock Mantle, where the shared tool limits were measured."""
+    host = getattr(getattr(client, "base_url", None), "host", None)
+    if not isinstance(host, str):
+        return False
+    return host == "api.openai.com" or (host.startswith("bedrock-mantle.") and host.endswith(".api.aws"))
+
+
+def _apply_chat_completions_tools(request: dict[str, Any]) -> None:
+    """Turn reasoning off in a request with tools when the model needs that, or raise when it cannot take them."""
+    model_id = request["model"]
+    support = lookup_chat_completions_tools(model_id)
+    if support == "unsupported":
+        raise ValueError(
+            f"{model_id} does not accept tools on the Chat Completions API. Use OpenAIResponsesModel instead."
+        )
+    if support != "reasoningOff":
+        return
+    effort = request.get("reasoning_effort")
+    if effort is None:
+        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per model id).
+        warnings.warn(
+            f"model_id=<{model_id}> | this model accepts tools on the Chat Completions API only with reasoning"
+            " off, sending reasoning_effort='none'; use OpenAIResponsesModel to keep reasoning",
+            stacklevel=1,
+        )
+        request["reasoning_effort"] = "none"
+    elif effort != "none":
+        raise ValueError(
+            f"{model_id} accepts tools on the Chat Completions API only with reasoning off, but"
+            f" params[\"reasoning_effort\"] is '{effort}'. Set it to 'none' or leave it unset, or use"
+            " OpenAIResponsesModel to keep reasoning."
+        )
 
 
 class OpenAIModel(Model):
@@ -523,8 +558,6 @@ class OpenAIModel(Model):
         Raises:
             TypeError: If a message contains a content block type that cannot be converted to an OpenAI-compatible
                 format.
-            ValueError: If the request has tools and the model does not accept them on the Chat Completions API,
-                or accepts them only with reasoning off while ``reasoning_effort`` asks for reasoning.
         """
         params = dict(cast(dict[str, Any], self.config.get("params") or {}))
         stream = bool(self.config.get("stream", params.pop("stream", True)))
@@ -556,34 +589,7 @@ class OpenAIModel(Model):
 
         apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")), agent_metadata)
 
-        if request["tools"]:
-            self._apply_chat_completions_tools(request)
-
         return request
-
-    def _apply_chat_completions_tools(self, request: dict[str, Any]) -> None:
-        """Turn reasoning off in a request with tools when the model needs that, or raise when it cannot take them."""
-        support = self.model_info.capabilities.chat_completions_tools
-        model_id = request["model"]
-        if support == "unsupported":
-            raise ValueError(
-                f"{model_id} does not accept tools on the Chat Completions API. Use OpenAIResponsesModel instead."
-            )
-        if support != "reasoning_off":
-            return
-        effort = request.get("reasoning_effort")
-        if effort is None:
-            warnings.warn(
-                f"model_id=<{model_id}> | this model accepts tools on the Chat Completions API only with reasoning"
-                " off, sending reasoning_effort='none'; use OpenAIResponsesModel to keep reasoning",
-                stacklevel=1,
-            )
-            request["reasoning_effort"] = "none"
-        elif effort != "none":
-            raise ValueError(
-                f"{model_id} accepts tools on the Chat Completions API only with reasoning off, but reasoning_effort"
-                f" is '{effort}'. Set it to 'none' or leave it unset, or use OpenAIResponsesModel to keep reasoning."
-            )
 
     def format_chunk(self, event: dict[str, Any], **kwargs: Any) -> StreamEvent:
         """Format an OpenAI response event into a standardized message chunk.
@@ -766,6 +772,9 @@ class OpenAIModel(Model):
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
+            ValueError: If the request has tools and OpenAI's Chat Completions API does not accept them for the
+                model, or accepts them only with reasoning off while ``params["reasoning_effort"]`` asks for
+                reasoning.
         """
         logger.debug("formatting request")
         request = self.format_request(messages, tool_specs, system_prompt, tool_choice, agent_metadata=agent_metadata)
@@ -777,6 +786,8 @@ class OpenAIModel(Model):
         # client. The asyncio event loop does not allow connections to be shared. For more details, please refer to
         # https://github.com/encode/httpx/discussions/2959.
         async with self._get_client() as client:
+            if request["tools"] and _has_openai_tool_limits(client):
+                _apply_chat_completions_tools(request)
             try:
                 response = await client.chat.completions.create(**request)
 

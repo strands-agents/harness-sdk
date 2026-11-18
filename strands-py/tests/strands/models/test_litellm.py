@@ -9,7 +9,7 @@ from litellm.exceptions import ContextWindowExceededError
 
 import strands
 from strands.agent import AgentMetadata
-from strands.models import CacheConfig, ModelCapabilities, ModelInfo
+from strands.models import CacheConfig
 from strands.models.litellm import LiteLLMModel
 from strands.types.exceptions import ContextWindowOverflowException
 
@@ -56,24 +56,14 @@ def test_output_model_cls():
     return TestOutputModel
 
 
-def test_format_request_does_not_apply_the_openai_chat_completions_tools_rule(litellm_acompletion, messages, recwarn):
-    """LiteLLM picks the provider API, so a Bedrock id that resolves to an OpenAI entry keeps its reasoning."""
+def test_format_request_does_not_apply_the_openai_chat_completions_tool_limits(litellm_acompletion, messages):
+    """LiteLLM picks the provider API itself, so the limits OpenAIModel applies when it streams stay out of it."""
     tool_specs = [{"name": "t1", "description": "d1", "inputSchema": {"json": {"type": "object"}}}]
-    model = LiteLLMModel(model_id="bedrock/us.openai.gpt-6-sol")
+    model = LiteLLMModel(model_id="gpt-6-astra")
 
     tru_request = model.format_request(messages, tool_specs)
 
     assert "reasoning_effort" not in tru_request
-    assert model.model_info.capabilities.chat_completions_tools == "supported"
-    assert len(recwarn) == 0
-
-
-def test_model_info_override_wins_over_the_chat_completions_tools_default(litellm_acompletion):
-    model = LiteLLMModel(
-        model_id="m1", model_info=ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="reasoning_off"))
-    )
-
-    assert model.model_info.capabilities.chat_completions_tools == "reasoning_off"
 
 
 def test_update_config(model, model_id):

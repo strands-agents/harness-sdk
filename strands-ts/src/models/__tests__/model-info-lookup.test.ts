@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_CONTEXT_WINDOW_LIMIT, lookupModelInfo, getContextWindowLimit, lookupModel } from '../model-info.js'
+import {
+  DEFAULT_CONTEXT_WINDOW_LIMIT,
+  lookupChatCompletionsTools,
+  lookupModelInfo,
+  getContextWindowLimit,
+  lookupModel,
+} from '../model-info.js'
 import modelInfoData from '../model-info.json' with { type: 'json' }
 
 describe('shared model info data', () => {
@@ -72,21 +78,14 @@ describe('shared model info data', () => {
   })
 
   it.each([
-    ['gpt-5.6', 'reasoningOff'],
-    ['gpt-5.6-luna', 'reasoningOff'],
-    ['gpt-5.6-sol', 'reasoningOff'],
-    ['gpt-5.6-terra', 'reasoningOff'],
-    ['gpt-6-luna', 'reasoningOff'],
     ['gpt-6-sol', 'reasoningOff'],
-    ['gpt-6.1-terra', 'reasoningOff'],
-    ['openai.gpt-6.1-terra', 'reasoningOff'],
+    ['us.openai.gpt-6-luna', 'reasoningOff'],
     ['gpt-6-astra', 'unsupported'],
-    ['gpt-6.1-sol', 'unsupported'],
     ['openai.gpt-6.1-sol', 'unsupported'],
-    ['gpt-5.5', undefined],
     ['gpt-5.4', undefined],
-  ])('says whether %s takes tools on Chat Completions: %s', (modelId, support) => {
-    expect(lookupModelInfo(modelId).capabilities?.chatCompletionsTools).toBe(support)
+    ['unknown-model', undefined],
+  ])('reads the untyped chatCompletionsTools fact for %s from the entry the id resolves to', (modelId, support) => {
+    expect(lookupChatCompletionsTools(modelId)).toBe(support)
   })
 
   it('keeps getContextWindowLimit working for ids the Python table already knew', () => {
@@ -115,10 +114,11 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
-        else if (key === 'chatCompletionsTools')
-          expect(['supported', 'reasoningOff', 'unsupported'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
+        // Read by the OpenAI Chat Completions provider, not typed by the SDK.
+        else if (key === 'chatCompletionsTools')
+          expect(['reasoningOff', 'unsupported'], `${id}.${key}`).toContain(value)
         // Read by another consumer (the harness), not typed by the SDK.
         else if (key === 'defaultEffort')
           expect(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], `${id}.${key}`).toContain(value)

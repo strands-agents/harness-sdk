@@ -21,7 +21,12 @@ import { warnOnce } from '../../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from '../defaults.js'
 import { bedrockMantleBaseUrl, createMantleApiKeySetter, resolveMantleRegion } from './mantle.js'
 import { classifyOpenAIError } from './errors.js'
-import { formatChatRequest, mapChatChunkToEvents, warnManagedParams as warnChatManagedParams } from './chat-adapter.js'
+import {
+  applyChatCompletionsTools,
+  formatChatRequest,
+  mapChatChunkToEvents,
+  warnManagedParams as warnChatManagedParams,
+} from './chat-adapter.js'
 import {
   createResponsesStreamState,
   finalizeResponsesStream,
@@ -236,7 +241,8 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
 
   private async *_streamChat(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      const request = formatChatRequest(this._config as OpenAIChatConfig, messages, options, this.modelInfo)
+      const request = formatChatRequest(this._config as OpenAIChatConfig, messages, options)
+      applyChatCompletionsTools(request, this._client.baseURL)
       const stream = await this._client.chat.completions.create(request, { signal: options?.cancelSignal })
 
       const streamState: ChatStreamState = {

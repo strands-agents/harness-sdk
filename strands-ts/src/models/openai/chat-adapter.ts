@@ -14,7 +14,7 @@ import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
-import type { ChatCompletionsTools, ModelInfo } from '../model-info.js'
+import { lookupChatCompletionsTools } from '../model-info.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig } from './cache.js'
@@ -51,16 +51,25 @@ type OpenAIChatChoice = {
   index: number
 }
 
+// The OpenAI API and Bedrock Mantle, where the tool limits in the shared model info were measured.
+const TOOL_LIMITS_BASE_URL = /^https:\/\/(api\.openai\.com|bedrock-mantle\.[a-z0-9-]+\.api\.aws)(\/|$)/
+
 /**
- * Turns reasoning off in a request with tools when the model needs that.
+ * Turns reasoning off in a request with tools when OpenAI's Chat Completions API needs that for the model.
+ * Leaves requests to other endpoints as they are.
  *
- * @throws Error when the model accepts no tools on Chat Completions, or only with reasoning off while
- *   `reasoning_effort` asks for reasoning
+ * @internal
+ * @param request - The request to send, changed in place
+ * @param baseURL - The base URL of the client that sends it
+ * @throws Error when the API accepts no tools for the model, or only with reasoning off while
+ *   `params.reasoning_effort` asks for reasoning
  */
-function applyChatCompletionsTools(
+export function applyChatCompletionsTools(
   request: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
-  support: ChatCompletionsTools | undefined
+  baseURL: string | undefined
 ): void {
+  if (!request.tools?.length || !TOOL_LIMITS_BASE_URL.test(baseURL ?? '')) return
+  const support = lookupChatCompletionsTools(request.model)
   if (support === 'unsupported') {
     throw new Error(
       `${request.model} does not accept tools on the Chat Completions API. Use OpenAIModel with api: 'responses' instead.`
@@ -76,7 +85,7 @@ function applyChatCompletionsTools(
     request.reasoning_effort = 'none'
   } else if (effort !== 'none') {
     throw new Error(
-      `${request.model} accepts tools on the Chat Completions API only with reasoning off, but reasoning_effort is '${effort}'. ` +
+      `${request.model} accepts tools on the Chat Completions API only with reasoning off, but params.reasoning_effort is '${effort}'. ` +
         "Set it to 'none' or leave it unset, or use OpenAIModel with api: 'responses' to keep reasoning."
     )
   }
@@ -86,13 +95,11 @@ function applyChatCompletionsTools(
  * Builds a Chat Completions streaming request body.
  *
  * @internal
- * @throws Error when the request has tools and the model's `chatCompletionsTools` capability rules them out
  */
 export function formatChatRequest(
   config: OpenAIChatConfig,
   messages: Message[],
-  options?: StreamOptions,
-  modelInfo?: ModelInfo
+  options?: StreamOptions
 ): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming {
   // User `params` are spread first so provider-managed fields always win.
   // The managed-params warning fires at config time to surface the collision.
@@ -175,8 +182,6 @@ export function formatChatRequest(
   }
 
   applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
-
-  if (request.tools?.length) applyChatCompletionsTools(request, modelInfo?.capabilities?.chatCompletionsTools)
 
   if ('n' in request && request.n !== undefined && request.n !== null && request.n > 1) {
     throw new Error('Streaming with n > 1 is not supported')

@@ -11,7 +11,7 @@ import pytest
 
 import strands
 from strands.agent import AgentMetadata
-from strands.models import CacheConfig, ModelCapabilities, ModelInfo
+from strands.models import CacheConfig
 from strands.models.litellm import LiteLLMModel
 from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -1530,79 +1530,97 @@ def test__stream_switch_content(model, new_data_type, prev_data_type, expected_c
     assert data_type == expected_data_type
 
 
-@pytest.mark.parametrize("model_id", ["gpt-6-sol", "gpt-5.6", "openai.gpt-6.1-terra", "us.openai.gpt-6-luna"])
-def test_format_request_turns_reasoning_off_when_the_model_takes_tools_only_without_it(
-    openai_client, model_id, messages, tool_specs
-):
-    model = OpenAIModel(model_id=model_id)
+_OPENAI_URL = "https://api.openai.com/v1/"
+_MANTLE_URL = "https://bedrock-mantle.us-east-1.api.aws/openai/v1/"
+_PROXY_URL = "http://localhost:4000/v1/"
 
+
+@pytest.fixture
+def stream_request(openai_client, agenerator, alist, messages, tool_specs):
+    """Stream once and return the request the client was sent."""
+
+    async def stream_request(base_url, model_id, params=None, with_tools=True):
+        if base_url:
+            openai_client.base_url = httpx.URL(base_url)
+        mock_delta = unittest.mock.Mock(content=None, tool_calls=None, reasoning_content=None)
+        mock_events = [
+            unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=mock_delta)]),
+            unittest.mock.Mock(usage=None),
+        ]
+        openai_client.chat.completions.create = unittest.mock.AsyncMock(return_value=agenerator(mock_events))
+        model = OpenAIModel(model_id=model_id, params=params)
+        await alist(model.stream(messages, tool_specs if with_tools else None))
+        return openai_client.chat.completions.create.call_args.kwargs
+
+    return stream_request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("base_url", "model_id"), [(_OPENAI_URL, "gpt-6-sol"), (_MANTLE_URL, "openai.gpt-6.1-terra")])
+async def test_stream_turns_reasoning_off_when_the_model_takes_tools_only_without_it(
+    stream_request, base_url, model_id
+):
     with pytest.warns(UserWarning, match=f"model_id=<{model_id}> .* sending reasoning_effort='none'"):
-        tru_request = model.format_request(messages, tool_specs)
+        tru_request = await stream_request(base_url, model_id)
 
     assert tru_request["reasoning_effort"] == "none"
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("model_id", "config", "with_tools", "exp_effort"),
+    ("base_url", "model_id", "params", "with_tools"),
     [
-        ("gpt-6-sol", {}, False, None),
-        ("gpt-6-sol", {"params": {"reasoning_effort": "low"}}, False, "low"),
-        ("gpt-6-sol", {"params": {"reasoning_effort": "none"}}, True, "none"),
-        ("gpt-6-astra", {}, False, None),
-        ("gpt-5.4", {}, True, None),
-        ("gpt-5.4", {"params": {"reasoning_effort": "low"}}, True, "low"),
-        (
-            "gpt-6-sol",
-            {"model_info": ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="supported"))},
-            True,
-            None,
-        ),
-        (
-            "m1",
-            {"model_info": ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="reasoning_off"))},
-            False,
-            None,
-        ),
+        (_OPENAI_URL, "gpt-6-sol", None, False),
+        (_OPENAI_URL, "gpt-6-sol", {"reasoning_effort": "none"}, True),
+        (_OPENAI_URL, "gpt-6-astra", None, False),
+        (_OPENAI_URL, "gpt-5.4", {"reasoning_effort": "low"}, True),
+        (_PROXY_URL, "gpt-6-sol", {"reasoning_effort": "low"}, True),
+        (_PROXY_URL, "gpt-6-astra", None, True),
+        (None, "gpt-6-astra", None, True),
     ],
 )
-def test_format_request_leaves_reasoning_effort_as_configured(
-    openai_client, model_id, config, with_tools, exp_effort, messages, tool_specs, recwarn
+async def test_stream_sends_the_request_as_formatted_when_no_tool_limit_applies(
+    stream_request, base_url, model_id, params, with_tools, messages, tool_specs, recwarn
 ):
-    model = OpenAIModel(model_id=model_id, **config)
+    tru_request = await stream_request(base_url, model_id, params, with_tools)
+    exp_request = OpenAIModel(model_id=model_id, params=params).format_request(
+        messages, tool_specs if with_tools else None
+    )
 
-    tru_request = model.format_request(messages, tool_specs if with_tools else None)
-
-    assert tru_request.get("reasoning_effort") == exp_effort
+    assert tru_request == exp_request
     assert len(recwarn) == 0
 
 
-def test_format_request_raises_when_reasoning_is_asked_for_with_tools_the_model_takes_only_without_it(
-    openai_client, messages, tool_specs
+@pytest.mark.asyncio
+async def test_stream_raises_when_reasoning_is_asked_for_with_tools_the_model_takes_only_without_it(
+    openai_client, stream_request
 ):
-    model = OpenAIModel(model_id="gpt-6-sol", params={"reasoning_effort": "low"})
+    exp_message = r"gpt-6-sol accepts tools .* params\[\"reasoning_effort\"\] is 'low'.* OpenAIResponsesModel"
 
-    with pytest.raises(ValueError, match="gpt-6-sol accepts tools .* reasoning_effort is 'low'.* OpenAIResponsesModel"):
-        model.format_request(messages, tool_specs)
+    with pytest.raises(ValueError, match=exp_message):
+        await stream_request(_OPENAI_URL, "gpt-6-sol", {"reasoning_effort": "low"})
+
+    openai_client.chat.completions.create.assert_not_called()
 
 
-@pytest.mark.parametrize("model_id", ["gpt-6-astra", "gpt-6.1-sol", "openai.gpt-6.1-sol"])
-@pytest.mark.parametrize("params", [None, {"reasoning_effort": "none"}])
-def test_format_request_raises_when_the_model_takes_no_tools_on_chat_completions(
-    openai_client, model_id, params, messages, tool_specs
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "model_id", "params"),
+    [
+        (_OPENAI_URL, "gpt-6-astra", None),
+        (_OPENAI_URL, "gpt-6.1-sol", {"reasoning_effort": "none"}),
+        (_MANTLE_URL, "openai.gpt-6.1-sol", None),
+    ],
+)
+async def test_stream_raises_when_the_model_takes_no_tools_on_chat_completions(
+    openai_client, stream_request, base_url, model_id, params
 ):
-    model = OpenAIModel(model_id=model_id, params=params)
+    exp_message = f"{re.escape(model_id)} does not accept tools .* Use OpenAIResponsesModel instead"
 
-    with pytest.raises(ValueError, match=f"{re.escape(model_id)} does not accept tools .* OpenAIResponsesModel"):
-        model.format_request(messages, tool_specs)
+    with pytest.raises(ValueError, match=exp_message):
+        await stream_request(base_url, model_id, params)
 
-
-def test_format_request_applies_the_tools_rule_from_a_model_info_override(openai_client, messages, tool_specs):
-    model = OpenAIModel(
-        model_id="m1", model_info=ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="unsupported"))
-    )
-
-    with pytest.raises(ValueError, match="m1 does not accept tools"):
-        model.format_request(messages, tool_specs)
+    openai_client.chat.completions.create.assert_not_called()
 
 
 def test_format_request_messages_excludes_reasoning_content():

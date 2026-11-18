@@ -18,9 +18,6 @@ from typing import Any, Literal, TypeAlias, TypeVar
 PromptCaching: TypeAlias = Literal["unsupported", "auto", "cache_points"]
 """How a model supports prompt caching."""
 
-ChatCompletionsTools: TypeAlias = Literal["supported", "reasoning_off", "unsupported"]
-"""Whether a model accepts tools on the OpenAI Chat Completions API: always, only with reasoning off, or never."""
-
 
 @dataclass(frozen=True, kw_only=True)
 class ModelCapabilities:
@@ -50,10 +47,6 @@ class ModelCapabilities:
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
             (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
-        chat_completions_tools: Whether the model accepts tools on the OpenAI Chat Completions API.
-            ``OpenAIModel`` reads it: for ``"reasoning_off"`` it sends ``reasoning_effort="none"`` with tools,
-            for ``"unsupported"`` it raises ``ValueError`` instead of sending them. Set ``"supported"`` in
-            ``model_info`` when an OpenAI-compatible endpoint has no such limit.
     """
 
     stateful: bool | None = None
@@ -62,7 +55,6 @@ class ModelCapabilities:
     native_structured_output: bool | None = None
     server_side_summary: bool | None = None
     temporary_messages: bool | None = None
-    chat_completions_tools: ChatCompletionsTools | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -141,7 +133,6 @@ _CAPABILITY_FIELDS = {
     "nativeStructuredOutput": "native_structured_output",
     "serverSideSummary": "server_side_summary",
     "temporaryMessages": "temporary_messages",
-    "chatCompletionsTools": "chat_completions_tools",
 }
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.
@@ -149,15 +140,6 @@ _PROMPT_CACHING_VALUES: dict[str, PromptCaching] = {
     "unsupported": "unsupported",
     "auto": "auto",
     "cachePoints": "cache_points",
-}
-_CHAT_COMPLETIONS_TOOLS_VALUES: dict[str, ChatCompletionsTools] = {
-    "supported": "supported",
-    "reasoningOff": "reasoning_off",
-    "unsupported": "unsupported",
-}
-_STRING_VALUES: dict[str, dict[str, Any]] = {
-    "prompt_caching": _PROMPT_CACHING_VALUES,
-    "chat_completions_tools": _CHAT_COMPLETIONS_TOOLS_VALUES,
 }
 
 # Bedrock appends a version to some ids (`claude-3-5-haiku-20241022-v1:0`); the base id carries the facts.
@@ -176,14 +158,17 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     if not isinstance(raw, dict):
         return section()
     known = {field_names[key]: value for key, value in raw.items() if key in field_names}
-    for field_name in _STRING_VALUES.keys() & known.keys():
-        value = known[field_name]
-        known[field_name] = _STRING_VALUES[field_name].get(value) if isinstance(value, str) else None
+    if "prompt_caching" in known:
+        value = known["prompt_caching"]
+        known["prompt_caching"] = _PROMPT_CACHING_VALUES.get(value) if isinstance(value, str) else None
     return section(**known)
 
 
-def _load_data() -> tuple[int, dict[str, ModelInfo]]:
-    """Read the shared model info data, re-casing its camelCase keys onto the record fields."""
+def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, str]]:
+    """Read the shared model info data, re-casing its camelCase keys onto the record fields.
+
+    The third item is ``capabilities.chatCompletionsTools`` by entry, which the SDK reads but does not type.
+    """
     package_copy = resources.files("strands.models").joinpath("model_info.json")
     try:
         raw = package_copy.read_text(encoding="utf-8")
@@ -203,7 +188,12 @@ def _load_data() -> tuple[int, dict[str, ModelInfo]]:
             )
             for model_id, entry in data["models"].items()
         }
-        return data["defaults"]["limits"]["contextWindow"], models
+        chat_completions_tools = {
+            model_id: entry["capabilities"]["chatCompletionsTools"]
+            for model_id, entry in data["models"].items()
+            if isinstance(entry.get("capabilities"), dict) and "chatCompletionsTools" in entry["capabilities"]
+        }
+        return data["defaults"]["limits"]["contextWindow"], models, chat_completions_tools
     except (ValueError, KeyError, TypeError) as error:
         raise ValueError(
             f"The model info data in the installed package is malformed: {package_copy}. "
@@ -212,7 +202,7 @@ def _load_data() -> tuple[int, dict[str, ModelInfo]]:
 
 
 # Context window limit (in tokens) assumed for a model whose window is unknown, and the known models.
-DEFAULT_CONTEXT_WINDOW_LIMIT, _MODELS = _load_data()
+DEFAULT_CONTEXT_WINDOW_LIMIT, _MODELS, _CHAT_COMPLETIONS_TOOLS = _load_data()
 
 
 def lookup_model(model_id: str) -> ModelInfo | None:
@@ -230,16 +220,36 @@ def lookup_model(model_id: str) -> ModelInfo | None:
     Returns:
         The entry, or None when the id is not in the data.
     """
+    key = _lookup_key(model_id)
+    return None if key is None else _MODELS[key]
+
+
+def _lookup_key(model_id: str) -> str | None:
+    """Find the key of the entry for a model id, by the rule :func:`lookup_model` documents."""
     candidate = model_id
     while True:
         unversioned = _VERSION_SUFFIX.sub("", candidate)
         for key in (candidate, unversioned, _DATE_SUFFIX.sub("", unversioned)):
             if key in _MODELS:
-                return _MODELS[key]
+                return key
         dot_index = candidate.find(".")
         if dot_index == -1:
             return None
         candidate = candidate[dot_index + 1 :]
+
+
+def lookup_chat_completions_tools(model_id: str) -> str | None:
+    """Report whether OpenAI's Chat Completions API accepts tools for a model.
+
+    Args:
+        model_id: The model id to look up.
+
+    Returns:
+        ``"reasoningOff"`` when only with reasoning off, ``"unsupported"`` when not at all, None when the
+        data does not say.
+    """
+    key = _lookup_key(model_id)
+    return None if key is None else _CHAT_COMPLETIONS_TOOLS.get(key)
 
 
 def lookup_model_info(model_id: object) -> ModelInfo:

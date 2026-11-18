@@ -6,7 +6,7 @@ This package includes an abstract base Model class along with concrete implement
 from typing import Any
 
 from . import bedrock, model, routing
-from ._model_info import ChatCompletionsTools, ModelCapabilities, ModelInfo, ModelLimits, PromptCaching
+from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, PromptCaching
 from ._summarize import SummarizeResult
 from .bedrock import BedrockModel
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
@@ -30,7 +30,6 @@ __all__ = [
     "CacheConfig",
     "CacheToolsConfig",
     "CandidateInput",
-    "ChatCompletionsTools",
     "ClassifierStrategy",
     "FallbackStrategy",
     "Model",
