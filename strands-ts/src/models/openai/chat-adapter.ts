@@ -460,7 +460,7 @@ function splitToolResultMedia(
     }
   }
 
-  return [textParts.join(''), imageParts]
+  return [textParts.join('\n'), imageParts]
 }
 
 /**

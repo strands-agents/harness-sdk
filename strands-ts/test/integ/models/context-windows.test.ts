@@ -39,7 +39,7 @@ const lookups = [
 describe.each(lookups)('$name context-window table', ({ prefix, name, skip, apiContextWindow }) => {
   const rows = Object.entries(modelInfo.models)
     .filter(([modelId]) => modelId.startsWith(prefix))
-    .map(([modelId, info]) => [modelId, info.limits?.contextWindow] as const)
+    .map(([modelId, info]) => [modelId, 'limits' in info ? info.limits.contextWindow : undefined] as const)
 
   describe.each(rows)('%s', (modelId, tableWindow) => {
     it.skipIf(skip)('matches the provider API', async (ctx) => {

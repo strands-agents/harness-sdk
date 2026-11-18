@@ -9,6 +9,7 @@ import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
 import { InvokeModelStage, type ExecuteToolContext } from '../middleware/index.js'
 import type { Plugin } from '../plugins/plugin.js'
+import { isLoadTools } from '../tools/load-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { tool } from '../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../tools/tool.js'
@@ -43,6 +44,19 @@ const FOREGROUND_TOOL_NAMES = new Set([
   'truncate_context',
   'pin_context',
 ])
+/** The manage tools {@link BackgroundTasks} created, recognized under any `manageToolName`. */
+const MANAGE_TOOLS = new WeakSet<Tool>()
+
+/**
+ * Whether a tool is the manage tool of a {@link BackgroundTasks}, under its default name or a `manageToolName`.
+ *
+ * @param tool - The tool to check
+ * @returns Whether {@link BackgroundTasks} created the tool
+ * @internal
+ */
+export function isManageTool(tool: Tool | undefined): boolean {
+  return tool !== undefined && MANAGE_TOOLS.has(tool)
+}
 
 /** @internal */
 export class BackgroundTasks implements Plugin {
@@ -93,6 +107,7 @@ export class BackgroundTasks implements Plugin {
         return { taskId: cancelled.taskId, status: cancelled.status }
       },
     })
+    MANAGE_TOOLS.add(this._manageTool)
   }
 
   getTools(): Tool[] {
@@ -381,6 +396,7 @@ export class BackgroundTasks implements Plugin {
       tool !== undefined &&
       tool.name !== this._manageTool.name &&
       !FOREGROUND_TOOL_NAMES.has(tool.name) &&
+      !isLoadTools(tool) &&
       !(tool instanceof AgentAsTool && tool.delegate)
     )
   }

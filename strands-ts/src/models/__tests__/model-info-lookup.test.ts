@@ -42,6 +42,7 @@ describe('shared model info data', () => {
         nativeStructuredOutput: true,
         serverSideSummary: true,
         temporaryMessages: true,
+        dynamicToolLoading: 'native',
       },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
@@ -54,7 +55,7 @@ describe('shared model info data', () => {
 
   it('returns the entry facts and nothing for unknown ids', () => {
     expect(lookupModelInfo('eu.anthropic.claude-sonnet-4-6')).toEqual({
-      capabilities: { promptCaching: 'cachePoints' },
+      capabilities: { promptCaching: 'cachePoints', dynamicToolLoading: 'native' },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
     for (const modelId of ['anthropic.claude-opus-5-5', 'global.anthropic.claude-fable-5-2', 'claude-mythos-5-2']) {
@@ -65,12 +66,13 @@ describe('shared model info data', () => {
           nativeStructuredOutput: true,
           serverSideSummary: true,
           temporaryMessages: true,
+          dynamicToolLoading: 'native',
         },
         limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       })
     }
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
-      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
+      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false, dynamicToolLoading: 'unsupported' },
       limits: { contextWindow: 300_000 },
     })
     expect(lookupModelInfo('claude-future-9')).toEqual({})
@@ -115,6 +117,7 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
+        else if (key === 'dynamicToolLoading') expect(['unsupported', 'native'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         // Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.

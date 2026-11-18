@@ -364,7 +364,9 @@ export interface BedrockModelConfig extends BaseModelConfig {
    * features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/
    * `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400
    * at request time, and compiles each new schema on first use, which can take minutes.
-   * Incompatible with citations for Anthropic models.
+   * Incompatible with citations for Anthropic models. Turns dynamic tool loading off, so `Offload.defer` and the
+   * `dynamicToolLoading` preset send every full spec: strict mode needs each tool's full input schema. A `modelInfo`
+   * override of `dynamicToolLoading` still wins.
    *
    * @see https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolSpecification.html
@@ -605,14 +607,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Turns `serverSideSummary` off, and reports how Converse caches the model where that differs from the shared
-   * model info; a `modelInfo` override still wins over both.
+   * Turns `serverSideSummary` off, reports how Converse caches the model where that differs from the shared model
+   * info, and turns dynamic tool loading off under `strictTools`; a `modelInfo` override still wins over all three.
+   * Strict mode needs each tool's full input schema, so it can't take a deferred tool as a stub.
    */
   override get modelInfo(): ModelInfo {
     return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
       bedrockCacheModelInfo(this.modelId ?? ''),
+      this._config.strictTools === true ? { capabilities: { dynamicToolLoading: 'unsupported' } } : undefined,
       this._config.modelInfo
     )
   }
@@ -1721,6 +1725,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           switch (content.type) {
             case 'unknownBlock':
               return []
+            // ModelProxy sends references as text unless a modelInfo override reports native deferral, which Converse
+            // lacks. Converse then gets every full spec, so the tool only needs naming.
+            case 'toolReferenceBlock':
+              return [{ text: `Loaded ${content.name}.` }]
             case 'textBlock':
               return [{ text: content.text }]
             case 'jsonBlock':

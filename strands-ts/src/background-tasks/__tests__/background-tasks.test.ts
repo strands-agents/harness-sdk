@@ -259,6 +259,23 @@ describe('BackgroundTasks', () => {
     }
   })
 
+  it('lets a user tool named load_tools run in the background', async () => {
+    const loadTools = tool({
+      name: 'load_tools',
+      description: 'Load data.',
+      inputSchema: z.object({}),
+      callback: () => 'done',
+    })
+    const agent = new Agent({
+      model: new MockMessageModel(),
+      tools: [loadTools],
+      backgroundTasks: { always: [loadTools] },
+      printer: false,
+    })
+
+    await expect(agent.initialize()).resolves.toBeUndefined()
+  })
+
   it('rejects conflicting tool policies', () => {
     const work = tool({
       name: 'work',
