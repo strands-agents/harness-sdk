@@ -94,13 +94,21 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
 
       const result = await decision.ask('state', questions)
 
-      expect(Object.keys(result.answers)).toEqual(ids)
-      expect(result.answers).toEqual(Object.fromEntries(ids.map((id) => [id, noul === 1 ? true : new Uncertain()])))
-      expect(result.metadata.probabilities).toEqual(
-        Object.fromEntries(ids.map((id) => [id, { true: noul, false: 1 - noul }]))
-      )
-      expect(result.metadata.confidence).toEqual(Object.fromEntries(ids.map((id) => [id, Math.abs(2 * noul - 1)])))
-      expect(Object.getPrototypeOf(result.answers)).toBe(Object.prototype)
+      expect(result).toEqual({
+        answers: Object.fromEntries(ids.map((id) => [id, noul === 1 ? true : new Uncertain()])),
+        usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 },
+        metadata: {
+          latencyMs: expect.any(Number),
+          providerName,
+          modelId: 'resolved-model',
+          probabilities: Object.fromEntries(ids.map((id) => [id, { true: noul, false: 1 - noul }])),
+          confidence: Object.fromEntries(ids.map((id) => [id, Math.abs(2 * noul - 1)])),
+        },
+      })
+      for (const map of [result.answers, result.metadata.probabilities, result.metadata.confidence]) {
+        expect(Object.keys(map!)).toEqual(ids)
+        expect(Object.getPrototypeOf(map)).toBe(Object.prototype)
+      }
     })
 
     it.each(['__proto__', 'constructor', 'toString'])('rejects a missing own answer for %s', async (id) => {
