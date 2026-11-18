@@ -779,16 +779,31 @@ async def _sandbox_fetch(sandbox, url: str = "https://example.com/", **kwargs) -
 
 
 class TestSandbox:
-    """``sandbox=True`` runs the request as curl through the host agent's sandbox."""
+    """``sandbox`` runs the request as curl through the host agent's sandbox, or through a bound one."""
 
-    @pytest.mark.parametrize("sandbox", ["sandbox", 1, None, NotASandboxLocalEnvironment()])
-    def test_non_bool_sandbox_is_rejected(self, sandbox):
-        with pytest.raises(ValueError, match="sandbox must be a bool, got .*; set the sandbox itself on the Agent"):
+    @pytest.mark.parametrize(
+        ("sandbox", "got"), [("sandbox", "str"), (1, "int"), (None, "NoneType"), (_Sandbox(), "_Sandbox")]
+    )
+    def test_sandbox_of_another_type_is_rejected(self, sandbox, got):
+        with pytest.raises(ValueError, match=f"sandbox must be a bool or a Sandbox, got {got}$"):
             make_web_fetch(sandbox=sandbox)
 
-    def test_client_with_sandbox_is_rejected(self):
-        with pytest.raises(ValueError, match="client cannot be combined with sandbox=True: drop client"):
-            make_web_fetch(client=httpx.AsyncClient(), sandbox=True)
+    @pytest.mark.parametrize("sandbox", [True, NotASandboxLocalEnvironment()], ids=["agent", "bound"])
+    def test_client_with_sandbox_is_rejected(self, sandbox):
+        with pytest.raises(ValueError, match="client cannot be combined with sandbox: drop client"):
+            make_web_fetch(client=httpx.AsyncClient(), sandbox=sandbox)
+
+    @pytest.mark.parametrize("tool_context", [None, _sandbox_ctx(_Sandbox())], ids=["no_context", "agent_sandbox"])
+    @pytest.mark.asyncio
+    async def test_bound_sandbox_is_used_instead_of_the_agents(self, tool_context, monkeypatch):
+        fake = _Sandbox(_curl_output(b"page", content_type="text/plain"))
+        bound = NotASandboxLocalEnvironment()
+        monkeypatch.setattr(bound, "execute", fake.execute)
+        tool = make_web_fetch(mode="markdown", sandbox=bound)
+        assert await tool(url="https://example.com/", tool_context=tool_context) == "page"
+        assert len(fake.commands) == 2
+        if tool_context is not None:
+            assert tool_context.agent.sandbox.commands == []
 
     @pytest.mark.parametrize("tool_context", [None, _make_ctx()], ids=["no_context", "agent_without_sandbox"])
     @pytest.mark.asyncio
@@ -858,7 +873,7 @@ class TestSandbox:
     )
     @pytest.mark.asyncio
     async def test_missing_command_says_what_the_sandbox_needs(self, sandbox, error):
-        with pytest.raises(WebFetchError, match=rf"Fetch failed: .*{error}\. sandbox=True needs curl, head and base64"):
+        with pytest.raises(WebFetchError, match=rf"Fetch failed: .*{error}\. the sandbox option needs curl, head"):
             await _sandbox_fetch(sandbox)
 
     @pytest.mark.parametrize(
@@ -980,7 +995,7 @@ class TestSandbox:
         sandbox = _Sandbox(_curl_output(b"page", content_type="text/plain"))
         sandbox.probe_output, sandbox.probe_exit_code = probe_output, probe_exit_code
         for _ in range(2):
-            with pytest.raises(WebFetchError, match="sandbox=True needs a POSIX shell or PowerShell in the sandbox"):
+            with pytest.raises(WebFetchError, match="the sandbox option needs a POSIX shell or PowerShell"):
                 await _sandbox_fetch(sandbox)
         assert sandbox.commands == [_SHELL_PROBE, _SHELL_PROBE]
 

@@ -9,7 +9,7 @@ import { SandboxAbortError, SandboxTimeoutError } from '../../sandbox/errors.js'
 import { tool } from '../../tools/tool-factory.js'
 import { htmlToMarkdown } from './extract.js'
 import { type MakeWebFetchOptions, WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DESCRIPTION_AGENTIC } from './types.js'
-import type { Sandbox } from '../../sandbox/base.js'
+import { Sandbox } from '../../sandbox/base.js'
 import type { ExecutionResult } from '../../sandbox/types.js'
 import type { ToolContext } from '../../tools/tool.js'
 
@@ -29,7 +29,8 @@ const TRAILER_BYTES = 1024
 const CURL_FILESIZE_EXCEEDED = 63
 const CURL_TIMED_OUT = 28
 const COMMAND_NOT_FOUND = 127
-const SANDBOX_NEEDS = '`sandbox: true` needs curl, head and base64 in a POSIX sandbox, or curl.exe under PowerShell'
+const SANDBOX_NEEDS =
+  'the `sandbox` option needs curl, head and base64 in a POSIX sandbox, or curl.exe under PowerShell'
 const NEWLINE = 0x0a
 
 const _HEADERS = {
@@ -77,13 +78,13 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
   if (!Number.isFinite(maxContentChars) || maxContentChars <= 0) {
     throw new Error(`maxContentChars must be a positive number, got ${maxContentChars}`)
   }
-  if (typeof sandbox !== 'boolean') {
-    // An object is named by its class: serializing a sandbox instance could throw or leak its fields.
+  if (typeof sandbox !== 'boolean' && !(sandbox instanceof Sandbox)) {
+    // An object is named by its class: serializing it could throw or leak its fields.
     const got =
       typeof sandbox === 'object' && sandbox !== null
         ? ((sandbox as object).constructor?.name ?? 'object')
         : JSON.stringify(sandbox)
-    throw new Error(`sandbox must be a boolean, got ${got}; set the sandbox itself on the Agent`)
+    throw new Error(`sandbox must be a boolean or a Sandbox, got ${got}`)
   }
   const limits = { maxBytes, maxContentChars, sandbox }
 
@@ -151,10 +152,10 @@ export const webFetch = makeWebFetch()
 /** Fetch `url` and return its content: markup as markdown, cut to `maxContentChars`. */
 async function fetchContent(
   url: string,
-  limits: { maxBytes: number; maxContentChars: number; sandbox: boolean },
+  limits: { maxBytes: number; maxContentChars: number; sandbox: boolean | Sandbox },
   context: ToolContext | undefined
 ): Promise<string> {
-  const sandbox = limits.sandbox ? agentSandbox(context) : undefined
+  const sandbox = limits.sandbox === true ? agentSandbox(context) : limits.sandbox || undefined
   const [contentType, raw] = await fetchOnce(url, limits.maxBytes, context?.cancelSignal ?? null, sandbox)
   const isMarkup = contentType.toLowerCase().includes('html') || contentType.toLowerCase().includes('xml')
   const content = isMarkup ? await htmlToMarkdown(raw) : raw
@@ -349,7 +350,7 @@ async function shellOf(sandbox: Sandbox, signal: AbortSignal | null): Promise<'s
     const result = await sandbox.execute(SHELL_PROBE, { timeout: TIMEOUT_SECONDS, signal: signal ?? undefined })
     const edition = result.stdout.trim()
     if (result.exitCode !== 0 || !['', 'Desktop', 'Core'].includes(edition)) {
-      throw new Error('web_fetch: `sandbox: true` needs a POSIX shell or PowerShell in the sandbox')
+      throw new Error('web_fetch: the `sandbox` option needs a POSIX shell or PowerShell in the sandbox')
     }
     shell = edition ? 'powershell' : 'sh'
     shells.set(sandbox, shell)

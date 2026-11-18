@@ -1,4 +1,5 @@
 import type { Model } from '../../models/model.js'
+import type { Sandbox } from '../../sandbox/base.js'
 
 /**
  * Input parameters for the markdown mode web fetch tool.
@@ -48,7 +49,8 @@ export interface MakeWebFetchOptions {
   mode?: 'markdown' | 'agentic'
   /**
    * When `true`, the request runs as `curl` through the host agent's sandbox and is confined only as
-   * far as that sandbox is. Defaults to `false`: global `fetch` from the agent process.
+   * far as that sandbox is. A `Sandbox` instance is used in place of the agent's. Defaults to `false`:
+   * global `fetch` from the agent process.
    */
-  sandbox?: boolean
+  sandbox?: boolean | Sandbox
 }

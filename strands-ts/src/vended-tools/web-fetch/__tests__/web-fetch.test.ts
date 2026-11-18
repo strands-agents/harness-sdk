@@ -6,7 +6,7 @@ import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { SandboxAbortError, SandboxTimeoutError } from '../../../sandbox/errors.js'
 import { encodeBase64 } from '../../../types/media.js'
-import type { Sandbox } from '../../../sandbox/base.js'
+import { Sandbox } from '../../../sandbox/base.js'
 import type { ExecutionResult } from '../../../sandbox/types.js'
 import { makeWebFetch, webFetch, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONTENT_CHARS } from '../web-fetch.js'
 import { WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DESCRIPTION_AGENTIC } from '../types.js'
@@ -106,18 +106,18 @@ describe('webFetch tool', () => {
       ['a string', 'sandbox', '"sandbox"'],
       ['a number', 1, '1'],
       ['null', null, 'null'],
-      ['a sandbox instance', new (class CustomSandbox {})(), 'CustomSandbox'],
+      ['an object that is not a Sandbox', new (class NotASandbox {})(), 'NotASandbox'],
       [
-        'a sandbox instance that refers to itself',
-        new (class CircularSandbox {
+        'an object that refers to itself',
+        new (class Circular {
           self = this
         })(),
-        'CircularSandbox',
+        'Circular',
       ],
       ['an object with no prototype', Object.create(null), 'object'],
     ])('rejects %s as sandbox', (_name, sandbox, got) => {
       expect(() => makeWebFetch({ sandbox: sandbox as unknown as boolean })).toThrow(
-        `sandbox must be a boolean, got ${got}; set the sandbox itself on the Agent`
+        `sandbox must be a boolean or a Sandbox, got ${got}`
       )
     })
 
@@ -484,6 +484,23 @@ describe('webFetch tool', () => {
       return makeWebFetch(options).invoke({ url }, sandboxContext(sandbox))
     }
 
+    it.each([undefined, sandboxContext(new FakeSandbox())])(
+      "uses a bound sandbox instead of the agent's (%#)",
+      async (context) => {
+        globalThis.fetch = vi.fn()
+        const fake = new FakeSandbox({ output: curlOutput('page', 'text/plain') })
+        // A real Sandbox by type whose only working method is the fake's execute.
+        const bound: Sandbox = Object.assign(Object.create(Sandbox.prototype), {
+          execute: (command: string, options?: unknown) => fake.execute(command, options),
+        })
+        const tool = makeWebFetch({ mode: 'markdown', sandbox: bound })
+        expect(await tool.invoke({ url: 'https://example.com/' }, context)).toBe('page')
+        expect(fake.commands).toHaveLength(2)
+        expect(globalThis.fetch).not.toHaveBeenCalled()
+        if (context) expect((context.agent.sandbox as unknown as FakeSandbox).commands).toStrictEqual([])
+      }
+    )
+
     it.each([undefined, makeContext()])('requires a sandbox (%#)', async (context) => {
       globalThis.fetch = vi.fn()
       await expect(
@@ -560,7 +577,7 @@ describe('webFetch tool', () => {
       ],
     ])('says what the sandbox needs when %s is missing', async (_name, response, error) => {
       await expect(sandboxFetch(new FakeSandbox(response))).rejects.toThrow(
-        `${error}. \`sandbox: true\` needs curl, head and base64 in a POSIX sandbox, or curl.exe under PowerShell`
+        `${error}. the \`sandbox\` option needs curl, head and base64 in a POSIX sandbox, or curl.exe under PowerShell`
       )
     })
 

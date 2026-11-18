@@ -32,9 +32,10 @@ pre-configured one with custom timeouts, redirects, proxies, or caching.
 Set <Syntax py="sandbox=True" ts="sandbox: true" /> to run the request as `curl`
 through the agent's sandbox instead. The request is then confined only as far
 as that sandbox is: with no sandbox configured, the agent's default local
-environment runs `curl` on the host. The sandbox must provide `curl`, `head`,
-and `base64` when its shell is POSIX, or `curl.exe` when it is PowerShell. In
-Python, `client` cannot be combined with it.
+environment runs `curl` on the host. Pass a sandbox instance to use that
+sandbox in place of the agent's, as the shell tool does. The sandbox must
+provide `curl`, `head`, and `base64` when its shell is POSIX, or `curl.exe`
+when it is PowerShell. In Python, `client` cannot be combined with it.
 
 On both paths the request is stopped 30 seconds after it starts, however much
 of the response has arrived. A `client` you supply keeps its own timeout

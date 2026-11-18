@@ -86,15 +86,15 @@ The default tool, produced by `makeWebFetch()` with `mode: 'agentic'` and defaul
 | `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                                 |
 | `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                              |
 | `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's `auxModel` when not provided. |
-| `sandbox`         | `boolean`                 | `false`       | Run the request through the agent's sandbox (see below).                                     |
+| `sandbox`         | `boolean \| Sandbox`      | `false`       | Run the request through the agent's sandbox, or through the one passed (see below).          |
 
-Throws if `maxBytes` is not a positive integer, `maxContentChars` is not a positive number, or `sandbox` is not a boolean.
+Throws if `maxBytes` is not a positive integer, `maxContentChars` is not a positive number, or `sandbox` is neither a boolean nor a `Sandbox`.
 
 ### Where the request runs
 
 By default the request is sent with global `fetch` from the agent process and does not go through the agent's sandbox.
 
-With `sandbox: true` the request runs as `curl` through the host agent's sandbox, so it is confined only as far as that sandbox is. With no sandbox configured, the agent's default local environment runs `curl` on the host. The sandbox must provide `curl`, `head`, and `base64` when its shell is POSIX, or `curl.exe` when it is PowerShell.
+With `sandbox: true` the request runs as `curl` through the host agent's sandbox, so it is confined only as far as that sandbox is. With no sandbox configured, the agent's default local environment runs `curl` on the host. Pass a `Sandbox` instance to use that sandbox in place of the agent's. The sandbox must provide `curl`, `head`, and `base64` when its shell is POSIX, or `curl.exe` when it is PowerShell.
 
 Both follow redirects, reject bodies over `maxBytes`, and stop the request 30 seconds after it starts.
 

@@ -17,6 +17,7 @@ The factory's ``sandbox`` parameter selects where the HTTP request runs:
   caching, proxies, redirects, and connection pooling.
 * ``True``: as ``curl`` through the host agent's sandbox, so the request is
   confined only as far as that sandbox is.
+* A ``Sandbox`` instance: as ``curl`` through that sandbox, as ``make_shell`` binds one.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from typing import TYPE_CHECKING, Literal
 import httpx
 
 from ...agent.invocation_context import _create_auxiliary_invocation_context
+from ...sandbox.base import Sandbox
 from ...sandbox.errors import SandboxTimeoutError
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
@@ -45,7 +47,6 @@ class WebFetchError(ValueError):
 
 if TYPE_CHECKING:
     from ...models.model import Model
-    from ...sandbox.base import Sandbox
     from ...sandbox.types import ExecutionResult
     from ...tools.decorator import DecoratedFunctionTool
 
@@ -67,7 +68,7 @@ _SCHEME_AND_HOST = re.compile(r"^((?:[^/?#]*//[^/?#]*)?)")
 _SHELL_PROBE = 'echo "${PSEdition}"'
 # Keyed by ``id`` so unhashable and value-equal sandboxes each get their own entry.
 _shells: dict[int, Literal["sh", "powershell"]] = {}
-_SANDBOX_NEEDS = "sandbox=True needs curl, head and base64 in a POSIX sandbox, or curl.exe under PowerShell"
+_SANDBOX_NEEDS = "the sandbox option needs curl, head and base64 in a POSIX sandbox, or curl.exe under PowerShell"
 # Room for the content type and exit status that follow the body in the curl output.
 _TRAILER_BYTES = 1024
 _CURL_FILESIZE_EXCEEDED = 63
@@ -92,7 +93,7 @@ def make_web_fetch(
     client: httpx.AsyncClient | None = None,
     model: Model | None = None,
     mode: Literal["markdown", "agentic"] = "agentic",
-    sandbox: bool = False,
+    sandbox: Sandbox | bool = False,
 ) -> DecoratedFunctionTool:
     """Create a web fetch tool.
 
@@ -110,13 +111,14 @@ def make_web_fetch(
             provided, the tool uses it directly and will not close it.
             When ``None``, a new client is created per request with
             ``follow_redirects=True`` and the request is stopped after 30 seconds in total.
-            Cannot be combined with ``sandbox=True``.
+            Cannot be combined with ``sandbox``.
         model: Optional model for the analyst. Only used when ``mode='agentic'``.
             Resolution order: this ``model`` > ``agent.aux_model`` > ``agent.model`` of the host
             agent; ``WebFetchError`` if none is available.
         mode: Extraction mode. Defaults to ``agentic``.
         sandbox: When ``True``, the request runs as ``curl`` through the host agent's sandbox
-            and is confined only as far as that sandbox is. Defaults to ``False``: the request
+            and is confined only as far as that sandbox is. A ``Sandbox`` instance is used
+            in place of the agent's. Defaults to ``False``: the request
             is sent from the agent process.
 
     Returns:
@@ -135,10 +137,10 @@ def make_web_fetch(
         raise ValueError(f"max_content_chars must be positive, got {max_content_chars}")
     if mode not in ("markdown", "agentic"):
         raise ValueError(f"mode must be 'markdown' or 'agentic', got {mode!r}")
-    if not isinstance(sandbox, bool):
-        raise ValueError(f"sandbox must be a bool, got {sandbox!r}; set the sandbox itself on the Agent")
-    if sandbox and client is not None:
-        raise ValueError("client cannot be combined with sandbox=True: drop client, or leave sandbox=False to use it")
+    if not isinstance(sandbox, (bool, Sandbox)):
+        raise ValueError(f"sandbox must be a bool or a Sandbox, got {type(sandbox).__name__}")
+    if sandbox is not False and client is not None:
+        raise ValueError("client cannot be combined with sandbox: drop client, or leave sandbox=False to use it")
     resolved_description = description or (
         WEB_FETCH_DESCRIPTION_MARKDOWN if mode == "markdown" else WEB_FETCH_DESCRIPTION_AGENTIC
     )
@@ -236,7 +238,7 @@ async def _fetch_content(
     max_bytes: int,
     max_content_chars: int,
     client: httpx.AsyncClient | None,
-    sandbox: bool,
+    sandbox: Sandbox | bool,
 ) -> str:
     """Fetch ``url`` and return its content: markup as markdown, cut to ``max_content_chars``."""
     cancel_signal = tool_context.cancel_signal if tool_context else None
@@ -245,9 +247,9 @@ async def _fetch_content(
         max_bytes=max_bytes,
         client=client,
         cancel_signal=cancel_signal,
-        sandbox=_agent_sandbox(tool_context) if sandbox else None,
+        sandbox=_agent_sandbox(tool_context) if sandbox is True else sandbox or None,
     )
-    if client is None and not sandbox:
+    if client is None and sandbox is False:
         # httpx times each read, so the tool's own client also gets a total deadline; curl has --max-time.
         request = asyncio.wait_for(request, _TIMEOUT_SECONDS)
     try:
@@ -421,7 +423,7 @@ async def _shell_of(sandbox: Sandbox) -> Literal["sh", "powershell"]:
         result = await sandbox.execute(_SHELL_PROBE, timeout=_TIMEOUT_SECONDS)
         edition = result.stdout.strip()
         if result.exit_code != 0 or edition not in ("", "Desktop", "Core"):
-            raise WebFetchError("Fetch failed: sandbox=True needs a POSIX shell or PowerShell in the sandbox")
+            raise WebFetchError("Fetch failed: the sandbox option needs a POSIX shell or PowerShell in the sandbox")
         _shells[key] = "powershell" if edition else "sh"
         # The entry goes when the sandbox does, before its id can be reused.
         weakref.finalize(sandbox, _shells.pop, key, None)
