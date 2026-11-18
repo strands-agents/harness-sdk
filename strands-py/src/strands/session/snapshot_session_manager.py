@@ -21,6 +21,7 @@ in one atomic blob and are the recommended path for new agents.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -479,9 +480,10 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
 
         Raises:
             Exception: A storage error, raised after ``snapshot_latest`` and every immutable snapshot
-                were attempted. If listing the snapshots fails, none is attempted. A snapshot that
-                failed keeps the original content; calling this method again with the same message
-                retries it.
+                were attempted: the ``snapshot_latest`` error if that write failed, otherwise the
+                first immutable snapshot error. Each failure is logged. If listing the snapshots
+                fails, none is attempted. A snapshot that failed keeps the original content; calling
+                this method again with the same message retries it.
         """
         run_async(lambda: self._flush_redaction(redact_message, agent))
 
@@ -630,9 +632,19 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         """Overwrite ``snapshot_latest``, then rewrite the message in every immutable snapshot that holds it."""
         try:
             await self._save_latest(agent)
-        finally:
-            # A failed latest write must not leave the immutable snapshots unredacted.
-            await self._redact_immutable_snapshots(redact_message, agent)
+        except Exception as error:
+            logger.warning(
+                "agent_id=<%s>, session_id=<%s>, error=<%s> | failed to flush a redaction to snapshot_latest",
+                agent.agent_id,
+                self.session_id,
+                error,
+            )
+            # A failed latest write must not leave the immutable snapshots unredacted. Its error is
+            # the one raised; a failed immutable snapshot is logged.
+            with contextlib.suppress(Exception):
+                await self._redact_immutable_snapshots(redact_message, agent)
+            raise
+        await self._redact_immutable_snapshots(redact_message, agent)
 
     async def _redact_immutable_snapshots(self, redact_message: Message, agent: LocalAgent) -> None:
         """Rewrite the message in every immutable snapshot that holds it, then raise the first storage error."""
@@ -653,12 +665,14 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             for snapshot_id, result in zip(snapshot_ids, results, strict=True)
             if isinstance(result, BaseException)
         ]
-        for snapshot_id, _ in errors:
+        for snapshot_id, error in errors:
             logger.warning(
-                "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s> | failed to flush a redaction to immutable snapshot",
+                "agent_id=<%s>, session_id=<%s>, snapshot_id=<%s>, error=<%s> | failed to flush a redaction to "
+                "immutable snapshot",
                 agent.agent_id,
                 self.session_id,
                 snapshot_id,
+                error,
             )
         if errors:
             raise errors[0][1]

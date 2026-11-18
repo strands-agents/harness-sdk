@@ -1371,7 +1371,8 @@ def test_redaction_storage_error_fails_invocation_after_other_rewrites(storage, 
         storage.write = write_failing_on_first_checkpoint  # type: ignore[method-assign]
 
     agent.add_hook(checkpoint, BeforeModelCallEvent)
-    with caplog.at_level(logging.WARNING, logger="strands.session.snapshot_session_manager"):
+    manager_logger = "strands.session.snapshot_session_manager"
+    with caplog.at_level(logging.WARNING, logger=manager_logger):
         with pytest.raises(OSError, match="disk full"):
             agent("sensitive prompt")
     storage.write = write  # type: ignore[method-assign]
@@ -1383,7 +1384,12 @@ def test_redaction_storage_error_fails_invocation_after_other_rewrites(storage, 
     # The two checkpoints were saved back to back, so they differ only in their timestamp.
     exp_snapshot = _redacted_snapshot(failed_data, 0) | {"created_at": ANY}
     assert json.loads(rewritten_data) == exp_snapshot
-    assert f"snapshot_id=<{snapshot_ids[0]}> | failed to flush a redaction to immutable snapshot" in caplog.text
+    tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
+    exp_warnings = [
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<disk full>"
+        " | failed to flush a redaction to immutable snapshot"
+    ]
+    assert tru_warnings == exp_warnings
 
     manager.redact_latest_message(agent.messages[0], agent)
 
@@ -1419,6 +1425,37 @@ def test_redaction_latest_write_error_still_rewrites_immutable_snapshots(storage
     [snapshot_id] = asyncio.run(manager.list_snapshot_ids(agent))
     tru_snapshots = [json.loads(_immutable_snapshot_data(storage, snapshot_id))]
     assert tru_snapshots == exp_snapshots
+
+
+def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage, caplog):
+    """When the ``snapshot_latest`` write and a checkpoint rewrite both fail, the latest error is the one raised."""
+    manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="trigger")
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    snapshot_ids = []
+
+    async def write_failing(key, data):
+        raise OSError("latest write failed" if key == _on_disk_key("s1", "a1") else "checkpoint write failed")
+
+    async def checkpoint(event):
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+        storage.write = write_failing  # type: ignore[method-assign]
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    manager_logger = "strands.session.snapshot_session_manager"
+    with caplog.at_level(logging.WARNING, logger=manager_logger):
+        with pytest.raises(OSError, match="latest write failed"):
+            agent("sensitive prompt")
+
+    tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
+    exp_warnings = [
+        "agent_id=<a1>, session_id=<s1>, error=<latest write failed> | failed to flush a redaction to snapshot_latest",
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<checkpoint write failed>"
+        " | failed to flush a redaction to immutable snapshot",
+    ]
+    assert tru_warnings == exp_warnings
 
 
 def test_redaction_rewrites_every_copy_of_message(storage):
