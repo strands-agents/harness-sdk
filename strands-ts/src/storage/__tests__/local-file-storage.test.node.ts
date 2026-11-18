@@ -97,31 +97,39 @@ describe('LocalFileStorage', () => {
       await writeFile(outsidePath, 'outside')
     })
 
-    it('creates the storage root, its directories and its files accessible to the owner only', async () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+      vi.mocked(lstat).mockReset()
+      vi.mocked(writeFile).mockReset()
+    })
+
+    it('creates directories and files accessible to the owner only and leaves existing directories alone', async () => {
+      const baseMode = await mode(baseDir)
       await storage.write('a/b/key.txt', data)
 
-      for (const dir of [rootDir, join(rootDir, 'a'), join(rootDir, 'a', 'b')]) {
+      for (const dir of [join(baseDir, 'parent'), rootDir, join(rootDir, 'a'), join(rootDir, 'a', 'b')]) {
         expect({ dir, mode: await mode(dir) }).toEqual({ dir, mode: 0o700 })
       }
       expect(await mode(join(rootDir, 'a', 'b', 'key.txt'))).toBe(0o600)
-      expect(await mode(join(baseDir, 'parent'))).toBe(await mode(baseDir))
+      expect(await mode(baseDir)).toBe(baseMode)
     })
 
-    it('creates the storage root accessible to the owner only when the first write is namespaced', async () => {
-      await storage.namespace('a').namespace('b').write('key.txt', data)
-
-      expect(await mode(rootDir)).toBe(0o700)
-      expect(await mode(join(baseDir, 'parent'))).toBe(await mode(baseDir))
-    })
-
-    it('refuses to read through a symbolic link', async () => {
+    it('refuses to read through a symbolic link and logs it once', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const linkPath = join(rootDir, 'key.txt')
       await mkdir(rootDir, { recursive: true })
-      await symlink(outsidePath, join(rootDir, 'key.txt'))
+      await symlink(outsidePath, linkPath)
 
-      await expect(storage.read('key.txt')).rejects.toMatchObject({
+      const error = await storage.read('key.txt').catch((caught: unknown) => caught)
+      await expect(storage.read('key.txt')).rejects.toThrow()
+
+      expect(error).toMatchObject({
         name: 'StorageError',
         message: "Refusing to read 'key.txt' through a symbolic link in local storage",
       })
+      // The check before the read raises without a cause; the O_NOFOLLOW refusal carries ELOOP.
+      expect((error as Error).cause).toBeUndefined()
+      expect(warn.mock.calls).toEqual([[`path=<${linkPath}> | refusing to read symbolic link in local storage`]])
     })
 
     it('refuses to read through a symbolic link swapped in after the check', async () => {
