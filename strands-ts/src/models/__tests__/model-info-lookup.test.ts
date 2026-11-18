@@ -82,6 +82,7 @@ describe('shared model info data', () => {
     ['us.openai.gpt-6-luna', 'reasoningOff'],
     ['gpt-6-astra', 'unsupported'],
     ['openai.gpt-6.1-sol', 'unsupported'],
+    ['openai.gpt-6.2-sol', 'unsupported'],
     ['gpt-5.4', undefined],
     ['unknown-model', undefined],
   ])('reads the chatCompletionsTools fact for %s from the entry the id resolves to', (modelId, support) => {

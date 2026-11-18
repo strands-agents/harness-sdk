@@ -201,6 +201,7 @@ def test_prompt_caching_value_map_covers_exactly_the_prompt_caching_type():
         ("us.openai.gpt-6-luna", "reasoningOff"),
         ("gpt-6-astra", "unsupported"),
         ("openai.gpt-6.1-sol", "unsupported"),
+        ("openai.gpt-6.2-sol", "unsupported"),
         ("gpt-5.4", None),
         ("unknown-model", None),
     ],
