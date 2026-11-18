@@ -12,6 +12,7 @@ import {
   createTestSnapshots,
 } from '../../__fixtures__/mock-storage-provider.js'
 import type { SnapshotLocation } from '../storage.js'
+import type { Snapshot } from '../types.js'
 
 const SCOPE_ID = 'test-agent'
 
@@ -122,7 +123,7 @@ describe('FileStorage', () => {
 
     it('rejects only the save whose write fails while an earlier rename is pending', async () => {
       const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
-      const snapshots = createTestSnapshots(2)
+      const snapshots = createTestSnapshots(3)
       const error = new Error('Write failed')
       const renameFile = fs.rename.bind(fs)
       let finishFirstRename!: () => void
@@ -132,25 +133,31 @@ describe('FileStorage', () => {
         })
         await renameFile(...args)
       })
+      const save = (snapshot: Snapshot): Promise<void> =>
+        storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
       const unhandledRejection = vi.fn()
       process.on('unhandledRejection', unhandledRejection)
 
-      const first = storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: snapshots[0]! })
-      await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1))
-      const writeFile = vi.spyOn(fs, 'writeFile').mockRejectedValueOnce(error)
-      const second = storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: snapshots[1]! })
-      await vi.waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1))
-      await new Promise((resolve) => setTimeout(resolve))
-      finishFirstRename()
-      const results = await Promise.allSettled([first, second])
-      process.off('unhandledRejection', unhandledRejection)
+      try {
+        const first = save(snapshots[0]!)
+        await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1))
+        const writeFile = vi.spyOn(fs, 'writeFile').mockRejectedValueOnce(error)
+        const second = save(snapshots[1]!)
+        await vi.waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1))
+        const third = save(snapshots[2]!)
+        await new Promise((resolve) => setTimeout(resolve))
+        finishFirstRename()
 
-      expect(results).toEqual([
-        { status: 'fulfilled', value: undefined },
-        { status: 'rejected', reason: expect.objectContaining({ name: 'SessionError', cause: error }) },
-      ])
+        expect(await Promise.allSettled([first, second, third])).toEqual([
+          { status: 'fulfilled', value: undefined },
+          { status: 'rejected', reason: expect.objectContaining({ name: 'SessionError', cause: error }) },
+          { status: 'fulfilled', value: undefined },
+        ])
+      } finally {
+        process.off('unhandledRejection', unhandledRejection)
+      }
       expect(unhandledRejection).not.toHaveBeenCalled()
-      expect(await storage.loadSnapshot({ location })).toEqual(snapshots[0])
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots[2])
     })
 
     it('keeps the save called last when the earlier save has the larger payload', async () => {

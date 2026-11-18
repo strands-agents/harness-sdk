@@ -184,7 +184,7 @@ export class FileStorage implements SnapshotStorage {
       const uniquePath = `${path}.${randomUUID()}.tmp`
       tmpPath = uniquePath
       const target = resolve(path)
-      // No I/O is awaited before this save takes its place in the queue, which keeps call order.
+      // Only the imports above are awaited before this save takes its place in the queue, which keeps call order.
       const written = (async (): Promise<void> => {
         if (await this._isSymlink(path)) {
           throw new SessionError(`Refusing to write to symbolic link at ${path}`)
