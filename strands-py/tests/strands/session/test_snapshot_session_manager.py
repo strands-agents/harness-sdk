@@ -1207,13 +1207,15 @@ def test_redaction_rewrites_immutable_snapshots_holding_message(storage):
     model = MockedModelProvider(
         [
             {"role": "assistant", "content": [{"text": "hi"}]},
+            {"role": "assistant", "content": [{"text": "hi again"}]},
             {"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."},
         ]
     )
     agent = Agent(model=model, session_manager=manager, agent_id="a1")
     agent("hello")
-    [earlier_id] = asyncio.run(manager.list_snapshot_ids(agent))
-    exp_earlier_data = _immutable_snapshot_data(storage, earlier_id)
+    agent("again")
+    earlier_ids = asyncio.run(manager.list_snapshot_ids(agent))
+    exp_earlier_data = [_immutable_snapshot_data(storage, snapshot_id) for snapshot_id in earlier_ids]
 
     async def checkpoint(event):
         await manager.save_snapshot(event.agent, is_latest=False)
@@ -1221,20 +1223,26 @@ def test_redaction_rewrites_immutable_snapshots_holding_message(storage):
     agent.add_hook(checkpoint, MessageAddedEvent)
     agent.add_hook(checkpoint, BeforeModelCallEvent)
     agent.state.set("step", "before model call")
+    storage.read = AsyncMock(wraps=storage.read)  # type: ignore[method-assign]
     agent("sensitive prompt")
     agent.state.set("step", "after model call")
 
-    _, *holder_ids = asyncio.run(manager.list_snapshot_ids(agent))
+    # Two checkpoints hold the message at redaction time; the newest one without it ends the walk.
+    tru_read_count = sum("immutable_history" in call.args[0] for call in storage.read.call_args_list)
+    exp_read_count = 3
+    assert tru_read_count == exp_read_count
+
+    holder_ids = asyncio.run(manager.list_snapshot_ids(agent))[len(earlier_ids) :]
     assert len(holder_ids) == 4  # user message added, before model call, assistant message added, trigger
     for snapshot_id in holder_ids:
         assert b"sensitive prompt" not in _immutable_snapshot_data(storage, snapshot_id)
-    tru_earlier_data = _immutable_snapshot_data(storage, earlier_id)
+    tru_earlier_data = [_immutable_snapshot_data(storage, snapshot_id) for snapshot_id in earlier_ids]
     assert tru_earlier_data == exp_earlier_data
 
     asyncio.run(manager.restore_snapshot(agent, snapshot_id=holder_ids[0]))
-    tru_contents = [message["content"] for message in agent.messages]
-    exp_contents = [[{"text": "hello"}], [{"text": "hi"}], [{"text": "REDACTED"}]]
-    assert tru_contents == exp_contents
+    tru_texts = [message["content"][0]["text"] for message in agent.messages]
+    exp_texts = ["hello", "hi", "again", "hi again", "REDACTED"]
+    assert tru_texts == exp_texts
     assert agent.state.get("step") == "before model call"
 
 
@@ -1296,6 +1304,55 @@ def test_redaction_skips_unreadable_immutable_snapshot(storage, caplog):
     assert "skipping unreadable immutable snapshot" in caplog.text
     [holder_id, _] = asyncio.run(manager.list_snapshot_ids(agent))
     assert b"sensitive prompt" not in _immutable_snapshot_data(storage, holder_id)
+
+
+def test_redaction_skips_immutable_snapshot_deleted_during_walk(storage):
+    """A checkpoint that disappears after being listed is skipped and older ones are still rewritten."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    snapshot_ids = []
+
+    async def checkpoint(event):
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+
+    read = storage.read
+
+    async def read_without_newest(key):
+        return None if snapshot_ids[1] in key else await read(key)
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    storage.read = read_without_newest  # type: ignore[method-assign]
+    result = agent("sensitive prompt")
+    storage.read = read  # type: ignore[method-assign]
+
+    assert result.stop_reason == "guardrail_intervened"
+    assert b"sensitive prompt" not in _immutable_snapshot_data(storage, snapshot_ids[0])
+    assert b"sensitive prompt" in _immutable_snapshot_data(storage, snapshot_ids[1])
+
+
+def test_redaction_without_tracking_id_rewrites_latest_only(storage):
+    """A redacted message with no tracking id cannot be matched, so immutable snapshots are left alone."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    agent = Agent(
+        model=_model("hi"),
+        session_manager=manager,
+        agent_id="a1",
+        messages=[{"role": "user", "content": [{"text": "sensitive prompt"}]}],
+    )
+    snapshot_id = asyncio.run(manager.save_snapshot(agent, is_latest=False))
+    exp_data = _immutable_snapshot_data(storage, snapshot_id)
+
+    agent.messages[-1]["content"] = [{"text": "REDACTED"}]
+    manager.redact_latest_message(agent.messages[-1], agent)
+
+    tru_data = _immutable_snapshot_data(storage, snapshot_id)
+    assert tru_data == exp_data
+    tru_latest_data = asyncio.run(storage.read(_on_disk_key("s1", "a1")))
+    assert b"REDACTED" in tru_latest_data and b"sensitive prompt" not in tru_latest_data
 
 
 def test_snapshot_trigger_returning_false_appends_nothing(storage):
