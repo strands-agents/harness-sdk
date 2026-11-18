@@ -15,8 +15,8 @@ import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
 import { isProtocolBlock } from './strategies/offload/target.js'
 import { isOffloaded } from './placeholder.js'
-import { parseWindowKey, windowsOf } from '../vended-plugins/context-offloader/search.js'
-import type { LineWindow } from '../vended-plugins/context-offloader/search.js'
+import { parseWindowKey, windowsOf } from './query-search.js'
+import type { LineWindow } from './query-search.js'
 
 /** @internal */
 export const STASH_PREFIX = 'context'
