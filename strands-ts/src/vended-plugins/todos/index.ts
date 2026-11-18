@@ -2,7 +2,7 @@
  * Todos plugin for Strands Agents.
  *
  * Provides the {@link Todos} plugin, which gives the agent a `todo_write` tool and re-surfaces the
- * current task list before each model call so a multi-step plan stays in view.
+ * current task list at intervals so a multi-step plan stays in view.
  *
  * @example
  * ```typescript
