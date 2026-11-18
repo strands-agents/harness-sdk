@@ -431,6 +431,23 @@ describe('TurnProjector', () => {
     expect(projectMessages(messages)[0]?.prompt).toBe(typed)
   })
 
+  it.each(['', 'unrelated', 'What changed?'])(
+    'still upgrades a Desktop profile whose stored prompt %j does not change what restore shows',
+    (stored) => {
+      const original = new Message({
+        role: 'user',
+        content: [new TextBlock('<strands_agent_profile>\nName: John\n</strands_agent_profile>\n\nWhat changed?')],
+        metadata: { custom: displayPromptMetadata(stored) },
+      })
+
+      const messages = upgradeDesktopAgentProfileMessages([original])
+
+      expect(messages[0]!.content[0]).toMatchObject({ text: expect.stringContaining('Assistant name: John') })
+      expect(messages[0]!.metadata).toEqual(original.metadata)
+      expect(projectMessages(messages)[0]?.prompt).toBe('What changed?')
+    }
+  )
+
   it('restores the visible skill command instead of its activation instructions', () => {
     const turns = projectMessages([
       new Message({

@@ -22,8 +22,12 @@ const DISPLAY_PROMPT_METADATA_KEY = 'strands.displayPrompt'
 export function upgradeDesktopAgentProfileMessages(messages: Message[]): Message[] {
   let changed = false
   const upgraded = messages.map((message) => {
-    // A message with a stored display prompt was typed in this CLI, so its text is not a Desktop profile.
-    if (message.role !== 'user' || readDisplayPromptMetadata(message.metadata?.custom) !== undefined) {
+    if (message.role !== 'user') {
+      return message
+    }
+    // The chat stores a display prompt only when it changes what restore shows: that text was typed here, not by Desktop.
+    const texts = message.content.flatMap((block) => (block.type === 'textBlock' ? [block.text] : []))
+    if (restoredPrompt(texts, readDisplayPromptMetadata(message.metadata?.custom)) !== restoredPrompt(texts)) {
       return message
     }
     let contentChanged = false
