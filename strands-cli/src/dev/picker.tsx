@@ -44,6 +44,7 @@ interface PickerProps {
   folderFor?: (choice: HarnessChoice) => FolderSuggestion | undefined
   newProject?: string
   modelNotice?: (language: 'typescript' | 'python') => string | undefined
+  onRefresh?: () => void
   onSelect: (selection: HarnessChoice | undefined, workspace?: string, replace?: boolean) => void | Promise<void>
 }
 
@@ -213,6 +214,7 @@ export const HarnessPicker = ({
   folderFor,
   newProject,
   modelNotice,
+  onRefresh,
   onSelect,
 }: PickerProps): ReactElement => {
   const [browsing, setBrowsing] = useState<Browsing>(() => ({
@@ -382,6 +384,7 @@ export const HarnessPicker = ({
       if (pending.current) return
       if (placing) return editFolder(input, key)
       if (creating) return editForm(input, key)
+      if (onRefresh && input === 'r' && !key.ctrl && !key.meta) return onRefresh()
       browse(key)
     },
     { isActive: replacing === undefined }
@@ -569,11 +572,12 @@ export const HarnessPicker = ({
                 marginTop={index > 0 && visible[index - 1]?.group !== row.group ? sectionGap : 0}
               >
                 {index === 0 || visible[index - 1]?.group !== row.group ? (
-                  <Box>
+                  <Box justifyContent="space-between" paddingRight={1}>
                     <Text bold wrap="truncate-end">
                       {row.group}
                       {row.group === discoveredGroup && projectRange ? ` · ${projectRange}` : ''}
                     </Text>
+                    {row.group === discoveredGroup && onRefresh ? <Text dimColor> r refresh</Text> : null}
                   </Box>
                 ) : null}
                 {row.key === DISCOVERY_ROW ? (
@@ -656,7 +660,7 @@ export const chooseHarness = async <Opened,>(
   screen.signal.throwIfAborted()
   const operation = new AbortController()
   const signal = AbortSignal.any([screen.signal, operation.signal])
-  const searchAbort = new AbortController()
+  let searchRun: AbortController | undefined
   let complete: (opened: Opened | undefined) => void = () => undefined
   let settled = false
   let opening = false
@@ -689,6 +693,55 @@ export const chooseHarness = async <Opened,>(
       complete(opened)
     }
   }
+  let flush: ReturnType<typeof setTimeout> | undefined
+  const add = (harness: DiscoveredHarness): void => {
+    const index = harnesses.findIndex(({ entrypoint }) => entrypoint === harness.entrypoint)
+    harnesses = index < 0 ? [...harnesses, harness] : harnesses.map((known, at) => (at === index ? harness : known))
+  }
+  const discover = (find: HarnessSource): void => {
+    searchRun?.abort(new Error('Harness search restarted.'))
+    const run = new AbortController()
+    searchRun = run
+    const current = (): boolean => searchRun === run
+    clearTimeout(flush)
+    flush = undefined
+    harnesses = options.harnesses
+    skipped = options.skipped ?? []
+    discovery = 'running'
+    void find(
+      (harness) => {
+        if (!current()) return
+        add(harness)
+        flush ??= setTimeout(() => {
+          flush = undefined
+          show()
+        }, SEARCH_FLUSH_MS)
+      },
+      AbortSignal.any([signal, run.signal])
+    )
+      .then((found) => {
+        if (!current()) return
+        found.harnesses.forEach(add)
+        skipped = found.skipped
+        discovery = 'done'
+      })
+      .catch((error: unknown) => {
+        if (!current()) return
+        discovery = signal.aborted || run.signal.aborted ? 'done' : { failed: errorMessage(error) }
+      })
+      .finally(() => {
+        if (!current()) return
+        clearTimeout(flush)
+        flush = undefined
+        show()
+      })
+  }
+  const refresh = search
+    ? (): void => {
+        discover(search)
+        show()
+      }
+    : undefined
   const show = (): void => {
     if (settled || opening) return
     screen.show(
@@ -697,47 +750,19 @@ export const chooseHarness = async <Opened,>(
         harnesses,
         skipped,
         ...(discovery === undefined ? {} : { discovery }),
+        ...(refresh ? { onRefresh: refresh } : {}),
         onSelect,
       }),
       'Select a local harness'
     )
   }
   screen.signal.addEventListener('abort', cancel, { once: true })
+  if (search) discover(search)
   show()
-  let flush: ReturnType<typeof setTimeout> | undefined
-  if (search) {
-    const add = (harness: DiscoveredHarness): void => {
-      const index = harnesses.findIndex(({ entrypoint }) => entrypoint === harness.entrypoint)
-      harnesses = index < 0 ? [...harnesses, harness] : harnesses.map((known, at) => (at === index ? harness : known))
-    }
-    void search(
-      (harness) => {
-        add(harness)
-        flush ??= setTimeout(() => {
-          flush = undefined
-          show()
-        }, SEARCH_FLUSH_MS)
-      },
-      AbortSignal.any([signal, searchAbort.signal])
-    )
-      .then((result) => {
-        result.harnesses.forEach(add)
-        skipped = result.skipped
-        discovery = 'done'
-      })
-      .catch((error: unknown) => {
-        discovery = signal.aborted || searchAbort.signal.aborted ? 'done' : { failed: errorMessage(error) }
-      })
-      .finally(() => {
-        clearTimeout(flush)
-        flush = undefined
-        show()
-      })
-  }
   try {
     return await result
   } finally {
-    searchAbort.abort(new Error('Harness selection closed.'))
+    searchRun?.abort(new Error('Harness selection closed.'))
     clearTimeout(flush)
     screen.signal.removeEventListener('abort', cancel)
     screen.show(undefined, 'Preparing workspace…')
