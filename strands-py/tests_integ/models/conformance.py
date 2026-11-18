@@ -3,6 +3,7 @@
 See shared/README.md for the file format, how a case applies to a model, and the result record.
 """
 
+import itertools
 import json
 import os
 import pathlib
@@ -25,16 +26,31 @@ _SHARED = json.loads(
     (pathlib.Path(__file__).parents[2] / ".." / "shared" / "conformance.json").read_text(encoding="utf-8")
 )
 CASES: dict[str, dict[str, Any]] = _SHARED["cases"]
-# (provider, model, case) -> the issue that tracks why the case fails there.
-KNOWN_FAILURES: dict[tuple[str, str, str], int] = {
-    (row["provider"], row["model"], row["case"]): row["issue"] for row in _SHARED["knownFailures"]
+# (provider, model, case) -> the shared known failure entry, which names the issue tracking it.
+KNOWN_FAILURES: dict[tuple[str, str, str], dict[str, Any]] = {
+    (row["provider"], row["model"], row["case"]): row for row in _SHARED["knownFailures"]
 }
 
 # Shared case and provider ids this SDK does not run, with the reason.
 OMITTED_CASES: dict[str, str] = {}
 OMITTED_PROVIDERS: dict[str, str] = {}
 
+# The caching case's system prompt, one guideline per topic and action pair: about twice the largest cache
+# minimum among the targets, and ordinary prose so that no provider filters it.
+CACHE_PROMPT = "\n".join(
+    [_SHARED["cachePrompt"]["intro"]]
+    + [
+        f"{number}. When a customer asks about {topic}, {action}."
+        for number, (topic, action) in enumerate(
+            itertools.product(_SHARED["cachePrompt"]["topics"], _SHARED["cachePrompt"]["actions"]), start=1
+        )
+    ]
+)
+
 NOT_APPLICABLE = "not applicable"
+# The cases call every listed model, so they only run when asked. CI sets this for the weekly run and for
+# changes that can affect how a model behaves.
+ENABLED = bool(os.environ.get("STRANDS_CONFORMANCE"))
 # HTTP statuses that mean the provider could not serve the call, which says nothing about the case.
 _PROVIDER_ERROR_STATUSES = frozenset({401, 403, 404, 408, 429})
 _MANTLE_CONFIG = {"region": "us-east-1"}
@@ -92,7 +108,12 @@ class Target:
         return PROVIDERS[self.provider][1](self.model_id)
 
 
-def _marks(provider: str) -> list[pytest.MarkDecorator]:
+def _marks(row: dict[str, Any]) -> list[pytest.MarkDecorator]:
+    provider = row["provider"]
+    if not ENABLED:
+        return [pytest.mark.skip(reason="set STRANDS_CONFORMANCE=1 to run the model conformance cases")]
+    if row.get("endOfLife"):
+        return [pytest.mark.skip(reason=f"{NOT_APPLICABLE}: end of life")]
     if provider in OMITTED_PROVIDERS:
         return [pytest.mark.skip(reason=f"{NOT_APPLICABLE}: {OMITTED_PROVIDERS[provider]}")]
     if provider not in PROVIDERS:
@@ -106,7 +127,7 @@ TARGETS = [
     pytest.param(
         Target(row["provider"], row["model"]),
         id=f"{row['provider']}-{row['model']}",
-        marks=_marks(row["provider"]),
+        marks=_marks(row),
     )
     for row in _SHARED["targets"]
 ]
@@ -173,9 +194,7 @@ def _outcome(report: pytest.TestReport, error: BaseException | None) -> dict[str
     # A strict xfail that passes reports as failed with no exception, and one that fails reports as skipped.
     if report.passed or (report.failed and error is None):
         return {"status": "passed"}
-    if hasattr(report, "wasxfail"):
-        return {"status": "failed"}
-    if not report.skipped:
+    if hasattr(report, "wasxfail") or not report.skipped:
         reason = provider_error_reason(error)
         return {"status": "error", "reason": reason} if reason else {"status": "failed"}
     reason = str(report.longrepr[2]).removeprefix("Skipped: ")
