@@ -20,6 +20,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._defaults import resolve_config_metadata
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
 from ._openai_cache import _resolve_cache_key
 from ._validation import (
     _has_location_source,
@@ -151,6 +152,15 @@ class MistralModel(Model):
         """
         validate_config_keys(model_config, self.MistralConfig)
         self.config.update(model_config)
+
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        The Mistral API has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @override
     def get_config(self) -> MistralConfig:

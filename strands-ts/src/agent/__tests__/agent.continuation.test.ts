@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
-import { AfterInvocationEvent, BeforeModelCallEvent, MessageAddedEvent } from '../../hooks/events.js'
+import {
+  AfterInvocationEvent,
+  BeforeInvocationEvent,
+  BeforeModelCallEvent,
+  MessageAddedEvent,
+} from '../../hooks/events.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import { Agent } from '../agent.js'
@@ -25,6 +30,10 @@ function captureRequests(model: MockMessageModel): Message[][] {
   return requests
 }
 
+function messageShape(message: Message): { role: string; content: unknown[] } {
+  return { role: message.role, content: message.content.map((block) => block.toJSON()) }
+}
+
 describe('Agent continuation input', () => {
   it('combines multiple follow-up contributions with public resume input', async () => {
     const model = textModel('initial', 'final')
@@ -33,6 +42,11 @@ describe('Agent continuation input', () => {
     const abandoned = vi.fn()
     const agent = new Agent({ model, printer: false })
     let resumed = false
+    const beforeInvocationInputs: string[][] = []
+
+    agent.addHook(BeforeInvocationEvent, (event) => {
+      beforeInvocationInputs.push(event.messages.map(textOf))
+    })
 
     agent.addHook(AfterInvocationEvent, (event) => {
       if (resumed) return
@@ -57,10 +71,79 @@ describe('Agent continuation input', () => {
     expect(requests[1]?.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
     expect(textOf(requests[1]!.at(-1)!)).toBe('firstsecondpublic')
     expect(agent.messages.map(textOf)).toEqual(['start', 'initial', 'firstsecondpublic', 'final'])
+    expect(beforeInvocationInputs).toEqual([['start'], ['public']])
     expect(appended).toEqual(['first', 'second'])
     expect(abandoned).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Continuation input must contain a complete message sequence' })
     )
+  })
+
+  it('keeps prepared continuation messages outside hook mutations', async () => {
+    const model = textModel('initial', 'final')
+    const requests = captureRequests(model)
+    const appended = vi.fn()
+    const agent = new Agent({ model, printer: false })
+    const beforeInvocationInputs: string[][] = []
+    const continuationMessages = [
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ name: 'backgroundTask', toolUseId: 'task-1', input: {} })],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'task-1',
+            status: 'success',
+            content: [new TextBlock('done')],
+          }),
+        ],
+      }),
+    ]
+    let resumed = false
+
+    agent.addHook(BeforeInvocationEvent, (event) => {
+      beforeInvocationInputs.push(event.messages.map(textOf))
+      if (beforeInvocationInputs.length === 2) event.messages = []
+    })
+
+    agent.addHook(AfterInvocationEvent, (event) => {
+      if (resumed) return
+      resumed = true
+      continuations.addInput(event, {
+        args: continuationMessages,
+        onAppended: appended,
+      })
+      event.resume = 'public'
+    })
+
+    await agent.invoke('start')
+
+    expect(beforeInvocationInputs).toEqual([['start'], ['public']])
+    expect(requests[1]!.map(messageShape)).toEqual([
+      {
+        role: 'user',
+        content: [{ text: 'start' }],
+      },
+      {
+        role: 'assistant',
+        content: [{ text: 'initial' }, { toolUse: { name: 'backgroundTask', toolUseId: 'task-1', input: {} } }],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            toolResult: {
+              toolUseId: 'task-1',
+              status: 'success',
+              content: [{ text: 'done' }],
+            },
+          },
+        ],
+      },
+    ])
+    expect(requests[1]!.some((message) => textOf(message) === 'public')).toBe(false)
+    expect(appended).toHaveBeenCalledOnce()
   })
 
   it('retains follow-up input through failed resume attempts', async () => {

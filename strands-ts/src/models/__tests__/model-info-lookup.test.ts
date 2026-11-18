@@ -27,6 +27,20 @@ describe('shared model info data', () => {
     expect(lookupModel('us.anthropic.claude-3-5-sonnet-20241022-v2:0')?.limits?.contextWindow).toBe(200_000)
   })
 
+  it('keeps the typed fields and skips the rest', () => {
+    // The data entry also carries defaultEffort, which the SDK does not type.
+    expect(lookupModelInfo('claude-opus-5-5')).toStrictEqual({
+      capabilities: {
+        promptCaching: 'cachePoints',
+        forcedToolChoice: false,
+        nativeStructuredOutput: true,
+        serverSideSummary: true,
+        temporaryMessages: true,
+      },
+      limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+    })
+  })
+
   it('returns undefined for unknown ids', () => {
     expect(lookupModel('unknown-model')).toBeUndefined()
     expect(lookupModel('')).toBeUndefined()
@@ -37,11 +51,18 @@ describe('shared model info data', () => {
       capabilities: { promptCaching: 'cachePoints' },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
-    expect(lookupModelInfo('anthropic.claude-opus-5-5').capabilities).toEqual({
-      promptCaching: 'cachePoints',
-      forcedToolChoice: false,
-      nativeStructuredOutput: true,
-    })
+    for (const modelId of ['anthropic.claude-opus-5-5', 'global.anthropic.claude-fable-5-2', 'claude-mythos-5-2']) {
+      expect(lookupModelInfo(modelId)).toEqual({
+        capabilities: {
+          promptCaching: 'cachePoints',
+          forcedToolChoice: false,
+          nativeStructuredOutput: true,
+          serverSideSummary: true,
+          temporaryMessages: true,
+        },
+        limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+      })
+    }
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
       capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
       limits: { contextWindow: 300_000 },
@@ -51,7 +72,7 @@ describe('shared model info data', () => {
   })
 
   it('keeps getContextWindowLimit working for ids the Python table already knew', () => {
-    expect(getContextWindowLimit('mistral-large-latest')).toBe(262_144)
+    expect(getContextWindowLimit('mistral-large-latest')).toBe(1_048_576)
     expect(getContextWindowLimit('o3')).toBe(200_000)
   })
 
@@ -76,9 +97,12 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
-        else if (key === 'forcedToolChoice' || key === 'nativeStructuredOutput')
+        else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
-        else throw new Error(`${id}.capabilities.${key} is not a ModelCapabilities field`)
+        // Read by another consumer (the harness), not typed by the SDK.
+        else if (key === 'defaultEffort')
+          expect(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], `${id}.${key}`).toContain(value)
+        else throw new Error(`${id}.capabilities.${key} is not a known model info field`)
       }
     }
   })

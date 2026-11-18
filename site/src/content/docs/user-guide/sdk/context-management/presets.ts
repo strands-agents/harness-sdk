@@ -18,7 +18,7 @@ async function mixing() {
       strategies: [
         'largeToolOffloading',
         Offload.summarize('*').when({
-          utilization: 0.9,
+          contextUtilization: '90%',
           preserveRecent: 2,
         }),
       ],

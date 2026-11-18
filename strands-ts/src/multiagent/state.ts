@@ -1,5 +1,5 @@
 import { StateStore } from '../state-store.js'
-import { type ContentBlock, contentBlockFromData } from '../types/messages.js'
+import { type ContentBlock, contentBlockFromSavedData } from '../types/messages.js'
 import type { Usage } from '../models/streaming.js'
 import type { InvocationContext } from '../agent/invocation-context.js'
 import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
@@ -106,7 +106,7 @@ export class NodeResult {
       nodeId: json.nodeId as string,
       status: json.status as ResultStatus,
       duration: json.duration as number,
-      content: (json.content as JSONValue[]).map((c) => contentBlockFromData(c as never)),
+      content: (json.content as JSONValue[]).map((c) => contentBlockFromSavedData(c as never)),
       ...(json.error && { error: normalizeError(json.error) }),
       ...(json.structuredOutput !== undefined && { structuredOutput: json.structuredOutput }),
       ...(json.usage && { usage: json.usage as unknown as Usage }),
@@ -250,7 +250,7 @@ export class MultiAgentResult {
     return new MultiAgentResult({
       status: json.status as ResultStatus,
       results: (json.results as JSONValue[]).map(NodeResult.fromJSON),
-      content: (json.content as JSONValue[]).map((c) => contentBlockFromData(c as never)),
+      content: (json.content as JSONValue[]).map((c) => contentBlockFromSavedData(c as never)),
       duration: json.duration as number,
       ...(json.error && { error: normalizeError(json.error) }),
       ...(json.interrupts && {
@@ -288,13 +288,13 @@ export class MultiAgentResult {
 /**
  * Rehydrates a serialized `_pendingInput` back to its runtime shape. `string` round-trips
  * as-is; array inputs (which serialize as `ContentBlockData[]` via each block's `toJSON`)
- * are mapped through `contentBlockFromData` so downstream callers see `ContentBlock[]`
+ * are mapped through `contentBlockFromSavedData` so downstream callers see `ContentBlock[]`
  * instead of raw data objects.
  */
 function rehydratePendingInput(value: JSONValue): MultiAgentInput {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
-    return (value as JSONValue[]).map((entry) => contentBlockFromData(entry as never)) as ContentBlock[]
+    return (value as JSONValue[]).map((entry) => contentBlockFromSavedData(entry as never)) as ContentBlock[]
   }
   // Unexpected shape — pass through so callers see the exact value and can diagnose.
   return value as unknown as MultiAgentInput

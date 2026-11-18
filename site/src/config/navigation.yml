@@ -13,7 +13,7 @@
 # from it for 30 days.
 #
 # IA: the docs are organized around products (Strands harness, SDK, Shell, Box,
-# Evals SDK). Each product's basePath(s) scope the left sidebar (via
+# Evals SDK, Decider). Each product's basePath(s) scope the left sidebar (via
 # route-middleware) to just that product's pages, and every product's sidebar
 # follows the same shape: Get started -> Build guides -> Run guides ->
 # Components -> Reference. First-level bands always render open; depth>=1 subgroups
@@ -55,6 +55,10 @@ navbar:
     href: /docs/user-guide/evals-sdk/
     basePath:
       - /docs/user-guide/evals-sdk/
+  - label: Decider
+    href: /docs/labs/strands-decider/overview/
+    basePath:
+      - /docs/labs/strands-decider/
   # Fallback: any /docs/user-guide/ page not matched by a product above still
   # resolves here (shortest match, so it never overrides a product) rather than
   # getting an empty sidebar.
@@ -108,6 +112,10 @@ products:
     slug: "/harness"
     href: /docs/user-guide/harness/
     description: Strands harness is a state-of-the-art, fully assembled agent harness.
+    repository: https://github.com/strands-agents/harness-sdk
+    languages:
+      - Python
+      - TypeScript
     pages:
       - label: Overview
         href: /docs/user-guide/harness/
@@ -121,6 +129,10 @@ products:
     slug: "/harness-sdk"
     href: /docs/user-guide/sdk/
     description: The Strands Harness SDK for building an agent harness from the ground up.
+    repository: https://github.com/strands-agents/harness-sdk
+    languages:
+      - Python
+      - TypeScript
     pages:
       - label: Overview
         href: /docs/user-guide/sdk/
@@ -138,23 +150,18 @@ products:
     slug: "/box"
     href: /docs/user-guide/box/
     description: An agent sandbox that pairs OS containment with Dogwood policy.
-    pages:
-      - label: Overview
-        href: /docs/user-guide/box/
-      - label: Quickstart
-        href: /docs/user-guide/box/quickstart/
-      - label: Write a policy
-        href: /docs/user-guide/box/guides/write-a-policy/
-      - label: Security model
-        href: /docs/user-guide/box/security/
-      - label: box.toml reference
-        href: /docs/user-guide/box/reference/configuration/
+    repository: https://github.com/strands-agents/box
+    languages:
+      - Rust
   - label: Shell
     accent: yellow
     name: Strands Shell
     slug: "/shell"
     href: /docs/user-guide/shell/
     description: A virtual shell designed for AI agents to use safely.
+    repository: https://github.com/strands-agents/shell
+    languages:
+      - Rust
     pages:
       - label: Overview
         href: /docs/user-guide/shell/
@@ -172,6 +179,9 @@ products:
     slug: "/evals"
     href: /docs/user-guide/evals-sdk/
     description: Validate your agent before you ship.
+    repository: https://github.com/strands-agents/evals
+    languages:
+      - Python
     pages:
       - label: Overview
         href: /docs/user-guide/evals-sdk/
@@ -183,6 +193,26 @@ products:
         href: /docs/user-guide/evals-sdk/evaluators/
       - label: CLI reference
         href: /docs/user-guide/evals-sdk/cli/
+  - label: Decider
+    accent: red
+    name: Strands Decider
+    slug: "/decider"
+    href: /docs/labs/strands-decider/overview/
+    description: A small, fast decision model for agentic AI.
+    repository: https://github.com/strands-labs/strands-decider
+    languages:
+      - Python
+    pages:
+      - label: Overview
+        href: /docs/labs/strands-decider/overview/
+      - label: Quickstart
+        href: /docs/labs/strands-decider/inference/
+      - label: Images
+        href: /docs/labs/strands-decider/images/
+      - label: Architecture
+        href: /docs/labs/strands-decider/architecture/
+      - label: Model names
+        href: /docs/labs/strands-decider/model-names/
 
 sidebar:
   # Product-scoped sidebar. Each top-level group below is a product; the route
@@ -245,6 +275,8 @@ sidebar:
             slug: docs/user-guide/migrate/langgraph
           - label: "Migrate from OpenAI"
             slug: docs/user-guide/migrate/openai
+          - label: "Migrate from strands-agents-tools"
+            slug: docs/user-guide/migrate/strands-agents-tools
       - label: Build guides
         items:
           - label: Tools
@@ -273,11 +305,13 @@ sidebar:
                 slug: docs/user-guide/sdk/agents/structured-output
               - label: "Stream responses"
                 slug: docs/user-guide/sdk/streaming
+              - label: "Stream to the browser"
+                slug: docs/user-guide/sdk/streaming/streaming-to-the-browser-guide
           - label: "Manage the context window"
             slug: docs/user-guide/sdk/context-management
-          - label: "Pause for input and control"
-            slug: docs/user-guide/sdk/agents/interventions/human-in-the-loop
-          - label: "Coordinate multiple agents"
+          - label: "Approve before your agent acts"
+            slug: docs/user-guide/sdk/agents/approve-before-acting
+          - label: "Choose a multi-agent pattern"
             slug: docs/user-guide/sdk/multi-agent/multi-agent-patterns
       - label: Run guides
         items:
@@ -381,12 +415,25 @@ sidebar:
               - docs/user-guide/sdk/model-providers/vercel
               - docs/user-guide/sdk/model-providers/writer
               - docs/user-guide/sdk/model-providers/custom_model_provider
+          - label: Decision models
+            addedDate: 2026-11-10
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/sdk/decision-models
+              - docs/user-guide/sdk/decision-models/quickstart
+              - docs/user-guide/sdk/decision-models/questions
+              - docs/user-guide/sdk/decision-models/agents
+              - docs/user-guide/sdk/decision-models/observability
+              - label: Models
+                items:
+                  - label: "Overview"
+                    slug: docs/user-guide/sdk/decision-models/models
+                  - docs/user-guide/sdk/decision-models/models/llm
           - label: Tools
             items:
               - docs/user-guide/sdk/tools/tool-results
               - docs/user-guide/sdk/tools/mcp-transports
               - docs/user-guide/sdk/tools/executors
-              - docs/user-guide/sdk/tools/community-tools-package
               - label: Vended Tools
                 items:
                   - label: "Overview"
@@ -421,6 +468,7 @@ sidebar:
               - docs/user-guide/sdk/plugins/skills
               - docs/user-guide/sdk/plugins/context-offloader
               - docs/user-guide/sdk/plugins/context-injector
+              - docs/user-guide/sdk/plugins/todos
               - docs/user-guide/sdk/plugins/goal-loop
               - docs/user-guide/sdk/plugins/custom-plugins
           - label: Interventions
@@ -523,41 +571,8 @@ sidebar:
           - label: "Reference"
             slug: docs/user-guide/shell/reference
 
-  - label: Box
-    items:
-      - label: Get started
-        badge:
-          text: Pre-release
-          variant: caution
-        items:
-          - label: "Overview"
-            slug: docs/user-guide/box
-          - docs/user-guide/box/quickstart
-      - label: How-to guides
-        items:
-          - docs/user-guide/box/guides/run-strands-harness
-          - docs/user-guide/box/guides/run-claude-code
-          - docs/user-guide/box/guides/run-codex-cli
-          - docs/user-guide/box/guides/run-pi
-          - docs/user-guide/box/guides/grant-files
-          - docs/user-guide/box/guides/network-and-credentials
-          - docs/user-guide/box/guides/add-a-tool
-          - docs/user-guide/box/guides/write-a-policy
-          - docs/user-guide/box/guides/write-shell-policy
-          - docs/user-guide/box/guides/record-telemetry
-          - docs/user-guide/box/guides/strands-cli-telemetry
-      - label: Security
-        items:
-          - label: "Security model"
-            slug: docs/user-guide/box/security
-          - docs/user-guide/box/security/agent-and-tool-containment
-      - label: Reference
-        items:
-          - docs/user-guide/box/reference/configuration
-          - docs/user-guide/box/reference/cli
-          - docs/user-guide/box/reference/policy-actions
-          - docs/user-guide/box/reference/shell
-          - docs/user-guide/box/reference/python
+  # Expanded from .build/external-docs/strands-box/navigation.json.
+  - externalDocs: strands-box
 
   - label: Evals SDK
     items:
@@ -696,9 +711,7 @@ sidebar:
           - label: PyWebRTC Audio
             href: https://github.com/strands-labs/pywebrtc-audio
             external: true
-          - label: Strands Decider
-            href: https://github.com/strands-labs/strands-decider
-            external: true
+          - externalDocs: strands-decider
       # Feeds llms.txt lesson listing (src/pages/llms.txt.ts extractLinks); visual sidebar built by route-middleware.
       - label: Learning
         items:

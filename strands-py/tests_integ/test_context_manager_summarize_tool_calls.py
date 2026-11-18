@@ -4,7 +4,6 @@ Regression tests for https://github.com/strands-agents/harness-sdk/issues/5291: 
 holds a tool call takes a single summarizer request on every provider, and the summary reflects the call.
 """
 
-import re
 import unittest.mock
 
 import pytest
@@ -59,4 +58,4 @@ async def test_summarize_tool_call_history_in_single_request(provider: providers
         if block.get("text", "").startswith("[Summarized: 2 messages")
     ]
     assert len(summaries) == 1
-    assert re.search(r"lookup_order|ORD-48213", summaries[0])
+    assert "FX-7731" in summaries[0]

@@ -3,13 +3,12 @@
  *
  * A single `todo_write` tool writes the current list to agent state; an internal
  * `ContextInjector` re-surfaces that list to the model before each call so it keeps the plan in
- * view without the list ever entering durable history.
+ * view.
  *
  * Re-surfacing goes through `ContextInjector` rather than editing `agent.messages` from a hook.
- * The list changes on every `todo_write` call, so a durable edit would either stack stale
- * reminders in history or force a remove-then-reappend dance; injection is ephemeral by
- * construction (it augments one model call and never persists), which is exactly what a
- * constantly-changing task list wants. It also happens to be symmetric across both SDKs.
+ * The list changes on every `todo_write` call, and the injector shows the model only the latest
+ * copy, never a stack of stale reminders, which is exactly what a constantly-changing task list
+ * wants. It also happens to be symmetric across both SDKs.
  *
  * The injector fires on `everyTurn`, not `userTurn`: the agent updates the list mid-loop via
  * `todo_write`, so it should see the refreshed list on the next model call within the same
@@ -20,8 +19,17 @@ import { tool, type LocalAgent, type Plugin, type Tool } from '@strands-agents/s
 import { ContextInjector, type InjectionContext } from '@strands-agents/sdk/vended-plugins/context-injector'
 import { z } from 'zod'
 
+import { warnOnce } from '../logging.js'
+
 const STATE_KEY = 'todos'
 const DEFAULT_NAME = 'strands:todos'
+
+// Matches the Python notice word for word so one grep finds both.
+const DEPRECATION_MESSAGE =
+  'The todos built-in plugin is deprecated in the harness and will be removed in a later minor ' +
+  "release. It now ships in the SDK as Todos from '@strands-agents/sdk/vended-plugins/todos' — " +
+  'construct it yourself and pass plugins: [new Todos()]. Tracked in ' +
+  'https://github.com/strands-agents/harness-sdk/issues/5279.'
 
 const todoItemSchema = z.object({
   content: z.string().describe('The task, imperative: "Run tests".'),
@@ -52,14 +60,18 @@ export interface TodosConfig {
  * Gives the agent a `todo_write` tool and keeps the current list in view.
  *
  * The tool persists the list to `agent.appState` under `stateKey`; before each model call the
- * plugin re-surfaces the list as a `<system-reminder>` (ephemeral, never written to durable
- * history). Sharing one instance across agents is safe: state is per-agent.
+ * plugin re-surfaces the list as a `<system-reminder>`, and the model sees only the latest one.
+ * Sharing one instance across agents is safe: state is per-agent.
+ *
+ * @deprecated Deprecated in the harness; use `Todos` from `@strands-agents/sdk/vended-plugins/todos`
+ * instead. See https://github.com/strands-agents/harness-sdk/issues/5279.
  */
 export class Todos implements Plugin {
   readonly name: string
   private readonly _stateKey: string
 
   constructor(config: TodosConfig = {}) {
+    warnOnce(DEPRECATION_MESSAGE)
     this.name = config.name ?? DEFAULT_NAME
     this._stateKey = config.stateKey ?? STATE_KEY
   }

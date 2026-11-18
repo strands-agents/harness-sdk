@@ -37,9 +37,11 @@ import {
   type BaseModelConfig,
   type CacheConfig,
   type CacheTTL,
+  type ResolvedCacheSection,
   type StreamOptions,
 } from './model.js'
-import type { ModelInfo } from './model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
+import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -49,7 +51,13 @@ import {
   ModelMessageStopEvent,
   ModelMetadataEvent,
 } from './streaming.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../errors.js'
+import {
+  ContextWindowOverflowError,
+  ModelError,
+  ModelThrottledError,
+  ModelNetworkError,
+  isFetchNetworkError,
+} from '../errors.js'
 import { toMimeType } from '../mime.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
@@ -160,6 +168,20 @@ export class VercelModel extends Model<VercelModelConfig> {
    */
   override get modelId(): string {
     return this._config.modelId ?? this._provider.modelId
+  }
+
+  /**
+   * Turns `serverSideSummary` off, and on Bedrock reports how Converse caches the model where that differs from the
+   * shared model info; a `modelInfo` override still wins over both.
+   */
+  override get modelInfo(): ModelInfo {
+    const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
+    return ModelInfo.merge(
+      super.modelInfo,
+      SERVER_SIDE_SUMMARY_OFF,
+      bedrock ? bedrockCacheModelInfo(this.modelId) : undefined,
+      this._config.modelInfo
+    )
   }
 
   updateConfig(config: VercelModelConfig): void {
@@ -385,25 +407,40 @@ function applyBedrockCache(
     )
   }
 
-  const systemPrompt = resolveCacheSection(cacheConfig.systemPromptTTL, cacheConfig.ttl)
+  const systemPrompt = bedrockCacheSection(cacheConfig.systemPromptTTL, cacheConfig, modelId)
   if (systemPrompt.enabled) {
     const system = callOptions.prompt.find((message) => message.role === 'system')
     if (system) setBedrockCachePoint(system, systemPrompt.ttl)
   }
 
-  const messages = resolveCacheSection(cacheConfig.messagesTTL, cacheConfig.ttl)
+  const messages = bedrockCacheSection(cacheConfig.messagesTTL, cacheConfig, modelId)
   if (messages.enabled) {
     cacheLastUserMessage(callOptions.prompt, (userMessage) => {
-      // Bedrock rejects a cache point directly after a non-PDF document, so scan back past those parts.
-      const part = durableCachePart(
-        userMessage.content,
-        dynamicTrailingBlocks,
-        (candidate) => !blocksCachePoint(candidate)
-      )
+      const part = durableCachePart(userMessage.content, dynamicTrailingBlocks, bedrockAcceptsCachePointAfter(modelId))
       if (part) setBedrockCachePoint(part, messages.ttl)
-      else logger.debug('last user message has no durable non-document content, skipped conversation cache point')
+      else logger.debug('last user message has no durable part to cache after, skipped conversation cache point')
     })
   }
+}
+
+/**
+ * Resolves a Bedrock cache section against `cacheConfig.ttl`, dropping the TTL with a one-time warning when the
+ * wrapped model rejects one (matching `BedrockModel`).
+ *
+ * @param section - The section's own setting
+ * @param cacheConfig - The caller's cache configuration
+ * @param modelId - The wrapped Bedrock model id
+ * @internal
+ */
+function bedrockCacheSection(
+  section: boolean | CacheTTL | undefined,
+  cacheConfig: CacheConfig,
+  modelId: string
+): ResolvedCacheSection {
+  const resolved = resolveCacheSection(section, cacheConfig.ttl)
+  if (!resolved.ttl || !bedrockLimitsCachePoints(modelId)) return resolved
+  warnOnce(logger, `model_id=<${modelId}> | ttl is not supported by this model, using the default cache duration`)
+  return { enabled: resolved.enabled }
 }
 
 /**
@@ -426,7 +463,8 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
     promptCaching === undefined
       ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
       : promptCaching === 'cachePoints'
-  if (!supported) {
+  // A model the provider caches implicitly needs no cache points, so it gets no warning.
+  if (!supported && promptCaching !== 'auto') {
     warnOnce(
       logger,
       `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
@@ -436,9 +474,23 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
 }
 
 /**
- * Reports whether Bedrock forbids a cache point directly after this part. The adapter turns every
- * non-image file part into a document, and Bedrock rejects a cache point after a non-PDF document (a
- * PDF document is fine).
+ * Picks which parts the wrapped Bedrock model takes a cache point directly after: text only on Nova, anything but a
+ * non-PDF document otherwise (the Claude rule).
+ *
+ * @param modelId - The wrapped Bedrock model id
+ * @internal
+ */
+function bedrockAcceptsCachePointAfter(
+  modelId: string
+): (part: LanguageModelV3TextPart | LanguageModelV3FilePart) => boolean {
+  if (bedrockLimitsCachePoints(modelId)) return (part) => part.type === 'text'
+  return (part) => !blocksCachePoint(part)
+}
+
+/**
+ * Reports whether Claude on Bedrock forbids a cache point directly after this part. The adapter turns every
+ * non-image file part into a document, and Claude rejects a cache point after a non-PDF document (a PDF
+ * document is fine). Nova follows a stricter rule, text only.
  *
  * @internal
  */
@@ -554,7 +606,7 @@ function applyOpenAICache(callOptions: LanguageModelV3CallOptions, cacheConfig: 
  * Classifies an error from doStream into the appropriate Strands error type.
  *
  * @param error - The error thrown by the Vercel provider
- * @returns A classified error (ContextWindowOverflowError, ModelThrottledError, or ModelError)
+ * @returns A classified error (ContextWindowOverflowError, ModelThrottledError, ModelNetworkError, or ModelError)
  */
 function classifyError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error)
@@ -575,7 +627,20 @@ function classifyError(error: unknown): Error {
     return new ContextWindowOverflowError(message)
   }
 
+  if (isNetworkError(error)) {
+    return new ModelNetworkError(`Language model stream error: ${message}`, { cause: error })
+  }
+
   return new ModelError(`Language model stream error: ${message}`, { cause: error })
+}
+
+/**
+ * Whether a Vercel provider error is a network failure. In Node, ai-sdk wraps fetch failures as a
+ * retryable `APICallError` with no status code; in browsers they surface as a raw `TypeError`.
+ */
+function isNetworkError(error: unknown): boolean {
+  if (isFetchNetworkError(error)) return true
+  return APICallError.isInstance(error) && error.isRetryable && error.statusCode === undefined
 }
 
 /**
@@ -810,6 +875,8 @@ function formatUserMessage(message: Message, prompt: LanguageModelV3Prompt, tool
           output: formatToolResultOutput(block.status, block.content),
         })
         break
+      case 'unknownBlock':
+        break
       default:
         logger.warn(`block_type=<${block.type}> | unsupported content type in vercel user message, skipping`)
         break
@@ -861,6 +928,8 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt)
       case 'documentBlock':
       case 'videoBlock':
         content.push(...formatMediaBlock(block))
+        break
+      case 'unknownBlock':
         break
       default:
         logger.warn(`block_type=<${block.type}> | unsupported content type in vercel assistant message, skipping`)
@@ -984,6 +1053,8 @@ function formatToolResultOutput(
         }
         break
       }
+      case 'unknownBlock':
+        break
       default:
         logger.warn(
           `block_type=<${(c as unknown as { type: string }).type}> | unsupported content type in vercel tool result, skipping`
