@@ -435,7 +435,7 @@ describe('TEMPORARY dev optimization', () => {
     vi.unstubAllEnvs()
   })
 
-  it('shouldResumeWithTheRunFolderAloneAndKeepTheTaskFileWhenTheRecordHoldsARun', async () => {
+  it('shouldResumeWithTheRunFolderAloneAndWriteTheTaskFileAgainWhenTheRecordHoldsARun', async () => {
     const workspace = await workspaceFixture()
     const record = optimizationFile(workspace, 'optimizer')
     const runFolder = join(record, '20261111-150406-abc123')
@@ -457,7 +457,7 @@ describe('TEMPORARY dev optimization', () => {
       runFolder,
       '--rich',
     ])
-    expect(await readFile(task, 'utf8')).toBe('the task of the first run\n')
+    expect(await readFile(task, 'utf8')).toContain('optimize_task(')
   })
 
   it('shouldStartTheRunAgainInItsRecordWhenTheOptimizerStoppedBeforeItMadeARunFolder', async () => {

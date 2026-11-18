@@ -182,12 +182,19 @@ const newRunArguments = async (
   ]
 }
 
-const resumeArguments = (runFolder: string, workers: number | undefined): string[] => [
-  'resume',
-  runFolder,
-  '--rich',
-  ...(workers === undefined ? [] : ['--max-workers', String(workers)]),
-]
+const resumeArguments = async (
+  request: TemporaryOptimizationRequest,
+  experiment: string,
+  files: TemporaryOptimizationFiles,
+  passed: TemporaryOptimizeFlags,
+  runFolder: string
+): Promise<string[]> => {
+  const baselineOnly = isBaselineOnly(runSettings(request, passed))
+  const runnable = await temporaryRunnableExperiment(experiment, files.copy)
+  await writeEvalsOptimizeEntry(files.task, entryOf(request, runnable, passed, baselineOnly))
+  const workers = request.settings?.concurrency
+  return ['resume', runFolder, '--rich', ...(workers === undefined ? [] : ['--max-workers', String(workers)])]
+}
 
 const optimizationFiles = (
   request: TemporaryOptimizationRequest,
@@ -255,7 +262,7 @@ export const runTemporaryOptimization = async (
   const runFolder = request.continuing === undefined ? undefined : await temporaryRunFolder(record)
   await mkdir(files.folder, { recursive: true })
   const args = runFolder
-    ? resumeArguments(runFolder, request.settings?.concurrency)
+    ? await resumeArguments(request, experiment, files, passed, runFolder)
     : await newRunArguments(request, experiment, files, passed)
   onProgress(`Optimizing ${workspace.entrypoint} against ${experiment}`)
   onProgress(`Record: ${record}`)
