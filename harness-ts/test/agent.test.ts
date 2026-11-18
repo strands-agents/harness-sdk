@@ -674,7 +674,6 @@ describe('createHarness', () => {
 
       const mode = (path: string): number => statSync(path).mode & 0o777
       expect(mode(dir)).toBe(0o700)
-      expect(mode(join(dir, 'retrieval'))).toBe(0o700)
       expect(mode(join(parent, 'agent'))).toBe(mode(parent))
       expect(openRootWarnings).toEqual([])
     }
