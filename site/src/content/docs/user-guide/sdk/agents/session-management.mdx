@@ -286,7 +286,7 @@ latest orchestrator snapshot before the first invocation.
 - **Agent Initialization**: When an agent is created with a session manager, it automatically restores any existing state and messages from the session.
 - **Message Addition**: When a new message is added to the conversation, it's automatically persisted to the session (`SnapshotSessionManager` does this under `save_latest_on="message"`).
 - **Agent Invocation**: After each agent invocation, the agent state is synchronized with the session to capture any updates (`SnapshotSessionManager` default, `save_latest_on="invocation"`).
-- **Message Redaction**: When sensitive information needs to be redacted, the session manager replaces the original message with a redacted version while maintaining conversation flow. `SnapshotSessionManager` flushes the redacted content to the latest snapshot under every strategy, and rewrites the redacted message in any immutable snapshot that already holds it.
+- **Message Redaction**: When sensitive information needs to be redacted, the session manager replaces the original message with a redacted version while maintaining conversation flow. `SnapshotSessionManager` flushes the redacted content to the latest snapshot under every strategy, and rewrites the redacted message in immutable snapshots that already hold it.
 - **Snapshot Trigger** (`SnapshotSessionManager`): Creates an immutable checkpoint when the `snapshot_trigger` callback returns `True`.
 
 </Tab>
