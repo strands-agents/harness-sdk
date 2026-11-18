@@ -501,6 +501,41 @@ describe('TEMPORARY dev optimization', () => {
     )
   })
 
+  it.each([
+    {
+      error: 'Split: 0.5/0.25/0.25 gives 0 validation cases of 2; at least 1 is needed',
+      step: 'Add more cases to the experiment, or choose a split',
+    },
+    {
+      error: 'run 20261111-150406-abc123 stopped at setup, so there is nothing to resume; start a new run',
+      step: 'Start a new run in /optimize.',
+    },
+    {
+      error: "space changed: 'a' -> 'b'; pass the run's space to resume it, or start a new run to change it",
+      step: 'Start a new run in /optimize.',
+    },
+    {
+      error: '/work/run has no cli.json: it was not started by `strands-evals optimize run`',
+      step: 'Start a new run in /optimize.',
+    },
+    {
+      error: 'every train trial of the baseline failed, so nothing was measured',
+      step: 'If the agent failed, check that it answers one of the cases in a strands dev chat.',
+    },
+  ])('shouldAddTheNextStepForStrandsDevWhenTheOptimizerReports$error', async ({ error, step }) => {
+    const workspace = await workspaceFixture()
+    const spawnOptimizer = vi.fn(async () => ({ code: 2, stdout: '', stderrTail: [`strands-evals: error: ${error}`] }))
+
+    const failure = await runTemporaryOptimization(
+      { workspace, now: () => NOW },
+      { run: environmentRunner(), spawnOptimizer }
+    ).catch((caught: unknown) => caught as Error)
+
+    const [, nextStep = ''] = failure.message.split('\n')
+    expect(nextStep.startsWith(step)).toBe(true)
+    expect(nextStep).toContain(' The full optimizer output is in ')
+  })
+
   it('shouldReturnTheResultAndFlagTheProposerFailureWhenTheSearchStoppedOnAProposerError', async () => {
     const workspace = await workspaceFixture()
     const spawnOptimizer = vi.fn(async ({ args }: TemporaryEvalsProcess) => {

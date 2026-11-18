@@ -14,6 +14,7 @@ import {
   spawnTemporaryEvals,
   temporaryEvalsEnvironment,
   temporaryEvalsFailure,
+  temporaryEvalsHeadline,
   temporaryTypescriptRunnerCommand,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsExit,
@@ -79,6 +80,31 @@ const TEXT_SETTINGS: readonly string[] = ['instructions']
 const SEARCH_STOPPED_EXIT = 3
 const STARTING = 'Measuring the baseline. The optimizer reports each iteration when it finishes.'
 const CONTINUING = 'Continuing the run from where it stopped.'
+const BASELINE_NEXT_STEP =
+  'If the agent failed, check that it answers one of the cases in a strands dev chat. ' +
+  'If a judge or the model service failed, check its credentials. Then try again.'
+const NEW_RUN_NEXT_STEP = 'Start a new run in /optimize.'
+const NEXT_STEPS: readonly (readonly [marker: string, nextStep: string])[] = [
+  [
+    'at least 1 is needed',
+    'Add more cases to the experiment, or choose a split that gives train and validation one case each at least.',
+  ],
+  ['share above 0', 'Give train and validation a share above 0 in the split.'],
+  ['sums to', 'Change the split so that the three shares sum to 1.'],
+  ['case names must be unique', 'Give every case in the experiment file a unique name, then try again.'],
+  ['every case needs a name', 'Give every case in the experiment file a unique name, then try again.'],
+  ['nothing to optimize: give an objective', 'Add an evaluator to the experiment file, or give the run an objective.'],
+  [
+    'have no bounded range',
+    'Give each usage metric of the WeightedSum or Pareto a scale=, such as Minimize(tokens, scale=1000).',
+  ],
+  ["can't cover the baseline", 'Pass a larger --max-rollouts, or use an experiment with fewer cases.'],
+  ['unmeasured for the baseline', BASELINE_NEXT_STEP],
+  ['trial of the baseline failed', BASELINE_NEXT_STEP],
+  ['nothing to resume', NEW_RUN_NEXT_STEP],
+  ['changed:', NEW_RUN_NEXT_STEP],
+  ['has no cli.json', NEW_RUN_NEXT_STEP],
+]
 
 const pythonText = (value: string): string => JSON.stringify(value)
 
@@ -209,6 +235,12 @@ const optimizationFiles = (
   return files
 }
 
+const failureNextStep = (exit: TemporaryEvalsExit, log: string): string => {
+  const headline = temporaryEvalsHeadline(exit)
+  const advice = NEXT_STEPS.find(([marker]) => headline.includes(marker))?.[1]
+  return [advice, `The full optimizer output is in ${log}.`].filter(Boolean).join(' ')
+}
+
 const hasFinished = async ({ code }: TemporaryEvalsExit, record: string): Promise<boolean> =>
   code === 0 || (code === SEARCH_STOPPED_EXIT && (await hasTemporaryRunResult(record)))
 
@@ -264,7 +296,7 @@ export const runTemporaryOptimization = async (
       `strands-evals optimize ${runFolder ? 'resume' : 'run'}`,
       exit,
       environment,
-      `The full optimizer output is in ${log}.`
+      failureNextStep(exit, log)
     )
   return { experiment, record, summary: summaryLines(exit), proposerFailed: exit.code === SEARCH_STOPPED_EXIT }
 }
