@@ -351,7 +351,9 @@ class _BackgroundTasks(Plugin):
             interrupt_state.deactivate()
 
     async def _after_invocation(self, event: AfterInvocationEvent) -> None:
-        if self._agent._interrupt_state.activated:
+        # A cancel can drop the interrupt this invocation already returns, so the interrupt state is not enough.
+        interrupted = event.result is not None and event.result.stop_reason == "interrupt"
+        if interrupted or self._agent._interrupt_state.activated:
             return
         tasks = self._task_snapshots()
         while (

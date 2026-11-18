@@ -4,7 +4,13 @@ import { z } from 'zod'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../agent/agent.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
-import { AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
+import {
+  AfterInvocationEvent,
+  AfterToolCallEvent,
+  BeforeModelCallEvent,
+  BeforeToolCallEvent,
+  InitializedEvent,
+} from '../../hooks/events.js'
 import { Interrupt } from '../../interrupt.js'
 import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
@@ -491,7 +497,7 @@ describe('BackgroundTasks', () => {
       await expect.poll(() => persistedTasks(agent)?.[0]?.status).toBe('cancelled')
     })
 
-    function approvalAgent(): Agent {
+    function approvalAgent(approvals = 1): Agent {
       const approval = tool({
         name: 'approval',
         description: 'Wait for approval.',
@@ -499,17 +505,20 @@ describe('BackgroundTasks', () => {
         callback: () => 'approved',
       })
       const model = new MockMessageModel()
-        .addTurn({
-          type: 'toolUseBlock',
-          name: 'approval',
-          toolUseId: 'approval-use',
-          input: { _background_execution: true },
-        })
+        .addTurn(
+          Array.from({ length: approvals }, (_, index) => ({
+            type: 'toolUseBlock' as const,
+            name: 'approval',
+            toolUseId: `approval-use-${index}`,
+            input: { _background_execution: true },
+          }))
+        )
         .addTurn({ type: 'textBlock', text: 'Task admitted.' })
         .addTurn({ type: 'textBlock', text: 'Continued.' })
+        .addTurn({ type: 'textBlock', text: 'Done.' })
       const agent = new Agent({ model, tools: [approval], backgroundTasks: {}, printer: false })
       agent.addMiddleware(ExecuteToolStage, async function* (context, next) {
-        context.interrupt<string>({ name: 'approve', reason: 'Approve work?' })
+        context.interrupt<string>({ name: `approve-${context.toolUse.toolUseId}`, reason: 'Approve work?' })
         return yield* next(context)
       })
       return agent
@@ -548,6 +557,27 @@ describe('BackgroundTasks', () => {
       }
 
       expect([...stopReasons]).toEqual(['cancelled'])
+    })
+
+    it('delivers each result once when cancel lands after a task interrupt is raised', async () => {
+      const agent = approvalAgent(2)
+      const interrupted = await agent.invoke('Run approvals.')
+      let armed = true
+      // Registered after the plugin, so it runs before the plugin's AfterInvocationEvent callback.
+      agent.addHook(AfterInvocationEvent, () => {
+        if (armed) agent.cancel({ cancelBackgroundTasks: true })
+        armed = false
+      })
+
+      // Answering one of the two approvals makes the plugin raise the other one again.
+      await agent.invoke([
+        new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
+      ])
+      const continued = await agent.invoke('Continue.')
+
+      expect(continued.stopReason).toBe('endTurn')
+      expect(agent._interruptState.activated).toBe(false)
+      expect(deliveries(agent)).toHaveLength(2)
     })
 
     it('cancels background tasks immediately while afterCurrentTools lets the tool batch finish', async () => {

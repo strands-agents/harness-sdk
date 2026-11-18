@@ -54,6 +54,7 @@ export class BackgroundTasks implements Plugin {
   private readonly _policy: ReturnType<typeof resolvePolicy>
   private readonly _manageTool: Tool
   private readonly _tasks = new Map<string, BackgroundTask>()
+  private _raisedInterrupt = false
   private _agent!: Agent
   private _manager!: BackgroundTaskManager
 
@@ -255,13 +256,19 @@ export class BackgroundTasks implements Plugin {
 
     const tasks = [...this._tasks.values()]
     const interrupts = tasks.flatMap((task) => (task.status === 'input_required' ? (task.interrupts ?? []) : []))
-    if (interrupts.length > 0) throw new InterruptError([...interrupts])
+    if (interrupts.length > 0) {
+      this._raisedInterrupt = true
+      throw new InterruptError([...interrupts])
+    }
     this._deliverReady(event, tasks)
   }
 
   private async _afterInvocation(event: AfterInvocationEvent): Promise<void> {
     const agent = event.agent as Agent
-    if (agent._interruptState.activated) return
+    // A cancel can drop the interrupt this invocation already returns, so the interrupt state is not enough.
+    const raisedInterrupt = this._raisedInterrupt
+    this._raisedInterrupt = false
+    if (raisedInterrupt || agent._interruptState.activated) return
     let tasks = [...this._tasks.values()]
     while (
       this._config.waitForCompletion !== false &&

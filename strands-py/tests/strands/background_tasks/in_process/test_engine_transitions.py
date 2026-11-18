@@ -100,6 +100,23 @@ async def test_resume_returns_a_cancelled_task_unchanged() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resume_rejects_a_task_that_has_not_asked_for_input() -> None:
+    finish, resolve = deferred()
+
+    async def execute(_: InProcessTaskExecutionContext) -> InProcessTaskExecutionOutcome:
+        return await finish
+
+    engine = create_engine(execute)
+    task = engine.submit(**create_admission("work"))
+
+    with pytest.raises(RuntimeError, match="cannot be resumed: status is 'queued', not 'input_required'"):
+        engine.resume(task["task_id"], lambda state: (state, True))
+
+    resolve({"status": "completed", "result": create_result("done")})
+    await engine.wait_for_idle()
+
+
+@pytest.mark.asyncio
 async def test_resume_restarts_execution_while_previous_execution_settles() -> None:
     executions = 0
     engine: InProcessTaskEngine

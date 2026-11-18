@@ -72,6 +72,19 @@ describe('InProcessTaskEngine', () => {
       expect(executions).toBe(1)
     })
 
+    it('rejects resuming a working task', async () => {
+      const finish = deferred<InProcessTaskExecutionOutcome>()
+      const engine = createEngine(async () => finish.promise)
+      const task = engine.submit(createAdmission('work'))
+
+      expect(() => engine.resume(task.taskId, (state) => ({ state, ready: true }))).toThrow(
+        "cannot be resumed: status is 'working', not 'input_required'"
+      )
+
+      finish.resolve({ status: 'completed', result: createResult('done') })
+      await engine.waitForIdle()
+    })
+
     it('cancels running work and removes it before execution settles', async () => {
       const finish = deferred<InProcessTaskExecutionOutcome>()
       let executionSignal: AbortSignal | undefined

@@ -10,7 +10,13 @@ from unittest.mock import ANY, AsyncMock, patch
 import pytest
 
 from strands import Agent, ToolContext, tool
-from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeModelCallEvent, BeforeToolCallEvent
+from strands.hooks import (
+    AfterInvocationEvent,
+    AfterToolCallEvent,
+    AgentInitializedEvent,
+    BeforeModelCallEvent,
+    BeforeToolCallEvent,
+)
 from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
 from strands.session import FileSessionManager
@@ -1291,6 +1297,31 @@ async def test_cancel_background_tasks_while_interrupt_responses_are_applied_fin
         )
 
     assert result.stop_reason == "cancelled"
+    assert not agent._interrupt_state.activated
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_after_a_task_interrupt_is_raised_delivers_the_cancelled_result_once() -> None:
+    @tool(name="approval", context=True)
+    def approval(tool_context: ToolContext) -> str:
+        """Ask before finishing."""
+        return tool_context.interrupt("approve", reason="Approve work?")
+
+    agent = _background_agent(approval, responses=[_assistant_text("Task admitted."), _assistant_text("Continued.")])
+
+    def cancel_once_interrupted(event: AfterInvocationEvent) -> None:
+        if event.result is not None and event.result.stop_reason == "interrupt":
+            agent.cancel(cancel_background_tasks=True)
+
+    agent.hooks.add_callback(AfterInvocationEvent, cancel_once_interrupted)  # runs before the plugin's callback
+
+    await agent.invoke_async("Run approval.")
+    continued = await agent.invoke_async("Continue.")
+
+    assert continued.stop_reason == "end_turn"
     assert not agent._interrupt_state.activated
     tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
     exp_status = "cancelled"
