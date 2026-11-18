@@ -44,7 +44,7 @@ export function buildExternalDocsProduct(options: {
       editRef,
       publishedRoutes,
     })
-    files.set(`${page.slug}.md`, renderPage(page, manifest, config, revision, editRef, content))
+    files.set(`${page.slug}.mdx`, renderPage(page, manifest, config, revision, editRef, content))
   }
 
   return {

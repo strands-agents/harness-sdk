@@ -1,8 +1,9 @@
 import path from 'node:path'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
+import remarkMdx from 'remark-mdx'
 import { visit } from 'unist-util-visit'
-import type { Definition, Image, Link, Root } from 'mdast'
+import type { Definition, Image, Link, Node, Root } from 'mdast'
 
 interface MarkdownContext {
   sourcePath: string
@@ -23,13 +24,6 @@ type UrlNode = Link | Image | Definition
 
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/
 const MKDOCS_SNIPPET_DIRECTIVE = /^-+8<-+\s*"[^"]+"$/
-// YouTube shortcode: only the two attributes we expand, both as plain string
-// literals. `id` matches YouTube's documented video-id charset; `title`
-// forbids angle brackets and quotes so the expansion cannot inject attributes.
-const YOUTUBE_TAG = /<YouTube\s+id="([A-Za-z0-9_-]{6,20})"(?:\s+title="([^"<>]*)")?\s*\/>/g
-const SAFE_RAW_HTML = new RegExp(
-  `^(?:(?:<\\/?details>)|(?:<summary>[^<]*<\\/summary>)|(?:<a id="[a-z0-9][a-z0-9-]*">)|(?:<\\/a>)|(?:${YOUTUBE_TAG.source})|\\s)+$`
-)
 
 export function transformExternalMarkdown(markdown: string, context: MarkdownContext): string {
   if (/^---\r?\n/.test(markdown)) {
@@ -37,13 +31,19 @@ export function transformExternalMarkdown(markdown: string, context: MarkdownCon
   }
 
   const preparedMarkdown = normalizeFenceLanguages(rewriteSameRepositoryUrls(markdown, context))
-  const tree = unified().use(remarkParse).parse(preparedMarkdown) as Root
+  let tree: Root
+  try {
+    tree = unified().use(remarkParse).use(remarkMdx).parse(preparedMarkdown) as Root
+  } catch (error) {
+    const message = error instanceof Error ? error.message : JSON.stringify(error)
+    throw new Error(`${context.sourcePath}: failed to parse as MDX: ${message}`)
+  }
   const heading = tree.children[0]
   if (heading?.type !== 'heading' || heading.depth !== 1 || heading.position?.start.offset !== 0) {
     throw new Error(`${context.sourcePath}: the first line must be an H1 heading`)
   }
 
-  validateMarkdown(tree, context.sourcePath)
+  validateMdx(tree, context.sourcePath)
 
   const headingEnd = consumeHeadingBreak(
     preparedMarkdown,
@@ -62,38 +62,7 @@ export function transformExternalMarkdown(markdown: string, context: MarkdownCon
     edits.push(urlEdit(preparedMarkdown, node, rewritten, context.sourcePath))
   })
 
-  // Expand `<YouTube ... />` shortcodes inside html nodes to static iframe
-  // markup. Validation above has already restricted html nodes to the safe
-  // allowlist, and we only touch spans that remark parsed as html — so a
-  // `<YouTube>` typed inside a fenced code block stays literal.
-  visit(tree, 'html', (node) => {
-    const nodeStart = requiredOffset(node.position?.start.offset, context.sourcePath)
-    YOUTUBE_TAG.lastIndex = 0
-    let match: RegExpExecArray | null
-    while ((match = YOUTUBE_TAG.exec(node.value)) !== null) {
-      edits.push({
-        start: nodeStart + match.index,
-        end: nodeStart + match.index + match[0].length,
-        value: renderYouTubeEmbed(match[1], match[2]),
-      })
-    }
-  })
-
   return applyEdits(preparedMarkdown, edits)
-}
-
-function renderYouTubeEmbed(id: string, title: string | undefined): string {
-  // Starlight's markdown.css forces `height: auto` on iframes, which collapses
-  // a fixed-height embed to 150px tall. Give the iframe an explicit
-  // aspect-ratio and a percentage width so it fills the column at 16:9.
-  const titleAttr = title === undefined ? '' : ` title="${title}"`
-  return (
-    `<iframe src="https://www.youtube-nocookie.com/embed/${id}"${titleAttr}` +
-    ` loading="lazy"` +
-    ` style="width:100%;aspect-ratio:16/9;border:0"` +
-    ` allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"` +
-    ` referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`
-  )
 }
 
 function rewriteSameRepositoryUrls(markdown: string, context: MarkdownContext): string {
@@ -123,10 +92,37 @@ function normalizeFenceLanguages(markdown: string): string {
   return markdown.replace(/^([ \t]{0,3})(`{3,}|~{3,})(?:dw|cedar)(?=[ \t]*$)/gim, '$1$2text')
 }
 
-function validateMarkdown(tree: Root, sourcePath: string): void {
-  visit(tree, 'html', (node) => {
-    if (!SAFE_RAW_HTML.test(node.value)) {
-      throw new Error(`${sourcePath}:${node.position?.start.line ?? 1}: unsafe HTML or MDX markup is not allowed`)
+// Validate the MDX AST per the external-docs trust model: upstream may use
+// any JSX element, with attribute values restricted to string literals or
+// boolean-style bare attributes. Data flow to components is a literal pipe.
+// Executable surfaces come from the site's own auto-imported components; an
+// unknown capitalized tag fails at Astro build time, and anything the site
+// deliberately exposes (including raw HTML tag names) is on the upstream
+// repo to use responsibly.
+//
+// Specifically, the validator rejects:
+//   - ESM `import`/`export` statements (mdxjsEsm)
+//   - bare `{expr}` in prose (mdxFlowExpression, mdxTextExpression)
+//   - spread/expression attributes (`<Foo {...rest} />`)
+//   - expression-valued attributes (`<Foo n={1} />`)
+//
+// Adding a new upstream component surface requires auto-importing it in
+// `astro.config.mjs`; no change to this validator.
+function validateMdx(tree: Root, sourcePath: string): void {
+  visit(tree, (node: Node) => {
+    const line = node.position?.start.line ?? 1
+    switch (node.type) {
+      case 'mdxjsEsm':
+        throw new Error(`${sourcePath}:${line}: import and export statements are not allowed`)
+      case 'mdxFlowExpression':
+      case 'mdxTextExpression':
+        throw new Error(`${sourcePath}:${line}: bare {expression} is not allowed`)
+      case 'mdxJsxFlowElement':
+      case 'mdxJsxTextElement':
+        validateJsxElement(node as JsxElement, sourcePath, line)
+        break
+      default:
+        break
     }
   })
 
@@ -135,6 +131,34 @@ function validateMarkdown(tree: Root, sourcePath: string): void {
       throw new Error(`${sourcePath}:${node.position?.start.line ?? 1}: snippet include directives are not allowed`)
     }
   })
+}
+
+interface JsxAttribute {
+  type: 'mdxJsxAttribute'
+  name: string
+  value?: string | { type: 'mdxJsxAttributeValueExpression'; value: string } | null
+}
+interface JsxExpressionAttribute {
+  type: 'mdxJsxExpressionAttribute'
+  value: string
+}
+interface JsxElement extends Node {
+  type: 'mdxJsxFlowElement' | 'mdxJsxTextElement'
+  name: string | null
+  attributes: Array<JsxAttribute | JsxExpressionAttribute>
+}
+
+function validateJsxElement(element: JsxElement, sourcePath: string, line: number): void {
+  const name = element.name
+  const tag = name ?? '<fragment>'
+  for (const attr of element.attributes) {
+    if (attr.type === 'mdxJsxExpressionAttribute') {
+      throw new Error(`${sourcePath}:${line}: spread or expression attribute on <${tag}> is not allowed`)
+    }
+    if (attr.value !== null && typeof attr.value === 'object') {
+      throw new Error(`${sourcePath}:${line}: attribute <${tag} ${attr.name}={…}> must be a literal string`)
+    }
+  }
 }
 
 function rewriteUrl(url: string, image: boolean, context: MarkdownContext): string {

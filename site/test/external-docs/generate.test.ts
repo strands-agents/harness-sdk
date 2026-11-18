@@ -49,7 +49,7 @@ describe('external docs generation', () => {
     })
     expect(second.navigation).toEqual(first.navigation)
 
-    const firstGuide = first.files.get('guides/first.md')
+    const firstGuide = first.files.get('guides/first.mdx')
     expect(firstGuide).toBe(`---
 title: "First guide"
 description: "First guide description."
@@ -78,8 +78,8 @@ Read [Second](../second/).
     const fixture = createFixture()
     const built = buildExternalDocsProduct({ ...fixture, editRef: null })
 
-    expect(built.files.get('guides/first.md')).toContain('editUrl: false')
-    expect(built.files.get('guides/first.md')).not.toContain('/edit/')
+    expect(built.files.get('guides/first.mdx')).toContain('editUrl: false')
+    expect(built.files.get('guides/first.mdx')).not.toContain('/edit/')
   })
 
   it('writes generated navigation that expands from one sidebar placeholder', () => {
@@ -93,7 +93,7 @@ Read [Second](../second/).
     writeExternalDocsProduct(outputRoot, built)
     expect(loadPreviewExternalDocsRoutes(outputRoot)).toEqual(['docs/user-guide/example/source/'])
     for (const item of built.navigation.groups.flatMap((group) => group.items)) {
-      const contentPath = path.join(contentRoot, `${item.slug}.md`)
+      const contentPath = path.join(contentRoot, `${item.slug}.mdx`)
       fs.mkdirSync(path.dirname(contentPath), { recursive: true })
       fs.writeFileSync(contentPath, 'generated')
     }
@@ -287,7 +287,7 @@ github:
         },
       ],
     })
-    expect(built.files.get('guides/first.md')).toBe(`---
+    expect(built.files.get('guides/first.mdx')).toBe(`---
 title: "First guide"
 description: "First guide description."
 slug: "docs/user-guide/example/source/guides/first"

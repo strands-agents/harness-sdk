@@ -111,46 +111,51 @@ Text.
     expect(transformExternalMarkdown(source, context)).toContain('<a id="stable-anchor"></a>')
   })
 
-  it('expands a <YouTube/> shortcode to a static nocookie iframe', () => {
+  it('passes through any JSX element whose attributes are literal strings', () => {
     const source = `# Source title
 
 <YouTube id="j6zR0sPeMko" title="Episode 1" />
+
+<Card variant="info">
+  Hello from a component the site has auto-imported.
+</Card>
 `
-    expect(transformExternalMarkdown(source, context)).toBe(
-      '<iframe src="https://www.youtube-nocookie.com/embed/j6zR0sPeMko"' +
-        ' title="Episode 1" loading="lazy"' +
-        ' style="width:100%;aspect-ratio:16/9;border:0"' +
-        ' allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"' +
-        ' referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>\n'
+    const transformed = transformExternalMarkdown(source, context)
+    expect(transformed).toContain('<YouTube id="j6zR0sPeMko" title="Episode 1" />')
+    expect(transformed).toContain('<Card variant="info">')
+    expect(transformed).toContain('</Card>')
+  })
+
+  it('rejects an attribute whose value is an expression', () => {
+    expect(() => transformExternalMarkdown('# Source title\n\n<YouTube id={x} />\n', context)).toThrow(
+      /must be a literal string/
     )
   })
 
-  it('expands a <YouTube/> shortcode without a title', () => {
-    expect(transformExternalMarkdown('# Source title\n\n<YouTube id="j6zR0sPeMko" />\n', context)).toBe(
-      '<iframe src="https://www.youtube-nocookie.com/embed/j6zR0sPeMko" loading="lazy"' +
-        ' style="width:100%;aspect-ratio:16/9;border:0"' +
-        ' allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"' +
-        ' referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>\n'
+  it('rejects a spread or expression-only attribute', () => {
+    expect(() => transformExternalMarkdown('# Source title\n\n<YouTube {...props} />\n', context)).toThrow(
+      /spread or expression attribute/
     )
   })
 
-  it.each([
-    ['extra attribute', '<YouTube id="j6zR0sPeMko" onLoad="x" />'],
-    ['expression attribute', '<YouTube id={x} />'],
-  ])('rejects <YouTube/> with %s', (_label, construct) => {
-    expect(() => transformExternalMarkdown(`# Source title\n\n${construct}\n`, context)).toThrow(/unsafe HTML or MDX/)
-  })
-
-  it('leaves trailing content on the same line alone after expanding <YouTube/>', () => {
-    expect(transformExternalMarkdown('# Source title\n\n<YouTube id="j6zR0sPeMko" />tail text\n', context)).toBe(
-      '<iframe src="https://www.youtube-nocookie.com/embed/j6zR0sPeMko" loading="lazy"' +
-        ' style="width:100%;aspect-ratio:16/9;border:0"' +
-        ' allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"' +
-        ' referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>tail text\n'
+  it('rejects an ESM import statement', () => {
+    expect(() => transformExternalMarkdown("# Source title\n\nimport Foo from 'bar'\n\n<Foo />\n", context)).toThrow(
+      /import and export/
     )
   })
 
-  it('does not expand <YouTube/> inside a fenced code block', () => {
+  it('rejects a bare {expression} in prose', () => {
+    expect(() => transformExternalMarkdown('# Source title\n\nReplace {name} with your box.\n', context)).toThrow(
+      /bare \{expression\}/
+    )
+  })
+
+  it('leaves braces inside inline code alone', () => {
+    const source = '# Source title\n\nSee `/orders/{order_id}/replacement`.\n'
+    expect(transformExternalMarkdown(source, context)).toBe('See `/orders/{order_id}/replacement`.\n')
+  })
+
+  it('leaves JSX inside a fenced code block as literal text', () => {
     const source = `# Source title
 
 \`\`\`md
@@ -162,25 +167,16 @@ Text.
     expect(output).not.toContain('youtube-nocookie.com')
   })
 
-  it('preserves braces and import-like paragraphs as plain Markdown prose', () => {
-    const source = `# Source title
-
-Replace {name} with your box.
-
-import and export are ordinary words in a Markdown paragraph.
-`
+  it('treats lines that happen to contain "import"/"export" mid-paragraph as prose', () => {
+    const source = '# Source title\n\nThe words import and export are ordinary in a Markdown paragraph.\n'
     expect(transformExternalMarkdown(source, context)).toBe(
-      'Replace {name} with your box.\n\nimport and export are ordinary words in a Markdown paragraph.\n'
+      'The words import and export are ordinary in a Markdown paragraph.\n'
     )
   })
 
-  it.each([
-    ['MDX components', '<DangerousComponent />'],
-    ['unsafe HTML', '<script>alert("x")</script>'],
-  ])('rejects %s', (_label, construct) => {
-    expect(() => transformExternalMarkdown(`# Source title\n\n${construct}\n`, context)).toThrow(
-      /not allowed|must be in code/
-    )
+  it('passes raw HTML tags through literally — upstream owns what it renders', () => {
+    const source = '# Source title\n\n<section class="note">Hello</section>\n'
+    expect(transformExternalMarkdown(source, context)).toContain('<section class="note">Hello</section>')
   })
 
   it('rejects relative links that escape the repository', () => {
