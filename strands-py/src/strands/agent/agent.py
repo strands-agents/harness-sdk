@@ -305,7 +305,7 @@ class Agent(AgentBase, LocalAgent):
                 If None, the model will behave according to its default settings.
             sort_tools: Sort tool specifications by name after middleware, before each model call, to stabilize
                 prompt-cache prefixes. Defaults to True. Set False to preserve the outgoing order, including
-                middleware changes. Tool registration order is always preserved.
+                middleware changes. Registration order is preserved in the tool registry.
             structured_output_model: Pydantic model type(s) for structured output.
                 When specified, all agent calls will attempt to return structured output of this type.
                 This can be overridden on the agent invocation.

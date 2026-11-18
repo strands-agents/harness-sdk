@@ -47,42 +47,6 @@ agent("Get https://example.com and summarize the response status.")
 </Tab>
 </Tabs>
 
-We can see which tools are loaded in our agent:
-
-<Tabs>
-<Tab label="Python">
-
-Access `agent.tool_names` for a list of tool names, and `agent.tool_registry.get_all_tools_config()` for a JSON representation including descriptions and input parameters:
-
-```python
-print(agent.tool_names)
-
-print(agent.tool_registry.get_all_tools_config())
-```
-</Tab>
-<Tab label="TypeScript">
-
-Access the tools array directly:
-
-```typescript
-// Access all tools
-console.log(agent.tools)
-```
-</Tab>
-</Tabs>
-
-
-## Tool definition order
-
-To keep identical tool catalogs stable across requests, agents sort outgoing tool
-definitions by name before each model call. Sorting happens after middleware and
-preserves tool registration order. This helps avoid prompt-cache misses caused by
-MCP servers returning the same tools in different orders; it does not enable caching.
-
-If your application relies on outgoing tool order, disable sorting with
-<Syntax py="Agent(sort_tools=False)" ts="new Agent({ sortTools: false })" />.
-This preserves the order supplied by registration and any middleware changes.
-
 ## Loading Tools from Files
 
 <Tabs>
@@ -130,6 +94,42 @@ Automatic loading and reloading from a directory is available in the Python SDK.
 :::note[Tool Loading Implications]
 When enabling automatic tool loading, any Python file placed in the `./tools/` directory will be executed by the agent. Under the shared responsibility model, it is your responsibility to ensure that only safe, trusted code is written to the tool loading directory, as the agent will automatically pick up and execute any tools found there.
 :::
+
+## Accessing Tools
+
+Inspect the tools registered with your agent:
+
+<Tabs>
+<Tab label="Python">
+
+Access `agent.tool_names` for a list of tool names, and `agent.tool_registry.get_all_tools_config()` for a JSON representation including descriptions and input parameters:
+
+```python
+print(agent.tool_names)
+
+print(agent.tool_registry.get_all_tools_config())
+```
+</Tab>
+<Tab label="TypeScript">
+
+Access the tools array directly:
+
+```typescript
+// Access all tools
+console.log(agent.tools)
+```
+</Tab>
+</Tabs>
+
+
+To keep identical tool catalogs stable across requests, agents sort outgoing tool
+definitions by name before each model call, after middleware. Tools remain in
+registration order in the tool registry. This helps avoid prompt-cache misses when
+MCP servers return the same tools in different orders; it does not enable caching.
+
+If your application relies on outgoing tool order, disable sorting with
+<Syntax py="Agent(sort_tools=False)" ts="new Agent({ sortTools: false })" />.
+This preserves the order supplied by registration and any middleware changes.
 
 ## Using Tools
 
