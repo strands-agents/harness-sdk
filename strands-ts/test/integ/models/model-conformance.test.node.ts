@@ -1,15 +1,18 @@
-import { describe, expect, inject, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { Agent, Message, TextBlock } from '@strands-agents/sdk'
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 import { lookupModelInfo } from '$/sdk/models/model-info.js'
-import { FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES } from '$/sdk/models/native-output.js'
+import { apiErrorMessage } from '$/sdk/models/anthropic.js'
+import { isUnsupportedMechanismMessage } from '$/sdk/models/native-output.js'
 import { ContextInjector } from '$/sdk/vended-plugins/context-injector/index.js'
 
 import {
   cachePrompt,
   cases,
+  isTrackedFailure,
   knownFailure,
+  knownFailures,
   notApplicableReason,
   omittedCases,
   omittedProviders,
@@ -18,7 +21,7 @@ import {
   recordResult,
   targets,
 } from '../__fixtures__/conformance.js'
-import { echoTool, hasToolUse, isInBrowser } from '../__fixtures__/test-helpers.js'
+import { echoTool, hasToolUse } from '../__fixtures__/test-helpers.js'
 import type { Model } from '@strands-agents/sdk'
 import type { ConformanceConfig, ConformanceStatus } from '../__fixtures__/conformance.js'
 
@@ -39,31 +42,24 @@ const expectedProfile = { name: 'John', age: 25, occupation: expect.stringMatchi
 
 const userMessage = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
 
-// The Anthropic client puts the response body into its error text as JSON, which escapes the quotes in the message.
-const apiErrorMessage = (error: unknown): string => {
-  const message = (error as { error?: { error?: { message?: unknown } } }).error?.error?.message
-  return typeof message === 'string' ? message : String(error)
+const forcedToolChoiceOutcome = async (model: Model): Promise<'accepted' | 'refused' | 'no tool use'> => {
+  try {
+    const events = await collectIterator(
+      model.stream([userMessage('Hello there!')], { toolSpecs: [echoTool.toolSpec], toolChoice: { any: {} } })
+    )
+    const usedTool = events.some(
+      (event) => event.type === 'modelContentBlockStartEvent' && event.start?.type === 'toolUseStart'
+    )
+    return usedTool ? 'accepted' : 'no tool use'
+  } catch (error) {
+    if (!isUnsupportedMechanismMessage(apiErrorMessage(error), 'forced')) throw error
+    return 'refused'
+  }
 }
 
-const forcedToolChoiceOutcome = async (model: Model): Promise<'accepted' | 'refused' | 'no tool use'> => {
-  // A model that accepts a forced call can still end a turn without one, so only a tool use or a refusal is final.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const events = await collectIterator(
-        model.stream([userMessage('Hello there!')], { toolSpecs: [echoTool.toolSpec], toolChoice: { any: {} } })
-      )
-      const startsToolUse = events.some(
-        (event) => event.type === 'modelContentBlockStartEvent' && event.start?.type === 'toolUseStart'
-      )
-      if (startsToolUse) return 'accepted'
-    } catch (error) {
-      const providerMessage = apiErrorMessage(error)
-      if (!FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES.some((message) => providerMessage.includes(message))) throw error
-      return 'refused'
-    }
-  }
-  return 'no tool use'
-}
+// On a single call a model can skip a tool or ignore injected text, so these cases also retry a failed assertion.
+// A target that does it often belongs in knownFailures as intermittent.
+const retriesAssertions = new Set(['tool-use', 'structured-output', 'forced-tool-choice', 'temporary-messages'])
 
 const implementations: Record<string, (context: CaseContext) => Promise<void>> = {
   'tool-use': async ({ model }) => {
@@ -189,26 +185,51 @@ describe('Model conformance coverage', () => {
 
     expect(targets.filter((target) => !known.has(target.provider))).toStrictEqual([])
   })
+
+  it('names a live target and a case in every known failure', () => {
+    const live = new Set(
+      targets.filter((target) => !target.endOfLife).map(({ provider, model }) => `${provider} ${model}`)
+    )
+
+    expect(
+      knownFailures.filter((known) => !live.has(`${known.provider} ${known.model}`) || !(known.case in cases))
+    ).toStrictEqual([])
+  })
 })
 
-describe.skipIf(!inject('conformanceEnabled')).each(targets)('Model conformance: $provider $model', (target) => {
+// The cases call every listed model, so they only run when asked: 'core' runs the targets marked core and any
+// other value runs them all. See shared/README.md for when CI sets each.
+const mode = process.env.STRANDS_CONFORMANCE
+
+describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (target) => {
   const provider = providers[target.provider]
 
   // Why no case can run on this target, as a result status and reason.
   const unavailable = (): ['skipped' | 'not-applicable', string] | undefined => {
     if (target.endOfLife) return ['not-applicable', 'end of life']
+    if (mode === 'core' && !target.core) return ['skipped', 'not in the core set that pull requests run']
     if (!provider) return ['not-applicable', omittedProviders[target.provider] ?? 'provider is not mapped']
     if (provider.skip) return ['skipped', 'credentials are not available']
-    if (provider.nodeOnly && isInBrowser()) return ['skipped', 'provider runs in node only']
     return undefined
   }
 
   for (const caseId of Object.keys(cases)) {
     const known = knownFailure(target, caseId)
-    // A known failure still runs and is recorded; the run goes red when it starts passing, unless it only fails
-    // some of the time. A provider can be briefly unavailable and a model can answer differently from one call to
-    // the next, so every case gets three attempts, and slow reasoning models get a longer timeout.
-    it(caseId, { fails: known !== undefined && !known.intermittent, timeout: 180_000, retry: 2 }, async (ctx) => {
+    const stale = (problem: string): Error =>
+      new Error(`known failure #${known?.issue} ${problem}; remove it from knownFailures in shared/conformance.json`)
+
+    // A provider can be unavailable for a short while, so an error gets three attempts half a minute apart. A
+    // failed assertion is the case's verdict and is retried only for the cases named above. Slow reasoning
+    // models get a longer timeout.
+    const options = {
+      timeout: 180_000,
+      retry: {
+        count: 2,
+        delay: 30_000,
+        condition: (error: { name?: string }) => error.name !== 'AssertionError' || retriesAssertions.has(caseId),
+      },
+    }
+    it(caseId, options, async (ctx) => {
       // Recorded when the attempt finishes, so a timeout or a throw before the case body still leaves a record.
       let status: ConformanceStatus = 'failed'
       let reason: string | undefined
@@ -225,6 +246,7 @@ describe.skipIf(!inject('conformanceEnabled')).each(targets)('Model conformance:
       const run = implementations[caseId]
       const model = provider!.create(target.model)
       const notApplicable = run ? notApplicableReason(cases[caseId]!, model.modelInfo) : omittedCases[caseId]
+      if (known && notApplicable) throw stale(`no longer applies (${notApplicable})`)
       if (!run || notApplicable) return skip('not-applicable', notApplicable)
 
       try {
@@ -233,8 +255,11 @@ describe.skipIf(!inject('conformanceEnabled')).each(targets)('Model conformance:
       } catch (error) {
         reason = providerErrorReason(error)
         if (reason) status = 'error'
-        if (!known?.intermittent) throw error
+        // Only the tracked failure is expected. Any other error on a known failure still fails the run.
+        if (known && isTrackedFailure(known, error)) return
+        throw error
       }
+      if (known && !known.intermittent) throw stale('now passes')
     })
   }
 })

@@ -2,10 +2,10 @@
  * Model conformance: the cases and targets in shared/conformance.json, mapped to this SDK's model providers.
  */
 
+import { appendFile } from 'node:fs/promises'
 import conformance from '../../../../shared/conformance.json' with { type: 'json' }
 
 import { anthropic, bedrock, gemini, mantle, openai, openaiResponses } from './model-providers.js'
-import { isInBrowser } from './test-helpers.js'
 import { ModelThrottledError } from '@strands-agents/sdk'
 import type { CacheConfig, Model, ModelInfo } from '@strands-agents/sdk'
 
@@ -18,12 +18,14 @@ export interface ConformanceCase {
 export interface ConformanceTarget {
   provider: string
   model: string
+  core?: boolean
   endOfLife?: boolean
 }
 
 export interface KnownFailure extends ConformanceTarget {
   case: string
   issue: number
+  error?: string
   intermittent?: boolean
 }
 
@@ -33,7 +35,6 @@ export interface ConformanceConfig {
 
 export interface ConformanceProvider {
   skip: boolean
-  nodeOnly?: boolean
   create: (modelId: string, config?: ConformanceConfig) => Model
 }
 
@@ -41,6 +42,7 @@ export type ConformanceStatus = 'passed' | 'failed' | 'error' | 'skipped' | 'not
 
 export const cases: Record<string, ConformanceCase> = conformance.cases
 export const targets: ConformanceTarget[] = conformance.targets
+export const knownFailures: KnownFailure[] = conformance.knownFailures
 
 const { intro, topics, actions } = conformance.cachePrompt
 
@@ -66,9 +68,24 @@ export const cachePrompt = [
  * @returns The entry, which names the issue that tracks the failure
  */
 export function knownFailure(target: ConformanceTarget, caseId: string): KnownFailure | undefined {
-  return (conformance.knownFailures as KnownFailure[]).find(
+  return knownFailures.find(
     (known) => known.provider === target.provider && known.model === target.model && known.case === caseId
   )
+}
+
+/**
+ * Whether an error is the failure the entry tracks: a failed assertion, or an error carrying the entry's text.
+ *
+ * @param known - The known failure entry
+ * @param error - What the case threw
+ * @returns True when the error is the tracked failure
+ */
+export function isTrackedFailure(known: KnownFailure, error: unknown): boolean {
+  if (known.error === undefined) return error instanceof Error && error.name === 'AssertionError'
+  for (let current = error; current instanceof Error; current = current.cause) {
+    if (current.message.includes(known.error)) return true
+  }
+  return false
 }
 
 // Factories set no output token limit, so the cases run on each provider's defaults.
@@ -104,19 +121,16 @@ export const providers: Record<string, ConformanceProvider> = {
     },
     create: (modelId, config) => openaiResponses.createModel({ modelId, ...config }),
   },
-  // Mantle authenticates with the ambient AWS credential chain, which only exists in node.
   mantle: {
     get skip() {
       return mantle.skip
     },
-    nodeOnly: true,
     create: (modelId, config) => mantle.createModel({ api: 'chat', modelId, ...config }),
   },
   'mantle-responses': {
     get skip() {
       return mantle.skip
     },
-    nodeOnly: true,
     create: (modelId, config) => mantle.createModel({ api: 'responses', modelId, ...config }),
   },
 }
@@ -172,8 +186,7 @@ export function providerErrorReason(error: unknown): string | undefined {
 }
 
 /**
- * Appends a result record to the file named by STRANDS_CONFORMANCE_RESULTS. Does nothing in the browser or when
- * the variable is unset.
+ * Appends a result record to the file named by STRANDS_CONFORMANCE_RESULTS. Does nothing when the variable is unset.
  *
  * @param target - The provider and model the case ran on
  * @param caseId - The case id
@@ -186,10 +199,15 @@ export async function recordResult(
   status: ConformanceStatus,
   reason?: string
 ): Promise<void> {
-  if (isInBrowser()) return
   const file = process.env.STRANDS_CONFORMANCE_RESULTS
   if (!file) return
-  const { appendFile } = await import('node:fs/promises')
-  const record = { sdk: 'typescript', ...target, case: caseId, status, ...(reason && { reason }) }
+  const record = {
+    sdk: 'typescript',
+    provider: target.provider,
+    model: target.model,
+    case: caseId,
+    status,
+    ...(reason && { reason }),
+  }
   await appendFile(file, `${JSON.stringify(record)}\n`)
 }

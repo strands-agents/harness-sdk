@@ -62,3 +62,48 @@ jobs:
           path: ${{ runner.temp }}/conformance-python.jsonl
           if-no-files-found: warn
 
+  typescript:
+    name: TypeScript
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 60
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.STRANDS_INTEG_TEST_ROLE }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build the package
+        run: npm run build
+
+      - name: Run the conformance cases
+        env:
+          STRANDS_CONFORMANCE: all
+          STRANDS_CONFORMANCE_RESULTS: ${{ runner.temp }}/conformance-typescript.jsonl
+        run: npm run test:integ -- test/integ/models/model-conformance.test.node.ts
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: conformance-typescript
+          path: ${{ runner.temp }}/conformance-typescript.jsonl
+          if-no-files-found: warn

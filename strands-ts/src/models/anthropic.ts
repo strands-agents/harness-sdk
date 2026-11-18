@@ -178,8 +178,10 @@ function isToolForced(request: Anthropic.MessageStreamParams): boolean {
 /**
  * The provider's error text. The SDK's error message is the JSON-encoded response body, which escapes quotes in the
  * text, so the body's own message is read when present.
+ *
+ * @internal
  */
-function apiErrorMessage(error: unknown): string {
+export function apiErrorMessage(error: unknown): string {
   const message = (error as { error?: { error?: { message?: unknown } } }).error?.error?.message
   return typeof message === 'string' ? message : normalizeError(error).message
 }

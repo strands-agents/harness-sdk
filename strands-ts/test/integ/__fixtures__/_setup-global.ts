@@ -76,8 +76,6 @@ export async function setup(project: TestProject): Promise<() => void> {
 
   project.provide('isBrowser', project.isBrowserEnabled())
   project.provide('isCI', isCI)
-  // The model conformance cases call every listed model, so they only run when asked.
-  project.provide('conformanceEnabled', !!globalThis.process.env.STRANDS_CONFORMANCE)
   project.provide('provider-openai', await getOpenAITestContext(isCI))
   project.provide('provider-bedrock', await getBedrockTestContext(isCI))
   project.provide('provider-bedrock-kb', await getBedrockKnowledgeBaseTestContext())

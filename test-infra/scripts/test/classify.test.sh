@@ -90,7 +90,9 @@ expect_conformance() {
 # --- Model conformance: only when asked for, and only for changes that can affect a model ---
 expect_conformance on "model provider source" 1 "strands-ts/src/models/bedrock.ts"
 expect_conformance on "shared model data" 1 "shared/model-info.json"
-expect_conformance on "the conformance cases" 1 "strands-ts/test/integ/models/model-conformance.test.ts"
+expect_conformance on "the conformance cases" 1 "strands-ts/test/integ/models/model-conformance.test.node.ts"
+expect_conformance on "provider client upgrade" 1 "package-lock.json"
+expect_conformance on "context injector" 1 "strands-ts/src/vended-plugins/context-injector/plugin.ts"
 expect_conformance off "unrelated source" 1 "strands-ts/src/agent/agent.ts"
 expect_conformance off "model provider source, not asked for" "" "strands-ts/src/models/bedrock.ts"
 

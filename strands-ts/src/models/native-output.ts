@@ -226,7 +226,12 @@ function modelKey(provider: string, modelId: string): string {
   return `${provider}:${modelId}`
 }
 
-function isUnsupportedMechanismMessage(message: string, mechanism: StructuredOutputMechanism): boolean {
+/**
+ * Whether a provider error message means the model does not support the mechanism.
+ *
+ * @internal
+ */
+export function isUnsupportedMechanismMessage(message: string, mechanism: StructuredOutputMechanism): boolean {
   if (mechanism === 'forced') {
     return FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES.some((signal) => message.includes(signal))
   }

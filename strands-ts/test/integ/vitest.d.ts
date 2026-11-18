@@ -5,7 +5,6 @@ declare module 'vitest' {
   export interface ProvidedContext {
     isCI: boolean
     isBrowser: boolean
-    conformanceEnabled: boolean
     ['provider-openai']: {
       shouldSkip: boolean
       apiKey: string | undefined
