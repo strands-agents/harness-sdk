@@ -93,6 +93,14 @@ export class InvocationContextImpl implements InvocationContext {
   }
 
   /**
+   * @param request - The instance to look for
+   * @returns `true` if this instance is `request` or its turns count toward it
+   */
+  countsToward(request: InvocationContextImpl): boolean {
+    return this === request || (this.limitingParent?.countsToward(request) ?? false)
+  }
+
+  /**
    * Whether this instance or a parent whose limits apply to it sets the limit named `key`.
    *
    * @param key - The limit to look for

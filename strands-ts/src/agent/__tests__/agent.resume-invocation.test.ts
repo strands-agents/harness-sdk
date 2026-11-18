@@ -43,8 +43,60 @@ describe('interrupt resume and the request invocation', () => {
     expect(resumed.stopReason).toBe('endTurn')
     expect(invocations).toHaveLength(2)
     expect(invocations[1]).toBe(invocations[0])
-    // One turn before the interrupt, then the resume's pending-tool cycle and its model call.
-    expect(invocations[0]!.usage.turnsTaken).toBe(3)
+    // The interrupted turn, which the resume finishes, then the model call after it.
+    expect(invocations[0]!.usage.turnsTaken).toBe(2)
+  })
+
+  it('a resume finishes the interrupted turn even when the turn limit is already reached', async () => {
+    const { agent, invocations } = interruptingAgent(['next'])
+    const interrupted = await agent.invoke('go', { limits: { turns: 1 } })
+    expect(interrupted.stopReason).toBe('interrupt')
+
+    const resumed = await agent.invoke([responseFor(interrupted)])
+
+    expect(resumed.stopReason).toBe('limitTurns')
+    expect(invocations[0]!.usage.turnsTaken).toBe(1)
+    expect(agent.messages.map((message) => message.content[0]!.type)).toEqual([
+      'textBlock',
+      'toolUseBlock',
+      'toolResultBlock',
+    ])
+    // The interrupt is resolved, so the agent takes new input again.
+    expect((await agent.invoke('next')).stopReason).toBe('endTurn')
+  })
+
+  it('a caller queued behind the interrupt runs after a resume that stops on the turn limit', async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} })
+      .addTurn({ type: 'textBlock', text: 'B' })
+    const agent = new Agent({ model, tools: [confirmTool()], printer: false, concurrentInvocationMode: 'queue' })
+    const interrupted = await agent.invoke('a', { limits: { turns: 1 } })
+    const queued = agent.invoke('b')
+
+    const resumed = await agent.invoke([responseFor(interrupted)])
+
+    expect(resumed.stopReason).toBe('limitTurns')
+    expect((await queued).stopReason).toBe('endTurn')
+    expect(agent.pendingInvocations).toHaveLength(0)
+  })
+
+  it('a turn interrupted more than once is still counted once', async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} })
+      .addTurn({ type: 'textBlock', text: 'done' })
+    const twice = createMockTool('confirm', (context) => {
+      const first = context.interrupt<string>({ name: 'first', reason: 'ok?' })
+      return `${first} ${context.interrupt<string>({ name: 'second', reason: 'sure?' })}`
+    })
+    const agent = new Agent({ model, tools: [twice], printer: false })
+
+    const first = await agent.invoke('go', { limits: { turns: 2 } })
+    const second = await agent.invoke([responseFor(first)])
+    expect(second.stopReason).toBe('interrupt')
+    const resumed = await agent.invoke([responseFor(second)])
+
+    expect(resumed.stopReason).toBe('endTurn')
+    expect(unwrapInvocationContext(resumed.invocationContext)!.usage.turnsTaken).toBe(2)
   })
 
   it('a rejected call while interrupted fires no invocation hooks and does not change which invocation the resume joins', async () => {
@@ -106,7 +158,7 @@ describe('interrupt resume and the request invocation', () => {
     expect(resumed.stopReason).toBe('endTurn')
     expect(targetInvocations).toHaveLength(2)
     expect(targetInvocations[1]).not.toBe(targetInvocations[0])
-    // The resume's own two cycles only; the warm-up turn is not carried over.
+    // A new request: its pending-tool cycle and its model call. The warm-up turn is not carried over.
     expect(targetInvocations[1]!.usage.turnsTaken).toBe(2)
   })
 })

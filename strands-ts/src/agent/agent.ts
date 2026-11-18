@@ -2007,6 +2007,13 @@ export class Agent implements LocalAgent, InvokableAgent {
         this._toolRegistry.add(structuredOutputTool)
       }
 
+      // A resume into the request that raised the interrupt runs the pending tools of a turn
+      // that request already counted, so that cycle is not counted or checked against limits again.
+      let finishesInterruptedTurn =
+        this._interruptState.pendingToolExecution !== undefined &&
+        this._interruptedInvocationContext !== undefined &&
+        invocationContext.countsToward(this._interruptedInvocationContext)
+
       // Main agent loop - continues until model stops without requesting tools
       let stepRan = false
       while (true) {
@@ -2015,14 +2022,23 @@ export class Agent implements LocalAgent, InvokableAgent {
         if (this._deferredCancel && stepRan) throw new CancelledError()
         stepRan = true
 
-        const limitStopReason = reachedLimit(invocationContext)
-        if (limitStopReason) {
-          result = this._buildLimitStopResult(limitStopReason, invocationState, invocationContext, messageCountAtStart)
-          return result
-        }
+        if (finishesInterruptedTurn) {
+          finishesInterruptedTurn = false
+        } else {
+          const limitStopReason = reachedLimit(invocationContext)
+          if (limitStopReason) {
+            result = this._buildLimitStopResult(
+              limitStopReason,
+              invocationState,
+              invocationContext,
+              messageCountAtStart
+            )
+            return result
+          }
 
-        // Count this turn before it runs, so nested calls started by its tools see it already counted.
-        invocationContext.recordTurn()
+          // Count this turn before it runs, so nested calls started by its tools see it already counted.
+          invocationContext.recordTurn()
+        }
 
         // Start metrics cycle tracking
         const { cycleId, startTime: cycleStartTime } = this._meter.startCycle()

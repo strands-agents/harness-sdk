@@ -171,9 +171,10 @@ export interface InvokeOptions {
    * limits and usage.
    *
    * Limits are checked before each turn, so tools requested by the previous turn
-   * finish first and `agent.messages` stays reinvokable. Each limit, when set,
-   * must be a positive finite number; omit a field (or `limits` itself) for no
-   * limit on that dimension.
+   * finish first and `agent.messages` stays reinvokable. That holds across an
+   * interrupt: a resume runs the interrupted turn's tools as part of that turn,
+   * before limits are checked again. Each limit, when set, must be a positive
+   * finite number; omit a field (or `limits` itself) for no limit on that dimension.
    *
    * Priority when several are reached at once (highest first): `turns`,
    * `totalTokens`, `outputTokens`, `structuredOutputAttempts`, with `stopReason`
