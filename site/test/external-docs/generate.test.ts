@@ -49,7 +49,7 @@ describe('external docs generation', () => {
     })
     expect(second.navigation).toEqual(first.navigation)
 
-    const firstGuide = first.files.get('guides/first.md')
+    const firstGuide = first.files.get('guides/first.mdx')
     expect(firstGuide).toBe(`---
 title: "First guide"
 description: "First guide description."
@@ -78,8 +78,8 @@ Read [Second](../second/).
     const fixture = createFixture()
     const built = buildExternalDocsProduct({ ...fixture, editRef: null })
 
-    expect(built.files.get('guides/first.md')).toContain('editUrl: false')
-    expect(built.files.get('guides/first.md')).not.toContain('/edit/')
+    expect(built.files.get('guides/first.mdx')).toContain('editUrl: false')
+    expect(built.files.get('guides/first.mdx')).not.toContain('/edit/')
   })
 
   it('writes generated navigation that expands from one sidebar placeholder', () => {
@@ -93,7 +93,7 @@ Read [Second](../second/).
     writeExternalDocsProduct(outputRoot, built)
     expect(loadPreviewExternalDocsRoutes(outputRoot)).toEqual(['docs/user-guide/example/source/'])
     for (const item of built.navigation.groups.flatMap((group) => group.items)) {
-      const contentPath = path.join(contentRoot, `${item.slug}.md`)
+      const contentPath = path.join(contentRoot, `${item.slug}.mdx`)
       fs.mkdirSync(path.dirname(contentPath), { recursive: true })
       fs.writeFileSync(contentPath, 'generated')
     }
@@ -184,6 +184,58 @@ github:
     ])
   })
 
+  it('nests navigation when manifest entries declare a group path', () => {
+    const sourceRoot = temporaryDirectory()
+    fs.mkdirSync(path.join(sourceRoot, 'docs/user'), { recursive: true })
+    fs.writeFileSync(path.join(sourceRoot, 'docs/user/overview.md'), '# Overview\n\nOverview.\n')
+    fs.writeFileSync(path.join(sourceRoot, 'docs/user/qwen.md'), '# Qwen\n\nQwen.\n')
+    fs.writeFileSync(path.join(sourceRoot, 'docs/user/gemma.md'), '# Gemma\n\nGemma.\n')
+
+    const manifest = parseExternalDocsManifest({
+      schemaVersion: 1,
+      product: { id: 'example', name: 'Example' },
+      pages: [
+        page('overview', 'docs/user/overview.md', 'models', 'Models', 'Models', 1),
+        page('qwen', 'docs/user/qwen.md', 'models/qwen', 'Qwen', ['Models', 'Checkpoints'], 2),
+        page('gemma', 'docs/user/gemma.md', 'models/gemma', 'Gemma', ['Models', 'Checkpoints'], 3),
+      ],
+    })
+    fs.writeFileSync(path.join(sourceRoot, 'docs/site-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const config = parseExternalDocsConfig({
+      schemaVersion: 1,
+      products: [
+        {
+          id: 'example',
+          repository: 'https://github.com/example/docs',
+          ref: 'main',
+          manifest: 'docs/site-manifest.json',
+          routePrefix: 'docs/labs/example',
+          navLabel: 'Example',
+          publicationStatus: 'preview',
+        },
+      ],
+    }).products[0]!
+
+    const built = buildExternalDocsProduct({ sourceRoot, config, manifest, revision, editRef: 'main' })
+
+    expect(built.navigation.groups).toEqual([
+      {
+        label: 'Models',
+        items: [
+          { label: 'Models', slug: 'docs/labs/example/models' },
+          {
+            label: 'Checkpoints',
+            items: [
+              { label: 'Qwen', slug: 'docs/labs/example/models/qwen' },
+              { label: 'Gemma', slug: 'docs/labs/example/models/gemma' },
+            ],
+          },
+        ],
+      },
+    ])
+  })
+
   it('rejects source symlinks even when they point to a regular file', () => {
     const fixture = createFixture()
     const outside = path.join(temporaryDirectory(), 'outside.md')
@@ -235,7 +287,7 @@ github:
         },
       ],
     })
-    expect(built.files.get('guides/first.md')).toBe(`---
+    expect(built.files.get('guides/first.mdx')).toBe(`---
 title: "First guide"
 description: "First guide description."
 slug: "docs/user-guide/example/source/guides/first"
@@ -293,7 +345,7 @@ function createFixture() {
   return { sourceRoot, config, manifest, revision, editRef: 'main' }
 }
 
-function page(id: string, source: string, slug: string, title: string, group: string, order: number) {
+function page(id: string, source: string, slug: string, title: string, group: string | string[], order: number) {
   return {
     id,
     source,

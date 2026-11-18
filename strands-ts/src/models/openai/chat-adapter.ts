@@ -4,7 +4,7 @@
  * @internal
  */
 
-import OpenAI from 'openai'
+import OpenAI, { type BadRequestError } from 'openai'
 import type { ChatCompletionContentPartText } from 'openai/resources/index.mjs'
 import type { Message, StopReason, ToolResultBlock } from '../../types/messages.js'
 import type { ImageBlock, DocumentBlock } from '../../types/media.js'
@@ -13,6 +13,9 @@ import { toMimeType } from '../../mime.js'
 import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
+import { warnOnce } from '../../logging/warn-once.js'
+import { lookupChatCompletionsTools } from '../model-info.js'
+import type { ChatCompletionsTools } from '../model-info.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig } from './cache.js'
@@ -47,6 +50,74 @@ type OpenAIChatChoice = {
   }
   finish_reason?: string
   index: number
+}
+
+// The OpenAI API and Bedrock Mantle, where the tool limits in the shared model info were measured.
+const TOOL_LIMITS_HOST = /^(api\.openai\.com|bedrock-mantle\.[a-z0-9-]+\.api\.aws)$/
+
+function hasOpenAIToolLimits(baseURL: string | undefined): boolean {
+  try {
+    return TOOL_LIMITS_HOST.test(new URL(baseURL ?? '').hostname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Turns reasoning off in a request with tools when OpenAI's Chat Completions API accepts them for the model
+ * only that way and `params.reasoning_effort` is unset. Leaves requests to other endpoints as they are.
+ *
+ * @internal
+ * @param request - The request to send, changed in place
+ * @param baseURL - The base URL of the client that sends it
+ * @returns The limit the API puts on the request's tools, undefined when it has none or the data does not say
+ */
+export function applyChatCompletionsTools(
+  request: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+  baseURL: string | undefined
+): ChatCompletionsTools | undefined {
+  if (!request.tools?.length || !hasOpenAIToolLimits(baseURL)) return undefined
+  const limit = lookupChatCompletionsTools(request.model)
+  if (limit === 'reasoningOff' && (request.reasoning_effort === undefined || request.reasoning_effort === null)) {
+    warnOnce(
+      logger,
+      `model_id=<${request.model}> | this model accepts tools on the Chat Completions API only with reasoning off, sending reasoning_effort='none'; use api: 'responses' to keep reasoning`
+    )
+    request.reasoning_effort = 'none'
+  }
+  return limit
+}
+
+/**
+ * Adds the way out to OpenAI's rejection of tools for a model that accepts none on Chat Completions: its message
+ * suggests `reasoning_effort: 'none'`, which such a model rejects too.
+ *
+ * @internal
+ * @param error - The error the request failed with
+ * @param toolLimit - What {@link applyChatCompletionsTools} returned for the request
+ * @param modelId - The model the request was sent to
+ * @returns For that rejection of a model with the `unsupported` limit, a copy of the error with the hint in its
+ *   message and the error as its cause; else the error as given
+ */
+export function withResponsesHint(
+  error: unknown,
+  toolLimit: ChatCompletionsTools | undefined,
+  modelId: string
+): unknown {
+  // OpenAI names this param in both of its rejections: tools with reasoning, and 'none' unsupported.
+  const rejection = error as BadRequestError | null | undefined
+  if (toolLimit !== 'unsupported' || rejection?.status !== 400 || rejection.param !== 'reasoning_effort') return error
+  // The error's own class, since a client can come from another copy of the openai package. Its constructor
+  // takes the message from the body, so the hint is set after it.
+  const hinted = new (rejection.constructor as typeof BadRequestError)(
+    400,
+    rejection.error,
+    undefined,
+    rejection.headers
+  )
+  hinted.message = `${rejection.message} ${modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`
+  hinted.cause = rejection
+  return hinted
 }
 
 /**

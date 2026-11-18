@@ -153,6 +153,14 @@ export class IntegTestRole extends Construct {
       }),
     );
 
+    // The harness's web_search on Bedrock (AgentCore InvokeWebSearch); an AWS-owned tool resource.
+    this.role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock-agentcore:InvokeWebSearch'],
+        resources: ['arn:aws:bedrock-agentcore:*:aws:tool/web-search.v1'],
+      }),
+    );
+
     this.role.addToPolicy(
       new iam.PolicyStatement({
         actions: [
