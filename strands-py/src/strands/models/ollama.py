@@ -194,7 +194,7 @@ class OllamaModel(Model):
         for message in messages:
             for content in message["content"]:
                 if "reasoningContent" in content:
-                    skipped["reasoningContent is not supported in multi-turn conversations by Ollama | skipping"] += 1
+                    skipped["reasoningContent is not supported by Ollama | skipping content block"] += 1
                     continue
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
@@ -386,7 +386,7 @@ class OllamaModel(Model):
                             "data": event.message.thinking,
                         }
                     )
-                elif is_thinking:
+                if is_thinking and (not event.message.thinking or event.message.content or event.message.tool_calls):
                     is_thinking = False
                     yield self.format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
 

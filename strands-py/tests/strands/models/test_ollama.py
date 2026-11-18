@@ -579,6 +579,45 @@ async def test_stream_thinking(ollama_client, model, agenerator, alist, captured
 
 
 @pytest.mark.asyncio
+async def test_stream_thinking_and_text_in_one_chunk(ollama_client, model, agenerator, alist):
+    mixed_event = unittest.mock.Mock()
+    mixed_event.message.tool_calls = None
+    mixed_event.message.content = "Hel"
+    mixed_event.message.thinking = "t1"
+
+    text_event = unittest.mock.Mock()
+    text_event.message.tool_calls = None
+    text_event.message.content = "lo"
+    text_event.message.thinking = None
+    text_event.done_reason = "stop"
+    text_event.eval_count = 10
+    text_event.prompt_eval_count = 5
+    text_event.total_duration = 1000000  # 1ms in nanoseconds
+
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([mixed_event, text_event]))
+
+    tru_events = await alist(model.stream([{"role": "user", "content": [{"text": "Hello"}]}]))
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "t1"}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockDelta": {"delta": {"text": "Hel"}}},
+        {"contentBlockDelta": {"delta": {"text": "lo"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 5, "outputTokens": 10, "totalTokens": 15},
+                "metrics": {"latencyMs": 1},
+            }
+        },
+    ]
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
 async def test_tool_choice_not_supported_warns(ollama_client, model, agenerator, alist, captured_warnings):
     """Test that non-None toolChoice emits warning for unsupported providers."""
     tool_choice = {"auto": {}}
@@ -984,20 +1023,3 @@ def test_format_request_skips_reasoning_content(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<2> | reasoningContent is not supported" in messages_logged[0]
-
-
-def test_format_chunk_content_block_delta_thinking_delta(model):
-    event = {"chunk_type": "content_delta", "data_type": "reasoning_content", "data": "t1"}
-
-    tru_chunk = model.format_chunk(event)
-    exp_chunk = {
-        "contentBlockDelta": {
-            "delta": {
-                "reasoningContent": {
-                    "text": "t1",
-                },
-            },
-        },
-    }
-
-    assert tru_chunk == exp_chunk
