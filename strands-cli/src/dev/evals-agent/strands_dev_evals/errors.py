@@ -1,0 +1,2 @@
+class StrandsDevEvalsError(ValueError):
+    pass
