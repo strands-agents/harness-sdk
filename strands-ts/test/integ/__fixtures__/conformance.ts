@@ -213,12 +213,14 @@ export function willNotClear(error: unknown): boolean {
  * @param caseId - The case id
  * @param status - The outcome
  * @param reason - Why the case errored, was skipped or does not apply
+ * @param attempts - How many attempts the case took
  */
 export async function recordResult(
   target: ConformanceTarget,
   caseId: string,
   status: ConformanceStatus,
-  reason?: string
+  reason?: string,
+  attempts = 1
 ): Promise<void> {
   const file = process.env.STRANDS_CONFORMANCE_RESULTS
   if (!file) return
@@ -229,6 +231,7 @@ export async function recordResult(
     case: caseId,
     status,
     ...(reason && { reason }),
+    ...(attempts > 1 && { attempts }),
   }
   await appendFile(file, `${JSON.stringify(record)}\n`)
 }

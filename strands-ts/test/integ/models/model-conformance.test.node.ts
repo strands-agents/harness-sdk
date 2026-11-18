@@ -57,6 +57,16 @@ const forcedToolChoiceOutcome = async (model: Model): Promise<'accepted' | 'refu
   }
 }
 
+// A call that never answers would otherwise use the whole test timeout, so each attempt has its own limit. Slow
+// reasoning models can take over a minute.
+const withinAttemptLimit = <T>(work: Promise<T>): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('the attempt did not finish within 180 seconds')), 180_000)
+  })
+  return Promise.race([work, limit]).finally(() => clearTimeout(timer))
+}
+
 // On a single call a model can skip a tool or ignore injected text, so these cases also retry a failed assertion.
 // A target that does it often belongs in knownFailures as intermittent.
 const retriesAssertions = new Set(['tool-use', 'structured-output', 'forced-tool-choice', 'temporary-messages'])
@@ -226,12 +236,13 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
       return isVerdict ? retriesAssertions.has(caseId) : !willNotClear(error)
     }
 
-    // The attempts happen inside the test, so vitest's own retry is off. Slow reasoning models need the long timeout.
-    it(caseId, { timeout: 600_000, retry: 0 }, async (ctx) => {
+    // The attempts happen inside the test, so vitest's own retry is off and the timeout covers all three.
+    it(caseId, { timeout: 630_000, retry: 0 }, async (ctx) => {
       // Recorded when the test finishes, so a timeout or a throw before the case body still leaves a record.
       let status: ConformanceStatus = 'failed'
       let reason: string | undefined
-      ctx.onTestFinished(() => recordResult(target, caseId, status, reason))
+      let attempt = 0
+      ctx.onTestFinished(() => recordResult(target, caseId, status, reason, attempt))
 
       const skip = (skipStatus: ConformanceStatus, skipReason: string | undefined): void => {
         status = skipStatus
@@ -247,9 +258,12 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
       if (known && notApplicable) throw stale(`no longer applies (${notApplicable})`)
       if (!run || notApplicable) return skip('not-applicable', notApplicable)
 
-      for (let attempt = 1; status !== 'passed'; attempt++) {
+      while (status !== 'passed') {
+        attempt++
         try {
-          await run({ modelId: target.model, model, create: (config) => provider!.create(target.model, config) })
+          await withinAttemptLimit(
+            run({ modelId: target.model, model, create: (config) => provider!.create(target.model, config) })
+          )
           status = 'passed'
         } catch (error) {
           reason = providerErrorReason(error)
