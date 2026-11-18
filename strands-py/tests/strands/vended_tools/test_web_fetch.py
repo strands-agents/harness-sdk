@@ -467,6 +467,51 @@ class TestHtmlToMarkdown:
     def test_escapes_image_alt_src_and_title(self, html, expected):
         assert html_to_markdown(html) == expected
 
+    # guards against body text, the page title, and link titles and hrefs changing the structure of the markdown (#6302)
+    @pytest.mark.parametrize(
+        ("html", "expected"),
+        [
+            (
+                "<p>See [the docs](https://example.com/docs) for details.</p>",
+                r"See \[the docs\](https://example.com/docs) for details.",
+            ),
+            (
+                "<p>![logo](https://example.com/x.png) a\\[b](https://example.com/c)</p>",
+                r"!\[logo\](https://example.com/x.png) a\\\[b\](https://example.com/c)",
+            ),
+            ("<p>Use <code>a[0]</code> and C:\\dir</p>", r"Use `a[0]` and C:\\dir"),
+            (
+                "<title>Guide [part 1](https://example.com/one) # intro</title>",
+                r"# Guide \[part 1\]\(https://example.com/one) # intro",
+            ),
+            ("<title>Line one\n\n## Line two</title>", "# Line one ## Line two"),
+            ("<title>snake_case *bold* &lt;b&gt;</title>", r"# snake\_case \*bold\* &lt;b&gt;"),
+            ("<title>\n(1) Inbox\xa0</title>", "# (1) Inbox"),
+            ("<html><head><title>\n My Page\n</title></head><body><p>body</p></body></html>", "# My Page\n\nbody"),
+            (
+                '<a href="https://example.com/a" title=\'path C:\\" end\'>link</a>',
+                r'[link](https://example.com/a "path C:\\\" end")',
+            ),
+            (
+                '<a href="https://example.com/a" title="two\nlines [x] &lt;b&gt;">link</a>',
+                r'[link](https://example.com/a "two lines \[x\] &lt;b&gt;")',
+            ),
+            ('<a href="https://example.com/a)b">odd</a>', "[odd](https://example.com/a%29b)"),
+            ('<a href="https://example.com/a b">space</a>', "[space](https://example.com/a%20b)"),
+            ('<a href="https://example.com/a\\)b">odd</a>', "[odd](https://example.com/a%5C%29b)"),
+            ('<a href=" \n">blank</a>', "blank"),
+            # a link whose text is its href is not written as <href>, which can be an HTML tag
+            ('<a href="b">b</a>', "[b](b)"),
+            # ordinary links are unchanged
+            (
+                '<a href=" /a?b=1&amp;c=2#d " title="(Plain) title">link [1]</a>',
+                r'[link \[1\]](/a?b=1&c=2#d "(Plain) title")',
+            ),
+        ],
+    )
+    def test_escapes_text_title_and_links(self, html, expected):
+        assert html_to_markdown(html) == expected
+
     def test_javascript_href_is_dropped(self):
         html = '<a href="javascript:alert(1)">click</a>'
         md = html_to_markdown(html)

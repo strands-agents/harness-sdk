@@ -175,6 +175,44 @@ describe('htmlToMarkdown', () => {
     expect((await htmlToMarkdown(html)).trim()).toBe(expected)
   })
 
+  // guards against body text, the page title, and link titles and hrefs changing the structure of the markdown (#6302)
+  it.each([
+    [
+      '<p>See [the docs](https://example.com/docs) for details.</p>',
+      'See \\[the docs\\](https://example.com/docs) for details.',
+    ],
+    [
+      '<p>![logo](https://example.com/x.png) a\\[b](https://example.com/c)</p>',
+      '!\\[logo\\](https://example.com/x.png) a\\\\\\[b\\](https://example.com/c)',
+    ],
+    ['<p>Use <code>a[0]</code> and C:\\dir</p>', 'Use `a[0]` and C:\\\\dir'],
+    [
+      '<title>Guide [part 1](https://example.com/one) # intro</title>',
+      '# Guide \\[part 1\\]\\(https://example.com/one) # intro',
+    ],
+    ['<title>Line one\n\n## Line two</title>', '# Line one ## Line two'],
+    ['<title>snake_case *bold* &lt;b&gt;</title>', '# snake\\_case \\*bold\\* &lt;b&gt;'],
+    ['<title>\n(1) Inbox\xa0</title>', '# (1) Inbox'],
+    ['<html><head><title>\n My Page\n</title></head><body><p>body</p></body></html>', '# My Page\n\nbody'],
+    [
+      '<a href="https://example.com/a" title=\'path C:\\" end\'>link</a>',
+      '[link](https://example.com/a "path C:\\\\\\" end")',
+    ],
+    [
+      '<a href="https://example.com/a" title="two\nlines [x] &lt;b&gt;">link</a>',
+      '[link](https://example.com/a "two lines \\[x\\] &lt;b&gt;")',
+    ],
+    ['<a href="https://example.com/a)b">odd</a>', '[odd](https://example.com/a%29b)'],
+    ['<a href="https://example.com/a b">space</a>', '[space](https://example.com/a%20b)'],
+    ['<a href="https://example.com/a\\)b">odd</a>', '[odd](https://example.com/a%5C%29b)'],
+    ['<a href=" \n">blank</a>', 'blank'],
+    ['<a href="b">b</a>', '[b](b)'],
+    // ordinary links are unchanged
+    ['<a href=" /a?b=1&amp;c=2#d " title="(Plain) title">link [1]</a>', '[link \\[1\\]](/a?b=1&c=2#d "(Plain) title")'],
+  ])('escapes text, the title and links in %s', async (html, expected) => {
+    expect(await htmlToMarkdown(html)).toBe(expected + '\n')
+  })
+
   it('embeds the page title as a top-level heading', async () => {
     const result = await htmlToMarkdown('<html><head><title>My Page</title></head><body><p>body</p></body></html>')
     expect(result).toMatch(/^# My Page\n/)
