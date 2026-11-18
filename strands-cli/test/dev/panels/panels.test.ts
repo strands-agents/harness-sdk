@@ -906,6 +906,25 @@ describe('OptimizePanel', () => {
     expect(session.start).not.toHaveBeenCalled()
   })
 
+  it.each<[string, number, boolean]>([
+    ['OnlyJudges', 230, true],
+    ['NeitherJudgesNorAProposer', 0, false],
+  ])('shouldNameTheBedrockCallsOfTheRunWhenItHas%s', async (_case, judgeCalls, named) => {
+    const knobs = setup.plan.knobs.map((knob) => ({ ...knob, enabled: knob.key === 'effort' }))
+    const { session } = optimizeSession({ step: 'setup', plan: { ...setup.plan, knobs, judgeCalls } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 30)
+
+    for (const key of [...START_BUTTON, '\r']) await press(key)
+
+    const flat = text().replace(/\s+/gu, ' ')
+    expect(flat).toContain('start a paid run?')
+    expect([flat.includes('About 230 judge calls use AWS Bedrock'), flat.includes('use AWS Bedrock')]).toEqual([
+      named,
+      named,
+    ])
+    expect(flat).not.toContain('the proposer calls')
+  })
+
   it('shouldShowWhatTheRunTunesAndCostsAndTheShellWarningWhenTheUserPressesEnterOnStart', async () => {
     const { session } = optimizeSession(setup)
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 30)
@@ -918,8 +937,8 @@ describe('OptimizePanel', () => {
     )
     expect(flat).toContain('It tries 4 steps of 4 candidates: about 230 rollouts of your agent with')
     expect(flat).toContain(
-      "The proposer is the optimizer's own AWS Bedrock model. It uses the AWS credentials and region of the shell " +
-        'that started strands dev, not the chat provider.'
+      'About 230 judge calls and the proposer calls use AWS Bedrock, with the AWS credentials and region of the ' +
+        'shell that started strands dev, also when your agent uses another provider.'
     )
     expect(flat).toContain(
       '⚠ To rewrite the instructions, a proposer agent writes shell commands and runs them on this machine.'
@@ -955,13 +974,18 @@ describe('OptimizePanel', () => {
     [
       'AnEstimateFromEarlierRuns',
       { ...setup.plan, judgeCalls: 0, usage: ESTIMATE },
-      'and no judge calls. 4 trials run at once. About 800k–1.2M tokens and 5–7 min, from the last 2 runs of refunds. ' +
-        'The price is unknown, because strands dev has no model prices.',
+      'with the model that the agent file sets. 4 trials run at once. The proposer calls use AWS Bedrock, with the ' +
+        'AWS credentials and region of the shell that started strands dev, also when your agent uses another ' +
+        'provider. About 800k–1.2M tokens and 5–7 min, from the last 2 runs of refunds. The price is unknown, ' +
+        'because strands dev has no model prices.',
     ],
     [
       'NoEstimate',
       setup.plan,
-      'and about 230 judge calls. 4 trials run at once. strands dev cannot estimate the tokens and the time yet, and it has no model prices.',
+      'with the model that the agent file sets. 4 trials run at once. About 230 judge calls and the proposer calls ' +
+        'use AWS Bedrock, with the AWS credentials and region of the shell that started strands dev, also when ' +
+        'your agent uses another provider. strands dev cannot estimate the tokens and the time yet, and it has no ' +
+        'model prices.',
     ],
   ])('shouldShowTheEstimateAndThePriceInTheConfirmWhenThePlanHas%s', async (_case, plan, sentence) => {
     const { session } = optimizeSession({ step: 'setup', plan })

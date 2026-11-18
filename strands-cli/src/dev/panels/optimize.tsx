@@ -49,6 +49,7 @@ import {
 } from './model.js'
 import {
   agentModel,
+  awsBedrockFact,
   Field,
   fileToolWarnings,
   formatSeconds,
@@ -855,10 +856,6 @@ const PROPOSER_RISK =
   'cases can carry prompt injection. To protect your credentials, run strands dev in a container or VM that has ' +
   'only the credentials that the run needs.'
 
-const PROPOSER_MODEL =
-  "The proposer is the optimizer's own AWS Bedrock model. It uses the AWS credentials and region of the shell " +
-  'that started strands dev, not the chat provider.'
-
 const tunedKnobs = ({ knobs }: OptimizePlan): Knob[] => knobs.filter((knob) => knob.enabled && !knob.unavailable)
 
 const textKnobs = (knobs: readonly Knob[]): string[] =>
@@ -877,10 +874,17 @@ const triedModels = (plan: OptimizePlan, knobs: readonly Knob[], agent: RunAgent
   return others > 0 ? `${current} and ${plural(others, 'other model')}` : current
 }
 
+const bedrockCalls = (judgeCalls: number, proposer: boolean): string | undefined => {
+  const judges = judgeCalls > 0 ? `About ${judgeCalls} judge calls` : undefined
+  if (judges && proposer) return `${judges} and the proposer calls`
+  return judges ?? (proposer ? 'The proposer calls' : undefined)
+}
+
 const paidOptimization = (plan: OptimizePlan, agent: RunAgent | undefined, start: () => void): PaidRun => {
   const knobs = tunedKnobs(plan)
   const texts = textKnobs(knobs)
   const { train, validation, test } = plan.split
+  const bedrock = bedrockCalls(plan.judgeCalls, texts.length > 0)
   return {
     title: [plan.experiment.name],
     facts: [
@@ -888,10 +892,9 @@ const paidOptimization = (plan: OptimizePlan, agent: RunAgent | undefined, start
         `${validation} validation, and ${plural(test, 'test case')} of ${plan.experiment.name}.`,
       `It tries ${plural(plan.iterations, 'step')} of ${plural(plan.width, 'candidate')}` +
         `${plan.repetitions > 1 ? `, with each case run ${plan.repetitions} times` : ''}: about ${plan.rollouts} ` +
-        `rollouts of your agent with ${triedModels(plan, knobs, agent)}, and ${judgeCallsText(plan.judgeCalls, 'about ')}. ` +
-        `${plural(plan.workers, 'trial')} run at once.`,
+        `rollouts of your agent with ${triedModels(plan, knobs, agent)}. ${plural(plan.workers, 'trial')} run at once.`,
+      ...(bedrock ? [awsBedrockFact(bedrock)] : []),
       usageSentence(plan.usage),
-      ...(texts.length > 0 ? [PROPOSER_MODEL] : []),
     ],
     warnings: [...proposerWarnings(texts), ...fileToolWarnings(agent)],
     start,
