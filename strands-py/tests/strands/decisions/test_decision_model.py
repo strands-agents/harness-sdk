@@ -1,6 +1,6 @@
 """Request-usage accounting tests for ``DecisionModel.ask``."""
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -55,6 +55,31 @@ def _tool_use_message(name: str) -> Message:
         "role": "assistant",
         "content": [{"toolUse": {"toolUseId": "tool-1", "name": name, "input": {}}}],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choices", ["abc", ("a", "b"), {"a": None}, 1, None, ["a", 1], ["a", []], [""]])
+async def test_ask_rejects_invalid_choices_before_deciding(choices):
+    decision = StubDecisionModel(_result())
+    question = cast(Question, {"question": "Pick a choice", "choices": choices})
+
+    with pytest.raises(ValueError, match="choices must be"):
+        await decision.ask("state", {"q": question})
+
+    assert decision.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choices", ["boolean", ["abc", "other"]])
+async def test_ask_accepts_valid_choices(choices):
+    decision = StubDecisionModel(_result())
+    question = cast(Question, {"question": "Pick a choice", "choices": choices})
+
+    tru_result = await decision.ask("state", {"q": question})
+    exp_result = _result()
+
+    assert tru_result == exp_result
+    assert decision.calls == 1
 
 
 @pytest.mark.asyncio
