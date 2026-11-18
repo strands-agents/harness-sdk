@@ -363,7 +363,8 @@ export type AgentConfig = {
    *   current step (model call and tool batch), then ends `'cancelled'` instead of calling
    *   the model again, or with its natural `stopReason` if the model answered without
    *   tools. Queued `'cancelPrevious'` / `'stopPrevious'` predecessors are displaced; the
-   *   new call runs next, so it waits for the slowest in-flight tool.
+   *   new call runs next, so it waits for the slowest in-flight tool. The stop is issued
+   *   when the call is queued and stays in effect if the caller then leaves the queue.
    * - `'queue'`: wait FIFO; the call runs as its own invocation when the current one
    *   finishes. The queue is unbounded; a queued call leaves it when its `cancelSignal`
    *   aborts (rejecting with {@link PendingInvocationCancelledError}). Bound it host-side
@@ -2014,6 +2015,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       // without counting it or checking limits again.
       let finishesInterruptedTurn =
         this._interruptState.pendingToolExecution !== undefined && invocationContext.resumeInterruptedTurn()
+      turnStarted = finishesInterruptedTurn
 
       // Main agent loop - continues until model stops without requesting tools
       let stepRan = false
@@ -2025,7 +2027,6 @@ export class Agent implements LocalAgent, InvokableAgent {
 
         if (finishesInterruptedTurn) {
           finishesInterruptedTurn = false
-          turnStarted = true
         } else {
           const limitStopReason = reachedLimit(invocationContext)
           if (limitStopReason) {

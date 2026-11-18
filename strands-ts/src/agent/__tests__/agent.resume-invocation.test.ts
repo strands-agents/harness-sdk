@@ -127,6 +127,33 @@ describe('interrupt resume and the request invocation', () => {
     }
   )
 
+  it.each(['an aborted cancelSignal', 'a BeforeInvocationEvent hook'])(
+    'a resume cancelled by %s before its pending tools leaves the turn for the next resume',
+    async (route) => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'B' })
+      const agent = new Agent({ model, tools: [confirmTool()], printer: false, concurrentInvocationMode: 'queue' })
+      const interrupted = await agent.invoke('a', { limits: { turns: 1 } })
+
+      const byHook = route === 'a BeforeInvocationEvent hook'
+      const removeHook = byHook ? agent.addHook(BeforeInvocationEvent, () => agent.cancel()) : undefined
+      const cancelled = await agent.invoke(
+        [responseFor(interrupted)],
+        byHook ? {} : { cancelSignal: AbortSignal.abort() }
+      )
+      removeHook?.()
+      expect(cancelled.stopReason).toBe('cancelled')
+      const parked = agent.invoke('b')
+
+      const resumed = await agent.invoke([responseFor(interrupted)])
+
+      expect(resumed.stopReason).toBe('limitTurns')
+      expect(agent.messages.map((message) => message.content[0]!.type)).toContain('toolResultBlock')
+      expect((await parked).stopReason).toBe('endTurn')
+    }
+  )
+
   it('a turn interrupted more than once is still counted once', async () => {
     const model = new MockMessageModel()
       .addTurn({ type: 'toolUseBlock', name: 'confirm', toolUseId: 't1', input: {} })
