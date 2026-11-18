@@ -159,9 +159,9 @@ describe('optimize-harness guidance', () => {
 
   it('shouldCheckFinalAnswerEvaluatorCompatibilityWithoutSilentlyRewritingExperiments', () => {
     expect(instructions).toContain('strands_dev_read_experiment')
-    expect(instructions).toContain('scores the final answer only')
+    expect(instructions).toContain('optimization of a TypeScript agent scores the final answer only')
     expect(instructions).toContain('OutputEvaluator, Contains, Equals, and StartsWith')
-    expect(instructions).toContain('does not optimize trajectory or tool-use evaluator scores')
+    expect(instructions).toContain('Optimization of a Python agent also scores trajectory and tool-use evaluators')
     expect(instructions).toContain('do not silently remove evaluators or rewrite the experiment')
     expect(instructions).toContain('do not require or start a separate paid baseline test')
   })

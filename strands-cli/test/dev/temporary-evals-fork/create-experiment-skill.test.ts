@@ -94,7 +94,7 @@ describe('TEMPORARY create-experiment flow', () => {
     ['it says what each evaluator checks', 'say in plain words what each one checks'],
     ['a rubric judge differs from a check', 'calls no model'],
     ['an unavailable evaluator gets its reason', 'cannot score this agent'],
-    ['optimize needs answer-only evaluators', '/optimize scores with the final answer only'],
+    ['optimize needs answer-only evaluators for TypeScript', 'record only the final answer of a TypeScript agent'],
   ])('shouldCoverScoringWhere %s', (_case, line) => {
     expect(instructions()).toContain(line)
   })
