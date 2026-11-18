@@ -25,6 +25,7 @@ import {
 import { ContextManager } from '@strands-agents/sdk/experimental'
 import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+import { BedrockAgentCoreClient } from '@aws-sdk/client-bedrock-agentcore'
 import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
@@ -38,6 +39,7 @@ import { HARNESS_CONTRACT } from '../src/prompt.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 import { makeProgrammaticToolCaller } from '../src/tools/programmatic-tool-caller.js'
 import { buildDefaultSubagent } from '../src/builtin-tools.js'
+import { exaWebSearch } from '../src/tools/web-search.js'
 import { AgentSpec, makeSubagent } from '../src/tools/subagent.js'
 import type { HarnessAgentOptions } from '../src/agent.js'
 import { storeOf } from './memory-internals.js'
@@ -171,6 +173,8 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
   }
   resetWarnOnce()
+  vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('createHarness', () => {
@@ -380,19 +384,97 @@ describe('createHarness', () => {
     expect(params.tools).toEqual([{ type: 'web_search' }])
   })
 
-  it('logs info, not a warning, and builds when default web_search hits the default bedrock model', async () => {
+  it('serves web_search on bedrock from the AgentCore tool, by default and when named', async () => {
+    // The default Claude model runs on Anthropic's Bedrock client. Search resolves its region from the
+    // same environment, with or without an endpoint override on the model.
+    vi.stubEnv('AWS_REGION', 'eu-west-1')
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    const search = (a: Agent): Promise<string> =>
+      (
+        a.tools.find((t) => t.name === 'web_search') as unknown as {
+          invoke: (input: unknown, context: unknown) => Promise<string>
+        }
+      ).invoke({ query: 'q' }, {})
+    const agent = await createHarness()
+    expect(toolNames(agent)).toContain('web_search')
+    expect(agent.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+    vi.stubEnv('AWS_ENDPOINT_URL_BEDROCK_RUNTIME', 'https://proxy.example')
+    expect([await search(agent), await search(await createHarness())]).toEqual(['No results.', 'No results.'])
+    expect(regions).toEqual(['eu-west-1', 'eu-west-1'])
+    const named = await createHarness({
+      model: 'bedrock/us.amazon.nova-2-lite-v1:0',
+      builtinTools: ['read', 'web_search'],
+    })
+    expect(toolNames(named)).toContain('web_search')
+  })
+
+  it('serves web_search on an all-Bedrock ModelRouter and names the router when it cannot', async () => {
+    const router = new ModelRouter([new BedrockModel({ modelId: 'fast' }), new BedrockModel({ modelId: 'deep' })])
+    expect(toolNames(await createHarness({ model: router }))).toContain('web_search')
+    const info = vi.fn()
+    configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
+    const mixed = new ModelRouter([new BedrockModel({ modelId: 'fast' }), new RetrievingModel()])
+    expect(toolNames(await createHarness({ model: mixed }))).not.toContain('web_search')
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('A pre-built ModelRouter has no built-in web search'))
+  })
+
+  it('serves web_search on a BedrockModel instance from AgentCore, taking nothing from the model', async () => {
+    vi.stubEnv('AWS_REGION', 'us-east-2')
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    const agent = await createHarness({ model: new BedrockModel({ modelId: 'x', region: 'eu-west-1' }) })
+    const search = agent.tools.find((t) => t.name === 'web_search') as unknown as {
+      invoke: (input: unknown, context: unknown) => Promise<string>
+    }
+    expect(await search.invoke({ query: 'q' }, {})).toBe('No results.')
+    expect(regions).toEqual(['us-east-2'])
+  })
+
+  it('collides with a passed web_search tool on bedrock, like any built-in', async () => {
+    const mine = tool({
+      name: 'web_search',
+      description: 'Search.',
+      inputSchema: z.object({ query: z.string() }),
+      callback: ({ query }) => query,
+    })
+    await expect(createHarness({ tools: [mine] })).rejects.toThrow('registered more than once')
+    const agent = await createHarness({ tools: [mine], builtinTools: { web_search: false } })
+    expect(agent.tools.find((t) => t.name === 'web_search')).toBe(mine)
+  })
+
+  it('serves an explicit Exa selection on bedrock instead of AgentCore', async () => {
+    const agent = await createHarness({ builtinTools: { web_search: 'exa' } })
+    expect(agent.tools.find((t) => t.name === 'web_search')).toBe(exaWebSearch)
+  })
+
+  it('logs info, not a warning, and builds when default web_search hits a model without search', async () => {
     const warn = vi.fn()
     const info = vi.fn()
     configureLogging({ debug: () => {}, info, warn, error: () => {} })
-    const agent = await createHarness()
+    const agent = await createHarness({ model: 'ollama/llama3' })
     expect(toolNames(agent)).not.toContain('web_search')
     expect(info).toHaveBeenCalledWith(expect.stringMatching(/has no built-in web search.*web-access\/#web_search/))
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('has no built-in web search'))
   })
 
   it('throws when web_search is explicitly selected on an unsupported provider', async () => {
-    await expect(createHarness({ builtinTools: ['read', 'web_search'] })).rejects.toThrow('has no built-in web search')
-    await expect(createHarness({ builtinTools: { web_search: true } })).rejects.toThrow('has no built-in web search')
+    await expect(createHarness({ model: 'ollama/llama3', builtinTools: ['read', 'web_search'] })).rejects.toThrow(
+      'has no built-in web search'
+    )
+    await expect(createHarness({ model: new RetrievingModel(), builtinTools: { web_search: true } })).rejects.toThrow(
+      'has no built-in web search'
+    )
   })
 
   it('builds the Exa tool for the fallback and warns about the third party', async () => {
@@ -430,18 +512,35 @@ describe('createHarness', () => {
     ])
   })
 
-  it('only offers Bedrock Web Search on GPT-5 and GPT-6 Mantle models', async () => {
-    const info = vi.fn()
-    configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
+  it('uses Bedrock Web Search on GPT-5/GPT-6 Mantle models and AgentCore on other Mantle models', async () => {
     let agent = await createHarness({ model: 'bedrock-mantle/openai.gpt-5.6-luna' })
     expect(toolNames(agent)).not.toContain('web_search')
     expect((agent.model.getConfig().params as { tools: unknown }).tools).toEqual([
       { type: 'web_search', external_web_access: true },
     ])
     agent = await createHarness({ model: 'bedrock-mantle/openai.gpt-oss-120b-1:0' })
-    expect(toolNames(agent)).not.toContain('web_search')
+    expect(toolNames(agent)).toContain('web_search')
     expect(agent.model.getConfig().params).not.toHaveProperty('tools')
-    expect(info).toHaveBeenCalledWith(expect.stringContaining('has no built-in web search'))
+  })
+
+  it('serves web_search from AgentCore for an AnthropicModel on a Bedrock client', async () => {
+    const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
+    vi.stubEnv('AWS_REGION', 'us-east-2')
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    // Stands in for `AnthropicBedrock` from @anthropic-ai/bedrock-sdk: what matters is its default Bedrock host.
+    const client = { baseURL: 'https://bedrock-runtime.eu-west-1.amazonaws.com', messages: {} } as never
+    const agent = await createHarness({ model: new AnthropicModel({ modelId: 'claude', client }) })
+    const search = agent.tools.find((t) => t.name === 'web_search') as unknown as {
+      invoke: (input: unknown, context: unknown) => Promise<string>
+    }
+    expect(await search.invoke({ query: 'q' }, {})).toBe('No results.')
+    expect(regions).toEqual(['us-east-2'])
   })
 
   it('enables web_search when explicitly selected on a supported provider', async () => {
@@ -1009,6 +1108,29 @@ describe('subagent delegate (built child)', () => {
     spec.tools = ['read']
     const child = await buildChild({ model: 'openai/gpt-5.6-sol' }, spec)
     expect((child.model.getConfig().params as { tools: unknown }).tools).toEqual([{ type: 'web_search' }])
+  })
+
+  it('gives delegates of a default bedrock parent AgentCore web search', async () => {
+    const spec = new AgentSpec('x')
+    spec.tools = ['read']
+    for (const child of [await buildChild({}, spec), await buildChild({}, new AgentSpec('x'))]) {
+      expect(toolNames(child)).toContain('web_search')
+      expect(child.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+    }
+  })
+
+  it("hands delegates the caller's web_search when the built-in is off", async () => {
+    const mine = tool({
+      name: 'web_search',
+      description: 'Search.',
+      inputSchema: z.object({ query: z.string() }),
+      callback: ({ query }) => query,
+    })
+    const parent = await createHarness({ tools: [mine], builtinTools: { web_search: false } })
+    expect((await buildChildFrom(parent, new AgentSpec('x'))).tools.find((t) => t.name === 'web_search')).toBe(mine)
+    const spec = new AgentSpec('x')
+    spec.tools = ['read']
+    expect(toolNames(await buildChildFrom(parent, spec))).not.toContain('web_search')
   })
 
   it('carries the Exa fallback onto a narrowed delegate', async () => {

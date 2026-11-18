@@ -323,14 +323,17 @@ await createHarness({ builtinTools: { web_fetch: { model: 'anthropic/claude-haik
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
-`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
-native search (Amazon Bedrock, other Mantle models, a `Model` instance) `web_search` is
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. Other
+Amazon Bedrock models get a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
+instead. In case of no native search (a `Model` instance from another provider) `web_search` is
 off by default. To enable web search for these providers, you can opt into Exa with
 `{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
 override a provider's native web search by adding `'exa'` explicitly to any model. If you are
 using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
-`AmazonBedrockFullAccess`) to avoid failing search.
+`AmazonBedrockFullAccess`) to avoid failing search; AgentCore web search needs
+`bedrock-agentcore:InvokeWebSearch`.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
@@ -339,7 +342,8 @@ using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
 
 ```typescript
 await createHarness({ model: 'openai/gpt-5.6-sol' }) // native search on, it's in the defaults
-await createHarness({ builtinTools: { web_search: 'exa' } }) // Bedrock: search through Exa (third party)
+await createHarness() // Bedrock: AgentCore web search, also a default
+await createHarness({ builtinTools: { web_search: 'exa' } }) // any model: search through Exa (third party)
 ```
 
 ## Caching reused context

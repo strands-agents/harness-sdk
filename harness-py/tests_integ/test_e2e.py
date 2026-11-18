@@ -42,6 +42,15 @@ async def test_shell_tool(build_agent: Build, tool_succeeded: Check) -> None:
     assert "hi" in str(result)
 
 
+async def test_web_search_on_bedrock_uses_agentcore(
+    build_agent: Build, tool_result_contains: Callable[[Agent, str, str], bool]
+) -> None:
+    # On Bedrock, web_search is the AgentCore InvokeWebSearch tool; "Sources:" only comes from real results.
+    agent = build_agent(builtin_tools=["web_search"])
+    await agent.invoke_async(f"{_TESTING} Use the web_search tool to find the Strands Agents SDK documentation site.")
+    assert tool_result_contains(agent, "web_search", "Sources:")
+
+
 async def test_builtin_tools_all_work(
     work_dir: Path,
     build_agent: Build,
