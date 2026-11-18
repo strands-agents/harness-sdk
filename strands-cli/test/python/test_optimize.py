@@ -819,7 +819,16 @@ def test_should_refuse_to_resume_when_the_tuned_settings_changed(harness, tmp_pa
     assert optimize_harness(tmp_path, DIRECT_HARNESS, "--tune", "effort", "--iterations", "2", "--json", cases=8) == 0
     capsys.readouterr()
     stopped = stop_after_the_first_step(run_dir(tmp_path), tmp_path / "stopped" / run_dir(tmp_path).name)
-    write_optimize_entry(tmp_path, str(tmp_path / "agent.py"), settings=("instructions",), space=None, baseline=False)
+    write_optimize_entry(
+        tmp_path,
+        str(tmp_path / "agent.py"),
+        str(tmp_path / "experiment.json"),
+        settings=("instructions",),
+        space=None,
+        runner=None,
+        custom=(),
+        baseline=False,
+    )
 
     code = resume(stopped)
 

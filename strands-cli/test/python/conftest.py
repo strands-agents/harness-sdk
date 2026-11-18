@@ -23,3 +23,10 @@ def harness(monkeypatch):
     monkeypatch.setitem(sys.modules, "strands_harness", fake)
     monkeypatch.setattr(sys, "path", list(sys.path))
     return fake
+
+
+@pytest.fixture
+def runner_log(tmp_path, monkeypatch):
+    log = tmp_path / "runner.jsonl"
+    monkeypatch.setenv("FAKE_RUNNER_LOG", str(log))
+    return log

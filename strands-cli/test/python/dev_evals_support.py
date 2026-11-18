@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 import textwrap
 import types
@@ -17,6 +18,10 @@ from strands_evals.types.evaluation import EvaluationData, EvaluationOutput
 from strands_evals.types.trace import EvaluationLevel, Session
 
 PACKAGE_FOLDER = Path(__file__).resolve().parents[2] / "src" / "dev" / "evals-agent"
+FAKE_RUNNER = Path(__file__).resolve().parent / "fake_typescript_runner.py"
+RUNNER_COMMAND = f"{shlex.quote(sys.executable)} {shlex.quote(str(FAKE_RUNNER))}"
+DESCRIPTION = {"instructions": "Answer briefly.", "effort": "low", "model": "bedrock/test"}
+TYPESCRIPT_AGENT = "export const agent = createHarness({})\n"
 
 DIRECT_HARNESS = """
 from strands_harness import create_harness
@@ -33,6 +38,9 @@ from strands_dev_evals.optimize import optimize_task
 
 _task = optimize_task(
     {agent!r},
+    experiment_file={experiment!r},
+    custom_evaluators={custom!r},
+    temporary_typescript_runner={runner!r},
     space_file={space!r},
     settings={settings!r},
     baseline_only={baseline!r},
@@ -48,7 +56,12 @@ sys.path.insert(0, {package!r})
 
 from strands_dev_evals.run import run_task
 
-task = run_task({agent!r})
+task = run_task(
+    {agent!r},
+    experiment_file={experiment!r},
+    custom_evaluators={custom!r},
+    temporary_typescript_runner={runner!r},
+)
 """
 
 RENAMED_FLAGS = {
@@ -103,6 +116,12 @@ def write_harness(directory: Path, source: str, name: str = "agent.py") -> Path:
     return path
 
 
+def write_typescript_agent(directory: Path) -> Path:
+    agent = directory / "agent.ts"
+    agent.write_text(TYPESCRIPT_AGENT)
+    return agent
+
+
 def write_experiment(directory: Path, cases: int = 4, evaluators: list[Evaluator] | None = None) -> Path:
     path = directory / "experiment.json"
     experiment = Experiment(
@@ -113,28 +132,36 @@ def write_experiment(directory: Path, cases: int = 4, evaluators: list[Evaluator
     return path
 
 
+def write_evaluators(directory: Path, evaluators: list[dict[str, Any]], cases: int = 1) -> Path:
+    path = directory / "experiment.json"
+    document = {"cases": [{"name": f"c{index}", "input": f"q{index}"} for index in range(cases)]}
+    path.write_text(json.dumps({**document, "evaluators": evaluators}))
+    return path
+
+
 def forget_entry_modules() -> None:
     for name in [name for name in sys.modules if name.startswith("_strands_evals_cli_task_")]:
         del sys.modules[name]
 
 
-def write_optimize_entry(directory: Path, agent: str, **options: Any) -> Path:
+def write_optimize_entry(directory: Path, agent: str, experiment: str, **options: Any) -> Path:
     path = directory / "task.py"
-    path.write_text(OPTIMIZE_ENTRY.format(package=str(PACKAGE_FOLDER), agent=agent, **options))
+    path.write_text(OPTIMIZE_ENTRY.format(package=str(PACKAGE_FOLDER), agent=agent, experiment=experiment, **options))
     forget_entry_modules()
     return path
 
 
-def write_run_entry(directory: Path, agent: Path) -> Path:
+def write_run_entry(directory: Path, agent: Path, experiment: Path, **options: Any) -> Path:
     path = directory / "task.py"
-    path.write_text(RUN_ENTRY.format(package=str(PACKAGE_FOLDER), agent=str(agent)))
+    entry = {"package": str(PACKAGE_FOLDER), "agent": str(agent), "experiment": str(experiment), "custom": ()}
+    path.write_text(RUN_ENTRY.format(**{**entry, "runner": None, **options}))
     forget_entry_modules()
     return path
 
 
 def run_arguments(arguments: tuple[str, ...]) -> list[str]:
     experiment, *rest = arguments
-    options: dict[str, Any] = {"settings": ("instructions",), "space": None}
+    options: dict[str, Any] = {"settings": ("instructions",), "space": None, "runner": None, "custom": ()}
     iterations, agent, flags = "4", None, []
     pairs = iter(rest)
     for flag in pairs:
@@ -148,6 +175,11 @@ def run_arguments(arguments: tuple[str, ...]) -> list[str]:
             options["settings"] = tuple(value.split(","))
         elif flag == "--space":
             options["space"] = value
+        elif flag == "--temporary-typescript-runner":
+            options["runner"] = value
+        elif flag == "--custom-evaluator":
+            options["custom"] = (*options["custom"], value)
+            flags += [flag, value]
         elif flag == "--iterations":
             iterations = value
         elif flag == "--maximize":
@@ -162,7 +194,7 @@ def run_arguments(arguments: tuple[str, ...]) -> list[str]:
             flags += [flag, value]
     baseline = iterations == "0"
     record = Path(flags[flags.index("--base-dir") + 1])
-    task = write_optimize_entry(record.parent, agent, baseline=baseline, **options)
+    task = write_optimize_entry(record.parent, agent, experiment, baseline=baseline, **options)
     route = ["--agent", f"{task}:agent", "--rollout", f"{task}:rollout"]
     route += ["--search", f"{task}:search"] if baseline else ["--max-iterations", iterations]
     return ["run", experiment, *route, *flags]
@@ -172,8 +204,8 @@ def optimize(*arguments: str) -> int:
     return main(["optimize", *run_arguments(arguments)])
 
 
-def run(experiment: Path, agent: Path, *flags: str) -> int:
-    entry = write_run_entry(experiment.parent, agent)
+def run(experiment: Path, agent: Path, *flags: str, **options: Any) -> int:
+    entry = write_run_entry(experiment.parent, agent, experiment, **options)
     return main(["run", str(experiment), "--task", f"{entry}:task", *flags])
 
 
@@ -210,3 +242,12 @@ def baseline_scores(tmp_path: Path) -> list[float]:
         for scores in event["objective_by_run"].values()
         for score in scores
     ]
+
+
+def trials_of(tmp_path: Path) -> list[dict]:
+    latest = {}
+    for event in events_of(tmp_path):
+        if event["event"] == "trial":
+            record = event["record"]
+            latest[(record["candidate_id"], record["run_index"], record["case_name"])] = record
+    return list(latest.values())

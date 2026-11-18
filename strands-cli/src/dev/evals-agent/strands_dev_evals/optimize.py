@@ -37,12 +37,20 @@ class _BaselineOnly(Schedule):
 def optimize_task(
     agent_file: str,
     *,
+    experiment_file: str,
     space_file: str | None = None,
     settings: Sequence[str] = _DEFAULT_SETTINGS,
+    temporary_typescript_runner: str | None = None,
+    custom_evaluators: Sequence[str] = (),
     baseline_only: bool = False,
 ) -> OptimizeTask:
     space = read_space_file(space_file) if space_file is not None else None
-    harness = load_harness(agent_file)
+    harness = load_harness(
+        agent_file,
+        experiment_file=experiment_file,
+        custom_evaluators=custom_evaluators,
+        temporary_typescript_runner=temporary_typescript_runner,
+    )
     factory = (
         _space_factory(harness, space)
         if space is not None

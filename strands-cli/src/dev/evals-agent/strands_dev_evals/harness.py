@@ -7,7 +7,7 @@ import importlib.machinery
 import inspect
 import sys
 import tokenize
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -20,6 +20,11 @@ from .errors import StrandsDevEvalsError
 from .imports import import_file
 from .model_effort import ModelEffort, read_model_effort
 from .space import Without, item_problem, without_items
+from .temporary_typescript import (
+    TEMPORARY_TYPESCRIPT_SUFFIXES,
+    load_temporary_typescript_harness,
+    temporary_refuse_trace_evaluators,
+)
 
 _PYTHON_SUFFIX = ".py"
 _SHARED_STATE_OPTIONS = frozenset({"session_manager", "memory_manager", "storage"})
@@ -113,11 +118,21 @@ class PythonHarness:
         return self.options.get("effort", "auto") if self._model_effort is None else self._model_effort.baseline
 
 
-def load_harness(agent_file: str) -> Harness:
-    if Path(agent_file).suffix != _PYTHON_SUFFIX:
-        raise StrandsDevEvalsError(f"{agent_file} is not a strands dev agent file; give a PATH.py")
+def load_harness(
+    agent_file: str,
+    *,
+    experiment_file: str,
+    custom_evaluators: Sequence[str] = (),
+    temporary_typescript_runner: str | None = None,
+) -> Harness:
+    suffix = Path(agent_file).suffix
     with contextlib.redirect_stdout(sys.stderr):
-        return load_python_harness(agent_file)
+        if suffix == _PYTHON_SUFFIX:
+            return load_python_harness(agent_file)
+        if suffix in TEMPORARY_TYPESCRIPT_SUFFIXES:
+            temporary_refuse_trace_evaluators(experiment_file, custom_evaluators)
+            return load_temporary_typescript_harness(agent_file, temporary_typescript_runner)
+    raise StrandsDevEvalsError(f"{agent_file} is not a strands dev agent file; give a PATH.py or a PATH.ts")
 
 
 def load_python_harness(path_text: str) -> PythonHarness:
