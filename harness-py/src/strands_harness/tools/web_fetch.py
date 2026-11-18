@@ -9,6 +9,9 @@ By default the HTTP request runs as ``curl`` inside the agent's ``sandbox`` (the
 and the file tools use), so a sandbox with network isolation or egress rules covers ``web_fetch``
 too. ``transport="direct"`` opts back into a plain standard-library request from the harness process.
 Candidate to port into the core SDK later; keep it minimal and SDK-idiomatic.
+
+Redirects are reported, never followed: the only URL read is the one the call named, which is the
+one a tool-call hook or permission rule saw.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import re
 import shlex
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from strands import Agent
@@ -36,6 +39,7 @@ _TIMEOUT = 30
 _MAX_BYTES = 5 * 1024 * 1024
 _MAX_CHARS = 50_000
 _CACHE_TTL_SECONDS = 15 * 60
+_MAX_REDIRECT_CHARS = 8192
 # The characters RFC 3986 allows anywhere in a URL; anything else (whitespace, quotes, control
 # characters, non-ASCII) is rejected before the URL reaches a shell or a socket.
 _URL_CHARS = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
@@ -72,16 +76,17 @@ def _validate_url(url: str) -> str:
 
 
 def _curl_command(url: str) -> str:
-    # -g keeps ``{}``/``[]`` in the URL literal; --proto/--proto-redir keep the request and any redirect on
-    # http(s) (curl would otherwise follow a redirect to ftp://); --fail turns HTTP errors into a non-zero
-    # exit; -sS keeps curl's own error text on stderr. The body is spooled to a file the shell picks with
-    # mktemp (so the path only ever has to make sense inside the sandbox), truncated there, and returned over
-    # stdout as base64: ASCII survives the chunked stdout decoding that raw bytes would not, and the charset is
-    # applied once here. stdout is the final hop's content type and URL, then the base64 body.
+    # -g keeps ``{}``/``[]`` in the URL literal; --proto keeps the request on http(s); --no-location stops at a
+    # redirect even when a curl config file turns following on; --fail turns HTTP errors into a non-zero exit;
+    # -sS keeps curl's own error text on stderr. The body is spooled to a file the shell picks with mktemp (so
+    # the path only ever has to make sense inside the sandbox), truncated there, and returned over stdout as
+    # base64: ASCII survives the chunked stdout decoding that raw bytes would not, and the charset is applied
+    # once here. stdout is the content type and the redirect target (empty unless the response is a redirect),
+    # then the base64 body.
     return (
         "f=$(mktemp -t strands-web-fetch.XXXXXX) && "
-        f"curl -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time {_TIMEOUT} "
-        f"-A {shlex.quote(_USER_AGENT)} -o \"$f\" -w '%{{content_type}}\\n%{{url_effective}}\\n' -- {shlex.quote(url)} "
+        f"curl -sS -g --fail --no-location --proto '=http,https' --max-time {_TIMEOUT} "
+        f"-A {shlex.quote(_USER_AGENT)} -o \"$f\" -w '%{{content_type}}\\n%{{redirect_url}}\\n' -- {shlex.quote(url)} "
         f'&& head -c {_MAX_BYTES} "$f" | base64; s=$?; rm -f "$f"; exit $s'
     )
 
@@ -98,8 +103,8 @@ def _powershell_curl_command(url: str) -> str:
             '$f = Join-Path ([IO.Path]::GetTempPath()) "strands-web-fetch-$([guid]::NewGuid())"',
             "$s = 127",
             "try {",
-            f"  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time {_TIMEOUT} "
-            f"-A '{_USER_AGENT}' -o $f --stderr \"$f.err\" -w '%{{content_type}}\\n%{{url_effective}}\\n' {quoted}",
+            f"  curl.exe -sS -g --fail --no-location --proto '=http,https' --max-time {_TIMEOUT} "
+            f"-A '{_USER_AGENT}' -o $f --stderr \"$f.err\" -w '%{{content_type}}\\n%{{redirect_url}}\\n' {quoted}",
             "  $s = $LASTEXITCODE",
             "  if ($s -eq 0) {",
             "    $in = [IO.File]::OpenRead($f)",
@@ -122,37 +127,58 @@ def _decode(data: bytes, content_type: str) -> str:
         return data.decode("utf-8", errors="replace")
 
 
-def _to_text(data: bytes, content_type: str, resolved_url: str, url: str) -> tuple[str, str]:
+def _to_text(data: bytes, content_type: str) -> str:
     raw = _decode(data, content_type)
     text = _html_to_text(raw) if "html" in content_type.lower() else raw
-    return resolved_url.strip() or url, text[:_MAX_CHARS]
+    return text[:_MAX_CHARS]
 
 
-async def _fetch_curl(sandbox: Sandbox, url: str) -> tuple[str, str]:
-    """Fetch a validated ``url`` with ``curl`` inside ``sandbox``; raises ``RuntimeError`` when curl fails."""
+def _redirected(location: str, url: str, encoding: str = "utf-8") -> RuntimeError:
+    """The error for a redirect to ``location``, naming the target only when it is a URL ``web_fetch`` accepts."""
+    try:
+        target = _validate_url(quote(urljoin(url, location), encoding=encoding, safe="-._~:/?#[]@!$&'()*+,;=%"))
+    except ValueError:
+        target = ""
+    if not target or len(target) > _MAX_REDIRECT_CHARS:
+        return RuntimeError("it redirects to a location web_fetch cannot fetch.")
+    return RuntimeError(
+        f"it redirects to {target}, and web_fetch does not follow redirects. Call web_fetch with that URL to read it."
+    )
+
+
+async def _fetch_curl(sandbox: Sandbox, url: str) -> str:
+    """Fetch a validated ``url`` with ``curl`` inside ``sandbox``; raises ``RuntimeError`` when curl fails or
+    the URL redirects."""
     command = _powershell_curl_command(url) if await _shell_of(sandbox) == "powershell" else _curl_command(url)
     result = await sandbox.execute(command, timeout=_TIMEOUT + 5)
     if result.exit_code != 0:
         raise RuntimeError(result.stderr.strip() or f"curl exited with code {result.exit_code}")
     # Two header lines (the content-type line is empty when the header is absent), then the base64 body,
     # which base64(1) may wrap; whitespace is not part of the encoding.
-    content_type, resolved_url, *body = result.stdout.split("\n") + ["", ""]
+    content_type, redirect_url, *body = result.stdout.split("\n") + ["", ""]
+    if redirect_url.strip():
+        raise _redirected(redirect_url.strip(), url)
     data = base64.b64decode(re.sub(r"\s+", "", "".join(body)))
-    return _to_text(data, content_type.strip(), resolved_url.strip(), url)
+    return _to_text(data, content_type.strip())
 
 
-class _HttpOnlyRedirects(HTTPRedirectHandler):
-    """Redirect handler that holds every hop to the same URL rules as the original request (urllib's
-    default would also follow a redirect to ``ftp://``)."""
+class _NoRedirects(HTTPRedirectHandler):
+    """Redirect handler that reports the target instead of following it."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
-        _validate_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+    def http_error_302(self, req, fp, code, msg, headers):  # type: ignore[no-untyped-def]
+        location = headers.get("Location")
+        if not location:
+            return None
+        fp.close()
+        # Header bytes arrive decoded as latin-1; quoting them the same way keeps them as the server sent them.
+        raise _redirected(location, req.full_url, "iso-8859-1")
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
 
-def _fetch_direct_sync(url: str) -> tuple[str, str]:
+def _fetch_direct_sync(url: str) -> str:
     deadline = time.monotonic() + _TIMEOUT
-    opener = build_opener(_HttpOnlyRedirects)
+    opener = build_opener(_NoRedirects)
     with opener.open(Request(url, headers={"User-Agent": _USER_AGENT}), timeout=_TIMEOUT) as response:
         # ``timeout`` bounds each socket read; the deadline bounds the whole download.
         chunks: list[bytes] = []
@@ -166,17 +192,16 @@ def _fetch_direct_sync(url: str) -> tuple[str, str]:
             if time.monotonic() > deadline:
                 raise TimeoutError(f"web_fetch gave up after {_TIMEOUT}s.")
         content_type = response.headers.get("Content-Type", "")
-        resolved_url = response.geturl()
-    return _to_text(b"".join(chunks), content_type, resolved_url, url)
+    return _to_text(b"".join(chunks), content_type)
 
 
-async def _fetch_direct(url: str) -> tuple[str, str]:
+async def _fetch_direct(url: str) -> str:
     """Fetch a validated ``url`` from the harness process with the standard library (bypasses the sandbox)."""
     return await asyncio.to_thread(_fetch_direct_sync, url)
 
 
-async def _fetch_text(sandbox: Sandbox, url: str, transport: WebFetchTransport) -> tuple[str, str]:
-    """Fetch ``url`` over ``transport`` and reduce it to text. Returns ``(resolved_url, text)``; raises on failure."""
+async def _fetch_text(sandbox: Sandbox, url: str, transport: WebFetchTransport) -> str:
+    """Fetch ``url`` over ``transport`` and reduce it to text; raises on failure or a redirect."""
     url = _validate_url(url)
     if transport == "curl":
         return await _fetch_curl(sandbox, url)
@@ -191,7 +216,7 @@ def make_web_fetch(*, model: Model, transport: WebFetchTransport = "curl") -> An
     """
     if transport not in ("curl", "direct"):
         raise ValueError(f"web_fetch transport must be 'curl' or 'direct', got {transport!r}.")
-    cache: dict[str, tuple[float, str, str]] = {}
+    cache: dict[str, tuple[float, str]] = {}
 
     @tool(name="web_fetch", context="tool_context")
     async def web_fetch(url: str, tool_context: ToolContext, prompt: str = "") -> str:
@@ -200,7 +225,8 @@ def make_web_fetch(*, model: Model, transport: WebFetchTransport = "curl") -> An
         Performs an HTTP GET, reduces the response to text, and asks a small fast model to answer
         the prompt using only that content, returning the answer rather than the raw page so large
         pages do not flood the conversation. Fetched content is cached for 15 minutes, so repeated
-        fetches of the same URL are fast while each prompt is answered fresh.
+        fetches of the same URL are fast while each prompt is answered fresh. Redirects are not
+        followed: the result names the URL the page redirects to, which you can fetch with another call.
 
         Args:
             url: The http(s) URL to fetch.
@@ -210,21 +236,19 @@ def make_web_fetch(*, model: Model, transport: WebFetchTransport = "curl") -> An
         """
         cached = cache.get(url)
         if cached and cached[0] > time.monotonic():
-            resolved_url, text = cached[1], cached[2]
+            text = cached[1]
         else:
             try:
-                resolved_url, text = await _fetch_text(tool_context.agent.sandbox, url, transport)
+                text = await _fetch_text(tool_context.agent.sandbox, url, transport)
             except Exception as exc:
                 return f"Failed to fetch {url}: {exc}"
-            cache[url] = (time.monotonic() + _CACHE_TTL_SECONDS, resolved_url, text)
+            cache[url] = (time.monotonic() + _CACHE_TTL_SECONDS, text)
 
         if not prompt.strip():
             return text
 
         summarizer = Agent(model=model, system_prompt=_SUMMARIZER_PROMPT, callback_handler=None)
-        result = await summarizer.invoke_async(
-            f"Fetched URL: {resolved_url}\n\nRequest: {prompt}\n\n--- Content ---\n{text}"
-        )
+        result = await summarizer.invoke_async(f"Fetched URL: {url}\n\nRequest: {prompt}\n\n--- Content ---\n{text}")
         return str(result)
 
     return web_fetch

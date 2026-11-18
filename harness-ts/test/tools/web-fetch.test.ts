@@ -1,5 +1,8 @@
 import { Buffer } from 'node:buffer'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ReadableStream } from 'node:stream/web'
 import type { AddressInfo } from 'node:net'
 
@@ -36,7 +39,7 @@ class FakeSandbox {
     private readonly response: {
       body?: Uint8Array | string
       contentType?: string
-      url?: string
+      redirect?: string
       exitCode?: number
       stderr?: string
     } = {}
@@ -47,7 +50,7 @@ class FakeSandbox {
     const exitCode = this.response.exitCode ?? 0
     const body = this.response.body ?? ''
     const encoded = Buffer.from(typeof body === 'string' ? Buffer.from(body) : body).toString('base64')
-    const trailer = [this.response.contentType ?? 'text/html', this.response.url ?? 'https://example.com/final']
+    const trailer = [this.response.contentType ?? 'text/html', this.response.redirect ?? '']
     return Promise.resolve({
       type: 'executionResult',
       exitCode,
@@ -105,7 +108,7 @@ describe('web_fetch', () => {
     expect(constructed[0]!.model).toBe(model)
     const prompt = invokeCalls[0]!
     expect(prompt).toContain('What does it say?')
-    expect(prompt).toContain('Fetched URL: https://example.com/final')
+    expect(prompt).toContain('Fetched URL: https://example.com\n')
     expect(prompt).toContain('Hello world')
     expect(prompt).not.toContain('<script>')
   })
@@ -121,12 +124,12 @@ describe('web_fetch', () => {
     for (const flag of [
       '-g',
       '--fail',
+      '--no-location',
       "--proto '=http,https'",
-      "--proto-redir '=http,https'",
       '--max-time',
       '-o "$f"',
       '%{content_type}',
-      '%{url_effective}',
+      '%{redirect_url}',
       " -- '",
     ]) {
       expect(command).toContain(flag)
@@ -139,7 +142,7 @@ describe('web_fetch', () => {
   })
 
   it('handles a missing content type without shifting the trailer', async () => {
-    const sandbox = new FakeSandbox({ body: 'a < b <i>', contentType: '', url: 'https://example.com/report.html' })
+    const sandbox = new FakeSandbox({ body: 'a < b <i>', contentType: '' })
     const tool = makeWebFetch({ model })
     expect(await invoke(tool, { url: 'https://example.com' }, sandbox)).toBe('a < b <i>')
   })
@@ -199,9 +202,7 @@ describe('web_fetch', () => {
     const tool = makeWebFetch({ model })
     expect(await invoke(tool, { url: "https://example.com/it's" }, sandbox)).toBe('Hello wörld')
     const command = sandbox.curl
-    expect(command).toContain(
-      "\n  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time "
-    )
+    expect(command).toContain("\n  curl.exe -sS -g --fail --no-location --proto '=http,https' --max-time ")
     // The URL is a single-quoted PowerShell literal (no expansion), with its own quotes doubled.
     expect(command.split("'https://example.com/it''s'")).toHaveLength(2)
     expect(command).toContain('$([guid]::NewGuid())')
@@ -330,11 +331,6 @@ describe('web_fetch', () => {
   // than the default 5 s allows on a busy CI runner.
   it('fetches end to end through the local environment sandbox', { timeout: 60_000 }, async () => {
     const server = createServer((req, res) => {
-      if (req.url === '/redirect') {
-        res.writeHead(302, { Location: '/page' })
-        res.end()
-        return
-      }
       if (req.url === '/huge') {
         res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': 6 * 1024 * 1024 })
         res.end(Buffer.alloc(6 * 1024 * 1024, 'x'))
@@ -359,7 +355,7 @@ describe('web_fetch', () => {
     const sandbox = new RealAgent({ model }).sandbox
     const tool = makeWebFetch({ model })
     try {
-      expect(await invoke(tool, { url: `${base}/redirect` }, sandbox)).toBe('Hello wörld')
+      expect(await invoke(tool, { url: `${base}/page` }, sandbox)).toBe('Hello wörld')
       expect(await invoke(tool, { url: `${base}/big` }, sandbox)).toBe('日'.repeat(50_000))
       expect(await invoke(tool, { url: `${base}/huge` }, sandbox)).toBe('x'.repeat(50_000))
       expect(await invoke(tool, { url: `${base}/notype` }, sandbox)).toBe('a < b')
@@ -374,4 +370,72 @@ describe('web_fetch', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
+
+  it('reports a redirect from either shell without summarizing or caching it', async () => {
+    const notice =
+      'Failed to fetch https://example.com/docs: it redirects to https://other.example/landing, and web_fetch ' +
+      'does not follow redirects. Call web_fetch with that URL to read it.'
+    for (const Sandbox of [FakeSandbox, FakePowerShellSandbox]) {
+      const sandbox = new Sandbox({ body: 'redirect body', redirect: 'https://other.example/landing' })
+      const tool = makeWebFetch({ model })
+      expect(await invoke(tool, { url: 'https://example.com/docs', prompt: 'anything' }, sandbox)).toBe(notice)
+      expect(await invoke(tool, { url: 'https://example.com/docs' }, sandbox)).toBe(notice)
+      expect(sandbox.commands).toHaveLength(3)
+    }
+    expect(invokeCalls).toHaveLength(0)
+  })
+
+  it.each(['ftp://example.com/file', 'javascript:alert(1)', `https://example.com/${'a'.repeat(8192)}`])(
+    'does not name a redirect target it would not fetch: %s',
+    async (redirect) => {
+      const tool = makeWebFetch({ model })
+      expect(await invoke(tool, { url: 'https://example.com/docs' }, new FakeSandbox({ redirect }))).toBe(
+        'Failed to fetch https://example.com/docs: it redirects to a location web_fetch cannot fetch.'
+      )
+    }
+  )
+
+  it.each(['curl', 'direct'] as const)(
+    'stops at a same-host or cross-host redirect with the %s transport',
+    { timeout: 60_000 },
+    async (transport) => {
+      const requests: string[] = []
+      const listen = async (name: string, location: () => string): Promise<[string, () => Promise<void>]> => {
+        const server = createServer((req, res) => {
+          requests.push(`${name}${req.url}`)
+          if (req.url === '/docs/moved') res.writeHead(302, { Location: '/private' })
+          else if (req.url === '/docs/away') res.writeHead(308, { Location: location() })
+          // Raw UTF-8 bytes and a space, as servers send them.
+          else if (req.url === '/docs/odd')
+            res.writeHead(301, { Location: Buffer.from('/a b/café?x=a|b').toString('latin1') })
+          res.end('secret')
+        })
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+        const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+        return [base, () => new Promise<void>((resolve) => server.close(() => resolve()))]
+      }
+      const [other, closeOther] = await listen('other', () => '')
+      const [base, close] = await listen('base', () => `${other}/landing?q=1`)
+      const tool = makeWebFetch({ model, transport })
+      const sandbox = new RealAgent({ model }).sandbox
+      // A curl config file that turns redirect following on must not bring it back.
+      const curlHome = mkdtempSync(join(tmpdir(), 'strands-curlrc-'))
+      writeFileSync(join(curlHome, '.curlrc'), '--location\n')
+      vi.stubEnv('CURL_HOME', curlHome)
+      try {
+        const moved = await invoke(tool, { url: `${base}/docs/moved` }, sandbox)
+        expect(moved).toContain(`Failed to fetch ${base}/docs/moved: it redirects to ${base}/private, and`)
+        const away = await invoke(tool, { url: `${base}/docs/away` }, sandbox)
+        expect(away).toContain(`Failed to fetch ${base}/docs/away: it redirects to ${other}/landing?q=1, and`)
+        // curl percent-encodes in lower case.
+        const odd = await invoke(tool, { url: `${base}/docs/odd` }, sandbox)
+        expect(odd.toLowerCase()).toContain(`it redirects to ${base}/a%20b/caf%c3%a9?x=a%7cb, and`)
+        expect(requests).toEqual(['base/docs/moved', 'base/docs/away', 'base/docs/odd'])
+      } finally {
+        vi.unstubAllEnvs()
+        rmSync(curlHome, { recursive: true, force: true })
+        await Promise.all([close(), closeOther()])
+      }
+    }
+  )
 })
