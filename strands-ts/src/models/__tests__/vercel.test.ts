@@ -1241,16 +1241,16 @@ describe('VercelModel', () => {
         expect(messageCacheControl(callArgs())).toEqual({ type: 'ephemeral' })
       })
 
-      it('disables caching and warns once on an unknown strategy', async () => {
+      it('falls back to auto and warns once on an unknown strategy', async () => {
         const config = { cacheConfig: { strategy: 'bogus' as unknown as 'auto' } }
         const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
         await collect(userMessages, { toolSpecs })
 
-        expect(toolCacheControl(callArgs())).toBeUndefined()
-        expect(messageCacheControl(callArgs())).toBeUndefined()
+        expect(toolCacheControl(callArgs())).toEqual({ type: 'ephemeral' })
+        expect(messageCacheControl(callArgs())).toEqual({ type: 'ephemeral' })
         expect(warnOnce).toHaveBeenCalledWith(
           expect.objectContaining({ warn: expect.any(Function) }),
-          expect.stringContaining('unknown cache strategy')
+          expect.stringContaining('falling back to auto')
         )
       })
 
@@ -1696,17 +1696,17 @@ describe('VercelModel', () => {
         expect(lastUser.content[1]?.providerOptions?.bedrock?.cachePoint).toBeUndefined()
       })
 
-      it('disables caching and warns once on an unknown strategy', async () => {
+      it('falls back to auto and warns once on an unknown strategy', async () => {
         const config = { cacheConfig: { strategy: 'bogus' as unknown as 'auto' } }
         const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
         await collect(userMessages, { systemPrompt: 'be helpful' })
 
         const args = callArgs()
-        expect(bedrockSystemCachePoint(args)).toBeUndefined()
-        expect(bedrockMessageCachePoint(args)).toBeUndefined()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
         expect(warnOnce).toHaveBeenCalledWith(
           expect.objectContaining({ warn: expect.any(Function) }),
-          expect.stringContaining('unknown cache strategy')
+          expect.stringContaining('falling back to auto')
         )
       })
 
@@ -1820,6 +1820,36 @@ describe('VercelModel', () => {
         )
       })
 
+      describe('for a model that takes cache points on another provider', () => {
+        const converseWarning = (modelId: string): string =>
+          `model_id=<${modelId}> | converse caches this model implicitly, cache points are supported through the openai model provider (bedrock mantle)`
+
+        it.each(['us.openai.gpt-6-luna', 'openai.gpt-6.1-sol'])(
+          'under the default auto strategy, warns that cache points go through the OpenAI model provider: %s',
+          async (modelId) => {
+            const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'amazon-bedrock', modelId)
+            await collect(userMessages, { systemPrompt: 'be helpful' })
+
+            expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+            expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
+            expect(warnOnce).toHaveBeenCalledWith(expect.anything(), converseWarning(modelId))
+          }
+        )
+
+        it.each([
+          'us.xai.grok-4.7',
+          'us.openai.gpt-5.4',
+          'openai.gpt-oss-120b-1:0',
+          'global.anthropic.claude-sonnet-4-6',
+          'us.amazon.nova-pro-v1:0',
+        ])('does not warn for a model Converse handles on its own: %s', async (modelId) => {
+          const { collect } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'amazon-bedrock', modelId)
+          await collect(userMessages, { systemPrompt: 'be helpful' })
+
+          expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), converseWarning(modelId))
+        })
+      })
+
       it('under the default auto strategy, warns that gpt-oss has no automatic caching and skips it', async () => {
         const modelId = 'openai.gpt-oss-120b-1:0'
         const { collect, callArgs, model } = setupCaptureTest(
@@ -1917,6 +1947,21 @@ describe('VercelModel', () => {
 
         expect(messageCacheControl(callArgs())).toEqual({ type: 'ephemeral', ttl: '1h' })
       })
+
+      it.each(['openai.chat', 'openai.responses'])(
+        'still sends the cache key for %s when an explicit strategy falls back to auto',
+        async (provider) => {
+          const config = { cacheConfig: { strategy: 'anthropic' as const, cacheKey: 'k' }, ...unsupported }
+          const { collect, callArgs } = setupCaptureTest(minimalParts, config, provider, 'gpt-5.4')
+          await collect(userMessages)
+
+          expect(callArgs().providerOptions?.openai).toEqual({ promptCacheKey: 'k' })
+          expect(warnOnce).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.stringContaining('does not support prompt caching')
+          )
+        }
+      )
     })
 
     describe('unsupported underlying provider', () => {

@@ -63,8 +63,15 @@ import {
   resolveMaxTokens,
   type ResolvedCacheSection,
 } from '../models/model.js'
-import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
-import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
+import {
+  SERVER_SIDE_SUMMARY_OFF,
+  ModelInfo,
+  cachePointsOnlyOffApi,
+  lookupCachePointRules,
+  lookupModel,
+  type CachePointRules,
+} from './model-info.js'
+import { appliedCacheConfig, resolveCacheStrategy, type CacheStrategyResolution } from './cache-strategy.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -302,7 +309,7 @@ export interface BedrockModelConfig extends BaseModelConfig {
    *
    * @see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
    */
-  cacheConfig?: BedrockCacheConfig
+  cacheConfig?: BedrockCacheConfig | false
 
   /**
    * Additional fields to include in the Bedrock request.
@@ -594,78 +601,75 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Turns `serverSideSummary` off, and reports how Converse caches the model where that differs from the shared
-   * model info; a `modelInfo` override still wins over both.
+   * Turns `serverSideSummary` off and applies the shared model info's Converse facts (`apis.converse`); a
+   * `modelInfo` override still wins over both.
    */
   override get modelInfo(): ModelInfo {
     return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
-      bedrockCacheModelInfo(this.modelId ?? ''),
+      lookupModel(this.modelId ?? '')?.apis?.converse,
       this._config.modelInfo
     )
   }
 
   /**
-   * Returns the cache strategy for this model based on its model ID.
-   * Returns the appropriate cache strategy name, or null if automatic caching is not supported.
-   *
-   * @returns Cache strategy name or null
+   * Resolves `cacheConfig` with the Converse rules: `'sdk'` applies to any model id, including ARNs and prompt
+   * routers, and an unlisted id naming Claude takes cache points under `'auto'`.
    */
-  private _getCacheStrategy(): 'anthropic' | null {
-    const promptCaching = this.modelInfo.capabilities?.promptCaching
-    if (promptCaching === undefined) {
-      // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
-      // keep the historical name test so caching does not turn off until the data catches up.
-      const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
-      return modelId.includes('claude') || modelId.includes('anthropic') ? 'anthropic' : null
-    }
-    return promptCaching === 'cachePoints' ? 'anthropic' : null
+  protected override _resolveCacheStrategy(): CacheStrategyResolution {
+    return resolveCacheStrategy(this._config.cacheConfig, 'converse', {
+      promptCaching: this.modelInfo.capabilities?.promptCaching,
+      modelId: this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId,
+    })
   }
 
   /**
-   * Determines if caching should be enabled.
-   * Returns true when:
-   * - strategy is 'anthropic' (explicit enable)
-   * - strategy is 'auto' (the default) and the model supports caching (auto-detect)
+   * Whether the SDK places cache points, warning once when `'auto'` finds the model caches none.
    *
    * @returns True if caching should be enabled.
    */
   private _shouldEnableCaching(): boolean {
-    const cacheConfig = this._config.cacheConfig
-    if (!cacheConfig) {
-      return false
+    const { strategy, auto } = this._cacheStrategy()
+    // A model the provider caches implicitly needs no cache points, so it gets no warning unless another
+    // provider would place them.
+    if (auto && strategy === 'implicit') {
+      this._warnCachePointsOffConverse()
     }
-
-    let strategy = cacheConfig.strategy ?? 'auto'
-
-    if (strategy === 'auto') {
-      const detectedStrategy = this._getCacheStrategy()
-      // A model the provider caches implicitly needs no cache points, so it gets no warning.
-      if (!detectedStrategy && this.modelInfo.capabilities?.promptCaching === 'auto') {
-        return false
-      }
-      if (!detectedStrategy) {
-        warnOnce(
-          logger,
-          `model_id=<${this._config.modelId}> | cache_config is enabled but this model does not support automatic caching`
-        )
-        return false
-      }
-      strategy = detectedStrategy
+    if (auto && strategy === 'manual') {
+      warnOnce(
+        logger,
+        `model_id=<${this._config.modelId}> | cache_config is enabled but this model does not support automatic caching`
+      )
     }
+    return strategy === 'sdk'
+  }
 
-    return strategy === 'anthropic'
+  /** The `cacheConfig` to apply, `undefined` when caching is off. */
+  private _cacheConfig(): CacheConfig | undefined {
+    return appliedCacheConfig(this._config.cacheConfig)
   }
 
   /**
-   * Whether Converse limits where this model takes cache points (no tools cache point, no TTL, only directly after
-   * text).
-   *
-   * @returns True for a Nova model that takes cache points
+   * Warns once when Converse caches the model implicitly but the model takes cache points through another provider.
    */
-  private _limitsCachePoints(): boolean {
-    return bedrockLimitsCachePoints(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+  private _warnCachePointsOffConverse(): void {
+    if (!cachePointsOnlyOffApi(this.modelId ?? '', 'converse')) {
+      return
+    }
+    warnOnce(
+      logger,
+      `model_id=<${this._config.modelId}> | converse caches this model implicitly, cache points are supported through the openai model provider (bedrock mantle)`
+    )
+  }
+
+  /**
+   * Where the model takes cache points, from the shared model info.
+   *
+   * @returns The model's cache-point rules
+   */
+  private _cachePointRules(): CachePointRules & { readonly maxCachePoints: number } {
+    return lookupCachePointRules(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
   }
 
   /**
@@ -676,8 +680,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns The resolved section
    */
   private _cacheSection(section: boolean | CacheTTL | undefined): ResolvedCacheSection {
-    const resolved = resolveCacheSection(section, this._config.cacheConfig?.ttl)
-    if (!resolved.ttl || !this._limitsCachePoints()) {
+    const resolved = resolveCacheSection(section, this._cacheConfig()?.ttl)
+    if (!resolved.ttl || this._cachePointRules().cachePointTTL !== false) {
       return resolved
     }
     warnOnce(
@@ -696,8 +700,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (!this._shouldEnableCaching()) {
       return { enabled: false }
     }
-    const toolsTTL = this._config.cacheConfig?.toolsTTL
-    if (this._limitsCachePoints()) {
+    const toolsTTL = this._cacheConfig()?.toolsTTL
+    if (this._cachePointRules().toolsCachePoint === false) {
       if (toolsTTL !== undefined && toolsTTL !== false) {
         warnOnce(
           logger,
@@ -715,7 +719,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param system - The formatted system blocks (modified in place)
    */
   private _dropUnsupportedSystemTTLs(system: SystemContentBlock[]): void {
-    if (!this._limitsCachePoints()) {
+    if (this._cachePointRules().cachePointTTL !== false) {
       return
     }
     for (const block of system) {
@@ -738,7 +742,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (!this._shouldEnableCaching()) {
       return false
     }
-    if (this._config.cacheConfig?.systemPromptTTL === false) {
+    if (this._cacheConfig()?.systemPromptTTL === false) {
       return false
     }
     if (!system || system.length === 0) {
@@ -759,7 +763,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       return
     }
     this._dropUnsupportedSystemTTLs(system)
-    const cacheConfig = this._config.cacheConfig
+    const cacheConfig = this._cacheConfig()
     const systemSection = this._cacheSection(cacheConfig?.systemPromptTTL)
     let ttl = systemSection.ttl
 
@@ -1159,6 +1163,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     // Runs after toolConfig so the tools checkpoint ahead of the system one is known.
     this._applySystemCacheTTL(request)
+    this._dropCachePointsOverBudget(request)
 
     // Add inference configuration
     const inferenceConfig: InferenceConfiguration = {}
@@ -1201,6 +1206,30 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     return request
+  }
+
+  /**
+   * Drops the cache points past the model's per-request budget, warning once. Keeps the tools point and the last
+   * system and message points; drops the oldest message points first, then the earliest system points.
+   *
+   * @param request - The formatted request (modified in place)
+   */
+  private _dropCachePointsOverBudget(request: ConverseStreamCommandInput): void {
+    const { maxCachePoints } = this._cachePointRules()
+    const toolPoints = request.toolConfig?.tools?.filter((tool) => 'cachePoint' in tool).length ?? 0
+    const systemPoints = cachePointSlots(request.system ?? [])
+    const messagePoints = (request.messages ?? []).flatMap((message) => cachePointSlots(message.content ?? []))
+    const excess = toolPoints + systemPoints.length + messagePoints.length - maxCachePoints
+    if (excess <= 0) {
+      return
+    }
+    for (const { blocks, block } of [...messagePoints.slice(0, -1), ...systemPoints.slice(0, -1)].slice(0, excess)) {
+      blocks.splice(blocks.indexOf(block), 1)
+    }
+    warnOnce(
+      logger,
+      `model_id=<${this._config.modelId}>, max_cache_points=<${maxCachePoints}> | request carries more cache points than bedrock allows, dropped the oldest extras`
+    )
   }
 
   /**
@@ -1270,7 +1299,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     const messagesCache = this._shouldEnableCaching()
-      ? this._cacheSection(this._config.cacheConfig?.messagesTTL)
+      ? this._cacheSection(this._cacheConfig()?.messagesTTL)
       : { enabled: false }
     if (messagesCache.enabled) {
       this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks)
@@ -1353,7 +1382,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       placed.cachePoint.ttl = ttl as BedrockSdkCacheTTL
     }
 
-    const novaRules = this._limitsCachePoints()
+    const novaRules = this._cachePointRules().cachePointPlacement === 'afterText'
     const targetIdx = novaRules ? stepBackToText(content, placedIdx) : stepBackOverDocuments(content, placedIdx)
 
     if (targetIdx !== placedIdx) {
@@ -1470,7 +1499,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           // The point could not legally stay, so fall through to automatic placement below.
         }
 
-        if (this._limitsCachePoints()) {
+        if (this._cachePointRules().cachePointPlacement === 'afterText') {
           this._injectNovaCachePoint(messages, lastUserIdx, trailingBlocks)
           return
         }
@@ -2649,4 +2678,14 @@ function applyDefaultRegion(config: BedrockRuntimeClientResolvedConfig): void {
       throw error
     }
   }
+}
+
+/**
+ * Lists the cache point blocks in `blocks`, in order, each with the array that holds it.
+ *
+ * @param blocks - System or message content blocks
+ * @returns One slot per cache point
+ */
+function cachePointSlots(blocks: object[]): { blocks: object[]; block: object }[] {
+  return blocks.filter((block) => 'cachePoint' in block).map((block) => ({ blocks, block }))
 }

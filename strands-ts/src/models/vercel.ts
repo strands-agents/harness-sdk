@@ -40,8 +40,19 @@ import {
   type ResolvedCacheSection,
   type StreamOptions,
 } from './model.js'
-import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
-import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
+import {
+  SERVER_SIDE_SUMMARY_OFF,
+  ModelInfo,
+  cachePointsOnlyOffApi,
+  lookupCachePointRules,
+  lookupModel,
+} from './model-info.js'
+import {
+  appliedCacheConfig,
+  resolveCacheStrategy,
+  type CacheStrategyResolution,
+  type CacheStrategyRules,
+} from './cache-strategy.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -99,9 +110,10 @@ export interface VercelModelConfig extends BaseModelConfig, LanguageModelCallSet
    * field (`ttl`, `toolsTTL`, `systemPromptTTL`, `messagesTTL`); Bedrock honors `systemPromptTTL` and
    * `messagesTTL`, caches tools as part of that prefix (so `toolsTTL` is inert), and under the default
    * `'auto'` strategy caches only models known to support it; OpenAI honors `cacheKey` and a retention
-   * `ttl`; every other provider ignores it with a one-time warning.
+   * `ttl`; every other provider ignores it with a one-time warning. `strategy` resolves as on `AnthropicModel`,
+   * `BedrockModel` and OpenAI Chat Completions (the ai-sdk OpenAI adapters take no checkpoints).
    */
-  cacheConfig?: CacheConfig
+  cacheConfig?: CacheConfig | false
 }
 
 /**
@@ -171,21 +183,33 @@ export class VercelModel extends Model<VercelModelConfig> {
   }
 
   /**
-   * Turns `serverSideSummary` off, and on Bedrock reports how Converse caches the model where that differs from the
-   * shared model info; a `modelInfo` override still wins over both.
+   * Turns `serverSideSummary` off and, on Bedrock, applies the shared model info's Converse facts (`apis.converse`);
+   * a `modelInfo` override still wins over both.
    */
   override get modelInfo(): ModelInfo {
     const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
     return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
-      bedrock ? bedrockCacheModelInfo(this.modelId) : undefined,
+      bedrock ? lookupModel(this.modelId)?.apis?.converse : undefined,
       this._config.modelInfo
     )
   }
 
   updateConfig(config: VercelModelConfig): void {
     this._config = { ...this._config, ...config }
+  }
+
+  /**
+   * Resolves `cacheConfig` with the wrapped provider's rules. Any other provider warns that it ignores
+   * `cacheConfig` itself, so it resolves as unconfigured.
+   */
+  protected override _resolveCacheStrategy(): CacheStrategyResolution {
+    const rules = VERCEL_CACHE_RULES.get(this._provider.provider.split('.')[0] ?? '')
+    return resolveCacheStrategy(rules ? this._config.cacheConfig : undefined, rules ?? 'none', {
+      promptCaching: this.modelInfo.capabilities?.promptCaching,
+      modelId: this._provider.modelId,
+    })
   }
 
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
@@ -203,7 +227,13 @@ export class VercelModel extends Model<VercelModelConfig> {
       ...callSettings,
     }
 
-    applyVercelCacheConfig(callOptions, this._provider, cacheConfig, this.modelInfo, options?.dynamicTrailingBlocks)
+    applyVercelCacheConfig(
+      callOptions,
+      this._provider,
+      appliedCacheConfig(cacheConfig),
+      this._cacheStrategy(),
+      options?.dynamicTrailingBlocks
+    )
 
     let result
     try {
@@ -265,11 +295,18 @@ export class VercelModel extends Model<VercelModelConfig> {
   }
 }
 
+// The ai-sdk OpenAI adapters take no checkpoints, so every OpenAI route resolves like Chat Completions.
+const VERCEL_CACHE_RULES: ReadonlyMap<string, CacheStrategyRules> = new Map([
+  ['anthropic', 'anthropic'],
+  ['amazon-bedrock', 'converse'],
+  ['openai', 'openaiChat'],
+])
+
 /**
  * Applies a `CacheConfig` to a Vercel call by the underlying provider. See
  * {@link VercelModelConfig.cacheConfig} for the per-provider routing.
  *
- * @param modelInfo - What the SDK knows about the wrapped model; decides the default `'auto'` strategy
+ * @param resolution - The resolved cache strategy; cache points are placed only for `'sdk'`
  * @param dynamicTrailingBlocks - Trailing content parts of the last user message a context injector
  * rebuilds every call; the conversation breakpoint stays ahead of them so the cached prefix is stable.
  * @internal
@@ -278,23 +315,25 @@ function applyVercelCacheConfig(
   callOptions: LanguageModelV3CallOptions,
   model: LanguageModelV3,
   cacheConfig: CacheConfig | undefined,
-  modelInfo: ModelInfo,
+  resolution: CacheStrategyResolution,
   dynamicTrailingBlocks = 0
 ): void {
   if (!cacheConfig) return
+  const sdk = resolution.strategy === 'sdk'
 
   // The segment before the first '.' is the provider namespace in the ai-sdk
   switch (model.provider.split('.')[0]) {
     case 'anthropic':
-      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
-        applyAnthropicCache(callOptions, cacheConfig, dynamicTrailingBlocks)
-      }
+      warnIfInfoForbidsCaching(resolution, model.modelId)
+      if (sdk) applyAnthropicCache(callOptions, cacheConfig, dynamicTrailingBlocks)
       break
     case 'amazon-bedrock':
-      applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, model.modelId, modelInfo)
+      if (sdk) applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, model.modelId)
+      else warnBedrockCachingSkipped(resolution, model.modelId)
       break
     case 'openai':
-      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
+      // Only the default `'auto'` lets model info turn the cache key off; an explicit strategy that fell back keeps it.
+      if (resolution.unsupported !== undefined || !warnIfInfoForbidsCaching(resolution, model.modelId)) {
         applyOpenAICache(callOptions, cacheConfig)
       }
       break
@@ -304,18 +343,16 @@ function applyVercelCacheConfig(
 }
 
 /**
- * Reports whether the default `'auto'` strategy is turned off by a `promptCaching: 'unsupported'` override,
- * warning once when it is. An explicit strategy is never turned off.
+ * Reports whether the default `'auto'` strategy found caching off, which only a `promptCaching: 'unsupported'`
+ * model info does on these routes, warning once when it is.
  *
- * @param cacheConfig - The caller's cache configuration
- * @param modelInfo - What the SDK knows about the model
+ * @param resolution - The resolved cache strategy
  * @param modelId - The model id, used in the warning
  * @returns True when caching must be skipped
  * @internal
  */
-function infoForbidsAutoCaching(cacheConfig: CacheConfig, modelInfo: ModelInfo, modelId: string): boolean {
-  const auto = (cacheConfig.strategy ?? 'auto') === 'auto'
-  if (!auto || modelInfo.capabilities?.promptCaching !== 'unsupported') return false
+function warnIfInfoForbidsCaching(resolution: CacheStrategyResolution, modelId: string): boolean {
+  if (!resolution.auto || resolution.strategy !== 'manual') return false
   warnOnce(
     logger,
     `model_id=<${modelId}> | cacheConfig is enabled but the model info says this model does not support prompt caching, ignoring`
@@ -324,17 +361,28 @@ function infoForbidsAutoCaching(cacheConfig: CacheConfig, modelInfo: ModelInfo, 
 }
 
 /**
- * Reports whether the configured cache strategy is supported
+ * Warns once when the default `'auto'` strategy places no cache points on the wrapped Bedrock model (mirroring
+ * `BedrockModel`). A model Converse caches implicitly needs none, so it warns only when another provider would
+ * place them.
  *
+ * @param resolution - The resolved cache strategy
+ * @param modelId - The wrapped Bedrock model id, used in the warning
  * @internal
  */
-function isCacheStrategySupported(cacheConfig: CacheConfig): boolean {
-  const strategy = cacheConfig.strategy ?? 'auto'
-  if (strategy !== 'auto' && strategy !== 'anthropic') {
-    warnOnce(logger, `strategy=<${strategy}> | unknown cache strategy, prompt caching disabled`)
-    return false
+function warnBedrockCachingSkipped(resolution: CacheStrategyResolution, modelId: string): void {
+  if (!resolution.auto) return
+  if (resolution.strategy === 'implicit' && cachePointsOnlyOffApi(modelId, 'converse')) {
+    warnOnce(
+      logger,
+      `model_id=<${modelId}> | converse caches this model implicitly, cache points are supported through the openai model provider (bedrock mantle)`
+    )
   }
-  return true
+  if (resolution.strategy === 'manual') {
+    warnOnce(
+      logger,
+      `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
+    )
+  }
 }
 
 /**
@@ -347,8 +395,6 @@ function applyAnthropicCache(
   cacheConfig: CacheConfig,
   dynamicTrailingBlocks: number
 ): void {
-  if (!isCacheStrategySupported(cacheConfig)) return
-
   const tools = resolveCacheSection(cacheConfig.toolsTTL, cacheConfig.ttl)
   if (tools.enabled) {
     // Anthropic caches the whole prefix up to the last function tool, so one breakpoint on it covers
@@ -383,21 +429,15 @@ function applyAnthropicCache(
 /**
  * Injects Bedrock `cachePoint` breakpoints on system and the last user message.
  *
- * @param modelId - The wrapped Bedrock model id, used in the skip warning
- * @param modelInfo - What the SDK knows about the wrapped model; the default `'auto'` strategy follows its
- * `promptCaching`, falling back to the Claude name test for unlisted ids, matching `BedrockModel`
+ * @param modelId - The wrapped Bedrock model id
  * @internal
  */
 function applyBedrockCache(
   callOptions: LanguageModelV3CallOptions,
   cacheConfig: CacheConfig,
   dynamicTrailingBlocks: number,
-  modelId: string,
-  modelInfo: ModelInfo
+  modelId: string
 ): void {
-  if (!isCacheStrategySupported(cacheConfig)) return
-  if (!bedrockModelSupportsCaching(cacheConfig, modelId, modelInfo)) return
-
   // The amazon-bedrock ai-sdk adapter accepts no tool-level cache point, so toolsTTL does nothing here.
   // Tool definitions are cached only as part of the system/messages prefix.
   if (cacheConfig.toolsTTL !== undefined && cacheConfig.toolsTTL !== true) {
@@ -438,39 +478,9 @@ function bedrockCacheSection(
   modelId: string
 ): ResolvedCacheSection {
   const resolved = resolveCacheSection(section, cacheConfig.ttl)
-  if (!resolved.ttl || !bedrockLimitsCachePoints(modelId)) return resolved
+  if (!resolved.ttl || lookupCachePointRules(modelId).cachePointTTL !== false) return resolved
   warnOnce(logger, `model_id=<${modelId}> | ttl is not supported by this model, using the default cache duration`)
   return { enabled: resolved.enabled }
-}
-
-/**
- * Reports whether the wrapped Bedrock model takes cache points. An explicit `'anthropic'` strategy
- * opts in regardless; the default `'auto'` caches when `modelInfo` says `'cachePoints'`, or when the id is
- * unlisted and names Claude, warning once and skipping otherwise (mirroring `BedrockModel`).
- *
- * @param cacheConfig - The caller's cache configuration
- * @param modelId - The wrapped Bedrock model id, used in the skip warning
- * @param modelInfo - What the SDK knows about the wrapped model
- * @internal
- */
-function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, modelInfo: ModelInfo): boolean {
-  if ((cacheConfig.strategy ?? 'auto') !== 'auto') return true
-
-  const promptCaching = modelInfo.capabilities?.promptCaching
-  // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
-  // keep the historical name test so caching does not turn off until the data catches up.
-  const supported =
-    promptCaching === undefined
-      ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
-      : promptCaching === 'cachePoints'
-  // A model the provider caches implicitly needs no cache points, so it gets no warning.
-  if (!supported && promptCaching !== 'auto') {
-    warnOnce(
-      logger,
-      `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
-    )
-  }
-  return supported
 }
 
 /**
@@ -483,7 +493,7 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
 function bedrockAcceptsCachePointAfter(
   modelId: string
 ): (part: LanguageModelV3TextPart | LanguageModelV3FilePart) => boolean {
-  if (bedrockLimitsCachePoints(modelId)) return (part) => part.type === 'text'
+  if (lookupCachePointRules(modelId).cachePointPlacement === 'afterText') return (part) => part.type === 'text'
   return (part) => !blocksCachePoint(part)
 }
 

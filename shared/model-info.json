@@ -3,6 +3,9 @@
   "defaults": {
     "limits": {
       "contextWindow": 200000
+    },
+    "cachePointRules": {
+      "maxCachePoints": 4
     }
   },
   "models": {
@@ -309,7 +312,13 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "promptCaching": "cachePoints"
+      },
+      "cachePointRules": {
+        "cachePointPlacement": "afterText",
+        "toolsCachePoint": false,
+        "cachePointTTL": false
       }
     },
     "amazon.nova-lite-v1:0": {
@@ -318,7 +327,13 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "promptCaching": "cachePoints"
+      },
+      "cachePointRules": {
+        "cachePointPlacement": "afterText",
+        "toolsCachePoint": false,
+        "cachePointTTL": false
       }
     },
     "amazon.nova-micro-v1:0": {
@@ -327,7 +342,13 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "promptCaching": "cachePoints"
+      },
+      "cachePointRules": {
+        "cachePointPlacement": "afterText",
+        "toolsCachePoint": false,
+        "cachePointTTL": false
       }
     },
     "amazon.nova-premier-v1:0": {
@@ -345,7 +366,13 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "promptCaching": "cachePoints"
+      },
+      "cachePointRules": {
+        "cachePointPlacement": "afterText",
+        "toolsCachePoint": false,
+        "cachePointTTL": false
       }
     },
     "amazon.nova-2-pro-preview-20251202-v1:0": {
@@ -384,6 +411,13 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "low"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-6.1-sol": {
@@ -393,6 +427,13 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "low"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "openai.gpt-6.1-sol": {
@@ -402,6 +443,13 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "low"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-6.1-terra": {
@@ -411,6 +459,13 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "low"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "openai.gpt-6.1-terra": {
@@ -419,6 +474,13 @@
       },
       "capabilities": {
         "defaultEffort": "low"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-6-sol": {
@@ -428,6 +490,13 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-6-luna": {
@@ -437,11 +506,25 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-6-cyber": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.6": {
@@ -451,6 +534,13 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.6-sol": {
@@ -460,6 +550,13 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "low"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.6-terra": {
@@ -469,6 +566,13 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.6-luna": {
@@ -478,16 +582,37 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "openai.gpt-5.6-cyber": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "openai.gpt-daybreak-blue-5.6-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.5": {
@@ -496,11 +621,25 @@
       },
       "capabilities": {
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.5-pro": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.4": {
@@ -509,11 +648,25 @@
       },
       "capabilities": {
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.4-pro": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.4-mini": {
@@ -522,11 +675,25 @@
       },
       "capabilities": {
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.4-nano": {
       "limits": {
         "contextWindow": 272000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.2": {
@@ -535,11 +702,25 @@
       },
       "capabilities": {
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.2-pro": {
       "limits": {
         "contextWindow": 272000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5.1": {
@@ -548,6 +729,13 @@
       },
       "capabilities": {
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5": {
@@ -556,76 +744,181 @@
       },
       "capabilities": {
         "defaultEffort": "medium"
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5-mini": {
       "limits": {
         "contextWindow": 272000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5-nano": {
       "limits": {
         "contextWindow": 272000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-5-pro": {
       "limits": {
         "contextWindow": 128000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-4.1": {
       "limits": {
         "contextWindow": 1047576
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-4.1-mini": {
       "limits": {
         "contextWindow": 1047576
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-4.1-nano": {
       "limits": {
         "contextWindow": 1047576
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-4o": {
       "limits": {
         "contextWindow": 128000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-4o-mini": {
       "limits": {
         "contextWindow": 128000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-4-turbo": {
       "limits": {
         "contextWindow": 128000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "o3": {
       "limits": {
         "contextWindow": 200000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "o3-mini": {
       "limits": {
         "contextWindow": 200000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "o3-pro": {
       "limits": {
         "contextWindow": 200000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "o4-mini": {
       "limits": {
         "contextWindow": 200000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "o1": {
       "limits": {
         "contextWindow": 200000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gemini-2.5-flash": {
@@ -833,21 +1126,49 @@
     "xai.grok-4.7": {
       "limits": {
         "contextWindow": 524288
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "xai.grok-4.6": {
       "limits": {
         "contextWindow": 500000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "xai.grok-4.3": {
       "limits": {
         "contextWindow": 1000000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "chat-latest": {
       "limits": {
         "contextWindow": 272000
+      },
+      "apis": {
+        "converse": {
+          "capabilities": {
+            "promptCaching": "auto"
+          }
+        }
       }
     },
     "gpt-oss-120b": {

@@ -32,6 +32,9 @@ import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
 
+// The Gemini API caches every request's prompt prefix on its own, so `cacheConfig` resolves to `'implicit'`.
+const IMPLICIT_CACHE: ModelInfo = Object.freeze({ capabilities: { promptCaching: 'auto' as const } })
+
 /**
  * Builds the Strands error for each recognized Google error type.
  */
@@ -167,9 +170,12 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     return this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId
   }
 
-  /** Turns `serverSideSummary` off, which a `modelInfo` override still wins over. */
+  /**
+   * Turns `serverSideSummary` off and reports that the Gemini API caches prompt prefixes implicitly; a `modelInfo`
+   * override still wins over both.
+   */
   override get modelInfo(): ModelInfo {
-    return ModelInfo.merge(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, this._config.modelInfo)
+    return ModelInfo.merge(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, IMPLICIT_CACHE, this._config.modelInfo)
   }
 
   /**

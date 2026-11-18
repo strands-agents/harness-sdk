@@ -60,9 +60,10 @@ interface OpenAIBaseConfig extends BaseModelConfig {
    * checkpoint's `ttl` and such a `ttl` sets `prompt_cache_options.ttl`. Older models and Chat
    * Completions use implicit caching. `cacheKey` maps to `prompt_cache_key`, and retention
    * literals map to `prompt_cache_retention`. Native caching fields in `params` take precedence.
-   * Checkpoints do not remove injected content retained by stateful server-side conversations.
+   * Checkpoints do not remove injected content retained by stateful server-side conversations. `strategy`
+   * `'manual'` places no checkpoints and still sends `cacheKey` and the retention.
    */
-  cacheConfig?: CacheConfig
+  cacheConfig?: CacheConfig | false
 }
 
 /**

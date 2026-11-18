@@ -32,6 +32,7 @@ import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { summarizeWithStream, type SummarizeResult } from './summarize.js'
+import { resolveCacheStrategy, type CacheStrategy, type CacheStrategyResolution } from './cache-strategy.js'
 
 /**
  * Fills `contextWindowLimit` on a config object when not explicitly set. Explicit values pass
@@ -94,14 +95,15 @@ class CitationAccumulator {
  */
 export interface CacheConfig {
   /**
-   * Whether to skip caching for models that do not support it.
-   * - "auto": cache only when the model is known to support it
-   * - "anthropic": cache without that check, for model identifiers it cannot inspect
-   *   (an application inference profile, for example)
+   * The caching mode to run in. `'auto'` picks the most capable mode the provider and model support. `'sdk'` places
+   * cache points (on Bedrock, also for a model id the SDK cannot inspect, such as an application inference profile
+   * ARN); `'implicit'` leaves caching to the provider's prefix cache; `'manual'` places none and sends the caller's
+   * cache points as written. A mode the provider or model cannot apply warns once and falls back to `'auto'`.
+   * `'anthropic'` is a deprecated alias of `'sdk'`.
    *
    * @defaultValue 'auto'
    */
-  strategy?: 'auto' | 'anthropic'
+  strategy?: CacheStrategy
 
   /**
    * TTL for every cache point, overridden by a per-section TTL. Provider default when omitted.
@@ -242,6 +244,12 @@ export interface BaseModelConfig {
    * previous override entirely, it does not merge into it.
    */
   modelInfo?: ModelInfo
+
+  /**
+   * Prompt caching configuration, for providers that apply it; `false` or unset turns caching off. A provider that
+   * does not apply it warns once that it is ignored.
+   */
+  cacheConfig?: CacheConfig | false
 }
 
 /**
@@ -438,6 +446,43 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Resolves the prompt-caching mode this model runs in from `cacheConfig`, the provider and {@link modelInfo},
+   * warning once when an explicit strategy falls back to `'auto'` or the provider
+   * ignores `cacheConfig`.
+   *
+   * @internal
+   * @returns The resolution
+   */
+  protected _cacheStrategy(): CacheStrategyResolution {
+    const resolution = this._resolveCacheStrategy()
+    if (resolution.unsupported !== undefined) {
+      warnOnce(
+        logger,
+        `strategy=<${resolution.unsupported}>, model_id=<${this.modelId}> | this provider or model does not support the cache strategy, falling back to auto`
+      )
+    }
+    if (resolution.ignored) {
+      warnOnce(
+        logger,
+        `provider=<${this.constructor.name}>, model_id=<${this.modelId}> | cacheConfig is not applied by this model provider, ignoring`
+      )
+    }
+    return resolution
+  }
+
+  /**
+   * Resolves `cacheConfig` with this provider's rules. A provider that applies `cacheConfig` overrides it.
+   *
+   * @internal
+   * @returns The resolution
+   */
+  protected _resolveCacheStrategy(): CacheStrategyResolution {
+    return resolveCacheStrategy(this.getConfig().cacheConfig, 'none', {
+      promptCaching: this.modelInfo.capabilities?.promptCaching,
+    })
+  }
+
+  /**
    * Streams a conversation with the model.
    * Returns an async iterable that yields streaming events as they occur.
    *
@@ -571,6 +616,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
     messages: Message[],
     options?: StreamOptions
   ): AsyncGenerator<ModelStreamEvent | ContentBlock, StreamAggregatedResult, undefined> {
+    // Surfaces the one-time cacheConfig warnings for providers that never format a cache point.
+    this._cacheStrategy()
     try {
       // State maintained in closure
       // Providers can end an empty turn with only a stop event, so a message is assumed to be the assistant's.

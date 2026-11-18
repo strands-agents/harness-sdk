@@ -2394,7 +2394,7 @@ describe('AnthropicModel', () => {
       expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral', ttl: '1h' }]])
     })
 
-    it('disables caching for an unknown strategy', async () => {
+    it('falls back to auto and warns once for an unknown strategy', async () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({
         client: mockClient,
@@ -2403,7 +2403,8 @@ describe('AnthropicModel', () => {
 
       await collectIterator(provider.stream([userMessage('Hi')]))
 
-      expect(breakpoints(captured.request)).toEqual([])
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(warnOnce).toHaveBeenCalledWith(logger, expect.stringContaining('strategy=<sometimes>'))
     })
 
     it('honors a cache point in the last user message', async () => {

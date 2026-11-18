@@ -21,6 +21,7 @@ import {
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
+import { appliedCacheConfig, resolveCacheStrategy, type CacheStrategyResolution } from './cache-strategy.js'
 import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../models/streaming.js'
@@ -324,11 +325,12 @@ export interface AnthropicModelConfig extends BaseModelConfig {
 
   /**
    * Prompt caching configuration. Setting it caches the tool definitions and adds a cache point
-   * to the last user message; caching is off when unset.
+   * to the last user message; caching is off when unset or `false`.
    *
-   * `strategy` has no effect here, since prompt caching is supported on every active Claude model.
+   * `strategy` takes `'auto'` and `'sdk'` (both place cache points) or `'manual'` (sends only the cache points the
+   * caller placed); any other strategy warns once and falls back to `'auto'`.
    */
-  cacheConfig?: CacheConfig
+  cacheConfig?: CacheConfig | false
 }
 
 type AnthropicMessagesClient = {
@@ -896,23 +898,24 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     )
   }
 
-  /** Resolves a cache section, disabled when `cacheConfig` is unset or its strategy is unknown. */
-  private _cacheSection(section: 'toolsTTL' | 'messagesTTL' | 'systemPromptTTL'): ResolvedCacheSection {
-    const cacheConfig = this._config.cacheConfig
-    if (!cacheConfig) {
-      return { enabled: false }
-    }
+  /** Resolves `cacheConfig` with the Anthropic rules. */
+  protected override _resolveCacheStrategy(): CacheStrategyResolution {
+    return resolveCacheStrategy(this._config.cacheConfig, 'anthropic', {
+      promptCaching: this.modelInfo.capabilities?.promptCaching,
+    })
+  }
 
-    const strategy = cacheConfig.strategy ?? 'auto'
-    if (strategy !== 'auto' && strategy !== 'anthropic') {
-      logger.warn(`strategy=<${strategy}> | unknown cache strategy, prompt caching disabled`)
-      return { enabled: false }
-    }
-    if (strategy === 'auto' && this.modelInfo.capabilities?.promptCaching === 'unsupported') {
+  /** Resolves a cache section, disabled unless the SDK places cache points. */
+  private _cacheSection(section: 'toolsTTL' | 'messagesTTL' | 'systemPromptTTL'): ResolvedCacheSection {
+    const { strategy, auto } = this._cacheStrategy()
+    const cacheConfig = appliedCacheConfig(this._config.cacheConfig)
+    if (auto && strategy === 'manual') {
       warnOnce(
         logger,
         `model_id=<${this._config.modelId}> | cacheConfig is enabled but the model info says this model does not support prompt caching, ignoring`
       )
+    }
+    if (strategy !== 'sdk' || !cacheConfig) {
       return { enabled: false }
     }
 
