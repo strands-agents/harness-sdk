@@ -1482,7 +1482,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           if (this._limitsCachePoints() && novaPoints <= 0) {
             content.splice(placedIdx, 1)
             logger.warn(
-              `msg_idx=<${lastUserIdx}> | dropped caller-placed cache point, the system prompt holds every cache point Converse accepts`
+              `msg_idx=<${lastUserIdx}>, block_idx=<${placedIdx}> | no cache point left after the system prompt | dropped caller-placed cache point`
             )
             return
           }

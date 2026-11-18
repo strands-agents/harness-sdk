@@ -999,9 +999,10 @@ class BedrockModel(Model):
                 if self._limits_cache_points and nova_points <= 0:
                     del content[placed_idxs[0]]
                     logger.warning(
-                        "msg_idx=<%s> | dropped caller-placed cache point, the system prompt holds every cache point"
-                        " Converse accepts",
+                        "msg_idx=<%s>, block_idx=<%s> | no cache point left after the system prompt"
+                        " | dropped caller-placed cache point",
                         last_user_idx,
+                        placed_idxs[0],
                     )
                     return
                 if self._honor_placed_cache_point(content, placed_idxs[0], last_user_idx):

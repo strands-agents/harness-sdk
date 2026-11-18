@@ -175,7 +175,7 @@ print(f"Cache read tokens: {response2.metrics.accumulated_usage.get('cacheReadIn
 
 > **Note**: Cache misses occur if you intentionally modify past conversation context (e.g., summarization or editing previous messages).
 
-**Amazon Nova**: Nova takes a cache point only directly after text, takes none on tool definitions, and takes no TTL, so <Syntax py="tools_ttl" ts="toolsTTL" /> and the TTL settings have no effect. It also reads a cache entry only at a position an earlier request marked too. The SDK therefore places Nova's conversation cache points differently:
+**Amazon Nova**: Nova takes a cache point only directly after text, takes none on tool definitions, and takes no TTL, so <Syntax py="tools_ttl" ts="toolsTTL" /> has no effect and a TTL duration is ignored. Setting <Syntax py="system_prompt_ttl" ts="systemPromptTTL" /> or <Syntax py="messages_ttl" ts="messagesTTL" /> to `False` (`false`) still turns that part off. It also reads a cache entry only at a position an earlier request marked too. The SDK therefore places Nova's conversation cache points differently:
 
 - A cache point goes after the last text block of each of the last three user messages that have text, so a new turn repeats the positions the previous turn wrote. During a tool loop the points stay where they are.
 - A cache point you place in the last user message is kept and counts as one of the three.
