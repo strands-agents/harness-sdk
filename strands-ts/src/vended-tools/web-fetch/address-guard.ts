@@ -20,7 +20,9 @@ const NON_PUBLIC_NETWORKS = [
   'ff00::/8', // multicast
 ]
 
-let nonPublic: BlockList | undefined
+type Lookup = typeof import('node:dns/promises').lookup
+
+let guard: Promise<{ lookup: Lookup; nonPublic: BlockList }> | undefined
 
 /**
  * Whether every address `hostname` resolves to is public. Rejects when `hostname`
@@ -29,15 +31,22 @@ let nonPublic: BlockList | undefined
  * @internal
  */
 export async function isPublicHost(hostname: string): Promise<boolean> {
-  const [{ lookup }, net] = await Promise.all([import('node:dns/promises'), import('node:net')])
-  if (!nonPublic) {
-    nonPublic = new net.BlockList()
+  const { lookup, nonPublic } = await (guard ??= _loadGuard())
+  const addresses = await lookup(hostname.replace(/^\[|\]$/g, ''), { all: true })
+  // IPv4-mapped IPv6 addresses are matched against the IPv4 networks.
+  return addresses.every(({ address, family }) => !nonPublic.check(address, family === 6 ? 'ipv6' : 'ipv4'))
+}
+
+async function _loadGuard(): Promise<{ lookup: Lookup; nonPublic: BlockList }> {
+  try {
+    const [{ lookup }, net] = await Promise.all([import('node:dns/promises'), import('node:net')])
+    const nonPublic = new net.BlockList()
     for (const network of NON_PUBLIC_NETWORKS) {
       const [address, prefix] = network.split('/')
       nonPublic.addSubnet(address!, Number(prefix), network.includes(':') ? 'ipv6' : 'ipv4')
     }
+    return { lookup, nonPublic }
+  } catch (error) {
+    throw new Error('host addresses can only be checked on Node.js', { cause: error })
   }
-  const addresses = await lookup(hostname.replace(/^\[|\]$/g, ''), { all: true })
-  // IPv4-mapped IPv6 addresses are matched against the IPv4 networks.
-  return addresses.every(({ address, family }) => !nonPublic!.check(address, family === 6 ? 'ipv6' : 'ipv4'))
 }

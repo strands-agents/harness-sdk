@@ -283,7 +283,7 @@ describe('webFetch tool', () => {
       vi.mocked(isPublicHost).mockRejectedValueOnce(new Error('ENOTFOUND'))
 
       await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://unknown.example/' })).rejects.toThrow(
-        /could not resolve host/
+        'url=<https://unknown.example/> | fetch failed: could not check the host address: ENOTFOUND'
       )
       expect(globalThis.fetch).not.toHaveBeenCalled()
     })
@@ -331,6 +331,15 @@ describe('webFetch tool', () => {
         /too many redirects/
       )
       expect(globalThis.fetch).toHaveBeenCalledTimes(21)
+    })
+
+    it('keeps the check for a truthy allowPrivateAddresses that is not true', async () => {
+      mockFetch('secret')
+      vi.mocked(isPublicHost).mockResolvedValueOnce(false)
+      const tool = makeWebFetch({ mode: 'markdown', allowPrivateAddresses: 'false' as never })
+
+      await expect(tool.invoke({ url: 'http://127.0.0.1:8080/' })).rejects.toThrow(/fetch refused/)
+      expect(globalThis.fetch).not.toHaveBeenCalled()
     })
 
     it('skips the check and lets fetch follow redirects when allowPrivateAddresses is set', async () => {

@@ -12,7 +12,9 @@ construction time:
 
 The tool delegates all networking to the ``httpx.AsyncClient`` instance
 provided by the operator, giving full control over transport configuration,
-caching, proxies, redirects, and connection pooling.
+caching, proxies, redirects, and connection pooling. Before each request,
+including each redirect hop, it resolves the host and refuses non-public
+addresses unless ``allow_private_addresses`` is set.
 """
 
 from __future__ import annotations
@@ -87,9 +89,11 @@ def make_web_fetch(
             agent; ``WebFetchError`` if none is available.
         mode: Extraction mode. Defaults to ``agentic``.
         allow_private_addresses: Allow URLs whose host is, or resolves to, a loopback,
-            link-local, private-range, or otherwise non-public address. Defaults to
-            ``False``: such a URL is refused with ``WebFetchError``, as is a redirect
-            to one, a non-``http(s)`` URL, and a host that cannot be resolved.
+            link-local, private, or otherwise non-public address. Defaults to ``False``:
+            such a URL is refused with ``WebFetchError``, as is a redirect to one and a
+            host this process cannot resolve. Set it when a proxy or custom transport
+            resolves names for the client. The host is resolved before connecting, so
+            the check does not stop DNS rebinding.
 
     Returns:
         A decorated tool that fetches a URL and extracts content according to
@@ -106,6 +110,8 @@ def make_web_fetch(
         raise ValueError(f"max_content_chars must be positive, got {max_content_chars}")
     if mode not in ("markdown", "agentic"):
         raise ValueError(f"mode must be 'markdown' or 'agentic', got {mode!r}")
+    if not isinstance(allow_private_addresses, bool):
+        raise ValueError(f"allow_private_addresses must be a bool, got {allow_private_addresses!r}")
     resolved_description = description or (
         WEB_FETCH_DESCRIPTION_MARKDOWN if mode == "markdown" else WEB_FETCH_DESCRIPTION_AGENTIC
     )
@@ -222,7 +228,7 @@ async def _fetch_once(
     cancel_signal: threading.Event | None,
     allow_private_addresses: bool,
 ) -> tuple[str, str]:
-    """Perform one HTTP GET, returning ``(content_type, body_text)``.
+    """Fetch ``url``, returning ``(content_type, body_text)``.
 
     Raises:
         asyncio.CancelledError: When the agent cancel signal is set.
@@ -278,6 +284,7 @@ async def _send(client: httpx.AsyncClient, url: str, allow_private_addresses: bo
     if allow_private_addresses:
         return await client.send(request, stream=True)
 
+    origin = _origin(request.url)
     auth: Any = httpx.USE_CLIENT_DEFAULT
     for _ in range(client.max_redirects + 1):
         await _check_public(request.url)
@@ -286,9 +293,14 @@ async def _send(client: httpx.AsyncClient, url: str, allow_private_addresses: bo
             return response
         await response.aclose()
         request = response.next_request
-        # httpx already kept or stripped credentials for the next hop; client auth must not be re-applied.
-        auth = None
+        if _origin(request.url) != origin:
+            # As when httpx follows redirects itself, client auth is never offered to another origin.
+            auth = None
     raise WebFetchError(f"Fetch failed: too many redirects: {url!r}")
+
+
+def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
+    return url.scheme, url.host, url.port
 
 
 async def _check_public(url: httpx.URL) -> None:
@@ -299,10 +311,11 @@ async def _check_public(url: httpx.URL) -> None:
     try:
         is_public = await is_public_host(host)
     except OSError as error:
-        raise WebFetchError(f"Fetch failed: could not resolve host {host!r}") from error
+        raise WebFetchError(f"Fetch failed: could not resolve host {host!r} to check its address") from error
     if not is_public:
         raise WebFetchError(
-            f"Fetch refused: {host!r} is or resolves to a loopback, link-local, private, or other non-public address"
+            f"Fetch refused: {host!r} is or resolves to a loopback, link-local, private, or other non-public address. "
+            "Set allow_private_addresses=True on make_web_fetch to allow it."
         )
 
 

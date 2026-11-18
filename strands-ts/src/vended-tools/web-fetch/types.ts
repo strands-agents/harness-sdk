@@ -49,9 +49,11 @@ export interface MakeWebFetchOptions {
   /** Extraction mode. Defaults to `'agentic'`. */
   mode?: 'markdown' | 'agentic'
   /**
-   * Allow URLs whose host is, or resolves to, a loopback, link-local, private-range, or
-   * otherwise non-public address. Defaults to `false`: such a URL is refused, as is a
-   * redirect to one and a host that cannot be resolved.
+   * Allow URLs whose host is, or resolves to, a loopback, link-local, private, or otherwise
+   * non-public address. Defaults to `false`: such a URL is refused, as is a redirect to one
+   * and a host this process cannot resolve. The check needs Node.js; on other runtimes every
+   * URL is refused unless this is `true`. Set it when a proxy resolves names for `fetch`.
+   * The host is resolved before connecting, so the check does not stop DNS rebinding.
    */
   allowPrivateAddresses?: boolean
 }

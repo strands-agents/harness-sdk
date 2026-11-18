@@ -45,7 +45,8 @@ const webFetchAgenticInputSchema = z.object({
  * with conservative limits; use this factory to tune them.
  */
 export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<typeof tool> {
-  const { mode = 'agentic', model: analystModel, allowPrivateAddresses = false } = options
+  const { mode = 'agentic', model: analystModel } = options
+  const allowPrivateAddresses = options.allowPrivateAddresses === true
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
   const maxContentChars = options.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS
   if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
@@ -189,13 +190,18 @@ async function fetchOnce(
 
 // Sends the GET, checking the target of every redirect hop unless private addresses are allowed.
 async function _send(url: string, signal: AbortSignal | null, allowPrivateAddresses: boolean): Promise<Response> {
+  if (allowPrivateAddresses) {
+    _parseHttpUrl(url)
+    return _get(url, signal, 'follow')
+  }
+
   let target = url
   for (let hop = 0; hop <= _MAX_REDIRECTS; hop++) {
-    await _checkUrl(target, allowPrivateAddresses)
-    const response = await _get(target, signal, allowPrivateAddresses ? 'follow' : 'manual')
+    await _checkPublic(_parseHttpUrl(target))
+    const response = await _get(target, signal, 'manual')
 
     const location = response.headers.get('location')
-    if (allowPrivateAddresses || !_REDIRECT_STATUSES.includes(response.status) || location === null) {
+    if (!_REDIRECT_STATUSES.includes(response.status) || location === null) {
       return response
     }
     await response.body?.cancel()
@@ -220,26 +226,31 @@ async function _get(url: string, signal: AbortSignal | null, redirect: RequestRe
   }
 }
 
-// Throws unless `url` is http(s) and, when private addresses are not allowed, its host resolves only to public ones.
-async function _checkUrl(url: string, allowPrivateAddresses: boolean): Promise<void> {
+function _parseHttpUrl(url: string): URL {
   if (!URL.canParse(url)) {
     throw new Error(`url=<${url}> | fetch failed: invalid URL`)
   }
-  const { protocol, hostname } = new URL(url)
-  if (protocol !== 'http:' && protocol !== 'https:') {
+  const parsed = new URL(url)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`url=<${url}> | fetch failed: only http and https URLs are supported`)
   }
-  if (allowPrivateAddresses) return
+  return parsed
+}
 
+async function _checkPublic(url: URL): Promise<void> {
   let isPublic: boolean
   try {
-    isPublic = await isPublicHost(hostname)
+    isPublic = await isPublicHost(url.hostname)
   } catch (error) {
-    throw new Error(`url=<${url}> | fetch failed: could not resolve host`, { cause: error })
+    throw new Error(
+      `url=<${url.href}> | fetch failed: could not check the host address: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
+    )
   }
   if (!isPublic) {
     throw new Error(
-      `url=<${url}> | fetch refused: host is or resolves to a loopback, link-local, private, or other non-public address`
+      `url=<${url.href}> | fetch refused: host is or resolves to a loopback, link-local, private, or other non-public address. ` +
+        'Set allowPrivateAddresses: true on makeWebFetch to allow it.'
     )
   }
 }

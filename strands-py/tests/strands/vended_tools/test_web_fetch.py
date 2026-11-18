@@ -333,7 +333,9 @@ class TestNonPublicAddresses:
         requests: list[str] = []
         tool = make_web_fetch(client=self._recording_client(requests), mode="markdown")
 
-        with pytest.raises(WebFetchError, match="^Fetch failed: could not resolve host 'unknown.example'"):
+        with pytest.raises(
+            WebFetchError, match="^Fetch failed: could not resolve host 'unknown.example' to check its address"
+        ):
             await tool(url="https://unknown.example/")
         assert requests == []
 
@@ -370,13 +372,18 @@ class TestNonPublicAddresses:
         assert requests == ["https://example.com/old", "https://example.com/new"]
 
     @pytest.mark.asyncio
-    async def test_client_auth_is_not_sent_to_another_origin_on_redirect(self):
+    async def test_client_auth_follows_same_origin_redirects_only(self):
         authorization: dict[str, str | None] = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
-            authorization[request.url.host] = request.headers.get("authorization")
-            if request.url.host == "example.com":
-                return httpx.Response(302, headers={"location": "https://other.example/"})
+            authorization[str(request.url)] = request.headers.get("authorization")
+            location = {
+                "https://example.com/": "/next",
+                "https://example.com/next": "https://other.example/",
+                "https://other.example/": "https://example.com/back",
+            }.get(str(request.url))
+            if location is not None:
+                return httpx.Response(302, headers={"location": location})
             return httpx.Response(200, headers={"content-type": "text/plain"}, text="ok")
 
         client = httpx.AsyncClient(
@@ -385,8 +392,34 @@ class TestNonPublicAddresses:
 
         await make_web_fetch(client=client, mode="markdown")(url="https://example.com/")
 
-        assert authorization["example.com"] is not None
-        assert authorization["other.example"] is None
+        assert authorization == {
+            "https://example.com/": "Basic dXNlcjpwYXNzd29yZA==",
+            "https://example.com/next": "Basic dXNlcjpwYXNzd29yZA==",
+            "https://other.example/": None,
+            "https://example.com/back": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_multi_step_client_auth_completes_after_a_same_origin_redirect(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/start":
+                return httpx.Response(302, headers={"location": "/protected"})
+            if "authorization" not in request.headers:
+                challenge = 'Digest realm="r", nonce="n", qop="auth", algorithm=MD5'
+                return httpx.Response(401, headers={"www-authenticate": challenge})
+            return httpx.Response(200, headers={"content-type": "text/plain"}, text="protected page")
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), follow_redirects=True, auth=httpx.DigestAuth("user", "password")
+        )
+
+        tru_result = await make_web_fetch(client=client, mode="markdown")(url="https://example.com/start")
+
+        assert tru_result == "protected page"
+
+    def test_rejects_non_bool_allow_private_addresses(self):
+        with pytest.raises(ValueError, match="allow_private_addresses must be a bool"):
+            make_web_fetch(allow_private_addresses="false")
 
     @pytest.mark.asyncio
     async def test_does_not_follow_redirects_when_the_client_does_not(self):
