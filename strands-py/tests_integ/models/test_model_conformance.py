@@ -15,7 +15,6 @@ from strands.models import CacheConfig
 from strands.models._model_info import lookup_model_info
 from strands.models._native_output import _FORCED_TOOL_CHOICE_UNSUPPORTED_MESSAGES
 from strands.vended_plugins.context_injector import ContextInjector
-from tests_integ.conftest import retry_on_flaky
 from tests_integ.models import conformance
 
 
@@ -27,8 +26,9 @@ class Profile(BaseModel):
     occupation: str
 
 
-# Slow reasoning models can take longer than the suite's default timeout for a single case.
-pytestmark = pytest.mark.timeout(180)
+# A provider can be briefly unavailable and a model can answer differently from one call to the next, so every
+# case gets three attempts. Slow reasoning models can take longer than the suite's default timeout.
+pytestmark = [pytest.mark.flaky(reruns=2, reruns_delay=5), pytest.mark.timeout(180)]
 
 PROFILE_PROMPT = "Create a profile for John who is a 25 year old dentist."
 EXPECTED_PROFILE = Profile(name="John", age=25, occupation="dentist")
@@ -77,7 +77,6 @@ def test_shared_cases_and_providers_are_all_accounted_for():
 
 
 @conformance.case("tool-use")
-@retry_on_flaky("A model may occasionally answer without calling the tool")
 def test_tool_use(model):
     agent = _agent(model, tools=[echo])
 
@@ -97,7 +96,6 @@ def test_context_window(model, target):
 
 
 @conformance.case("structured-output")
-@retry_on_flaky("A model may occasionally answer in text instead of producing the structured output")
 def test_structured_output(model):
     result = _agent(model)(PROFILE_PROMPT, structured_output_model=Profile)
 
@@ -202,7 +200,6 @@ async def test_server_side_summary(model):
 
 
 @conformance.case("temporary-messages")
-@retry_on_flaky("A model may occasionally answer without using the injected text")
 def test_temporary_messages(model):
     order_number = uuid.uuid4().hex[:8]
     agent = _agent(model, plugins=[ContextInjector(lambda context: f"The user's order number is {order_number}.")])
