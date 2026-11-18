@@ -119,6 +119,39 @@ describe('FileStorage', () => {
       expect(await storage.loadSnapshot({ location })).toEqual(snapshots[1])
     })
 
+    it('rejects only the save whose write fails while an earlier rename is pending', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const snapshots = createTestSnapshots(2)
+      const error = new Error('Write failed')
+      const renameFile = fs.rename.bind(fs)
+      let finishFirstRename!: () => void
+      const rename = vi.spyOn(fs, 'rename').mockImplementationOnce(async (...args) => {
+        await new Promise<void>((resolve) => {
+          finishFirstRename = resolve
+        })
+        await renameFile(...args)
+      })
+      const unhandledRejection = vi.fn()
+      process.on('unhandledRejection', unhandledRejection)
+
+      const first = storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: snapshots[0]! })
+      await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1))
+      const writeFile = vi.spyOn(fs, 'writeFile').mockRejectedValueOnce(error)
+      const second = storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: snapshots[1]! })
+      await vi.waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1))
+      await new Promise((resolve) => setTimeout(resolve))
+      finishFirstRename()
+      const results = await Promise.allSettled([first, second])
+      process.off('unhandledRejection', unhandledRejection)
+
+      expect(results).toEqual([
+        { status: 'fulfilled', value: undefined },
+        { status: 'rejected', reason: expect.objectContaining({ name: 'SessionError', cause: error }) },
+      ])
+      expect(unhandledRejection).not.toHaveBeenCalled()
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots[0])
+    })
+
     it('keeps the save called last when the earlier save has the larger payload', async () => {
       const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
       const snapshots = [4_000_000, 1].map((length) => createTestSnapshot({ appData: { value: 'x'.repeat(length) } }))
