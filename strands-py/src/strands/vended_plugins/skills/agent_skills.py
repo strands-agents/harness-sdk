@@ -15,6 +15,7 @@ readiness barrier is needed. The observable effect is benign: URL skills are
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import weakref
 from pathlib import Path
@@ -26,11 +27,12 @@ from ...plugins import Plugin, hook
 from ...tools.decorator import tool
 from ...types.content import SystemContentBlock
 from ...types.tools import ToolContext
-from .skill import Skill
+from .skill import _MCP_CONFIG_FILE, Skill, _parse_mcp_config
 
 if TYPE_CHECKING:
     from ...agent.agent import Agent
     from ...sandbox import FileInfo, Sandbox
+    from ...tools.mcp import MCPServerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,28 @@ def _find_skill_md_name(entries: list[FileInfo]) -> str | None:
     return None
 
 
+async def _read_mcp_servers(
+    sandbox: Sandbox, skill_dir: str, entries: list[FileInfo] | None
+) -> dict[str, MCPServerConfig]:
+    if entries is None:
+        entries = await sandbox.list_files(skill_dir)
+    if not any(not entry.is_dir and entry.name == _MCP_CONFIG_FILE for entry in entries):
+        return {}
+    return _parse_mcp_config(await sandbox.read_text(f"{skill_dir}/{_MCP_CONFIG_FILE}"))
+
+
+def _with_skill_cwd(server_config: MCPServerConfig, skill_path: Path | None) -> MCPServerConfig:
+    if "command" not in server_config or "cwd" in server_config or skill_path is None or not skill_path.is_dir():
+        return server_config
+    return {**server_config, "cwd": str(skill_path)}
+
+
+def _describe_mcp_tools(tool_names: list[str], failures: dict[str, str]) -> str:
+    lines = [f"MCP tools now available: {', '.join(tool_names)}"] if tool_names else []
+    lines.extend(f"MCP server '{name}' failed to start: {error}" for name, error in failures.items())
+    return "\n\n" + "\n".join(lines) if lines else ""
+
+
 class AgentSkills(Plugin):
     """Plugin that integrates Agent Skills into a Strands agent.
 
@@ -79,6 +103,7 @@ class AgentSkills(Plugin):
     1. A ``skills`` tool that allows the agent to activate skills on demand
     2. System prompt injection of available skill metadata before each invocation
     3. Session persistence of active skill state via ``agent.state``
+    4. Opt-in MCP servers per skill that start on activation (``allow_mcp_servers``)
 
     Skills can be provided as filesystem paths (to individual skill directories or
     parent directories containing multiple skills), ``https://`` URLs pointing to
@@ -114,6 +139,8 @@ class AgentSkills(Plugin):
         state_key: str = _DEFAULT_STATE_KEY,
         max_resource_files: int = _DEFAULT_MAX_RESOURCE_FILES,
         strict: bool = False,
+        *,
+        allow_mcp_servers: bool = False,
     ) -> None:
         """Initialize the AgentSkills plugin.
 
@@ -127,10 +154,20 @@ class AgentSkills(Plugin):
             state_key: Key used to store plugin state in ``agent.state``.
             max_resource_files: Maximum number of resource files to list in skill responses.
             strict: If True, raise on skill validation issues. If False (default), warn and load anyway.
+            allow_mcp_servers: If True, activating a skill starts the MCP servers in its ``mcp_servers``
+                (read from ``mcp.json`` in the skill directory) and adds their tools to the agent, so the
+                model sees those tools only after it activates the skill. The servers run in the agent's
+                own process environment, not in its sandbox, and stop when the agent is cleaned up.
+                Defaults to False, because a skill directory then decides which commands run.
         """
         self._strict = strict
         self._state_key = state_key
         self._max_resource_files = max_resource_files
+        self._allow_mcp_servers = allow_mcp_servers
+        self._started_mcp_servers: weakref.WeakKeyDictionary[Agent, dict[tuple[str, str], list[str]]] = (
+            weakref.WeakKeyDictionary()
+        )
+        self._mcp_restored_agents: weakref.WeakSet[Agent] = weakref.WeakSet()
         # Skill instances and URLs resolve now (both sandbox-independent and synchronous in
         # Python). Filesystem paths are deferred to init_agent, where the agent's sandbox is
         # available, so a path may resolve differently per agent (host vs. container).
@@ -182,7 +219,15 @@ class AgentSkills(Plugin):
 
         logger.debug("skill_name=<%s> | skill activated", skill_name)
         self._track_activated_skill(agent, skill_name)
-        return await self._format_skill_response(found, agent.sandbox)
+        response = await self._format_skill_response(found, agent.sandbox)
+        if not found.mcp_servers:
+            return response
+        if not self._allow_mcp_servers:
+            logger.warning(
+                "skill_name=<%s> | skill declares mcp servers, set allow_mcp_servers=True to start them", skill_name
+            )
+            return response
+        return response + _describe_mcp_tools(*await self._start_mcp_servers(agent, found))
 
     @hook
     async def _on_before_invocation(self, event: BeforeInvocationEvent) -> None:
@@ -209,6 +254,9 @@ class AgentSkills(Plugin):
         # after set_available_skills, which clears the per-agent cache.
         if agent not in self._agent_skills:
             await self._load_skill_paths(agent)
+
+        if self._allow_mcp_servers:
+            await self._restore_mcp_servers(agent)
 
         state_data = agent.state.get(self._state_key)
         last_injected_xml = state_data.get("last_injected_xml") if isinstance(state_data, dict) else None
@@ -316,11 +364,12 @@ class AgentSkills(Plugin):
         # Falls back to the default NotASandboxLocalEnvironment when the agent has no explicit sandbox.
         sandbox = agent.sandbox
 
-        async def load_skill(skill_dir: str, md_path: str) -> None:
+        async def load_skill(skill_dir: str, md_path: str, entries: list[FileInfo] | None = None) -> None:
             # A failure (e.g. malformed SKILL.md) is logged and skipped so it does not abort
             # sibling skills, matching Skill.from_directory's per-skill resilience.
             try:
                 skill = Skill.from_content(await sandbox.read_text(md_path), strict=self._strict)
+                skill.mcp_servers = await _read_mcp_servers(sandbox, skill_dir, entries)
                 # Set the sandbox path as-is (not host-resolved): the file may live in a container.
                 # Then replicate Skill.from_file's directory-name check, which from_content does not
                 # perform (Python's from_content takes no path parameter).
@@ -351,7 +400,7 @@ class AgentSkills(Plugin):
 
             md_name = _find_skill_md_name(entries)
             if md_name:
-                await load_skill(skill_path_str, f"{skill_path_str}/{md_name}")
+                await load_skill(skill_path_str, f"{skill_path_str}/{md_name}", entries)
                 continue
 
             # Parent directory: load each subdirectory that contains a skill.
@@ -364,7 +413,7 @@ class AgentSkills(Plugin):
                     continue
                 child_md = _find_skill_md_name(child_entries)
                 if child_md:
-                    await load_skill(child_dir, f"{child_dir}/{child_md}")
+                    await load_skill(child_dir, f"{child_dir}/{child_md}", child_entries)
 
         self._agent_skills[agent] = skills
 
@@ -559,6 +608,41 @@ class AgentSkills(Plugin):
             activated.remove(skill_name)
         activated.append(skill_name)
         self._set_state_field(agent, "activated_skills", activated)
+
+    async def _start_mcp_servers(self, agent: Agent, skill: Skill) -> tuple[list[str], dict[str, str]]:
+        from ...tools.mcp import MCPClient
+
+        started = self._started_mcp_servers.setdefault(agent, {})
+        failures: dict[str, str] = {}
+        for server_name, server_config in skill.mcp_servers.items():
+            key = (skill.name, server_name)
+            if key in started:
+                continue
+            started[key] = []
+            try:
+                clients = MCPClient.load_servers({server_name: _with_skill_cwd(server_config, skill.path)})
+                started[key] = await asyncio.to_thread(agent.tool_registry.process_tools, clients)
+            except Exception as error:
+                del started[key]
+                failures[server_name] = str(error.__cause__ or error)
+                logger.warning(
+                    "skill_name=<%s>, server_name=<%s>, error=<%s> | failed to start skill mcp server",
+                    skill.name,
+                    server_name,
+                    failures[server_name],
+                )
+        tool_names = [name for server_name in skill.mcp_servers for name in started.get((skill.name, server_name), [])]
+        return tool_names, failures
+
+    async def _restore_mcp_servers(self, agent: Agent) -> None:
+        if agent in self._mcp_restored_agents:
+            return
+        self._mcp_restored_agents.add(agent)
+        skills = self._skills_for(agent)
+        for skill_name in self.get_activated_skills(agent):
+            skill = skills.get(skill_name)
+            if skill is not None and skill.mcp_servers:
+                await self._start_mcp_servers(agent, skill)
 
     def get_activated_skills(self, agent: Agent) -> list[str]:
         """Get the list of skills activated by this agent.

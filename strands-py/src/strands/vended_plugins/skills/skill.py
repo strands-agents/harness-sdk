@@ -8,20 +8,36 @@ frontmatter metadata and markdown instructions.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from ...tools.mcp import MCPServerConfig
 
 logger = logging.getLogger(__name__)
 
 _SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 _MAX_SKILL_NAME_LENGTH = 64
+_MCP_CONFIG_FILE = "mcp.json"
+
+
+def _parse_mcp_config(content: str) -> dict[str, MCPServerConfig]:
+    try:
+        config = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"malformed {_MCP_CONFIG_FILE}: {error}") from error
+    servers = config.get("mcpServers", config) if isinstance(config, dict) else None
+    if not isinstance(servers, dict) or not all(isinstance(server, dict) for server in servers.values()):
+        raise ValueError(f"{_MCP_CONFIG_FILE} must map server names to server configs")
+    return servers
 
 
 def _find_skill_md(skill_dir: Path) -> Path:
@@ -239,6 +255,9 @@ class Skill:
         metadata: Additional key-value metadata from the SKILL.md frontmatter.
         license: License identifier (e.g., "Apache-2.0").
         compatibility: Compatibility information string.
+        mcp_servers: MCP servers that start when the skill is activated, keyed by server name, in the
+            ``mcpServers`` format that ``MCPClient.load_servers`` reads. Loaded from ``mcp.json`` in the
+            skill directory. ``AgentSkills`` starts them only when ``allow_mcp_servers`` is set.
     """
 
     name: str
@@ -249,6 +268,7 @@ class Skill:
     metadata: dict[str, Any] = field(default_factory=dict)
     license: str | None = None
     compatibility: str | None = None
+    mcp_servers: dict[str, MCPServerConfig] = field(default_factory=dict)
 
     @classmethod
     def from_file(cls, skill_path: str | Path, *, strict: bool = False) -> Skill:
@@ -256,7 +276,8 @@ class Skill:
 
         Resolves the filesystem path, reads the file content, and delegates
         to ``from_content`` for parsing. After loading, sets the skill's
-        ``path`` and validates the skill name against the parent directory.
+        ``path``, validates the skill name against the parent directory, and
+        reads ``mcp_servers`` from ``mcp.json`` in the skill directory if present.
 
         Args:
             skill_path: Path to the skill directory or the SKILL.md file itself.
@@ -267,7 +288,7 @@ class Skill:
 
         Raises:
             FileNotFoundError: If the path does not exist or SKILL.md is not found.
-            ValueError: If the skill metadata is invalid.
+            ValueError: If the skill metadata or ``mcp.json`` is invalid.
         """
         skill_path = Path(skill_path).resolve()
 
@@ -294,6 +315,10 @@ class Skill:
             if strict:
                 raise ValueError(msg % (skill.name, skill_dir.name))
             logger.warning(msg, skill.name, skill_dir.name)
+
+        mcp_config_path = skill_dir / _MCP_CONFIG_FILE
+        if mcp_config_path.is_file():
+            skill.mcp_servers = _parse_mcp_config(mcp_config_path.read_text(encoding="utf-8"))
 
         logger.debug("name=<%s>, path=<%s> | skill loaded successfully", skill.name, skill.path)
         return skill
