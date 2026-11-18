@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath, URL } from 'node:url'
 
 import { redactPreparationOutput } from '../../project/preparation.js'
+import type { EvalsRunEntry } from '../evals-agent/entry-files.js'
 import type { DevWorkspace } from '../workspace.js'
 import { tailTemporaryLines } from './jobs.js'
 
@@ -31,6 +32,8 @@ export interface TemporaryEvalsExit {
 
 export type TemporaryEvalsSpawner = (process: TemporaryEvalsProcess) => Promise<TemporaryEvalsExit>
 
+type TemporaryTypescriptRunner = Pick<EvalsRunEntry, 'temporaryTypescriptRunner'>
+
 const STDERR_TAIL_LINES = 20
 const LOG_TAIL_BYTES = 64 * 1024
 const DETACHABLE = process.platform !== 'win32'
@@ -38,13 +41,13 @@ const ERROR_LINE = /^strands-evals(?: [a-z-]+)*: error: /u
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
-export const temporaryTypescriptRunnerCommand = (): string => {
+const temporaryTypescriptRunnerCommand = (): string => {
   const runner = fileURLToPath(new URL('./typescript-runner-main.js', import.meta.url))
   return `${shellQuote(process.execPath)} ${shellQuote(runner)}`
 }
 
-export const temporaryLanguageArguments = ({ config }: DevWorkspace): string[] =>
-  config.language === 'typescript' ? ['--typescript-runner', temporaryTypescriptRunnerCommand()] : []
+export const temporaryTypescriptRunnerOf = ({ config }: DevWorkspace): TemporaryTypescriptRunner =>
+  config.language === 'typescript' ? { temporaryTypescriptRunner: temporaryTypescriptRunnerCommand() } : {}
 
 export const temporaryWorkspaceDirectory = ({ directory, entrypoint }: DevWorkspace): string => {
   if (!directory)
@@ -53,6 +56,12 @@ export const temporaryWorkspaceDirectory = ({ directory, entrypoint }: DevWorksp
     )
   return directory
 }
+
+export const temporaryFlagValues = (forkArguments: readonly string[], flag: string): string[] =>
+  forkArguments.flatMap((argument, index) => {
+    if (argument === flag) return forkArguments.slice(index + 1, index + 2)
+    return argument.startsWith(`${flag}=`) ? [argument.slice(flag.length + 1)] : []
+  })
 
 export const assertTemporaryForkArguments = (
   forkArguments: readonly string[],

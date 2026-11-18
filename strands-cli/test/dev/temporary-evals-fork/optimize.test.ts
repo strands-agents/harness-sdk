@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { fileURLToPath, URL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
@@ -11,6 +12,7 @@ import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
+const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals-agent', import.meta.url))
 
 const writeFileAt = async (path: string, text = '{}'): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
@@ -127,7 +129,7 @@ describe('TEMPORARY dev optimization', () => {
     expect(progress).toContain('candidate  0 baseline complete n=4 Contains 0.5')
   })
 
-  it('shouldWriteATaskFileWithAbsolutePathsWhenANewRunStarts', async () => {
+  it('shouldWriteATaskFileThatImportsTheShippedPackageWithAbsolutePathsWhenANewRunStarts', async () => {
     const workspace = await workspaceFixture()
 
     await runTemporaryOptimization(
@@ -137,9 +139,13 @@ describe('TEMPORARY dev optimization', () => {
 
     expect(await readFile(optimizationFile(workspace, '.state/task.py'), 'utf8')).toBe(
       [
-        'from strands_evals.cli.commands._temporary_task import temporary_task',
+        'import sys',
         '',
-        '_task = temporary_task(',
+        `sys.path.insert(0, ${JSON.stringify(EVALS_AGENT_FOLDER)})`,
+        '',
+        'from strands_dev_evals.optimize import optimize_task',
+        '',
+        '_task = optimize_task(',
         `    ${JSON.stringify(workspace.entrypoint)},`,
         `    experiment_file=${JSON.stringify(experimentFile(workspace.directory!, 'support'))},`,
         '    settings=("instructions",),',
@@ -402,7 +408,6 @@ describe('TEMPORARY dev optimization', () => {
     ['--json'],
     ['--rich'],
     ['--record=elsewhere'],
-    ['--typescript-runner', 'node'],
   ])('shouldRejectFlagsThatStrandsDevOwnsWhen%sIsPassed', async (...forkArguments) => {
     const workspace = await workspaceFixture()
     const run = environmentRunner()
@@ -411,7 +416,7 @@ describe('TEMPORARY dev optimization', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
-  it('shouldStartTheTypescriptRunnerAndUseTheSystemPythonWhenTheWorkspaceAgentIsTypeScript', async () => {
+  it('shouldWriteTheTemporaryTypescriptRunnerAndUseTheSystemPythonWhenTheWorkspaceAgentIsTypeScript', async () => {
     vi.stubEnv('PYTHON', '/opt/python3.12')
     const workspace = await workspaceFixture(['support'], 'typescript')
     const run = environmentRunner()
@@ -421,7 +426,7 @@ describe('TEMPORARY dev optimization', () => {
 
     const { args } = spawnOptimizer.mock.calls[0]![0]
     const task = await readFile(args[args.indexOf('--agent') + 1]!.replace(/:agent$/u, ''), 'utf8')
-    const runner = JSON.parse(/^ {4}typescript_runner=(".*"),$/mu.exec(task)![1]!) as string
+    const runner = JSON.parse(/^ {4}temporary_typescript_runner=(".*"),$/mu.exec(task)![1]!) as string
     expect(runner).toMatch(/^'.+' '.+typescript-runner-main\.js'$/u)
     expect(runner).toContain(process.execPath)
     expect(args).not.toContain('--typescript-runner')

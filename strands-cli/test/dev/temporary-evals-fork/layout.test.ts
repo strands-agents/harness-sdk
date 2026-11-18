@@ -54,6 +54,7 @@ describe('TEMPORARY run files', () => {
       store: join(folder, '.state/cases'),
       copy: join(folder, '.state/experiment.json'),
       record: join(folder, '.state/record.json'),
+      task: join(folder, '.state/task.py'),
     })
   })
 

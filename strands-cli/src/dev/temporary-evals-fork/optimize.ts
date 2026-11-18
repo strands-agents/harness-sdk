@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { mkdir, readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 import { isRecord } from '../../values.js'
+import { writeEvalsOptimizeEntry, type EvalsOptimizeEntry } from '../evals-agent/entry-files.js'
 import type { OptimizeObjective } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryModelDiscovery } from './knobs.js'
@@ -15,7 +16,7 @@ import {
   temporaryEvalsEnvironment,
   temporaryEvalsFailure,
   temporaryEvalsHeadline,
-  temporaryTypescriptRunnerCommand,
+  temporaryTypescriptRunnerOf,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsExit,
   type TemporaryEvalsSpawner,
@@ -64,17 +65,6 @@ export interface TemporaryOptimizationDependencies {
   discoverModels?: (provider: string) => Promise<TemporaryModelDiscovery>
 }
 
-interface TemporaryTask {
-  readonly agentFile: string
-  readonly experimentFile: string
-  readonly spaceFile?: string
-  readonly settings: readonly string[]
-  readonly typescriptRunner?: string
-  readonly customEvaluators: readonly string[]
-  readonly baselineOnly: boolean
-}
-
-const TASK_IMPORT = 'from strands_evals.cli.commands._temporary_task import temporary_task'
 const TUNED_BY_DEFAULT: readonly string[] = ['instructions']
 const TEXT_SETTINGS: readonly string[] = ['instructions']
 const SEARCH_STOPPED_EXIT = 3
@@ -105,32 +95,6 @@ const NEXT_STEPS: readonly (readonly [marker: string, nextStep: string])[] = [
   ['changed:', NEW_RUN_NEXT_STEP],
   ['has no cli.json', NEW_RUN_NEXT_STEP],
 ]
-
-const pythonText = (value: string): string => JSON.stringify(value)
-
-const pythonTuple = (values: readonly string[]): string =>
-  values.length === 0 ? '()' : `(${values.map(pythonText).join(', ')},)`
-
-const taskSource = (task: TemporaryTask): string =>
-  [
-    TASK_IMPORT,
-    '',
-    '_task = temporary_task(',
-    ...[
-      pythonText(task.agentFile),
-      `experiment_file=${pythonText(task.experimentFile)}`,
-      ...(task.spaceFile ? [`space_file=${pythonText(task.spaceFile)}`] : []),
-      `settings=${pythonTuple(task.settings)}`,
-      ...(task.typescriptRunner ? [`typescript_runner=${pythonText(task.typescriptRunner)}`] : []),
-      ...(task.customEvaluators.length > 0 ? [`custom_evaluators=${pythonTuple(task.customEvaluators)}`] : []),
-      `baseline_only=${task.baselineOnly ? 'True' : 'False'}`,
-    ].map((argument) => `    ${argument},`),
-    ')',
-    'agent = _task.agent',
-    'rollout = _task.rollout',
-    'search = _task.search',
-    '',
-  ].join('\n')
 
 const summaryLines = ({ stdout }: TemporaryEvalsExit): string[] =>
   stdout.split('\n').filter((line) => line.trim().length > 0)
@@ -179,26 +143,20 @@ const runSettings = (
   ...(passed.iterations === undefined ? {} : { iterations: passed.iterations }),
 })
 
-const taskOf = (
+const entryOf = (
   { workspace, space }: TemporaryOptimizationRequest,
   runnable: string,
   passed: TemporaryOptimizeFlags,
   baselineOnly: boolean
-): TemporaryTask => ({
+): EvalsOptimizeEntry => ({
   agentFile: resolve(workspace.entrypoint),
   experimentFile: resolve(runnable),
+  customEvaluators: passed.customEvaluators,
+  ...temporaryTypescriptRunnerOf(workspace),
   ...(space ? { spaceFile: resolve(space) } : {}),
   settings: passed.tuned ?? TUNED_BY_DEFAULT,
-  ...(workspace.config.language === 'typescript' ? { typescriptRunner: temporaryTypescriptRunnerCommand() } : {}),
-  customEvaluators: passed.customEvaluators,
   baselineOnly,
 })
-
-const writeTask = async (file: string, task: TemporaryTask): Promise<string> => {
-  await mkdir(dirname(file), { recursive: true })
-  await writeFile(file, taskSource(task))
-  return resolve(file)
-}
 
 const newRunArguments = async (
   request: TemporaryOptimizationRequest,
@@ -209,23 +167,18 @@ const newRunArguments = async (
   const settings = runSettings(request, passed)
   const baselineOnly = isBaselineOnly(settings)
   const runnable = await temporaryRunnableExperiment(experiment, files.copy)
-  const task = taskOf(request, runnable, passed, baselineOnly)
-  const taskFile = await writeTask(files.task, task)
+  const entry = entryOf(request, runnable, passed, baselineOnly)
   return [
     'run',
     runnable,
-    '--agent',
-    `${taskFile}:agent`,
-    '--rollout',
-    `${taskFile}:rollout`,
-    ...(baselineOnly ? ['--search', `${taskFile}:search`] : []),
+    ...(await writeEvalsOptimizeEntry(files.task, entry)),
     '--base-dir',
     files.record,
     '--rich',
     ...settingArguments(settings),
     ...(request.objective ? temporaryObjectiveArguments(request.objective) : []),
     ...passed.flags,
-    ...(baselineOnly ? [] : await reflectionArguments(passed.reflectionModel, request.space, task.settings)),
+    ...(baselineOnly ? [] : await reflectionArguments(passed.reflectionModel, request.space, entry.settings)),
   ]
 }
 

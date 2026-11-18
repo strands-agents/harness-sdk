@@ -1,11 +1,17 @@
 import { spawn } from 'node:child_process'
+import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { describe, expect, it } from 'vitest'
+
+import { writeEvalsOptimizeEntry, writeEvalsRunEntry } from '../../src/dev/evals-agent/entry-files.js'
+import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 const PYTHON = process.env.STRANDS_TEST_EVALS_PYTHON ?? ''
 const PACKAGE_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const PYTEST_ARGUMENTS = ['-m', 'pytest', 'test/python', '-q', '-p', 'no:cacheprovider']
 const PYTEST_TIMEOUT_MS = 600_000
+const ENTRY_TIMEOUT_MS = 60_000
+const RUN_ENTRY_FILE = "import runpy, sys; runpy.run_path(sys.argv[1].rpartition(':')[0])"
 
 interface PythonExit {
   readonly code: number | null
@@ -35,5 +41,40 @@ describe.skipIf(!PYTHON)('strands_dev_evals in strands-evals', () => {
       expect(code, output).toBe(0)
     },
     PYTEST_TIMEOUT_MS
+  )
+
+  it.each([
+    {
+      kind: 'run',
+      write: (folder: string) =>
+        writeEvalsRunEntry(join(folder, 'task.py'), {
+          agentFile: join(folder, 'missing-agent.py'),
+          experimentFile: join(folder, 'experiment.json'),
+          customEvaluators: [],
+        }),
+    },
+    {
+      kind: 'optimize',
+      write: (folder: string) =>
+        writeEvalsOptimizeEntry(join(folder, 'task.py'), {
+          agentFile: join(folder, 'missing-agent.py'),
+          experimentFile: join(folder, 'experiment.json'),
+          customEvaluators: [],
+          settings: ['instructions'],
+          baselineOnly: false,
+        }),
+    },
+  ])(
+    'shouldImportThePackageFromItsFolderWhenPythonRunsThe$kindEntryFile',
+    async ({ write }) => {
+      const folder = await temporaryDirectory()
+      const flags = await write(folder)
+
+      const { code, output } = await runPython(['-c', RUN_ENTRY_FILE, flags[1]!])
+
+      expect(code).not.toBe(0)
+      expect(output).toContain(`StrandsDevEvalsError: cannot find the agent file ${join(folder, 'missing-agent.py')}`)
+    },
+    ENTRY_TIMEOUT_MS
   )
 })

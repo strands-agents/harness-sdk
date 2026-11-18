@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
-import { basename, dirname } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 
+import { writeEvalsRunEntry } from '../evals-agent/entry-files.js'
 import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
 import {
@@ -9,7 +10,8 @@ import {
   spawnTemporaryEvals,
   temporaryEvalsEnvironment,
   temporaryEvalsFailure,
-  temporaryLanguageArguments,
+  temporaryFlagValues,
+  temporaryTypescriptRunnerOf,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
@@ -26,6 +28,7 @@ import {
   temporaryExperimentsFolder,
   temporaryFreeStamp,
   temporaryTestRunFiles,
+  temporaryTestRunOf,
 } from './layout.js'
 
 export interface TemporaryTestFiles {
@@ -71,6 +74,7 @@ export interface TemporaryTestDependencies {
 
 const TEST_WORKERS = 4
 const MILLISECONDS_PER_SECOND = 1000
+const CUSTOM_EVALUATOR_FLAG = '--custom-evaluator'
 
 const TEST_OWNED_FLAGS = [
   '--agent',
@@ -79,7 +83,6 @@ const TEST_OWNED_FLAGS = [
   '--output',
   '--json',
   '--rich',
-  '--typescript-runner',
   '--fail-on',
   '--exit-zero',
   '--display',
@@ -136,6 +139,18 @@ const newTestFiles = async (
   }
 }
 
+const writeRunEntry = (
+  workspace: DevWorkspace,
+  { cases, report }: TemporaryTestFiles,
+  forkArguments: readonly string[]
+): Promise<string[]> =>
+  writeEvalsRunEntry(temporaryTestRunOf(report).task, {
+    agentFile: resolve(workspace.entrypoint),
+    experimentFile: resolve(cases),
+    customEvaluators: temporaryFlagValues(forkArguments, CUSTOM_EVALUATOR_FLAG),
+    ...temporaryTypescriptRunnerOf(workspace),
+  })
+
 const assertChecked = (experiment: string, report: string, checks: number): void => {
   if (checks === 0)
     throw new Error(
@@ -163,6 +178,7 @@ export const runTemporaryTest = async (
   const startedAt = request.startedAt ?? Date.now()
   const files = request.resume ?? (await newTestFiles(experiment, home, request.now?.() ?? new Date(), request.only))
   const { report, log } = files
+  const task = await writeRunEntry(workspace, files, forkArguments)
   onProgress(`Testing ${workspace.entrypoint} on the ${cases} cases of ${experiment}`)
   onProgress(`Report: ${report}`)
   onProgress('Running the cases. The summary appears when every case has finished.')
@@ -174,9 +190,7 @@ export const runTemporaryTest = async (
       'strands_evals.cli',
       'run',
       files.cases,
-      '--agent',
-      workspace.entrypoint,
-      ...temporaryLanguageArguments(workspace),
+      ...task,
       '--output',
       report,
       '--fail-on',

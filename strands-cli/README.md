@@ -376,7 +376,8 @@ At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/
 
 `/optimize` runs the upstream `strands-evals optimize run` command from the pinned evals fork.
 For each run, dev writes `.state/task.py` in the folder of the run. The `--agent` and `--rollout` flags of the command refer to this file.
-The file calls `temporary_task` of the fork with the agent file, the experiment, and the space file.
+The file imports `strands_dev_evals`, a Python package that the CLI includes. Then the file calls `optimize_task` with the agent file, the experiment, and the space file.
+
 Dev uses the `--agent` route for each agent, because only that route can tune every marker. That route also examines each candidate before the candidate uses a rollout.
 
 Dev gives each setting to the command explicitly. These settings are the split, the iterations, the candidates per step, the runs per case, the parallel trials, the rollout cap, and the seed.
@@ -402,7 +403,7 @@ When the search stops on a proposer error, the command prints the result and exi
 **Limits:**
 
 - Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
-- A TypeScript agent runs in a Node runner, not in the process of the optimizer. Its trials report the answer and the token usage from the runner, but no trajectory. Thus the experiment can use only evaluators that read the answer.
+- **TEMPORARY:** `/test` and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. When strands-evals can run TypeScript agents, dev removes this limit.
 - Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
 
 ### Evals UI

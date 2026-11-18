@@ -22,7 +22,6 @@ const WRAPPER_OWNED_FLAGS = [
   '--rich',
   '--record',
   '--resume',
-  '--typescript-runner',
 ]
 const RENAMED_FLAGS: Readonly<Record<string, string>> = {
   '--width': '--proposals-per-iteration',

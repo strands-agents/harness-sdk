@@ -36,6 +36,7 @@ export interface TemporaryTestRunFiles {
   readonly store: string
   readonly copy: string
   readonly record: string
+  readonly task: string
 }
 
 export interface TemporaryOptimizationFiles {
@@ -133,6 +134,7 @@ export const temporaryTestRunFiles = (home: string, stamp: string): TemporaryTes
     store: join(state, CASE_STORE_FOLDER),
     copy: join(state, CASES_COPY_FILE),
     record: join(state, RECORD_FILE),
+    task: join(state, TASK_FILE),
   }
 }
 

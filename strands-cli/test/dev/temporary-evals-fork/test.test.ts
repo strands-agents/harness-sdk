@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { fileURLToPath, URL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
@@ -11,6 +12,7 @@ import { temporaryDirectory } from '../../fixtures/tempdir.js'
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
 const EXPERIMENT = JSON.stringify({ cases: [{ name: 'a' }, { name: 'b' }], evaluators: [] })
+const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals-agent', import.meta.url))
 
 const writeFileAt = async (path: string, text = EXPERIMENT): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
@@ -99,8 +101,8 @@ describe('TEMPORARY /test', () => {
       'strands_evals.cli',
       'run',
       experiment,
-      '--agent',
-      workspace.entrypoint,
+      '--task',
+      `${runFile(workspace, '.state/task.py')}:task`,
       '--output',
       report,
       '--fail-on',
@@ -120,6 +122,67 @@ describe('TEMPORARY /test', () => {
     })
     expect(log).toBe(runFile(workspace, 'run.log'))
     expect(progress).toContain(`Testing ${workspace.entrypoint} on the 2 cases of ${outcome.experiment}`)
+  })
+
+  it('shouldWriteAnEntryFileThatRunsTheAgentFromTheShippedPackageWhenATestStarts', async () => {
+    const workspace = await workspaceFixture()
+
+    await runTemporaryTest(
+      { workspace, now: () => NOW },
+      { run: environmentRunner(), spawnTests: reporting([true, true], 1) }
+    )
+
+    expect(await readFile(runFile(workspace, '.state/task.py'), 'utf8')).toBe(
+      [
+        'import sys',
+        '',
+        `sys.path.insert(0, ${JSON.stringify(EVALS_AGENT_FOLDER)})`,
+        '',
+        'from strands_dev_evals.run import run_task',
+        '',
+        'task = run_task(',
+        `    ${JSON.stringify(workspace.entrypoint)},`,
+        `    experiment_file=${JSON.stringify(experimentFile(workspace.directory!, 'support'))},`,
+        ')',
+        '',
+      ].join('\n')
+    )
+  })
+
+  it.each([{ given: ['--custom-evaluator', 'evals.py:Tone'] }, { given: ['--custom-evaluator=evals.py:Tone'] }])(
+    'shouldGiveTheEntryFileTheCustomEvaluatorsWhenTestGets$given',
+    async ({ given }) => {
+      const workspace = await workspaceFixture()
+      const spawnTests = reporting([true, true], 1)
+
+      await runTemporaryTest(
+        { workspace, forkArguments: given, now: () => NOW },
+        { run: environmentRunner(), spawnTests }
+      )
+
+      expect(await readFile(runFile(workspace, '.state/task.py'), 'utf8')).toContain(
+        '    custom_evaluators=("evals.py:Tone",),\n'
+      )
+      expect(spawnTests.mock.calls[0]![0].args.slice(-given.length)).toEqual(given)
+    }
+  )
+
+  it('shouldWriteTheEntryFileInTheRunFolderWhenAStoppedRunResumes', async () => {
+    const workspace = await workspaceFixture()
+    const spawnTests = reporting([true, true], 1)
+    const resume = {
+      cases: experimentFile(workspace.directory!, 'support'),
+      report: runFile(workspace, 'report.json', `${STAMP}-3`),
+      log: runFile(workspace, 'run.log', `${STAMP}-3`),
+      store: runFile(workspace, '.state/cases', `${STAMP}-3`),
+    }
+
+    await runTemporaryTest({ workspace, resume }, { run: environmentRunner(), spawnTests })
+
+    const task = runFile(workspace, '.state/task.py', `${STAMP}-3`)
+    const { args } = spawnTests.mock.calls[0]![0]
+    expect(args.slice(args.indexOf('--task'), args.indexOf('--task') + 2)).toEqual(['--task', `${task}:task`])
+    expect(await readFile(task, 'utf8')).toContain(`    experiment_file=${JSON.stringify(resume.cases)},\n`)
   })
 
   it('shouldRunFourCasesAtOnceWhenNoWorkerCountIsGiven', async () => {
@@ -207,13 +270,17 @@ describe('TEMPORARY /test', () => {
     })
   })
 
-  it('shouldPassTheTypescriptRunnerWhenTheAgentIsTypeScript', async () => {
+  it('shouldWriteTheTemporaryTypescriptRunnerIntoTheEntryFileWhenTheAgentIsTypeScript', async () => {
     const workspace = await workspaceFixture(['support'], 'typescript')
     const spawnTests = reporting([true], 1)
 
-    await runTemporaryTest({ workspace }, { run: environmentRunner(), spawnTests })
+    await runTemporaryTest({ workspace, now: () => NOW }, { run: environmentRunner(), spawnTests })
 
-    expect(spawnTests.mock.calls[0]![0].args).toContain('--typescript-runner')
+    const entry = await readFile(runFile(workspace, '.state/task.py'), 'utf8')
+    const runner = JSON.parse(/^ {4}temporary_typescript_runner=(".*"),$/mu.exec(entry)![1]!) as string
+    expect(runner).toMatch(/^'.+' '.+typescript-runner-main\.js'$/u)
+    expect(entry).toContain(`    ${JSON.stringify(workspace.entrypoint)},\n`)
+    expect(spawnTests.mock.calls[0]![0].args).not.toContain('--typescript-runner')
   })
 
   it.each([
@@ -237,6 +304,7 @@ describe('TEMPORARY /test', () => {
     ['--output', 'x.json'],
     ['--fail-on', 'any'],
     ['--agent', 'other.py'],
+    ['--task', 'other.py:task'],
   ])('shouldRejectFlagsThatTestSetsItselfWhen%sIsPassed', async (...forkArguments) => {
     const workspace = await workspaceFixture()
 
