@@ -1,0 +1,9 @@
+name: Dogwood Authorization
+description: 'Gate tool calls with Dogwood policies: Cedar-style access control plus temporal rules that decide on what the agent already did.'
+integrationType: intervention
+maintainedBy: strands
+languages:
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-ts/src/vended-interventions/dogwood
+docsPage: docs/user-guide/sdk/agents/interventions/dogwood-authorization
+addedDate: 2026-11-16

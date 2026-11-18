@@ -82,6 +82,12 @@ describe('homepage machine-readable metadata', () => {
     expect(alternate?.getAttribute('href')).toBe(configuredPathWithBase('/index.md'))
   })
 
+  it('advertises the OpenAPI description', () => {
+    const serviceDescription = homepage.querySelector('link[rel="service-desc"][type="application/json"]')
+
+    expect(serviceDescription?.getAttribute('href')).toBe(configuredPathWithBase('/openapi.json'))
+  })
+
   it('includes the shared base schemas and product nodes as JSON-LD', () => {
     const script = homepage.querySelector('script[type="application/ld+json"]')
     const structuredData = JSON.parse(script?.innerHTML ?? '{}')

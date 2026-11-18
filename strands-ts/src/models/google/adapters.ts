@@ -264,7 +264,7 @@ function formatToolUseBlock(block: ToolUseBlock): Part[] {
  */
 function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<string, string>): Part[] {
   const parts: Part[] = []
-  const output: Array<{ text?: string; json?: unknown }> = []
+  const output: Array<{ text?: string; json?: unknown; $ref?: string }> = []
 
   // Gemini enforces unique displayNames within one function_response.parts. Disambiguate
   // collisions (e.g. two same-format images, or two documents sharing a name) by suffixing.
@@ -284,6 +284,13 @@ function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<stri
     usedDisplayNames.add(candidate)
     return candidate
   }
+  // Gemini replaces each { $ref: displayName } in the output with the part of that display name.
+  // Docs: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/function-calling#mm-fr
+  const addMedia = (data: string, mimeType: string, name: string): void => {
+    const displayName = uniqueDisplayName(name)
+    output.push({ $ref: displayName })
+    parts.push({ inlineData: { data, mimeType, displayName } })
+  }
 
   for (const c of block.content) {
     switch (c.type) {
@@ -296,13 +303,7 @@ function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<stri
       case 'imageBlock': {
         const mimeType = toMimeType(c.format) ?? `image/${c.format}`
         if (c.source.type === 'imageSourceBytes') {
-          parts.push({
-            inlineData: {
-              data: encodeBase64(c.source.bytes),
-              mimeType,
-              displayName: uniqueDisplayName(`image.${c.format}`),
-            },
-          })
+          addMedia(encodeBase64(c.source.bytes), mimeType, `image.${c.format}`)
         } else {
           logger.warn('source_type=<%s> | only bytes sources supported in gemini tool results', c.source.type)
         }
@@ -310,22 +311,11 @@ function formatToolResultBlock(block: ToolResultBlock, toolUseIdToName: Map<stri
       }
       case 'documentBlock': {
         const mimeType = toMimeType(c.format) ?? `application/${c.format}`
+        const name = c.name || `document.${c.format}`
         if (c.source.type === 'documentSourceBytes') {
-          parts.push({
-            inlineData: {
-              data: encodeBase64(c.source.bytes),
-              mimeType,
-              displayName: uniqueDisplayName(c.name),
-            },
-          })
+          addMedia(encodeBase64(c.source.bytes), mimeType, name)
         } else if (c.source.type === 'documentSourceText') {
-          parts.push({
-            inlineData: {
-              data: encodeBase64(new TextEncoder().encode(c.source.text)),
-              mimeType,
-              displayName: uniqueDisplayName(c.name),
-            },
-          })
+          addMedia(encodeBase64(new TextEncoder().encode(c.source.text)), mimeType, name)
         } else {
           logger.warn('source_type=<%s> | only bytes/text sources supported in gemini tool results', c.source.type)
         }

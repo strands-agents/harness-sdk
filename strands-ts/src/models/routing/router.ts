@@ -356,7 +356,7 @@ export class ModelRouter implements Plugin {
       const context = this._routingContext(
         event.agent.messages,
         event.agent.systemPrompt,
-        event.agent.toolRegistry.list().map((tool) => tool.toolSpec),
+        event.agent.toolRegistry.toolSpecs(),
         event.invocationState,
         event.invocationContext,
         state.attempts

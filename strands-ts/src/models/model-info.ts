@@ -27,7 +27,11 @@ export interface ModelCapabilities {
   readonly stateful?: boolean | undefined
   /** Whether and how the model caches prompts. */
   readonly promptCaching?: PromptCaching | undefined
-  /** Whether the model accepts a `toolChoice` that forces a tool call (`any` or a named tool). */
+  /**
+   * Whether the Bedrock and Anthropic providers force the structured output tool (`any` or a named tool) on the
+   * structured output retry. False when the model rejects forcing, or when a forced call degrades the response (for
+   * example, it skips thinking).
+   */
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
@@ -156,16 +160,45 @@ const MODELS: Readonly<Record<string, ModelInfo>> = Object.fromEntries(
  * @returns The entry, or undefined when the id is not in the data
  */
 export function lookupModel(modelId: string): ModelInfo | undefined {
+  const key = lookupKey(modelId)
+  return key === undefined ? undefined : MODELS[key]
+}
+
+// Finds the key of the entry for a model id, by the rule `lookupModel` documents.
+function lookupKey(modelId: string): string | undefined {
   let candidate = modelId
   for (;;) {
     const unversioned = candidate.replace(VERSION_SUFFIX, '')
     for (const key of [candidate, unversioned, unversioned.replace(DATE_SUFFIX, '')]) {
-      if (Object.hasOwn(MODELS, key)) return MODELS[key]
+      if (Object.hasOwn(MODELS, key)) return key
     }
     const dotIndex = candidate.indexOf('.')
     if (dotIndex === -1) return undefined
     candidate = candidate.substring(dotIndex + 1)
   }
+}
+
+/**
+ * The values of `capabilities.chatCompletionsTools` in the data.
+ *
+ * @internal
+ */
+export type ChatCompletionsTools = 'reasoningOff' | 'unsupported'
+
+/**
+ * Whether OpenAI's Chat Completions API accepts tools for a model. The data carries this as
+ * `capabilities.chatCompletionsTools`, which `ModelCapabilities` does not carry.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns `'reasoningOff'` when only with reasoning off, `'unsupported'` when not at all, undefined when the data
+ *   does not say
+ */
+export function lookupChatCompletionsTools(modelId: string): ChatCompletionsTools | undefined {
+  const key = lookupKey(modelId)
+  if (key === undefined) return undefined
+  return (data.models[key]?.capabilities as { chatCompletionsTools?: ChatCompletionsTools } | undefined)
+    ?.chatCompletionsTools
 }
 
 /**
