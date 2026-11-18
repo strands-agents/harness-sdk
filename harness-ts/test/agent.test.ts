@@ -650,15 +650,26 @@ describe('createHarness', () => {
   })
 
   // https://github.com/strands-agents/harness-sdk/issues/6248
-  it.skipIf(process.platform === 'win32')(
-    'keeps the session directory private when the stash writes before the first snapshot',
-    async () => {
+  describe.skipIf(process.platform === 'win32')('session directory', () => {
+    it.each([
+      ['the stash writes before the first snapshot', {}],
+      [
+        'initial messages are stashed while plugins initialize',
+        {
+          messages: [
+            { role: 'user' as const, content: [{ text: 'Earlier question' }] },
+            { role: 'assistant' as const, content: [{ text: 'Earlier answer' }] },
+          ],
+        },
+      ],
+    ])('is private when %s', async (_, options: HarnessAgentOptions) => {
       const parent = makeTempDir()
       mkdirSync(parent)
       const dir = join(parent, 'agent', 'sessions')
       // The SDK logs its warnings through the console by default.
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const agent = await createHarness({
+        ...options,
         model: new RetrievingModel(),
         tools: [readLargeTool],
         session: { id: 'retrieval', dir },
@@ -677,8 +688,8 @@ describe('createHarness', () => {
       expect(mode(dir)).toBe(0o700)
       expect(mode(join(parent, 'agent'))).toBe(mode(parent))
       expect(openRootWarnings).toEqual([])
-    }
-  )
+    })
+  })
 
   it.each([
     ['without a session', (): HarnessAgentOptions => ({ session: false })],
