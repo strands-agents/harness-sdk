@@ -121,8 +121,6 @@ export interface CachePointRules {
   readonly toolsCachePoint?: boolean
   /** `false` when the model rejects any cache point `ttl`. */
   readonly cachePointTTL?: boolean
-  /** Most cache points one request may carry, across tool definitions, system prompt and messages. */
-  readonly maxCachePoints?: number
 }
 
 /**
@@ -138,10 +136,7 @@ export interface ModelEntry extends ModelInfo {
 }
 
 interface ModelInfoData {
-  readonly defaults: {
-    readonly limits: { readonly contextWindow: number }
-    readonly cachePointRules: CachePointRules & { readonly maxCachePoints: number }
-  }
+  readonly defaults: { readonly limits: { readonly contextWindow: number } }
   readonly models: Readonly<Record<string, ModelEntry>>
 }
 
@@ -172,7 +167,6 @@ const CACHE_POINT_RULE_FIELDS = Object.keys({
   cachePointPlacement: true,
   toolsCachePoint: true,
   cachePointTTL: true,
-  maxCachePoints: true,
 } satisfies Record<keyof CachePointRules, true>)
 
 function pick(section: object | undefined, keys: readonly string[]): object | undefined {
@@ -194,7 +188,7 @@ function knownEntry(entry: ModelEntry): ModelEntry {
   return {
     ...knownFields(entry),
     ...(apis.length > 0 ? { apis: Object.fromEntries(apis) } : {}),
-    ...(cachePointRules ? { cachePointRules } : {}),
+    ...(cachePointRules ? { cachePointRules: Object.freeze(cachePointRules) } : {}),
   } as ModelEntry
 }
 
@@ -240,15 +234,17 @@ export function lookupModelInfo(modelId: string, api?: ModelApi): ModelInfo {
 }
 
 /**
- * Where a model takes cache points: the data's defaults, then the model's own rules.
+ * Where a model takes cache points, as far as it differs from the provider's own rules.
  *
  * @internal
  * @param modelId - The model id to look up
- * @returns The model's cache-point rules; the defaults when the data does not list it
+ * @returns The model's cache-point rules; empty when the data lists none
  */
-export function lookupCachePointRules(modelId: string): CachePointRules & { readonly maxCachePoints: number } {
-  return Object.freeze({ ...data.defaults.cachePointRules, ...lookupModel(modelId)?.cachePointRules })
+export function lookupCachePointRules(modelId: string): CachePointRules {
+  return lookupModel(modelId)?.cachePointRules ?? NO_CACHE_POINT_RULES
 }
+
+const NO_CACHE_POINT_RULES: CachePointRules = Object.freeze({})
 
 /**
  * Whether `api` caches a model implicitly while the model takes cache points elsewhere, so a caller who wants cache

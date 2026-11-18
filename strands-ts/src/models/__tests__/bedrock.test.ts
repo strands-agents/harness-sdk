@@ -545,14 +545,14 @@ describe('BedrockModel', () => {
         expect(vi.mocked(ConverseStreamCommand).mock.lastCall?.[0].messages?.[0]?.content).toEqual([{ text: 'Hello' }])
         expect(warnOnce).toHaveBeenCalledWith(
           expect.anything(),
-          `model_id=<${modelId}> | cache_config is enabled but this model does not support automatic caching`
+          `model_id=<${modelId}> | cacheConfig is enabled but this model does not support automatic caching, ignoring`
         )
       }
     )
 
     describe('Converse caching for a model that takes cache points on another provider', () => {
       const converseWarning = (modelId: string): string =>
-        `model_id=<${modelId}> | converse caches this model implicitly, cache points are supported through the openai model provider (bedrock mantle)`
+        `model_id=<${modelId}> | converse caches this model only when a request starts with an entire earlier request, and documents no cache points for it | context injected per call (todos, environment, memory) stops cache reads and each call is billed a 1.25x cache write | cache points are supported through the openai model provider (bedrock mantle)`
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
 
       it.each(['us.openai.gpt-6-luna', 'openai.gpt-6.1-sol'])(

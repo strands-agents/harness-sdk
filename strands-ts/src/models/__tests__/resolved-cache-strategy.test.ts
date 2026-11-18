@@ -41,7 +41,6 @@ const RESOLUTION: ResolutionRow[] = [
   { provider: 'bedrock', modelId: CLAUDE_BEDROCK, cacheConfig: { strategy: 'sdk' }, expected: 'sdk' },
   { provider: 'bedrock', modelId: CLAUDE_BEDROCK, cacheConfig: { strategy: 'manual' }, expected: 'manual' },
   { provider: 'bedrock', modelId: CLAUDE_BEDROCK, cacheConfig: { strategy: 'implicit' }, expected: 'sdk' },
-  { provider: 'bedrock', modelId: CLAUDE_BEDROCK, cacheConfig: { strategy: 'provider' }, expected: 'sdk' },
   { provider: 'bedrock', modelId: 'us.anthropic.claude-unlisted-9', cacheConfig: {}, expected: 'sdk' },
   { provider: 'bedrock', modelId: ARN, cacheConfig: {}, expected: 'manual' },
   { provider: 'bedrock', modelId: ARN, cacheConfig: { strategy: 'sdk' }, expected: 'sdk' },
@@ -75,7 +74,6 @@ const RESOLUTION: ResolutionRow[] = [
   { provider: 'openaiResponses', modelId: 'gpt-6-sol', cacheConfig: {}, expected: 'sdk' },
   { provider: 'openaiResponses', modelId: 'gpt-6-sol', cacheConfig: { strategy: 'implicit' }, expected: 'implicit' },
   { provider: 'openaiResponses', modelId: 'gpt-6-sol', cacheConfig: { strategy: 'manual' }, expected: 'manual' },
-  { provider: 'openaiResponses', modelId: 'gpt-6-sol', cacheConfig: { strategy: 'provider' }, expected: 'sdk' },
   { provider: 'openaiResponses', modelId: 'gpt-5.4', cacheConfig: {}, expected: 'implicit' },
   { provider: 'openaiResponses', modelId: 'gpt-5.4', cacheConfig: { strategy: 'sdk' }, expected: 'implicit' },
 
@@ -244,15 +242,12 @@ describe('wire behavior of the modes', () => {
 
   it.each([
     { provider: 'anthropic', modelId: 'claude-sonnet-4-6', cacheConfig: { strategy: 'implicit' }, placed: true },
-    { provider: 'anthropic', modelId: 'claude-sonnet-4-6', cacheConfig: { strategy: 'provider' }, placed: true },
     { provider: 'bedrock', modelId: CLAUDE_BEDROCK, cacheConfig: { strategy: 'implicit' }, placed: true },
-    { provider: 'bedrock', modelId: CLAUDE_BEDROCK, cacheConfig: { strategy: 'provider' }, placed: true },
-    { provider: 'openaiResponses', modelId: 'gpt-6-sol', cacheConfig: { strategy: 'provider' }, placed: true },
     { provider: 'openaiChat', modelId: 'gpt-5.4', cacheConfig: { strategy: 'sdk' }, placed: false },
     {
       provider: 'vercel:anthropic.messages',
       modelId: 'claude-sonnet-4-6',
-      cacheConfig: { strategy: 'provider' },
+      cacheConfig: { strategy: 'implicit' },
       placed: true,
     },
   ] satisfies (BenchCase & { placed: boolean })[])(

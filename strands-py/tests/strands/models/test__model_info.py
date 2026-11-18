@@ -256,8 +256,6 @@ def _assert_cache_point_rules_shape(model_id, rules):
     for key, value in rules.items():
         if key == "cachePointPlacement":
             assert value == "afterText", f"{model_id}.{key}"
-        elif key == "maxCachePoints":
-            assert isinstance(value, int) and value > 0, f"{model_id}.{key}"
         else:
             assert key in _BOOLEAN_CACHE_POINT_RULE_KEYS, f"{model_id}.cachePointRules.{key}"
             assert isinstance(value, bool), f"{model_id}.{key}"
@@ -267,10 +265,7 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
     data = json.loads(_SHARED_DATA.read_text(encoding="utf-8"))
 
     assert sorted(data.keys()) == ["$comment", "defaults", "models"]
-    assert set(data["defaults"]) == {"limits", "cachePointRules"}
-    assert data["defaults"]["limits"] == {"contextWindow": DEFAULT_CONTEXT_WINDOW_LIMIT}
-    assert set(data["defaults"]["cachePointRules"]) == {"maxCachePoints"}
-    _assert_cache_point_rules_shape("defaults", data["defaults"]["cachePointRules"])
+    assert data["defaults"] == {"limits": {"contextWindow": DEFAULT_CONTEXT_WINDOW_LIMIT}}
 
     for model_id, entry in data["models"].items():
         assert _MODEL_ID_PATTERN.match(model_id), model_id

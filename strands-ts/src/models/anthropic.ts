@@ -21,7 +21,12 @@ import {
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
-import { appliedCacheConfig, resolveCacheStrategy, type CacheStrategyResolution } from './cache-strategy.js'
+import {
+  appliedCacheConfig,
+  resolveCacheStrategy,
+  warnAutoCachingSkipped,
+  type CacheStrategyResolution,
+} from './cache-strategy.js'
 import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../models/streaming.js'
@@ -907,15 +912,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   /** Resolves a cache section, disabled unless the SDK places cache points. */
   private _cacheSection(section: 'toolsTTL' | 'messagesTTL' | 'systemPromptTTL'): ResolvedCacheSection {
-    const { strategy, auto } = this._cacheStrategy()
+    const resolution = this._cacheStrategy()
     const cacheConfig = appliedCacheConfig(this._config.cacheConfig)
-    if (auto && strategy === 'manual') {
-      warnOnce(
-        logger,
-        `model_id=<${this._config.modelId}> | cacheConfig is enabled but the model info says this model does not support prompt caching, ignoring`
-      )
-    }
-    if (strategy !== 'sdk' || !cacheConfig) {
+    warnAutoCachingSkipped(resolution, 'anthropic', this._config.modelId)
+    if (resolution.strategy !== 'sdk' || !cacheConfig) {
       return { enabled: false }
     }
 

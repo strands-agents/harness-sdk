@@ -151,7 +151,7 @@ const ROWS: Row[] = [
     modelId: 'openai.gpt-oss-120b',
     cacheConfig: {},
     placed: false,
-    warnings: ['not known to support automatic caching'],
+    warnings: [NOT_AUTO],
   },
   {
     provider: 'vercel:amazon-bedrock',

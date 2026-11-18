@@ -90,10 +90,7 @@ describe('shared model info data', () => {
   it('has only the fields ModelInfo defines, with the right types, in every entry', () => {
     const data = modelInfoData as Record<string, unknown>
     expect(Object.keys(data).sort()).toEqual(['$comment', 'defaults', 'models'])
-    expect(data.defaults).toEqual({
-      limits: { contextWindow: expect.any(Number) },
-      cachePointRules: { maxCachePoints: expect.any(Number) },
-    })
+    expect(data.defaults).toEqual({ limits: { contextWindow: expect.any(Number) } })
 
     for (const [id, entry] of Object.entries(data.models as Record<string, Record<string, Record<string, unknown>>>)) {
       expect(id, id).toMatch(/^[a-z0-9][a-z0-9.:@-]*$/)
@@ -135,8 +132,6 @@ function expectCachePointRulesShape(id: string, rules: Record<string, unknown>):
   for (const [key, value] of Object.entries(rules)) {
     if (key === 'cachePointPlacement') expect(['afterText'], `${id}.${key}`).toContain(value)
     else if (['toolsCachePoint', 'cachePointTTL'].includes(key)) expect(typeof value, `${id}.${key}`).toBe('boolean')
-    else if (key === 'maxCachePoints')
-      expect(Number.isInteger(value) && (value as number) > 0, `${id}.${key}`).toBe(true)
     else throw new Error(`${id}.cachePointRules.${key} is not a known cache point rule`)
   }
 }
@@ -155,7 +150,7 @@ describe('prompt-caching facts', () => {
     ['openai.gpt-6-luna', undefined, 'cachePoints', {}],
   ] as const)('%s on %s → %s', (modelId, api, promptCaching, rules) => {
     expect(lookupModelInfo(modelId, api).capabilities?.promptCaching).toBe(promptCaching)
-    expect(lookupCachePointRules(modelId)).toStrictEqual({ maxCachePoints: 4, ...rules })
+    expect(lookupCachePointRules(modelId)).toStrictEqual(rules)
   })
 
   it('keeps the API facts and cache-point rules out of the model info', () => {
@@ -197,9 +192,7 @@ describe('prompt-caching facts', () => {
     ['global.anthropic.claude-sonnet-4-6', false],
     ['us.openai.gpt-6-luna', false],
   ])('Nova cache-point rules for %s → %s', (modelId, nova) => {
-    expect(lookupCachePointRules(modelId)).toStrictEqual(
-      nova ? { maxCachePoints: 4, ...NOVA_RULES } : { maxCachePoints: 4 }
-    )
+    expect(lookupCachePointRules(modelId)).toStrictEqual(nova ? NOVA_RULES : {})
   })
 
   it.each([

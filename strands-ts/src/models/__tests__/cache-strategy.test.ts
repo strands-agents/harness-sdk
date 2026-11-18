@@ -47,8 +47,6 @@ const ROWS: Row[] = [
   ['converse', { strategy: 'implicit' }, IMPLICIT, chosen('implicit')],
   ['converse', { strategy: 'implicit' }, CACHE_POINTS, fellBack('sdk', 'implicit')],
   ['converse', { strategy: 'manual' }, CACHE_POINTS, chosen('manual')],
-  ['converse', { strategy: 'provider' }, CACHE_POINTS, fellBack('sdk', 'provider')],
-  ['converse', { strategy: 'provider' }, IMPLICIT, fellBack('implicit', 'provider')],
   ['converse', undefined, CACHE_POINTS, chosen('manual')],
   ['converse', false, CACHE_POINTS, chosen('manual')],
   ['converse', undefined, IMPLICIT, chosen('implicit')],
@@ -62,7 +60,6 @@ const ROWS: Row[] = [
   ['anthropic', { strategy: 'anthropic' }, UNSUPPORTED, chosen('sdk')],
   ['anthropic', { strategy: 'manual' }, CACHE_POINTS, chosen('manual')],
   ['anthropic', { strategy: 'implicit' }, CACHE_POINTS, fellBack('sdk', 'implicit')],
-  ['anthropic', { strategy: 'provider' }, CACHE_POINTS, fellBack('sdk', 'provider')],
   ['anthropic', undefined, CACHE_POINTS, chosen('manual')],
   ['anthropic', false, CACHE_POINTS, chosen('manual')],
 
@@ -75,7 +72,6 @@ const ROWS: Row[] = [
   ['openaiResponses', { strategy: 'anthropic' }, UNKNOWN, fellBack('implicit', 'anthropic')],
   ['openaiResponses', { strategy: 'implicit' }, CACHE_POINTS, chosen('implicit')],
   ['openaiResponses', { strategy: 'manual' }, CACHE_POINTS, chosen('manual')],
-  ['openaiResponses', { strategy: 'provider' }, CACHE_POINTS, fellBack('sdk', 'provider')],
   ['openaiResponses', undefined, CACHE_POINTS, chosen('implicit')],
   ['openaiResponses', false, CACHE_POINTS, chosen('implicit')],
 

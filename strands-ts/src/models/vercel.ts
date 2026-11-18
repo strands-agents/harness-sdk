@@ -40,16 +40,11 @@ import {
   type ResolvedCacheSection,
   type StreamOptions,
 } from './model.js'
-import {
-  SERVER_SIDE_SUMMARY_OFF,
-  ModelInfo,
-  cachePointsOnlyOffApi,
-  lookupCachePointRules,
-  lookupModel,
-} from './model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo, lookupCachePointRules, lookupModel } from './model-info.js'
 import {
   appliedCacheConfig,
   resolveCacheStrategy,
+  warnAutoCachingSkipped,
   type CacheStrategyResolution,
   type CacheStrategyRules,
 } from './cache-strategy.js'
@@ -324,64 +319,21 @@ function applyVercelCacheConfig(
   // The segment before the first '.' is the provider namespace in the ai-sdk
   switch (model.provider.split('.')[0]) {
     case 'anthropic':
-      warnIfInfoForbidsCaching(resolution, model.modelId)
+      warnAutoCachingSkipped(resolution, 'anthropic', model.modelId)
       if (sdk) applyAnthropicCache(callOptions, cacheConfig, dynamicTrailingBlocks)
       break
     case 'amazon-bedrock':
+      warnAutoCachingSkipped(resolution, 'converse', model.modelId)
       if (sdk) applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, model.modelId)
-      else warnBedrockCachingSkipped(resolution, model.modelId)
       break
     case 'openai':
       // Only the default `'auto'` lets model info turn the cache key off; an explicit strategy that fell back keeps it.
-      if (resolution.unsupported !== undefined || !warnIfInfoForbidsCaching(resolution, model.modelId)) {
+      if (resolution.unsupported !== undefined || !warnAutoCachingSkipped(resolution, 'openaiChat', model.modelId)) {
         applyOpenAICache(callOptions, cacheConfig)
       }
       break
     default:
       warnOnce(logger, `provider=<${model.provider}> | cacheConfig is not supported for this vercel provider, ignoring`)
-  }
-}
-
-/**
- * Reports whether the default `'auto'` strategy found caching off, which only a `promptCaching: 'unsupported'`
- * model info does on these routes, warning once when it is.
- *
- * @param resolution - The resolved cache strategy
- * @param modelId - The model id, used in the warning
- * @returns True when caching must be skipped
- * @internal
- */
-function warnIfInfoForbidsCaching(resolution: CacheStrategyResolution, modelId: string): boolean {
-  if (!resolution.auto || resolution.strategy !== 'manual') return false
-  warnOnce(
-    logger,
-    `model_id=<${modelId}> | cacheConfig is enabled but the model info says this model does not support prompt caching, ignoring`
-  )
-  return true
-}
-
-/**
- * Warns once when the default `'auto'` strategy places no cache points on the wrapped Bedrock model (mirroring
- * `BedrockModel`). A model Converse caches implicitly needs none, so it warns only when another provider would
- * place them.
- *
- * @param resolution - The resolved cache strategy
- * @param modelId - The wrapped Bedrock model id, used in the warning
- * @internal
- */
-function warnBedrockCachingSkipped(resolution: CacheStrategyResolution, modelId: string): void {
-  if (!resolution.auto) return
-  if (resolution.strategy === 'implicit' && cachePointsOnlyOffApi(modelId, 'converse')) {
-    warnOnce(
-      logger,
-      `model_id=<${modelId}> | converse caches this model implicitly, cache points are supported through the openai model provider (bedrock mantle)`
-    )
-  }
-  if (resolution.strategy === 'manual') {
-    warnOnce(
-      logger,
-      `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
-    )
   }
 }
 

@@ -4,20 +4,21 @@
  */
 
 import type { CacheConfig } from './model.js'
-import type { PromptCaching } from './model-info.js'
+import { cachePointsOnlyOffApi, type PromptCaching } from './model-info.js'
+import { logger } from '../logging/logger.js'
+import { warnOnce } from '../logging/warn-once.js'
 
 /**
  * A prompt-caching strategy to ask for in `CacheConfig.strategy`.
  *
  * - `'auto'`: the most capable mode the provider and model support
- * - `'sdk'`, `'provider'`, `'implicit'`, `'manual'`: that mode; one the provider or model cannot apply warns once
+ * - `'sdk'`, `'implicit'`, `'manual'`: that mode; one the provider or model cannot apply warns once
  *   and falls back to `'auto'`
  * - `'anthropic'`: same as `'sdk'`
  */
 export type CacheStrategy =
   | 'auto'
   | 'sdk'
-  | 'provider'
   | 'implicit'
   | 'manual'
   /** @deprecated Use `'sdk'`. */
@@ -27,13 +28,12 @@ export type CacheStrategy =
  * The prompt-caching mode a model runs in.
  *
  * - `'sdk'`: the SDK places cache points
- * - `'provider'`: the provider's own explicit caching mechanism; no provider applies it yet
  * - `'implicit'`: the provider caches by prompt prefix with nothing sent by the SDK
  * - `'manual'`: the SDK places no cache points; cache points in the messages and system prompt are sent as written
  *
  * @internal
  */
-export type ResolvedCacheStrategy = 'sdk' | 'provider' | 'implicit' | 'manual'
+export type ResolvedCacheStrategy = 'sdk' | 'implicit' | 'manual'
 
 /**
  * The provider rules that resolve a `CacheConfig`: `'converse'` is Bedrock Converse, `'none'` is a provider that
@@ -165,4 +165,37 @@ function conversePromptCaching(facts: CacheStrategyFacts): PromptCaching | undef
   if (facts.promptCaching !== undefined) return facts.promptCaching
   const modelId = facts.modelId?.toLowerCase() ?? ''
   return modelId.includes('claude') || modelId.includes('anthropic') ? 'cachePoints' : undefined
+}
+
+/**
+ * Warns once when the default `'auto'` strategy places no cache points: on Converse, for a model that caches only
+ * implicitly but takes cache points through another provider, or for one with no known caching; elsewhere, when model
+ * info says the model does not cache.
+ *
+ * @internal
+ * @param resolution - The resolved cache strategy
+ * @param rules - The provider rules it was resolved with
+ * @param modelId - The model id, used in the warning
+ * @returns True when it warned that caching is off
+ */
+export function warnAutoCachingSkipped(
+  resolution: CacheStrategyResolution,
+  rules: CacheStrategyRules,
+  modelId: string | undefined
+): boolean {
+  if (!resolution.auto) return false
+  if (rules === 'converse' && resolution.strategy === 'implicit' && cachePointsOnlyOffApi(modelId ?? '', 'converse')) {
+    warnOnce(
+      logger,
+      `model_id=<${modelId}> | converse caches this model only when a request starts with an entire earlier request, and documents no cache points for it | context injected per call (todos, environment, memory) stops cache reads and each call is billed a 1.25x cache write | cache points are supported through the openai model provider (bedrock mantle)`
+    )
+    return false
+  }
+  if (resolution.strategy !== 'manual') return false
+  const reason =
+    rules === 'converse'
+      ? 'this model does not support automatic caching'
+      : 'the model info says this model does not support prompt caching'
+  warnOnce(logger, `model_id=<${modelId}> | cacheConfig is enabled but ${reason}, ignoring`)
+  return true
 }

@@ -1467,7 +1467,7 @@ describe('VercelModel', () => {
         )
         expect(warnOnce).not.toHaveBeenCalledWith(
           expect.anything(),
-          expect.stringContaining('is not known to support automatic caching')
+          expect.stringContaining('does not support automatic caching')
         )
       })
 
@@ -1766,7 +1766,7 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(args)).toBeUndefined()
         expect(warnOnce).toHaveBeenCalledWith(
           expect.objectContaining({ warn: expect.any(Function) }),
-          expect.stringContaining('is not known to support automatic caching')
+          expect.stringContaining('does not support automatic caching')
         )
       })
 
@@ -1789,7 +1789,7 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
         expect(warnOnce).not.toHaveBeenCalledWith(
           expect.objectContaining({ warn: expect.any(Function) }),
-          expect.stringContaining('is not known to support automatic caching')
+          expect.stringContaining('does not support automatic caching')
         )
       })
 
@@ -1816,13 +1816,13 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
         expect(warnOnce).not.toHaveBeenCalledWith(
           expect.anything(),
-          expect.stringContaining('is not known to support automatic caching')
+          expect.stringContaining('does not support automatic caching')
         )
       })
 
       describe('for a model that takes cache points on another provider', () => {
         const converseWarning = (modelId: string): string =>
-          `model_id=<${modelId}> | converse caches this model implicitly, cache points are supported through the openai model provider (bedrock mantle)`
+          `model_id=<${modelId}> | converse caches this model only when a request starts with an entire earlier request, and documents no cache points for it | context injected per call (todos, environment, memory) stops cache reads and each call is billed a 1.25x cache write | cache points are supported through the openai model provider (bedrock mantle)`
 
         it.each(['us.openai.gpt-6-luna', 'openai.gpt-6.1-sol'])(
           'under the default auto strategy, warns that cache points go through the OpenAI model provider: %s',
@@ -1865,7 +1865,7 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
         expect(warnOnce).toHaveBeenCalledWith(
           expect.anything(),
-          `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
+          `model_id=<${modelId}> | cacheConfig is enabled but this model does not support automatic caching, ignoring`
         )
       })
 

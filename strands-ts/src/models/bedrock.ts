@@ -66,12 +66,16 @@ import {
 import {
   SERVER_SIDE_SUMMARY_OFF,
   ModelInfo,
-  cachePointsOnlyOffApi,
   lookupCachePointRules,
   lookupModel,
   type CachePointRules,
 } from './model-info.js'
-import { appliedCacheConfig, resolveCacheStrategy, type CacheStrategyResolution } from './cache-strategy.js'
+import {
+  appliedCacheConfig,
+  resolveCacheStrategy,
+  warnAutoCachingSkipped,
+  type CacheStrategyResolution,
+} from './cache-strategy.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -109,6 +113,9 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
  * undocumented models may accept it (Llama 4) or reject it with a ValidationException (Writer).
  * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html
  */
+// Bedrock accepts at most this many cache points per request, across toolConfig, system and messages.
+const BEDROCK_MAX_CACHE_POINTS = 4
+
 const MODELS_INCLUDE_STATUS = ['amazon.nova', 'anthropic.claude']
 
 /**
@@ -630,19 +637,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns True if caching should be enabled.
    */
   private _shouldEnableCaching(): boolean {
-    const { strategy, auto } = this._cacheStrategy()
-    // A model the provider caches implicitly needs no cache points, so it gets no warning unless another
-    // provider would place them.
-    if (auto && strategy === 'implicit') {
-      this._warnCachePointsOffConverse()
-    }
-    if (auto && strategy === 'manual') {
-      warnOnce(
-        logger,
-        `model_id=<${this._config.modelId}> | cache_config is enabled but this model does not support automatic caching`
-      )
-    }
-    return strategy === 'sdk'
+    const resolution = this._cacheStrategy()
+    warnAutoCachingSkipped(resolution, 'converse', this._config.modelId)
+    return resolution.strategy === 'sdk'
   }
 
   /** The `cacheConfig` to apply, `undefined` when caching is off. */
@@ -651,24 +648,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Warns once when Converse caches the model implicitly but the model takes cache points through another provider.
-   */
-  private _warnCachePointsOffConverse(): void {
-    if (!cachePointsOnlyOffApi(this.modelId ?? '', 'converse')) {
-      return
-    }
-    warnOnce(
-      logger,
-      `model_id=<${this._config.modelId}> | converse caches this model implicitly, cache points are supported through the openai model provider (bedrock mantle)`
-    )
-  }
-
-  /**
    * Where the model takes cache points, from the shared model info.
    *
    * @returns The model's cache-point rules
    */
-  private _cachePointRules(): CachePointRules & { readonly maxCachePoints: number } {
+  private _cachePointRules(): CachePointRules {
     return lookupCachePointRules(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
   }
 
@@ -1215,11 +1199,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param request - The formatted request (modified in place)
    */
   private _dropCachePointsOverBudget(request: ConverseStreamCommandInput): void {
-    const { maxCachePoints } = this._cachePointRules()
     const toolPoints = request.toolConfig?.tools?.filter((tool) => 'cachePoint' in tool).length ?? 0
     const systemPoints = cachePointSlots(request.system ?? [])
     const messagePoints = (request.messages ?? []).flatMap((message) => cachePointSlots(message.content ?? []))
-    const excess = toolPoints + systemPoints.length + messagePoints.length - maxCachePoints
+    const excess = toolPoints + systemPoints.length + messagePoints.length - BEDROCK_MAX_CACHE_POINTS
     if (excess <= 0) {
       return
     }
@@ -1228,7 +1211,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
     warnOnce(
       logger,
-      `model_id=<${this._config.modelId}>, max_cache_points=<${maxCachePoints}> | request carries more cache points than bedrock allows, dropped the oldest extras`
+      `model_id=<${this._config.modelId}>, max_cache_points=<${BEDROCK_MAX_CACHE_POINTS}> | request carries more cache points than bedrock allows, dropped the oldest extras`
     )
   }
 
