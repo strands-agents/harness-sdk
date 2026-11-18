@@ -111,25 +111,72 @@ Text.
     expect(transformExternalMarkdown(source, context)).toContain('<a id="stable-anchor"></a>')
   })
 
-  it('preserves braces and import-like paragraphs as plain Markdown prose', () => {
+  it('passes through any JSX element whose attributes are literal strings', () => {
     const source = `# Source title
 
-Replace {name} with your box.
+<YouTube id="j6zR0sPeMko" title="Episode 1" />
 
-import and export are ordinary words in a Markdown paragraph.
+<Card variant="info">
+  Hello from a component the site has auto-imported.
+</Card>
 `
-    expect(transformExternalMarkdown(source, context)).toBe(
-      'Replace {name} with your box.\n\nimport and export are ordinary words in a Markdown paragraph.\n'
+    const transformed = transformExternalMarkdown(source, context)
+    expect(transformed).toContain('<YouTube id="j6zR0sPeMko" title="Episode 1" />')
+    expect(transformed).toContain('<Card variant="info">')
+    expect(transformed).toContain('</Card>')
+  })
+
+  it('rejects an attribute whose value is an expression', () => {
+    expect(() => transformExternalMarkdown('# Source title\n\n<YouTube id={x} />\n', context)).toThrow(
+      /must be a literal string/
     )
   })
 
-  it.each([
-    ['MDX components', '<DangerousComponent />'],
-    ['unsafe HTML', '<script>alert("x")</script>'],
-  ])('rejects %s', (_label, construct) => {
-    expect(() => transformExternalMarkdown(`# Source title\n\n${construct}\n`, context)).toThrow(
-      /not allowed|must be in code/
+  it('rejects a spread or expression-only attribute', () => {
+    expect(() => transformExternalMarkdown('# Source title\n\n<YouTube {...props} />\n', context)).toThrow(
+      /spread or expression attribute/
     )
+  })
+
+  it('rejects an ESM import statement', () => {
+    expect(() => transformExternalMarkdown("# Source title\n\nimport Foo from 'bar'\n\n<Foo />\n", context)).toThrow(
+      /import and export/
+    )
+  })
+
+  it('rejects a bare {expression} in prose', () => {
+    expect(() => transformExternalMarkdown('# Source title\n\nReplace {name} with your box.\n', context)).toThrow(
+      /bare \{expression\}/
+    )
+  })
+
+  it('leaves braces inside inline code alone', () => {
+    const source = '# Source title\n\nSee `/orders/{order_id}/replacement`.\n'
+    expect(transformExternalMarkdown(source, context)).toBe('See `/orders/{order_id}/replacement`.\n')
+  })
+
+  it('leaves JSX inside a fenced code block as literal text', () => {
+    const source = `# Source title
+
+\`\`\`md
+<YouTube id="j6zR0sPeMko" title="Example" />
+\`\`\`
+`
+    const output = transformExternalMarkdown(source, context)
+    expect(output).toContain('<YouTube id="j6zR0sPeMko" title="Example" />')
+    expect(output).not.toContain('youtube-nocookie.com')
+  })
+
+  it('treats lines that happen to contain "import"/"export" mid-paragraph as prose', () => {
+    const source = '# Source title\n\nThe words import and export are ordinary in a Markdown paragraph.\n'
+    expect(transformExternalMarkdown(source, context)).toBe(
+      'The words import and export are ordinary in a Markdown paragraph.\n'
+    )
+  })
+
+  it('passes raw HTML tags through literally — upstream owns what it renders', () => {
+    const source = '# Source title\n\n<section class="note">Hello</section>\n'
+    expect(transformExternalMarkdown(source, context)).toContain('<section class="note">Hello</section>')
   })
 
   it('rejects relative links that escape the repository', () => {
