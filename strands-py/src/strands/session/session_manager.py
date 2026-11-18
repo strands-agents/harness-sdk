@@ -62,7 +62,7 @@ class SessionManager(HookProvider, ABC, Generic[_SessionAgentT]):
 
     @abstractmethod
     def redact_latest_message(self, redact_message: Message, agent: _SessionAgentT, **kwargs: Any) -> None:
-        """Redact the message most recently appended to the agent in the session.
+        """Redact the agent's last user message in the session.
 
         Args:
             redact_message: New message to use that contains the redact content

@@ -77,7 +77,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         # Track the previously synced internal state for each agent to detect changes.
         self._last_synced_internal_state: dict[str, dict[str, Any]] = {}
 
-        # Held records per agent, used by redact_latest_message to find alias records.
+        # Held records per agent, used by redact_latest_message to find the records holding a message.
         self._held_records: dict[str, list[SessionMessage]] = {}
 
     def append_message(self, message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
@@ -101,7 +101,9 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         self._held_records.setdefault(agent.agent_id, []).append(session_message)
 
     def redact_latest_message(self, redact_message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
-        """Redact the latest message appended to the session.
+        """Redact the stored message that holds ``redact_message``.
+
+        Falls back to the latest message appended to the session when no stored message holds it.
 
         Args:
             redact_message: New message to use that contains the redact content
@@ -111,13 +113,12 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         latest_agent_message = self._latest_agent_message[agent.agent_id]
         if latest_agent_message is None:
             raise SessionException("No message to redact.")
-        latest_agent_message.redact_message = redact_message
-        self.session_repository.update_message(self.session_id, agent.agent_id, latest_agent_message)
 
-        # A retried prompt may have stored the same dict in an earlier record; rewrite those too.
-        for r in self._held_records.get(agent.agent_id, []):
-            if r is not latest_agent_message and r.to_message() is redact_message:
-                self.session_repository.update_message(self.session_id, agent.agent_id, r)
+        # A retried prompt may have stored the same dict in several records; rewrite them all.
+        records = [r for r in self._held_records.get(agent.agent_id, []) if r.to_message() is redact_message]
+        for record in records or [latest_agent_message]:
+            record.redact_message = redact_message
+            self.session_repository.update_message(self.session_id, agent.agent_id, record)
 
     def sync_agent(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Serialize and update the agent into the session repository.

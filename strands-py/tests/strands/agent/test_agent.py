@@ -2173,10 +2173,16 @@ def test_agent_redacts_user_message_not_ltm_context():
     agent.hooks.add_callback(MessageAddedEvent, append_ltm_context)
     agent("Tell me something bad")
 
-    user_messages = [message for message in agent.messages if message["role"] == "user"]
-    assert len(user_messages) == 1
-    assert user_messages[0]["content"] == [{"text": "BLOCKED!"}]
-    assert agent.messages[1] == ltm_message
+    assert agent.messages == [
+        {"role": "user", "content": [{"text": "BLOCKED!"}], "tracking_id": unittest.mock.ANY},
+        ltm_message,
+        {
+            "role": "assistant",
+            "content": [{"text": "INPUT BLOCKED!"}],
+            "metadata": unittest.mock.ANY,
+            "tracking_id": unittest.mock.ANY,
+        },
+    ]
 
 
 def test_agent_restored_from_session_management_with_correct_index():
