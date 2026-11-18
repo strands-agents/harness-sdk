@@ -95,7 +95,7 @@ The user-settable column matters for pricing: an OpenAI-compatible endpoint or a
 
 Where a price comes from, in order:
 
-1. **Your own prices**, passed as `prices=[...]`. Each entry names a `model_id` and, optionally, a `provider_name`. The model ID is compared as a whole string and never split, so ARNs and LiteLLM IDs that contain `/` work, and so does a model with no provider name.
+1. **Your own prices**, passed as `prices=[...]`. Each entry names a `model_id` and, optionally, a `provider_name`. The model ID is compared as a whole string and never split, so ARNs and LiteLLM IDs that contain `/` work, and so does a model with no provider name. An entry with a `provider_name` wins over one without. An entry with no `model_id`, or two entries for the same provider and model, raise `ValueError` when the plugin is created.
 2. **genai-prices**, looked up by provider and model ID in the data bundled with the installed package.
 3. **Neither**: the model is unpriced. Its cost is `None`, and so is the request total.
 
@@ -114,7 +114,8 @@ Prices are USD per one million tokens, the unit providers publish. Two details:
 
 - **Cached tokens are charged once.** Some providers count cached tokens inside `inputTokens` and some do not. The plugin uses the rule already documented on `Usage` to tell which.
 - **Base rates only.** Some models charge more above a context size. A request total cannot say which calls crossed that line, so the plugin reads each model's base rate from genai-prices and does this arithmetic itself.
-- **A price with no cache rate uses the input rate for cached tokens.** That is how a provider bills a model with no separate cache price, and it keeps the cost from reading as zero. It applies to your prices and to genai-prices entries alike. Each model's record carries the price that was used.
+- **A price with no cache rate uses the input rate for cached tokens.** genai-prices' own `calc_price` does the same, and it keeps the cost from reading as zero. It applies to your prices and to genai-prices entries alike. Each model's record carries the price that was used.
+  - **This overstates Amazon Nova cache writes.** genai-prices has no cache-write rate for Nova, and the AWS Price List has $0. The data cannot tell "free" from "not listed", so Nova cache writes are priced at the input rate. To correct it, pass your own price with `cache_write_per_million=0`.
 
 How prices stay current:
 
@@ -201,7 +202,7 @@ No maintained Python package carries models.dev data. The only one on PyPI is th
 | Code we own | The formula and a provider map | Those, plus the snapshot build, the ID matching, and the lookup, in each language |
 | How you get new prices | Upgrade genai-prices (a release about every 7 days) | Upgrade Strands (a release about every 6 days) |
 | How Bedrock prices get in | Imported from the AWS Price List by an hourly job | Edited by hand |
-| 31 Bedrock prices checked against the AWS Price List | 30 right, 0 wrong, 1 missing | 27 right, 4 wrong, 0 missing |
+| 31 Bedrock models checked against the AWS Price List, on the price the estimator would use | 26 right, 4 wrong, 1 missing | 27 right, 4 wrong, 0 missing |
 | Non-Anthropic Bedrock models in our list | 14 of 32 | 24 of 32 |
 | Bedrock profiles outside the US | One price for every region | An entry per profile |
 | How prices are checked | A check date on every model, hourly importers for about 30 providers, a weekly review PR | Schema validation. 83% of data commits in the last 90 days came from bots, and the sync bot merges its own safe changes |
@@ -213,7 +214,7 @@ No maintained Python package carries models.dev data. The only one on PyPI is th
 - **Cons:**
   - Strands ships the prices. That is what this proposal sets out to avoid, and wrong prices become our bug reports.
   - We own the snapshot build and the lookup in every language.
-  - Less accurate on Bedrock in our check. It prices Nova cache writes at the input rate, where AWS lists $0.
+  - No more accurate on Bedrock in our check. Both sources end up pricing Nova cache writes at the input rate, where AWS lists $0.
   - New prices arrive only with a Strands upgrade.
 
 ### Alternative: models.dev over HTTP
@@ -332,7 +333,7 @@ class ModelUsage:
     usage: Usage
 
 InvocationContext.usage_by_model -> list[ModelUsage]
-Model.provider_name -> str | None
+Model.provider_name -> str | None  # or model_info.provider_name, per open question 2
 
 # strands.experimental.cost_estimator exports these four
 class GenAIPricesEstimator(Plugin):
@@ -344,7 +345,7 @@ class ModelPrice:
     output_per_million: float
     cache_read_per_million: float | None = None   # None: cached reads use the input rate
     cache_write_per_million: float | None = None  # None: cache writes use the input rate
-    model_id: str | None = None        # set on your own prices; the whole ID, never split
+    model_id: str | None = None        # required on entries passed in prices=; the whole ID, never split
     provider_name: str | None = None   # None matches any provider
 
 class CostEstimate:
@@ -374,6 +375,7 @@ Each of these makes the real bill differ from the estimate. The docs page lists 
 | Bedrock source region | Regional profiles get one price; real prices vary by region | Your own prices |
 | Service tier, batch, provisioned throughput | Flex and batch are overpriced, priority is underpriced | Record the tier in usage; genai-prices has tier prices for some providers |
 | One-hour cache writes | Priced at the five-minute rate, so underpriced | #5257 (cache writes split by TTL); genai-prices has the one-hour price |
+| Amazon Nova cache writes | Priced at the input rate, where AWS lists $0, so overpriced | Your own prices; a cache-write rate for Nova in genai-prices |
 | Negotiated discounts | Overpriced | Your own prices |
 | Application inference profile ARNs | Unpriced | Your own prices |
 | A model call that fails or is cancelled mid-stream | Tokens the provider billed are not counted | Record partial usage on failure |
@@ -462,12 +464,12 @@ Still open in the prototype:
 <details>
 <summary>genai-prices and models.dev compared as data</summary>
 
-**Accuracy on Bedrock.** 31 model and profile combinations, each checked for input, output, cache read, and cache write price against the AWS Price List for us-east-1 (standard on-demand, the November 2026 files). The set covers Claude from Sonnet 4.5 to Fable 5.2 on `us.` and `global.` profiles, Nova, OpenAI on Bedrock, Llama, Mistral, DeepSeek, GLM, and Palmyra.
+**Accuracy on Bedrock.** 31 model and profile combinations, each checked for input, output, cache read, and cache write price against the AWS Price List for us-east-1 (standard on-demand, the November 2026 files). Each source is scored on the price the estimator would use, so a missing cache rate counts as the input rate. The set covers Claude from Sonnet 4.5 to Fable 5.2 on `us.` and `global.` profiles, Nova, OpenAI on Bedrock, Llama, Mistral, DeepSeek, GLM, and Palmyra.
 
 | | genai-prices | models.dev |
 |---|---|---|
-| All four prices right | 30 | 27 |
-| A wrong price | 0 | 4: Nova Pro, Nova Lite, Nova Micro, and Nova 2 Lite list cache writes at the input price; AWS lists $0 |
+| All four prices right | 26 | 27 |
+| A wrong price | 4: Nova Pro, Nova Lite, Nova Micro, and Nova 2 Lite have no cache-write rate, so cache writes fall back to the input rate; AWS lists $0 | 4: the same four models list cache writes at the input rate |
 | Missing | 1: GLM 5 | 0 |
 
 **When new models appeared.** Dates are the first commit that added a priced entry.
