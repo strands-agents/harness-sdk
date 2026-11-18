@@ -161,8 +161,8 @@ runs as.
 To keep conversations and offloaded tool results out of the repository, add
 `.agent/sessions/` to the `.gitignore` in the directory that contains `.agent`. Ignoring
 all of `.agent/` covers [long-term memory](../memory/) files too, but it also ignores
-`.agent/skills`. To keep the [skills](../skills/) you commit there tracked, use this
-pattern instead:
+`.agent/skills`. To ignore everything except the [skills](../skills/) you commit there,
+use this pattern instead:
 
 ```text
 .agent/*
