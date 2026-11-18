@@ -82,7 +82,7 @@ Example Usage:
 """
 
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._bash import _RENAME_RATIONALE, make_bash  # noqa: F401  deprecated tool, kept importable until v2.0.0
 from .edit import edit, make_edit
@@ -100,6 +100,12 @@ from .stop import make_stop, stop
 from .subagent import make_subagent, subagent
 from .swarm import make_swarm, swarm
 from .write import make_write, write
+
+if TYPE_CHECKING:
+    from .programmatic_tool_caller import (  # noqa: F401  lazy-loaded by __getattr__; imported here for type checkers
+        make_programmatic_tool_caller,
+        programmatic_tool_caller,
+    )
 
 
 def __getattr__(name: str) -> Any:
@@ -123,8 +129,8 @@ def __getattr__(name: str) -> Any:
             return web_fetch
         return make_web_fetch
     # programmatic_tool_caller pulls the optional ``programmatic-tool-caller`` extra, so it is
-    # lazy-loaded to keep the base import free of that dependency. Importing the submodule binds
-    # it to this package under the tool's name, so both names are rebound to the real objects.
+    # lazy-loaded to keep the base import free of that dependency. The import binds the submodule
+    # to this package under the tool's name, so both names are rebound to the real objects.
     if name in ("make_programmatic_tool_caller", "programmatic_tool_caller"):
         from .programmatic_tool_caller import make_programmatic_tool_caller, programmatic_tool_caller
 

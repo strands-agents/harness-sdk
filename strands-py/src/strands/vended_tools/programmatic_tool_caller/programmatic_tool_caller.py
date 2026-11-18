@@ -88,7 +88,7 @@ async def _poll_cancel(cancel_signal: Any) -> None:
 async def _await_bounded(coro: Awaitable[Any], timeout: float | None, cancel_signal: Any) -> None:
     """Await ``coro`` until it finishes, ``timeout`` elapses, or ``cancel_signal`` fires.
 
-    On the latter two the coroutine is cancelled (unwinding any in-flight tool ``await``) before raising.
+    On the latter two the coroutine is cancelled before raising.
     """
     task = asyncio.ensure_future(coro)
     watch = asyncio.ensure_future(_poll_cancel(cancel_signal)) if cancel_signal is not None else None
@@ -119,10 +119,11 @@ DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION = (
     'taking keyword arguments -- always `await` them, e.g. `result = await read(path="/etc/hosts")`. '
     "The code runs in an async context, so `await` and `asyncio.gather(...)` work without boilerplate. "
     "A tool result that is structured content or JSON text (an object or array) arrives parsed, as a "
-    "dict/list; anything else arrives as a string. A tool that fails raises RuntimeError, which you can "
-    "catch. "
+    "dict/list; anything else arrives as a string. A tool that fails or exceeds its time limit raises "
+    "RuntimeError, which you can catch. "
     "Only text sent to `print()` is returned to you: a tool's return value stays in the code's local "
-    "scope unless you print it. A tool whose name is not a valid Python identifier (for example "
+    "scope unless you print it. The run is also time-limited; if it is cut off you get back only what "
+    "was printed so far, so print results as you go. A tool whose name is not a valid Python identifier (for example "
     "`fetch-url` or `ns.fetch`) is also available with those characters replaced by underscores "
     "(`fetch_url`, `ns_fetch`). The code runs in a sandboxed Python subset: `asyncio`, `json`, `re`, "
     "`math`, `datetime`, `collections`, `itertools`, `functools`, `dataclasses`, `typing`, `base64` "
@@ -190,7 +191,9 @@ async def _execute_tool(tool_context: ToolContext, tool_name: str, tool_input: d
     # A copy, so an inner call cannot change the parent's invocation state.
     invocation_state = {**tool_context.invocation_state}
     try:
-        async for event in ToolExecutor._stream(agent, tool_use, tool_results, invocation_state):
+        async for event in ToolExecutor._stream(
+            agent, tool_use, tool_results, invocation_state, invocation_context=tool_context.invocation_context
+        ):
             if isinstance(event, ToolInterruptEvent):
                 agent._interrupt_state.deactivate()
                 raise RuntimeError(
@@ -207,20 +210,41 @@ async def _execute_tool(tool_context: ToolContext, tool_name: str, tool_input: d
 
 
 def _make_async_tool_function(
-    tool_context: ToolContext, tool_name: str, semaphore: asyncio.Semaphore, tool_timeout: float | None
+    tool_context: ToolContext, tool_name: str, run: _Run, tool_timeout: float | None
 ) -> Callable[..., Awaitable[Any]]:
     """Wrap a tool as an ``async`` host function taking keyword arguments only."""
 
     async def tool_function(*args: Any, **kwargs: Any) -> Any:
         if args:
             raise TypeError(f"{tool_name}() takes keyword arguments only, e.g. {tool_name}(key=value)")
-        async with semaphore:
-            try:
+        call = asyncio.current_task()
+        run.calls.add(call)
+        try:
+            async with run.semaphore:
                 return await asyncio.wait_for(_execute_tool(tool_context, tool_name, kwargs), tool_timeout)
-            except asyncio.TimeoutError:
-                raise RuntimeError(f"Tool '{tool_name}' timed out after {tool_timeout:g} seconds.") from None
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                f"Tool '{tool_name}' timed out after {tool_timeout:g} seconds; it may still be running."
+            ) from None
+        finally:
+            run.calls.discard(call)
 
     return tool_function
+
+
+class _Run:
+    """What the tool functions of one run share: the concurrency slots and the calls not yet finished."""
+
+    def __init__(self) -> None:
+        self.semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TOOL_CALLS)
+        self.calls: set[asyncio.Task[Any] | None] = set()
+
+    async def cancel_calls(self) -> None:
+        """Cancel the calls still queued or in flight; the sandbox leaves them running when the code ends."""
+        calls = [call for call in self.calls if call is not None]
+        for call in calls:
+            call.cancel()
+        await asyncio.gather(*calls, return_exceptions=True)
 
 
 def _resolve_available_tools(agent: Any, allowed_tools: list[str] | None) -> set[str]:
@@ -243,18 +267,17 @@ def _resolve_available_tools(agent: Any, allowed_tools: list[str] | None) -> set
 
 
 def _build_external_lookup(
-    available_tools: set[str], tool_context: ToolContext, tool_timeout: float | None
+    available_tools: set[str], tool_context: ToolContext, run: _Run, tool_timeout: float | None
 ) -> dict[str, Any]:
     """Build the host functions handed to the sandbox.
 
     One per tool, plus an alias for each tool whose name is not a valid identifier (MCP servers
     commonly use ``-`` or ``.``): every non-word character becomes ``_``, matching how
     ``agent.tool.<name>`` resolves underscores to hyphens. An alias is skipped when it would shadow a
-    real tool name or another tool's alias. The functions share one pool of concurrency slots per run.
+    real tool name or another tool's alias.
     """
-    semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TOOL_CALLS)
     lookup: dict[str, Any] = {
-        name: _make_async_tool_function(tool_context, name, semaphore, tool_timeout) for name in available_tools
+        name: _make_async_tool_function(tool_context, name, run, tool_timeout) for name in available_tools
     }
 
     aliases: dict[str, str] = {}
@@ -350,8 +373,9 @@ def make_programmatic_tool_caller(
             disable it. Defaults to 3600 (60 minutes). The code's own compute time is bounded
             separately by the sandbox.
         tool_timeout: Wall-clock ceiling in seconds for one tool call made by the code, or ``None``
-            to disable it. Defaults to 1800 (30 minutes). A call that exceeds it is cancelled and
-            raises a ``RuntimeError`` the code can catch.
+            to disable it. Defaults to 1800 (30 minutes). A call that exceeds it raises a
+            ``RuntimeError`` the code can catch. The tool is cancelled, but one that cannot be
+            interrupted, such as a synchronous tool, may still finish.
 
     Returns:
         A decorated tool that runs code with access to the agent's other tools.
@@ -381,7 +405,8 @@ def make_programmatic_tool_caller(
             return _error_result("No agent available. The programmatic tool caller requires an agent context.")
 
         available_tools = _resolve_available_tools(agent, resolved_allowed_tools)
-        external_lookup = _build_external_lookup(available_tools, tool_context, tool_timeout)
+        run = _Run()
+        external_lookup = _build_external_lookup(available_tools, tool_context, run, tool_timeout)
         output = _Output()
 
         try:
@@ -396,6 +421,8 @@ def make_programmatic_tool_caller(
             return _error_result(output.with_error(f"Execution error:\n{error.display()}"))
         except MontyError as error:
             return _error_result(output.with_error(f"Execution error: {error}"))
+        finally:
+            await run.cancel_calls()
 
         return {"status": "success", "content": [{"text": output.text() or "(no output)"}]}
 

@@ -26,6 +26,7 @@
  */
 
 import { z } from 'zod'
+import { assertTimerDelay } from '../../background-tasks/timer.js'
 import { AfterToolCallEvent, BeforeToolCallEvent } from '../../hooks/events.js'
 import type { ToolUseData } from '../../hooks/events.js'
 import { logger } from '../../logging/logger.js'
@@ -75,10 +76,11 @@ export const DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION =
   'taking keyword arguments -- always `await` them, e.g. `result = await read(path="/etc/hosts")`. ' +
   'The code runs in an async context, so `await` and `asyncio.gather(...)` work without boilerplate. ' +
   'A tool result that is structured content or JSON text (an object or array) arrives parsed, as a ' +
-  'dict/list; anything else arrives as a string. A tool that fails raises RuntimeError, which you can ' +
-  'catch. ' +
+  'dict/list; anything else arrives as a string. A tool that fails or exceeds its time limit raises ' +
+  'RuntimeError, which you can catch. ' +
   "Only text sent to `print()` is returned to you: a tool's return value stays in the code's local " +
-  'scope unless you print it. A tool whose name is not a valid Python identifier (for example ' +
+  'scope unless you print it. The run is also time-limited; if it is cut off you get back only what ' +
+  'was printed so far, so print results as you go. A tool whose name is not a valid Python identifier (for example ' +
   '`fetch-url` or `ns.fetch`) is also available with those characters replaced by underscores ' +
   '(`fetch_url`, `ns_fetch`). The code runs in a sandboxed Python subset: `asyncio`, `json`, `re`, ' +
   '`math`, `datetime`, `collections`, `itertools`, `functools`, `dataclasses`, `typing`, `base64` ' +
@@ -99,16 +101,20 @@ export interface MakeProgrammaticToolCallerOptions {
   /** Tool description shown to the model. */
   description?: string
   /**
-   * Wall-clock ceiling for a run in milliseconds, tool calls included, or `null` to disable it.
-   * Defaults to 3 600 000 (60 minutes). The code's own compute time is bounded separately by the sandbox.
+   * Wall-clock ceiling for a run, tool calls included, in milliseconds. Pass `Infinity` for no limit.
+   * The code's own compute time is bounded separately by the sandbox.
+   *
+   * @defaultValue 3_600_000 (60 minutes)
    */
-  timeout?: number | null
+  timeout?: number
   /**
-   * Wall-clock ceiling for one tool call made by the code in milliseconds, or `null` to disable it.
-   * Defaults to 1 800 000 (30 minutes). A call that exceeds it is cancelled and raises a
-   * `RuntimeError` the code can catch.
+   * Wall-clock ceiling for one tool call made by the code, in milliseconds. Pass `Infinity` for no
+   * limit. A call that exceeds it raises a `RuntimeError` the code can catch. The tool's cancel signal
+   * fires, but a tool that ignores it may still finish.
+   *
+   * @defaultValue 1_800_000 (30 minutes)
    */
-  toolTimeout?: number | null
+  toolTimeout?: number
 }
 
 interface MontyRuntime {
@@ -324,7 +330,7 @@ function makeToolFunction(
   parent: ToolContext,
   signal: AbortSignal,
   slots: Semaphore,
-  toolTimeout: number | null
+  toolTimeout: number
 ): (...args: unknown[]) => Promise<unknown> {
   return async (...args: unknown[]): Promise<unknown> => {
     const [input = {}] = args
@@ -341,7 +347,7 @@ async function callTool(
   parent: ToolContext,
   signal: AbortSignal,
   input: JSONValue,
-  toolTimeout: number | null
+  toolTimeout: number
 ): Promise<unknown> {
   // A cancelled run makes no further real tool calls (writes, shell, MCP) behind the model's back.
   if (signal.aborted) {
@@ -353,8 +359,11 @@ async function callTool(
       runInnerCall(agent, toolName, parent, callSignal, input)
     )
   } catch (error) {
-    if (error instanceof ToolTimedOut && toolTimeout !== null) {
-      throw guestError('RuntimeError', `Tool '${toolName}' timed out after ${toolTimeout / 1000} seconds.`)
+    if (error instanceof ToolTimedOut) {
+      throw guestError(
+        'RuntimeError',
+        `Tool '${toolName}' timed out after ${toolTimeout / 1000} seconds; it may still be running.`
+      )
     }
     throw guestError('RuntimeError', `Failed to execute tool '${toolName}': ${errorMessage(error)}`, error)
   }
@@ -371,16 +380,19 @@ async function callTool(
  */
 async function withToolTimeout<T>(
   parent: AbortSignal,
-  timeout: number | null,
+  timeout: number,
   call: (signal: AbortSignal) => Promise<T>
 ): Promise<T> {
-  if (timeout === null) {
+  if (timeout === Infinity) {
     return call(parent)
   }
   const controller = new globalThis.AbortController()
-  const forwardCancel = (): void => controller.abort()
-  parent.addEventListener('abort', forwardCancel, { once: true })
   let timer: ReturnType<typeof globalThis.setTimeout> | undefined
+  const forwardCancel = (): void => {
+    globalThis.clearTimeout(timer)
+    controller.abort()
+  }
+  parent.addEventListener('abort', forwardCancel, { once: true })
   const expired = new Promise<never>((_, reject) => {
     timer = globalThis.setTimeout(() => {
       controller.abort()
@@ -421,6 +433,7 @@ async function runInnerCall(
     agent,
     invocationState,
     cancelSignal: signal,
+    ...(parent.invocationContext && { invocationContext: parent.invocationContext }),
     interrupt: () => {
       throw new Error('Interrupts are not supported from programmatic_tool_caller.')
     },
@@ -456,7 +469,7 @@ function buildExternalLookup(
   agent: LocalAgent,
   parent: ToolContext,
   signal: AbortSignal,
-  toolTimeout: number | null
+  toolTimeout: number
 ): Record<string, unknown> {
   const slots = new Semaphore(MAX_CONCURRENT_TOOL_CALLS)
   const lookup: Record<string, unknown> = {}
@@ -542,7 +555,7 @@ function cap(raw: string, limit = MAX_OUTPUT_CHARS): string {
  * Await `run` until it settles, `timeout` elapses, or `cancelSignal` fires. Rejects with `'timeout'`
  * or `'cancel'` on the latter two; the caller tears the sandbox down, which is what stops the code.
  */
-function withDeadline<T>(run: Promise<T>, timeout: number | null, cancelSignal: AbortSignal | undefined): Promise<T> {
+function withDeadline<T>(run: Promise<T>, timeout: number, cancelSignal: AbortSignal | undefined): Promise<T> {
   const cleanup = new globalThis.AbortController()
   return new Promise<T>((resolve, reject) => {
     if (cancelSignal?.aborted) {
@@ -550,7 +563,7 @@ function withDeadline<T>(run: Promise<T>, timeout: number | null, cancelSignal: 
       return
     }
     cancelSignal?.addEventListener('abort', () => reject(new Error('cancel')), { once: true, signal: cleanup.signal })
-    if (timeout !== null) {
+    if (timeout !== Infinity) {
       const timer = globalThis.setTimeout(() => reject(new Error('timeout')), timeout)
       cleanup.signal.addEventListener('abort', () => globalThis.clearTimeout(timer), { once: true })
     }
@@ -562,6 +575,10 @@ function withDeadline<T>(run: Promise<T>, timeout: number | null, cancelSignal: 
  * Create a programmatic-tool-caller tool. The returned tool executes agent-authored Python in a Monty
  * sandbox in which the agent's other tools are exposed as `async` functions. Only `print()` output is
  * returned.
+ *
+ * @param options - Exposed tools, tool name and description, and timeouts.
+ * @returns A tool that runs code with access to the agent's other tools.
+ * @throws TypeError if `timeout` or `toolTimeout` is neither `Infinity` nor a positive integer a timer accepts.
  */
 export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOptions = {}): Tool {
   const {
@@ -572,8 +589,8 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
     toolTimeout = DEFAULT_TOOL_TIMEOUT,
   } = options
   for (const [option, value] of Object.entries({ timeout, toolTimeout })) {
-    if (value !== null && !(Number.isFinite(value) && value > 0)) {
-      throw new Error(`${option} must be a positive, finite number or null, got ${value}`)
+    if (value !== Infinity) {
+      assertTimerDelay(option, value)
     }
   }
 
@@ -620,11 +637,10 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
             run.catch(() => {})
             await withDeadline(run, timeout, context.cancelSignal)
           } catch (error) {
-            controller.abort()
             if (error instanceof Error && error.message === 'cancel') {
               throw new Error('Execution cancelled.', { cause: error })
             }
-            if (error instanceof Error && error.message === 'timeout' && timeout !== null) {
+            if (error instanceof Error && error.message === 'timeout') {
               throw new Error(output.withError(`Execution error: timed out after ${timeout / 1000} seconds.`), {
                 cause: error,
               })
@@ -640,6 +656,8 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
             }
             throw error
           } finally {
+            // Calls still queued or in flight must not outlive the run.
+            controller.abort()
             await session.close()
           }
         } finally {

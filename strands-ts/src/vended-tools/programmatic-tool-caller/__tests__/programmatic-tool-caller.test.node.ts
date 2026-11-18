@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../../agent/agent.js'
@@ -56,6 +56,25 @@ function agentOf(...tools: Tool[]): Agent {
 
 async function run(agent: Agent, code: string, name = 'programmatic_tool_caller'): Promise<ToolResultBlock> {
   return agent.tool[name]!.invoke({ code }, { recordDirectToolCall: false })
+}
+
+/** Run the default caller with a hand-built context, for what a direct tool call cannot set. */
+async function runWithContext(agent: Agent, code: string, extra: Partial<ToolContext>): Promise<ToolResultBlock> {
+  const generator = programmaticToolCaller.stream({
+    toolUse: { toolUseId: 'x', name: 'programmatic_tool_caller', input: { code } },
+    agent,
+    invocationState: {},
+    cancelSignal: new AbortController().signal,
+    interrupt: () => {
+      throw new Error('no interrupts')
+    },
+    ...extra,
+  })
+  let next = await generator.next()
+  while (!next.done) {
+    next = await generator.next()
+  }
+  return next.value
 }
 
 function text(result: ToolResultBlock): string {
@@ -313,6 +332,18 @@ describe('programmatic_tool_caller', () => {
     expect(text(result)).toBe('Error: start\n\nExecution error: timed out after 0.3 seconds.')
   })
 
+  it('defaults to an hour per run and half an hour per tool call', async () => {
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      await run(agentWith(calculator), "await calculator(expression='1')")
+      const delays = timers.mock.calls.map(([, delay]) => delay)
+      expect(delays).toContain(3_600_000)
+      expect(delays).toContain(1_800_000)
+    } finally {
+      timers.mockRestore()
+    }
+  })
+
   it('times out one tool call with a catchable error and the run continues', async () => {
     let cancelled = false
     const slow = tool({
@@ -333,34 +364,117 @@ describe('programmatic_tool_caller', () => {
     const result = await run(agentOf(quick, slow, calculator), code, 'quick')
     expect(Date.now() - started).toBeLessThan(4000)
     expect(result.status).toBe('success')
-    expect(text(result)).toBe("ERR Tool 'slow' timed out after 0.2 seconds.\n2")
+    expect(text(result)).toBe("ERR Tool 'slow' timed out after 0.2 seconds; it may still be running.\n2")
     expect(cancelled).toBe(true)
   })
 
-  it('leaves only the run timeout when toolTimeout is null', async () => {
+  it('does not count time queued for a slot against the tool timeout', async () => {
     const slow = tool({
       name: 'slow',
       description: 'Take a moment.',
-      inputSchema: z.object({}),
-      callback: () => new Promise<string>((resolve) => globalThis.setTimeout(() => resolve('done'), 400)),
+      inputSchema: z.object({ value: z.number() }),
+      callback: (input) => new Promise<number>((resolve) => globalThis.setTimeout(() => resolve(input.value), 100)),
     })
-    const unbounded = makeProgrammaticToolCaller({ name: 'unbounded', toolTimeout: null })
-    expect(text(await run(agentOf(unbounded, slow), 'print(await slow())', 'unbounded'))).toBe('done')
+    // Eight rounds of slots: the later rounds start after the tool timeout has passed since they were queued.
+    const count = MAX_CONCURRENT_TOOL_CALLS * 8
+    const quick = makeProgrammaticToolCaller({ name: 'quick', toolTimeout: 500 })
+    const code = `import asyncio\nprint(len(await asyncio.gather(*[slow(value=i) for i in range(${count})])))`
+    expect(text(await run(agentOf(quick, slow), code, 'quick'))).toBe(String(count))
+  })
+
+  it('leaves only the run timeout when toolTimeout is Infinity', async () => {
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      const unbounded = makeProgrammaticToolCaller({ name: 'unbounded', toolTimeout: Infinity })
+      const result = await run(
+        agentOf(unbounded, calculator),
+        "print(await calculator(expression='1 + 1'))",
+        'unbounded'
+      )
+      expect(text(result)).toBe('2')
+      expect(timers.mock.calls.map(([, delay]) => delay)).toEqual([3_600_000])
+    } finally {
+      timers.mockRestore()
+    }
+  })
+
+  it('cancels an in-flight tool call and its timer when the run is cancelled', async () => {
+    const controller = new AbortController()
+    let cancelled = false
+    const hang = tool({
+      name: 'hang',
+      description: 'Never settles; cancels the run once it is in flight.',
+      inputSchema: z.object({}),
+      callback: (_input, context) =>
+        new Promise<string>(() => {
+          context?.cancelSignal?.addEventListener('abort', () => (cancelled = true))
+          globalThis.setTimeout(() => controller.abort(), 10)
+        }),
+    })
+    const cleared = vi.spyOn(globalThis, 'clearTimeout')
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      const result = await runWithContext(agentWith(hang), 'await hang()', { cancelSignal: controller.signal })
+      expect(text(result)).toContain('Execution cancelled.')
+      expect(cancelled).toBe(true)
+      const toolTimer = timers.mock.results[timers.mock.calls.findIndex(([, delay]) => delay === 1_800_000)]!.value
+      expect(cleared).toHaveBeenCalledWith(toolTimer)
+    } finally {
+      cleared.mockRestore()
+      timers.mockRestore()
+    }
+  })
+
+  it('starts no tool call after the run ends', async () => {
+    const started: number[] = []
+    const record = tool({
+      name: 'record',
+      description: 'Record that the call started.',
+      inputSchema: z.object({ value: z.number() }),
+      callback: (input) => {
+        started.push(input.value)
+        return new Promise<number>((resolve) => globalThis.setTimeout(() => resolve(input.value), 200))
+      },
+    })
+    const code =
+      'import asyncio\n' +
+      'try:\n    await asyncio.gather(boom(), *[record(value=i) for i in range(30)])\n' +
+      "except RuntimeError:\n    print('caught')"
+    const result = await run(agentWith(boom, record), code)
+    expect(text(result)).toBe('caught')
+    const startedByTheEnd = started.length
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 500))
+    expect(startedByTheEnd).toBeLessThan(30)
+    expect(started.length).toBe(startedByTheEnd)
+  })
+
+  it('runs inner calls in the parent request', async () => {
+    const seen: unknown[] = []
+    const whoami = tool({
+      name: 'whoami',
+      description: 'Record the request the inner call belongs to.',
+      inputSchema: z.object({}),
+      callback: (_input, toolContext) => {
+        seen.push(toolContext?.invocationContext)
+        return 'ok'
+      },
+    })
+    const invocationContext = {} as NonNullable<ToolContext['invocationContext']>
+    await runWithContext(agentWith(whoami), 'await whoami()', { invocationContext })
+    expect(seen).toEqual([invocationContext])
   })
 
   it.each([
     ['timeout', 0],
     ['timeout', -1],
-    ['timeout', Infinity],
     ['timeout', NaN],
+    ['timeout', 2 ** 31],
     ['toolTimeout', 0],
     ['toolTimeout', -1],
-    ['toolTimeout', Infinity],
     ['toolTimeout', NaN],
+    ['toolTimeout', 2 ** 31],
   ])('rejects %s=%s', (option, value) => {
-    expect(() => makeProgrammaticToolCaller({ [option]: value })).toThrow(
-      `${option} must be a positive, finite number or null, got ${value}`
-    )
+    expect(() => makeProgrammaticToolCaller({ [option]: value })).toThrow(new RegExp(`^${option} must be `))
   })
 
   it('keeps inner calls from changing the parent state', async () => {

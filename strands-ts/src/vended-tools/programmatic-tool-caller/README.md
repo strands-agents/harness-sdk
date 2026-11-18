@@ -9,6 +9,7 @@ Lets the agent orchestrate its other tools with Python code. The model passes a 
 - The sandbox is language-level, not OS-level: the code has no filesystem, network, environment, or subprocess access of its own, but it reaches whatever the exposed tools reach
 - Narrow the exposed tools with `allowedTools`
 - Inner tool calls fire the agent's `beforeToolCall` / `afterToolCall` hooks, so interventions still gate them. A call that needs interactive approval is refused, since a call made from code cannot prompt
+- Inner tool calls do not run tool middleware, `AfterToolCallEvent.retry`, tool spans, or stream-update events
 
 ## Install
 
@@ -17,6 +18,8 @@ Requires the optional `@pydantic/monty` peer dependency and Node.js:
 ```bash
 npm install @pydantic/monty@0.0.23
 ```
+
+The native addon of that version needs glibc 2.39 or newer on Linux. Where it cannot load, the tool logs a warning and runs the interpreter in-process as WebAssembly (see [Limits](#limits)).
 
 ## Usage
 
@@ -45,13 +48,13 @@ const caller = makeProgrammaticToolCaller({
 
 ### `makeProgrammaticToolCaller(options?)`
 
-| Option         | Default                                        | Description                                                                                                                                                             |
-| -------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allowedTools` | every other registered tool                    | Registry names of the tools to expose to the code. A programmatic tool caller is never exposed                                                                          |
-| `name`         | `'programmatic_tool_caller'`                   | Tool name                                                                                                                                                               |
-| `description`  | `DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION` | Tool description shown to the model                                                                                                                                     |
-| `timeout`      | `3_600_000` (60 minutes)                       | Wall-clock ceiling for a run in milliseconds, tool calls included. `null` disables it                                                                                   |
-| `toolTimeout`  | `1_800_000` (30 minutes)                       | Wall-clock ceiling for one tool call made by the code, in milliseconds. `null` disables it. An expired call is cancelled and raises a `RuntimeError` the code can catch |
+| Option         | Default                                        | Description                                                                                                                                                                                                                                     |
+| -------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowedTools` | every other registered tool                    | Registry names of the tools to expose to the code. A programmatic tool caller is never exposed                                                                                                                                                  |
+| `name`         | `'programmatic_tool_caller'`                   | Tool name                                                                                                                                                                                                                                       |
+| `description`  | `DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION` | Tool description shown to the model                                                                                                                                                                                                             |
+| `timeout`      | `3_600_000` (60 minutes)                       | Wall-clock ceiling for a run in milliseconds, tool calls included. `Infinity` for no limit                                                                                                                                                      |
+| `toolTimeout`  | `1_800_000` (30 minutes)                       | Wall-clock ceiling for one tool call made by the code, in milliseconds. `Infinity` for no limit. A call that exceeds it raises a `RuntimeError` the code can catch; the tool's cancel signal fires, but a tool that ignores it may still finish |
 
 ### What the code sees
 

@@ -9,13 +9,13 @@ truncation, and timeout/cancellation.
 import asyncio
 import inspect
 import re
+import subprocess
 import sys
 import threading
 import time
 
 import pytest
 
-import strands.vended_tools
 from strands import Agent
 from strands.hooks import BeforeToolCallEvent
 from strands.tools.decorator import tool
@@ -75,15 +75,16 @@ def _text(result):
     return result["content"][0]["text"]
 
 
-@pytest.mark.parametrize("name", ["programmatic_tool_caller", "make_programmatic_tool_caller"])
-def test_lazy_load_resolves_to_the_tool_on_every_access(name, monkeypatch):
-    expected = {
-        "programmatic_tool_caller": programmatic_tool_caller,
-        "make_programmatic_tool_caller": make_programmatic_tool_caller,
-    }[name]
-    monkeypatch.delattr(strands.vended_tools, name, raising=False)
-    assert getattr(strands.vended_tools, name) is expected
-    assert getattr(strands.vended_tools, name) is expected
+def test_lazy_export_resolves_to_the_tool_on_every_access():
+    # A fresh interpreter: this module has already imported the subpackage, which hides the first access.
+    code = (
+        "import strands.vended_tools as vended\n"
+        "from strands.tools.decorator import DecoratedFunctionTool\n"
+        "first, second = vended.programmatic_tool_caller, vended.programmatic_tool_caller\n"
+        "assert isinstance(first, DecoratedFunctionTool) and first is second, (first, second)\n"
+        "assert callable(vended.make_programmatic_tool_caller)\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_single_call():
@@ -188,6 +189,26 @@ def test_inner_calls_carry_the_parent_invocation_state_not_guest_kwargs():
     result = asyncio.run(programmatic_tool_caller._tool_func(code=code, tool_context=context))
     assert _text(result) == "ok"
     assert seen[0]["principal"] == "alice"
+
+
+def test_inner_calls_join_the_parent_request():
+    seen = []
+
+    @tool(context="tool_context")
+    def whoami(tool_context: ToolContext) -> str:
+        """Record the request the inner call belongs to."""
+        seen.append(tool_context.invocation_context)
+        return "ok"
+
+    request = object()
+    context = ToolContext(
+        tool_use={"toolUseId": "x", "name": "programmatic_tool_caller", "input": {}},
+        agent=_agent(whoami),
+        invocation_state={},
+        invocation_context=request,
+    )
+    asyncio.run(programmatic_tool_caller._tool_func(code="await whoami()", tool_context=context))
+    assert seen == [request]
 
 
 def test_inner_calls_do_not_change_the_parent_state():
@@ -537,10 +558,16 @@ def test_default_timeouts_are_an_hour_per_run_and_half_an_hour_per_tool_call():
 
 
 def test_tool_timeout_raises_a_catchable_error_and_the_run_continues():
+    cancelled = []
+
     @tool
     async def slow() -> str:
         """Run longer than the tool timeout."""
-        await asyncio.sleep(5)
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
         return "late"
 
     quick = make_programmatic_tool_caller(name="quick", tool_timeout=0.2)
@@ -552,7 +579,49 @@ def test_tool_timeout_raises_a_catchable_error_and_the_run_continues():
     result = _run(Agent(model=None, tools=[quick, slow, calculator]), code, "quick")
     assert time.monotonic() - started < 4
     assert result["status"] == "success"
-    assert _text(result) == "ERR Tool 'slow' timed out after 0.2 seconds.\n2"
+    assert _text(result) == "ERR Tool 'slow' timed out after 0.2 seconds; it may still be running.\n2"
+    assert cancelled == [True]
+
+
+def test_tool_timeout_does_not_count_time_queued_for_a_slot():
+    @tool
+    async def slow(value: int) -> int:
+        """Take a moment."""
+        await asyncio.sleep(0.1)
+        return value
+
+    # Eight rounds of slots: the later rounds start after the tool timeout has passed since they were queued.
+    count = _MAX_CONCURRENT_TOOL_CALLS * 8
+    quick = make_programmatic_tool_caller(name="quick", tool_timeout=0.5)
+    code = f"import asyncio\nprint(len(await asyncio.gather(*[slow(value=i) for i in range({count})])))"
+    assert _text(_run(Agent(model=None, tools=[quick, slow]), code, "quick")) == str(count)
+
+
+def test_no_tool_call_starts_or_keeps_running_after_the_run_ends():
+    started, finished = [], []
+
+    @tool
+    async def record(value: int) -> int:
+        """Record when the call starts and finishes."""
+        started.append(value)
+        await asyncio.sleep(0.4)
+        finished.append(value)
+        return value
+
+    quick = make_programmatic_tool_caller(name="quick", timeout=0.2)
+    agent = Agent(model=None, tools=[quick, record])
+    context = ToolContext(tool_use={"toolUseId": "x", "name": "quick", "input": {}}, agent=agent, invocation_state={})
+    code = "import asyncio\nawait asyncio.gather(*[record(value=i) for i in range(30)])"
+
+    async def run_then_wait() -> dict:
+        result = await quick._tool_func(code=code, tool_context=context)
+        await asyncio.sleep(0.6)
+        return result
+
+    result = asyncio.run(run_then_wait())
+    assert _text(result) == "Execution error: timed out after 0.2 seconds."
+    assert len(started) <= _MAX_CONCURRENT_TOOL_CALLS
+    assert finished == []
 
 
 def test_tool_timeout_none_leaves_only_the_run_timeout():
@@ -603,11 +672,10 @@ def test_in_flight_cancellation_stops_promptly():
     loop = asyncio.new_event_loop()
     result = loop.run_until_complete(programmatic_tool_caller._tool_func(code="await hang()", tool_context=context))
     elapsed = time.monotonic() - start
-    for task in asyncio.all_tasks(loop):  # the parked inner call, orphaned by the cancel
-        task.cancel()
-    loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(loop), return_exceptions=True))
+    pending = asyncio.all_tasks(loop)
     loop.close()
-    assert elapsed < 2  # cancel unwound the run; the 900 s tool timeout never fired
+    assert pending == set()
+    assert elapsed < 2
     assert result["status"] == "error"
     assert _text(result) == "Execution cancelled."
 
