@@ -104,8 +104,8 @@ async function isSymlink(path: string): Promise<boolean> {
  * Persists each key as a file under a base directory, mapping the key's `/` segments
  * onto directory segments. On the host filesystem, writes are atomic (write to a
  * scratch sibling, then rename) so a crash mid-write never leaves a partially written
- * file. Directories it creates and files it writes are accessible to the owner only,
- * and a key whose file is a symbolic link is refused.
+ * file. Directories it creates from the base directory down, and the files it writes,
+ * are accessible to the owner only, and a key whose file is a symbolic link is refused.
  * When bound to a {@link Sandbox} via {@link forSandbox}, all I/O is routed
  * through that sandbox instead of the host's `node:fs` (atomicity, permissions and
  * symbolic link handling depend on the sandbox implementation).
@@ -123,6 +123,8 @@ async function isSymlink(path: string): Promise<boolean> {
  */
 export class LocalFileStorage implements Storage {
   private readonly _baseDir: string
+  /** Base directory of the storage this instance was namespaced from, or its own. */
+  private _rootDir: string
   private readonly _sandbox: Sandbox | undefined
   private readonly _searchStrategy: SearchStrategy<LocalFileStorage> | undefined
 
@@ -172,6 +174,7 @@ export class LocalFileStorage implements Storage {
       throw new Error(`${strategy.constructor.name} requires host filesystem access and cannot be used with a sandbox`)
     }
     this._baseDir = baseDir.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1')
+    this._rootDir = this._baseDir
     this._sandbox = sandbox
     this._searchStrategy = strategy
   }
@@ -220,10 +223,13 @@ export class LocalFileStorage implements Storage {
     let tmpPath: string | undefined
     try {
       const { mkdir, writeFile, rename } = await import('node:fs/promises')
-      const { dirname } = await import('node:path')
+      const { dirname, resolve } = await import('node:path')
       if (await isSymlink(path)) {
         throw new StorageError(`Refusing to write '${normalized}' over a symbolic link in local storage`)
       }
+      // Directories above the storage root keep the default mode. Windows rejects mkdir on a drive
+      // root, and a real failure here also fails the mkdir below.
+      await mkdir(dirname(resolve(this._rootDir)), { recursive: true }).catch(() => {})
       await mkdir(dirname(path), { recursive: true, mode: 0o700 })
       const { randomUUID } = await import('node:crypto')
       tmpPath = `${path}.__strands_tmp_${randomUUID()}`
@@ -419,6 +425,7 @@ export class LocalFileStorage implements Storage {
         new LocalFileStorage(subDir, this._sandbox, this._searchStrategy as SandboxSafeSearchStrategy)
       : new LocalFileStorage(subDir, undefined, this._searchStrategy)
     Object.defineProperty(scoped, NAMESPACED, { value: true })
+    scoped._rootDir = this._rootDir
     return scoped
   }
 }

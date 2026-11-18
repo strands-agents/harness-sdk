@@ -13,7 +13,12 @@ import { randomUUID } from 'node:crypto'
 // Lets a test fail or intercept one filesystem call; every other call goes to the real filesystem.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...actual, lstat: vi.fn(actual.lstat), writeFile: vi.fn(actual.writeFile) }
+  return {
+    ...actual,
+    lstat: vi.fn(actual.lstat),
+    mkdir: vi.fn(actual.mkdir),
+    writeFile: vi.fn(actual.writeFile),
+  }
 })
 
 describe('LocalFileStorage', () => {
@@ -62,6 +67,15 @@ describe('LocalFileStorage', () => {
       await expect(stat(join(baseDir, 'atomic/test.tmp'))).rejects.toThrow()
     })
 
+    it('writes when the directory above the storage root cannot be created, as on a Windows drive root', async () => {
+      vi.mocked(mkdir).mockRejectedValueOnce(Object.assign(new Error('Not permitted'), { code: 'EPERM' }))
+      const data = new TextEncoder().encode('stored')
+
+      await storage.write('key.txt', data)
+
+      expect(await storage.read('key.txt')).toEqual(data)
+    })
+
     it.skipIf(process.platform === 'win32')('cleans up tmp file on rename failure', async () => {
       const { mkdir, chmod, readdir } = await import('node:fs/promises')
       const dir = join(baseDir, 'readonly')
@@ -103,15 +117,24 @@ describe('LocalFileStorage', () => {
       vi.mocked(writeFile).mockReset()
     })
 
-    it('creates directories and files accessible to the owner only and leaves existing directories alone', async () => {
-      const baseMode = await mode(baseDir)
+    it('creates the storage root, its directories and its files accessible to the owner only', async () => {
       await storage.write('a/b/key.txt', data)
 
-      for (const dir of [join(baseDir, 'parent'), rootDir, join(rootDir, 'a'), join(rootDir, 'a', 'b')]) {
+      for (const dir of [rootDir, join(rootDir, 'a'), join(rootDir, 'a', 'b')]) {
         expect({ dir, mode: await mode(dir) }).toEqual({ dir, mode: 0o700 })
       }
       expect(await mode(join(rootDir, 'a', 'b', 'key.txt'))).toBe(0o600)
-      expect(await mode(baseDir)).toBe(baseMode)
+      expect(await mode(join(baseDir, 'parent'))).toBe(await mode(baseDir))
+    })
+
+    it.each([
+      ['the first write is namespaced', (): LocalFileStorage => storage.namespace('a').namespace('b')],
+      ['the base directory ends in a dot segment', (): LocalFileStorage => new LocalFileStorage(`${rootDir}/.`)],
+    ])('creates the storage root accessible to the owner only when %s', async (_, create) => {
+      await create().write('key.txt', data)
+
+      expect(await mode(rootDir)).toBe(0o700)
+      expect(await mode(join(baseDir, 'parent'))).toBe(await mode(baseDir))
     })
 
     it('refuses to read through a symbolic link and logs it once', async () => {
