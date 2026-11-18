@@ -2272,9 +2272,9 @@ class Agent(AgentBase, LocalAgent):
         if "state" in fields:
             data["state"] = self.state.get()
         if "conversation_manager_state" in fields:
-            data["conversation_manager_state"] = self.conversation_manager.get_state()
+            data["conversation_manager_state"] = copy.deepcopy(self.conversation_manager.get_state())
         if "interrupt_state" in fields:
-            data["interrupt_state"] = self._interrupt_state.to_dict()
+            data["interrupt_state"] = copy.deepcopy(self._interrupt_state.to_dict())
         if "system_prompt" in fields:
             # Store the content-block representation so round-trips preserve caching hints and
             # other block-level metadata.
@@ -2314,9 +2314,9 @@ class Agent(AgentBase, LocalAgent):
         if "state" in data:
             self.state = AgentState(data["state"])
         if "conversation_manager_state" in data:
-            self.conversation_manager.restore_from_session(data["conversation_manager_state"])
+            self.conversation_manager.restore_from_session(copy.deepcopy(data["conversation_manager_state"]))
         if "interrupt_state" in data:
-            self._interrupt_state = _InterruptState.from_dict(data["interrupt_state"])
+            self._interrupt_state = _InterruptState.from_dict(copy.deepcopy(data["interrupt_state"]))
         if "system_prompt" in data:
             self.system_prompt = copy.deepcopy(data["system_prompt"])
         if "model_state" in data:
