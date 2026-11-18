@@ -233,6 +233,8 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
               }
               break
             }
+            case 'unknownBlock':
+              break
             default: {
               logger.warn(`block_type=<${block.type}> | unsupported content type in openai user message | skipping`)
               break
@@ -318,6 +320,8 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
             }
             break
           }
+          case 'unknownBlock':
+            break
           default: {
             logger.warn(`block_type=<${block.type}> | unsupported content type in openai assistant message | skipping`)
           }

@@ -4,6 +4,8 @@ import {
   ContextWindowOverflowError,
   MaxTokensError,
   ModelThrottledError,
+  ModelNetworkError,
+  isFetchNetworkError,
   normalizeError,
 } from '../errors.js'
 import { Message, TextBlock } from '../types/messages.js'
@@ -165,6 +167,42 @@ describe('ModelThrottledError', () => {
 
       expect(error.cause).toBeUndefined()
     })
+  })
+})
+
+describe('ModelNetworkError', () => {
+  it('is a ModelError with its own name that preserves the cause', () => {
+    const cause = new TypeError('Failed to fetch')
+    const error = new ModelNetworkError('Language model stream error: Failed to fetch', { cause })
+
+    expect(error).toBeInstanceOf(ModelError)
+    expect(error).toMatchObject({
+      name: 'ModelNetworkError',
+      message: 'Language model stream error: Failed to fetch',
+      cause,
+    })
+  })
+})
+
+describe('isFetchNetworkError', () => {
+  it.each([
+    'Failed to fetch',
+    'network error',
+    'fetch failed',
+    'NetworkError when attempting to fetch resource.',
+    'Load failed',
+    'Network request failed',
+    'The Internet connection appears to be offline.',
+  ])('returns true for a TypeError with message %j', (message) => {
+    expect(isFetchNetworkError(new TypeError(message))).toBe(true)
+  })
+
+  it('returns false for a TypeError with another message', () => {
+    expect(isFetchNetworkError(new TypeError("Cannot read properties of undefined (reading 'body')"))).toBe(false)
+  })
+
+  it('returns false for a non-TypeError with a network failure message', () => {
+    expect(isFetchNetworkError(new Error('Failed to fetch'))).toBe(false)
   })
 })
 

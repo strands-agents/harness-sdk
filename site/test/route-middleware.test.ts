@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import path from 'node:path'
-import {
-  findCurrentNavSection,
-  filterSidebarByBasePath,
-  applyCollapse,
-  onRequest,
-} from '../src/route-middleware'
+import { findCurrentNavSection, filterSidebarByBasePath, applyCollapse, onRequest } from '../src/route-middleware'
 import { type NavLink } from '../src/config/navbar'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../src/sidebar'
 import { buildCourseSidebar, getPrevNextLinks, type DocInfo } from '../src/dynamic-sidebar'
@@ -99,9 +94,7 @@ describe('findCurrentNavSection', () => {
   })
 
   it('should not match external links', () => {
-    const externalOnlyLinks: NavLink[] = [
-      { label: 'Contribute', href: 'https://github.com/example', external: true },
-    ]
+    const externalOnlyLinks: NavLink[] = [{ label: 'Contribute', href: 'https://github.com/example', external: true }]
     const result = findCurrentNavSection('/anything/', externalOnlyLinks)
     expect(result).toBeUndefined()
   })
@@ -146,13 +139,61 @@ describe('Sidebar filtering with live navigation.yml data', () => {
     })
   })
 
+  it('keeps Labs project links on Labs pages but not inside a nested product', () => {
+    const labsSidebar: SidebarEntry[] = [
+      {
+        type: 'group',
+        label: 'Labs',
+        collapsed: false,
+        entries: [
+          {
+            type: 'link',
+            label: 'Overview',
+            href: '/docs/labs/',
+            isCurrent: false,
+          },
+          {
+            type: 'link',
+            label: 'Robots',
+            href: 'https://github.com/strands-labs/robots',
+            isCurrent: false,
+          },
+          {
+            type: 'group',
+            label: 'Strands Decider',
+            collapsed: false,
+            entries: [
+              {
+                type: 'link',
+                label: 'Overview',
+                href: '/docs/labs/strands-decider/overview/',
+                isCurrent: false,
+              },
+              {
+                type: 'link',
+                label: 'Inference',
+                href: '/docs/labs/strands-decider/inference/',
+                isCurrent: false,
+              },
+            ],
+          },
+        ],
+      },
+    ]
+
+    const labs = getAllLinks(filterSidebarByBasePath(labsSidebar as any, '/docs/labs/'))
+    expect(labs.map((link) => link.label)).toEqual(['Overview', 'Robots', 'Overview', 'Inference'])
+
+    const decider = getAllLinks(filterSidebarByBasePath(labsSidebar as any, '/docs/labs/strands-decider/'))
+    expect(decider.map((link) => link.label)).toEqual(['Overview', 'Inference'])
+  })
+
   it('has no doc-sidebar section for integrations (dynamic catalog sidebar)', () => {
     // Integrations pages build their rail from the catalog collection
     // (src/util/integrations-sidebar.ts), not from navigation.yml.
     const result = filterSidebarByBasePath(runtimeSidebar as any, '/docs/integrations/')
     expect(getAllLinks(result)).toHaveLength(0)
   })
-
 })
 
 describe('Integration: Full filtering flow', () => {
@@ -282,9 +323,7 @@ describe('filterSidebarByBasePath unwrapping', () => {
         type: 'group',
         label: 'User Guide',
         collapsed: false,
-        entries: [
-          { type: 'link', label: 'Quickstart', href: '/user-guide/quickstart/', isCurrent: false },
-        ],
+        entries: [{ type: 'link', label: 'Quickstart', href: '/user-guide/quickstart/', isCurrent: false }],
       },
     ]
 
@@ -304,9 +343,7 @@ describe('filterSidebarByBasePath unwrapping', () => {
         type: 'group',
         label: 'Python Examples',
         collapsed: false,
-        entries: [
-          { type: 'link', label: 'Weather', href: '/examples/python/weather/', isCurrent: false },
-        ],
+        entries: [{ type: 'link', label: 'Weather', href: '/examples/python/weather/', isCurrent: false }],
       },
     ]
 
@@ -361,9 +398,7 @@ describe('filterSidebarByBasePath with base path in URLs', () => {
         type: 'group',
         label: 'User Guide',
         collapsed: false,
-        entries: [
-          { type: 'link', label: 'Quickstart', href: '/docs/user-guide/quickstart/', isCurrent: false },
-        ],
+        entries: [{ type: 'link', label: 'Quickstart', href: '/docs/user-guide/quickstart/', isCurrent: false }],
       },
     ]
 
@@ -404,6 +439,6 @@ describe('onRequest integration: lesson pagination via real collection', () => {
 
     const pagination = starlightRoute.pagination as { prev?: SidebarLink; next?: SidebarLink }
     expect(pagination.prev).toBeUndefined()
-    expect(pagination.next?.label).toBe('Lesson 2: Switching Model Providers')
+    expect(pagination.next?.label).toBe('Lesson 2: Switching model providers')
   })
 })

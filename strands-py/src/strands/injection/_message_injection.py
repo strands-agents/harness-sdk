@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from .types import InjectionContext, InjectionTriggerPredicate
 
 if TYPE_CHECKING:
-    from .._middleware.stages import InvokeModelContext
+    from ..middleware.stages import InvokeModelContext
     from ..types.content import ContentBlock, Message, Messages
 
 logger = logging.getLogger(__name__)
@@ -186,6 +186,8 @@ def _fold_into_last_user_message(messages: Messages, text: str) -> tuple[Message
     folded: Message = {"role": target["role"], "content": content}
     if "metadata" in target:
         folded["metadata"] = target["metadata"]
+    if "tracking_id" in target:
+        folded["tracking_id"] = target["tracking_id"]
 
     result = list(messages)
     result[target_index] = folded

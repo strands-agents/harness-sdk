@@ -11,6 +11,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 import strands.agent.agent as agent_module
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.types.tools import ToolContext, ToolUse
 from strands.vended_tools.web_fetch import (
     WebFetchError,
@@ -452,3 +453,40 @@ def test__tag_attribute_joins_list_values():
     # BS4 returns ``class`` as a list; _tag_attribute must join it.
     tag = BeautifulSoup('<div class="foo bar">', "html.parser").div
     assert _tag_attribute(tag, "class") == "foo bar"
+
+
+class TestWebFetchRequestUsage:
+    """The analyst joins the request the tool call belongs to."""
+
+    @staticmethod
+    def _page_client() -> httpx.AsyncClient:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"content-type": "text/html"}, text="<p>page content</p>")
+
+        return _client(handler)
+
+    @pytest.mark.asyncio
+    async def test_analyst_joins_the_request_the_tool_call_belongs_to(self, monkeypatch):
+        received_kwargs: list[dict] = []
+
+        class _FakeAgent:
+            def __init__(self, **kwargs):
+                pass
+
+            async def invoke_async(self, prompt: str, **kwargs):
+                received_kwargs.append(kwargs)
+                return "the answer"
+
+        monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
+        tool = make_web_fetch(client=self._page_client(), model=SimpleNamespace(), mode="agentic")
+        request = _create_invocation_context({"turns": 1})
+        request._usage["turns_taken"] = 1
+        tool_use = {"toolUseId": "1", "name": "web_fetch", "input": {}}
+        ctx = ToolContext(tool_use=tool_use, agent=SimpleNamespace(), invocation_state={}, invocation_context=request)
+
+        await tool(url="https://example.com/", prompt="What is this about?", tool_context=ctx)
+
+        handed = received_kwargs[0]["invocation_context"]
+        handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+        assert _reached_limit(handed) is None
+        assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}

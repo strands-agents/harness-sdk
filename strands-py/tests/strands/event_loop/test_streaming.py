@@ -2,11 +2,21 @@ import threading
 import unittest.mock
 from typing import cast
 
+import pydantic
 import pytest
 
 import strands
 import strands.event_loop
-from strands.types._events import ModelStopReason, TypedEvent
+from strands.agent.invocation_context import _create_invocation_context
+from strands.types._events import (
+    ModelStopReason,
+    ModelStreamChunkEvent,
+    ReasoningRedactedContentStreamEvent,
+    ReasoningSignatureStreamEvent,
+    ReasoningTextStreamEvent,
+    TextStreamEvent,
+    TypedEvent,
+)
 from strands.types.content import Message, Messages
 from strands.types.streaming import (
     ContentBlockDeltaEvent,
@@ -628,6 +638,78 @@ def test_handle_content_block_delta(event: ContentBlockDeltaEvent, event_type, s
                 "redactedContent": b"",
             },
         ),
+        # Regression: text and a pending tool use both land in content (#4004).
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "t1", "name": "read_file", "input": "{}"},
+                "text": "Let me check that for you.",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [
+                    {"toolUse": {"toolUseId": "t1", "name": "read_file", "input": {}}},
+                    {"text": "Let me check that for you."},
+                ],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
+        # Regression: reasoning text + pending tool use — both must land (issue #4004)
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "t1", "name": "lookup", "input": '{"k": "v"}'},
+                "text": "",
+                "reasoningText": "thinking...",
+                "signature": "sig-123",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [
+                    {"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {"k": "v"}}},
+                    {
+                        "reasoningContent": {
+                            "reasoningText": {"text": "thinking...", "signature": "sig-123"},
+                        },
+                    },
+                ],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
+        # Regression: text + reasoning + pending tool use — all three blocks land (issue #4004)
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "t1", "name": "multi", "input": "{}"},
+                "text": "ok",
+                "reasoningText": "hmm",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [
+                    {"toolUse": {"toolUseId": "t1", "name": "multi", "input": {}}},
+                    {"text": "ok"},
+                    {"reasoningContent": {"reasoningText": {"text": "hmm"}}},
+                ],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
     ],
 )
 def test_handle_content_block_stop(state, exp_updated_state):
@@ -1196,6 +1278,53 @@ async def test_process_stream_redacted(response, exp_events, agenerator, alist):
     assert non_typed_events == []
 
 
+_USAGE_METADATA = {
+    "metadata": {"usage": {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}, "metrics": {"latencyMs": 0}}
+}
+
+
+@pytest.mark.asyncio
+async def test_process_stream_adds_the_call_usage_to_the_invocation_context(agenerator, alist):
+    invocation_context = _create_invocation_context()
+    response = [{"messageStart": {"role": "assistant"}}, {"messageStop": {"stopReason": "end_turn"}}, _USAGE_METADATA]
+
+    await alist(
+        strands.event_loop.streaming.process_stream(agenerator(response), invocation_context=invocation_context)
+    )
+
+    assert invocation_context.usage == {"turns_taken": 0, "inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+
+
+@pytest.mark.asyncio
+async def test_process_stream_adds_the_usage_when_the_consumer_stops_at_the_stop_event(agenerator):
+    invocation_context = _create_invocation_context()
+    response = [{"messageStart": {"role": "assistant"}}, {"messageStop": {"stopReason": "end_turn"}}, _USAGE_METADATA]
+    stream = strands.event_loop.streaming.process_stream(agenerator(response), invocation_context=invocation_context)
+
+    async for event in stream:
+        if "stop" in event:
+            break
+    await stream.aclose()
+
+    assert invocation_context.usage == {"turns_taken": 0, "inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+
+
+@pytest.mark.asyncio
+async def test_process_stream_adds_nothing_to_the_invocation_context_when_the_stream_raises(alist):
+    invocation_context = _create_invocation_context()
+
+    async def failing_stream():
+        yield _USAGE_METADATA
+        raise RuntimeError("stream failed")
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        await alist(
+            strands.event_loop.streaming.process_stream(failing_stream(), invocation_context=invocation_context)
+        )
+
+    assert invocation_context.usage == {"turns_taken": 0, "inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+
+
 def _get_message_from_event(event: ModelStopReason) -> Message:
     return cast(Message, event["stop"][1])
 
@@ -1278,14 +1407,10 @@ async def test_process_stream_with_signature(agenerator, alist):
     assert message["content"][1]["text"] == "Sure! Let’s do it"
 
 
+@pytest.mark.parametrize("same_index", [False, True])
 @pytest.mark.asyncio
-async def test_process_stream_with_multiple_signed_reasoning_blocks(agenerator, alist):
-    """Each signed reasoning block keeps only its own signature.
-
-    Guards against https://github.com/strands-agents/harness-sdk/issues/3425: the signature accumulator
-    was never cleared when a reasoning block finalized, so later blocks carried a cumulative concatenation
-    ("SIG1", "SIG1SIG2", ...) that providers reject as a modified thinking signature on the next request.
-    """
+async def test_process_stream_with_multiple_signed_reasoning_blocks(same_index, agenerator, alist):
+    """Keep reasoning blocks distinct across stops (#3425) and within one index (#5498)."""
     response = [
         {"messageStart": {"role": "assistant"}},
         {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "first"}}, "contentBlockIndex": 0}},
@@ -1296,6 +1421,12 @@ async def test_process_stream_with_multiple_signed_reasoning_blocks(agenerator, 
         {"contentBlockStop": {"contentBlockIndex": 1}},
         {"messageStop": {"stopReason": "end_turn"}},
     ]
+    if same_index:
+        response.pop(3)
+        for chunk in response:
+            for event in chunk.values():
+                if "contentBlockIndex" in event:
+                    event["contentBlockIndex"] = 0
 
     stream = strands.event_loop.streaming.process_stream(agenerator(response))
 
@@ -1303,9 +1434,116 @@ async def test_process_stream_with_multiple_signed_reasoning_blocks(agenerator, 
 
     message = _get_message_from_event(last_event)
 
-    tru_signatures = [block["reasoningContent"]["reasoningText"]["signature"] for block in message["content"]]
-    exp_signatures = ["SIG1", "SIG2"]
-    assert tru_signatures == exp_signatures
+    tru_content = message["content"]
+    exp_content = [
+        {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+        {"reasoningContent": {"reasoningText": {"text": "second", "signature": "SIG2"}}},
+    ]
+    assert tru_content == exp_content
+
+
+@pytest.mark.parametrize(
+    ("reasoning_deltas", "exp_content", "exp_event_types"),
+    [
+        (
+            [{"text": "first"}, {"signature": "SIG"}, {"signature": "1"}, {"text": "second"}, {"signature": "SIG2"}],
+            [
+                {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+                {"reasoningContent": {"reasoningText": {"text": "second", "signature": "SIG2"}}},
+            ],
+            [
+                ReasoningTextStreamEvent,
+                ReasoningSignatureStreamEvent,
+                ReasoningSignatureStreamEvent,
+                ReasoningTextStreamEvent,
+                ReasoningSignatureStreamEvent,
+            ],
+        ),
+        (
+            [{"text": "first"}, {"signature": "SIG1"}, {"redactedContent": b"redacted"}, {"redactedContent": b" data"}],
+            [
+                {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+                {"reasoningContent": {"redactedContent": b"redacted data"}},
+            ],
+            [
+                ReasoningTextStreamEvent,
+                ReasoningSignatureStreamEvent,
+                ReasoningRedactedContentStreamEvent,
+                ReasoningRedactedContentStreamEvent,
+            ],
+        ),
+        (
+            [{"signature": "SIG1"}, {"text": "second"}],
+            [
+                {"reasoningContent": {"reasoningText": {"text": "", "signature": "SIG1"}}},
+                {"reasoningContent": {"reasoningText": {"text": "second"}}},
+            ],
+            [ReasoningSignatureStreamEvent, ReasoningTextStreamEvent],
+        ),
+    ],
+    ids=["chunked-signature", "redacted-transition", "signature-only"],
+)
+@pytest.mark.asyncio
+async def test_process_stream_same_index_reasoning_boundaries(
+    reasoning_deltas, exp_content, exp_event_types, agenerator, alist
+):
+    """Preserve signed reasoning boundaries and delta event types under one index (#5498)."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        *[
+            {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"reasoningContent": delta}}}
+            for delta in reasoning_deltas
+        ],
+        {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"text": "answer"}}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(response)))
+    tru_message = _get_message_from_event(events[-1])
+    exp_message = {"role": "assistant", "content": [exp_content[0], {"text": "answer"}, *exp_content[1:]]}
+    assert tru_message == exp_message
+    tru_chunks = [event["event"] for event in events if isinstance(event, ModelStreamChunkEvent)]
+    assert tru_chunks == response
+    delta_events = [event for event in events if not isinstance(event, (ModelStreamChunkEvent, ModelStopReason))]
+    tru_event_types = [type(event) for event in delta_events]
+    assert tru_event_types == [*exp_event_types, TextStreamEvent]
+    tru_deltas = [event["delta"]["reasoningContent"] for event in delta_events[:-1]]
+    assert tru_deltas == reasoning_deltas
+
+
+@pytest.mark.parametrize("with_citation", [False, True])
+@pytest.mark.asyncio
+async def test_process_stream_reasoning_boundary_preserves_pending_content(with_citation, agenerator, alist):
+    """A reasoning boundary must not finalize unrelated accumulators (#5498)."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "tool-1", "name": "test"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"value":'}}}},
+        {"contentBlockDelta": {"delta": {"text": "before"}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "first"}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "SIG1"}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "second"}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "SIG2"}}}},
+        {"contentBlockDelta": {"delta": {"text": " after"}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": "1}"}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+    citation = {"location": {"documentChar": {"documentIndex": 0, "start": 10, "end": 20}}, "title": "Test Doc"}
+    if with_citation:
+        response.insert(4, {"contentBlockDelta": {"delta": {"citation": citation}}})
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(response)))
+    tru_content = _get_message_from_event(events[-1])["content"]
+    exp_content = [
+        {"reasoningContent": {"reasoningText": {"text": "first", "signature": "SIG1"}}},
+        {"toolUse": {"toolUseId": "tool-1", "name": "test", "input": {"value": 1}}},
+        {"text": "before after"},
+        {"reasoningContent": {"reasoningText": {"text": "second", "signature": "SIG2"}}},
+    ]
+    if with_citation:
+        exp_content[2] = {"citationsContent": {"citations": [citation], "content": [{"text": "before after"}]}}
+    assert tru_content == exp_content
 
 
 @pytest.mark.asyncio
@@ -1433,6 +1671,87 @@ async def test_stream_messages_strips_id_before_model_call(agenerator, alist):
     assert sent_messages == [{"role": "user", "content": [{"text": "hi"}]}]
     assert "tracking_id" not in sent_messages[0]
     assert "metadata" not in sent_messages[0]
+
+
+def _summary_history():
+    summary = {"provider": "anthropic", "signature": "SIG", "text": "SUMMARY"}
+    return [
+        {"role": "assistant", "content": [{"summary": summary}, {"text": "next"}]},
+        {"role": "user", "content": [{"text": "go"}]},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server_side_summary", [None, False])
+async def test_stream_messages_sends_summary_text_to_model_without_server_side_summary(
+    server_side_summary, agenerator, alist
+):
+    mock_model = unittest.mock.MagicMock()
+    mock_model.model_info.capabilities.server_side_summary = server_side_summary
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+    messages = _summary_history()
+
+    await alist(
+        strands.event_loop.streaming.stream_messages(mock_model, system_prompt=None, messages=messages, tool_specs=None)
+    )
+
+    sent_messages = mock_model.stream.call_args[0][0]
+    assert sent_messages[0]["content"] == [{"text": "SUMMARY"}, {"text": "next"}]
+    assert messages == _summary_history()
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_keeps_summary_block_for_model_with_server_side_summary(agenerator, alist):
+    mock_model = unittest.mock.MagicMock()
+    mock_model.model_info.capabilities.server_side_summary = True
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+
+    await alist(
+        strands.event_loop.streaming.stream_messages(
+            mock_model, system_prompt=None, messages=_summary_history(), tool_specs=None
+        )
+    )
+
+    assert mock_model.stream.call_args[0][0] == _summary_history()
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_keeps_the_cache_point_ahead_of_the_latest_injected_text(agenerator, alist):
+    mock_model = unittest.mock.MagicMock()
+    mock_model.model_info.capabilities.temporary_messages = False
+    mock_model.stream.side_effect = lambda *args, **kwargs: agenerator([{"contentBlockStop": {}}])
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "Refactor."},
+                {"injected": {"text": "reminder", "source": "test"}},
+                {"text": "\n\nper-call text"},
+            ],
+        }
+    ]
+
+    await alist(
+        strands.event_loop.streaming.stream_messages(
+            mock_model, system_prompt=None, messages=messages, tool_specs=None, dynamic_trailing_blocks=1
+        )
+    )
+    await alist(
+        strands.event_loop.streaming.stream_messages(
+            mock_model,
+            system_prompt=None,
+            messages=[*messages, {"role": "assistant", "content": [{"text": "Sure"}]}],
+            tool_specs=None,
+        )
+    )
+
+    tru_trailing = [call.kwargs.get("dynamic_trailing_blocks") for call in mock_model.stream.call_args_list]
+    assert tru_trailing == [2, 2]
+    assert mock_model.stream.call_args_list[0][0][0][0]["content"] == [
+        {"text": "Refactor."},
+        {"text": "\n\nreminder"},
+        {"text": "\n\nper-call text"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -1818,3 +2137,24 @@ async def test_stream_messages_forwards_cancel_signal_to_model(agenerator, alist
     await alist(stream)
 
     assert mock_model.stream.call_args.kwargs["cancel_signal"] is cancel_signal
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_forwards_structured_output_model_to_model(agenerator, alist):
+    class Answer(pydantic.BaseModel):
+        value: str
+
+    mock_model = unittest.mock.MagicMock()
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+
+    stream = strands.event_loop.streaming.stream_messages(
+        mock_model,
+        system_prompt=None,
+        messages=[{"role": "user", "content": [{"text": "Hello"}]}],
+        tool_specs=None,
+        structured_output_model=Answer,
+    )
+
+    await alist(stream)
+
+    assert mock_model.stream.call_args.kwargs["structured_output_model"] is Answer

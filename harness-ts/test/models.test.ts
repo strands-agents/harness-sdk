@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Model, ModelRouter } from '@strands-agents/sdk'
+import { lookupModel } from '../src/model-info.js'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+import { AnthropicBedrock } from '@anthropic-ai/bedrock-sdk'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   resolveModel,
@@ -13,11 +19,18 @@ import type { Effort } from '../src/types/agent.js'
 import { DEFAULT_EFFORT } from '../src/defaults.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 
+// Pass-through by default; one test swaps in a vendor default the provider does not take.
+vi.mock('../src/model-info.js', async (importOriginal) => {
+  const info = await importOriginal<typeof import('../src/model-info.js')>()
+  return { ...info, lookupModel: vi.fn(info.lookupModel) }
+})
+
 const DEFAULT = 'bedrock/global.anthropic.claude-opus-4-8'
 
 afterEach(() => {
   resetWarnOnce()
   vi.unstubAllEnvs()
+  vi.mocked(lookupModel).mockReset()
 })
 
 function resolve(
@@ -28,6 +41,17 @@ function resolve(
   cachingExplicit = false
 ): Promise<Model> {
   return resolveModel(model, DEFAULT, effort, webSearch, caching, cachingExplicit) as Promise<Model>
+}
+
+function bedrockClient(model: Model): AnthropicBedrock {
+  return (model as unknown as { _client: AnthropicBedrock })._client
+}
+
+async function region(model: Model): Promise<string> {
+  if (model instanceof AnthropicModel) {
+    return bedrockClient(model).awsRegion
+  }
+  return (model as unknown as { _client: { config: { region(): Promise<string> } } })._client.config.region()
 }
 
 describe('resolveModel', () => {
@@ -41,24 +65,80 @@ describe('resolveModel', () => {
     }
   )
 
-  it('uses AWS_DEFAULT_REGION when AWS_REGION is absent and gives AWS_REGION precedence', async () => {
-    vi.stubEnv('AWS_REGION', undefined)
-    vi.stubEnv('AWS_DEFAULT_REGION', 'us-east-2')
-    const region = async (): Promise<string> => {
-      const model = await resolve(DEFAULT)
-      const client = (model as unknown as { _client: { config: { region(): Promise<string> } } })._client
-      return client.config.region()
-    }
-    expect(await region()).toBe('us-east-2')
-    vi.stubEnv('AWS_REGION', 'us-west-2')
-    expect(await region()).toBe('us-west-2')
+  it.each([
+    ['bedrock/global.anthropic.claude-opus-5-5', 'global.anthropic.claude-opus-5-5'],
+    ['global.anthropic.claude-haiku-4-5-20251001-v1:0', 'global.anthropic.claude-haiku-4-5-20251001-v1:0'],
+    ['bedrock/us.anthropic.claude-3-haiku-20240307-v1:0', 'us.anthropic.claude-3-haiku-20240307-v1:0'],
+  ])('runs %s on the Anthropic Messages API through an AnthropicBedrock client', async (spec, modelId) => {
+    const model = await resolve(spec)
+    expect(model).toBeInstanceOf(AnthropicModel)
+    expect(model.getConfig().modelId).toBe(modelId)
+    expect(bedrockClient(model)).toBeInstanceOf(AnthropicBedrock)
   })
+
+  it.each([
+    [{}, 'https://bedrock-runtime.us-west-2.amazonaws.com'],
+    [{ AWS_ENDPOINT_URL: 'https://vpce.example' }, 'https://vpce.example'],
+    [
+      { AWS_ENDPOINT_URL: 'https://all.example', AWS_ENDPOINT_URL_BEDROCK_RUNTIME: 'https://runtime.example' },
+      'https://runtime.example',
+    ],
+    [
+      { AWS_ENDPOINT_URL_BEDROCK_RUNTIME: 'https://runtime.example', ANTHROPIC_BEDROCK_BASE_URL: 'https://a.example' },
+      'https://a.example',
+    ],
+  ])('points the AnthropicBedrock client at the endpoint override %o', async (env, baseURL) => {
+    for (const name of ['AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_BEDROCK_RUNTIME', 'ANTHROPIC_BEDROCK_BASE_URL']) {
+      vi.stubEnv(name, (env as Record<string, string>)[name] ?? '')
+    }
+    vi.stubEnv('AWS_REGION', 'us-west-2')
+    expect(bedrockClient(await resolve('bedrock/global.anthropic.claude-opus-5-5')).baseURL).toBe(baseURL)
+  })
+
+  it('leaves AWS_BEARER_TOKEN_BEDROCK to the AnthropicBedrock client, which reads it itself', async () => {
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'bedrock-api-key')
+    expect(bedrockClient(await resolve('bedrock/global.anthropic.claude-opus-5-5')).apiKey).toBe('bedrock-api-key')
+  })
+
+  it.each(['bedrock/amazon.nova-pro-v1:0', 'bedrock/us.openai.gpt-5.6-luna', 'bedrock/anthropic.other-model'])(
+    'keeps %s on Converse',
+    async (spec) => {
+      expect(await resolve(spec)).toBeInstanceOf(BedrockModel)
+    }
+  )
+
+  it.each([DEFAULT, 'bedrock/amazon.nova-pro-v1:0'])(
+    'uses AWS_DEFAULT_REGION when AWS_REGION is absent and gives AWS_REGION precedence for %s',
+    async (spec) => {
+      vi.stubEnv('AWS_REGION', undefined)
+      vi.stubEnv('AWS_DEFAULT_REGION', 'us-east-2')
+      expect(await region(await resolve(spec))).toBe('us-east-2')
+      vi.stubEnv('AWS_REGION', 'us-west-2')
+      expect(await region(await resolve(spec))).toBe('us-west-2')
+    }
+  )
+
+  it.each([
+    ['the AWS config region', '[default]\nregion = eu-central-1\n', 'eu-central-1'],
+    ['us-west-2', '', 'us-west-2'],
+  ])('falls back to %s without a region in the environment', async (_, config, expected) => {
+    const configFile = join(mkdtempSync(join(tmpdir(), 'harness-aws-')), 'config')
+    writeFileSync(configFile, config)
+    vi.stubEnv('AWS_REGION', undefined)
+    vi.stubEnv('AWS_DEFAULT_REGION', undefined)
+    vi.stubEnv('AWS_PROFILE', undefined)
+    vi.stubEnv('AWS_CONFIG_FILE', configFile)
+    for (const spec of [DEFAULT, 'bedrock/amazon.nova-pro-v1:0']) {
+      expect(await region(await resolve(spec))).toBe(expected)
+    }
+  })
+
   it('resolves undefined to the default with thinking', async () => {
     const model = await resolve(undefined)
-    expect(model).toBeInstanceOf(BedrockModel)
+    expect(model).toBeInstanceOf(AnthropicModel)
     const config = model.getConfig()
     expect(config.modelId).toBe('global.anthropic.claude-opus-4-8')
-    expect(config.additionalRequestFields).toEqual({
+    expect(config.params).toEqual({
       thinking: { type: 'adaptive', display: 'summarized' },
       output_config: { effort: 'high' },
     })
@@ -107,7 +187,7 @@ describe('resolveModel', () => {
 
   it('leaves provider defaults when effort is off', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-opus-4-8', 'off')
-    expect(model.getConfig().additionalRequestFields).toBeUndefined()
+    expect(model.getConfig().params).toBeUndefined()
   })
 
   it('rejects an effort outside the enum by name', async () => {
@@ -118,13 +198,13 @@ describe('resolveModel', () => {
 
   it('applies an explicit thinking level', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-opus-4-8', 'low')
-    const fields = model.getConfig().additionalRequestFields as { output_config: { effort: string } }
+    const fields = model.getConfig().params as { output_config: { effort: string } }
     expect(fields.output_config.effort).toBe('low')
   })
 
   it('accepts a provider-specific level', async () => {
     const model = await resolve('bedrock/global.anthropic.claude-opus-4-8', 'max')
-    const fields = model.getConfig().additionalRequestFields as { output_config: { effort: string } }
+    const fields = model.getConfig().params as { output_config: { effort: string } }
     expect(fields.output_config.effort).toBe('max')
   })
 
@@ -145,25 +225,64 @@ describe('resolveModel', () => {
     )
   })
 
-  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra'])(
-    'resolves Astra effort for %s',
+  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra', 'us.openai.gpt-6.1-sol'])(
+    'resolves Astra and 6.1 Sol effort without none for %s',
     async (modelId) => {
       for (const [thinking, effort] of [
-        ['auto', 'high'],
+        ['auto', 'low'],
         ['low', 'low'],
         ['max', 'max'],
       ] as const) {
         const model = await resolve(`bedrock/${modelId}`, thinking)
         expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
       }
-      expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toEqual({
-        reasoning: { effort: 'none' },
-      })
+      expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toBeUndefined()
       await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
         "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
       )
     }
   )
+
+  // https://github.com/strands-agents/harness-sdk/issues/5191
+  it.each(['openai.gpt-5.4', 'us.openai.gpt-5.4', 'openai.gpt-5.5', 'us.openai.gpt-5.5', 'global.openai.gpt-5.5'])(
+    'resolves GPT-5.4/5.5 effort without max for %s',
+    async (modelId) => {
+      for (const [thinking, effort] of [
+        ['auto', 'medium'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ] as const) {
+        const model = await resolve(`bedrock/${modelId}`, thinking)
+        expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
+      }
+      for (const thinking of ['minimal', 'max'] as const) {
+        await expect(resolve(`bedrock/${modelId}`, thinking)).rejects.toThrow(
+          "Supported levels: low, medium, high, xhigh (or 'auto', 'off')."
+        )
+      }
+    }
+  )
+
+  it.each([
+    'openai.gpt-5.6-cyber',
+    'us.openai.gpt-6-sol',
+    'us.openai.gpt-6.1-terra',
+    'openai.gpt-daybreak-blue-5.6-sol',
+    'us.openai.gpt-daybreak-blue-5.6-sol',
+  ])('resolves every GPT-5.6, GPT-6, and Daybreak effort for %s', async (modelId) => {
+    for (const [thinking, effort] of [
+      ['low', 'low'],
+      ['max', 'max'],
+      ['off', 'none'],
+    ] as const) {
+      const model = await resolve(`bedrock/${modelId}`, thinking)
+      expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
+    }
+    await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
+      "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
+    )
+  })
 
   it('uses the Qwen Bedrock reasoning field and levels', async () => {
     const model = await resolve('bedrock/qwen.qwen3-32b-v1:0', 'minimal')
@@ -203,8 +322,8 @@ describe('resolveModel', () => {
   })
 
   it('rejects a level the provider does not support', async () => {
-    await expect(resolve('google/gemini-3.5-flash', 'xhigh')).rejects.toThrow('not supported by this provider')
-    await expect(resolve('openai/gpt-5.6-sol', 'max')).rejects.toThrow('not supported by this provider')
+    await expect(resolve('google/gemini-3.5-flash', 'xhigh')).rejects.toThrow('not supported by model gemini-3.5-flash')
+    await expect(resolve('openai/gpt-5.6-sol', 'max')).rejects.toThrow('not supported by model gpt-5.6-sol')
   })
 
   it('rejects a level the model does not support', async () => {
@@ -228,13 +347,33 @@ describe('resolveModel', () => {
     expect(params.thinkingConfig.thinkingLevel).toBe('high')
   })
 
+  it.each([
+    ['google/gemini-4-argon', 'minimal', 'Supported levels: low, medium, high'],
+    ['google/gemini-3.6-flash', 'minimal', 'minimal'],
+    ['google/gemini-3.1-flash-lite-image', 'minimal', 'minimal'],
+    ['google/gemini-3.1-flash-lite-image', 'low', 'Supported levels: minimal, high'],
+    ['bedrock-mantle/google.gemma-4-31b', 'auto', 'high'],
+    ['bedrock-mantle/google.gemma-4-31b', 'off', 'none'],
+    ['bedrock-mantle/google.gemma-4-31b', 'low', 'Supported levels: high'],
+  ])('resolves the per-model levels for %s with effort %s', async (model, effort, expected) => {
+    if (expected.startsWith('Supported levels')) {
+      await expect(resolve(model, effort)).rejects.toThrow(`not supported by model ${model.split('/')[1]}. ${expected}`)
+      return
+    }
+    const params = (await resolve(model, effort)).getConfig().params as {
+      reasoning?: { effort: string }
+      thinkingConfig?: { thinkingLevel: string }
+    }
+    expect(params.reasoning?.effort ?? params.thinkingConfig?.thinkingLevel).toBe(expected)
+  })
+
   it('uses the google model id directly', async () => {
     const model = await resolve('google/gemini-3.5-flash', 'off')
     expect(model.getConfig().modelId).toBe('gemini-3.5-flash')
   })
 
   it('maps openai to reasoning effort', async () => {
-    const model = await resolve('openai/gpt-5.6-sol')
+    const model = await resolve('openai/gpt-5.6-sol', 'high')
     expect(model).toBeInstanceOf(Model)
     const params = model.getConfig().params as { reasoning: { effort: string } }
     expect(params.reasoning.effort).toBe('high')
@@ -300,7 +439,12 @@ describe('resolveModel', () => {
     'global.anthropic.claude-opus-4-7',
     'global.anthropic.claude-opus-4-8',
     'global.anthropic.claude-opus-5',
+    'global.anthropic.claude-opus-5-5',
     'global.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-haiku-5-5',
+    'au.anthropic.claude-haiku-5-5',
+    'anthropic.claude-haiku-5-5',
+    'global.anthropic.claude-haiku-6',
     'global.anthropic.claude-fable-5',
     'global.anthropic.claude-fable-5-1',
     'anthropic.claude-mythos-preview',
@@ -309,12 +453,12 @@ describe('resolveModel', () => {
 
   it.each(NO_THINKING_CLAUDE)('sends no thinking block to %s', async (modelId) => {
     const model = await resolve(`bedrock/${modelId}`)
-    expect(model.getConfig().additionalRequestFields).toBeUndefined()
+    expect(model.getConfig().params).toBeUndefined()
   })
 
   it.each(EXTENDED_CLAUDE)('sends the extended block to %s', async (modelId) => {
     const model = await resolve(`bedrock/${modelId}`)
-    expect(model.getConfig().additionalRequestFields).toEqual(EXTENDED)
+    expect(model.getConfig().params).toEqual(EXTENDED)
   })
 
   it.each([
@@ -325,39 +469,34 @@ describe('resolveModel', () => {
     ['max', 49_152],
   ] as const)('maps %s to a budget of %d that the api accepts', async (level, budget) => {
     const config = (await resolve('bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0', level)).getConfig()
-    expect(config.additionalRequestFields).toEqual({ thinking: { type: 'enabled', budget_tokens: budget } })
+    expect(config.params).toEqual({ thinking: { type: 'enabled', budget_tokens: budget } })
     expect(budget).toBeLessThan(config.maxTokens!)
   })
 
   it.each([
     ['claude-sonnet-4-5-20250929-v1:0', 64_000],
-    ['claude-sonnet-4.5', 64_000],
     ['claude-sonnet-4-6', 128_000],
-    ['claude-sonnet-4.6', 128_000],
     ['claude-sonnet-5', 128_000],
     ['claude-opus-4-5-20251101-v1:0', 64_000],
-    ['claude-opus-4.5', 64_000],
     ['claude-opus-4-8', 128_000],
     ['claude-opus-5', 128_000],
+    ['claude-opus-5-5', 128_000],
+    ['claude-haiku-4-5-20251001-v1:0', 64_000],
+    ['claude-haiku-5-5', 128_000],
   ] as const)('gives %s a max tokens ceiling of %d', async (modelId, maxTokens) => {
     const model = await resolve(`bedrock/global.anthropic.${modelId}`)
     expect(model.getConfig().maxTokens).toBe(maxTokens)
   })
 
-  it.each(['claude-haiku-latest', 'claude-haiku'])('falls open to extended, not adaptive, for %s', async (modelId) => {
-    const model = await resolve(`bedrock/global.anthropic.${modelId}`)
-    expect(model.getConfig().additionalRequestFields).toEqual(EXTENDED)
-  })
-
-  it('clamps the budget below a small max tokens', async () => {
-    const model = await resolve('anthropic/claude-haiku', 'max')
+  it('clamps a version-led id against the anthropic-direct fallback', async () => {
+    const model = await resolve('anthropic/claude-4-5-haiku', 'max')
     expect(model.getConfig().maxTokens).toBe(32_000)
     expect(model.getConfig().params).toEqual({ thinking: { type: 'enabled', budget_tokens: 31_999 } })
   })
 
   it.each(ADAPTIVE_CLAUDE)('sends the adaptive block to %s', async (modelId) => {
-    const model = await resolve(`bedrock/${modelId}`)
-    expect(model.getConfig().additionalRequestFields).toEqual(ADAPTIVE)
+    const model = await resolve(`bedrock/${modelId}`, 'high')
+    expect(model.getConfig().params).toEqual(ADAPTIVE)
   })
 
   it('rejects an explicit thinking level on a claude below the thinking floor', async () => {
@@ -386,13 +525,17 @@ describe('resolveModel', () => {
     expect(model.getConfig().maxTokens).toBe(128_000)
   })
 
-  it('does not force max tokens on a non-claude bedrock model', async () => {
-    const model = await resolve('bedrock/amazon.nova-pro-v1:0')
-    expect(model.getConfig().maxTokens).toBeUndefined()
+  it.each([
+    ['bedrock/anthropic.claude-3-haiku-20240307-v1:0', 4_096],
+    ['anthropic/claude-3-5-haiku-20241022', 8_192],
+    ['anthropic/claude-unknown-1', 32_000],
+    ['bedrock/anthropic.claude-unknown-1', 32_000],
+  ] as const)('caps %s without a tier ceiling at the model info output limit (%d)', async (spec, maxTokens) => {
+    expect((await resolve(spec)).getConfig().maxTokens).toBe(maxTokens)
   })
 
-  it('does not force max tokens on a legacy claude 3 bedrock id', async () => {
-    const model = await resolve('bedrock/anthropic.claude-3-haiku-20240307-v1:0')
+  it('does not force max tokens on a non-claude bedrock model', async () => {
+    const model = await resolve('bedrock/amazon.nova-pro-v1:0')
     expect(model.getConfig().maxTokens).toBeUndefined()
   })
 
@@ -402,17 +545,19 @@ describe('resolveModel', () => {
     expect(model).toBeInstanceOf(OpenAIModel)
     const config = model.getConfig() as { modelId: string; params: { reasoning: { effort: string } } }
     expect(config.modelId).toBe('openai.gpt-oss-120b')
-    expect(config.params.reasoning.effort).toBe('high')
+    expect(config.params.reasoning.effort).toBe('medium')
   })
 
   it('rejects an unsupported thinking level for bedrock-mantle', async () => {
-    await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow('not supported by this provider')
+    await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow(
+      'not supported by model openai.gpt-oss-120b'
+    )
   })
 
   it('adds the Bedrock Web Search tool for bedrock-mantle web_search', async () => {
     const model = await resolve('bedrock-mantle/openai.gpt-5.6-luna', 'auto', true)
     const params = model.getConfig().params as { reasoning: { effort: string }; tools: unknown }
-    expect(params.reasoning.effort).toBe('high')
+    expect(params.reasoning.effort).toBe('medium')
     expect(params.tools).toEqual([{ type: 'web_search', external_web_access: true }])
   })
 
@@ -468,12 +613,24 @@ describe('resolveModel', () => {
     expect(model.getConfig().builtInTools).toBeUndefined()
   })
 
+  it('adds the anthropic web_search server tool as a direct call', async () => {
+    const model = await resolve('anthropic/claude-opus-4-8', 'high', true)
+    expect(model.getConfig().anthropicTools).toEqual([
+      { type: 'web_search_20260318', name: 'web_search', allowed_callers: ['direct'] },
+    ])
+    expect(model.getConfig().params).toHaveProperty('thinking')
+  })
+
+  it('omits anthropic server tools when web_search is off', async () => {
+    const model = await resolve('anthropic/claude-opus-4-8', 'high', false)
+    expect(model.getConfig()).not.toHaveProperty('anthropicTools')
+  })
+
   it('never adds a native search tool where the model has none', async () => {
     // The factory only passes web_search for models that have it; the builders never add the tool elsewhere.
     for (const id of ['bedrock-mantle/qwen.qwen3-32b-v1:0', 'bedrock-mantle/openai.gpt-oss-120b-1:0']) {
       expect((await resolve(id, 'high', true)).getConfig().params).not.toHaveProperty('tools')
     }
-    expect((await resolve('anthropic/claude-opus-4-8', 'high', true)).getConfig()).not.toHaveProperty('anthropicTools')
   })
 
   it('warns instead of throwing when an effort level is requested on a Model instance', async () => {
@@ -501,6 +658,35 @@ describe('resolveModel', () => {
     const model = await resolve('anthropic/claude-opus-4-8', 'auto', false, false)
     expect(model.getConfig().cacheConfig).toBeUndefined()
   })
+
+  it.each([
+    { spec: 'openai/gpt-5.6-sol', modelId: 'gpt-5.6-sol', searchTool: { type: 'web_search' }, caching: true },
+    { spec: 'openai/gpt-5.6-sol', modelId: 'gpt-5.6-sol', searchTool: { type: 'web_search' }, caching: false },
+    {
+      spec: 'bedrock-mantle/openai.gpt-6-luna',
+      modelId: 'openai.gpt-6-luna',
+      searchTool: { type: 'web_search', external_web_access: true },
+      caching: true,
+    },
+    {
+      spec: 'bedrock-mantle/openai.gpt-6-luna',
+      modelId: 'openai.gpt-6-luna',
+      searchTool: { type: 'web_search', external_web_access: true },
+      caching: false,
+    },
+  ])(
+    'configures $spec caching=$caching without changing reasoning or search',
+    async ({ spec, modelId, searchTool, caching }) => {
+      const model = await resolve(spec, 'high', true, caching)
+      // contextWindowLimit comes from the SDK's model info, not the harness.
+      const { contextWindowLimit: _, ...config } = model.getConfig()
+      expect(config).toStrictEqual({
+        modelId,
+        ...(caching ? { cacheConfig: { strategy: 'auto' } } : {}),
+        params: { reasoning: { effort: 'high' }, tools: [searchTool] },
+      })
+    }
+  )
 
   it('warns instead of throwing when caching is explicitly requested on a Model instance', async () => {
     const warn = vi.fn()
@@ -539,38 +725,65 @@ describe('resolveModel', () => {
   })
 })
 
-// https://github.com/strands-agents/harness-sdk/issues/4472
+// https://github.com/strands-agents/harness-sdk/issues/4472; the level is the vendor's default for the model from
+// the shared model info (Claude Code, Codex, Gemini CLI), else the provider's high.
 describe('default effort', () => {
-  // [model spec, path of the effort field in the resolved config]
-  const HIGH_BY_DEFAULT: [string, string[]][] = [
-    ['bedrock/global.anthropic.claude-opus-5', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/global.anthropic.claude-sonnet-5', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/us.anthropic.claude-sonnet-4-6', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/global.anthropic.claude-fable-5-1', ['additionalRequestFields', 'output_config', 'effort']],
-    ['bedrock/openai.gpt-5.6-sol', ['additionalRequestFields', 'reasoning', 'effort']],
-    ['bedrock/global.openai.gpt-6-astra', ['additionalRequestFields', 'reasoning', 'effort']],
-    ['bedrock/openai.gpt-oss-120b-1:0', ['additionalRequestFields', 'reasoning_effort']],
-    ['bedrock/qwen.qwen3-32b-v1:0', ['additionalRequestFields', 'reasoning_effort']],
-    ['bedrock/us.xai.grok-4', ['additionalRequestFields', 'reasoning_effort']],
-    ['anthropic/claude-opus-5', ['params', 'output_config', 'effort']],
-    ['openai/gpt-5.6-sol', ['params', 'reasoning', 'effort']],
-    ['bedrock-mantle/openai.gpt-5.6-sol', ['params', 'reasoning', 'effort']],
-    ['google/gemini-3.5-flash', ['params', 'thinkingConfig', 'thinkingLevel']],
+  const BEDROCK_CLAUDE = ['params', 'output_config', 'effort']
+  const BEDROCK_GPT = ['additionalRequestFields', 'reasoning', 'effort']
+  const BEDROCK_REASONING_EFFORT = ['additionalRequestFields', 'reasoning_effort']
+  // [model spec, path of the effort field in the resolved config, level]
+  const BY_DEFAULT: [string, string[], string][] = [
+    ['bedrock/global.anthropic.claude-opus-5', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/global.anthropic.claude-sonnet-5', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/us.anthropic.claude-sonnet-4-6', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/global.anthropic.claude-fable-5-1', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/global.anthropic.claude-opus-5-5', BEDROCK_CLAUDE, 'medium'],
+    ['bedrock/us.anthropic.claude-opus-5-5-20260401-v1:0', BEDROCK_CLAUDE, 'medium'],
+    ['bedrock/global.anthropic.claude-sonnet-5-5', BEDROCK_CLAUDE, 'medium'],
+    ['bedrock/global.anthropic.claude-opus-4-7', BEDROCK_CLAUDE, 'xhigh'],
+    ['bedrock/global.anthropic.claude-opus-9', BEDROCK_CLAUDE, 'high'],
+    ['bedrock/openai.gpt-5.6-sol', BEDROCK_GPT, 'low'],
+    ['bedrock/us.openai.gpt-5.5', BEDROCK_GPT, 'medium'],
+    ['bedrock/global.openai.gpt-6-astra', BEDROCK_GPT, 'low'],
+    ['bedrock/us.openai.gpt-6.1-terra', BEDROCK_GPT, 'low'],
+    ['bedrock/us.openai.gpt-6-sol', BEDROCK_GPT, 'medium'],
+    ['bedrock/openai.gpt-5.6-cyber', BEDROCK_GPT, 'high'],
+    ['bedrock/openai.gpt-oss-120b-1:0', BEDROCK_REASONING_EFFORT, 'medium'],
+    ['bedrock/qwen.qwen3-32b-v1:0', BEDROCK_REASONING_EFFORT, 'high'],
+    ['bedrock/us.xai.grok-4', BEDROCK_REASONING_EFFORT, 'high'],
+    ['anthropic/claude-opus-5', ['params', 'output_config', 'effort'], 'high'],
+    ['anthropic/claude-opus-5-5', ['params', 'output_config', 'effort'], 'medium'],
+    ['anthropic/claude-haiku-5-5-20260601', ['params', 'output_config', 'effort'], 'medium'],
+    ['openai/gpt-5.6-sol', ['params', 'reasoning', 'effort'], 'low'],
+    ['openai/gpt-5.5', ['params', 'reasoning', 'effort'], 'medium'],
+    ['openai/o3', ['params', 'reasoning', 'effort'], 'high'],
+    ['bedrock-mantle/openai.gpt-5.6-sol', ['params', 'reasoning', 'effort'], 'low'],
+    ['google/gemini-3.5-flash', ['params', 'thinkingConfig', 'thinkingLevel'], 'high'],
   ]
 
-  it.each(HIGH_BY_DEFAULT)('is high on %s', async (spec, path) => {
+  it.each(BY_DEFAULT)('is the vendor default from the model info, else high, on %s', async (spec, path, level) => {
     const config = (await resolve(spec, DEFAULT_EFFORT)).getConfig() as Record<string, unknown>
     const at = path.reduce<unknown>((value, key) => (value as Record<string, unknown> | undefined)?.[key], config)
-    expect(at).toBe('high')
-    expect(config).toEqual((await resolve(spec, 'high')).getConfig())
+    expect(at).toBe(level)
+    expect(config).toEqual((await resolve(spec, level as Effort)).getConfig())
+  })
+
+  it('falls back to the provider level when the vendor default is not one the provider takes', async () => {
+    vi.mocked(lookupModel).mockReturnValue({ capabilities: { defaultEffort: 'ultra' } })
+
+    expect((await resolve('bedrock/us.openai.gpt-6-sol')).getConfig().additionalRequestFields).toEqual({
+      reasoning: { effort: 'high' },
+    })
+    expect(((await resolve('openai/gpt-5.5')).getConfig().params as { reasoning: unknown }).reasoning).toEqual({
+      effort: 'high',
+    })
   })
 
   it.each(['bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0', 'anthropic/claude-haiku-4-5-20251001'])(
     'is the high budget on extended-thinking %s',
     async (spec) => {
       const config = (await resolve(spec, DEFAULT_EFFORT)).getConfig()
-      const block = spec.startsWith('bedrock/') ? config.additionalRequestFields : config.params
-      expect(block).toEqual({ thinking: { type: 'enabled', budget_tokens: 16_384 } })
+      expect(config.params).toEqual({ thinking: { type: 'enabled', budget_tokens: 16_384 } })
       expect(config).toEqual((await resolve(spec, 'high')).getConfig())
     }
   )
@@ -627,7 +840,7 @@ describe('supportsThinking', () => {
     const modelId = `bedrock/${prefix}anthropic.claude-opus-4-8`
     expect(supportsThinking(modelId)).toBe(true)
     const model = await resolve(modelId, 'max')
-    expect(model.getConfig().additionalRequestFields).toEqual({
+    expect(model.getConfig().params).toEqual({
       thinking: { type: 'adaptive', display: 'summarized' },
       output_config: { effort: 'max' },
     })
@@ -643,12 +856,12 @@ describe('supportsThinking', () => {
     expect(supportsThinking(`bedrock/global.anthropic.${modelId}`)).toBe(thinks)
   })
 
-  it.each(['claude-opus-latest', 'claude-sonnet-latest', 'claude-opus-100'])(
+  it.each(['claude-opus-latest', 'claude-sonnet-latest', 'claude-haiku-latest', 'claude-haiku', 'claude-opus-100'])(
     'fails open to adaptive for %s, whose version does not parse',
     async (modelId) => {
       expect(supportsThinking(`bedrock/global.anthropic.${modelId}`)).toBe(true)
       const model = await resolve(`bedrock/global.anthropic.${modelId}`)
-      expect(model.getConfig().additionalRequestFields).toEqual({
+      expect(model.getConfig().params).toEqual({
         thinking: { type: 'adaptive', display: 'summarized' },
         output_config: { effort: 'high' },
       })
@@ -666,13 +879,16 @@ describe('supportsWebSearch', () => {
     expect(supportsWebSearch('google/gemini-3.5-flash')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-5.6-luna')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-6-astra')).toBe(true)
+    // https://github.com/strands-agents/harness-sdk/issues/5187
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-6.1-sol')).toBe(true)
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-daybreak-blue-5.6-sol')).toBe(true)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(false)
     expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(false)
   })
 
-  it('is false for bedrock and anthropic', () => {
+  it('is false for bedrock but true for anthropic direct', () => {
     expect(supportsWebSearch('bedrock/global.anthropic.claude-opus-4-8')).toBe(false)
-    expect(supportsWebSearch('anthropic/claude-opus-4-8')).toBe(false)
+    expect(supportsWebSearch('anthropic/claude-opus-4-8')).toBe(true)
   })
 
   it('uses the default model provider for undefined', () => {
@@ -692,10 +908,11 @@ describe('supportsWebSearch', () => {
 describe('resolveWebFetchModel', () => {
   it('defaults to the provider small model with no thinking', async () => {
     const model = await resolveWebFetchModel('bedrock/global.anthropic.claude-opus-4-8', undefined)
-    expect(model).toBeInstanceOf(BedrockModel)
+    expect(model).toBeInstanceOf(AnthropicModel)
+    expect(bedrockClient(model)).toBeInstanceOf(AnthropicBedrock)
     const config = model.getConfig()
     expect(config.modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
-    expect(config.additionalRequestFields).toBeUndefined()
+    expect(config.params).toBeUndefined()
   })
 
   it('uses the openai small model for an openai-on-bedrock main model', async () => {

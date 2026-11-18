@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from opentelemetry import trace as trace_api
 
-from .._middleware.stages import InvokeModelStage
 from ..hooks.events import MessageAddedEvent
 from ..injection._message_injection import _create_injection_middleware, _is_user_turn
 from ..injection._xml import _escape_xml_attr, _escape_xml_text
+from ..middleware.stages import InvokeModelStage
 from ..plugins.plugin import Plugin
 from ..telemetry.tracer import get_tracer
 from ..tools.decorator import tool
@@ -20,7 +19,7 @@ from ..types.exceptions import AggregateMemoryError
 from ..types.tools import AgentTool
 from .extraction.coordinator import ExtractionCoordinator, _ExtractionBinding
 from .extraction.resolve_extraction_config import _resolve_extraction_config
-from .extraction.types import ExtractionTriggerContext
+from .extraction.types import ExtractionTriggerContext, _FireExtraction
 from .types import (
     InjectionFormatContext,
     InjectionQueryContext,
@@ -37,6 +36,7 @@ from .types import (
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
+    from ..agent.invocation_context import InvocationContext
     from ..types.content import Messages
 
 logger = logging.getLogger(__name__)
@@ -636,7 +636,7 @@ class MemoryManager(Plugin):
         if config is False:
             return
 
-        agent._middleware_registry.add_middleware(
+        agent.add_middleware(
             InvokeModelStage.Input,
             _create_injection_middleware(
                 lambda context: self._provide_memory_context(context.messages, config),
@@ -756,11 +756,11 @@ class MemoryManager(Plugin):
         return f"<memory>\n{joined}\n</memory>"
 
     @staticmethod
-    def _make_fire(coordinator: ExtractionCoordinator, store: MemoryStore) -> Callable[[], None]:
-        """Build a zero-arg ``fire`` callback bound to a specific store."""
+    def _make_fire(coordinator: ExtractionCoordinator, store: MemoryStore) -> _FireExtraction:
+        """Build a ``fire`` callback bound to a specific store."""
 
-        def fire() -> None:
-            coordinator.schedule(store)
+        def fire(invocation_context: InvocationContext | None = None) -> None:
+            coordinator.schedule(store, invocation_context)
 
         return fire
 

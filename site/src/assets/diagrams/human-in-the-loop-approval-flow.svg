@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 520" width="720" height="520">
+  <!-- Type: flowchart (top to bottom). Story: a tool call runs without asking when it's allowed or trusted, or when the classifier calls it safe; otherwise a human approves it or it is cancelled. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Notes -->
+  <text class="dg-note" x="336" y="412">Negated tools (!name) always ask a human</text>
+  <text class="dg-note" x="336" y="432">Trust (opt-in) approves the tool for the session</text>
+
+  <!-- Edges: the spine runs down; every "run it" exit goes right to Execute -->
+  <path class="dg-edge" d="M200,64 V94" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M200,184 V214" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M200,304 V334" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M200,424 V454" marker-end="url(#arrow)"/>
+
+  <path class="dg-edge" d="M312,140 H544 Q552,140 552,148 V234" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M312,260 H470" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M312,380 H544 Q552,380 552,372 V286" marker-end="url(#arrow)"/>
+
+  <!-- Exit labels -->
+  <text class="dg-label" x="210" y="202.5">NO</text>
+  <text class="dg-label" x="210" y="322.5">RISKY OR NONE</text>
+  <text class="dg-label" x="210" y="442.5">NO</text>
+  <text class="dg-label" x="428" y="131" text-anchor="middle">YES</text>
+  <text class="dg-label" x="391" y="251" text-anchor="middle">SAFE</text>
+  <text class="dg-label" x="428" y="371" text-anchor="middle">YES</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="128" y="16" width="144" height="48" rx="24"/>
+  <text class="dg-name" x="200" y="45" text-anchor="middle">Tool call</text>
+
+  <polygon class="dg-node" points="200,96 312,140 200,184 88,140"/>
+  <text class="dg-name" x="200" y="145" text-anchor="middle">Allowed or trusted?</text>
+
+  <polygon class="dg-node" points="200,216 312,260 200,304 88,260"/>
+  <text class="dg-name" x="200" y="265" text-anchor="middle">Classifier?</text>
+
+  <polygon class="dg-node is-focal" points="200,336 312,380 200,424 88,380"/>
+  <text class="dg-name is-focal-text" x="200" y="385" text-anchor="middle">Human approves?</text>
+
+  <rect class="dg-node is-input" x="472" y="236" width="160" height="48" rx="24"/>
+  <text class="dg-name" x="552" y="265" text-anchor="middle">Execute</text>
+
+  <rect class="dg-node is-input" x="128" y="456" width="144" height="48" rx="24"/>
+  <text class="dg-name" x="200" y="485" text-anchor="middle">Cancel</text>
+</svg>

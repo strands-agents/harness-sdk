@@ -6,8 +6,8 @@ import unittest.mock
 import pytest
 
 import strands
-import strands._middleware
 import strands.event_loop.event_loop
+import strands.middleware._registry
 from strands import Agent
 from strands.event_loop._retry import ModelRetryStrategy
 from strands.hooks import HookRegistry
@@ -57,9 +57,11 @@ def agent(model, messages, tool_registry, hook_registry):
     mock._interrupt_state = _InterruptState()
     mock._cancel_signal = threading.Event()
     mock._observe_cancellation = mock._cancel_signal.is_set
+    mock._deferred_cancel = False
+    mock._cancel_message = None
     mock._model_state = {}
     mock._system_prompt_content = None
-    mock._middleware_registry = strands._middleware.MiddlewareRegistry()
+    mock._middleware_registry = strands.middleware._registry.MiddlewareRegistry()
     mock.trace_attributes = {}
     mock.retry_strategy = ModelRetryStrategy()
     # Bind the real _append_messages chokepoint so appends assign tracking ids

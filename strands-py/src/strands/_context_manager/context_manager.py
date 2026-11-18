@@ -9,7 +9,9 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Literal
 
+from ..agent.invocation_context import _create_auxiliary_invocation_context
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from ..models._model_proxy import _count_request_tokens
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
@@ -24,6 +26,7 @@ from .types import ContextManagerConfig, ContextState, ContextStrategy, StashCon
 if TYPE_CHECKING:
     from ..agent.agent import Agent
     from ..agent.conversation_manager import ConversationManager
+    from ..agent.invocation_context import InvocationContext
     from ..storage.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -48,8 +51,8 @@ class ContextManager(Plugin):
     """Manages context reduction for an agent's conversation.
 
     On context overflow, runs the strategy pipeline (offload, summarize, emergency truncate).
-    The emergency truncation is always appended as the final strategy — it recomputes
-    utilization and only fires if the window is still overflowing after user strategies.
+    The emergency truncation is always appended as the final strategy — it fires only if the
+    window is still overflowing after the user strategies have run.
 
     Configured through the Agent's ``context_manager`` parameter — pass a preset
     string (``'auto'``, ``'agentic'``) or a :class:`ContextManagerConfig`; the Agent
@@ -224,7 +227,9 @@ class ContextManager(Plugin):
                     init(agent)
 
         async def _on_before_model_call(event: BeforeModelCallEvent) -> None:
-            await self._run_strategies(event.agent, event.projected_input_tokens)
+            await self._run_strategies(
+                event.agent, event.projected_input_tokens, invocation_context=event.invocation_context
+            )
 
         agent.hooks.add_callback(BeforeModelCallEvent, _on_before_model_call)
 
@@ -242,7 +247,7 @@ class ContextManager(Plugin):
                 overflow_retries = 0
                 return
 
-            acted = await self._run_strategies(event.agent, overflow=True)
+            acted = await self._run_strategies(event.agent, overflow=True, invocation_context=event.invocation_context)
             if not acted:
                 logger.warning("agent_id=<%s> | no strategy made progress, skipping retry", event.agent.agent_id)
                 return
@@ -275,6 +280,7 @@ class ContextManager(Plugin):
         precomputed_input_tokens: int | None = None,
         *,
         overflow: bool = False,
+        invocation_context: InvocationContext | None = None,
     ) -> bool:
         """Run the strategy pipeline, recomputing utilization after each acting strategy."""
         await self._backfill_stash(agent)
@@ -283,7 +289,7 @@ class ContextManager(Plugin):
             input_tokens = precomputed_input_tokens
         else:
             try:
-                input_tokens = await agent.model.count_tokens(messages)
+                input_tokens = await _count_request_tokens(agent, messages)
             except Exception:
                 logger.warning("agent_id=<%s> | token counting failed, skipping strategies", agent.agent_id)
                 return False
@@ -294,6 +300,7 @@ class ContextManager(Plugin):
             utilization=agent.model.estimate_utilization(input_tokens),
             overflow=overflow,
             stash=self._stash,
+            invocation_context=_create_auxiliary_invocation_context(invocation_context),
         )
 
         any_acted = False
@@ -304,7 +311,7 @@ class ContextManager(Plugin):
                 acted = await strategy.apply(context)
                 if acted:
                     any_acted = True
-                    new_tokens = await agent.model.count_tokens(messages)
+                    new_tokens = await _count_request_tokens(agent, messages)
                     context.utilization = agent.model.estimate_utilization(new_tokens)
                     logger.debug("strategy=<%s>, agent_id=<%s> | strategy applied", strategy.name, agent.agent_id)
             except Exception:

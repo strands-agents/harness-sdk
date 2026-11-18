@@ -855,6 +855,56 @@ describe('subagent cancellation and failure', () => {
     expect((result.content[0] as { text: string }).text).toContain('kaboom')
   })
 
+  it.each(['contentFiltered', 'refusal'])(
+    'turns a %s child into an error result naming the stop reason',
+    async (stopReason) => {
+      // A content filter or refusal ends the child's run without a real answer; the parent must see
+      // a failure that names the stop reason, never a success wrapping the partial text.
+      const child = fakeChild([fakeResult("I'll retrieve that now.\n", stopReason)])
+      const tool = makeSubagent({ builder: () => child as never, presets: { generalist: GENERALIST } })
+      const { result } = await drive(tool, { task: 'x' })
+      expect(result).toEqual(
+        new ToolResultBlock({
+          toolUseId: 't1',
+          status: 'error',
+          content: [
+            new TextBlock(
+              `Subagent stopped before finishing (stopReason=${stopReason}).\n\nPartial output:\nI'll retrieve that now.`
+            ),
+          ],
+        })
+      )
+      expect((tool as unknown as { pending: Map<string, unknown> }).pending.size).toBe(0)
+    }
+  )
+
+  it('reports only the stop reason when a blocked child produced no output', async () => {
+    const child = fakeChild([fakeResult('', 'contentFiltered')])
+    const tool = makeSubagent({ builder: () => child as never, presets: { generalist: GENERALIST } })
+    const { result } = await drive(tool, { task: 'x' })
+    expect(result).toEqual(
+      new ToolResultBlock({
+        toolUseId: 't1',
+        status: 'error',
+        content: [new TextBlock('Subagent stopped before finishing (stopReason=contentFiltered).')],
+      })
+    )
+  })
+
+  it.each(['guardrailIntervened', 'limitTurns', 'stopSequence'])(
+    "returns a %s child's text as a success",
+    async (stopReason) => {
+      // A guardrail substitutes its own message and a budget limit is graceful exhaustion; both keep
+      // the child's text so the parent can judge it, so neither is turned into an error.
+      const child = fakeChild([fakeResult('the text\n', stopReason)])
+      const tool = makeSubagent({ builder: () => child as never, presets: { generalist: GENERALIST } })
+      const { result } = await drive(tool, { task: 'x' })
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('the text\n')] })
+      )
+    }
+  )
+
   it('surfaces an error when the child produces no result', async () => {
     // An empty child stream returns undefined; the tool must report a model-visible error, not throw
     // into the parent loop when result.stopReason is read (parity with Python).

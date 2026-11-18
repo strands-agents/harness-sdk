@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -107,14 +107,14 @@ describe('HarnessAgentConfig', () => {
     const options = await harnessAgentOptionsFromConfig(config, '/project')
     expect(options.tools).toEqual([{ name: 'custom-tool' }])
     expect(options.conversationManager).toEqual({ name: 'custom-conversation-manager' })
-    expect(options.interventions).toEqual(['ask', join('/project', 'policy.cedar'), { name: 'custom-intervention' }])
+    expect(options.interventions).toEqual(['ask', resolve('/project', 'policy.cedar'), { name: 'custom-intervention' }])
   })
 
   it.each([
-    ['./policy.cedar', join('/project', 'policy.cedar')],
-    ['policies/policy.cedar', join('/project', 'policies/policy.cedar')],
-    ['  ./policy.cedar  ', join('/project', 'policy.cedar')],
-    ['/policies/policy.cedar', '/policies/policy.cedar'],
+    ['./policy.cedar', resolve('/project', 'policy.cedar')],
+    ['policies/policy.cedar', resolve('/project', 'policies/policy.cedar')],
+    ['  ./policy.cedar  ', resolve('/project', 'policy.cedar')],
+    ['/policies/policy.cedar', resolve('/policies/policy.cedar')],
     ['~/policy.cedar', join(homedir(), 'policy.cedar')],
     ['ask', 'ask'],
     ['  Require approval for writes.  ', '  Require approval for writes.  '],
@@ -306,9 +306,9 @@ describe('HarnessAgentConfig', () => {
     })
 
     await expect(harnessAgentOptionsFromConfig(config, '/project')).resolves.toMatchObject({
-      session: { id: 'proj', dir: join('/project', '.agent/sessions') },
-      memory: { dir: join('/project', '.agent/memory') },
-      skills: [join('/project', '.agent/skills'), 'https://example.com/SKILL.md'],
+      session: { id: 'proj', dir: resolve('/project', '.agent/sessions') },
+      memory: { dir: resolve('/project', '.agent/memory') },
+      skills: [resolve('/project', '.agent/skills'), 'https://example.com/SKILL.md'],
     })
   })
 

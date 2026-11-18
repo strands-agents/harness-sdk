@@ -404,6 +404,69 @@ agent = Agent(
 </Tab>
 </Tabs>
 
+### Baggage Propagation
+
+Baggage attributes propagate key-value pairs across process boundaries via the W3C `baggage` header. Unlike trace attributes, baggage is not stamped onto spans by default. It travels through the OTel context and is available to downstream services.
+
+<Tabs>
+<Tab label="Python">
+Pass `baggage_attributes` to the `Agent`:
+
+```python
+agent = Agent(
+    system_prompt="You are a helpful assistant.",
+    baggage_attributes={
+        "tenant.id": "acme",
+        "env": "production",
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+Pass `baggageAttributes` to the `Agent`:
+
+```typescript
+--8<-- "user-guide/sdk/observability-evaluation/traces_imports.ts:baggage_propagation_imports"
+
+--8<-- "user-guide/sdk/observability-evaluation/traces.ts:baggage_propagation"
+```
+</Tab>
+</Tabs>
+
+If you also want baggage recorded on spans, enable the baggage span processor. Pass a predicate (or a list of predicates) that takes a baggage key and returns true to record only matching entries.
+
+<Tabs>
+<Tab label="Python">
+Call `setup_baggage_processor()` on `StrandsTelemetry`:
+
+```python
+from strands.telemetry import StrandsTelemetry
+
+strands_telemetry = StrandsTelemetry()
+strands_telemetry.setup_otlp_exporter()
+strands_telemetry.setup_baggage_processor(lambda key: key in {"tenant.id", "env"})
+```
+
+Requires the `strands-agents[otel]` extra.
+</Tab>
+
+<Tab label="TypeScript">
+Pass `baggageProcessor` to `setupTracer()`:
+
+```typescript
+--8<-- "user-guide/sdk/observability-evaluation/traces_imports.ts:baggage_span_processor_imports"
+
+--8<-- "user-guide/sdk/observability-evaluation/traces.ts:baggage_span_processor"
+```
+
+Requires `npm install @opentelemetry/baggage-span-processor`. `baggageProcessor` is ignored when you pass your own `provider`.
+</Tab>
+</Tabs>
+
+:::caution
+Without a predicate, *every* baggage entry is stamped onto every span, including values extracted from inbound `baggage` request headers.
+:::
+
 ### Custom Spans
 
 You can access the configured tracer to create your own custom spans alongside the auto-instrumented ones:

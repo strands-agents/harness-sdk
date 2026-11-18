@@ -1,0 +1,41 @@
+---
+title: Edit
+description: "Use the edit vended tool to let a Strands agent make surgical, in-place changes to a text file by replacing an exact, unique string with the new content."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/edit/edit.ts
+  - path: strands-py/src/strands/vended_tools/edit/edit.py
+---
+
+Lets your agent make surgical, in-place changes to a text file by replacing an exact, unique string (`old_str` must appear in the file exactly once).
+
+The `edit` tool pairs with the `read` and `write` vended tools and supersedes `file_editor`.
+
+:::caution[Security Warning]
+This tool writes files at arbitrary absolute paths with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](../../sandbox/index.mdx) for production.
+:::
+
+**Example:**
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import edit
+
+agent = Agent(tools=[edit])
+agent("In /tmp/hello.txt, replace 'world' with 'Strands'.")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/edit_imports.ts:edit_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/edit.ts:edit_example"
+```
+
+</Tab>
+</Tabs>

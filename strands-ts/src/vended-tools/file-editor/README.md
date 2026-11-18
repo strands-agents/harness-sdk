@@ -1,5 +1,7 @@
 # File Editor Tool
 
+> **Deprecated.** `fileEditor` is deprecated in favor of the focused [`edit`](../edit/README.md) vended tool and will be removed in a future release. Docker and SSH sandboxes still vend it as `sandbox_file_editor` for continuity.
+
 A filesystem editor tool for viewing, creating, and editing files programmatically. Provides string replacement, line insertion, and directory viewing with security validation.
 
 ## ⚠️ Security Warning

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 208" width="720" height="208">
+  <!-- Type: branching (left to right). Story: conditional edges send the classifier's output down the technical branch or the business branch. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Edges: conditional edges are dashed -->
+  <path class="dg-edge is-dashed" d="M152,96 H176 Q184,96 184,88 V64 Q184,56 192,56 H334" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M152,120 H176 Q184,120 184,128 V152 Q184,160 192,160 H334" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M520,56 H550" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M520,160 H550" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask" x="219" y="36" width="88" height="12" rx="2"/>
+  <text class="dg-label" x="263" y="45" text-anchor="middle">IF TECHNICAL</text>
+  <rect class="dg-mask" x="223" y="140" width="80" height="12" rx="2"/>
+  <text class="dg-label" x="263" y="149" text-anchor="middle">IF BUSINESS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node" x="16" y="76" width="136" height="64" rx="6"/>
+  <text class="dg-name" x="84" y="105" text-anchor="middle">Classifier</text>
+  <text class="dg-code" x="84" y="123" text-anchor="middle">classifier</text>
+
+  <rect class="dg-node" x="336" y="24" width="184" height="64" rx="6"/>
+  <text class="dg-name" x="428" y="53" text-anchor="middle">Technical specialist</text>
+  <text class="dg-code" x="428" y="71" text-anchor="middle">tech_specialist</text>
+
+  <rect class="dg-node" x="336" y="128" width="184" height="64" rx="6"/>
+  <text class="dg-name" x="428" y="157" text-anchor="middle">Business specialist</text>
+  <text class="dg-code" x="428" y="175" text-anchor="middle">business_specialist</text>
+
+  <rect class="dg-node" x="552" y="24" width="152" height="64" rx="6"/>
+  <text class="dg-name" x="628" y="53" text-anchor="middle">Technical report</text>
+  <text class="dg-code" x="628" y="71" text-anchor="middle">tech_report</text>
+
+  <rect class="dg-node" x="552" y="128" width="152" height="64" rx="6"/>
+  <text class="dg-name" x="628" y="157" text-anchor="middle">Business report</text>
+  <text class="dg-code" x="628" y="175" text-anchor="middle">business_report</text>
+</svg>

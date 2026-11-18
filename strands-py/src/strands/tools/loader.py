@@ -80,7 +80,7 @@ def load_tool_from_string(tool_string: str) -> list[AgentTool]:
     This function can load a tool based on a string in the following ways:
     1. Local file path to a module based tool: `./path/to/module/tool.py`
     2. Module import path
-      2.1. Path to a module based tool: `strands_tools.file_read`
+      2.1. Path to a module based tool: `my_package.my_tool`
       2.2. Path to a module with multiple AgentTool instances (@tool decorated): `tests.fixtures.say_tool`
       2.3. Path to a module and a specific function: `tests.fixtures.say_tool:say`
     """
@@ -92,7 +92,7 @@ def load_tool_from_string(tool_string: str) -> list[AgentTool]:
 
     # Case 2: Module import path
     # Ex: test.fixtures.say_tool:say (Load specific @tool decorated function)
-    # Ex: strands_tools.file_read (Load all @tool decorated functions, or module tool)
+    # Ex: strands.vended_tools.file_editor (Load all @tool decorated functions, or module tool)
     return load_tools_from_module_path(tool_string)
 
 
@@ -151,7 +151,7 @@ def load_tools_from_module_path(module_tool_path: str) -> list[AgentTool]:
 def load_tools_from_module(module: ModuleType, module_name: str) -> list[AgentTool]:
     """Load tools from a module.
 
-    First checks if the passed in module has instances of DecoratedToolFunction classes as atributes to the module.
+    First checks if the passed in module has instances of DecoratedToolFunction classes as attributes to the module.
     If so, then it returns them as a list of tools. If not, then it attempts to load the module as a module based tool.
     """
     logger.debug("tool_name=<%s>, module=<%s> | loading tools from module", module_name, module_name)

@@ -208,6 +208,20 @@ export const gemini = {
   },
 }
 
+/**
+ * OpenAI-compatible Bedrock Mantle endpoint. Authenticates with the ambient AWS credential
+ * chain (same gate as Bedrock), so it is node-only and not part of `allProviders`.
+ */
+export const mantle = {
+  name: 'OpenAIModel (Bedrock Mantle)',
+  get skip() {
+    return inject('provider-bedrock').shouldSkip
+  },
+  createModel: (config: Omit<OpenAIModelOptions, 'apiKey' | 'client' | 'bedrockMantleConfig'> = {}): OpenAIModel => {
+    return new OpenAIModel({ ...config, bedrockMantleConfig: { region: 'us-east-1' } })
+  },
+}
+
 export const vercelBedrock = {
   name: 'VercelModel (Bedrock)',
   supports: {

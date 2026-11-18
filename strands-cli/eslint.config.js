@@ -68,6 +68,23 @@ export default [
     },
   },
   {
+    files: ['test/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'ink',
+              importNames: ['render'],
+              message: 'Use render from test/fixtures/terminal.ts for complete frames and automatic teardown.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ['bin/**/*.js', 'scripts/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
