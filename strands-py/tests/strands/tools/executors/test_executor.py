@@ -1158,6 +1158,23 @@ async def test_executor_stream_with_trace_skips_tool_when_agent_cancelled_during
 
 
 @pytest.mark.asyncio
+async def test_executor_stream_runs_tool_cancelled_during_before_hook_without_observe_agent_cancel(
+    executor, tracer, agent, tool_results, invocation_state, tool_events, alist
+):
+    """Passing a tracer does not turn on the re-check; only observe_agent_cancel does."""
+    agent.hooks.add_callback(BeforeToolCallEvent, lambda event: agent._cancel_signal.set())
+    tool_use: ToolUse = {"name": "thread_tool", "toolUseId": "1", "input": {}}
+
+    stream = executor._stream(agent, tool_use, tool_results, invocation_state, tracer=tracer)
+
+    tru_events = await alist(stream)
+    exp_result = {"toolUseId": "1", "status": "success", "content": [{"text": "threaded"}]}
+    assert tru_events == [ToolResultEvent(exp_result)]
+    assert tool_results == [exp_result]
+    assert len(tool_events) == 1
+
+
+@pytest.mark.asyncio
 async def test_executor_stream_runs_bidi_agent_tool_cancelled_during_before_hook(
     executor, weather_tool, tool_results, alist
 ):
@@ -1183,6 +1200,6 @@ def test_before_tool_cancel_message_ignores_bidi_agent_cancellation(weather_tool
         invocation_state={},
     )
 
-    tru_message = ToolExecutor._before_tool_cancel_message(bidi_agent, before_event, direct_call=False)
+    tru_message = ToolExecutor._before_tool_cancel_message(bidi_agent, before_event, observe_agent_cancel=True)
 
     assert tru_message is None
