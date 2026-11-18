@@ -44,7 +44,6 @@ flowchart TD
     A1 --> A1b["No evidence needed"]
     A -->|"rung 2"| A2["What a mode expands to, e.g. which strategies<br/>context_manager='auto' configures"]
     A -->|"rung 3 or 4"| A3["The value a user gets when they pass nothing,<br/>e.g. DEFAULT_MODEL, DEFAULT_BUILTIN_PLUGINS"]
-    A -->|"not on the ladder"| A4["Prompt text, undocumented tuning, or an 'auto' the<br/>model answers, e.g. ModelCapabilities.prompt_caching"]
 
     A2 --> B
     A3 --> B
@@ -93,6 +92,7 @@ A default must **win on at least one axis and lose on neither**:
 
 Recommending something in the docs ships no code. Prompt text and undocumented tuning are not on
 the ladder — they change nothing a user configured — and ship in an SDK minor or any harness release.
+Neither is an `"auto"` the model answers rather than we do, like `ModelCapabilities.prompt_caching`.
 
 ## Action items
 
