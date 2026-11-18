@@ -288,6 +288,18 @@ describe('FileStorage', () => {
           storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
         ).rejects.toMatchObject({ name: 'SessionError', cause: expect.objectContaining({ code: 'EEXIST' }) })
         expect(await fs.readFile(outsidePath, 'utf8')).toBe(outside)
+        expect(await fs.readdir(snapshotsDir)).toEqual([expect.stringMatching(/^snapshot_latest\.json\..+\.tmp$/)])
+      })
+
+      it('refuses to load through a symbolic link swapped in after the check', async () => {
+        await fs.mkdir(snapshotsDir, { recursive: true })
+        await fs.symlink(outsidePath, latestPath)
+        vi.spyOn(fs, 'lstat').mockRejectedValueOnce(Object.assign(new Error('Not found'), { code: 'ENOENT' }))
+
+        await expect(storage.loadSnapshot({ location })).rejects.toMatchObject({
+          name: 'SessionError',
+          cause: expect.objectContaining({ code: 'ELOOP' }),
+        })
       })
     })
   })

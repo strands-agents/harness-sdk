@@ -192,7 +192,8 @@ export class FileStorage implements SnapshotStorage {
         if (PENDING_RENAMES.get(target) === pendingRename) PENDING_RENAMES.delete(target)
       }
     } catch (error: unknown) {
-      if (tmpPath) {
+      // On EEXIST the temp path was not created by this call, so it is not ours to remove.
+      if (tmpPath && !this._hasErrorCode(error, 'EEXIST')) {
         const { promises: fs } = await import('fs')
         await fs.rm(tmpPath, { force: true }).catch(() => {})
       }
@@ -209,8 +210,10 @@ export class FileStorage implements SnapshotStorage {
       throw new SessionError(`Refusing to read symbolic link at ${path}`)
     }
     try {
-      const { promises: fs } = await import('fs')
-      const content = await fs.readFile(path, 'utf8')
+      const { promises: fs, constants } = await import('fs')
+      // O_NOFOLLOW (not on Windows) also refuses a link swapped in after the check above.
+      const flag = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+      const content = await fs.readFile(path, { encoding: 'utf8', flag })
       return JSON.parse(content)
     } catch (error: unknown) {
       if (this._isFileNotFoundError(error)) {
@@ -234,7 +237,12 @@ export class FileStorage implements SnapshotStorage {
 
   /** Returns true if the error represents a missing file or directory (ENOENT). */
   private _isFileNotFoundError(error: unknown): boolean {
-    return error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+    return this._hasErrorCode(error, 'ENOENT')
+  }
+
+  /** Returns true if the error carries the given Node.js error code. */
+  private _hasErrorCode(error: unknown, code: string): boolean {
+    return error !== null && typeof error === 'object' && 'code' in error && error.code === code
   }
 
   /** Returns the file path for `snapshot_latest.json` within the given scope. */
