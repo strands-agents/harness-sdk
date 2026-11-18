@@ -603,10 +603,10 @@ const tunedKnobs = (knobs: readonly Knob[], tune: readonly KnobKey[]): void => {
 
 const objectiveFor = async (experiment: ExperimentSummary, input: Input): Promise<OptimizeObjective | undefined> => {
   const objective = text(input, 'objective') || undefined
-  const limits = textList(input, 'limits')
-  if (objective === undefined && limits === undefined) return undefined
+  const constraints = textList(input, 'constraints')
+  if (objective === undefined && constraints === undefined) return undefined
   const { experiment: loaded } = await readTemporaryExperimentFile(experiment.path)
-  const chosen = temporaryObjectiveFromRequest(objective, limits, loaded.evaluators)
+  const chosen = temporaryObjectiveFromRequest(objective, constraints, loaded.evaluators)
   const { problem } = checkTemporaryObjective(chosen, loaded.evaluators)
   if (problem)
     throw new Error(`${problem} The evaluators of ${experiment.name}: ${loaded.evaluators.join(', ') || 'none'}.`)
@@ -651,11 +651,11 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
           'cache_write_tokens, seconds, and model_calls. A bare evaluator name maximizes it, and a bare usage ' +
           'name minimizes it. Default: the mean of every evaluator.',
       },
-      limits: {
+      constraints: {
         type: 'array',
         items: { type: 'string' },
         description:
-          'Limits that the chosen candidate must meet, such as "tokens <= 4000" or "Correctness >= 0.8". ' +
+          'Constraints that the chosen candidate must meet, such as "tokens <= 4000" or "Correctness >= 0.8". ' +
           'Add an evaluator floor when every goal is a usage number.',
       },
     },

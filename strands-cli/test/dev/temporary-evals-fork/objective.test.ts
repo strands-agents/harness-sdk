@@ -17,20 +17,20 @@ describe('TEMPORARY optimize objective', () => {
     ['AWeightedSum', 'WeightedSum(Maximize(Contains), Minimize(tokens, scale=1000))', ''],
     ['AParetoFront', 'Pareto(Maximize(Contains, weight=2), Minimize(seconds, scale=10))', 'tokens <= 4000'],
     ['AQuotedName', 'Maximize("Equals")', ''],
-    ['TwoLimitsOnOneMetric', 'Maximize(Contains)', 'Equals >= 0.5, Equals <= 1'],
-  ])('shouldAccept%s', (_case, expression, limits) => {
-    expect(checkTemporaryObjective({ expression, limits }, EVALUATORS)).toEqual({})
+    ['TwoConstraintsOnOneMetric', 'Maximize(Contains)', 'Equals >= 0.5, Equals <= 1'],
+  ])('shouldAccept%s', (_case, expression, constraints) => {
+    expect(checkTemporaryObjective({ expression, constraints }, EVALUATORS)).toEqual({})
   })
 
   it('shouldResolveTheShortNameOfAnEvaluatorTheWayTheApiDoes', () => {
     expect(
-      checkTemporaryObjective({ expression: 'Maximize(Helpfulness)', limits: '' }, ['HelpfulnessEvaluator'])
+      checkTemporaryObjective({ expression: 'Maximize(Helpfulness)', constraints: '' }, ['HelpfulnessEvaluator'])
     ).toEqual({})
   })
 
   it('shouldAcceptAQuotedNameThatIsNotAPlainWord', () => {
     expect(
-      checkTemporaryObjective({ expression: 'Maximize("refund-policy")', limits: '"refund-policy" >= 0.5' }, [
+      checkTemporaryObjective({ expression: 'Maximize("refund-policy")', constraints: '"refund-policy" >= 0.5' }, [
         'refund-policy',
       ])
     ).toEqual({})
@@ -49,32 +49,32 @@ describe('TEMPORARY optimize objective', () => {
     ],
     ['AMetricTwice', 'WeightedSum(Maximize(Contains), Maximize(Contains))', '', 'Contains is in the objective twice'],
     ['AZeroWeight', 'WeightedSum(Maximize(Contains, weight=0), Maximize(Equals))', '', "'0' does not fit"],
-    ['ALimitWithoutABound', '', 'tokens < 4000', "'tokens < 4000' does not fit"],
-    ['ALimitOnAnUnknownMetric', '', 'Nope >= 1', 'Nope is not an evaluator of this experiment or a usage number'],
-  ])('shouldExplainWhatIsWrongWithAnObjectiveThatHas%s', (_case, expression, limits, problem) => {
-    expect(checkTemporaryObjective({ expression, limits }, EVALUATORS).problem).toContain(problem)
+    ['AConstraintWithoutABound', '', 'tokens < 4000', "'tokens < 4000' does not fit"],
+    ['AConstraintOnAnUnknownMetric', '', 'Nope >= 1', 'Nope is not an evaluator of this experiment or a usage number'],
+  ])('shouldExplainWhatIsWrongWithAnObjectiveThatHas%s', (_case, expression, constraints, problem) => {
+    expect(checkTemporaryObjective({ expression, constraints }, EVALUATORS).problem).toContain(problem)
   })
 
   it('shouldAskForAGoalWhenTheExperimentHasNoEvaluatorAndTheObjectiveIsTheDefault', () => {
-    expect(checkTemporaryObjective({ expression: '', limits: '' }, []).problem).toContain('no evaluator')
+    expect(checkTemporaryObjective({ expression: '', constraints: '' }, []).problem).toContain('no evaluator')
   })
 
   it.each([
-    ['NoLimit', 'Minimize(tokens)', '', true],
-    ['OnlyAUsageLimit', 'Minimize(seconds)', 'tokens <= 4000', true],
+    ['NoConstraint', 'Minimize(tokens)', '', true],
+    ['OnlyAUsageConstraint', 'Minimize(seconds)', 'tokens <= 4000', true],
     ['AnEvaluatorFloor', 'Minimize(tokens)', 'Contains >= 0.8', false],
     ['AnEvaluatorGoal', 'WeightedSum(Maximize(Contains), Minimize(tokens, scale=1000))', '', false],
-  ])('shouldWarnAboutAUsageOnlyObjectiveWhenItHas%s', (_case, expression, limits, warns) => {
-    const { warning } = checkTemporaryObjective({ expression, limits }, EVALUATORS)
+  ])('shouldWarnAboutAUsageOnlyObjectiveWhenItHas%s', (_case, expression, constraints, warns) => {
+    const { warning } = checkTemporaryObjective({ expression, constraints }, EVALUATORS)
 
     expect(warning !== undefined).toBe(warns)
   })
 
   it.each([
-    ['NoFlagsForTheDefault', { expression: '', limits: '' }, []],
+    ['NoFlagsForTheDefault', { expression: '', constraints: '' }, []],
     [
-      'TheObjectiveAndEachLimit',
-      { expression: ' Minimize(tokens) ', limits: 'Contains >= 0.8, tokens <= 4000' },
+      'TheObjectiveAndEachConstraint',
+      { expression: ' Minimize(tokens) ', constraints: 'Contains >= 0.8, tokens <= 4000' },
       ['--objective', 'Minimize(tokens)', '--at-least', 'Contains=0.8', '--at-most', 'tokens=4000'],
     ],
   ])('shouldPass%s', (_case, objective, flags) => {
@@ -83,36 +83,36 @@ describe('TEMPORARY optimize objective', () => {
 
   it('shouldOfferTheMeanEachEvaluatorAndTheUsageTradeOffsAsPresets', () => {
     expect(temporaryObjectivePresets(EVALUATORS)).toEqual([
-      { label: 'the mean of every evaluator', objective: { expression: '', limits: '' } },
-      { label: 'Contains only', objective: { expression: 'Maximize(Contains)', limits: '' } },
-      { label: 'Equals only', objective: { expression: 'Maximize(Equals)', limits: '' } },
+      { label: 'the mean of every evaluator', objective: { expression: '', constraints: '' } },
+      { label: 'Contains only', objective: { expression: 'Maximize(Contains)', constraints: '' } },
+      { label: 'Equals only', objective: { expression: 'Maximize(Equals)', constraints: '' } },
       {
         label: 'fewer tokens, each evaluator at least 0.8',
-        objective: { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8, Equals >= 0.8' },
+        objective: { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8, Equals >= 0.8' },
       },
       {
         label: 'less time, each evaluator at least 0.8',
-        objective: { expression: 'Minimize(seconds)', limits: 'Contains >= 0.8, Equals >= 0.8' },
+        objective: { expression: 'Minimize(seconds)', constraints: 'Contains >= 0.8, Equals >= 0.8' },
       },
       {
         label: 'the evaluators and fewer tokens',
         objective: {
           expression: 'WeightedSum(Maximize(Contains), Maximize(Equals), Minimize(tokens, scale=1000))',
-          limits: '',
+          constraints: '',
         },
       },
       {
         label: 'the evaluators and less time',
         objective: {
           expression: 'WeightedSum(Maximize(Contains), Maximize(Equals), Minimize(seconds, scale=10))',
-          limits: '',
+          constraints: '',
         },
       },
       {
         label: 'the best trade-offs of the evaluators and tokens',
         objective: {
           expression: 'Pareto(Maximize(Contains), Maximize(Equals), Minimize(tokens, scale=1000))',
-          limits: '',
+          constraints: '',
         },
       },
     ])
@@ -126,23 +126,23 @@ describe('TEMPORARY optimize objective', () => {
   it('shouldQuoteAnEvaluatorNameThatIsNotAPlainWordInThePresets', () => {
     expect(temporaryObjectivePresets(['refund-policy', 'Equals'])[1]).toEqual({
       label: 'refund-policy only',
-      objective: { expression: 'Maximize("refund-policy")', limits: '' },
+      objective: { expression: 'Maximize("refund-policy")', constraints: '' },
     })
   })
 
   it.each([
-    ['AnEvaluatorName', 'equals', { expression: 'Maximize(Equals)', limits: '' }],
-    ['AUsageName', 'tokens', { expression: 'Minimize(tokens)', limits: '' }],
-    ['AnUnknownName', 'Helpfulness', { expression: 'Maximize(Helpfulness)', limits: '' }],
-    ['TheApiNotation', 'Minimize(tokens)', { expression: 'Minimize(tokens)', limits: '' }],
+    ['AnEvaluatorName', 'equals', { expression: 'Maximize(Equals)', constraints: '' }],
+    ['AUsageName', 'tokens', { expression: 'Minimize(tokens)', constraints: '' }],
+    ['AnUnknownName', 'Helpfulness', { expression: 'Maximize(Helpfulness)', constraints: '' }],
+    ['TheApiNotation', 'Minimize(tokens)', { expression: 'Minimize(tokens)', constraints: '' }],
   ])('shouldReadTheObjectiveOfAChatRequestGivenAs%s', (_case, text, objective) => {
     expect(temporaryObjectiveFromRequest(text, undefined, EVALUATORS)).toEqual(objective)
   })
 
-  it('shouldReadTheLimitsOfAChatRequestAsOneLine', () => {
+  it('shouldReadTheConstraintsOfAChatRequestAsOneLine', () => {
     expect(temporaryObjectiveFromRequest(undefined, ['Contains >= 0.8', 'tokens <= 4000'], EVALUATORS)).toEqual({
       expression: '',
-      limits: 'Contains >= 0.8, tokens <= 4000',
+      constraints: 'Contains >= 0.8, tokens <= 4000',
     })
   })
 })

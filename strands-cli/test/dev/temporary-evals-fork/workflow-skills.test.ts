@@ -168,7 +168,7 @@ describe('optimize-harness guidance', () => {
 
   it('shouldLimitTuningToSupportedKnobsAndExplainCostsWithoutPromisingImprovement', () => {
     expect(instructions).toContain(
-      "strands_dev_optimize with {experiment, tune?: ('instructions' | 'effort')[], iterations?, objective?, limits?}"
+      "strands_dev_optimize with {experiment, tune?: ('instructions' | 'effort')[], iterations?, objective?, constraints?}"
     )
     expect(instructions).toContain('not arbitrary tools, models, or configuration')
     expect(instructions).toContain('default tune of instructions and default iteration count')

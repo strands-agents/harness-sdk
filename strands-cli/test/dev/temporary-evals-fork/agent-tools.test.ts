@@ -86,8 +86,8 @@ const KNOBS: readonly Knob[] = [
 const plan = (): OptimizePlan => ({
   experiment: REFUNDS,
   knobs: KNOBS,
-  objective: { expression: '', limits: '' },
-  objectivePresets: [{ label: 'the mean of every evaluator', objective: { expression: '', limits: '' } }],
+  objective: { expression: '', constraints: '' },
+  objectivePresets: [{ label: 'the mean of every evaluator', objective: { expression: '', constraints: '' } }],
   metrics: ['OutputEvaluator', 'tokens'],
   split: { train: 1, validation: 1, test: 0 },
   splitChoices: [{ train: 1, validation: 1, test: 0 }],
@@ -764,7 +764,10 @@ describe('TEMPORARY dev chat part', () => {
       finishRun({ step: 'review', review: review() })
       await running
 
-      expect(sessions.optimize.setObjective).toHaveBeenCalledWith({ expression: `Maximize(${evaluator})`, limits: '' })
+      expect(sessions.optimize.setObjective).toHaveBeenCalledWith({
+        expression: `Maximize(${evaluator})`,
+        constraints: '',
+      })
       expect(sessions.optimize.setObjective.mock.invocationCallOrder[0]).toBeLessThan(
         sessions.optimize.start.mock.invocationCallOrder[0]!
       )
@@ -773,7 +776,7 @@ describe('TEMPORARY dev chat part', () => {
     }
   })
 
-  it('shouldPassAnyObjectiveOfTheApiAndItsLimitsWhenTheDeveloperAsksForThem', async () => {
+  it('shouldPassAnyObjectiveOfTheApiAndItsConstraintsWhenTheDeveloperAsksForThem', async () => {
     const { tool, sessions, experiments, finishRun } = setup()
     const folder = await mkdtemp(join(tmpdir(), 'dev-optimize-objective-'))
     try {
@@ -790,7 +793,7 @@ describe('TEMPORARY dev chat part', () => {
       const running = tool('strands_dev_optimize').run({
         experiment: 'refunds',
         objective: 'WeightedSum(Maximize(OutputEvaluator), Minimize(tokens, scale=1000))',
-        limits: ['seconds <= 30'],
+        constraints: ['seconds <= 30'],
       })
       await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
       finishRun({ step: 'review', review: review() })
@@ -798,7 +801,7 @@ describe('TEMPORARY dev chat part', () => {
 
       expect(sessions.optimize.setObjective).toHaveBeenCalledWith({
         expression: 'WeightedSum(Maximize(OutputEvaluator), Minimize(tokens, scale=1000))',
-        limits: 'seconds <= 30',
+        constraints: 'seconds <= 30',
       })
     } finally {
       await rm(folder, { recursive: true, force: true })

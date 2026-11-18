@@ -840,7 +840,7 @@ describe('TEMPORARY dev sessions', () => {
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
     const state = sessions.optimize.snapshot()
     if (state.step !== 'setup') throw new Error('expected the setup')
-    expect(state.plan.objective).toEqual({ expression: '', limits: '' })
+    expect(state.plan.objective).toEqual({ expression: '', constraints: '' })
     expect(state.plan.objectivePresets.map(({ label }) => label).slice(0, 4)).toEqual([
       'the mean of every evaluator',
       'Contains only',
@@ -860,9 +860,9 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
 
-    sessions.optimize.setObjective({ expression: 'Maximize(Helpfulness)', limits: '' })
+    sessions.optimize.setObjective({ expression: 'Maximize(Helpfulness)', constraints: '' })
     const started = sessions.optimize.start()
-    sessions.optimize.setObjective({ expression: 'Minimize(tokens)', limits: '' })
+    sessions.optimize.setObjective({ expression: 'Minimize(tokens)', constraints: '' })
 
     expect(started).toBeUndefined()
     expect(optimizing).not.toHaveBeenCalled()
@@ -872,10 +872,10 @@ describe('TEMPORARY dev sessions', () => {
     expect(sessions.optimize.snapshot()).not.toHaveProperty('plan.objectiveProblem')
   })
 
-  it.each<[string, { expression: string; limits: string } | undefined, readonly string[]]>([
+  it.each<[string, { expression: string; constraints: string } | undefined, readonly string[]]>([
     [
-      'TheObjectiveAndItsLimits',
-      { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8, seconds <= 30' },
+      'TheObjectiveAndItsConstraints',
+      { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8, seconds <= 30' },
       ['--objective', 'Minimize(tokens)', '--at-least', 'Contains=0.8', '--at-most', 'seconds=30'],
     ],
     ['NoObjectiveFlagForTheMeanOfEveryEvaluator', undefined, []],
@@ -912,18 +912,18 @@ describe('TEMPORARY dev sessions', () => {
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    sessions.optimize.setObjective({ expression: 'Maximize(Contains)', limits: 'tokens <= 4000' })
+    sessions.optimize.setObjective({ expression: 'Maximize(Contains)', constraints: 'tokens <= 4000' })
 
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    expect(recorded).toMatchObject({ objective: { expression: 'Maximize(Contains)', limits: 'tokens <= 4000' } })
+    expect(recorded).toMatchObject({ objective: { expression: 'Maximize(Contains)', constraints: 'tokens <= 4000' } })
   })
 
   it.each<[string, unknown, readonly string[]]>([
     [
       'TheObjectiveOfTheFirstRun',
-      { expression: 'Minimize(seconds)', limits: 'Equals >= 0.5' },
+      { expression: 'Minimize(seconds)', constraints: 'Equals >= 0.5' },
       ['--objective', 'Minimize(seconds)', '--at-least', 'Equals=0.5'],
     ],
     [

@@ -142,7 +142,7 @@ type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width' | 'split
   readonly objective?: OptimizeObjective
 }
 
-const NO_OBJECTIVE: OptimizeObjective = { expression: '', limits: '' }
+const NO_OBJECTIVE: OptimizeObjective = { expression: '', constraints: '' }
 
 const objectiveFields = (
   objective: OptimizeObjective,

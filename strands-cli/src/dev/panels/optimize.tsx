@@ -110,7 +110,7 @@ const BROWSABLE_STEPS: ReadonlySet<OptimizeState['step']> = new Set([
 const COMMAND = 'optimize'
 const BACK_HINT = 'Esc back to the list'
 const SLIDER_WIDTH = 21
-const SLIDER_LABEL_WIDTH = 11
+const SLIDER_LABEL_WIDTH = 12
 const DIFF_CONTEXT_LINES = 2
 const FULL_SETUP_ROWS = 12
 const DIFF_INDENT = 2
@@ -499,7 +499,7 @@ type ObjectiveField = keyof OptimizeObjective
 type SetupRow =
   | { readonly kind: 'knob'; readonly knob: Knob }
   | { readonly kind: 'slider'; readonly slider: SetupSlider }
-  | { readonly kind: 'limits' }
+  | { readonly kind: 'constraints' }
   | { readonly kind: 'button'; readonly button: SetupButton }
 
 interface ObjectiveEditor {
@@ -574,7 +574,7 @@ const startHint = (plan: OptimizePlan, ready: boolean): string => {
 
 const setupHints = (focused: SetupRow | undefined, plan: OptimizePlan, ready: boolean): string[] => {
   if (focused?.kind === 'slider') return ['↑↓', focused.slider.hint, 'Esc cancel']
-  if (focused?.kind === 'limits') return ['↑↓', 'Enter edit', 'Esc cancel']
+  if (focused?.kind === 'constraints') return ['↑↓', 'Enter edit', 'Esc cancel']
   if (focused?.kind === 'button')
     return focused.button === 'start'
       ? ['↑↓', startHint(plan, ready), 'Esc cancel']
@@ -846,14 +846,16 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
     ...sliders
       .filter(isSelectable)
       .flatMap((slider): SetupRow[] =>
-        slider.key === 'objective' ? [{ kind: 'slider', slider }, { kind: 'limits' }] : [{ kind: 'slider', slider }]
+        slider.key === 'objective'
+          ? [{ kind: 'slider', slider }, { kind: 'constraints' }]
+          : [{ kind: 'slider', slider }]
       ),
     ...SETUP_BUTTONS.map((button) => ({ kind: 'button' as const, button })),
   ]
   const rowOf = (match: (row: SetupRow) => boolean): number => rows.findIndex(match)
   const firstSlider = plan.knobs.length
   const firstButton = rowOf((row) => row.kind === 'button')
-  const limitsRow = rowOf((row) => row.kind === 'limits')
+  const constraintsRow = rowOf((row) => row.kind === 'constraints')
   const cursor = useCursor(rows.length)
   const editing = useSyncedState<ObjectiveEditor | undefined>(undefined)
   const [choosingModels, setChoosingModels] = useState(false)
@@ -874,7 +876,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
       if (row.button === 'cancel') cancel()
       else if (ready) confirm.ask(paidOptimization(latest(), session.agent?.(), () => session.start()))
     } else if (row?.kind === 'slider' && row.slider.editable) edit('expression')
-    else if (row?.kind === 'limits') edit('limits')
+    else if (row?.kind === 'constraints') edit('constraints')
     else if (row?.kind === 'knob' && !row.knob.unavailable) {
       if (row.knob.kind !== 'models') return session.toggleKnob(row.knob.key)
       session.loadModels()
@@ -969,14 +971,14 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
             ) : plan.objective.expression.trim() ? (
               <Line tone="muted">{`${' '.repeat(SLIDER_LABEL_WIDTH + 2)}${plan.objective.expression.trim()}`}</Line>
             ) : null}
-            {editor?.field === 'limits' ? (
-              editorField('limits', 'such as tokens <= 4000, Correctness >= 0.8')
+            {editor?.field === 'constraints' ? (
+              editorField('constraints', 'such as tokens <= 4000, Correctness >= 0.8')
             ) : (
               <FieldRow
-                label="limits"
-                value={plan.objective.limits.trim() || 'none'}
-                active={cursor.index === limitsRow}
-                onPoint={() => cursor.set(limitsRow)}
+                label="constraints"
+                value={plan.objective.constraints.trim() || 'none'}
+                active={cursor.index === constraintsRow}
+                onPoint={() => cursor.set(constraintsRow)}
               />
             )}
           </Box>

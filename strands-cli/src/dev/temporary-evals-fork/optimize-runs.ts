@@ -31,11 +31,12 @@ const recordPath = ({ record }: Pick<TemporaryOptimizeRecord, 'record'>): string
 
 const recordedObjective = (value: unknown): OptimizeObjective | undefined => {
   if (!isRecord(value)) return undefined
-  if (typeof value.expression === 'string' && typeof value.limits === 'string')
-    return { expression: value.expression, limits: value.limits }
+  const constraints = value.constraints ?? value.limits
+  if (typeof value.expression === 'string' && typeof constraints === 'string')
+    return { expression: value.expression, constraints }
   if (value.kind === 'evaluator' && typeof value.evaluator === 'string')
-    return { expression: `Maximize(${JSON.stringify(value.evaluator)})`, limits: '' }
-  if (value.kind === 'evaluators' && Array.isArray(value.evaluators)) return { expression: '', limits: '' }
+    return { expression: `Maximize(${JSON.stringify(value.evaluator)})`, constraints: '' }
+  if (value.kind === 'evaluators' && Array.isArray(value.evaluators)) return { expression: '', constraints: '' }
   return undefined
 }
 

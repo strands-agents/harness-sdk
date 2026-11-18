@@ -61,6 +61,15 @@ describe('TEMPORARY dev commands', () => {
     expect(details.some((text) => text.includes('TEMPORARY'))).toBe(false)
   })
 
+  it('shouldExplainTheObjectiveAndItsConstraintsWhenOptimizeHelpShowsTheDetails', async () => {
+    const { workspace, project } = await fixture()
+
+    const [, , optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
+
+    expect(optimize).toContain('The constraints row under it sets what the chosen candidate must meet')
+    expect(optimize).not.toContain('limit')
+  })
+
   it('shouldReportNoRunningJobsWhenNothingRuns', async () => {
     const { workspace, project } = await fixture()
 

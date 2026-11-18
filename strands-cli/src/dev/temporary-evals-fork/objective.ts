@@ -29,7 +29,7 @@ interface Goals {
   readonly goals: readonly Goal[]
 }
 
-interface Limit {
+interface Constraint {
   readonly metric: string
   readonly bound: 'at-most' | 'at-least'
   readonly value: number
@@ -49,7 +49,7 @@ const SETTINGS: readonly string[] = ['weight', 'scale']
 const PLAIN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u
 const TOKEN =
   /\s*(?:([A-Za-z_][A-Za-z0-9_]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\d+(?:\.\d*)?(?:[eE][-+]?\d+)?|\.\d+(?:[eE][-+]?\d+)?)|([(),=]))/uy
-const LIMIT = /^\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[A-Za-z_][A-Za-z0-9_]*)\s*(<=|>=)\s*(-?\d+(?:\.\d+)?)\s*$/u
+const CONSTRAINT = /^\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[A-Za-z_][A-Za-z0-9_]*)\s*(<=|>=)\s*(-?\d+(?:\.\d+)?)\s*$/u
 const DEFAULT_FLOOR = 0.8
 const TOKEN_SCALE = 1000
 const SECONDS_SCALE = 10
@@ -157,16 +157,16 @@ const readGoals = (expression: string): Goals => {
   return { goals: [goal] }
 }
 
-const readLimits = (limits: string): Limit[] =>
-  limits
+const readConstraints = (constraints: string): Constraint[] =>
+  constraints
     .split(',')
     .map((part) => part.trim())
     .filter(Boolean)
     .map((part) => {
-      const match = LIMIT.exec(part)
+      const match = CONSTRAINT.exec(part)
       if (!match)
         throw new ObjectiveProblem(
-          `Each limit must look like tokens <= 4000 or Correctness >= 0.8. '${part}' does not fit.`
+          `Each constraint must look like tokens <= 4000 or Correctness >= 0.8. '${part}' does not fit.`
         )
       const [, metric = '', bound, value = '0'] = match
       return {
@@ -206,24 +206,26 @@ const checkGoals = ({ combination, goals }: Goals, evaluators: readonly string[]
 
 const usageOnlyWarning = (
   goalMetrics: readonly string[],
-  limits: readonly Limit[],
+  constraints: readonly Constraint[],
   evaluators: readonly string[]
 ): string | undefined => {
   if (goalMetrics.length === 0 || !goalMetrics.every((metric) => TEMPORARY_USAGE_METRICS.includes(metric)))
     return undefined
-  const floored = limits.some(({ metric, bound }) => bound === 'at-least' && !TEMPORARY_USAGE_METRICS.includes(metric))
+  const floored = constraints.some(
+    ({ metric, bound }) => bound === 'at-least' && !TEMPORARY_USAGE_METRICS.includes(metric)
+  )
   if (floored) return undefined
   const example = evaluators[0] ? `${metricText(evaluators[0])} >= ${DEFAULT_FLOOR}` : 'Correctness >= 0.8'
-  return `Every goal is a usage number, so a broken agent can look best. Add an evaluator to the objective, or a limit such as ${example}.`
+  return `Every goal is a usage number, so a broken agent can look best. Add an evaluator to the objective, or a constraint such as ${example}.`
 }
 
 export const checkTemporaryObjective = (
-  { expression, limits }: OptimizeObjective,
+  { expression, constraints }: OptimizeObjective,
   evaluators: readonly string[]
 ): TemporaryObjectiveCheck => {
   try {
     const goals = expression.trim() ? checkGoals(readGoals(expression), evaluators) : []
-    const bounds = readLimits(limits)
+    const bounds = readConstraints(constraints)
     bounds.forEach(({ metric }) => resolve(metric, evaluators))
     if (goals.length === 0 && evaluators.length === 0)
       return {
@@ -237,9 +239,9 @@ export const checkTemporaryObjective = (
   }
 }
 
-export const temporaryObjectiveArguments = ({ expression, limits }: OptimizeObjective): string[] => [
+export const temporaryObjectiveArguments = ({ expression, constraints }: OptimizeObjective): string[] => [
   ...(expression.trim() ? ['--objective', expression.trim()] : []),
-  ...readLimits(limits).flatMap(({ metric, bound, value }) => [
+  ...readConstraints(constraints).flatMap(({ metric, bound, value }) => [
     bound === 'at-most' ? '--at-most' : '--at-least',
     `${metric}=${value}`,
   ]),
@@ -257,36 +259,38 @@ export const temporaryObjectivePresets = (evaluators: readonly string[]): Object
   const names = [...new Set(evaluators)]
   const floor = names.length > 0 ? `, each evaluator at least ${DEFAULT_FLOOR}` : ''
   return [
-    ...(names.length > 0 ? [{ label: 'the mean of every evaluator', objective: { expression: '', limits: '' } }] : []),
+    ...(names.length > 0
+      ? [{ label: 'the mean of every evaluator', objective: { expression: '', constraints: '' } }]
+      : []),
     ...(names.length > 1
       ? names.map((name) => ({
           label: `${name} only`,
-          objective: { expression: `Maximize(${metricText(name)})`, limits: '' },
+          objective: { expression: `Maximize(${metricText(name)})`, constraints: '' },
         }))
       : []),
-    { label: `fewer tokens${floor}`, objective: { expression: 'Minimize(tokens)', limits: floors(names) } },
-    { label: `less time${floor}`, objective: { expression: 'Minimize(seconds)', limits: floors(names) } },
+    { label: `fewer tokens${floor}`, objective: { expression: 'Minimize(tokens)', constraints: floors(names) } },
+    { label: `less time${floor}`, objective: { expression: 'Minimize(seconds)', constraints: floors(names) } },
     ...(names.length > 0
       ? [
           {
             label: 'the evaluators and fewer tokens',
             objective: {
               expression: `WeightedSum(${[...maximized(names), `Minimize(tokens, scale=${TOKEN_SCALE})`].join(', ')})`,
-              limits: '',
+              constraints: '',
             },
           },
           {
             label: 'the evaluators and less time',
             objective: {
               expression: `WeightedSum(${[...maximized(names), `Minimize(seconds, scale=${SECONDS_SCALE})`].join(', ')})`,
-              limits: '',
+              constraints: '',
             },
           },
           {
             label: 'the best trade-offs of the evaluators and tokens',
             objective: {
               expression: `Pareto(${[...maximized(names), `Minimize(tokens, scale=${TOKEN_SCALE})`].join(', ')})`,
-              limits: '',
+              constraints: '',
             },
           },
         ]
@@ -305,14 +309,14 @@ const bareGoal = (word: string, evaluators: readonly string[]): string => {
 
 export const temporaryObjectiveFromRequest = (
   objective: string | undefined,
-  limits: readonly string[] | undefined,
+  constraints: readonly string[] | undefined,
   evaluators: readonly string[]
 ): OptimizeObjective => {
   const text = objective?.trim() ?? ''
   return {
     expression: text && !text.includes('(') ? bareGoal(text, evaluators) : text,
-    limits: (limits ?? [])
-      .map((limit) => limit.trim())
+    constraints: (constraints ?? [])
+      .map((constraint) => constraint.trim())
       .filter(Boolean)
       .join(', '),
   }

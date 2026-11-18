@@ -103,7 +103,7 @@ describe('TEMPORARY optimize run records', () => {
     const workspace = await temporaryDirectory()
     const record = {
       ...recordIn(workspace),
-      objective: { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8' },
+      objective: { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8' },
     }
 
     await saveTemporaryOptimizeRecord(record)
@@ -111,9 +111,22 @@ describe('TEMPORARY optimize run records', () => {
     expect(await readTemporaryOptimizeRecords(workspace)).toEqual([record])
   })
 
+  it('shouldReadTheConstraintsOfARecordThatSavedThemAsLimits', async () => {
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace)
+    await writeFileAt(
+      savedRecordFile(workspace),
+      JSON.stringify({ ...record, objective: { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8' } })
+    )
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([
+      { ...record, objective: { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8' } },
+    ])
+  })
+
   it.each([
-    ['OneEvaluator', { kind: 'evaluator', evaluator: 'Equals' }, { expression: 'Maximize("Equals")', limits: '' }],
-    ['TheMeanOfEveryEvaluator', { kind: 'evaluators', evaluators: ['Contains'] }, { expression: '', limits: '' }],
+    ['OneEvaluator', { kind: 'evaluator', evaluator: 'Equals' }, { expression: 'Maximize("Equals")', constraints: '' }],
+    ['TheMeanOfEveryEvaluator', { kind: 'evaluators', evaluators: ['Contains'] }, { expression: '', constraints: '' }],
   ])('shouldReadAnObjectiveSavedBeforeTheApiNotationAs%s', async (_case, saved, objective) => {
     const workspace = await temporaryDirectory()
     const record = recordIn(workspace)
@@ -125,7 +138,7 @@ describe('TEMPORARY optimize run records', () => {
   it.each([
     ['AnEvaluatorObjectiveWithoutAName', { kind: 'evaluator' }],
     ['AnUnknownObjectiveShape', { kind: 'cheapest', metric: 'tokens' }],
-    ['AnExpressionWithoutLimits', { expression: 'Minimize(tokens)' }],
+    ['AnExpressionWithoutConstraints', { expression: 'Minimize(tokens)' }],
   ])('shouldSkipARecordWith%s', async (_case, objective) => {
     const workspace = await temporaryDirectory()
     await writeFileAt(savedRecordFile(workspace), JSON.stringify({ ...recordIn(workspace), objective }))

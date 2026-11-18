@@ -553,12 +553,12 @@ const optimizeSession = (initial: OptimizeState, experimentsState: Partial<Exper
 }
 
 const OBJECTIVE_PRESETS = [
-  { label: 'the mean of every evaluator', objective: { expression: '', limits: '' } },
-  { label: 'Contains only', objective: { expression: 'Maximize(Contains)', limits: '' } },
-  { label: 'Equals only', objective: { expression: 'Maximize(Equals)', limits: '' } },
+  { label: 'the mean of every evaluator', objective: { expression: '', constraints: '' } },
+  { label: 'Contains only', objective: { expression: 'Maximize(Contains)', constraints: '' } },
+  { label: 'Equals only', objective: { expression: 'Maximize(Equals)', constraints: '' } },
   {
     label: 'fewer tokens, each evaluator at least 0.8',
-    objective: { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8, Equals >= 0.8' },
+    objective: { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8, Equals >= 0.8' },
   },
 ]
 
@@ -586,7 +586,7 @@ const setup: OptimizeState = {
         unavailable: 'strands-evals optimize cannot tune tools yet',
       },
     ],
-    objective: { expression: '', limits: '' },
+    objective: { expression: '', constraints: '' },
     objectivePresets: OBJECTIVE_PRESETS,
     metrics: ['Contains', 'Equals', 'tokens', 'seconds'],
     split: { train: 10, validation: 5, test: 5 },
@@ -749,8 +749,8 @@ const PAST_RUNS: readonly PastRun[] = [
 ]
 
 const OBJECTIVE_ROW = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
-const LIMITS_ROW = [...OBJECTIVE_ROW, DOWN_KEY]
-const CASES_ROW = [...LIMITS_ROW, DOWN_KEY]
+const CONSTRAINTS_ROW = [...OBJECTIVE_ROW, DOWN_KEY]
+const CASES_ROW = [...CONSTRAINTS_ROW, DOWN_KEY]
 const BUDGET_ROW = [...CASES_ROW, DOWN_KEY]
 const START_BUTTON = [...BUDGET_ROW, DOWN_KEY]
 const CANCEL_BUTTON = [...START_BUTTON, DOWN_KEY]
@@ -804,7 +804,7 @@ describe('OptimizePanel', () => {
       'RightOnTheObjective',
       [...OBJECTIVE_ROW, RIGHT_KEY],
       'setObjective',
-      [{ expression: 'Maximize(Contains)', limits: '' }],
+      [{ expression: 'Maximize(Contains)', constraints: '' }],
     ],
     ['EnterOnStartAndEnterOnTheConfirm', [...START_BUTTON, '\r', '\r'], 'start', []],
   ])('shouldCallTheSessionWhenTheUserPresses%sInTheSetup', async (_key, keys, action, args) => {
@@ -1228,8 +1228,8 @@ describe('OptimizePanel', () => {
   })
 
   it.each([
-    ['APreset', { expression: 'Maximize(Contains)', limits: '' }, 'Contains only', 'Maximize(Contains)'],
-    ['ACustomObjective', { expression: 'Minimize(seconds)', limits: '' }, 'custom', 'Minimize(seconds)'],
+    ['APreset', { expression: 'Maximize(Contains)', constraints: '' }, 'Contains only', 'Maximize(Contains)'],
+    ['ACustomObjective', { expression: 'Minimize(seconds)', constraints: '' }, 'custom', 'Minimize(seconds)'],
   ])('shouldShowTheObjectiveAndItsExpressionWhenItIs%s', async (_case, objective, label, expression) => {
     const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, objective } })
 
@@ -1237,6 +1237,15 @@ describe('OptimizePanel', () => {
 
     expect(text()).toMatch(new RegExp(`objective\\s+─*█─*\\s+${label}`, 'u'))
     expect(text()).toContain(expression)
+  })
+
+  it('shouldShowTheConstraintsUnderTheObjectiveWhenThePlanHasThem', async () => {
+    const objective = { expression: '', constraints: 'tokens <= 4000' }
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, objective } })
+
+    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+
+    expect(text()).toMatch(/ {2}constraints tokens <= 4000/u)
   })
 
   it('shouldSkipASettingWithOneChoiceButKeepTheObjectiveSelectable', async () => {
@@ -1247,9 +1256,9 @@ describe('OptimizePanel', () => {
     })
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    for (const key of [...LIMITS_ROW, DOWN_KEY]) await press(key)
+    for (const key of [...CONSTRAINTS_ROW, DOWN_KEY]) await press(key)
 
-    expect(text()).toMatch(/ {2}cases {6}10 train/u)
+    expect(text()).toMatch(/ {2}cases {7}10 train/u)
     expect(text()).toMatch(/› budget\s+─*█─*/u)
   })
 
@@ -1265,20 +1274,20 @@ describe('OptimizePanel', () => {
 
     expect(editing).toContain('metrics: Contains, Equals, tokens, seconds')
     expect(editing).toContain('Enter save · Esc cancel')
-    expect(session.setObjective).toHaveBeenCalledWith({ expression: 'Minimize(tokens)', limits: '' })
+    expect(session.setObjective).toHaveBeenCalledWith({ expression: 'Minimize(tokens)', constraints: '' })
     expect(session.reset).not.toHaveBeenCalled()
   })
 
-  it('shouldSaveTheTypedLimitsWhenTheUserEditsThemAndPressesEnter', async () => {
+  it('shouldSaveTheTypedConstraintsWhenTheUserEditsThemAndPressesEnter', async () => {
     const { session } = optimizeSession(setup)
     const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
-    for (const key of LIMITS_ROW) await press(key)
+    for (const key of CONSTRAINTS_ROW) await press(key)
 
     await press('\r')
     for (const character of 'tokens <= 4000') await press(character)
     await press('\r')
 
-    expect(session.setObjective).toHaveBeenCalledWith({ expression: '', limits: 'tokens <= 4000' })
+    expect(session.setObjective).toHaveBeenCalledWith({ expression: '', constraints: 'tokens <= 4000' })
   })
 
   it('shouldKeepTheObjectiveAndTheSetupWhenTheUserPressesEscWhileEditing', async () => {
@@ -1299,7 +1308,7 @@ describe('OptimizePanel', () => {
     const problem = 'Nope is not an evaluator of this experiment or a usage number.'
     const { session } = optimizeSession({
       ...setup,
-      plan: { ...setup.plan, objective: { expression: 'Maximize(Nope)', limits: '' }, objectiveProblem: problem },
+      plan: { ...setup.plan, objective: { expression: 'Maximize(Nope)', constraints: '' }, objectiveProblem: problem },
     })
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
@@ -1314,7 +1323,11 @@ describe('OptimizePanel', () => {
     const warning = 'Every goal is a usage number, so a broken agent can look best.'
     const { session } = optimizeSession({
       ...setup,
-      plan: { ...setup.plan, objective: { expression: 'Minimize(tokens)', limits: '' }, objectiveWarning: warning },
+      plan: {
+        ...setup.plan,
+        objective: { expression: 'Minimize(tokens)', constraints: '' },
+        objectiveWarning: warning,
+      },
     })
 
     const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)

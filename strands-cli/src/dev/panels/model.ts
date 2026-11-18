@@ -229,7 +229,7 @@ export const smallSplitWarning = ({ train, test }: CaseSplit): string | undefine
 
 export interface OptimizeObjective {
   readonly expression: string
-  readonly limits: string
+  readonly constraints: string
 }
 
 export interface ObjectivePreset {
@@ -240,7 +240,7 @@ export interface ObjectivePreset {
 const compact = (text: string): string => text.replace(/\s+/gu, '')
 
 export const sameObjective = (left: OptimizeObjective, right: OptimizeObjective): boolean =>
-  compact(left.expression) === compact(right.expression) && compact(left.limits) === compact(right.limits)
+  compact(left.expression) === compact(right.expression) && compact(left.constraints) === compact(right.constraints)
 
 export interface UsageRange {
   readonly low: number
