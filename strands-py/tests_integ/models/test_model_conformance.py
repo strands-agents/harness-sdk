@@ -44,6 +44,13 @@ def target(request):
     return request.param
 
 
+@pytest.fixture(autouse=True)
+def running_item(request):
+    conformance.running_item = request.node
+    yield
+    conformance.running_item = None
+
+
 @pytest.fixture
 def model(request, target):
     model = target.create_model()

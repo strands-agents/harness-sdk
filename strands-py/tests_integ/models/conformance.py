@@ -149,36 +149,47 @@ TARGETS = [
 IMPLEMENTED: set[str] = set()
 
 
-def _may_pass_on_retry(case_id: str, error: Exception) -> bool:
+# The running test, set by a fixture, so the retry wrapper can see its target and count its attempts.
+running_item: pytest.Item | None = None
+
+
+def _note_attempt(attempt: int) -> None:
+    if running_item is not None:
+        running_item.conformance_attempts = attempt
+
+
+def _give_up(case_id: str, attempt: int, error: Exception) -> bool:
+    known = _known_failure(running_item) if running_item else None
+    if attempt == _ATTEMPTS or (known and not known.get("intermittent")):
+        return True
     if isinstance(error, AssertionError):
-        return case_id in _RETRIES_ASSERTIONS
-    return not _will_not_clear(error)
+        return case_id not in _RETRIES_ASSERTIONS
+    return _will_not_clear(error)
 
 
 def case(case_id: str) -> Callable:
     """Mark a test as the implementation of a shared case, retried when another attempt may pass."""
 
     def decorator(test: Callable) -> Callable:
-        def give_up(attempt: int, error: Exception) -> bool:
-            return attempt == _ATTEMPTS or not _may_pass_on_retry(case_id, error)
-
         @functools.wraps(test)
         def sync_test(*args: Any, **kwargs: Any) -> Any:
             for attempt in itertools.count(1):
+                _note_attempt(attempt)
                 try:
                     return test(*args, **kwargs)
                 except Exception as error:
-                    if give_up(attempt, error):
+                    if _give_up(case_id, attempt, error):
                         raise
                 time.sleep(_RETRY_DELAY_SECONDS)
 
         @functools.wraps(test)
         async def async_test(*args: Any, **kwargs: Any) -> Any:
             for attempt in itertools.count(1):
+                _note_attempt(attempt)
                 try:
                     return await test(*args, **kwargs)
                 except Exception as error:
-                    if give_up(attempt, error):
+                    if _give_up(case_id, attempt, error):
                         raise
                 await asyncio.sleep(_RETRY_DELAY_SECONDS)
 
@@ -306,6 +317,9 @@ def record(item: pytest.Item, report: pytest.TestReport, error: BaseException | 
     target: Target = item.callspec.params["target"]
     result = {"sdk": "python", "provider": target.provider, "model": target.model_id, "case": case_id}
     result.update(_outcome(report, error))
+    attempts = getattr(item, "conformance_attempts", 1)
+    if attempts > 1:
+        result["attempts"] = attempts
 
     with open(path, "a", encoding="utf-8") as results:
         results.write(json.dumps(result) + "\n")
