@@ -536,55 +536,53 @@ describe('Tracer', () => {
       ])
     })
 
-    it('keeps reasoning text as a reasoning part with stable conventions and never exports the signature', () => {
-      const tracer = new Tracer()
-      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
-
-      const output = new Message({
-        role: 'assistant',
-        content: [new ReasoningBlock({ text: 'Multiply 17 by 23.', signature: 'sig-secret' }), new TextBlock('391')],
-      })
-
-      tracer.endModelInvokeSpan(span, { output, stopReason: 'end_turn' })
-
-      const parsed = JSON.parse(eventAttr(mockSpan.getEvents('gen_ai.choice')[0]!, 'message'))
-      expect(parsed).toStrictEqual([{ type: 'reasoning', text: 'Multiply 17 by 23.' }, { text: '391' }])
-      expect(JSON.stringify(mockSpan.getEvents('gen_ai.choice'))).not.toContain('sig-secret')
-      expect(JSON.stringify(mockSpan.getEvents('gen_ai.client.inference.operation.details'))).not.toContain(
-        'sig-secret'
-      )
-    })
-
-    it('keeps reasoning text as a reasoning part with latest conventions', () => {
-      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
-      const tracer = new Tracer()
-      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
-
-      const output = new Message({
-        role: 'assistant',
-        content: [new ReasoningBlock({ text: 'Multiply 17 by 23.', signature: 'sig-secret' }), new TextBlock('391')],
-      })
-
-      tracer.endModelInvokeSpan(span, { output, stopReason: 'end_turn' })
-
-      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
-      const outputEvent = detailEvents.find((e) => eventAttr(e, 'gen_ai.output.messages'))
-      const parsed = JSON.parse(eventAttr(outputEvent!, 'gen_ai.output.messages'))
-      expect(parsed).toStrictEqual([
-        {
-          role: 'assistant',
-          parts: [
-            { type: 'reasoning', content: 'Multiply 17 by 23.' },
-            { type: 'text', content: '391' },
-          ],
-          finish_reason: 'end_turn',
+    it.each([
+      {
+        name: 'stable conventions',
+        env: '',
+        expected: [{ type: 'reasoning', text: 'Multiply 17 by 23.' }, { text: '391' }],
+        read: () => JSON.parse(eventAttr(mockSpan.getEvents('gen_ai.choice')[0]!, 'message')),
+      },
+      {
+        name: 'latest conventions',
+        env: 'gen_ai_latest_experimental',
+        expected: [
+          {
+            role: 'assistant',
+            parts: [
+              { type: 'reasoning', content: 'Multiply 17 by 23.' },
+              { type: 'text', content: '391' },
+            ],
+            finish_reason: 'end_turn',
+          },
+        ],
+        read: () => {
+          const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+          const outputEvent = detailEvents.find((e) => eventAttr(e, 'gen_ai.output.messages'))
+          return JSON.parse(eventAttr(outputEvent!, 'gen_ai.output.messages'))
         },
-      ])
-      expect(JSON.stringify(mockSpan.getEvents('gen_ai.choice'))).not.toContain('sig-secret')
-      expect(JSON.stringify(mockSpan.getEvents('gen_ai.client.inference.operation.details'))).not.toContain(
-        'sig-secret'
-      )
-    })
+      },
+    ])(
+      'keeps reasoning text as a reasoning part with $name and never exports the signature',
+      ({ env, expected, read }) => {
+        vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', env)
+        const tracer = new Tracer()
+        const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+        const output = new Message({
+          role: 'assistant',
+          content: [new ReasoningBlock({ text: 'Multiply 17 by 23.', signature: 'sig-secret' }), new TextBlock('391')],
+        })
+
+        tracer.endModelInvokeSpan(span, { output, stopReason: 'end_turn' })
+
+        expect(read()).toStrictEqual(expected)
+        expect(JSON.stringify(mockSpan.getEvents('gen_ai.choice'))).not.toContain('sig-secret')
+        expect(JSON.stringify(mockSpan.getEvents('gen_ai.client.inference.operation.details'))).not.toContain(
+          'sig-secret'
+        )
+      }
+    )
 
     it('does not export redacted reasoning content', () => {
       vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
