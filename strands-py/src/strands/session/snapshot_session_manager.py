@@ -644,7 +644,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 "snapshot_latest",
                 agent.agent_id,
                 self.session_id,
-                error,
+                type(error).__name__,
                 _cause_name(error),
             )
             # A failed latest write must not leave the immutable snapshots unredacted. Its error is
@@ -673,7 +673,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 "flushing a redaction | no immutable snapshot was rewritten",
                 agent.agent_id,
                 self.session_id,
-                list_error,
+                type(list_error).__name__,
                 _cause_name(list_error),
             )
             raise
@@ -691,7 +691,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 agent.agent_id,
                 self.session_id,
                 snapshot_id,
-                error,
+                type(error).__name__,
                 _cause_name(error),
             )
         if errors:

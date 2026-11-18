@@ -1361,7 +1361,7 @@ def test_redaction_storage_error_fails_invocation_after_other_rewrites(storage, 
 
     async def write_failing_on_first_checkpoint(key, data):
         if snapshot_ids[0] in key:
-            raise OSError("disk full")
+            raise OSError("disk full while writing: sensitive prompt")
         await asyncio.sleep(0.01)  # as on remote storage, this write is still in flight when the other one fails
         await write(key, data)
 
@@ -1386,10 +1386,12 @@ def test_redaction_storage_error_fails_invocation_after_other_rewrites(storage, 
     assert json.loads(rewritten_data) == exp_snapshot
     tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
     exp_warnings = [
-        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<disk full>, cause=<None>"
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<OSError>, cause=<None>"
         " | failed to flush a redaction to immutable snapshot"
     ]
     assert tru_warnings == exp_warnings
+    # The error is not wrapped and its message quotes the prompt, so the log names its type only.
+    assert "sensitive prompt" not in caplog.text
 
     manager.redact_latest_message(agent.messages[0], agent)
 
@@ -1453,13 +1455,13 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
 
     tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
     exp_warnings = [
-        "agent_id=<a1>, session_id=<s1>, error=<latest write failed>, cause=<TimeoutError>"
+        "agent_id=<a1>, session_id=<s1>, error=<StorageError>, cause=<TimeoutError>"
         " | failed to flush a redaction to snapshot_latest",
-        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<checkpoint write failed>,"
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<StorageError>,"
         " cause=<PermissionError> | failed to flush a redaction to immutable snapshot",
     ]
     assert tru_warnings == exp_warnings
-    # A wrapped cause can quote the stored document, so the logs name its type only.
+    # A wrapped cause can quote the stored document, so the logs name the error and cause types only.
     assert "sensitive prompt" not in caplog.text
 
 
@@ -1471,7 +1473,7 @@ def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage,
             True,
             "latest write failed",
             [
-                "agent_id=<a1>, session_id=<s1>, error=<latest write failed>, cause=<None>"
+                "agent_id=<a1>, session_id=<s1>, error=<OSError>, cause=<None>"
                 " | failed to flush a redaction to snapshot_latest"
             ],
         ),
@@ -1489,11 +1491,11 @@ def test_redaction_listing_error_is_logged(storage, caplog, latest_write_fails, 
 
     async def write_failing_on_latest(key, data):
         if key == _on_disk_key("s1", "a1"):
-            raise OSError("latest write failed")
+            raise OSError("latest write failed: sensitive prompt")
         await write(key, data)
 
     async def list_failing(prefix):
-        raise StorageError("listing failed") from PermissionError("cannot list: sensitive prompt")
+        raise StorageError("listing failed: sensitive prompt") from PermissionError("cannot list: sensitive prompt")
 
     async def checkpoint(event):
         snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
@@ -1511,7 +1513,7 @@ def test_redaction_listing_error_is_logged(storage, caplog, latest_write_fails, 
     tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
     exp_warnings = [
         *exp_latest_warnings,
-        "agent_id=<a1>, session_id=<s1>, error=<listing failed>, cause=<PermissionError>"
+        "agent_id=<a1>, session_id=<s1>, error=<StorageError>, cause=<PermissionError>"
         " | failed to list immutable snapshots while flushing a redaction | no immutable snapshot was rewritten",
     ]
     assert tru_warnings == exp_warnings
