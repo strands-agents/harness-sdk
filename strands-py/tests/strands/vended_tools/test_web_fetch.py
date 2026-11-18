@@ -370,6 +370,25 @@ class TestNonPublicAddresses:
         assert requests == ["https://example.com/old", "https://example.com/new"]
 
     @pytest.mark.asyncio
+    async def test_client_auth_is_not_sent_to_another_origin_on_redirect(self):
+        authorization: dict[str, str | None] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            authorization[request.url.host] = request.headers.get("authorization")
+            if request.url.host == "example.com":
+                return httpx.Response(302, headers={"location": "https://other.example/"})
+            return httpx.Response(200, headers={"content-type": "text/plain"}, text="ok")
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), follow_redirects=True, auth=("user", "password")
+        )
+
+        await make_web_fetch(client=client, mode="markdown")(url="https://example.com/")
+
+        assert authorization["example.com"] is not None
+        assert authorization["other.example"] is None
+
+    @pytest.mark.asyncio
     async def test_does_not_follow_redirects_when_the_client_does_not(self):
         requests: list[str] = []
         redirects = {"https://example.com/": "https://example.com/next"}

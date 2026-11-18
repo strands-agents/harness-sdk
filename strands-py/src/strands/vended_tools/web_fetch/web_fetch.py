@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 
@@ -278,13 +278,16 @@ async def _send(client: httpx.AsyncClient, url: str, allow_private_addresses: bo
     if allow_private_addresses:
         return await client.send(request, stream=True)
 
+    auth: Any = httpx.USE_CLIENT_DEFAULT
     for _ in range(client.max_redirects + 1):
         await _check_public(request.url)
-        response = await client.send(request, stream=True, follow_redirects=False)
+        response = await client.send(request, stream=True, follow_redirects=False, auth=auth)
         if response.next_request is None or not client.follow_redirects:
             return response
         await response.aclose()
         request = response.next_request
+        # httpx already kept or stripped credentials for the next hop; client auth must not be re-applied.
+        auth = None
     raise WebFetchError(f"Fetch failed: too many redirects: {url!r}")
 
 
