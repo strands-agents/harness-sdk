@@ -186,11 +186,17 @@ describe('programmatic_tool_caller', () => {
 
   it.each([
     ["import os\nprint(os.listdir('/'))", 'PermissionError'],
+    ["import os\nprint(os.environ['HOME'])", 'not supported'],
+    ["import os\nprint(os.getenv('HOME'))", 'not supported'],
+    ["import os\nos.system('id')", 'AttributeError'],
     ["print(open('/etc/passwd').read())", 'PermissionError'],
+    ["open('/tmp/programmatic_tool_caller_probe', 'w')", 'PermissionError'],
+    ["from pathlib import Path\nprint(Path('/etc/passwd').read_text())", 'PermissionError'],
     ['import subprocess', 'ModuleNotFoundError'],
     ['import socket', 'ModuleNotFoundError'],
     ['print(().__class__.__bases__)', 'AttributeError'],
-    ["print(eval('1 + 1'))", 'NameError'],
+    ['print(eval("__import__(\'os\')"))', 'NameError'],
+    ['exec("import os\\nprint(os.listdir(\'/\'))")', 'PermissionError'],
     ['print(__builtins__)', 'NameError'],
   ])('keeps the host unreachable: %s', async (code, expected) => {
     const result = await run(agentWith(calculator), code)
@@ -199,8 +205,8 @@ describe('programmatic_tool_caller', () => {
   })
 
   it('bounds a synchronous busy loop via the VM duration limit', async () => {
-    const previous = LIMITS.maxDurationSecs
-    LIMITS.maxDurationSecs = 0.3
+    const previous = LIMITS.maxFeedDurationSecs
+    LIMITS.maxFeedDurationSecs = 0.3
     try {
       const start = Date.now()
       const result = await run(agentWith(calculator), 'while True:\n    pass')
@@ -208,7 +214,7 @@ describe('programmatic_tool_caller', () => {
       expect(text(result)).toContain('TimeoutError')
       expect(Date.now() - start).toBeLessThan(5000)
     } finally {
-      LIMITS.maxDurationSecs = previous
+      LIMITS.maxFeedDurationSecs = previous
     }
   })
 
@@ -328,11 +334,12 @@ describe('programmatic_tool_caller', () => {
 
   it('streams prints while the code runs', async () => {
     let release: (value: string) => void = () => {}
+    const released = new Promise<string>((resolve) => (release = resolve))
     const gate = tool({
       name: 'gate',
       description: 'Block until the test has seen the first print.',
       inputSchema: z.object({}),
-      callback: () => new Promise<string>((resolve) => (release = resolve)),
+      callback: () => released,
     })
     const generator = streamWithContext(agentWith(gate), "print('before')\nawait gate()\nprint('after')")
     const first = await generator.next()
@@ -392,6 +399,27 @@ describe('programmatic_tool_caller', () => {
     output.write('stdout', 'z'.repeat(500))
     expect(output.take()).toBe('y'.repeat(10))
     expect(output.take()).toBe('')
+  })
+
+  it('lets the code pass a tool function around as a value', async () => {
+    const code =
+      'async def twice(fn):\n    return [await fn(expression="1 + 1"), await fn(expression="2 + 2")]\n' +
+      'print(await twice(calculator))'
+    expect(text(await run(agentWith(calculator), code))).toBe("['2', '4']")
+  })
+
+  it('returns at the run timeout while the code is still computing', async () => {
+    const quick = makeProgrammaticToolCaller({ name: 'quick', timeout: 300 })
+    const previous = LIMITS.maxFeedDurationSecs
+    LIMITS.maxFeedDurationSecs = 3
+    try {
+      const started = Date.now()
+      const result = await run(agentOf(quick), "print('start')\nwhile True:\n    pass", 'quick')
+      expect(Date.now() - started).toBeLessThan(2000)
+      expect(text(result)).toBe('Error: start\n\nExecution error: timed out after 0.3 seconds.')
+    } finally {
+      LIMITS.maxFeedDurationSecs = previous
+    }
   })
 
   it('enforces the timeout', async () => {

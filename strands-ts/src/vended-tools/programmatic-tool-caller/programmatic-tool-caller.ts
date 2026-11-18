@@ -8,15 +8,14 @@
  * to the model; a tool's return value stays in the code's local scope unless printed, which keeps
  * large intermediate payloads out of context.
  *
- * Security posture: Monty is a Python interpreter written in Rust whose VM implements no host
- * operations -- no filesystem, environment, network, FFI, or process access exists in the bytecode,
- * and memory/time/recursion limits are enforced by the VM. The only way out of the sandbox is the
- * tool functions handed in here, so the sandbox reaches exactly what the agent's own tools reach.
- * Under Node the interpreter runs in a separate worker process (native addon) or, where the addon
- * cannot load, in-process as WebAssembly -- the language-level sandbox holds either way, but the
- * in-process build blocks the event loop while the guest computes, so neither the wall-clock timeout
- * nor a cancel can preempt it; guest compute is capped much lower there (`WASM_MAX_DURATION_SECS`).
- * For an OS boundary around the *tools*, run the agent under a Docker/SSH sandbox.
+ * Security posture: Monty is a Python interpreter written in Rust that performs no host operations
+ * itself. It has no network, FFI, or process access, and it hands filesystem and environment calls to
+ * the host, which refuses them because this tool mounts no directory and installs no OS handler.
+ * Memory/time/recursion limits are enforced by the VM. The only way out of the sandbox is the tool
+ * functions handed in here, so the sandbox reaches exactly what the agent's own tools reach. Under
+ * Node the interpreter runs in a separate worker process (native addon) or, where the addon cannot
+ * load, in a worker thread as WebAssembly; the language-level sandbox holds either way. For an OS
+ * boundary around the *tools*, run the agent under a Docker/SSH sandbox.
  *
  * Inner tool calls run the way the executor runs a model-issued call (`beforeToolCall` hooks, then the
  * tool, then `afterToolCall` hooks), so `interventions` gate them: a denied call raises a catchable
@@ -40,10 +39,10 @@ type MontyModule = typeof import('@pydantic/monty')
 
 // Enforced by the Monty VM. Duration counts interpreter time only (the clock pauses while a tool
 // call is in flight), so it bounds runaway guest code without penalizing slow tools; the wall clock
-// is bounded separately by `timeout`. Suspensions are host round trips: a sequentially awaited
-// tool call costs two, a gathered one about one, so this is roughly 500 sequential calls per run.
+// is bounded separately by `timeout`. Suspensions are host round trips: a tool call costs about one,
+// and gathering in small batches adds a few, so this is roughly 700 to 1,000 tool calls per run.
 /** @internal Exported for tests, which lower the duration to exercise the limit quickly. */
-export const LIMITS = { maxDurationSecs: 60, maxMemory: 256 * 1024 * 1024, maxSuspensions: 1_000 }
+export const LIMITS = { maxFeedDurationSecs: 60, maxMemory: 256 * 1024 * 1024, maxSuspensions: 1_000 }
 
 /**
  * Inner tool calls in flight at once per run: `asyncio.gather` over a big list must not fan out
@@ -55,9 +54,6 @@ export const MAX_CONCURRENT_TOOL_CALLS = 10
 
 // Every caller made by this module; none is ever exposed to another's code (no nested runs).
 const INSTANCES = new WeakSet<Tool>()
-
-// The in-process WebAssembly build cannot be interrupted while the guest computes; keep that bounded.
-const WASM_MAX_DURATION_SECS = 5
 
 const USER_CODE_FILENAME = '<programmatic_tool_caller>'
 
@@ -84,8 +80,8 @@ export const DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION =
   '`fetch-url` or `ns.fetch`) is also available with those characters replaced by underscores ' +
   '(`fetch_url`, `ns_fetch`). The code runs in a sandboxed Python subset: `asyncio`, `json`, `re`, ' +
   '`math`, `datetime`, `collections`, `itertools`, `functools`, `dataclasses`, `typing`, `base64` ' +
-  "are importable; filesystem, network, and subprocess access do not exist -- use the agent's tools " +
-  'for those. Generators (`yield`), class inheritance, `match`, and `del` are not supported. Use this ' +
+  "are importable; filesystem, network, and subprocess access are not available -- use the agent's " +
+  'tools for those. Generators (`yield`), class inheritance, and `del` are not supported. Use this ' +
   'to chain, loop over, filter, or parallelize tool calls in a single turn instead of one tool call ' +
   'per model round-trip, keeping large intermediate results out of the conversation.'
 
@@ -124,20 +120,15 @@ export interface MakeProgrammaticToolCallerOptions {
   toolTimeout?: number
 }
 
-interface MontyRuntime {
-  monty: MontyModule
-  inProcess: boolean
-}
-
-let montyRuntime: Promise<MontyRuntime> | undefined
+let montyRuntime: Promise<MontyModule> | undefined
 
 /**
  * The Monty runtime: the native addon when it loads, else the bundled WebAssembly build, which runs
- * the interpreter in this process (same language-level sandbox, no crash isolation).
+ * the interpreter in a worker thread (same language-level sandbox, slower).
  */
-function loadMonty(): Promise<MontyRuntime> {
+function loadMonty(): Promise<MontyModule> {
   montyRuntime ??= import('@pydantic/monty').then(
-    (monty) => ({ monty, inProcess: false }),
+    (monty) => monty,
     async (cause: unknown) => {
       let monty: MontyModule
       try {
@@ -145,14 +136,14 @@ function loadMonty(): Promise<MontyRuntime> {
       } catch {
         throw new Error(
           "programmatic_tool_caller requires the '@pydantic/monty' package. " +
-            'Install it with: npm install @pydantic/monty@0.0.23',
+            'Install it with: npm install @pydantic/monty',
           { cause }
         )
       }
       logger.warn(
-        `error=<${errorMessage(cause)}> | native monty addon did not load, falling back to the in-process webassembly build`
+        `error=<${errorMessage(cause)}> | native monty addon did not load, falling back to the webassembly build`
       )
-      return { monty, inProcess: true }
+      return monty
     }
   )
   return montyRuntime
@@ -345,13 +336,15 @@ function makeToolFunction(
   slots: Semaphore,
   toolTimeout: number
 ): (...args: unknown[]) => Promise<unknown> {
-  return async (...args: unknown[]): Promise<unknown> => {
+  const toolFunction = async (...args: unknown[]): Promise<unknown> => {
     const [input = {}] = args
     if (args.length > 1 || typeof input !== 'object' || input === null || Array.isArray(input)) {
       throw guestError('TypeError', `${toolName}() takes keyword arguments only, e.g. ${toolName}(key=value)`)
     }
     return slots.run(() => callTool(agent, toolName, parent, signal, input as JSONValue, toolTimeout))
   }
+  // The sandbox looks a function passed around as a value up again by its name.
+  return Object.defineProperty(toolFunction, 'name', { value: toolName })
 }
 
 async function callTool(
@@ -590,7 +583,7 @@ function cap(raw: string, limit = MAX_OUTPUT_CHARS): string {
 
 /**
  * Await `run` until it settles, `timeout` elapses, or `cancelSignal` fires. Rejects with `'timeout'`
- * or `'cancel'` on the latter two; the caller tears the sandbox down, which is what stops the code.
+ * or `'cancel'` on the latter two; the caller then abandons the run.
  */
 function withDeadline<T>(run: Promise<T>, timeout: number, cancelSignal: AbortSignal | undefined): Promise<T> {
   const cleanup = new globalThis.AbortController()
@@ -670,48 +663,56 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
     const available = resolveAvailableTools(agent, allowedTools)
     const externalLookup = buildExternalLookup(available, agent, context, controller.signal, toolTimeout)
 
-    const { monty, inProcess } = await loadMonty()
-    const { Monty, MontyError, MontyRuntimeError, MontySyntaxError } = monty
-    const limits = inProcess
-      ? { ...LIMITS, maxDurationSecs: Math.min(LIMITS.maxDurationSecs, WASM_MAX_DURATION_SECS) }
-      : LIMITS
+    const { Monty, MontyError, MontyRuntimeError, MontySyntaxError } = await loadMonty()
     const pool = await Monty.create()
+    let session: Awaited<ReturnType<typeof pool.checkout>>
     try {
-      const session = await pool.checkout({ scriptName: USER_CODE_FILENAME, limits })
-      try {
-        const run = session.feedRun(code, {
-          externalLookup,
-          printCallback: (stream, text) => output.write(stream, text),
-        })
-        // On timeout/cancel the run is abandoned and its session closed; swallow the late rejection.
-        run.catch(() => {})
-        await withDeadline(run, timeout, controller.signal)
-      } catch (error) {
-        if (error instanceof Error && error.message === 'cancel') {
-          throw new Error('Execution cancelled.', { cause: error })
-        }
-        if (error instanceof Error && error.message === 'timeout') {
-          throw new Error(output.withError(`Execution error: timed out after ${timeout / 1000} seconds.`), {
-            cause: error,
-          })
-        }
-        if (error instanceof MontySyntaxError) {
-          throw new Error(cap(`Syntax error:\n${error.display('traceback')}`), { cause: error })
-        }
-        if (error instanceof MontyRuntimeError) {
-          throw new Error(output.withError(`Execution error:\n${error.display('traceback')}`), { cause: error })
-        }
-        if (error instanceof MontyError) {
-          throw new Error(output.withError(`Execution error: ${error.message}`), { cause: error })
-        }
-        throw error
-      } finally {
-        // Calls still queued or in flight must not outlive the run.
-        controller.abort()
-        await session.close()
-      }
-    } finally {
+      session = await pool.checkout({ scriptName: USER_CODE_FILENAME, limits: LIMITS })
+    } catch (error) {
       await pool.close()
+      throw error
+    }
+    let abandoned = false
+    try {
+      const run = session.feedRun(code, {
+        externalLookup,
+        printCallback: (stream, text) => output.write(stream, text),
+      })
+      // On timeout/cancel the run is abandoned; swallow the late rejection.
+      run.catch(() => {})
+      await withDeadline(run, timeout, controller.signal)
+    } catch (error) {
+      if (error instanceof Error && error.message === 'cancel') {
+        abandoned = true
+        throw new Error('Execution cancelled.', { cause: error })
+      }
+      if (error instanceof Error && error.message === 'timeout') {
+        abandoned = true
+        throw new Error(output.withError(`Execution error: timed out after ${timeout / 1000} seconds.`), {
+          cause: error,
+        })
+      }
+      if (error instanceof MontySyntaxError) {
+        throw new Error(cap(`Syntax error:\n${error.display('traceback')}`), { cause: error })
+      }
+      if (error instanceof MontyRuntimeError) {
+        throw new Error(output.withError(`Execution error:\n${error.display('traceback')}`), { cause: error })
+      }
+      if (error instanceof MontyError) {
+        throw new Error(output.withError(`Execution error: ${error.message}`), { cause: error })
+      }
+      throw error
+    } finally {
+      // Calls still queued or in flight must not outlive the run.
+      controller.abort()
+      // A session closes only once its feed ends, and code that is computing cannot be interrupted, so an
+      // abandoned run is closed in the background: the VM duration limit ends it.
+      const closed = session.close().finally(() => pool.close())
+      if (abandoned) {
+        closed.catch(() => {})
+      } else {
+        await closed
+      }
     }
 
     return output.text() || '(no output)'
@@ -744,7 +745,6 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
         yield* streamPrints(output, run)
         return await run
       } finally {
-        controller.abort()
         context.cancelSignal?.removeEventListener('abort', forwardCancel)
       }
     },

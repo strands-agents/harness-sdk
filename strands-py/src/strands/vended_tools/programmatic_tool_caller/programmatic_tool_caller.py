@@ -6,8 +6,9 @@ over, filter, and parallelize tool calls in a single turn instead of one tool ca
 Only text the code sends to ``print()`` is returned to the model; a tool's return value stays in the
 code's local scope unless printed, which keeps large intermediate payloads out of the context window.
 
-Security posture: Monty is a Python interpreter written in Rust whose VM implements no host operations
--- no filesystem, environment, network, FFI, or process access exists in the bytecode, and the
+Security posture: Monty is a Python interpreter written in Rust that performs no host operations
+itself. It has no network, FFI, or process access, and it hands filesystem and environment calls to
+the host, which refuses them because this tool mounts no directory and installs no OS handler. The
 interpreter runs in a separate worker process with memory/time/recursion limits enforced by the VM.
 The only way out of the sandbox is the tool functions handed in here, so the sandbox reaches exactly
 what the agent's own tools reach. This is a language-level sandbox, not an OS-level one; for an OS
@@ -54,9 +55,9 @@ logger = logging.getLogger(__name__)
 
 # Enforced by the Monty VM. Duration counts interpreter time only (the clock pauses while a tool call
 # is in flight), so it bounds runaway guest code without penalizing slow tools; the wall clock is
-# bounded separately by ``timeout``. Suspensions are host round trips: a sequentially awaited tool
-# call costs two, a gathered one about one, so this is roughly 500 sequential calls per run.
-_LIMITS: ResourceLimits = {"max_duration_secs": 60.0, "max_memory": 256 * 1024 * 1024, "max_suspensions": 1_000}
+# bounded separately by ``timeout``. Suspensions are host round trips: a tool call costs about one,
+# and gathering in small batches adds a few, so this is roughly 700 to 1,000 tool calls per run.
+_LIMITS: ResourceLimits = {"max_feed_duration_secs": 60.0, "max_memory": 256 * 1024 * 1024, "max_suspensions": 1_000}
 
 # Inner tool calls in flight at once per run: ``asyncio.gather`` over a big list must not fan out
 # unbounded against the same agent (a model turn is naturally bounded by its handful of tool_use blocks).
@@ -135,8 +136,8 @@ DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION = (
     "`fetch-url` or `ns.fetch`) is also available with those characters replaced by underscores "
     "(`fetch_url`, `ns_fetch`). The code runs in a sandboxed Python subset: `asyncio`, `json`, `re`, "
     "`math`, `datetime`, `collections`, `itertools`, `functools`, `dataclasses`, `typing`, `base64` "
-    "are importable; filesystem, network, and subprocess access do not exist -- use the agent's tools "
-    "for those. Generators (`yield`), class inheritance, `match`, and `del` are not supported. Use this "
+    "are importable; filesystem, network, and subprocess access are not available -- use the agent's "
+    "tools for those. Generators (`yield`), class inheritance, and `del` are not supported. Use this "
     "to chain, loop over, filter, or parallelize tool calls in a single turn instead of one tool call "
     "per model round-trip, keeping large intermediate results out of the conversation."
 )

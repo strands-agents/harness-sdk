@@ -31,11 +31,10 @@ pip install 'strands-agents[programmatic-tool-caller]'
 ```
 </Tab>
 <Tab label="TypeScript">
-The sandbox requires the optional `@pydantic/monty` peer dependency. The SDK pins it to
-an exact version:
+The sandbox requires the optional `@pydantic/monty` peer dependency:
 
 ```bash
-npm install @pydantic/monty@0.0.23
+npm install @pydantic/monty
 ```
 </Tab>
 </Tabs>
@@ -103,7 +102,7 @@ window.
 
 Monty implements a subset of Python. The default description lists the standard library
 modules the code can import (`asyncio`, `json`, `re`, `math`, `datetime`, and a few more)
-and the features that are missing: generators, class inheritance, `match`, and `del`.
+and the features that are missing: generators, class inheritance, and `del`.
 
 ## Stream the output
 
@@ -218,13 +217,13 @@ Every run has fixed limits that are separate from the timeouts:
 - **Compute:** 60 seconds of interpreter time. The clock pauses while a tool call is in
   flight, so slow tools do not count against it.
 - **Memory:** 256 MiB.
-- **Suspensions:** 1,000 per run, which is about 500 sequentially awaited tool calls.
+- **Suspensions:** 1,000 per run, which is roughly 700 to 1,000 tool calls.
 - **Concurrency:** 10 tool calls in flight at once. Further calls wait for a free slot.
 - **Output:** 200,000 characters. Longer output is truncated.
 
-In TypeScript, the tool falls back to an in-process WebAssembly build of Monty when the
-native addon cannot load, which on Linux happens with a glibc older than 2.39. That build
-cannot be interrupted while the code computes, so compute is capped at 5 seconds there.
+In TypeScript, the tool falls back to a WebAssembly build of Monty when the native addon
+cannot load, for example on Alpine Linux. That build has the same limits but runs the code
+more slowly.
 
 ## Hooks and interventions
 

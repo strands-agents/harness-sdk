@@ -286,8 +286,11 @@ def test_unwrap_raises_runtime_error_for_error_results():
         ("import sys\nprint(sys.modules)", "AttributeError"),
         ("print(().__class__.__bases__)", "AttributeError"),
         ("print(__builtins__)", "NameError"),
-        ("print(eval('1 + 1'))", "NameError"),
-        ("exec('x = 1')", "NameError"),
+        ("import os\nprint(os.getenv('HOME'))", "not supported"),
+        ("import os\nos.system('id')", "AttributeError"),
+        ("print(eval(\"__import__('os')\"))", "NameError"),
+        ("exec(\"import os\\nprint(os.listdir('/'))\")", "PermissionError"),
+        ("open('/tmp/programmatic_tool_caller_probe', 'w')", "PermissionError"),
         ("def f(): pass\nprint(f.__globals__)", "AttributeError"),
         ("from pathlib import Path\nprint(Path('/etc/passwd').read_text())", "PermissionError"),
     ],
@@ -314,7 +317,7 @@ _module = sys.modules["strands.vended_tools.programmatic_tool_caller.programmati
 
 
 def test_synchronous_busy_loop_is_bounded(monkeypatch):
-    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_duration_secs": 0.2})
+    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_feed_duration_secs": 0.2})
     start = time.monotonic()
     result = _run(_agent(calculator), "while True:\n    pass")
     assert result["status"] == "error"
@@ -669,6 +672,23 @@ def test_syntax_error_output_is_truncated_when_too_long():
     text = _text(_run(_agent(calculator), f"x = '{long_line}' +"))
     assert text.startswith("Syntax error:")
     assert len(text) < _MAX_OUTPUT_CHARS + 100
+
+
+def test_tool_function_can_be_passed_around_as_a_value():
+    code = (
+        'async def twice(fn):\n    return [await fn(expression="1 + 1"), await fn(expression="2 + 2")]\n'
+        "print(await twice(calculator))"
+    )
+    assert _text(_run(_agent(calculator), code)) == "['2', '4']"
+
+
+def test_run_timeout_returns_while_the_code_is_still_computing(monkeypatch):
+    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_feed_duration_secs": 3.0})
+    quick = make_programmatic_tool_caller(name="quick", timeout=0.3)
+    started = time.monotonic()
+    result = _run(Agent(model=None, tools=[quick]), "print('start')\nwhile True:\n    pass", "quick")
+    assert time.monotonic() - started < 2
+    assert _text(result) == "start\n\nExecution error: timed out after 0.3 seconds."
 
 
 def test_timeout_is_enforced():

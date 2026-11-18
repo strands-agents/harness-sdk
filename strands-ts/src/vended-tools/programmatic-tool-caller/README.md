@@ -16,10 +16,10 @@ Lets the agent orchestrate its other tools with Python code. The model passes a 
 Requires the optional `@pydantic/monty` peer dependency and Node.js:
 
 ```bash
-npm install @pydantic/monty@0.0.23
+npm install @pydantic/monty
 ```
 
-The native addon of that version needs glibc 2.39 or newer on Linux. Where it cannot load, the tool logs a warning and runs the interpreter in-process as WebAssembly (see [Limits](#limits)).
+Where the native addon cannot load, for example on Alpine Linux, the tool logs a warning and runs the interpreter as WebAssembly, which is slower.
 
 ## Usage
 
@@ -84,4 +84,4 @@ One event can carry several `print()` calls, and streaming stops at the output l
 
 ### Limits
 
-The sandbox bounds the code's own compute time (60 seconds, not counting time spent waiting on tools), memory (256 MiB), and output (200,000 characters). Where the native Monty addon cannot load, the interpreter falls back to an in-process WebAssembly build that cannot be interrupted while the code computes, so compute time is capped at 5 seconds there.
+The sandbox bounds the code's own compute time (60 seconds, not counting time spent waiting on tools), memory (256 MiB), and output (200,000 characters). A run makes roughly 700 to 1,000 tool calls before it reaches the sandbox's limit on host round trips.
