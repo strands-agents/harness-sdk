@@ -19,6 +19,8 @@ const TIMEOUT_SECONDS = 30
 
 // The characters RFC 3986 allows in a URL; anything else is rejected before the URL reaches a shell.
 const URL_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/
+// Characters the URL parser leaves as they are after the host; percent-encoded so the direct path's URLs pass `URL_CHARS`.
+const QUERY_UNSAFE = /[|^`{}\\]/g
 // PowerShell prints its edition (Desktop or Core); sh expands the unset variable to an empty line.
 const SHELL_PROBE = 'echo "${PSEdition}"'
 const shells = new WeakMap<Sandbox, 'sh' | 'powershell'>()
@@ -69,7 +71,7 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
   const { mode = 'agentic', model: analystModel, sandbox = false } = options
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
   const maxContentChars = options.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS
-  if (!Number.isInteger(maxBytes) || maxBytes <= 0) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new Error(`maxBytes must be a positive integer, got ${maxBytes}`)
   }
   if (!Number.isFinite(maxContentChars) || maxContentChars <= 0) {
@@ -265,7 +267,11 @@ async function fetchSandbox(
 ): Promise<[string, Uint8Array]> {
   // The parsed URL has spaces and non-ASCII characters percent-encoded, as `fetch` sends it. `fetch` refuses
   // credentials in the URL, so they are refused here too.
-  const url = target.href
+  const afterHost = (target.pathname + target.search + target.hash).replace(
+    QUERY_UNSAFE,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  )
+  const url = target.origin + afterHost
   if (!URL_CHARS.test(url) || target.username || target.password) {
     throw new Error(
       `url=<${url}> | fetch failed: the URL may only contain the characters RFC 3986 allows, and no credentials`

@@ -42,6 +42,9 @@ from .types import WEB_FETCH_DESCRIPTION_AGENTIC, WEB_FETCH_DESCRIPTION_MARKDOWN
 
 logger = logging.getLogger(__name__)
 
+if not (importlib.util.find_spec("bs4") and importlib.util.find_spec("markdownify")):
+    logger.warning("extra=<strands-agents[web-fetch]> | extra is not installed | fetching an html page will fail")
+
 
 class WebFetchError(ValueError):
     """Raised when a web fetch request fails."""
@@ -64,6 +67,9 @@ _TIMEOUT_SECONDS = 30
 
 # The characters RFC 3986 allows in a URL; anything else is rejected before the URL reaches a shell.
 _URL_CHARS = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
+# Characters httpx leaves as they are after the host; percent-encoded so the direct path's URLs pass ``_URL_CHARS``.
+_QUERY_UNSAFE = re.compile(r"[|^`{}\\]")
+_SCHEME_AND_HOST = re.compile(r"^((?:[^/?#]*//[^/?#]*)?)")
 # PowerShell prints its edition (Desktop or Core); sh expands the unset variable to an empty line.
 _SHELL_PROBE = 'echo "${PSEdition}"'
 # Keyed by ``id`` so unhashable and value-equal sandboxes each get their own entry.
@@ -118,7 +124,7 @@ def make_web_fetch(
         mode: Extraction mode. Defaults to ``agentic``.
         sandbox: When ``True``, the request runs as ``curl`` through the host agent's sandbox
             and is confined only as far as that sandbox is. Defaults to ``False``: the request
-            is sent from the agent process. Both stop after 30 seconds in total.
+            is sent from the agent process.
 
     Returns:
         A decorated tool that fetches a URL and extracts content according to
@@ -140,8 +146,6 @@ def make_web_fetch(
         raise ValueError(f"sandbox must be a bool, got {sandbox!r}")
     if sandbox and client is not None:
         raise ValueError("client cannot be combined with sandbox=True: drop client, or leave sandbox=False to use it")
-    if not (importlib.util.find_spec("bs4") and importlib.util.find_spec("markdownify")):
-        logger.warning("extra=<strands-agents[web-fetch]> | extra is not installed | fetching an html page will fail")
     resolved_description = description or (
         WEB_FETCH_DESCRIPTION_MARKDOWN if mode == "markdown" else WEB_FETCH_DESCRIPTION_AGENTIC
     )
@@ -364,8 +368,9 @@ async def _fetch_sandbox(
     """
     try:
         # httpx percent-encodes spaces and non-ASCII characters, as it does for the request it sends itself.
-        url = str(httpx.URL(url.strip()))
-    except httpx.InvalidURL as error:
+        _, scheme_and_host, rest = _SCHEME_AND_HOST.split(str(httpx.URL(url.strip())), maxsplit=1)
+        url = scheme_and_host + _QUERY_UNSAFE.sub(lambda match: f"%{ord(match.group()):02X}", rest)
+    except (httpx.InvalidURL, ValueError) as error:
         raise WebFetchError(f"Fetch failed: {error}") from error
     if not _URL_CHARS.fullmatch(url):
         raise WebFetchError("Fetch failed: the URL may only contain the characters RFC 3986 allows.")

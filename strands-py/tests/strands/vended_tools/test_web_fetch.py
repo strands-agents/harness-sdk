@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import gzip
-import logging
 import shlex
 import shutil
 import subprocess
@@ -110,15 +109,17 @@ class TestWithoutMarkdownPackages:
         with pytest.raises(ImportError, match=r"pip install 'strands-agents\[web-fetch\]'"):
             await tool(url="https://example.com/")
 
-    def test_factory_logs_a_warning(self, caplog):
-        make_web_fetch()
-        assert [record.levelno for record in caplog.records] == [logging.WARNING]
-        assert "extra=<strands-agents[web-fetch]> | extra is not installed" in caplog.text
 
-
-def test_factory_logs_nothing_with_the_markdown_packages_installed(caplog):
-    make_web_fetch()
-    assert caplog.records == []
+@pytest.mark.parametrize(("missing", "warnings"), [(True, 1), (False, 0)])
+def test_import_warns_once_when_the_markdown_packages_are_missing(missing, warnings):
+    code = (
+        "import logging, sys; logging.basicConfig(); "
+        + ("sys.modules.update(bs4=None, markdownify=None); " if missing else "")
+        + "from strands.vended_tools.web_fetch import make_web_fetch; make_web_fetch(); make_web_fetch()"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr.count("extra=<strands-agents[web-fetch]> | extra is not installed") == warnings
 
 
 @pytest.mark.parametrize("max_bytes", [0, -1, 1.5, True, float("inf"), float("nan"), "5", None])
@@ -922,10 +923,6 @@ class TestSandbox:
             "javascript:alert(1)",
             "https:///no-host",
             "https://exa`mple.com/",
-            "https://example.com/a|b",
-            "https://example.com/a\\b",
-            "https://example.com/?q=`id`",
-            "https://example.com/?q={a,b}",
             "https://example.com/x\nrm -rf /",
             "https://example.com/x\x7f",
             "",
@@ -961,6 +958,27 @@ class TestSandbox:
         assert await _sandbox_fetch(sandbox, url) == "page"
         assert requested == [sent]
         assert f" -- {shlex.quote(sent)}; " in sandbox.commands[1]
+
+    @pytest.mark.parametrize(
+        ("url", "sent"),
+        [
+            ("https://example.com/a|b", "https://example.com/a%7Cb"),
+            ("https://example.com/a\\b", "https://example.com/a%5Cb"),
+            ("https://example.com/?q=`id`^{a,b}", "https://example.com/?q=%60id%60%5E%7Ba,b%7D"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_characters_httpx_leaves_raw_are_percent_encoded(self, url, sent):
+        sandbox = _Sandbox(_curl_output(b"page", content_type="text/plain"))
+        assert await _sandbox_fetch(sandbox, url) == "page"
+        assert f" -- {shlex.quote(sent)}; " in sandbox.commands[1]
+
+    @pytest.mark.asyncio
+    async def test_lone_surrogate_is_rejected_before_any_command_runs(self):
+        sandbox = _Sandbox()
+        with pytest.raises(WebFetchError, match="Fetch failed"):
+            await _sandbox_fetch(sandbox, "https://example.com/\ud800")
+        assert sandbox.commands == []
 
     @pytest.mark.asyncio
     async def test_shell_is_probed_once_per_sandbox(self):

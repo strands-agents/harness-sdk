@@ -605,9 +605,6 @@ describe('webFetch tool', () => {
       'file:///etc/passwd',
       'javascript:alert(1)',
       'https://exa`mple.com/',
-      'https://example.com/a|b',
-      'https://example.com/?q=`id`',
-      'https://example.com/?q={a,b}',
       'https://user:pw@example.com/',
       'https://user@example.com/',
       '',
@@ -627,6 +624,15 @@ describe('webFetch tool', () => {
       mockFetch('page')
       expect(await makeWebFetch({ mode: 'markdown' }).invoke({ url })).toBe('page')
       expect(new Request(vi.mocked(globalThis.fetch).mock.calls[0]![0] as string).url).toBe(sent)
+      const sandbox = new FakeSandbox({ output: curlOutput('page', 'text/plain') })
+      expect(await sandboxFetch(sandbox, url)).toBe('page')
+      expect(sandbox.commands[1]).toContain(` -- '${sent}'; `)
+    })
+
+    it.each([
+      ['https://example.com/a|b', 'https://example.com/a%7Cb'],
+      ['https://example.com/?q=`id`^{a,b}', 'https://example.com/?q=%60id%60%5E%7Ba,b%7D'],
+    ])('percent-encodes characters the URL parser leaves raw in %j', async (url, sent) => {
       const sandbox = new FakeSandbox({ output: curlOutput('page', 'text/plain') })
       expect(await sandboxFetch(sandbox, url)).toBe('page')
       expect(sandbox.commands[1]).toContain(` -- '${sent}'; `)
