@@ -130,6 +130,19 @@ describe('FileStorage', () => {
       expect(await storage.loadSnapshot({ location })).toEqual(snapshots[1])
     })
 
+    it('keeps the save called last when the earlier symbolic link check finishes later', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const manifests = [1, 2].map((day) => createTestManifest({ updatedAt: `2024-01-0${day}T00:00:00.000Z` }))
+      vi.spyOn(fs, 'lstat').mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        throw Object.assign(new Error('Not found'), { code: 'ENOENT' })
+      })
+
+      await Promise.all(manifests.map((manifest) => storage.saveManifest({ location, manifest })))
+
+      expect(await storage.loadManifest({ location })).toEqual(manifests[1])
+    })
+
     it('persists complete JSON for many overlapping saves on the real filesystem', async () => {
       const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
       const snapshots = Array.from({ length: 20 }, (_, index) =>
