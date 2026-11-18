@@ -59,15 +59,20 @@ export function formatChatRequest(
   messages: Message[],
   options?: StreamOptions
 ): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming {
-  // User `params` override the `stream_options` default but never the provider-managed fields
-  // after them. The managed-params warning fires at config time to surface the collision.
+  // User `params` are spread first so provider-managed fields always win.
+  // The managed-params warning fires at config time to surface the collision.
   const request = {
-    stream_options: { include_usage: true },
     ...(config.params ?? {}),
     model: config.modelId ?? DEFAULT_CHAT_MODEL_ID,
     messages: [] as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     stream: true as const,
   } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming
+
+  // `params` may override the `stream_options` default or omit it with `null`. A missing or
+  // `undefined` value keeps the default.
+  if (request.stream_options === undefined) {
+    request.stream_options = { include_usage: true }
+  }
 
   if (options?.systemPrompt !== undefined) {
     if (typeof options.systemPrompt === 'string') {

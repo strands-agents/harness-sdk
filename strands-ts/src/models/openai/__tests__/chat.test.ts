@@ -451,6 +451,11 @@ describe('OpenAIModel', () => {
       expect(request.stream_options).toStrictEqual({ include_usage: true })
     })
 
+    it('keeps the stream_options default when params sets it to undefined', async () => {
+      const request = await streamWithParams({ params: { stream_options: undefined } })
+      expect(request.stream_options).toStrictEqual({ include_usage: true })
+    })
+
     it('passes a set stream_options through without a warning', async () => {
       const warnSpy = vi.spyOn(logger, 'warn')
       const request = await streamWithParams({ params: { stream_options: { include_usage: false } } })
@@ -459,14 +464,12 @@ describe('OpenAIModel', () => {
       warnSpy.mockRestore()
     })
 
-    it('omits stream_options when params sets it to null', async () => {
-      const request = await streamWithParams({ params: { stream_options: null } })
-      expect('stream_options' in request).toBe(false)
-    })
-
     it('omits every params key set to null and passes set keys through', async () => {
-      const request = await streamWithParams({ params: { seed: null, top_p: 0.8, prompt_cache_key: null } })
+      const request = await streamWithParams({
+        params: { seed: null, top_p: 0.8, prompt_cache_key: null, stream_options: null },
+      })
       expect('seed' in request).toBe(false)
+      expect('stream_options' in request).toBe(false)
       expect('prompt_cache_key' in request).toBe(false)
       expect(request.top_p).toBe(0.8)
     })
