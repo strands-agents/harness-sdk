@@ -7,6 +7,7 @@ import { DecisionModel } from '../decision-model.js'
 import { DecisionsAPIDecisionModel } from '../decisions-api-decision-model.js'
 import { TypeSafeDecisionModel } from '../typesafe-decision-model.js'
 import { Uncertain } from '../types.js'
+import type { Question } from '../types.js'
 
 interface CapturedRequest {
   url: string
@@ -81,6 +82,34 @@ afterEach(() => {
 
 describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerName, apiKeyEnvironmentVariable }) => {
   describe('ask', () => {
+    it.each([1, 0.5])('preserves prototype-named question ids with noul probability %s', async (noul) => {
+      const ids = ['__proto__', 'constructor', 'toString']
+      const questions = Object.fromEntries(
+        ids.map((id) => [id, { question: 'ok?', choices: 'boolean' } satisfies Question])
+      )
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody(Object.fromEntries(ids.map((id) => [id, { type: 'noul', noul }])))),
+      })
+
+      const result = await decision.ask('state', questions)
+
+      expect(Object.keys(result.answers)).toEqual(ids)
+      expect(result.answers).toEqual(Object.fromEntries(ids.map((id) => [id, noul === 1 ? true : new Uncertain()])))
+      expect(result.metadata.probabilities).toEqual(
+        Object.fromEntries(ids.map((id) => [id, { true: noul, false: 1 - noul }]))
+      )
+      expect(result.metadata.confidence).toEqual(Object.fromEntries(ids.map((id) => [id, Math.abs(2 * noul - 1)])))
+      expect(Object.getPrototypeOf(result.answers)).toBe(Object.prototype)
+    })
+
+    it.each(['__proto__', 'constructor', 'toString'])('rejects a missing own answer for %s', async (id) => {
+      const decision = create({ apiKey: 'test-key', fetch: fakeFetch(responseBody({})) })
+      const questions = Object.fromEntries([[id, { question: 'ok?', choices: 'boolean' } satisfies Question]])
+
+      await expect(decision.ask('state', questions)).rejects.toThrow(`omitted answer for question id=<${id}>`)
+    })
+
     it('maps questions and returns typed answers with confidence metadata', async () => {
       const captured: CapturedRequest[] = []
       const fetch = fakeFetch(
