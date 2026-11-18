@@ -164,28 +164,33 @@ export class FileStorage implements SnapshotStorage {
   }
 
   /**
-   * Atomically writes JSON to a file using a `.tmp` intermediary to prevent partial writes.
+   * Atomically writes JSON to a file through a unique `.tmp` intermediary to prevent partial writes.
    * Creates parent directories if they do not exist. New directories and files are accessible
    * to the owner only, and a symbolic link at `path` is refused.
+   * Overlapping saves to the same file write concurrently and are renamed one at a time in call
+   * order, so the last save called wins. This holds within one process only.
    */
   private async _writeJSON(path: string, data: unknown): Promise<void> {
-    if (await this._isSymlink(path)) {
-      throw new SessionError(`Refusing to write to symbolic link at ${path}`)
-    }
     let tmpPath: string | undefined
     try {
       const { promises: fs } = await import('fs')
       const { dirname, resolve } = await import('path')
-      // Directories above the storage root keep the default mode.
-      await fs.mkdir(dirname(this._baseDir), { recursive: true })
-      await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
       const { randomUUID } = await import('crypto')
       const uniquePath = `${path}.${randomUUID()}.tmp`
       tmpPath = uniquePath
-      await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
       const target = resolve(path)
-      const pendingRename = (PENDING_RENAMES.get(target) ?? Promise.resolve())
-        .catch(() => {})
+      // No I/O is awaited before this save takes its place in the queue, which keeps call order.
+      const written = (async (): Promise<void> => {
+        if (await this._isSymlink(path)) {
+          throw new SessionError(`Refusing to write to symbolic link at ${path}`)
+        }
+        // Directories above the storage root keep the default mode.
+        await fs.mkdir(dirname(this._baseDir), { recursive: true })
+        await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
+        await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+      })()
+      const pendingRename = Promise.allSettled([PENDING_RENAMES.get(target), written])
+        .then(() => written)
         .then(() => fs.rename(uniquePath, path))
       PENDING_RENAMES.set(target, pendingRename)
       try {
@@ -194,6 +199,7 @@ export class FileStorage implements SnapshotStorage {
         if (PENDING_RENAMES.get(target) === pendingRename) PENDING_RENAMES.delete(target)
       }
     } catch (error: unknown) {
+      if (error instanceof SessionError) throw error
       // On EEXIST the temp path was not created by this call, so it is not ours to remove.
       if (tmpPath && !this._hasErrorCode(error, 'EEXIST')) {
         const { promises: fs } = await import('fs')
