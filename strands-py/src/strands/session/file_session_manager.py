@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import tempfile
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -63,20 +64,21 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
             storage_dir: Directory for local filesystem storage.
                 Defaults to a user-private ``~/.strands/sessions/`` directory.
                 A new directory is created with mode ``0o700``. An existing directory keeps its
-                permissions, and a warning is logged if it is accessible by group or others.
+                permissions, and a ``UserWarning`` is emitted if it is accessible by group or others.
             **kwargs: Additional keyword arguments for future extensibility.
         """
         self.storage_dir = storage_dir or self._default_storage_dir()
         os.makedirs(self.storage_dir, mode=0o700, exist_ok=True)
 
         # Windows reports 0o777 for every directory, so the check is POSIX-only.
-        storage_mode = stat.S_IMODE(os.stat(self.storage_dir).st_mode)
-        if os.name == "posix" and storage_mode & 0o077:
-            logger.warning(
-                "storage_dir=<%s>, mode=<%o> | session storage directory is accessible by group or others",
-                self.storage_dir,
-                storage_mode,
-            )
+        if os.name == "posix":
+            storage_mode = stat.S_IMODE(os.stat(self.storage_dir).st_mode)
+            if storage_mode & 0o077:
+                warnings.warn(
+                    f"storage_dir=<{self.storage_dir}>, mode=<{storage_mode:o}> | session storage directory is"
+                    " accessible by group or others; restrict it with chmod 700",
+                    stacklevel=2,
+                )
 
         super().__init__(session_id=session_id, session_repository=self)
 
