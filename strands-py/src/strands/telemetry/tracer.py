@@ -275,7 +275,12 @@ class Tracer:
                 attributes["gen_ai.usage.cache_write_input_tokens"] = usage["cacheWriteInputTokens"]
 
         if metrics.get("timeToFirstByteMs", 0) > 0:
-            attributes["gen_ai.server.time_to_first_token"] = metrics["timeToFirstByteMs"]
+            # gen_ai.response.time_to_first_chunk is a double measured in seconds per the GenAI semantic conventions
+            attributes["gen_ai.response.time_to_first_chunk"] = metrics["timeToFirstByteMs"] / 1000.0
+            # Deprecated pre-semconv name (a metric name emitted here as a span attribute in ms),
+            # dual-emitted unless opted into the latest conventions
+            if not self.use_latest_genai_conventions:
+                attributes["gen_ai.server.time_to_first_token"] = metrics["timeToFirstByteMs"]
 
         if metrics.get("latencyMs", 0) > 0:
             attributes["gen_ai.server.request.duration"] = metrics["latencyMs"]
