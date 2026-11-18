@@ -170,7 +170,7 @@
         "forcedToolChoice": false,
         "nativeStructuredOutput": true,
         "serverSideSummary": true,
-        "temporaryMessages": true,
+        "temporaryMessages": false,
         "defaultEffort": "medium"
       }
     },
