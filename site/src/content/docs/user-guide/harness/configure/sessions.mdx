@@ -147,6 +147,22 @@ When a session is active, offloaded tool results (from context management) are k
 the session directory too, so they stay durable across restarts alongside the conversation.
 Without a session, they stay in memory and do not outlive the process.
 
+### Keep the session directory private
+
+Session files are trusted input. Resuming a session loads everything stored in it
+as-is: the messages, with their tool calls and tool results, and the stored system prompt,
+which replaces the one you configured. Resume only sessions that you or your own tooling
+wrote, not a session directory that arrived with a cloned repository. Strands harness
+creates the directory with the process's default permissions, so on a shared machine
+restrict it to the user the agent runs as.
+
+The default location sits inside your project, and session files hold the full
+conversation along with offloaded tool output. Add `.agent/sessions/` to the project's
+`.gitignore` so they are not committed or shared through the repository. Ignoring all of
+`.agent/` works too, unless you commit [skills](../skills/) from `.agent/skills`. For
+how the SDK treats session storage, see its
+[session persistence best practices](../../../sdk/agents/session-management/#session-persistence-best-practices).
+
 ## Sessions are not memory
 
 Sessions and [long-term memory](../memory/) are separate.
