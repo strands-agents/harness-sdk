@@ -48,9 +48,9 @@ CACHE_PROMPT = "\n".join(
 )
 
 NOT_APPLICABLE = "not applicable"
-# The cases call every listed model, so they only run when asked. CI sets this for the weekly run and for
-# changes that can affect how a model behaves.
-ENABLED = bool(os.environ.get("STRANDS_CONFORMANCE"))
+# The cases call every listed model, so they only run when asked: "core" runs the targets marked core and any
+# other value runs them all. See shared/README.md for when CI sets each.
+MODE = os.environ.get("STRANDS_CONFORMANCE", "")
 # HTTP statuses that mean the provider could not serve the call, which says nothing about the case.
 _PROVIDER_ERROR_STATUSES = frozenset({401, 403, 404, 408, 429})
 _MANTLE_CONFIG = {"region": "us-east-1"}
@@ -110,8 +110,10 @@ class Target:
 
 def _marks(row: dict[str, Any]) -> list[pytest.MarkDecorator]:
     provider = row["provider"]
-    if not ENABLED:
-        return [pytest.mark.skip(reason="set STRANDS_CONFORMANCE=1 to run the model conformance cases")]
+    if not MODE:
+        return [pytest.mark.skip(reason="set STRANDS_CONFORMANCE to run the model conformance cases")]
+    if MODE == "core" and not row.get("core"):
+        return [pytest.mark.skip(reason="not in the core set that pull requests run")]
     if row.get("endOfLife"):
         return [pytest.mark.skip(reason=f"{NOT_APPLICABLE}: end of life")]
     if provider in OMITTED_PROVIDERS:
@@ -123,6 +125,7 @@ def _marks(row: dict[str, Any]) -> list[pytest.MarkDecorator]:
 
 
 TARGET_PROVIDERS = {row["provider"] for row in _SHARED["targets"]}
+LIVE_TARGETS = {(row["provider"], row["model"]) for row in _SHARED["targets"] if not row.get("endOfLife")}
 TARGETS = [
     pytest.param(
         Target(row["provider"], row["model"]),
@@ -190,8 +193,46 @@ def provider_error_reason(error: BaseException | None) -> str | None:
     return None
 
 
+def _known_failure(item: pytest.Item) -> dict[str, Any] | None:
+    case_id = getattr(getattr(item, "function", None), "conformance_case", None)
+    if case_id is None:
+        return None
+    target: Target = item.callspec.params["target"]
+    return KNOWN_FAILURES.get((target.provider, target.model_id, case_id))
+
+
+def _is_tracked_failure(known: dict[str, Any], error: BaseException | None) -> bool:
+    """Whether the error is the failure the entry tracks: a failed assertion, or an error carrying its text."""
+    if "error" not in known:
+        return isinstance(error, AssertionError)
+    while error is not None:
+        if known["error"] in str(error):
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
+def apply_known_failure(item: pytest.Item, call: pytest.CallInfo, report: pytest.TestReport) -> None:
+    """Report the tracked failure of a known failure as expected, and its unexpected pass as a failure.
+
+    Any other error on the pair is left as a failure, so a known failure cannot hide a different problem.
+    """
+    known = _known_failure(item)
+    if known is None or call.when != "call":
+        return
+    if call.excinfo is None:
+        if not known.get("intermittent"):
+            report.outcome = "failed"
+            report.longrepr = (
+                f"known failure #{known['issue']} now passes; remove it from knownFailures in shared/conformance.json"
+            )
+    elif _is_tracked_failure(known, call.excinfo.value):
+        report.outcome = "skipped"
+        report.wasxfail = f"known failure, see #{known['issue']}"
+
+
 def _outcome(report: pytest.TestReport, error: BaseException | None) -> dict[str, str]:
-    # A strict xfail that passes reports as failed with no exception, and one that fails reports as skipped.
+    # A known failure that passes reports as failed with no exception, and one that fails reports as skipped.
     if report.passed or (report.failed and error is None):
         return {"status": "passed"}
     if hasattr(report, "wasxfail") or not report.skipped:
