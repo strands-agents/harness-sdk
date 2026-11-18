@@ -400,6 +400,9 @@ class OllamaModel(Model):
                     yield self.format_chunk(
                         {"chunk_type": "content_delta", "data_type": "text", "data": event.message.content}
                     )
+
+            if is_thinking:
+                yield self.format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
         except ollama.ResponseError as error:
             if any(message in str(error).lower() for message in self.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(str(error)) from error

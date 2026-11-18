@@ -618,6 +618,38 @@ async def test_stream_thinking_and_text_in_one_chunk(ollama_client, model, agene
 
 
 @pytest.mark.asyncio
+async def test_stream_ends_while_thinking(ollama_client, model, agenerator, alist):
+    think_event = unittest.mock.Mock()
+    think_event.message.tool_calls = None
+    think_event.message.content = ""
+    think_event.message.thinking = "t1"
+    think_event.done_reason = "length"
+    think_event.eval_count = 10
+    think_event.prompt_eval_count = 5
+    think_event.total_duration = 1000000  # 1ms in nanoseconds
+
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([think_event]))
+
+    tru_events = await alist(model.stream([{"role": "user", "content": [{"text": "Hello"}]}]))
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "t1"}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "max_tokens"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 5, "outputTokens": 10, "totalTokens": 15},
+                "metrics": {"latencyMs": 1},
+            }
+        },
+    ]
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
 async def test_tool_choice_not_supported_warns(ollama_client, model, agenerator, alist, captured_warnings):
     """Test that non-None toolChoice emits warning for unsupported providers."""
     tool_choice = {"auto": {}}
