@@ -302,13 +302,15 @@ def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
 
 async def _check_public(url: httpx.URL, timeout: float | None) -> None:
     """Raise ``WebFetchError`` unless ``url`` is http(s) and its host resolves only to public addresses."""
+    # Credentials in the URL, such as those of the client's base_url, stay out of error messages.
+    shown = str(url.copy_with(userinfo=b""))
     if url.scheme not in ("http", "https"):
-        raise WebFetchError(f"Fetch failed: only http and https URLs are supported: {str(url)!r}")
+        raise WebFetchError(f"Fetch failed: only http and https URLs are supported: {shown!r}")
     host = url.raw_host.decode("ascii")
     try:
         is_public = await asyncio.wait_for(is_public_host(host), timeout)
     except asyncio.TimeoutError as error:
-        raise WebFetchError(f"Fetch timed out: {str(url)!r}") from error
+        raise WebFetchError(f"Fetch timed out: {shown!r}") from error
     except OSError as error:
         raise WebFetchError(
             f"Fetch failed: could not resolve host {host!r} to check its address. If a proxy or custom transport "

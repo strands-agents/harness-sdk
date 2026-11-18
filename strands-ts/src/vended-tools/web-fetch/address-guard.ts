@@ -17,6 +17,7 @@ const NON_PUBLIC_NETWORKS = [
   'fe80::/10', // link-local
   'fec0::/10', // site-local (deprecated)
   'ff00::/8', // multicast
+  '64:ff9b:1::/48', // local-use NAT64
 ]
 
 type Lookup = typeof import('node:dns/promises').lookup
@@ -42,17 +43,35 @@ export async function isPublicHost(hostname: string): Promise<boolean> {
 
 async function _loadGuard(): Promise<{ lookup: Lookup; nonPublic: BlockList }> {
   try {
-    // Specifiers are held in variables so browser bundlers do not try to resolve them.
-    const [dns, net] = ['node:dns/promises', 'node:net']
-    const [{ lookup }, { BlockList }]: [typeof import('node:dns/promises'), typeof import('node:net')] =
-      await Promise.all([import(/* @vite-ignore */ dns), import(/* @vite-ignore */ net)])
+    const [{ lookup }, { BlockList }] = await Promise.all([
+      _builtin<typeof import('node:dns/promises')>('node:dns/promises'),
+      _builtin<typeof import('node:net')>('node:net'),
+    ])
     const nonPublic = new BlockList()
     for (const network of NON_PUBLIC_NETWORKS) {
       const [address, prefix] = network.split('/')
-      nonPublic.addSubnet(address!, Number(prefix), network.includes(':') ? 'ipv6' : 'ipv4')
+      if (network.includes(':')) {
+        nonPublic.addSubnet(address!, Number(prefix), 'ipv6')
+      } else {
+        nonPublic.addSubnet(address!, Number(prefix), 'ipv4')
+        // The well-known NAT64 prefix carries an IPv4 address in its low 32 bits.
+        nonPublic.addSubnet(`64:ff9b::${address}`, 96 + Number(prefix), 'ipv6')
+      }
     }
     return { lookup, nonPublic }
   } catch (error) {
     throw new Error('host addresses can only be checked on Node.js', { cause: error })
+  }
+}
+
+// The specifier is a variable so browser bundlers do not resolve it. Bundlers for Node.js cannot
+// resolve it either, so a failed import falls back to `process.getBuiltinModule`.
+async function _builtin<T>(id: string): Promise<T> {
+  try {
+    return await import(/* @vite-ignore */ id)
+  } catch (error) {
+    const module = globalThis.process?.getBuiltinModule?.(id)
+    if (!module) throw error
+    return module as T
   }
 }

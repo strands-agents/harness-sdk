@@ -283,12 +283,16 @@ class TestNonPublicAddresses:
             ("fe80::1%eth0", False),
             ("fec0::1", False),
             ("ff02::1", False),
+            ("64:ff9b::a00:5", False),
+            ("64:ff9b::a9fe:a9fe", False),
+            ("64:ff9b:1::808:808", False),
             ("8.8.8.8", True),
             ("172.15.255.255", True),
             ("172.32.0.1", True),
             ("198.18.0.1", True),
             ("::ffff:8.8.8.8", True),
             ("2606:4700:4700::1111", True),
+            ("64:ff9b::808:808", True),
         ],
     )
     def test_is_public_address(self, address, expected):
@@ -390,16 +394,17 @@ class TestNonPublicAddresses:
         assert tru_result == "secret"
         assert requests == ["https://example.com/old", "https://example.com/new"]
 
+    @pytest.mark.parametrize("elsewhere", ["https://other.example/", "https://example.com:8443/"])
     @pytest.mark.asyncio
-    async def test_client_auth_follows_same_origin_redirects_only(self):
+    async def test_client_auth_follows_same_origin_redirects_only(self, elsewhere):
         authorization: dict[str, str | None] = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
             authorization[str(request.url)] = request.headers.get("authorization")
             location = {
                 "https://example.com/": "/next",
-                "https://example.com/next": "https://other.example/",
-                "https://other.example/": "https://example.com/back",
+                "https://example.com/next": elsewhere,
+                elsewhere: "https://example.com/back",
             }.get(str(request.url))
             if location is not None:
                 return httpx.Response(302, headers={"location": location})
@@ -414,7 +419,7 @@ class TestNonPublicAddresses:
         assert authorization == {
             "https://example.com/": "Basic dXNlcjpwYXNzd29yZA==",
             "https://example.com/next": "Basic dXNlcjpwYXNzd29yZA==",
-            "https://other.example/": None,
+            elsewhere: None,
             "https://example.com/back": None,
         }
 
@@ -444,8 +449,9 @@ class TestNonPublicAddresses:
         requests: list[str] = []
         client = self._recording_client(requests, timeout=0.05)
 
-        with pytest.raises(WebFetchError, match="^Fetch timed out"):
-            await make_web_fetch(client=client, mode="markdown")(url="https://example.com/")
+        with pytest.raises(WebFetchError) as exc_info:
+            await make_web_fetch(client=client, mode="markdown")(url="https://user:password@example.com/")
+        assert str(exc_info.value) == "Fetch timed out: 'https://example.com/'"
         assert requests == []
 
     @pytest.mark.asyncio

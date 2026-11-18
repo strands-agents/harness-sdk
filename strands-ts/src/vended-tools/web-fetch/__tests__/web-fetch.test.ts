@@ -316,19 +316,22 @@ describe('webFetch tool', () => {
       )
     })
 
-    it('follows redirects to public hosts, resolving a relative location', async () => {
-      mockFetch('final page')
-      vi.mocked(globalThis.fetch).mockResolvedValueOnce(mockRedirect('/moved', 301) as Response)
+    it.each([301, 302, 303, 307, 308])(
+      'follows a %i to a public host, resolving a relative location',
+      async (status) => {
+        mockFetch('final page')
+        vi.mocked(globalThis.fetch).mockResolvedValueOnce(mockRedirect('/moved', status) as Response)
 
-      const result = await makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/old' })
+        const result = await makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/old' })
 
-      expect(result).toBe('final page')
-      expect(vi.mocked(globalThis.fetch).mock.calls.map(([target]) => target)).toStrictEqual([
-        'https://example.com/old',
-        'https://example.com/moved',
-      ])
-      expect(vi.mocked(isPublicHost).mock.calls).toStrictEqual([['example.com'], ['example.com']])
-    })
+        expect(result).toBe('final page')
+        expect(vi.mocked(globalThis.fetch).mock.calls.map(([target]) => target)).toStrictEqual([
+          'https://example.com/old',
+          'https://example.com/moved',
+        ])
+        expect(vi.mocked(isPublicHost).mock.calls).toStrictEqual([['example.com'], ['example.com']])
+      }
+    )
 
     it('stops after too many redirects', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue(mockRedirect('https://example.com/loop'))

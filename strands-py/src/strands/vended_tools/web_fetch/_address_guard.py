@@ -25,13 +25,18 @@ _NON_PUBLIC_NETWORKS = tuple(
         "fe80::/10",  # link-local
         "fec0::/10",  # site-local (deprecated)
         "ff00::/8",  # multicast
+        "64:ff9b:1::/48",  # local-use NAT64
     )
 )
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
 
 
 def is_public_address(address: str) -> bool:
     """Whether ``address`` (an IPv4 or IPv6 literal) is outside every non-public range."""
     ip = ipaddress.ip_address(address)
+    if ip in _NAT64:
+        # The well-known NAT64 prefix carries an IPv4 address in its low 32 bits.
+        ip = ipaddress.ip_address(int(ip) & 0xFFFFFFFF)
     ip = getattr(ip, "ipv4_mapped", None) or ip
     return not any(ip in network for network in _NON_PUBLIC_NETWORKS)
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, onTestFinished } from 'vitest'
 import { lookup } from 'node:dns/promises'
 import { isPublicHost } from '../address-guard.js'
 
@@ -34,12 +34,16 @@ describe('isPublicHost', () => {
     ['fe80::1%eth0', false],
     ['fec0::1', false],
     ['ff02::1', false],
+    ['64:ff9b::a00:5', false],
+    ['64:ff9b::a9fe:a9fe', false],
+    ['64:ff9b:1::808:808', false],
     ['8.8.8.8', true],
     ['172.15.255.255', true],
     ['172.32.0.1', true],
     ['198.18.0.1', true],
     ['::ffff:8.8.8.8', true],
     ['2606:4700:4700::1111', true],
+    ['64:ff9b::808:808', true],
   ])('resolving to %s is public: %s', async (address, expected) => {
     mockLookup(address)
 
@@ -70,5 +74,20 @@ describe('isPublicHost', () => {
     vi.mocked(lookup).mockRejectedValue(new Error('ENOTFOUND'))
 
     await expect(isPublicHost('unknown.example')).rejects.toThrow('ENOTFOUND')
+  })
+
+  it('loads the Node.js modules when a bundler has left the import unresolvable', async () => {
+    vi.resetModules()
+    vi.doMock('node:net', () => {
+      throw new Error("Cannot find module 'node:net'")
+    })
+    onTestFinished(() => {
+      vi.doUnmock('node:net')
+      vi.resetModules()
+    })
+    const guard = await import('../address-guard.js')
+    mockLookup('127.0.0.1')
+
+    await expect(guard.isPublicHost('host.example')).resolves.toBe(false)
   })
 })
