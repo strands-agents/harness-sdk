@@ -72,11 +72,22 @@ result.invocation_context.usage_by_model
 How it works:
 
 - **Recording.** Model calls go through one internal wrapper that knows both the model and the request. It records each call's usage under that model. Two places record usage directly, decision models and the offload summarizer, and they pass their model the same way.
-- **Provider name.** `Model` gains a `provider_name` property. It is an instance property, because one class can serve several vendors: `OpenAIModel` with a custom base URL, or the TypeScript `VercelModel`. A model that cannot tell returns `None`.
+- **Provider name.** `Model` gains a `provider_name` property. It is an instance property, because one class can serve several vendors: `OpenAIModel` with a custom base URL, or the TypeScript `VercelModel`. A model that cannot tell returns `None`. The other place it could live is `model_info`, compared below.
 - **Vocabulary.** The names are the ones the harness already uses in model strings: `bedrock`, `anthropic`, `openai`, `google`, and so on. One table in `shared/` lists them.
 - **Unknown stays visible.** Usage with no known model goes under a record with no provider and no model ID. It is never merged into another model.
 
 This step is useful with no plugin. You can price a request with your own table, or see where your tokens went.
+
+Where the provider name lives:
+
+| | `Model.provider_name` property (proposed) | `model_info.provider_name` field |
+|---|---|---|
+| Who sets it | Each provider class | Each provider class, in the `model_info` it already builds |
+| Can a user set it | Only by subclassing | Yes: `model_info=ModelInfo(provider_name="openai")`, the way a context window is set today |
+| New public surface | A property on `Model` | A field on an existing type |
+| Fit | A fact about the endpoint, kept apart from facts about the model | One place for everything the SDK knows about a model, as [#5305](https://github.com/strands-agents/harness-sdk/pull/5305) proposes. The shared `model-info.json` cannot supply it, because one entry there covers a model on every provider |
+
+The user-settable column matters for pricing: an OpenAI-compatible endpoint or a custom model has no provider name unless the user can give one.
 
 **Step 2: the plugin.**
 
@@ -84,7 +95,7 @@ This step is useful with no plugin. You can price a request with your own table,
 
 Where a price comes from, in order:
 
-1. **Your own prices**, passed as `prices={...}`.
+1. **Your own prices**, passed as `prices=[...]`. Each entry names a `model_id` and, optionally, a `provider_name`. The model ID is compared as a whole string and never split, so ARNs and LiteLLM IDs that contain `/` work, and so does a model with no provider name.
 2. **genai-prices**, looked up by provider and model ID in the data bundled with the installed package.
 3. **Neither**: the model is unpriced. Its cost is `None`, and so is the request total.
 
@@ -103,15 +114,17 @@ Prices are USD per one million tokens, the unit providers publish. Two details:
 
 - **Cached tokens are charged once.** Some providers count cached tokens inside `inputTokens` and some do not. The plugin uses the rule already documented on `Usage` to tell which.
 - **Base rates only.** Some models charge more above a context size. A request total cannot say which calls crossed that line, so the plugin reads each model's base rate from genai-prices and does this arithmetic itself.
+- **A price with no cache rate uses the input rate for cached tokens.** That is how a provider bills a model with no separate cache price, and it keeps the cost from reading as zero. It applies to your prices and to genai-prices entries alike. Each model's record carries the price that was used.
 
 How prices stay current:
 
 - **No network.** `estimate()` reads the data that ships inside the genai-prices package. It works in a VPC with no egress.
 - **Freshness is the package version.** genai-prices releases about weekly. A model newer than the installed version is unpriced until you upgrade it.
-- **An optional extra with a lower bound only**, for example `strands-agents[cost-estimation]`. You pick up new prices by upgrading genai-prices, without a Strands release.
+- **An optional extra**, `strands-agents[cost-estimation]`, pinned like the repo's other 0.x dependencies: `genai-prices>=0.2.4,<0.3; python_version>='3.11'`. Price updates ship in genai-prices patch releases, so you pick them up by upgrading genai-prices, without a Strands release. A new genai-prices minor version needs a Strands release that raises the cap. The last two came three months apart: 0.1 in July 2026 and 0.2 in October 2026.
+- **On Python 3.10** the extra installs nothing, and importing the plugin raises an `ImportError` that names the Python 3.11 requirement.
 - **Refresh is yours to turn on.** genai-prices has its own opt-in background updater in Python and JavaScript. The plugin uses whatever data the package currently holds.
 
-What attaching the plugin to an agent does in this version: nothing yet. The estimate works on any result. It is a plugin so that a stream event or a spend limit can be added later without changing how you set it up.
+What attaching the plugin to an agent does in this version: nothing yet. The estimate works on any result. It is a plugin so that a stream event or a spend limit can be added later without changing how you set it up. Two alternatives below drop the plugin: a plain estimator with a pluggable price source, and cost in core.
 
 The same numbers in every language:
 
@@ -136,8 +149,45 @@ The same numbers in every language:
 - The package is in beta (0.2.x), and the Rust crate was first published in October 2026.
 - It covers fewer non-Anthropic models on Bedrock than models.dev (14 of 32 in our list, against 24), and it uses one price for all regional profiles.
 - No package for the JVM, .NET, or Swift.
-- `provider_name` on `Model` is a public, permanent addition. It needs an API review.
+- The provider name is a public, permanent addition, on `Model` or on `ModelInfo`. It needs an API review.
 - The estimate ignores several things that change the real price (see "What the estimate leaves out").
+
+### Alternative: a plain estimator with a pluggable price source
+
+The same estimate, without the `Plugin` base and with the catalog as a parameter instead of a class per catalog:
+
+```python
+from strands.experimental.cost import CostEstimator, GenAIPrices
+
+cost = CostEstimator(source=GenAIPrices(), prices=[...])
+estimate = cost.estimate(result)
+```
+
+A price source is one method: `(provider_name, model_id) -> ModelPrice | None`. `GenAIPrices` is one source. A models.dev source, or a company's own pricing service, is another.
+
+- **Pros:**
+  - Nothing to attach, so nobody assumes attaching is required or limits the estimate to one agent. Graph and Swarm results need no second plugin type.
+  - The formula, the unpriced handling, and your own prices exist once per language, not once per catalog.
+  - "Cost" stays in the name. The SDK already uses "estimate" for token counts.
+  - A plugin for a stream event or a spend limit can wrap the same estimator later. That is an addition, not a change.
+- **Cons:**
+  - One more public type, the price source interface.
+  - The third party is named in an argument, not in the class you import.
+  - If a stream event or spend limit arrives, users who want it change their setup from an object to a plugin.
+
+### Alternative: cost in core through a source chain, like `count_tokens`
+
+`count_tokens` already works this way: the provider's own count, then `tiktoken` when it is installed, then a heuristic. Cost would follow the same order on every model call: a cost the provider reported, then your own prices, then genai-prices when it is installed, then unknown. The result lands next to the token counts, for example `result.invocation_context.usage["estimatedCostUsd"]`.
+
+- **Pros:**
+  - Nothing to set up, and the number sits where users already look for usage.
+  - Each call is priced when it happens, so long-context price tiers are applied correctly and the cost of one turn falls out without subtracting estimates.
+  - Works for Graph, Swarm, and subagents with no extra code.
+- **Cons:**
+  - A cost on every result reads as Strands' own figure. The plugin exists to make the estimate opt-in and to name whose prices it uses.
+  - The number changes, or disappears, with whether genai-prices is installed and at which version, with no line of user code saying so. Token counts have the same property, but a wrong token count does not look like a bill.
+  - Core gains the formula, the source chain, and a place to configure your own prices.
+  - It is hard to remove once users read the field.
 
 ### Alternative: models.dev, bundled with Strands
 
@@ -236,9 +286,9 @@ Supply a price genai-prices does not have, or one you negotiated:
 from strands.experimental.cost_estimator import GenAIPricesEstimator, ModelPrice
 
 cost = GenAIPricesEstimator(
-    prices={
-        "sagemaker/my-endpoint": ModelPrice(input_per_million=0.20, output_per_million=0.60),
-    },
+    prices=[
+        ModelPrice(model_id="my-endpoint", input_per_million=0.20, output_per_million=0.60),
+    ],
 )
 ```
 
@@ -252,7 +302,7 @@ estimate.total_usd                               # None
 
 Three rules to know:
 
-- **An estimate covers the request so far.** If you continue a request by passing its `invocation_context` to a later call, the estimate grows. Do not add the two together.
+- **An estimate covers the request so far.** If you continue a request by passing its `invocation_context` to a later call, the estimate grows. Do not add the two together. For the cost of one turn, subtract the previous turn's estimate from the current one.
 - **Background work can add to it.** Memory extraction that finishes after the result returns shows up in a later `estimate(result)`.
 - **It accepts any result.** Agent results, Graph and Swarm results, or an `invocation_context` directly.
 
@@ -269,6 +319,49 @@ const result = await agent.invoke('Compare the three proposals and recommend one
 const estimate = cost.estimate(result)
 console.log(estimate.totalUsd)
 ```
+
+### API
+
+Python. The types are frozen dataclasses. Costs and prices are `float`: genai-prices returns `Decimal` in Python and `number` in JavaScript, and `float` keeps the two SDKs the same.
+
+```python
+# strands (core)
+class ModelUsage:
+    provider_name: str | None
+    model_id: str | None
+    usage: Usage
+
+InvocationContext.usage_by_model -> list[ModelUsage]
+Model.provider_name -> str | None
+
+# strands.experimental.cost_estimator exports these four
+class GenAIPricesEstimator(Plugin):
+    def __init__(self, *, prices: Sequence[ModelPrice] = ()) -> None: ...
+    def estimate(self, request: AgentResult | MultiAgentResult | InvocationContext) -> CostEstimate: ...
+
+class ModelPrice:
+    input_per_million: float
+    output_per_million: float
+    cache_read_per_million: float | None = None   # None: cached reads use the input rate
+    cache_write_per_million: float | None = None  # None: cache writes use the input rate
+    model_id: str | None = None        # set on your own prices; the whole ID, never split
+    provider_name: str | None = None   # None matches any provider
+
+class CostEstimate:
+    total_usd: float | None                 # None when any model is unpriced
+    models: tuple[ModelCostEstimate, ...]
+    unpriced: tuple[ModelCostEstimate, ...]  # property
+
+class ModelCostEstimate:
+    provider_name: str | None
+    model_id: str | None
+    usage: Usage
+    cost_usd: float | None    # None when no price was found
+    price: ModelPrice | None
+    price_source: str | None  # "user", or "genai-prices:<provider>/<model>"
+```
+
+TypeScript has the same types as readonly interfaces, exported from `@strands-agents/sdk/experimental/cost-estimator`. The names are camelCase: `usageByModel`, `providerName`, `modelId`, `totalUsd`, `costUsd`, `priceSource`, `inputPerMillion`, `outputPerMillion`, `cacheReadPerMillion`, `cacheWritePerMillion`. `null` stands where Python has `None`.
 
 ## What the estimate leaves out
 
@@ -305,11 +398,12 @@ Not in this proposal: a stream event, a dollar limit, an OpenTelemetry cost attr
 ## Open questions
 
 1. **Python 3.11 for this feature.** Acceptable while Strands itself supports 3.10? Python 3.10 is 8.6% of downloads. If that share matters, the alternative is the bundled models.dev snapshot.
-2. **`provider_name` on `Model`.** Is the public property acceptable, and are the harness's names the right vocabulary? The other candidates are the Python module names and the OpenTelemetry provider names.
+2. **Where the provider name lives.** A property on `Model`, or a field on `model_info` that users can also set (see the table in step 1)? I lean to `model_info`, because an OpenAI-compatible endpoint can then be priced without a subclass. Are the harness's names the right vocabulary? The other candidates are the Python module names and the OpenTelemetry provider names.
 3. **Unpriced models.** `total_usd` is `None` when any model has no price. The alternative is a partial total plus a flag.
-4. **No stream event in the first version.** Acceptable, given that attaching the plugin then does nothing yet?
+4. **Plugin, plain estimator, or core.** With no stream event in the first version, attaching the plugin does nothing. Keep the plugin for what comes later, ship a plain `CostEstimator` with a pluggable price source, or compute cost in core through a source chain like `count_tokens`? The three are compared under Proposal. The answer also settles the name.
 5. **Provider-reported cost.** Gateways such as LiteLLM and OpenRouter return a cost with the response. [#3212](https://github.com/strands-agents/harness-sdk/pull/3212) adds LiteLLM's to `AgentResult`. Should it instead become an optional field on `Usage` that the plugin prefers over any table?
 6. **Where your own prices live.** On the plugin, as proposed, or as a `model_info` override next to context windows? The model metadata design ([#5305](https://github.com/strands-agents/harness-sdk/pull/5305)) lists `pricing` as a possible later section.
+7. **Cost of one turn.** In a continued request you subtract two estimates by hand, and background work can land in either. Is a helper such as `estimate.since(previous)` worth adding to the first version?
 
 ## Additional Details
 
@@ -344,7 +438,8 @@ Confirmed by independent testing of the first prototype:
 Still open in the prototype:
 
 - Step 0 is not part of the prototype. Decision model and offload summarizer usage still land in the unknown-model record.
-- `provider_name` is derived from the class's module. The real change is a property on `Model`.
+- `provider_name` is derived from the class's module. The real change declares it per provider.
+- `prices` is a dict keyed by model ID in the prototype. The design above takes a list of `ModelPrice` entries.
 - `bedrock-mantle`, and LiteLLM IDs beyond a plain `provider/model`, are not mapped to genai-prices provider IDs yet.
 - The model ID is read when the call ends. A model reconfigured mid-call is attributed to the new ID.
 - No TypeScript prototype. Base-rate access was checked in the Python package and seen in the JavaScript types, not checked in Rust or Go. Not tested live against OpenAI, Anthropic, or Gemini directly.
