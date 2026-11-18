@@ -129,7 +129,10 @@ own namespace (the context manager's stash under `context/`, for example) so dat
 collides, and long-term memory
 supports a scoped store per tenant rather than one shared store. The session directory
 is a trusted data store: restrict filesystem permissions to the agent process, and note
-the Strands Harness SDK does not block symlinks inside it.
+the Strands Harness SDK follows symlinked directories inside it. In TypeScript, each
+session's directory and files are created accessible to the owner only, and a session
+file that is itself a symlink is refused; in Python, they get the default permissions and
+symlinked files are followed.
 
 **Deletion.** Deleting a session removes its entire root directory (filesystem) or every
 object under its prefix (S3, which needs `s3:DeleteObject`). Memory is plain files under
