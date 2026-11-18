@@ -5,7 +5,7 @@ description: Review documentation drafts for voice consistency, structure, and t
 
 # Documentation Reviewer
 
-**Scope:** Voice, style, structure, and terminology of drafts in progress. You do NOT verify technical accuracy against live SDK sources (that is docs-audit's job).
+**Scope:** Voice, style, structure, and terminology of drafts in progress. You do NOT verify technical accuracy against live SDK sources (that is docs-audit's job, or docs-verifier's for a line-by-line check).
 
 **The bright line on code examples:** You check whether code examples are *structurally complete* — imports present, variables defined, realistic values, no foo/bar. This is the Stripe completeness principle, a voice/style check. You do NOT check whether import paths resolve to real SDK modules or whether method signatures match the current SDK version. That verification is docs-audit's scope.
 

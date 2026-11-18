@@ -1,4 +1,5 @@
 import { normalizeError } from '../../errors.js'
+import { logger } from '../../logging/logger.js'
 import { BackgroundTaskNotFoundError } from '../errors.js'
 import { assertTimerDelay } from '../timer.js'
 import type { InterruptStateData } from '../../interrupt.js'
@@ -258,6 +259,11 @@ export class InProcessTaskEngine {
 
     this._updateTask(taskId, (record) => {
       if (record.status !== 'working') return false
+      if (outcome.status === 'cancelled') {
+        record.status = 'cancelled'
+        delete record.state
+        return true
+      }
       if (outcome.status === 'failed') {
         record.status = 'failed'
         delete record.state
@@ -316,7 +322,9 @@ export class InProcessTaskEngine {
     const taskSnapshot = globalThis.structuredClone(task)
     void Promise.resolve()
       .then(() => this._options.onTaskUpdated(taskSnapshot))
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        logger.warn(`task_id=<${task.taskId}>, error=<${error}> | background task update notification failed`)
+      })
   }
 
   private _wakeIdleWaiters(): void {

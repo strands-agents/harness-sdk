@@ -156,9 +156,11 @@ Red teaming tests whether your agent resists adversarial pressure: jailbreaks, d
 
 ```python
 from create_agent import create_customer_service_agent
-from strands_evals.experimental.redteam import RedTeamExperiment
-from strands_evals.experimental.redteam.generators.adversarial import AdversarialCaseGenerator
-from strands_evals.experimental.redteam.strategies import CrescendoStrategy
+from strands_evals.redteam import (
+    AdversarialCaseGenerator,
+    CrescendoStrategy,
+    RedTeamExperiment,
+)
 
 cases = AdversarialCaseGenerator().generate_cases(
     agent=create_customer_service_agent(),
@@ -168,11 +170,11 @@ cases = AdversarialCaseGenerator().generate_cases(
 
 experiment = RedTeamExperiment(
     cases=cases,
-    agent_factory=create_customer_service_agent,  # fresh state for each attack
     attack_strategies=[CrescendoStrategy()],
 )
 
-report = experiment.run_evaluations()
+# fresh agent per case so attacks don't bleed across runs
+report = experiment.run_evaluations(agent_factory=create_customer_service_agent)
 ```
 
 Red teaming probes the tested guardrails under adversarial conditions. Passing these

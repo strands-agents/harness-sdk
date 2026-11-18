@@ -9,9 +9,11 @@ import type { JSONSchema, JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 
-type SchemaNode = Record<string, JSONValue>
+/** @internal */
+export type SchemaNode = Record<string, JSONValue>
 
-function isRecord(value: JSONValue | undefined): value is SchemaNode {
+/** @internal */
+export function isRecord(value: JSONValue | undefined): value is SchemaNode {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
@@ -45,8 +47,12 @@ const UNSUPPORTED_STRICT_KEYWORDS = [
   'maxLength',
 ]
 
-/** Return the direct subschemas of `schema`, including `$defs`/`definitions` entries. */
-function childSchemas(schema: SchemaNode): SchemaNode[] {
+/**
+ * Return the direct subschemas of `schema`, including `$defs`/`definitions` entries.
+ *
+ * @internal
+ */
+export function childSchemas(schema: SchemaNode): SchemaNode[] {
   const children: (JSONValue | undefined)[] = []
   for (const keyword of SCHEMA_MAP_KEYWORDS) {
     const map = schema[keyword]

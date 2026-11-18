@@ -1,0 +1,574 @@
+---
+title: Migrate from the community tools package
+description: "Migrate off the deprecated strands-agents-tools package: the replacement for each tool and the behavior changes to expect before you ship the swap."
+tags: [tool-authoring]
+sidebar:
+  label: "Community Tools Migration"
+languages: [python]
+redirectFrom:
+  - docs/user-guide/concepts/tools/community-tools-package
+  - docs/user-guide/sdk/tools/community-tools-package
+sourceLinks:
+  - path: strands-py/src/strands/vended_tools/__init__.py
+---
+
+:::caution[Deprecated]
+The community tools package
+[strands-agents-tools](https://pypi.org/project/strands-agents-tools/) is deprecated. Its
+tools raise errors at import time.
+:::
+
+Each tool is superseded by a vended tool, an SDK feature, a memory store, or a
+vendor-maintained MCP server. This page lists the replacement for each tool and the
+behavior differences to check before you ship the change.
+
+| Tool | Replacement | Type |
+|---|---|---|
+| [`a2a_client`](#a2a_client) | [`strands.vended_tools.make_a2a_client`](../sdk/tools/vended-tools/a2a-client.md) | Vended tool |
+| [`agent_core_memory`](#agent_core_memory) (`AgentCoreMemoryToolProvider`) | `MemoryManager` with [`AgentCoreMemoryStore`](../../integrations/memory-stores/agentcore-memory-store.md) from `bedrock-agentcore` | Memory store |
+| [`agent_graph`](#agent_graph) | [`strands.vended_tools.graph`](../sdk/tools/vended-tools/graph.md) | Vended tool |
+| [`batch`](#batch) | None needed: the SDK runs tool calls [concurrently](../sdk/tools/executors.md) by default | SDK feature |
+| [`bright_data`](#bright_data) | [Bright Data MCP server](https://docs.brightdata.com/products/mcp-server/overview) | MCP server |
+| [`browser`](#browser) (`LocalChromiumBrowser`, `AgentCoreBrowser`) | None: drive Playwright directly, with `bedrock-agentcore`'s `BrowserClient` for AgentCore sessions | No replacement |
+| [`calculator`](#calculator) | [`strands.vended_tools.shell`](../sdk/tools/vended-tools/shell.md), running `python3 -c` with sympy | Vended tool |
+| [`chat_video`](#chat_video-and-search_video) | [TwelveLabs MCP servers](https://docs.twelvelabs.io/docs/advanced/model-context-protocol) | MCP server |
+| [`code_interpreter`](#code_interpreter) (`AgentCoreCodeInterpreter`) | [`strands.vended_tools.python_repl`](../sdk/tools/vended-tools/python-repl.md) for Python, [`shell`](../sdk/tools/vended-tools/shell.md) for other languages | Vended tool |
+| [`cron`](#cron) | [`strands.vended_tools.shell`](../sdk/tools/vended-tools/shell.md) managing `crontab`, or Amazon EventBridge Scheduler | Vended tool |
+| [`current_time`](#current_time) | [`ContextInjector`](../sdk/plugins/context-injector.md) | SDK feature |
+| [`diagram`](#diagram) | None: have the model write graphviz, mermaid, or `diagrams` code | No replacement |
+| [`editor`](#editor) | [`strands.vended_tools.read`](../sdk/tools/vended-tools/read.md), [`write`](../sdk/tools/vended-tools/write.md), and [`edit`](../sdk/tools/vended-tools/edit.md) | Vended tool |
+| [`elasticsearch_memory`](#elasticsearch_memory) (`elasticsearch_memory`, `ElasticsearchMemoryTool`) | `MemoryManager` with a [custom `MemoryStore`](../sdk/memory/managing-memory.md#custom-stores) over [`elasticsearch-py`](https://www.elastic.co/docs/reference/elasticsearch/clients/python) | Memory store |
+| [`environment`](#environment) | [`strands.vended_tools.shell`](../sdk/tools/vended-tools/shell.md), for reading only | Vended tool |
+| [`exa`](#exa) (`exa_search`, `exa_get_contents`) | [Exa MCP server](https://exa.ai/docs/reference/exa-mcp) | MCP server |
+| [`file_read`](#file_read) | [`strands.vended_tools.read`](../sdk/tools/vended-tools/read.md) | Vended tool |
+| [`file_write`](#file_write) | [`strands.vended_tools.write`](../sdk/tools/vended-tools/write.md) | Vended tool |
+| [`generate_image`](#generate_image) | None: call Amazon Bedrock's `invoke_model` with a [Stability AI model](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-stability-diffusion.html) | No replacement |
+| [`generate_image_stability`](#generate_image_stability) | None: call the [Stability AI REST API](https://docs.stability.ai/api-reference) directly | No replacement |
+| [`graph`](#graph) | [`strands.vended_tools.graph`](../sdk/tools/vended-tools/graph.md) | Vended tool |
+| [`handoff_to_user`](#handoff_to_user) | [`strands.vended_tools.handoff_to_user`](../sdk/tools/vended-tools/handoff-to-user.md) | Vended tool |
+| [`http_request`](#http_request) | [`strands.vended_tools.http_request`](../sdk/tools/vended-tools/http-request.md) for APIs, [`web_fetch`](../sdk/tools/vended-tools/web-fetch.md) for web pages | Vended tool |
+| [`image_reader`](#image_reader) | Image content blocks in the [prompt](../sdk/agents/prompts.md#multi-modal-prompting) | SDK feature |
+| [`journal`](#journal) | [`strands.vended_tools.notebook`](../sdk/tools/vended-tools/notebook.md) | Vended tool |
+| [`load_tool`](#load_tool) | None: pass tools to the agent, or use `Agent(load_tools_from_directory=True)` | No replacement |
+| [`mcp_client`](#mcp_client) | [`strands.vended_tools.make_mcp_router`](../sdk/tools/vended-tools/mcp-router.md) | Vended tool |
+| [`mem0_memory`](#mem0_memory) (`mem0_memory`, `Mem0MemoryTool`) | `MemoryManager` with `Mem0MemoryStore` from [`mem0-strands`](https://docs.mem0.ai/integrations/strands) | Memory store |
+| [`memory`](#memory-and-retrieve) | `MemoryManager` with a writable [`BedrockKnowledgeBaseStore`](../sdk/memory/bedrock-knowledge-base.md) | Memory store |
+| [`mongodb_memory`](#mongodb_memory) (`mongodb_memory`, `MongoDBMemoryTool`) | `MemoryManager` with a [custom `MemoryStore`](../sdk/memory/managing-memory.md#custom-stores) over [`pymongo`](https://pymongo.readthedocs.io/) | Memory store |
+| [`nova_reels`](#nova_reels) | None: Amazon Nova Reel reached [end of life](https://docs.aws.amazon.com/bedrock/latest/userguide/model-lifecycle-legacy.html) on Amazon Bedrock | No replacement |
+| [`python_repl`](#python_repl) | [`strands.vended_tools.python_repl`](../sdk/tools/vended-tools/python-repl.md) | Vended tool |
+| [`retrieve`](#memory-and-retrieve) | `MemoryManager` with a read-only [`BedrockKnowledgeBaseStore`](../sdk/memory/bedrock-knowledge-base.md) | Memory store |
+| [`rss`](#rss) | None: parse feeds with `feedparser` | No replacement |
+| [`search_video`](#chat_video-and-search_video) | [TwelveLabs MCP servers](https://docs.twelvelabs.io/docs/advanced/model-context-protocol) | MCP server |
+| [`shell`](#shell) | [`strands.vended_tools.shell`](../sdk/tools/vended-tools/shell.md) | Vended tool |
+| [`slack`](#slack) | [Slack MCP server](https://docs.slack.dev/ai/mcp-server/); `slack_bolt` for Socket Mode | MCP server |
+| [`sleep`](#sleep) | [`strands.vended_tools.sleep`](../sdk/tools/vended-tools/sleep.md) | Vended tool |
+| [`speak`](#speak) | None: call Amazon Polly's `synthesize_speech` directly | No replacement |
+| [`stop`](#stop) | [`strands.vended_tools.stop`](../sdk/tools/vended-tools/stop.md) | Vended tool |
+| [`swarm`](#swarm) | [`strands.vended_tools.swarm`](../sdk/tools/vended-tools/swarm.md) | Vended tool |
+| [`tavily`](#tavily) (`tavily_search`, `tavily_extract`, `tavily_crawl`, `tavily_map`) | [Tavily MCP server](https://docs.tavily.com/documentation/mcp) | MCP server |
+| [`think`](#think) | Model [reasoning](../sdk/model-providers/amazon-bedrock.md#reasoning-support) configuration | SDK feature |
+| [`use_agent`](#use_agent-and-use_llm) | [`strands.vended_tools.subagent`](../sdk/tools/vended-tools/subagent.md) | Vended tool |
+| [`use_aws`](#use_aws) | [AWS MCP Server](https://docs.aws.amazon.com/agent-toolkit/latest/userguide/mcp-server.html) | MCP server |
+| [`use_computer`](#use_computer) | None: drive `pyautogui` and `pytesseract` directly | No replacement |
+| [`use_llm`](#use_agent-and-use_llm) | [`strands.vended_tools.subagent`](../sdk/tools/vended-tools/subagent.md) | Vended tool |
+| [`workflow`](#workflow) | [`strands.vended_tools.graph`](../sdk/tools/vended-tools/graph.md) | Vended tool |
+
+## Vended Tools
+
+Most migrations to vended tools are simple import changes, sometimes with a rename:
+
+```python
+# Before
+from strands import Agent
+from strands_tools import editor, shell, sleep
+
+agent = Agent(tools=[editor, shell, sleep])
+
+# After
+from strands import Agent
+from strands.vended_tools import edit, read, shell, sleep, write
+
+agent = Agent(tools=[edit, read, shell, sleep, write])
+```
+
+Tools that require configuration are built with a factory instead:
+
+```python
+# Before
+from strands import Agent
+from strands_tools import mcp_client
+
+agent = Agent(tools=[mcp_client])
+
+# After
+from strands import Agent
+from strands.vended_tools import make_mcp_router
+
+mcp_router = make_mcp_router(
+    servers={
+        "aws_docs": {
+            "command": "uvx",
+            "args": ["awslabs.aws-documentation-mcp-server@latest"],
+        },
+    },
+)
+
+agent = Agent(tools=[mcp_router])
+```
+
+The replacements are not drop-in equivalents. Check
+[behavior differences](#behavior-differences) for each tool your agent uses before you
+ship the change.
+
+## MCP Servers
+
+Tools that wrapped a third-party API move to the vendor's own MCP server. Connect it with
+an `MCPClient` and pass the client to the agent:
+
+```python
+# Before
+from strands import Agent
+from strands_tools.exa import exa_get_contents, exa_search
+
+agent = Agent(tools=[exa_search, exa_get_contents])
+
+# After
+import os
+
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+exa = MCPClient(
+    url="https://mcp.exa.ai/mcp",
+    headers={"x-api-key": os.environ["EXA_API_KEY"]},
+)
+
+agent = Agent(tools=[exa])
+```
+
+Tool names, parameters, and auth differ from the old wrappers, so follow each
+vendor's setup guide. See [MCP tools](../sdk/tools/mcp-tools.md) for transports and tool
+filtering.
+
+## Memory Stores
+
+The memory tools become memory stores attached to a `MemoryManager`. Instead
+of waiting for the model to call a tool, the memory manager injects relevant
+memories into context automatically:
+
+```python
+# Before
+from strands import Agent
+from strands_tools import retrieve
+
+agent = Agent(tools=[retrieve])
+
+# After
+from strands import Agent
+from strands.memory import MemoryManager
+from strands.vended_memory_stores import BedrockKnowledgeBaseStore
+
+store = BedrockKnowledgeBaseStore(
+    name="docs",
+    description="Company documentation and policies.",
+    config={"knowledge_base_id": "ABCDEF1234"},
+)
+
+agent = Agent(memory_manager=MemoryManager(stores=[store]))
+```
+
+You can also [write your own store](../sdk/memory/managing-memory.md#custom-stores). See
+[Long-term memory](../sdk/memory/overview.md) for search and add tools, injection, and
+extraction.
+
+## Behavior differences
+
+### `a2a_client`
+
+**`strands_tools.a2a_client.A2AClientToolProvider` →
+`strands.vended_tools.make_a2a_client`**: folds the three `a2a_*` tools into one
+tool with `discover` and `send_message` operations, limited to the endpoints you
+list in `allowed_endpoints`. Authentication, timeouts, and push notifications move
+from `httpx_client_args` and the webhook arguments into a per-endpoint
+`ClientConfig`. Install the `a2a` extra: `pip install 'strands-agents[a2a]'`.
+
+### `agent_core_memory`
+
+**`strands_tools.agent_core_memory.AgentCoreMemoryToolProvider` → `MemoryManager`
+with `AgentCoreMemoryStore` from `bedrock-agentcore`**: run
+`pip install "bedrock-agentcore[strands-agents]>=1.21.0"`, then see the
+[AgentCore memory store](../../integrations/memory-stores/agentcore-memory-store.md).
+`retrieve` becomes `search_memory`. There is no `record` tool: set
+`writable=True, extraction=True` and AgentCore extracts memories from the
+conversation. For `list`, `get`, and `delete`, use `bedrock-agentcore`'s
+`MemorySessionManager`.
+
+### `agent_graph`
+
+**`strands_tools.agent_graph` → `strands.vended_tools.graph`**: the execution model
+changes. `agent_graph` kept a network of agents running and passed messages
+between them, while `graph` runs each node once and propagates its output
+downstream. There are no `message`, `status`, or `stop` actions. `star` and
+`hierarchical` topologies map onto edges. Cycles are not allowed, so `mesh`
+topologies fit the `swarm` tool better.
+
+### `batch`
+
+**`strands_tools.batch` → none needed**: drop it. The
+[concurrent tool executor](../sdk/tools/executors.md) runs tool calls concurrently by default
+and keeps tracing, metrics, and hooks intact.
+
+### `bright_data`
+
+**`strands_tools.bright_data` →
+[Bright Data MCP server](https://docs.brightdata.com/products/mcp-server/overview)**:
+covers search, scraping, structured extraction, and browser automation. Its tool
+names and response shapes differ from `bright_data`, so follow Bright Data's
+[setup and migration documentation](https://docs.brightdata.com/products/mcp-server/overview).
+
+### `browser`
+
+**`strands_tools.browser` (`LocalChromiumBrowser`, `AgentCoreBrowser`) → none**:
+drive Playwright from a custom tool. For AgentCore sessions, start one with
+`bedrock-agentcore`'s `BrowserClient` and connect Playwright to it.
+
+### `calculator`
+
+**`strands_tools.calculator` → `shell`**: run `python3 -c` with sympy for the same
+symbolic math. `calculator` checked expressions against an allowlist; `shell` runs
+whatever it receives. If the expressions come from untrusted input, put a sandbox
+behind the shell or keep your own validation in front of it.
+
+### `chat_video` and `search_video`
+
+**`strands_tools.chat_video` and `strands_tools.search_video` →
+[TwelveLabs MCP servers](https://docs.twelvelabs.io/docs/advanced/model-context-protocol)**:
+Jockey adds cross-video reasoning but requires publicly accessible URLs, and has
+no equivalent for `chat_video`'s local-file upload or `search_video`'s
+`group_by`, `threshold`, and `search_options`. Single-video search and analysis
+continue at `mcp-alpic.twelvelabs.io`.
+
+### `code_interpreter`
+
+**`strands_tools.code_interpreter.AgentCoreCodeInterpreter` → `python_repl` for
+Python, `shell` for other languages**: both run in the agent's sandbox instead of
+an Amazon Bedrock AgentCore session. An agent without a sandbox runs these tools
+on the host with no isolation, so pass one (for example `DockerSandbox`) if you
+depended on AgentCore's. Each call starts a fresh process, and there are no named
+sessions or file actions. Use `read`, `write`, `edit`, or `shell` for files.
+
+### `cron`
+
+**`strands_tools.cron` → `shell` or Amazon EventBridge Scheduler**: managing
+`crontab` through `shell` means composing crontab lines yourself instead of
+structured `list`, `add`, `remove`, and `edit` actions. Under a Docker or SSH
+sandbox, jobs land in an environment that may have no cron daemon. For schedules
+that outlive the host, use Amazon EventBridge Scheduler.
+
+### `current_time`
+
+**`strands_tools.current_time` → `ContextInjector`**: with
+[context injection](../sdk/plugins/context-injector.md) the date is always fresh and
+the model cannot forget to ask. Your code now picks the timezone. If the model
+must choose one per call, use the official
+[MCP `time` server](https://github.com/modelcontextprotocol/servers/tree/main/src/time).
+
+### `diagram`
+
+**`strands_tools.diagram` → none**: deliberately so. `diagram` wrapped `graphviz`
+and the `diagrams` package, and a capable model writes that code well on its own.
+The wrapper mostly added a layer to keep in sync.
+
+### `editor`
+
+**`strands_tools.editor` → `strands.vended_tools.read`, `write`, and `edit`**: `view`
+maps to `read`, `create` to `write`, and `str_replace` to `edit`. `edit` requires the
+old string to be unique in the file, whereas `str_replace` replaced every occurrence.
+`write` and `edit` write immediately, with no `.bak` backup. The `insert`,
+`pattern_replace`, `find_line`, and `undo_edit` commands have no equivalent. Directory
+views move to `shell`. There is no confirmation prompt, so `BYPASS_TOOL_CONSENT` no
+longer applies: to approve calls, raise an interrupt from a `BeforeToolCallEvent` hook
+([Interrupts](../sdk/interrupts.md#hooks)). Without a configured sandbox, they run on the
+host; pass `DockerSandbox` for isolation.
+
+### `elasticsearch_memory`
+
+**`strands_tools.elasticsearch_memory` (and `ElasticsearchMemoryTool`) →
+`MemoryManager` with a custom `MemoryStore`**: no store ships for Elasticsearch,
+but a [custom store](../sdk/memory/managing-memory.md#custom-stores) needs only
+`search` (a k-NN query) and `add` (index a document) over
+[`elasticsearch-py`](https://www.elastic.co/docs/reference/elasticsearch/clients/python).
+`retrieve` becomes `search_memory` and `record` becomes `add_memory`, with
+`writable=True` on the store and `add_tool_config=True` on the memory manager.
+Bind the namespace in the store, not the tool call, to keep tenants isolated. For
+`list`, `get`, and `delete`, call `elasticsearch-py` directly.
+
+### `environment`
+
+**`strands_tools.environment` → `shell`**: `env` and `printenv` cover reading.
+Writes have no replacement: a child shell cannot change the agent's own process
+environment. Set variables where you launch the agent, or pass them per call.
+`PROTECTED_VARS` and secret masking become your responsibility.
+
+### `exa`
+
+**`strands_tools.exa` (`exa_search`, `exa_get_contents`) →
+[Exa MCP server](https://exa.ai/docs/reference/exa-mcp)**: `exa_search` becomes
+`web_search_exa` and `exa_get_contents` becomes `web_fetch_exa`. For the full
+`exa_search` parameter set, opt in to `web_search_advanced_exa` through the
+`tools` URL parameter. Auth moves from the tool's own `EXA_API_KEY` lookup to
+OAuth, a key in the server URL, or a header you set.
+
+### `file_read`
+
+**`strands_tools.file_read` → `strands.vended_tools.read`**: reads one file per
+call by absolute path, returning numbered lines paged with `offset` and `limit`.
+Images and binary documents come back as content blocks, while the csv, html,
+txt, and md files that `document` mode returned as document blocks now come back
+as numbered text. The `find`, `search`, `stats`, `preview`, `chunk`, `diff`, and
+`time_machine` modes have no equivalent, so run those through `shell`.
+
+### `file_write`
+
+**`strands_tools.file_write` → `strands.vended_tools.write`**: writes through the
+agent's sandbox and takes absolute paths only, with no preview. There is no confirmation
+prompt, so `BYPASS_TOOL_CONSENT` no longer applies: to approve calls, raise an interrupt
+from a `BeforeToolCallEvent` hook ([Interrupts](../sdk/interrupts.md#hooks)). Without a
+configured sandbox, it runs on the host; pass `DockerSandbox` for isolation.
+
+### `generate_image`
+
+**`strands_tools.generate_image` → none**: `generate_image` wrapped Amazon
+Bedrock's `invoke_model` for
+[Stability AI models](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-stability-diffusion.html),
+so a custom tool covers it in a few lines.
+
+### `generate_image_stability`
+
+**`strands_tools.generate_image_stability` → none**: `generate_image_stability`
+wrapped Stability AI's
+[`v2beta/stable-image` REST API](https://docs.stability.ai/api-reference), so a
+custom tool covers it in a few lines.
+
+### `graph`
+
+**`strands_tools.graph` → `strands.vended_tools.graph`**: the model passes `task`,
+`nodes`, and `edges` in one call and gets each node's output back, with no
+create, execute, status, list, or delete lifecycle. Edges use `from_node` and
+`to_node` instead of `from` and `to`, and nodes with no incoming edges are always
+the entry points. Nodes inherit the parent's model and tools by default. In place
+of per-node `model_provider` and `model_settings`, use
+`make_graph(tools=Choice([...], multiple=True), model=Choice([...]))`, which also
+sets node, edge, and timeout limits.
+
+### `handoff_to_user`
+
+**`strands_tools.handoff_to_user` → `strands.vended_tools.handoff_to_user`**:
+raises an interrupt instead of prompting on the console. The agent stops with
+`stop_reason == "interrupt"`, and your code resumes it with the user's reply.
+There is no `breakout_of_loop`: every call pauses the agent. See
+[Interrupts](../sdk/agents/interventions/human-in-the-loop.md).
+
+### `http_request`
+
+**`strands_tools.http_request` → `strands.vended_tools.http_request` or
+`web_fetch`**: the tool splits by intent. Raw API calls go to `http_request`;
+reading a page goes to `web_fetch`. Authentication and endpoint scoping move into
+an `httpx.AsyncClient` you pass to `make_http_request(client=...)`. By default,
+`web_fetch` hands the page to an auxiliary analyst that answers the model's
+`prompt`, so the full page never enters the main context. For the full page
+as markdown (the old `convert_to_markdown=True`), build it with
+`make_web_fetch(mode="markdown")`. `web_fetch` needs the `web-fetch` extra:
+`pip install 'strands-agents[web-fetch]'`.
+
+### `image_reader`
+
+**`strands_tools.image_reader` → image content blocks**: pass the image in the
+[prompt](../sdk/agents/prompts.md#multi-modal-prompting), e.g.
+`agent([{"text": "..."}, {"image": {"format": "png", "source": {"bytes": data}}}])`.
+The model can no longer load images by path mid-run. If it needs to, return the
+same image block from a [custom tool](../sdk/tools/custom-tools.md).
+
+### `journal`
+
+**`strands_tools.journal` → `strands.vended_tools.notebook`**: keeps notes in
+`agent.state` instead of `./journal/<date>.md`, so notes persist through your
+session manager. There is no `add_task` and no per-day entry; tasks and dated
+entries become plain note text. If you need files on disk, use `write`.
+
+### `load_tool`
+
+**`strands_tools.load_tool` → tools passed to the agent**: letting the model load
+arbitrary files as tools is rarely what you want. Pass tools to the agent up
+front, or set `Agent(load_tools_from_directory=True)` to load and hot-reload tools
+from `./tools/`.
+
+### `mcp_client`
+
+**`strands_tools.mcp_client` → `strands.vended_tools.make_mcp_router`**: connects
+only to servers you allowlist in `servers`, by name. The model can no longer
+supply its own command or URL. There is no `load_tools`; the model calls remote
+tools through `call_tool`.
+
+### `mem0_memory`
+
+**`strands_tools.mem0_memory` (and `Mem0MemoryTool`) → `MemoryManager` with
+`Mem0MemoryStore` from `mem0-strands`**: memories are recalled automatically.
+`retrieve` becomes `search_memory` and `store` becomes `add_memory` (enable it
+with `add_tool_config=True`). For `get`, `list`, `delete`, and `history`, use
+Mem0's `MemoryClient`. `mem0-strands` needs `mem0ai` 2.x, so remove the
+`mem0-memory` extra first, then `pip install mem0-strands`. Backend environment
+variables do not carry over: without `MEM0_API_KEY`, pass a Mem0 OSS `config=`.
+See the
+[Mem0 integration docs](https://docs.mem0.ai/integrations/strands).
+
+### `memory` and `retrieve`
+
+**`strands_tools.memory` and `strands_tools.retrieve` → `MemoryManager` with
+`BedrockKnowledgeBaseStore`**: [memory stores](../sdk/memory/bedrock-knowledge-base.md)
+inject context automatically. `retrieve` becomes `search_memory` and `store`
+becomes `add_memory`, with `writable=True` (plus the data source) on the store and
+`add_tool_config=True` on the memory manager. The store is read-only by default,
+which matches `retrieve`. `list`, `get`, and `delete` are not part of the store
+protocol: write them as custom tools over the Amazon Bedrock Knowledge Bases API,
+or return them from `get_tools()` on a store subclass. To keep `retrieve`'s
+default `score >= 0.4` floor, set `min_score=0.4` on the store (see
+[Filtering by score](../sdk/memory/bedrock-knowledge-base.md#filtering-by-score)).
+
+### `mongodb_memory`
+
+**`strands_tools.mongodb_memory` (and `MongoDBMemoryTool`) → `MemoryManager` with a
+custom `MemoryStore`**: no store ships for MongoDB, but a
+[custom store](../sdk/memory/managing-memory.md#custom-stores) needs only `search` (a
+`$vectorSearch` aggregation) and `add` (insert a document) over
+[`pymongo`](https://pymongo.readthedocs.io/).
+`retrieve` becomes `search_memory` and `record` becomes `add_memory`, with
+`writable=True` on the store and `add_tool_config=True` on the memory manager.
+Bind the namespace in the store, not the tool call, to keep tenants isolated. For
+`list`, `get`, and `delete`, call `pymongo` directly.
+
+### `nova_reels`
+
+**`strands_tools.nova_reels` → none**: Amazon Nova Reel reached end of life on
+Amazon Bedrock on September 30, 2026, so `nova_reels` no longer works.
+
+### `python_repl`
+
+**`strands_tools.python_repl` → `strands.vended_tools.python_repl`**: runs each call in
+a fresh interpreter, so save intermediate results to files instead of variables. There
+is no confirmation prompt, so `BYPASS_TOOL_CONSENT` no longer applies: to approve calls,
+raise an interrupt from a `BeforeToolCallEvent` hook
+([Interrupts](../sdk/interrupts.md#hooks)). Without a configured sandbox, it runs on the
+host; pass `DockerSandbox` for isolation. There is no PTY, stdin, or `reset_state`, and
+the `PYTHON_REPL_*` environment variables no longer apply.
+
+### `rss`
+
+**`strands_tools.rss` → none**: parse feeds with `feedparser`. The stored
+subscription list and feed HTTP Basic auth move into your code.
+
+### `shell`
+
+**`strands_tools.shell` → `strands.vended_tools.shell`**: runs through the agent's
+sandbox, and every call starts a fresh shell. Variables and the working directory do not
+carry over between calls. There is no PTY support and no batched parallel or sequential
+command execution. There is no confirmation prompt, so `BYPASS_TOOL_CONSENT` no longer
+applies: to approve calls, raise an interrupt from a `BeforeToolCallEvent` hook
+([Interrupts](../sdk/interrupts.md#hooks)). Without a configured sandbox, it runs on the
+host; pass `DockerSandbox` for isolation.
+
+### `slack`
+
+**`strands_tools.slack` → [Slack MCP server](https://docs.slack.dev/ai/mcp-server/)**:
+uses OAuth instead of long-lived tokens and exposes a curated tool set, not a
+passthrough to every Web API method. It is request and response only, so event
+listeners and Socket Mode stay on `slack_bolt`.
+
+### `sleep`
+
+**`strands_tools.sleep` → `strands.vended_tools.sleep`**: caps duration with
+`make_sleep(max_duration=...)`, defaulting to 60 seconds. The
+`MAX_SLEEP_SECONDS` environment variable, which defaulted to 300, no longer
+applies.
+
+### `speak`
+
+**`strands_tools.speak` → none**: call Amazon Polly's `synthesize_speech` (or
+macOS `say`) from a custom tool. If you want the agent itself to talk rather than
+read text aloud, `BidiAgent` from `strands.bidi` runs a live
+[voice](../sdk/bidi/index.md) session with a speech model. It does not read text
+verbatim or save audio files.
+
+### `stop`
+
+**`strands_tools.stop` → `strands.vended_tools.stop`**: the run ends with
+`stop_reason == "cancelled"` instead of the model's own `"tool_use"`. `reason`
+becomes an optional `message` that is also the final assistant message, so
+`str(result)` returns it instead of an empty string. If you branch on
+`stop_reason` or read `request_state["stop_event_loop"]`, update those checks.
+The message is capped at 4096 characters by default.
+
+### `swarm`
+
+**`strands_tools.swarm` → `strands.vended_tools.swarm`**: by default every agent
+inherits the parent's model and all of its tools, and the model writes only
+`instructions` (formerly `system_prompt`). To let it pick tools or models per
+agent again, offer a set with
+`make_swarm(tools=Choice([...], multiple=True), model=Choice([...]))`. The
+handoff, iteration, and timeout limits also move from tool arguments to
+`make_swarm(...)`.
+
+### `tavily`
+
+**`strands_tools.tavily` (`tavily_search`, `tavily_extract`, `tavily_crawl`,
+`tavily_map`) → [Tavily MCP server](https://docs.tavily.com/documentation/mcp)**:
+auth moves from `TAVILY_API_KEY` to OAuth, a key in the server URL, or a header.
+`auto_parameters`, `chunks_per_source`, `days`, `include_answer`, `categories`,
+`exclude_paths`, and the `"markdown"` and `"text"` values of
+`include_raw_content` have no MCP equivalent. If you need them, call the
+[Tavily REST API](https://docs.tavily.com/documentation/api-reference/introduction)
+from a custom tool.
+
+### `think`
+
+**`strands_tools.think` → model reasoning**: configure
+[reasoning](../sdk/model-providers/amazon-bedrock.md#reasoning-support) once on the
+model instead of prompting for it. It is single-pass: if you relied on
+`cycle_count` refinement or tool calls inside the reasoning loop, move that into
+your own orchestration. Configuration differs per model provider.
+
+### `use_agent` and `use_llm`
+
+**`strands_tools.use_agent` and `strands_tools.use_llm` →
+`strands.vended_tools.subagent`**: by default the child inherits the parent's
+model and tools, and the model passes a `task` with optional `instructions`.
+Without them, a built-in general-purpose prompt is used. In place of
+`use_agent`'s free-form `model_provider` and `model_settings`, offer models with
+`make_subagent(model=Choice([...]))` or pin one with `Fixed(...)`. The result is
+the child's final message, without the metrics block. `Choice`, `Fixed`, and the
+other axis modes come from `strands.multiagent.spec`.
+
+### `use_aws`
+
+**`strands_tools.use_aws` →
+[AWS MCP Server](https://docs.aws.amazon.com/agent-toolkit/latest/userguide/mcp-server.html)**:
+AWS maintains it as a managed remote server, reached through the
+`mcp-proxy-for-aws` proxy, and its `aws___call_aws` tool covers the same API
+surface as `use_aws`. Write access is controlled by IAM, or the proxy's
+`--read-only` flag, instead of a confirmation prompt. The self-hosted
+[AWS API MCP server](https://github.com/awslabs/mcp/tree/main/src/aws-api-mcp-server)
+still works but is superseded; see its
+[migration guide](https://github.com/awslabs/mcp/blob/main/src/aws-api-mcp-server/MIGRATION.md).
+
+### `use_computer`
+
+**`strands_tools.use_computer` → none**: call `pyautogui` and `pytesseract` from a
+custom tool scoped to the actions you actually use.
+
+### `workflow`
+
+**`strands_tools.workflow` → `strands.vended_tools.graph`**: tasks become nodes
+and `dependencies` become edges, run in one call. Nothing is saved under
+`~/.strands/workflows`. `status`, partial workflow resumption (by re-running
+`start`), and `priority` have no equivalent. Ready nodes run in parallel.
+Per-task models and tools move to `make_graph`, as with `graph`.

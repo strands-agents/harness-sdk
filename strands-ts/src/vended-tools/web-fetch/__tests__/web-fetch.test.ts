@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ToolContext } from '../../../tools/tool.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import { Agent } from '../../../agent/agent.js'
+import { InvocationContextImpl } from '../../../agent/invocation-context.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { makeWebFetch, webFetch, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONTENT_CHARS } from '../web-fetch.js'
 import { WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DESCRIPTION_AGENTIC } from '../types.js'
 
@@ -343,6 +345,35 @@ describe('webFetch tool', () => {
           prompt: 'Summarize',
         })
       ).rejects.toThrow(/web fetch analyst failed/)
+    })
+
+    describe('request limits', () => {
+      it('adds the analyst usage to the request total and runs it past a spent limit', async () => {
+        const { Agent: RealAgent } = await vi.importActual<{ Agent: typeof Agent }>('../../../agent/agent.js')
+        vi.mocked(Agent).mockImplementationOnce(function (config) {
+          return new RealAgent(config)
+        })
+        mockFetch('page content', { contentType: 'text/plain' })
+        const analystModel = new MockMessageModel().addTurn(
+          { type: 'textBlock', text: 'the answer' },
+          { usage: { inputTokens: 20, outputTokens: 6, totalTokens: 26 } }
+        )
+        const parentInvocationContext = new InvocationContextImpl({ turns: 1 })
+        parentInvocationContext.usage.turnsTaken = 5
+
+        const result = await makeWebFetch({ mode: 'agentic', model: analystModel }).invoke(
+          { url: 'https://example.com/', prompt: 'Summarize' },
+          makeContext({ invocationContext: parentInvocationContext })
+        )
+
+        expect(result).toBe('the answer')
+        expect(parentInvocationContext.usage).toEqual({
+          turnsTaken: 5,
+          inputTokens: 20,
+          outputTokens: 6,
+          totalTokens: 26,
+        })
+      })
     })
   })
 })

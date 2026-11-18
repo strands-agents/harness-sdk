@@ -21,6 +21,7 @@ from ....agent.conversation_manager.compression.context_compression import (
     matches_message_type,
 )
 from ....agent.conversation_manager.compression.pin_message import is_pinned, pin_message, unpin_message
+from ....agent.invocation_context import _create_auxiliary_invocation_context
 from ....middleware.stages import InvokeModelContext
 from ....middleware.types import MiddlewareInputHandler
 from ....models._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
@@ -135,7 +136,12 @@ async def summarize_context(
         )
 
     try:
-        summary_message = await generate_summary(eligible, agent.aux_model)
+        summary_message = await generate_summary(
+            eligible,
+            agent.aux_model,
+            None,
+            _create_auxiliary_invocation_context(tool_context.invocation_context),
+        )
     except Exception as err:
         return f"Summarization failed: {err}"
 
@@ -325,6 +331,9 @@ def create_token_usage_middleware() -> MiddlewareInputHandler:
         }
         if "metadata" in last_message:
             new_message["metadata"] = last_message["metadata"]
+        # Later middleware, such as ContextInjector, finds the stored message by its tracking id.
+        if "tracking_id" in last_message:
+            new_message["tracking_id"] = last_message["tracking_id"]
         messages[-1] = new_message
 
         # The live token count makes this block per-call, so a cache point must stay ahead of it.

@@ -12,6 +12,7 @@ from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _build_
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
+    from ....agent.invocation_context import InvocationContext
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class DropStrategy(BaseOffloadStrategy):
         message: Message,
         agent: Agent,
         stash_refs: list[str],
+        invocation_context: InvocationContext | None = None,
     ) -> ContentBlock | None:
         marker = f"{DROPPED_MARKER}{_format_stash_refs(stash_refs)}"
         if "toolResult" in block:

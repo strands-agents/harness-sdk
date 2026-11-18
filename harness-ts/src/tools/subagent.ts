@@ -481,7 +481,8 @@ function forkMessages(parent: LocalAgent | undefined, lastN: number | null): Mes
     const content = message
       .clone()
       .content.filter(
-        (block) => block.type !== 'reasoningBlock' && (block.type !== 'toolUseBlock' || answered.has(block.toolUseId))
+        (block) =>
+          !PARENT_ONLY_BLOCKS.has(block.type) && (block.type !== 'toolUseBlock' || answered.has(block.toolUseId))
       )
     if (content.length > 0) {
       forked.push(new Message({ role: message.role, content }))
@@ -496,6 +497,10 @@ function forkMessages(parent: LocalAgent | undefined, lastN: number | null): Mes
   }
   return forked
 }
+
+// Reasoning is the parent model's signed state, and injected text is context for the parent's own turn. A string
+// set, so this compiles against SDK versions that have no injected blocks.
+const PARENT_ONLY_BLOCKS: ReadonlySet<string> = new Set(['reasoningBlock', 'injectedBlock'])
 
 const FORK_PREAMBLE =
   "The conversation so far is the parent agent's. You are the subagent it delegated to at this point; " +

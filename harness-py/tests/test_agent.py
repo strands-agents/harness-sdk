@@ -593,6 +593,14 @@ def test_caching_enabled_by_default_on_anthropic_direct():
     assert agent.model.config["cache_config"] == CacheConfig(strategy="auto", tools_ttl=True)
 
 
+@pytest.mark.parametrize("model", ["openai/gpt-5.6-sol", "bedrock-mantle/openai.gpt-6-luna"])
+@pytest.mark.parametrize("options", [{}, {"caching": "auto"}, {"caching": True}, {"caching": False}, {"caching": None}])
+def test_openai_responses_caching_defaults_and_optout(model, options):
+    agent = create_harness(model=model, session=False, memory=False, skills=False, builtin_tools=[], **options)
+    enabled = options.get("caching", "auto") not in (False, None)
+    assert agent.model.config.get("cache_config") == (CacheConfig(strategy="auto") if enabled else None)
+
+
 def test_caching_default_on_model_instance_warns_and_builds(caplog):
     import logging
 
@@ -660,12 +668,12 @@ def test_context_manager_config_builds_an_sdk_context_manager():
 
 def test_effort_auto_uses_recommended_level():
     agent = create_harness(effort="auto")
-    assert agent.model.config["additional_request_fields"]["output_config"]["effort"] == "high"
+    assert agent.model.config["params"]["output_config"]["effort"] == "medium"
 
 
 def test_effort_off_drops_reasoning():
     agent = create_harness(effort="off")
-    assert "additional_request_fields" not in agent.model.config
+    assert "params" not in agent.model.config
 
 
 def test_effort_level_is_validated_against_the_model():

@@ -77,7 +77,7 @@ def test_barge_in_event_fields(agent):
     event = BidiBargeInEvent(agent=agent)
 
     tru_event = {field.name: getattr(event, field.name) for field in fields(event)}
-    exp_event = {"agent": agent}
+    exp_event = {"agent": agent, "invocation_context": None}
     assert tru_event == exp_event
 
 

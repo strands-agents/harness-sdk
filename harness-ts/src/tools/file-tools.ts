@@ -14,13 +14,21 @@ import { z } from 'zod'
 
 const READ_DEFAULT_LIMIT = 2000
 
-// Media formats the read tool returns as viewable content, keyed by file extension. Detection is
-// by extension because the sandbox seam exposes no MIME metadata. Text-representable document
-// formats (csv, html, txt, md) stay on the numbered-lines path, which supports citing and paging.
-// Video is omitted: the Python SDK's tool results do not accept video content, and the two
-// libraries keep behavior parity.
-const IMAGE_FORMATS: Record<string, ImageFormat> = { png: 'png', jpg: 'jpeg', jpeg: 'jpeg', gif: 'gif', webp: 'webp' }
+// Media formats the read tool returns as viewable content, selected by file extension because the
+// sandbox seam exposes no MIME metadata. Text-representable document formats (csv, html, txt, md)
+// stay on the numbered-lines path, which supports citing and paging. Video is omitted: the Python
+// SDK's tool results do not accept video content, and the two libraries keep behavior parity.
+const IMAGE_EXTENSIONS: readonly string[] = ['png', 'jpg', 'jpeg', 'gif', 'webp']
 const DOCUMENT_FORMATS: readonly string[] = ['pdf', 'doc', 'docx', 'xls', 'xlsx']
+
+// For images the extension only selects the media path; the signature decides the format. A non-image or
+// mislabeled file sent as a success image block poisons history (every later request fails on it).
+const IMAGE_SIGNATURES: readonly [Uint8Array, ImageFormat][] = [
+  [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), 'png'],
+  [new Uint8Array([0xff, 0xd8, 0xff]), 'jpeg'],
+  [new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]), 'gif'], // GIF87a
+  [new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]), 'gif'], // GIF89a
+]
 
 function validatePath(path: string): void {
   // The path belongs to the sandbox, not the host, so accept either platform's notion of absolute. The two
@@ -63,6 +71,18 @@ function documentName(path: string): string {
   return sanitized || 'document'
 }
 
+function startsWith(data: Uint8Array, prefix: Uint8Array, offset = 0): boolean {
+  return data.length >= offset + prefix.length && prefix.every((byte, i) => data[offset + i] === byte)
+}
+
+const RIFF = new Uint8Array([0x52, 0x49, 0x46, 0x46])
+const WEBP = new Uint8Array([0x57, 0x45, 0x42, 0x50])
+
+function sniffImageFormat(data: Uint8Array): ImageFormat | undefined {
+  if (startsWith(data, RIFF) && startsWith(data, WEBP, 8)) return 'webp'
+  return IMAGE_SIGNATURES.find(([signature]) => startsWith(data, signature))?.[1]
+}
+
 function mediaPlaceholder(path: string, kind: string, mediaFormat: string, size: number): string {
   return (
     `[${kind} file: ${path} (${mediaFormat}, ${size} bytes). This model cannot view ` +
@@ -91,9 +111,15 @@ function readCallback(media: boolean): (input: ReadInput, context?: ToolContext)
     validatePath(input.path)
     const ext = extension(input.path)
 
-    const imageFormat = IMAGE_FORMATS[ext]
-    if (imageFormat) {
+    if (IMAGE_EXTENSIONS.includes(ext)) {
       const bytes = await context.agent.sandbox.readFile(input.path)
+      const imageFormat = sniffImageFormat(bytes)
+      if (!imageFormat) {
+        throw new Error(
+          `${input.path} has a .${ext} extension but its ${bytes.length} bytes are not a png, jpeg, gif, or webp ` +
+            'image. Identify it with `file`; if it is text, read it with `cat`.'
+        )
+      }
       if (!media) {
         return mediaPlaceholder(input.path, 'Image', imageFormat, bytes.length)
       }

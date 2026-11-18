@@ -39,6 +39,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks.events import AfterInvocationEvent, MessageAddedEvent
 from strands.hooks.registry import HookOrder
 from strands.memory import AggregateMemoryError
@@ -1555,3 +1556,28 @@ async def test_injection_fails_open_when_custom_format_raises(caplog):
     with caplog.at_level(logging.WARNING):
         assert await _provide(mm, [_assistant_msg("prior"), _user_msg("ask")]) is None
     assert "skipping injection" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_init_agent_trigger_forwards_the_firing_events_request_to_the_extractor():
+    extractor = _make_extractor([ExtractionResult(content="fact")])
+    store = _store(
+        "s",
+        writable=True,
+        sinks={"add"},
+        extraction=ExtractionConfig(trigger=InvocationTrigger(), extractor=extractor),
+    )
+    mm = MemoryManager(stores=[store])
+    agent = _FakeAgent()
+    await mm.init_agent(agent)
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    await _add_messages(agent, _user_msg("I prefer dark mode"))
+    await _invoke_all(agent, AfterInvocationEvent(agent=agent, invocation_context=request))
+    await mm.flush()
+
+    handed = extractor.extract.call_args.args[1].invocation_context
+    handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+    assert _reached_limit(handed) is None
+    assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}

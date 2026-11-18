@@ -6,18 +6,21 @@ id, or ``None`` for the harness default. Every provider uses its real model ids 
 value regardless of provider.
 
 Prompt caching is requested via ``caching`` and reaches the provider one of two ways: the harness
-configures Bedrock and Anthropic direct (cache points plus cached tool definitions), while OpenAI,
-Gemini, bedrock-mantle, and litellm cache automatically server-side (Gemini on models 2.5 and
-newer; litellm through its OpenAI-compatible backend). Only a pre-built ``Model`` or ``ModelRouter``
-instance can't be honored (its provider is unknown), so a warning is logged.
+passes an SDK cache config to Bedrock and Anthropic direct (cache points plus cached tool
+definitions) and to OpenAI and bedrock-mantle (a per-session cache key, plus cache points on
+models that take them), while Gemini and litellm cache automatically server-side (Gemini on models
+2.5 and newer; litellm through its OpenAI-compatible backend). Only a pre-built ``Model`` or
+``ModelRouter`` instance can't be honored (its provider is unknown), so a warning is logged.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 from collections.abc import Callable
+from importlib import resources
 from typing import Any, NamedTuple
 
 from strands.models import Model, ModelRouter
@@ -34,30 +37,31 @@ _ANTHROPIC_MAX_TOKENS = 32_000
 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
 _ANTHROPIC_WEB_SEARCH = {"type": "web_search_20260318", "name": "web_search", "allowed_callers": ["direct"]}
 
-# Claude's real max_tokens ceiling by tier, verified live against Bedrock Converse. Applied on
-# Bedrock and Anthropic-direct only — other Bedrock-hosted model families aren't known to need
-# this. Matched as a substring so any Bedrock region/vendor prefix in front of it doesn't matter.
-_CLAUDE_MAX_TOKENS = {
-    "claude-opus-": 128_000,
-    "claude-sonnet-": 128_000,
-    "claude-haiku-": 128_000,
-    "claude-fable-": 128_000,
-}
-_CLAUDE_MAX_TOKENS_BY_VERSION = (
-    ("claude-opus-4-5", 64_000),
-    ("claude-opus-4.5", 64_000),
-    ("claude-sonnet-4-5", 64_000),
-    ("claude-sonnet-4.5", 64_000),
-    ("claude-haiku-4-5", 64_000),
-    ("claude-haiku-4.5", 64_000),
-)
+
+_VERSION_SUFFIX = re.compile(r"-(?:v\d+(?::\d+)?|\d+:\d+)$")
+_DATE_SUFFIX = re.compile(r"[-@]\d{8}$")
+# The shared model info (``shared/model-info.json``); hatch_build.py copies it into the package.
+_MODELS: dict[str, dict[str, Any]] = json.loads(
+    resources.files("strands_harness").joinpath("model_info.json").read_text(encoding="utf-8")
+)["models"]
 
 
-def _claude_max_tokens(model_id: str) -> int | None:
-    pinned = next((tokens for needle, tokens in _CLAUDE_MAX_TOKENS_BY_VERSION if needle in model_id), None)
-    if pinned is not None:
-        return pinned
-    return next((tokens for needle, tokens in _CLAUDE_MAX_TOKENS.items() if needle in model_id), None)
+def _lookup_model(model_id: str) -> dict[str, Any]:
+    """The model's entry, matched by the SDK's rule (version suffix, date, leading segments); empty when unknown."""
+    candidate = model_id
+    while True:
+        unversioned = _VERSION_SUFFIX.sub("", candidate)
+        for key in (candidate, unversioned, _DATE_SUFFIX.sub("", unversioned)):
+            if key in _MODELS:
+                return _MODELS[key]
+        dot_index = candidate.find(".")
+        if dot_index == -1:
+            return {}
+        candidate = candidate[dot_index + 1 :]
+
+
+def _claude_max_tokens(model_id: str) -> int:
+    return _lookup_model(model_id).get("limits", {}).get("maxOutputTokens") or _ANTHROPIC_MAX_TOKENS
 
 
 # Small, fast model per provider for the web_fetch summarizer. Keyed by the main agent's provider
@@ -78,6 +82,7 @@ _WEB_FETCH_MODELS = {
 _CUSTOM_ENDPOINT_VARS = {"anthropic": "ANTHROPIC_BASE_URL", "openai": "OPENAI_BASE_URL"}
 
 _BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "eu.", "au.", "jp.")
+_BEDROCK_GPT_PREFIXES = ("openai.gpt-5.", "openai.gpt-daybreak-", "openai.gpt-6-", "openai.gpt-6.")
 
 # Small regional summarizer per Bedrock model family, keyed by family prefix. These ids are served
 # regionally, so unlike the OpenAI-on-Bedrock case no inference-profile prefix is carried over.
@@ -93,11 +98,27 @@ _BEDROCK_WEB_FETCH_FAMILY_MODELS = {
 _ANTHROPIC_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _OPENAI_LEVELS = ("minimal", "low", "medium", "high", "xhigh", "none")
 _BEDROCK_GPT_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
+# Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
+_BEDROCK_GPT_NO_MAX_LEVELS = ("none", "low", "medium", "high", "xhigh")
+_BEDROCK_GPT_NO_NONE_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _BEDROCK_GPT_OSS_LEVELS = ("low", "medium", "high")
 _BEDROCK_QWEN_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 _BEDROCK_XAI_LEVELS = ("low", "medium", "high", "xhigh")
 _BEDROCK_NOVA_LEVELS = ("low", "medium", "high")
-_GOOGLE_LEVELS = ("minimal", "low", "medium", "high")
+_GOOGLE_LEVELS = ("low", "medium", "high")
+_GOOGLE_MINIMAL_LEVELS = ("minimal", "low", "medium", "high")
+# Per-model levels: https://ai.google.dev/gemini-api/docs/thinking#controlling-thinking for Gemini;
+# Gemma 4 on Mantle only reasons at ``high``.
+_MODEL_LEVELS = {
+    "google": (
+        ("gemini-3.1-flash-lite-image", ("minimal", "high")),
+        ("gemini-3.6-flash", _GOOGLE_MINIMAL_LEVELS),
+        ("gemini-3.5-flash", _GOOGLE_MINIMAL_LEVELS),
+        ("gemini-3-flash-preview", _GOOGLE_MINIMAL_LEVELS),
+        ("gemini-robotics-er-2-preview", _GOOGLE_MINIMAL_LEVELS),
+    ),
+    "bedrock-mantle": (("google.gemma-4-", ("none", "high")),),
+}
 
 _ADAPTIVE_THINKING_SINCE = {"opus": (4, 6), "sonnet": (4, 6), "haiku": (5, 5)}
 _EXTENDED_THINKING_SINCE = {"opus": (4, 5), "sonnet": (4, 5), "haiku": (4, 5)}
@@ -152,7 +173,11 @@ def _bedrock_levels(model_id: str) -> tuple[str, ...]:
         return _ANTHROPIC_LEVELS if _claude_thinking_mode(family) is not None else ()
     if family.startswith("amazon.nova-2"):
         return _BEDROCK_NOVA_LEVELS
-    if family.startswith("openai.gpt-5.6-") or family == "openai.gpt-6-astra":
+    if family.startswith(("openai.gpt-5.4", "openai.gpt-5.5")):
+        return _BEDROCK_GPT_NO_MAX_LEVELS
+    if family.startswith(("openai.gpt-6-astra", "openai.gpt-6.1-sol")):
+        return _BEDROCK_GPT_NO_NONE_LEVELS
+    if family.startswith(_BEDROCK_GPT_PREFIXES):
         return _BEDROCK_GPT_LEVELS
     if family.startswith("openai.gpt-oss-"):
         return _BEDROCK_GPT_OSS_LEVELS
@@ -163,10 +188,10 @@ def _bedrock_levels(model_id: str) -> tuple[str, ...]:
     return ()
 
 
-def _bedrock_effort(model_id: str, effort: Effort) -> str | None:
+def _bedrock_effort(model_id: str, effort: Effort, recommended: str | None) -> str | None:
     levels = _bedrock_levels(model_id)
     if levels:
-        return _effort(effort, "high", levels, f"Bedrock model {model_id}")
+        return _effort(effort, _default_effort(model_id, levels, recommended), levels, f"Bedrock model {model_id}")
     _check_effort(effort)
     if effort in ("auto", "off"):
         return None
@@ -178,10 +203,10 @@ def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
         return None
     family = _bedrock_family(model_id)
     if family.startswith("anthropic."):
-        return _claude_thinking_block(family, effort, _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS)
+        return _claude_thinking_block(family, effort, _claude_max_tokens(model_id))
     if family.startswith("amazon.nova-2"):
         return {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": effort}}
-    if family.startswith("openai.gpt-5.6-") or family == "openai.gpt-6-astra":
+    if family.startswith(_BEDROCK_GPT_PREFIXES):
         return {"reasoning": {"effort": effort}}
     if family.startswith("openai.gpt-oss-"):
         return {"reasoning_effort": effort}
@@ -193,37 +218,62 @@ def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
 
 
 def _bedrock(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+    if _bedrock_family(model_id).startswith("anthropic.claude-"):
+        return _bedrock_claude(model_id, effort, caching)
     from strands.models import BedrockModel, CacheConfig
 
     thinking = _bedrock_thinking(model_id, effort)
     extra: dict[str, Any] = {} if thinking is None else {"additional_request_fields": thinking}
-    max_tokens = _claude_max_tokens(model_id)
-    if max_tokens is not None:
-        extra["max_tokens"] = max_tokens
     if caching:
-        # The SDK injects cache points for Anthropic model ids on Bedrock (a no-op for others).
+        # The SDK injects cache points on models that take them (a no-op for others).
         # Tools are stable across turns, so cache them too.
         extra["cache_config"] = CacheConfig(strategy="auto", tools_ttl=True)
     return BedrockModel(model_id=model_id, **extra)
 
 
-def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
-    from strands.models import CacheConfig
+def _bedrock_claude(model_id: str, effort: str | None, caching: bool) -> Model:
+    import anthropic
+    import boto3
+    from strands.models.bedrock import DEFAULT_BEDROCK_REGION
+
+    # Same resolution as BedrockModel, so Claude and the other Bedrock families share a region.
+    region = boto3.Session().region_name or os.environ.get("AWS_REGION") or DEFAULT_BEDROCK_REGION
     from strands.models.anthropic import AnthropicModel
 
-    max_tokens = _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS
-    extra: dict[str, Any] = {} if effort is None else {"params": _claude_thinking_block(model_id, effort, max_tokens)}
+    # Anthropic's client reads ANTHROPIC_BEDROCK_BASE_URL but not the AWS endpoint overrides BedrockModel honors.
+    endpoint = None if os.environ.get("ANTHROPIC_BEDROCK_BASE_URL") else _aws_endpoint_url()
+    client = anthropic.AsyncAnthropicBedrock(aws_region=region, **({"base_url": endpoint} if endpoint else {}))
+    return AnthropicModel(client=client, **_anthropic_config(model_id, effort, False, caching))
+
+
+def _aws_endpoint_url() -> str | None:
+    return os.environ.get("AWS_ENDPOINT_URL_BEDROCK_RUNTIME") or os.environ.get("AWS_ENDPOINT_URL")
+
+
+def _anthropic(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+    from strands.models.anthropic import AnthropicModel
+
+    return AnthropicModel(**_anthropic_config(model_id, effort, web_search, caching))
+
+
+def _anthropic_config(model_id: str, effort: str | None, web_search: bool, caching: bool) -> dict[str, Any]:
+    from strands.models import CacheConfig
+
+    max_tokens = _claude_max_tokens(model_id)
+    config: dict[str, Any] = {"model_id": model_id, "max_tokens": max_tokens}
+    if effort is not None:
+        config["params"] = _claude_thinking_block(model_id, effort, max_tokens)
     if web_search:
-        extra["anthropic_tools"] = [_ANTHROPIC_WEB_SEARCH]
+        config["anthropic_tools"] = [_ANTHROPIC_WEB_SEARCH]
     if caching:
         # Caches the tool definitions plus a cache point on the last user message; the system
-        # prompt is cached automatically. Mirrors the Bedrock builder.
-        extra["cache_config"] = CacheConfig(strategy="auto", tools_ttl=True)
-    return AnthropicModel(model_id=model_id, max_tokens=max_tokens, **extra)
+        # prompt is cached automatically.
+        config["cache_config"] = CacheConfig(strategy="auto", tools_ttl=True)
+    return config
 
 
 def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
-    # ``caching`` is unused: OpenAI caches server-side with no opt-in.
+    from strands.models import CacheConfig
     from strands.models.openai_responses import OpenAIResponsesModel
 
     params: dict[str, Any] = {}
@@ -232,18 +282,30 @@ def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool) 
     # The Responses API merges built-in tools carried in ``params`` with the agent's function tools.
     if web_search:
         params["tools"] = [{"type": "web_search"}]
-    return OpenAIResponsesModel(model_id=model_id, **({"params": params} if params else {}))
+    # The SDK derives a per-session ``prompt_cache_key`` from the cache config and, on models whose
+    # model info takes cache points (GPT-5.6 and later), places them on durable content so per-turn
+    # reminders stay out of the cached prefix.
+    return OpenAIResponsesModel(
+        model_id=model_id,
+        **({"cache_config": CacheConfig(strategy="auto")} if caching else {}),
+        **({"params": params} if params else {}),
+    )
 
 
 def _bedrock_mantle(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
-    # ``caching`` is unused: Mantle caches server-side automatically.
+    from strands.models import CacheConfig
     from strands.models.openai_responses import BedrockMantleConfig, OpenAIResponsesModel
 
     params: dict[str, Any] = {} if effort is None else {"reasoning": {"effort": effort}}
     if web_search:
         params["tools"] = [{"type": "web_search", "external_web_access": True}]
+    # Same cache config as ``_openai``: without explicit cache points, Mantle reads little or nothing
+    # from cache across the turns of a conversation.
     return OpenAIResponsesModel(
-        model_id=model_id, bedrock_mantle_config=BedrockMantleConfig(), **({"params": params} if params else {})
+        model_id=model_id,
+        bedrock_mantle_config=BedrockMantleConfig(),
+        **({"cache_config": CacheConfig(strategy="auto")} if caching else {}),
+        **({"params": params} if params else {}),
     )
 
 
@@ -293,11 +355,12 @@ class Provider(NamedTuple):
     ``web_search`` is enabled through model config on the providers whose SDK exposes a
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
     Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
-    bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no mechanism.
+    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock has none: Converse has no
+    mechanism, and Anthropic's web search tool isn't served on Bedrock.
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
-    the harness configures anything: Bedrock and Anthropic direct (the harness sets cache points and tool caching)
-    plus OpenAI, Gemini, bedrock-mantle, and litellm (automatic server-side). Only a pre-built
+    the harness configures anything: Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness
+    passes an SDK cache config) plus Gemini and litellm (automatic server-side). Only a pre-built
     ``Model`` instance can't be honored (its provider is unknown), so the factory warns there.
     """
 
@@ -328,11 +391,23 @@ def _check_effort(effort: object) -> None:
     raise ValueError(f"Unknown effort {effort!r}. Choose one of: {', '.join(EFFORT_LEVELS)}.")
 
 
+def _model_levels(provider_name: str, model_id: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    rows = _MODEL_LEVELS.get(provider_name, ())
+    return next((levels for prefix, levels in rows if model_id.startswith(prefix)), default)
+
+
+def _default_effort(model_id: str, levels: tuple[str, ...], recommended: str | None) -> str | None:
+    """The level ``"auto"`` resolves to: the vendor's default for the model from the shared model info
+    (what Claude Code, Codex, or Gemini CLI run it at), else the provider's ``recommended`` level."""
+    vendor_default = _lookup_model(model_id).get("capabilities", {}).get("defaultEffort")
+    return vendor_default if vendor_default in levels else recommended
+
+
 def _effort(
     effort: Effort,
     recommended: str | None,
     levels: tuple[str, ...],
-    subject: str = "this provider",
+    subject: str,
 ) -> str | None:
     """Map ``effort`` onto the provider's ``levels``; ``"off"`` is ``None`` where the provider has no ``none``."""
     _check_effort(effort)
@@ -371,8 +446,8 @@ def _has_web_search(provider_name: str, name: str) -> bool:
     provider = _PROVIDERS.get(provider_name)
     if provider is None or not provider.web_search:
         return False
-    # Bedrock Web Search is only served for Mantle's GPT-5/GPT-6 models; other families reject the tool (HTTP 400).
-    return provider_name != "bedrock-mantle" or name.startswith(("openai.gpt-5.", "openai.gpt-6-", "openai.gpt-6."))
+    # Only Mantle's GPT-5, GPT-6, and Daybreak models serve Bedrock Web Search; others reject the tool (HTTP 400).
+    return provider_name != "bedrock-mantle" or name.startswith(_BEDROCK_GPT_PREFIXES)
 
 
 def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
@@ -479,14 +554,14 @@ def resolve_model(
             f"Model {provider_name}/{name} does not support prompt caching. Pass caching=False.",
             f"model=<{provider_name}/{name}> | prompt caching not supported by this model; continuing without it",
         )
-    levels = provider.thinking_levels
-    recommended = provider.recommended_thinking
-    subject = "this provider"
-    if provider_name == "anthropic" and _claude_thinking_mode(name) is None:
-        levels, recommended, subject = (), None, f"model {name}"
-    level = (
-        _bedrock_effort(name, effort) if provider_name == "bedrock" else _effort(effort, recommended, levels, subject)
-    )
+    if provider_name == "bedrock":
+        level = _bedrock_effort(name, effort, provider.recommended_thinking)
+    elif provider_name == "anthropic" and _claude_thinking_mode(name) is None:
+        level = _effort(effort, None, (), f"model {name}")
+    else:
+        levels = _model_levels(provider_name, name, provider.thinking_levels)
+        recommended = _default_effort(name, levels, provider.recommended_thinking)
+        level = _effort(effort, recommended, levels, f"model {name}")
     native_search = web_search and _has_web_search(provider_name, name)
     return provider.build(name, level, native_search, caching and provider.caching and not unsupported_caching)
 
