@@ -1118,7 +1118,11 @@ async def test_executor_stream_cancel_duration_is_none(
 
 @pytest.mark.parametrize(
     ("cancel_tool", "exp_message"),
-    [(False, "Tool execution cancelled"), ("hook cancel message", "hook cancel message")],
+    [
+        (False, "Tool execution cancelled"),
+        (True, "tool cancelled by user"),
+        ("hook cancel message", "hook cancel message"),
+    ],
 )
 @pytest.mark.asyncio
 async def test_executor_stream_with_trace_skips_tool_when_agent_cancelled_during_before_hook(
@@ -1167,3 +1171,18 @@ async def test_executor_stream_runs_bidi_agent_tool_cancelled_during_before_hook
     exp_result = {"toolUseId": "1", "status": "success", "content": [{"text": "sunny"}]}
     assert tru_events == [ToolResultEvent(exp_result)]
     assert tool_results == [exp_result]
+
+
+def test_before_tool_cancel_message_ignores_bidi_agent_cancellation(weather_tool):
+    bidi_agent = BidiAgent(model=unittest.mock.AsyncMock(spec=BidiModel), tools=[weather_tool])
+    bidi_agent.cancel()
+    before_event = BeforeToolCallEvent(
+        agent=bidi_agent,
+        selected_tool=weather_tool,
+        tool_use={"name": "weather_tool", "toolUseId": "1", "input": {}},
+        invocation_state={},
+    )
+
+    tru_message = ToolExecutor._before_tool_cancel_message(bidi_agent, before_event, direct_call=False)
+
+    assert tru_message is None

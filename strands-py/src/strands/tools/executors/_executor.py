@@ -247,7 +247,7 @@ class ToolExecutor(abc.ABC):
                 yield ToolInterruptEvent(tool_use, interrupts)
                 return
 
-            # Only the agent loop passes a tracer; direct tool calls pass none.
+            # Only the standard Agent's loop passes a tracer; direct tool calls and BidiAgent's loop pass none.
             cancel_message = ToolExecutor._before_tool_cancel_message(agent, before_event, direct_call=tracer is None)
             if cancel_message:
                 yield ToolCancelEvent(tool_use, cancel_message)
