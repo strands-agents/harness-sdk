@@ -264,10 +264,15 @@ export interface OptimizePlan {
   readonly split: CaseSplit
   readonly splitChoices: readonly CaseSplit[]
   readonly repetitions: number
+  readonly repetitionChoices: readonly number[]
   readonly width: number
+  readonly widthChoices: readonly number[]
+  readonly workers: number
+  readonly workerChoices: readonly number[]
   readonly iterations: number
   readonly iterationChoices: readonly number[]
   readonly rollouts: number
+  readonly budgetProblem?: string
   readonly judgeCalls: number
   readonly usage?: UsageEstimate
   readonly warning?: string
@@ -430,6 +435,9 @@ export interface OptimizeSession {
   loadModels(): void
   pickModel(id: string, picked: boolean): void
   setIterations(iterations: number): void
+  setRepetitions(repetitions: number): void
+  setWidth(width: number): void
+  setWorkers(workers: number): void
   setSplit(split: CaseSplit): void
   setObjective(objective: OptimizeObjective): void
   openExperiment(experiment?: ExperimentSummary): void

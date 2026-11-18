@@ -92,7 +92,11 @@ const plan = (): OptimizePlan => ({
   split: { train: 1, validation: 1, test: 0 },
   splitChoices: [{ train: 1, validation: 1, test: 0 }],
   repetitions: 1,
+  repetitionChoices: [1, 2, 3, 5],
   width: 4,
+  widthChoices: [2, 4, 6, 8],
+  workers: 4,
+  workerChoices: [1, 2, 4, 8, 16],
   iterations: 4,
   iterationChoices: [2, 4, 8],
   rollouts: 10,
@@ -181,6 +185,9 @@ const fakeSessions = () => {
       plan: vi.fn(() => setTimeout(() => optimize.set({ step: 'setup', plan: plan() }), 0)),
       toggleKnob: vi.fn(),
       setIterations: vi.fn(),
+      setWidth: vi.fn(),
+      setRepetitions: vi.fn(),
+      setWorkers: vi.fn(),
       setObjective: vi.fn(),
       start: vi.fn((): string => {
         finishRun({ step: 'running', progress: progress() })
@@ -723,6 +730,39 @@ describe('TEMPORARY dev chat part', () => {
         { index: 1, knob: 'effort', unavailable: 'set in code', before: 'low', after: 'high' },
       ],
     })
+  })
+
+  it('shouldSetTheCandidatesPerStepTheRunsPerCaseAndTheParallelTrialsWhenItOptimizes', async () => {
+    const { tool, sessions, finishRun } = setup()
+
+    const running = tool('strands_dev_optimize').run({
+      experiment: 'refunds',
+      tune: ['instructions'],
+      candidatesPerStep: 6,
+      runsPerCase: 2,
+      parallelTrials: 8,
+    })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
+    finishRun({ step: 'review', review: review() })
+    await running
+
+    expect(sessions.optimize.setWidth).toHaveBeenCalledWith(6)
+    expect(sessions.optimize.setRepetitions).toHaveBeenCalledWith(2)
+    expect(sessions.optimize.setWorkers).toHaveBeenCalledWith(8)
+  })
+
+  it('shouldSayWhyAndNotStartWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
+    const { tool, sessions, optimize } = setup()
+    const budgetProblem = 'Needs about 620 rollouts, but one run can use 500. Lower the steps, candidates, or runs.'
+    sessions.optimize.setRepetitions.mockImplementation(() => {
+      const state = optimize.snapshot()
+      if (state.step === 'setup') optimize.set({ ...state, plan: { ...state.plan, budgetProblem } })
+    })
+
+    await expect(
+      tool('strands_dev_optimize').run({ experiment: 'refunds', tune: ['instructions'], runsPerCase: 5 })
+    ).rejects.toThrow(budgetProblem)
+    expect(sessions.optimize.start).not.toHaveBeenCalled()
   })
 
   it.each<[string, Record<string, JSONValue>, string]>([

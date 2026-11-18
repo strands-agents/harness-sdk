@@ -18,6 +18,9 @@ export interface TemporaryOptimizeRecord {
   readonly record: string
   readonly space: string
   readonly iterations: number
+  readonly width?: number
+  readonly repetitions?: number
+  readonly workers?: number
   readonly split?: TemporarySplitShares
   readonly objective?: OptimizeObjective
   readonly startedAt: number
@@ -45,6 +48,7 @@ const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
   value.version === RECORD_VERSION &&
   ['experiment', 'record', 'space'].every((key) => typeof value[key] === 'string') &&
   Number.isInteger(value.iterations) &&
+  ['width', 'repetitions', 'workers'].every((key) => value[key] === undefined || Number.isInteger(value[key])) &&
   (value.split === undefined ||
     (Array.isArray(value.split) &&
       value.split.length === 3 &&

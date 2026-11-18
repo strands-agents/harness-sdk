@@ -752,6 +752,8 @@ describe('TEMPORARY dev sessions', () => {
         'resume',
         join(record, OPTIMIZER_RUN_FOLDER),
         '--rich',
+        '--max-workers',
+        '4',
       ])
     expect(existsSync(resume)).toBe(false)
   })
@@ -791,6 +793,44 @@ describe('TEMPORARY dev sessions', () => {
     const args = continuing.mock.calls[0]![0].args
     const at = args.indexOf('--split')
     expect(args.slice(at, at + 2)).toEqual(flags)
+  })
+
+  it('shouldResumeAStoppedRunWithTheParallelTrialsOfTheFirstRunWhenItsFolderHoldsTheRestOfThePlan', async () => {
+    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const { record, space, resume } = optimizationFiles(workspace)
+    await writeFileAt(
+      space,
+      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
+    )
+    await writeOptimizerRun(record, studyLines(0.6))
+    await writeFileAt(
+      resume,
+      JSON.stringify({
+        version: 1,
+        experiment: experiment.path,
+        record,
+        space,
+        iterations: 4,
+        width: 6,
+        repetitions: 3,
+        workers: 2,
+        startedAt: 1,
+        pid: 999999,
+      })
+    )
+
+    await sessions.optimize.resume()
+
+    await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
+    const { args } = continuing.mock.calls[0]![0]
+    expect(flagValue(args, '--max-workers')).toBe('2')
+    expect(args).not.toContain('--runs-per-candidate')
+    expect(args).not.toContain('--proposals-per-iteration')
   })
 
   it('shouldRecordTheSplitWhenARunStartsSoThatItCanResumeWithIt', async () => {
@@ -851,6 +891,72 @@ describe('TEMPORARY dev sessions', () => {
     expect(
       ['--max-iterations', '--proposals-per-iteration', '--runs-per-candidate'].map((flag) => flagValue(args, flag))
     ).toEqual(['2', '4', '1'])
+  })
+
+  it('shouldGiveTheOptimizerTheRunsPerCaseTheCandidatesPerStepAndTheParallelTrialsWhenTheRunStarts', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.setRepetitions(2)
+    sessions.optimize.setWidth(6)
+    sessions.optimize.setWorkers(8)
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
+    const { args } = optimizing.mock.calls[0]![0]
+    expect([
+      flagValue(args, '--runs-per-candidate'),
+      flagValue(args, '--proposals-per-iteration'),
+      flagValue(args, '--max-workers'),
+    ]).toEqual(['2', '6', '8'])
+  })
+
+  it('shouldCountTheRunsPerCaseAndTheCandidatesPerStepInTheEstimate', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const rollouts = (): number => {
+      const state = sessions.optimize.snapshot()
+      if (state.step !== 'setup') throw new Error('the plan closed')
+      return state.plan.rollouts
+    }
+    const first = rollouts()
+
+    sessions.optimize.setWidth(8)
+    const wider = rollouts()
+    sessions.optimize.setRepetitions(2)
+
+    expect(wider).toBeGreaterThan(first)
+    expect(rollouts()).toBe(2 * wider)
+  })
+
+  it('shouldRefuseToStartAndSayWhyWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(
+      workspace,
+      Array.from({ length: 20 }, (_, index) => `c${index}`)
+    )
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.setRepetitions(5)
+    sessions.optimize.setWidth(8)
+    sessions.optimize.setIterations(8)
+
+    const started = sessions.optimize.start()
+
+    const state = sessions.optimize.snapshot()
+    if (state.step !== 'setup') throw new Error('the plan closed')
+    expect(state.plan.rollouts).toBeGreaterThan(500)
+    expect(state.plan.budgetProblem).toBe(
+      `Needs about ${state.plan.rollouts} rollouts, but one run can use 500. Lower the steps, candidates, or runs.`
+    )
+    expect(started).toBeUndefined()
+    expect(optimizing).not.toHaveBeenCalled()
   })
 
   it('shouldStartFromTheMeanOfEveryEvaluatorAndOfferPresetsAndEveryMetric', async () => {

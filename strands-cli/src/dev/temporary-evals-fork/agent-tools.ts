@@ -28,7 +28,12 @@ import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
 import { TEMPORARY_KNOB_NAMES } from './knobs.js'
 import { checkTemporaryObjective, temporaryObjectiveFromRequest } from './objective.js'
-import { TEMPORARY_ITERATION_CHOICES } from './plan.js'
+import {
+  TEMPORARY_ITERATION_CHOICES,
+  TEMPORARY_REPETITION_CHOICES,
+  TEMPORARY_WIDTH_CHOICES,
+  TEMPORARY_WORKER_CHOICES,
+} from './plan.js'
 import type { TemporarySessionHistory } from './session-converter.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from './sessions.js'
 
@@ -641,6 +646,22 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
         enum: [...TEMPORARY_ITERATION_CHOICES],
         description: 'How many optimizer steps to run. Default: 4.',
       },
+      candidatesPerStep: {
+        type: 'integer',
+        enum: [...TEMPORARY_WIDTH_CHOICES],
+        description: 'How many candidates each step proposes and scores. Default: 4.',
+      },
+      runsPerCase: {
+        type: 'integer',
+        enum: [...TEMPORARY_REPETITION_CHOICES],
+        description:
+          'How many times each candidate runs each case, to average out a noisy agent. It multiplies the cost. Default: 1.',
+      },
+      parallelTrials: {
+        type: 'integer',
+        enum: [...TEMPORARY_WORKER_CHOICES],
+        description: 'How many trials run at once. Lower it when the model provider throttles. Default: 4.',
+      },
       objective: {
         type: 'string',
         description:
@@ -672,9 +693,10 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     const models = textList(input, 'models') ?? []
     if (tune.includes('model') && models.length === 0)
       throw new Error('Tuning model needs models: the provider-qualified ids to try besides the current model.')
-    const iterations = whole(input, 'iterations', 1, Number.MAX_SAFE_INTEGER)
-    if (iterations !== undefined && !TEMPORARY_ITERATION_CHOICES.includes(iterations))
-      throw new Error(`iterations must be one of ${TEMPORARY_ITERATION_CHOICES.join(', ')}.`)
+    const iterations = choiceOf(input, 'iterations', TEMPORARY_ITERATION_CHOICES)
+    const width = choiceOf(input, 'candidatesPerStep', TEMPORARY_WIDTH_CHOICES)
+    const repetitions = choiceOf(input, 'runsPerCase', TEMPORARY_REPETITION_CHOICES)
+    const workers = choiceOf(input, 'parallelTrials', TEMPORARY_WORKER_CHOICES)
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
     const objective = await objectiveFor(experiment, input)
     if (pendingReview(current))
@@ -694,7 +716,12 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
       if (!knob.unavailable && knob.kind !== 'models' && knob.enabled !== tune.includes(knob.key))
         optimize.toggleKnob(knob.key)
     if (iterations !== undefined) optimize.setIterations(iterations)
+    if (width !== undefined) optimize.setWidth(width)
+    if (repetitions !== undefined) optimize.setRepetitions(repetitions)
+    if (workers !== undefined) optimize.setWorkers(workers)
     if (objective) optimize.setObjective(objective)
+    const ready = optimize.snapshot()
+    if (ready.step === 'setup' && ready.plan.budgetProblem) throw new Error(ready.plan.budgetProblem)
     const started = optimize.start()
     if (started === undefined) throw new Error('The optimization did not start.')
     const finished = await until(optimize, (state) => {
@@ -715,6 +742,12 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     return reply(reviewReport(finished.review))
   },
 })
+
+const choiceOf = (input: Input, key: string, choices: readonly number[]): number | undefined => {
+  const value = whole(input, key, 1, Number.MAX_SAFE_INTEGER)
+  if (value !== undefined && !choices.includes(value)) throw new Error(`${key} must be one of ${choices.join(', ')}.`)
+  return value
+}
 
 const cancelOptimizationTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_cancel_optimization',

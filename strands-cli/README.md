@@ -342,6 +342,8 @@ Inside a `strands dev` chat:
 - `/test` selects saved experiments, runs the agent on their cases, and shows results and reports. It runs four cases at once. To stop a run, open it and press `s`. A run continues after strands dev closes. When strands dev opens the workspace again, it follows a run that is still active and shows the results of a run that finished. It also resumes a run that stopped, for example after a restart. Cases that finished before are not run again.
 - `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
   The list shows each experiment with its number of runs. Select an experiment to start a new run, or to open one of its runs.
+  The setup sets the runs of each case and the candidates of each step. Its Advanced section sets the number of parallel trials.
+  Start is not available when the plan needs more rollouts than one run can use (500). Then lower the steps, the candidates, or the runs.
   Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
 
 In the panels, a paid run starts only after a confirm step. The confirm step shows the case count and the model. For `/optimize`, the confirm step also shows the token and time estimate when strands dev has one. When the run tunes a text knob, the confirm step tells you that the proposer runs shell commands that can use your credentials. Enter starts the run, and Esc cancels it.

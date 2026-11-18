@@ -500,6 +500,7 @@ type SetupRow =
   | { readonly kind: 'knob'; readonly knob: Knob }
   | { readonly kind: 'slider'; readonly slider: SetupSlider }
   | { readonly kind: 'constraints' }
+  | { readonly kind: 'advanced' }
   | { readonly kind: 'button'; readonly button: SetupButton }
 
 interface ObjectiveEditor {
@@ -543,7 +544,7 @@ const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () =
     label: 'cases',
     count: plan.splitChoices.length,
     position: Math.max(0, splitPosition(plan)),
-    detail: `${splitText(plan.split)} · ${plural(plan.repetitions, 'run')} per candidate`,
+    detail: splitText(plan.split),
     hint: '←→ split',
     move: (step): void => {
       const current = latest()
@@ -551,6 +552,16 @@ const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () =
       if (next) session.setSplit(next)
     },
   },
+  choiceSlider({
+    key: 'runs',
+    label: 'runs',
+    choices: plan.repetitionChoices,
+    value: plan.repetitions,
+    detail: `${plural(plan.repetitions, 'run')} of each case per candidate`,
+    hint: '←→ runs',
+    pick: (value) => session.setRepetitions(value),
+    latest: () => latest().repetitions,
+  }),
   {
     key: 'budget',
     label: 'budget',
@@ -565,16 +576,72 @@ const setupSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () =
       if (next !== undefined) session.setIterations(next)
     },
   },
+  choiceSlider({
+    key: 'candidates',
+    label: 'per step',
+    choices: plan.widthChoices,
+    value: plan.width,
+    detail: `${plural(plan.width, 'candidate')} in each step`,
+    hint: '←→ candidates',
+    pick: (value) => session.setWidth(value),
+    latest: () => latest().width,
+  }),
 ]
+
+const advancedSliders = (plan: OptimizePlan, session: OptimizeSession, latest: () => OptimizePlan): SetupSlider[] => [
+  choiceSlider({
+    key: 'workers',
+    label: 'parallel',
+    choices: plan.workerChoices,
+    value: plan.workers,
+    detail: `${plural(plan.workers, 'trial')} at once`,
+    hint: '←→ parallel trials',
+    pick: (value) => session.setWorkers(value),
+    latest: () => latest().workers,
+  }),
+]
+
+const choiceSlider = ({
+  key,
+  label,
+  choices,
+  value,
+  detail,
+  hint,
+  pick,
+  latest,
+}: {
+  readonly key: string
+  readonly label: string
+  readonly choices: readonly number[]
+  readonly value: number
+  readonly detail: string
+  readonly hint: string
+  readonly pick: (value: number) => void
+  readonly latest: () => number
+}): SetupSlider => ({
+  key,
+  label,
+  count: choices.length,
+  position: Math.max(0, choices.indexOf(value)),
+  detail,
+  hint,
+  move: (step): void => {
+    const next = choices[choices.indexOf(latest()) + step]
+    if (next !== undefined) pick(next)
+  },
+})
 
 const startHint = (plan: OptimizePlan, ready: boolean): string => {
   if (ready) return 'Enter start'
-  return plan.objectiveProblem ? 'fix the objective to start' : 'check a knob to start'
+  if (plan.objectiveProblem) return 'fix the objective to start'
+  return plan.budgetProblem ? 'lower the budget to start' : 'check a knob to start'
 }
 
 const setupHints = (focused: SetupRow | undefined, plan: OptimizePlan, ready: boolean): string[] => {
   if (focused?.kind === 'slider') return ['↑↓', focused.slider.hint, 'Esc cancel']
   if (focused?.kind === 'constraints') return ['↑↓', 'Enter edit', 'Esc cancel']
+  if (focused?.kind === 'advanced') return ['↑↓', 'Enter show or hide', 'Esc cancel']
   if (focused?.kind === 'button')
     return focused.button === 'start'
       ? ['↑↓', startHint(plan, ready), 'Esc cancel']
@@ -669,6 +736,7 @@ const SliderRow = ({
 }
 
 const SETUP_CHROME_ROWS = 12
+const SETUP_EXTRA_ROWS = 3
 const MODEL_CHOOSER_CHROME_ROWS = 5
 const MODEL_FILTER = /^[\w.:/-]$/u
 
@@ -818,8 +886,10 @@ const paidOptimization = (plan: OptimizePlan, agent: RunAgent | undefined, start
     facts: [
       `The optimizer tunes the ${listed(knobs.map(({ label }) => label))} of your agent on ${train} train, ` +
         `${validation} validation, and ${plural(test, 'test case')} of ${plan.experiment.name}.`,
-      `It tries ${plural(plan.iterations, 'step')} of ${plural(plan.width, 'candidate')}: about ${plan.rollouts} ` +
-        `rollouts of your agent with ${triedModels(plan, knobs, agent)}, and ${judgeCallsText(plan.judgeCalls, 'about ')}.`,
+      `It tries ${plural(plan.iterations, 'step')} of ${plural(plan.width, 'candidate')}` +
+        `${plan.repetitions > 1 ? `, with each case run ${plan.repetitions} times` : ''}: about ${plan.rollouts} ` +
+        `rollouts of your agent with ${triedModels(plan, knobs, agent)}, and ${judgeCallsText(plan.judgeCalls, 'about ')}. ` +
+        `${plural(plan.workers, 'trial')} run at once.`,
       usageSentence(plan.usage),
       ...(texts.length > 0 ? [PROPOSER_MODEL] : []),
     ],
@@ -830,6 +900,7 @@ const paidOptimization = (plan: OptimizePlan, agent: RunAgent | undefined, start
 
 const objectiveNotice = (plan: OptimizePlan): { readonly tone: Tone; readonly text: string } | undefined => {
   if (plan.objectiveProblem) return { tone: 'error', text: plan.objectiveProblem }
+  if (plan.budgetProblem) return { tone: 'error', text: plan.budgetProblem }
   if (plan.objectiveWarning) return { tone: 'warning', text: plan.objectiveWarning }
   const warning = plan.warning ?? smallSplitWarning(plan.split)
   return warning ? { tone: 'warning', text: warning } : undefined
@@ -840,7 +911,9 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
     const state = session.snapshot()
     return state.step === 'setup' ? state.plan : plan
   }
+  const [advanced, setAdvanced] = useState(false)
   const sliders = setupSliders(plan, session, latest)
+  const extras = advanced ? advancedSliders(plan, session, latest) : []
   const rows: SetupRow[] = [
     ...plan.knobs.map((knob) => ({ kind: 'knob' as const, knob })),
     ...sliders
@@ -850,8 +923,11 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
           ? [{ kind: 'slider', slider }, { kind: 'constraints' }]
           : [{ kind: 'slider', slider }]
       ),
+    { kind: 'advanced' },
+    ...extras.filter(isSelectable).map((slider) => ({ kind: 'slider' as const, slider })),
     ...SETUP_BUTTONS.map((button) => ({ kind: 'button' as const, button })),
   ]
+  const advancedRow = rows.findIndex((row) => row.kind === 'advanced')
   const rowOf = (match: (row: SetupRow) => boolean): number => rows.findIndex(match)
   const firstSlider = plan.knobs.length
   const firstButton = rowOf((row) => row.kind === 'button')
@@ -860,7 +936,8 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
   const editing = useSyncedState<ObjectiveEditor | undefined>(undefined)
   const [choosingModels, setChoosingModels] = useState(false)
   const confirm = usePaidRunConfirm()
-  const ready = plan.knobs.some((knob) => knob.enabled && !knob.unavailable) && !plan.objectiveProblem
+  const ready =
+    plan.knobs.some((knob) => knob.enabled && !knob.unavailable) && !plan.objectiveProblem && !plan.budgetProblem
   const compact = height < FULL_SETUP_ROWS
   const focused = rows[cursor.index]
   const editor = editing.value
@@ -877,6 +954,7 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
       else if (ready) confirm.ask(paidOptimization(latest(), session.agent?.(), () => session.start()))
     } else if (row?.kind === 'slider' && row.slider.editable) edit('expression')
     else if (row?.kind === 'constraints') edit('constraints')
+    else if (row?.kind === 'advanced') setAdvanced((open) => !open)
     else if (row?.kind === 'knob' && !row.knob.unavailable) {
       if (row.knob.kind !== 'models') return session.toggleKnob(row.knob.key)
       session.loadModels()
@@ -946,7 +1024,10 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
       <ItemList
         items={plan.knobs.map(knobItem)}
         selected={cursor.index < firstSlider ? cursor.index : -1}
-        capacity={Math.max(3, Math.min(plan.knobs.length, height - SETUP_CHROME_ROWS))}
+        capacity={Math.max(
+          3,
+          Math.min(plan.knobs.length, height - SETUP_CHROME_ROWS - SETUP_EXTRA_ROWS - extras.length)
+        )}
         labelWidth={labelWidthFor(
           plan.knobs.map(({ label }) => label),
           width
@@ -982,6 +1063,18 @@ const SetupView = ({ session, width, height, plan }: OptimizePanelProps & { plan
               />
             )}
           </Box>
+        )
+      })}
+      <FieldRow
+        label="advanced"
+        value={advanced ? 'hide' : `${plural(plan.workers, 'parallel trial')}`}
+        active={cursor.index === advancedRow}
+        onPoint={() => cursor.set(advancedRow)}
+      />
+      {extras.map((slider) => {
+        const row = rowOf((entry) => entry.kind === 'slider' && entry.slider.key === slider.key)
+        return (
+          <SliderRow key={slider.key} slider={slider} active={cursor.index === row} onPoint={() => cursor.set(row)} />
         )
       })}
       {editor ? <Line tone="muted">{`  metrics: ${plan.metrics.join(', ')}`}</Line> : null}

@@ -40,6 +40,19 @@ export const TEMPORARY_OPTIMIZE_DEFAULTS: TemporaryOptimizeSettings = {
 
 export const TEMPORARY_ITERATION_CHOICES: readonly number[] = [1, 2, 4, 6, 8]
 
+export const TEMPORARY_REPETITION_CHOICES: readonly number[] = [1, 2, 3, 5]
+
+export const TEMPORARY_WIDTH_CHOICES: readonly number[] = [2, 4, 6, 8]
+
+export const TEMPORARY_WORKER_CHOICES: readonly number[] = [1, 2, 4, 8, 16]
+
+export const TEMPORARY_ROLLOUT_CAP = 500
+
+export const temporaryRolloutCapProblem = (rollouts: number): string | undefined =>
+  rollouts > TEMPORARY_ROLLOUT_CAP
+    ? `Needs about ${rollouts} rollouts, but one run can use ${TEMPORARY_ROLLOUT_CAP}. Lower the steps, candidates, or runs.`
+    : undefined
+
 export const TEMPORARY_TRAIN_SHARES: readonly number[] = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 
 const VALIDATED_CANDIDATES = 4

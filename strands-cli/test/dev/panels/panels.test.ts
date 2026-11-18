@@ -538,6 +538,9 @@ const optimizeSession = (initial: OptimizeState, experimentsState: Partial<Exper
       loadModels: vi.fn(),
       pickModel: vi.fn(),
       setIterations: vi.fn(),
+      setRepetitions: vi.fn(),
+      setWidth: vi.fn(),
+      setWorkers: vi.fn(),
       setSplit: vi.fn(),
       setObjective: vi.fn(),
       openExperiment: vi.fn(),
@@ -596,7 +599,11 @@ const setup: OptimizeState = {
       { train: 12, validation: 4, test: 4 },
     ],
     repetitions: 1,
+    repetitionChoices: [1, 2, 3, 5],
     width: 4,
+    widthChoices: [2, 4, 6, 8],
+    workers: 4,
+    workerChoices: [1, 2, 4, 8, 16],
     iterations: 4,
     iterationChoices: [1, 2, 4, 6, 8],
     rollouts: 230,
@@ -751,8 +758,11 @@ const PAST_RUNS: readonly PastRun[] = [
 const OBJECTIVE_ROW = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
 const CONSTRAINTS_ROW = [...OBJECTIVE_ROW, DOWN_KEY]
 const CASES_ROW = [...CONSTRAINTS_ROW, DOWN_KEY]
-const BUDGET_ROW = [...CASES_ROW, DOWN_KEY]
-const START_BUTTON = [...BUDGET_ROW, DOWN_KEY]
+const RUNS_ROW = [...CASES_ROW, DOWN_KEY]
+const BUDGET_ROW = [...RUNS_ROW, DOWN_KEY]
+const PER_STEP_ROW = [...BUDGET_ROW, DOWN_KEY]
+const ADVANCED_ROW = [...PER_STEP_ROW, DOWN_KEY]
+const START_BUTTON = [...ADVANCED_ROW, DOWN_KEY]
 const CANCEL_BUTTON = [...START_BUTTON, DOWN_KEY]
 const LEFT_KEY = '\u001b[D'
 
@@ -782,7 +792,7 @@ describe('OptimizePanel', () => {
       enabled: index === 0,
     }))
     const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, knobs } })
-    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 18, session }), 20)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 21, session }), 23)
 
     for (let step = 0; step < downs; step++) await press(DOWN_KEY)
 
@@ -800,6 +810,10 @@ describe('OptimizePanel', () => {
     ['LeftOnTheBudget', [...BUDGET_ROW, LEFT_KEY], 'setIterations', [2]],
     ['RightOnTheCases', [...CASES_ROW, RIGHT_KEY], 'setSplit', [{ train: 12, validation: 4, test: 4 }]],
     ['LeftOnTheCases', [...CASES_ROW, LEFT_KEY], 'setSplit', [{ train: 8, validation: 6, test: 6 }]],
+    ['RightOnTheRuns', [...RUNS_ROW, RIGHT_KEY], 'setRepetitions', [2]],
+    ['RightOnTheCandidatesPerStep', [...PER_STEP_ROW, RIGHT_KEY], 'setWidth', [6]],
+    ['LeftOnTheCandidatesPerStep', [...PER_STEP_ROW, LEFT_KEY], 'setWidth', [2]],
+    ['RightOnParallelTrialsInAdvanced', [...ADVANCED_ROW, '\r', DOWN_KEY, RIGHT_KEY], 'setWorkers', [8]],
     [
       'RightOnTheObjective',
       [...OBJECTIVE_ROW, RIGHT_KEY],
@@ -941,13 +955,13 @@ describe('OptimizePanel', () => {
     [
       'AnEstimateFromEarlierRuns',
       { ...setup.plan, judgeCalls: 0, usage: ESTIMATE },
-      'and no judge calls. About 800k–1.2M tokens and 5–7 min, from the last 2 runs of refunds. ' +
+      'and no judge calls. 4 trials run at once. About 800k–1.2M tokens and 5–7 min, from the last 2 runs of refunds. ' +
         'The price is unknown, because strands dev has no model prices.',
     ],
     [
       'NoEstimate',
       setup.plan,
-      'and about 230 judge calls. strands dev cannot estimate the tokens and the time yet, and it has no model prices.',
+      'and about 230 judge calls. 4 trials run at once. strands dev cannot estimate the tokens and the time yet, and it has no model prices.',
     ],
   ])('shouldShowTheEstimateAndThePriceInTheConfirmWhenThePlanHas%s', async (_case, plan, sentence) => {
     const { session } = optimizeSession({ step: 'setup', plan })
@@ -1248,6 +1262,33 @@ describe('OptimizePanel', () => {
     expect(text()).toMatch(/ {2}constraints tokens <= 4000/u)
   })
 
+  it('shouldHideParallelTrialsUntilTheUserOpensAdvanced', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 24, session }), 26)
+
+    const closed = text()
+    for (const key of [...ADVANCED_ROW, '\r']) await press(key)
+
+    expect(closed).toMatch(/advanced\s+4 parallel trials/u)
+    expect(closed).not.toMatch(/parallel\s+─*█─*/u)
+    expect(text()).toMatch(/parallel\s+─*█─*\s+4 trials at once/u)
+    expect(text()).toMatch(/runs\s+─*█─*\s+1 run of each case per candidate/u)
+    expect(text()).toMatch(/per step\s+─*█─*\s+4 candidates in each step/u)
+  })
+
+  it('shouldBlockStartAndSayWhyWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
+    const budgetProblem = 'Needs about 620 rollouts, but one run can use 500. Lower the steps, candidates, or runs.'
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, rollouts: 620, budgetProblem } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 24, session }), 26)
+
+    for (const key of [...START_BUTTON, '\r']) await press(key)
+
+    expect(text().replace(/\s+/gu, ' ')).toContain(budgetProblem)
+    expect(text()).toContain('lower the budget to start')
+    expect(text()).not.toContain('start a paid run?')
+    expect(session.start).not.toHaveBeenCalled()
+  })
+
   it('shouldSkipASettingWithOneChoiceButKeepTheObjectiveSelectable', async () => {
     const only = { train: 10, validation: 5, test: 5 }
     const { session } = optimizeSession({
@@ -1259,7 +1300,7 @@ describe('OptimizePanel', () => {
     for (const key of [...CONSTRAINTS_ROW, DOWN_KEY]) await press(key)
 
     expect(text()).toMatch(/ {2}cases {7}10 train/u)
-    expect(text()).toMatch(/› budget\s+─*█─*/u)
+    expect(text()).toMatch(/› runs\s+─*█─*/u)
   })
 
   it('shouldSaveTheTypedObjectiveWhenTheUserEditsItAndPressesEnter', async () => {
@@ -1659,7 +1700,7 @@ describe('OptimizePanel', () => {
         },
       },
     })
-    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 21, session }), 23)
 
     for (const key of ['\u001b[B', '\u001b[B', '\u001b[B', '\r']) await press(key)
 
