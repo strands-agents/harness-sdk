@@ -158,12 +158,18 @@ that no session directory came with it. Strands harness creates the directory wi
 process's default permissions, so on a shared machine restrict it to the user the agent
 runs as.
 
-The default directory sits under the directory you run the agent from, so add
-`.agent/sessions/` to the `.gitignore` there to keep conversations and offloaded tool
-results out of the repository. To keep [long-term memory](../memory/) files out as well,
-add `.agent/memory/`. Ignoring all of `.agent/` covers both, but it also excludes any
-[skills](../skills/) you commit from `.agent/skills`. For how the SDK treats session
-storage, see its
+To keep conversations and offloaded tool results out of the repository, add
+`.agent/sessions/` to the `.gitignore` in the directory that contains `.agent`. Ignoring
+all of `.agent/` covers [long-term memory](../memory/) files too, but it also ignores
+`.agent/skills`. To keep the [skills](../skills/) you commit there tracked, use this
+pattern instead:
+
+```text
+.agent/*
+!.agent/skills/
+```
+
+For how the SDK treats session storage, see its
 [session persistence best practices](../../../sdk/agents/session-management/#session-persistence-best-practices).
 
 ## Sessions are not memory
