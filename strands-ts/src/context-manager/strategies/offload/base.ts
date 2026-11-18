@@ -270,6 +270,9 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     const { messages, agent } = context
     if (messages.length <= 3) return false
     if (!context.overflow) {
+      // Only what this strategy can remove, never the pipeline's whole-request utilization: that also carries the
+      // system prompt and tool specs, which dropping messages cannot shrink, and it is anchored on the last call's
+      // usage, which a strategy earlier in the pass has already invalidated.
       const tokens = await new ModelProxy(agent.model).countTokens(messages)
       if (agent.model.estimateUtilization(tokens) < 1.0) return false
     }
