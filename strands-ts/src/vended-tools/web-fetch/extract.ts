@@ -4,8 +4,9 @@
  * Delegates HTML-to-markdown conversion to turndown with ATX headings and
  * fenced code blocks. Non-content elements (scripts, styles, media, forms,
  * etc.) are dropped entirely. `data:` URI images are replaced with their alt
- * text (or nothing) to avoid enormous blobs in the output. `javascript:`
- * hrefs and src values are stripped silently.
+ * text (or nothing) to avoid enormous blobs in the output. Images with a
+ * `javascript:` or `vbscript:` source are dropped, and links with a
+ * `javascript:`, `vbscript:`, or `data:` href are reduced to their text.
  *
  * Requires `turndown` as an optional peer dependency.
  */
@@ -35,9 +36,11 @@ const DROPPED_ELEMENTS = [
   'nav',
 ]
 
-// Strip invisible characters before URL scheme detection.
-function _stripInvisible(value: string): string {
-  return value.replace(/^[\p{Cc}\p{Cf}\p{Zs}]+/u, '')
+// Read the scheme after stripping leading whitespace and invisible characters, and tab/CR/LF anywhere as browsers do.
+// The rest of the URL is not parsed: a malformed host must not hide the scheme.
+function _urlScheme(url: string): string {
+  const stripped = url.replace(/^[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}]+/u, '').replace(/[\t\n\r]/g, '')
+  return /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(stripped)?.[1]?.toLowerCase() ?? ''
 }
 
 async function loadTurndown(): Promise<typeof TurndownService> {
@@ -82,13 +85,9 @@ async function _createTurndownService(): Promise<TurndownService> {
       const src = (element.getAttribute('src') ?? '').trim()
       const alt = element.getAttribute('alt') ?? ''
       if (!src) return alt
-      try {
-        const scheme = new URL(_stripInvisible(src)).protocol
-        if (scheme === 'javascript:' || scheme === 'vbscript:') return ''
-        if (scheme === 'data:') return alt
-      } catch {
-        // not an absolute URL — pass through as-is
-      }
+      const scheme = _urlScheme(src)
+      if (scheme === 'javascript' || scheme === 'vbscript') return ''
+      if (scheme === 'data') return alt
       return `![${alt}](${src})`
     },
   })
@@ -97,13 +96,8 @@ async function _createTurndownService(): Promise<TurndownService> {
   td.addRule('safeLink', {
     filter: (node) => {
       if (node.nodeName !== 'A') return false
-      const href = ((node as HTMLAnchorElement).getAttribute('href') ?? '').trim()
-      try {
-        const scheme = new URL(_stripInvisible(href)).protocol
-        return scheme === 'javascript:' || scheme === 'vbscript:' || scheme === 'data:'
-      } catch {
-        return false
-      }
+      const scheme = _urlScheme((node as HTMLAnchorElement).getAttribute('href') ?? '')
+      return scheme === 'javascript' || scheme === 'vbscript' || scheme === 'data'
     },
     replacement: (content) => content,
   })
