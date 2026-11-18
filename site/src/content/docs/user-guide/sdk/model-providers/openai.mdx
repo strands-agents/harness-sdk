@@ -164,6 +164,10 @@ model = OpenAIModel(
 ```
 
 See the [OpenAI Harmony message format](https://cookbook.openai.com/articles/openai-harmony#message-format) for details on GPT-OSS stop tokens.
+
+**Tools with GPT-5.6 and GPT-6 Models**
+
+OpenAI's Chat Completions API accepts tools for GPT-5.6 and GPT-6 models only with reasoning off, and for some of them (such as `gpt-6-astra` and `gpt-6.1-sol`) not at all. `OpenAIModel` therefore sends `reasoning_effort="none"` when an agent with tools runs on the first group, with a warning, and raises a `ValueError` for the second. To use tools with reasoning on any of these models, use `OpenAIResponsesModel`. If your OpenAI-compatible endpoint has no such limit, turn the rule off with `model_info=ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="supported"))`.
 </Tab>
 <Tab label="TypeScript">
 
@@ -192,6 +196,10 @@ const model = new OpenAIModel({
 ```
 
 See the [OpenAI Harmony message format](https://cookbook.openai.com/articles/openai-harmony#message-format) for details on GPT-OSS stop tokens.
+
+**Tools with GPT-5.6 and GPT-6 Models**
+
+OpenAI's Chat Completions API accepts tools for GPT-5.6 and GPT-6 models only with reasoning off, and for some of them (such as `gpt-6-astra` and `gpt-6.1-sol`) not at all. With `api: 'chat'`, `OpenAIModel` therefore sends `reasoning_effort: 'none'` when an agent with tools runs on the first group, with a warning, and throws for the second. To use tools with reasoning on any of these models, use the default `api: 'responses'`. If your OpenAI-compatible endpoint has no such limit, turn the rule off with `modelInfo: { capabilities: { chatCompletionsTools: 'supported' } }`.
 </Tab>
 </Tabs>
 

@@ -71,6 +71,24 @@ describe('shared model info data', () => {
     expect(lookupModelInfo('')).toEqual({})
   })
 
+  it.each([
+    ['gpt-5.6', 'reasoningOff'],
+    ['gpt-5.6-luna', 'reasoningOff'],
+    ['gpt-5.6-sol', 'reasoningOff'],
+    ['gpt-5.6-terra', 'reasoningOff'],
+    ['gpt-6-luna', 'reasoningOff'],
+    ['gpt-6-sol', 'reasoningOff'],
+    ['gpt-6.1-terra', 'reasoningOff'],
+    ['openai.gpt-6.1-terra', 'reasoningOff'],
+    ['gpt-6-astra', 'unsupported'],
+    ['gpt-6.1-sol', 'unsupported'],
+    ['openai.gpt-6.1-sol', 'unsupported'],
+    ['gpt-5.5', undefined],
+    ['gpt-5.4', undefined],
+  ])('says whether %s takes tools on Chat Completions: %s', (modelId, support) => {
+    expect(lookupModelInfo(modelId).capabilities?.chatCompletionsTools).toBe(support)
+  })
+
   it('keeps getContextWindowLimit working for ids the Python table already knew', () => {
     expect(getContextWindowLimit('mistral-large-latest')).toBe(1_048_576)
     expect(getContextWindowLimit('o3')).toBe(200_000)
@@ -97,6 +115,8 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
+        else if (key === 'chatCompletionsTools')
+          expect(['supported', 'reasoningOff', 'unsupported'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         // Read by another consumer (the harness), not typed by the SDK.

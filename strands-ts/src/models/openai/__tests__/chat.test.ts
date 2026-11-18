@@ -1399,6 +1399,88 @@ describe('OpenAIModel', () => {
     })
   })
 
+  describe('tools on models that limit them', () => {
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const toolSpecs = [{ name: 'echo', description: 'Echo a value', inputSchema: { type: 'object' as const } }]
+
+    const send = async (config: Record<string, unknown>, withTools = true): Promise<any> => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured), ...config })
+      await collectIterator(provider.stream(messages, withTools ? { toolSpecs } : {}))
+      return captured.request
+    }
+
+    it.each(['gpt-6-sol', 'gpt-5.6', 'openai.gpt-6.1-terra', 'us.openai.gpt-6-luna'])(
+      'turns reasoning off and warns when %s is sent tools',
+      async (modelId) => {
+        const request = await send({ modelId })
+
+        expect(request.reasoning_effort).toBe('none')
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining(`model_id=<${modelId}> | this model accepts tools`)
+        )
+      }
+    )
+
+    it.each([
+      { name: 'reasoningOff model, no tools', config: { modelId: 'gpt-6-sol' }, withTools: false, effort: undefined },
+      {
+        name: 'reasoningOff model, no tools, effort set',
+        config: { modelId: 'gpt-6-sol', params: { reasoning_effort: 'low' } },
+        withTools: false,
+        effort: 'low',
+      },
+      {
+        name: 'reasoningOff model, tools, effort none',
+        config: { modelId: 'gpt-6-sol', params: { reasoning_effort: 'none' } },
+        withTools: true,
+        effort: 'none',
+      },
+      { name: 'unsupported model, no tools', config: { modelId: 'gpt-6-astra' }, withTools: false, effort: undefined },
+      { name: 'older model, tools', config: { modelId: 'gpt-5.4' }, withTools: true, effort: undefined },
+      {
+        name: 'older model, tools, effort set',
+        config: { modelId: 'gpt-5.4', params: { reasoning_effort: 'low' } },
+        withTools: true,
+        effort: 'low',
+      },
+      {
+        name: 'modelInfo override to supported',
+        config: { modelId: 'gpt-6-sol', modelInfo: { capabilities: { chatCompletionsTools: 'supported' } } },
+        withTools: true,
+        effort: undefined,
+      },
+    ])('leaves reasoning_effort as configured: $name', async ({ config, withTools, effort }) => {
+      const request = await send(config, withTools)
+
+      expect(request.reasoning_effort).toBe(effort)
+      expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('accepts tools'))
+    })
+
+    it('throws when reasoning is asked for with tools the model takes only without it', async () => {
+      await expect(send({ modelId: 'gpt-6-sol', params: { reasoning_effort: 'low' } })).rejects.toThrow(
+        /gpt-6-sol accepts tools .* reasoning_effort is 'low'.* api: 'responses'/
+      )
+    })
+
+    it.each([
+      { modelId: 'gpt-6-astra', params: undefined },
+      { modelId: 'gpt-6.1-sol', params: { reasoning_effort: 'none' } },
+      { modelId: 'openai.gpt-6.1-sol', params: undefined },
+    ])('throws when $modelId, which takes no tools on Chat Completions, is sent tools', async ({ modelId, params }) => {
+      await expect(send({ modelId, ...(params ? { params } : {}) })).rejects.toThrow(
+        `${modelId} does not accept tools on the Chat Completions API. Use OpenAIModel with api: 'responses' instead.`
+      )
+    })
+
+    it('applies the rule from a modelInfo override', async () => {
+      await expect(
+        send({ modelId: 'm1', modelInfo: { capabilities: { chatCompletionsTools: 'unsupported' } } })
+      ).rejects.toThrow('m1 does not accept tools')
+    })
+  })
+
   describe('systemPrompt handling', () => {
     it('formats array system prompt with text blocks only', async () => {
       const captured: { request: any } = { request: null }

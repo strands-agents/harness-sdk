@@ -18,6 +18,9 @@ from typing import Any, Literal, TypeAlias, TypeVar
 PromptCaching: TypeAlias = Literal["unsupported", "auto", "cache_points"]
 """How a model supports prompt caching."""
 
+ChatCompletionsTools: TypeAlias = Literal["supported", "reasoning_off", "unsupported"]
+"""Whether a model accepts tools on the OpenAI Chat Completions API: always, only with reasoning off, or never."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class ModelCapabilities:
@@ -47,6 +50,10 @@ class ModelCapabilities:
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
             (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
+        chat_completions_tools: Whether the model accepts tools on the OpenAI Chat Completions API.
+            ``OpenAIModel`` reads it: for ``"reasoning_off"`` it sends ``reasoning_effort="none"`` with tools,
+            for ``"unsupported"`` it raises ``ValueError`` instead of sending them. Set ``"supported"`` in
+            ``model_info`` when an OpenAI-compatible endpoint has no such limit.
     """
 
     stateful: bool | None = None
@@ -55,6 +62,7 @@ class ModelCapabilities:
     native_structured_output: bool | None = None
     server_side_summary: bool | None = None
     temporary_messages: bool | None = None
+    chat_completions_tools: ChatCompletionsTools | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -133,6 +141,7 @@ _CAPABILITY_FIELDS = {
     "nativeStructuredOutput": "native_structured_output",
     "serverSideSummary": "server_side_summary",
     "temporaryMessages": "temporary_messages",
+    "chatCompletionsTools": "chat_completions_tools",
 }
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.
@@ -140,6 +149,15 @@ _PROMPT_CACHING_VALUES: dict[str, PromptCaching] = {
     "unsupported": "unsupported",
     "auto": "auto",
     "cachePoints": "cache_points",
+}
+_CHAT_COMPLETIONS_TOOLS_VALUES: dict[str, ChatCompletionsTools] = {
+    "supported": "supported",
+    "reasoningOff": "reasoning_off",
+    "unsupported": "unsupported",
+}
+_STRING_VALUES: dict[str, dict[str, Any]] = {
+    "prompt_caching": _PROMPT_CACHING_VALUES,
+    "chat_completions_tools": _CHAT_COMPLETIONS_TOOLS_VALUES,
 }
 
 # Bedrock appends a version to some ids (`claude-3-5-haiku-20241022-v1:0`); the base id carries the facts.
@@ -158,9 +176,9 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     if not isinstance(raw, dict):
         return section()
     known = {field_names[key]: value for key, value in raw.items() if key in field_names}
-    if "prompt_caching" in known:
-        value = known["prompt_caching"]
-        known["prompt_caching"] = _PROMPT_CACHING_VALUES.get(value) if isinstance(value, str) else None
+    for field_name in _STRING_VALUES.keys() & known.keys():
+        value = known[field_name]
+        known[field_name] = _STRING_VALUES[field_name].get(value) if isinstance(value, str) else None
     return section(**known)
 
 

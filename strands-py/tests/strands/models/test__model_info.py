@@ -10,9 +10,11 @@ import pytest
 
 from strands.models._model_info import (
     _CAPABILITY_FIELDS,
+    _CHAT_COMPLETIONS_TOOLS_VALUES,
     _LIMIT_FIELDS,
     _PROMPT_CACHING_VALUES,
     DEFAULT_CONTEXT_WINDOW_LIMIT,
+    ChatCompletionsTools,
     ModelCapabilities,
     ModelInfo,
     ModelLimits,
@@ -193,6 +195,47 @@ def test_prompt_caching_value_map_covers_exactly_the_prompt_caching_type():
     assert set(_PROMPT_CACHING_VALUES.values()) == set(get_args(PromptCaching))
 
 
+def test_chat_completions_tools_value_map_covers_exactly_the_chat_completions_tools_type():
+    assert set(_CHAT_COMPLETIONS_TOOLS_VALUES.values()) == set(get_args(ChatCompletionsTools))
+
+
+def test_loader_recases_chat_completions_tools_and_treats_an_unknown_value_as_unknown():
+    tru_known = _section(
+        {"capabilities": {"chatCompletionsTools": "reasoningOff"}},
+        "capabilities",
+        _CAPABILITY_FIELDS,
+        ModelCapabilities,
+    )
+    tru_unknown = _section(
+        {"capabilities": {"chatCompletionsTools": "sometimes"}}, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities
+    )
+
+    assert tru_known == ModelCapabilities(chat_completions_tools="reasoning_off")
+    assert tru_unknown == ModelCapabilities()
+
+
+@pytest.mark.parametrize(
+    ("model_id", "exp_support"),
+    [
+        ("gpt-5.6", "reasoning_off"),
+        ("gpt-5.6-luna", "reasoning_off"),
+        ("gpt-5.6-sol", "reasoning_off"),
+        ("gpt-5.6-terra", "reasoning_off"),
+        ("gpt-6-luna", "reasoning_off"),
+        ("gpt-6-sol", "reasoning_off"),
+        ("gpt-6.1-terra", "reasoning_off"),
+        ("openai.gpt-6.1-terra", "reasoning_off"),
+        ("gpt-6-astra", "unsupported"),
+        ("gpt-6.1-sol", "unsupported"),
+        ("openai.gpt-6.1-sol", "unsupported"),
+        ("gpt-5.5", None),
+        ("gpt-5.4", None),
+    ],
+)
+def test_lookup_model_info_says_which_openai_models_take_tools_on_chat_completions(model_id, exp_support):
+    assert lookup_model_info(model_id).capabilities.chat_completions_tools == exp_support
+
+
 def test_load_data_says_how_to_restore_the_package_copy_when_it_is_missing():
     """The copy is only written on install, so an environment installed without it needs the fix named."""
     with unittest.mock.patch("strands.models._model_info.resources") as mock_resources:
@@ -246,6 +289,8 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
         for key, value in entry.get("capabilities", {}).items():
             if key == "promptCaching":
                 assert value in _PROMPT_CACHING_VALUES, f"{model_id}.{key}"
+            elif key == "chatCompletionsTools":
+                assert value in _CHAT_COMPLETIONS_TOOLS_VALUES, f"{model_id}.{key}"
             elif key == "defaultEffort":
                 assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
             else:

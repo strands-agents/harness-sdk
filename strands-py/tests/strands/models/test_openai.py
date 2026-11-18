@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import unittest.mock
 from types import SimpleNamespace
 
@@ -10,7 +11,7 @@ import pytest
 
 import strands
 from strands.agent import AgentMetadata
-from strands.models import CacheConfig
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo
 from strands.models.litellm import LiteLLMModel
 from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -1527,6 +1528,81 @@ def test__stream_switch_content(model, new_data_type, prev_data_type, expected_c
     chunks, data_type = model._stream_switch_content(new_data_type, prev_data_type)
     assert chunks == expected_chunks
     assert data_type == expected_data_type
+
+
+@pytest.mark.parametrize("model_id", ["gpt-6-sol", "gpt-5.6", "openai.gpt-6.1-terra", "us.openai.gpt-6-luna"])
+def test_format_request_turns_reasoning_off_when_the_model_takes_tools_only_without_it(
+    openai_client, model_id, messages, tool_specs
+):
+    model = OpenAIModel(model_id=model_id)
+
+    with pytest.warns(UserWarning, match=f"model_id=<{model_id}> .* sending reasoning_effort='none'"):
+        tru_request = model.format_request(messages, tool_specs)
+
+    assert tru_request["reasoning_effort"] == "none"
+
+
+@pytest.mark.parametrize(
+    ("model_id", "config", "with_tools", "exp_effort"),
+    [
+        ("gpt-6-sol", {}, False, None),
+        ("gpt-6-sol", {"params": {"reasoning_effort": "low"}}, False, "low"),
+        ("gpt-6-sol", {"params": {"reasoning_effort": "none"}}, True, "none"),
+        ("gpt-6-astra", {}, False, None),
+        ("gpt-5.4", {}, True, None),
+        ("gpt-5.4", {"params": {"reasoning_effort": "low"}}, True, "low"),
+        (
+            "gpt-6-sol",
+            {"model_info": ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="supported"))},
+            True,
+            None,
+        ),
+        (
+            "m1",
+            {"model_info": ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="reasoning_off"))},
+            False,
+            None,
+        ),
+    ],
+)
+def test_format_request_leaves_reasoning_effort_as_configured(
+    openai_client, model_id, config, with_tools, exp_effort, messages, tool_specs, recwarn
+):
+    model = OpenAIModel(model_id=model_id, **config)
+
+    tru_request = model.format_request(messages, tool_specs if with_tools else None)
+
+    assert tru_request.get("reasoning_effort") == exp_effort
+    assert len(recwarn) == 0
+
+
+def test_format_request_raises_when_reasoning_is_asked_for_with_tools_the_model_takes_only_without_it(
+    openai_client, messages, tool_specs
+):
+    model = OpenAIModel(model_id="gpt-6-sol", params={"reasoning_effort": "low"})
+
+    with pytest.raises(ValueError, match="gpt-6-sol accepts tools .* reasoning_effort is 'low'.* OpenAIResponsesModel"):
+        model.format_request(messages, tool_specs)
+
+
+@pytest.mark.parametrize("model_id", ["gpt-6-astra", "gpt-6.1-sol", "openai.gpt-6.1-sol"])
+@pytest.mark.parametrize("params", [None, {"reasoning_effort": "none"}])
+def test_format_request_raises_when_the_model_takes_no_tools_on_chat_completions(
+    openai_client, model_id, params, messages, tool_specs
+):
+    model = OpenAIModel(model_id=model_id, params=params)
+
+    with pytest.raises(ValueError, match=f"{re.escape(model_id)} does not accept tools .* OpenAIResponsesModel"):
+        model.format_request(messages, tool_specs)
+
+
+def test_format_request_applies_the_tools_rule_from_a_model_info_override(openai_client, messages, tool_specs):
+    model = OpenAIModel(
+        model_id="m1", model_info=ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="unsupported"))
+    )
+
+    with pytest.raises(ValueError, match="m1 does not accept tools"):
+        model.format_request(messages, tool_specs)
 
 
 def test_format_request_messages_excludes_reasoning_content():

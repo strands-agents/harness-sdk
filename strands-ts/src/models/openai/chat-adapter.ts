@@ -13,6 +13,8 @@ import { toMimeType } from '../../mime.js'
 import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
+import { warnOnce } from '../../logging/warn-once.js'
+import type { ChatCompletionsTools, ModelInfo } from '../model-info.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig } from './cache.js'
@@ -50,14 +52,47 @@ type OpenAIChatChoice = {
 }
 
 /**
+ * Turns reasoning off in a request with tools when the model needs that.
+ *
+ * @throws Error when the model accepts no tools on Chat Completions, or only with reasoning off while
+ *   `reasoning_effort` asks for reasoning
+ */
+function applyChatCompletionsTools(
+  request: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+  support: ChatCompletionsTools | undefined
+): void {
+  if (support === 'unsupported') {
+    throw new Error(
+      `${request.model} does not accept tools on the Chat Completions API. Use OpenAIModel with api: 'responses' instead.`
+    )
+  }
+  if (support !== 'reasoningOff') return
+  const effort = request.reasoning_effort
+  if (effort === undefined || effort === null) {
+    warnOnce(
+      logger,
+      `model_id=<${request.model}> | this model accepts tools on the Chat Completions API only with reasoning off, sending reasoning_effort='none'; use api: 'responses' to keep reasoning`
+    )
+    request.reasoning_effort = 'none'
+  } else if (effort !== 'none') {
+    throw new Error(
+      `${request.model} accepts tools on the Chat Completions API only with reasoning off, but reasoning_effort is '${effort}'. ` +
+        "Set it to 'none' or leave it unset, or use OpenAIModel with api: 'responses' to keep reasoning."
+    )
+  }
+}
+
+/**
  * Builds a Chat Completions streaming request body.
  *
  * @internal
+ * @throws Error when the request has tools and the model's `chatCompletionsTools` capability rules them out
  */
 export function formatChatRequest(
   config: OpenAIChatConfig,
   messages: Message[],
-  options?: StreamOptions
+  options?: StreamOptions,
+  modelInfo?: ModelInfo
 ): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming {
   // User `params` are spread first so provider-managed fields always win.
   // The managed-params warning fires at config time to surface the collision.
@@ -140,6 +175,8 @@ export function formatChatRequest(
   }
 
   applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
+
+  if (request.tools?.length) applyChatCompletionsTools(request, modelInfo?.capabilities?.chatCompletionsTools)
 
   if ('n' in request && request.n !== undefined && request.n !== null && request.n > 1) {
     throw new Error('Streaming with n > 1 is not supported')

@@ -17,6 +17,9 @@ import modelInfoData from './model-info.json' with { type: 'json' }
 /** How a model supports prompt caching. */
 export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
 
+/** Whether a model accepts tools on the OpenAI Chat Completions API: always, only with reasoning off, or never. */
+export type ChatCompletionsTools = 'supported' | 'reasoningOff' | 'unsupported'
+
 /**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
  * union, like {@link PromptCaching} (which mechanism). A fact about two features together gets its
@@ -48,6 +51,12 @@ export interface ModelCapabilities {
    * (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.
    */
   readonly temporaryMessages?: boolean | undefined
+  /**
+   * Whether the model accepts tools on the OpenAI Chat Completions API. `OpenAIModel` with `api: 'chat'` reads it:
+   * for `'reasoningOff'` it sends `reasoning_effort: 'none'` with tools, for `'unsupported'` it throws instead of
+   * sending them. Set `'supported'` in `modelInfo` when an OpenAI-compatible endpoint has no such limit.
+   */
+  readonly chatCompletionsTools?: ChatCompletionsTools | undefined
 }
 
 /** Size limits of the model. */
@@ -126,6 +135,7 @@ const CAPABILITY_FIELDS = Object.keys({
   nativeStructuredOutput: true,
   serverSideSummary: true,
   temporaryMessages: true,
+  chatCompletionsTools: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,

@@ -21,6 +21,7 @@ from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec, ToolUse
+from ._model_info import ModelCapabilities, ModelInfo
 from ._validation import validate_config_keys
 from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
@@ -32,6 +33,9 @@ logger = logging.getLogger(__name__)
 _THOUGHT_SIGNATURE_SEPARATOR = "__thought__"
 
 T = TypeVar("T", bound=BaseModel)
+
+
+_CHAT_COMPLETIONS_TOOLS_SUPPORTED = ModelInfo(capabilities=ModelCapabilities(chat_completions_tools="supported"))
 
 
 class LiteLLMModel(OpenAIModel):
@@ -91,6 +95,17 @@ class LiteLLMModel(OpenAIModel):
             The LiteLLM model configuration.
         """
         return cast(LiteLLMModel.LiteLLMConfig, self.config)
+
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports tools on Chat Completions as supported, which a ``model_info`` override still wins over.
+
+        LiteLLM picks the provider API for each model, so OpenAI's Chat Completions limits do not apply to it.
+        """
+        return ModelInfo.merge(
+            super().model_info, _CHAT_COMPLETIONS_TOOLS_SUPPORTED, self.get_config().get("model_info")
+        )
 
     @override
     @classmethod

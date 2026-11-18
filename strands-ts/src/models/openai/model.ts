@@ -236,7 +236,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
 
   private async *_streamChat(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      const request = formatChatRequest(this._config as OpenAIChatConfig, messages, options)
+      const request = formatChatRequest(this._config as OpenAIChatConfig, messages, options, this.modelInfo)
       const stream = await this._client.chat.completions.create(request, { signal: options?.cancelSignal })
 
       const streamState: ChatStreamState = {

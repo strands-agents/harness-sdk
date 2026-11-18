@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -522,6 +523,8 @@ class OpenAIModel(Model):
         Raises:
             TypeError: If a message contains a content block type that cannot be converted to an OpenAI-compatible
                 format.
+            ValueError: If the request has tools and the model does not accept them on the Chat Completions API,
+                or accepts them only with reasoning off while ``reasoning_effort`` asks for reasoning.
         """
         params = dict(cast(dict[str, Any], self.config.get("params") or {}))
         stream = bool(self.config.get("stream", params.pop("stream", True)))
@@ -553,7 +556,34 @@ class OpenAIModel(Model):
 
         apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")), agent_metadata)
 
+        if request["tools"]:
+            self._apply_chat_completions_tools(request)
+
         return request
+
+    def _apply_chat_completions_tools(self, request: dict[str, Any]) -> None:
+        """Turn reasoning off in a request with tools when the model needs that, or raise when it cannot take them."""
+        support = self.model_info.capabilities.chat_completions_tools
+        model_id = request["model"]
+        if support == "unsupported":
+            raise ValueError(
+                f"{model_id} does not accept tools on the Chat Completions API. Use OpenAIResponsesModel instead."
+            )
+        if support != "reasoning_off":
+            return
+        effort = request.get("reasoning_effort")
+        if effort is None:
+            warnings.warn(
+                f"model_id=<{model_id}> | this model accepts tools on the Chat Completions API only with reasoning"
+                " off, sending reasoning_effort='none'; use OpenAIResponsesModel to keep reasoning",
+                stacklevel=1,
+            )
+            request["reasoning_effort"] = "none"
+        elif effort != "none":
+            raise ValueError(
+                f"{model_id} accepts tools on the Chat Completions API only with reasoning off, but reasoning_effort"
+                f" is '{effort}'. Set it to 'none' or leave it unset, or use OpenAIResponsesModel to keep reasoning."
+            )
 
     def format_chunk(self, event: dict[str, Any], **kwargs: Any) -> StreamEvent:
         """Format an OpenAI response event into a standardized message chunk.
