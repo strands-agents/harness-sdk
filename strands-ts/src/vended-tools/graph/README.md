@@ -67,7 +67,7 @@ The default tool, produced by `makeGraph()`: no presets, free-form `instructions
 
 Throws if `name` or `description` is empty, `maxNodes` is not an integer >= 2, `maxEdges` is not a positive integer, `maxSteps` is not a positive integer or `Infinity`, a timeout is not a positive number, `defaultPreset` is not one of `presets`, or a `Choice` axis has no options, or a `tools` `Choice` is not `multiple`.
 
-The default builder gives each node the parent's model, tools (narrowed by the resolved spec), and interventions, sandbox, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the node's model is stateful. The agent's `name` and `id` are its spec name.
+The default builder gives each node the parent's model, tools (narrowed by the resolved spec), and interventions, sandbox, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the node's model is stateful. The agent's `name` and `id` are its spec name. The parent's hooks and plugins are not passed to the nodes; pass a custom `builder` for nodes that need them.
 
 ### Input
 
