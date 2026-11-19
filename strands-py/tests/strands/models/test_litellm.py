@@ -1,3 +1,4 @@
+import copy
 import unittest.mock
 import warnings
 from types import SimpleNamespace
@@ -1355,3 +1356,94 @@ def test_format_request_warns_only_about_cache_config_fields_the_backend_ignores
     model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
 
     assert any("no effect on OpenAI" in str(warning.message) for warning in captured_warnings) is warns
+
+
+@pytest.fixture
+def injected_loop_messages():
+    return [
+        {"role": "user", "content": [{"text": "read section 1"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "read", "input": {"n": 1}}}]},
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "s1"}]}},
+                {"text": "Current time: 1 ms"},
+            ],
+        },
+    ]
+
+
+def _marked(request):
+    return [
+        (message["role"], part.get("text"))
+        for message in request["messages"]
+        if isinstance(message.get("content"), list)
+        for part in message["content"]
+        if "cache_control" in part
+    ]
+
+
+def test_format_request_places_cache_points_ahead_of_rebuilt_trailing_blocks(injected_loop_messages):
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig())
+    original = copy.deepcopy(injected_loop_messages)
+
+    request = model.format_request(injected_loop_messages, system_prompt="s1", dynamic_trailing_blocks=1)
+
+    assert _marked(request) == [("system", "s1"), ("tool", "s1")]
+    assert request["messages"][-1] == {"role": "user", "content": [{"type": "text", "text": "Current time: 1 ms"}]}
+    assert injected_loop_messages == original
+
+
+@pytest.mark.parametrize("model_id", ["openai/gpt-6-luna", "gemini/gemini-3.5-flash", "m1"])
+def test_format_request_places_no_cache_points_on_other_backends(model_id, injected_loop_messages):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig())
+
+    assert _marked(model.format_request(injected_loop_messages, system_prompt="s1")) == []
+
+
+def test_format_request_places_cache_points_for_a_proxy_alias_declared_through_model_info(injected_loop_messages):
+    from strands.models import ModelCapabilities, ModelInfo
+
+    model = LiteLLMModel(
+        model_id="litellm_proxy/claude-alias",
+        cache_config=CacheConfig(),
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+    )
+
+    assert _marked(model.format_request(injected_loop_messages, system_prompt="s1"))[0] == ("system", "s1")
+
+
+@pytest.mark.parametrize("model_id", ["litellm_proxy/claude-alias", "gemini/gemini-3.5-flash"])
+def test_format_request_anthropic_strategy_does_not_override_model_info(model_id, injected_loop_messages):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic"))
+
+    assert _marked(model.format_request(injected_loop_messages, system_prompt="s1")) == []
+
+
+def test_format_request_keeps_the_callers_cache_points_and_applies_ttls(injected_loop_messages):
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig(ttl="1h"))
+    system_prompt_content = [{"text": "a"}, {"cachePoint": {"type": "default"}}, {"text": "b"}]
+
+    request = model.format_request(injected_loop_messages, system_prompt_content=system_prompt_content)
+
+    assert [part.get("cache_control") for part in request["messages"][0]["content"]] == [{"type": "ephemeral"}, None]
+    assert request["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_format_request_honors_disabled_cache_sections(injected_loop_messages):
+    model = LiteLLMModel(
+        model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig(system_prompt_ttl=False, messages_ttl=False)
+    )
+
+    assert _marked(model.format_request(injected_loop_messages, system_prompt="s1")) == []
+
+
+@pytest.mark.asyncio
+async def test_stream_passes_dynamic_trailing_blocks_to_format_request(messages):
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5")
+    model.format_request = unittest.mock.Mock(side_effect=RuntimeError("stop"))
+
+    with pytest.raises(RuntimeError):
+        await anext(model.stream(messages, dynamic_trailing_blocks=2))
+
+    assert model.format_request.call_args.kwargs["dynamic_trailing_blocks"] == 2

@@ -5,7 +5,7 @@ import unittest.mock
 
 import pytest
 
-from strands.models._model_proxy import ModelProxy, _with_cache_points
+from strands.models._model_proxy import ModelProxy
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -210,86 +210,3 @@ def test_prepare_sends_summary_text_unless_the_model_summarizes_server_side(serv
     ]
     assert trailing_blocks == 1
     assert messages == original
-
-
-def tool_result_turn(*extra: dict) -> dict:
-    return user({"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "s1"}]}}, *extra)
-
-
-@pytest.fixture
-def cache_messages():
-    return [
-        user({"text": "read section 1"}),
-        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "read", "input": {"n": 1}}}]},
-        tool_result_turn({"text": "Current time: 1 ms"}),
-    ]
-
-
-def _cache_model(model_id: str, model_info=None, **cache_config):
-    from strands.models import CacheConfig
-    from strands.models.litellm import LiteLLMModel
-
-    extra = {"model_info": model_info} if model_info else {}
-    return LiteLLMModel(model_id=model_id, cache_config=CacheConfig(**cache_config), **extra)
-
-
-def test_with_cache_points_marks_the_system_prompt_and_the_latest_user_message_ahead_of_rebuilt_blocks(
-    cache_messages,
-):
-    model = _cache_model("anthropic/claude-haiku-4-5")
-    original = copy.deepcopy(cache_messages)
-
-    system, messages = _with_cache_points(model, "s1", None, cache_messages, dynamic_trailing_blocks=1)
-
-    assert system == [{"text": "s1"}, {"cachePoint": {"type": "default"}}]
-    assert messages[-1]["content"][1:] == [{"cachePoint": {"type": "default"}}, {"text": "Current time: 1 ms"}]
-    assert messages[:-1] == cache_messages[:-1]
-    assert cache_messages == original
-
-
-@pytest.mark.parametrize("model_id", ["openai/gpt-6-luna", "gemini/gemini-3.5-flash"])
-def test_with_cache_points_leaves_backends_without_cache_points_alone(model_id, cache_messages):
-    system, messages = _with_cache_points(_cache_model(model_id), "s1", None, cache_messages, 0)
-
-    assert (system, messages) == (None, cache_messages)
-
-
-def test_with_cache_points_leaves_a_provider_that_places_its_own_alone(model, cache_messages):
-    system, messages = _with_cache_points(model, "s1", None, cache_messages, 0)
-
-    assert (system, messages) == (None, cache_messages)
-
-
-def test_with_cache_points_marks_a_proxy_alias_declared_through_model_info(cache_messages):
-    from strands.models import ModelCapabilities, ModelInfo
-
-    declared = ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points"))
-    model = _cache_model("litellm_proxy/claude-alias", model_info=declared)
-
-    system, messages = _with_cache_points(model, "s1", None, cache_messages, 0)
-
-    assert system[-1] == {"cachePoint": {"type": "default"}}
-    assert messages[-1]["content"][-1] == {"cachePoint": {"type": "default"}}
-
-
-@pytest.mark.parametrize("model_id", ["litellm_proxy/claude-alias", "gemini/gemini-3.5-flash"])
-def test_with_cache_points_does_not_let_the_anthropic_strategy_override_model_info(model_id, cache_messages):
-    model = _cache_model(model_id, strategy="anthropic")
-
-    assert _with_cache_points(model, "s1", None, cache_messages, 0) == (None, cache_messages)
-
-
-def test_with_cache_points_keeps_the_callers_points_and_ttls(cache_messages):
-    model = _cache_model("anthropic/claude-haiku-4-5", ttl="1h")
-    content = [{"text": "a"}, {"cachePoint": {"type": "default"}}, {"text": "b"}]
-
-    system, messages = _with_cache_points(model, None, content, cache_messages, 0)
-
-    assert system is content
-    assert messages[-1]["content"][-1] == {"cachePoint": {"type": "default", "ttl": "1h"}}
-
-
-def test_with_cache_points_honors_disabled_sections(cache_messages):
-    model = _cache_model("anthropic/claude-haiku-4-5", system_prompt_ttl=False, messages_ttl=False)
-
-    assert _with_cache_points(model, "s1", None, cache_messages, 0) == (None, cache_messages)

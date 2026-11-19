@@ -45,9 +45,6 @@ T = TypeVar("T", bound=BaseModel)
 class LiteLLMModel(OpenAIModel):
     """LiteLLM model provider implementation."""
 
-    # ModelProxy places this provider's automatic cache points; the provider only translates them.
-    _cache_points_from_proxy = True
-
     class LiteLLMConfig(BaseModelConfig, total=False):
         """Configuration options for LiteLLM models.
 
@@ -61,8 +58,8 @@ class LiteLLMModel(OpenAIModel):
             cache_config: Prompt-caching configuration. LiteLLM's OpenAI-compatible request path consumes it
                 as ``OpenAIModel`` does, except that the routing key is sent only to models LiteLLM accepts
                 ``prompt_cache_key`` for. When ``model_info`` says the backend's model takes cache points
-                (Anthropic, Bedrock and Vertex AI Claude), the agent also places them on the system prompt and
-                the latest user message. For a proxy alias, whose backend the id does not name, declare it with
+                (Anthropic, Bedrock and Vertex AI Claude), it also places them on the system prompt and the
+                latest user message. For a proxy alias, whose backend the id does not name, declare it with
                 ``model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points"))``.
         """
 
@@ -366,12 +363,15 @@ class LiteLLMModel(OpenAIModel):
         *,
         system_prompt_content: list[SystemContentBlock] | None = None,
         agent_metadata: AgentMetadata | None = None,
+        dynamic_trailing_blocks: int = 0,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Format a LiteLLM chat request.
 
-        Builds the request as ``OpenAIModel`` does. For a backend that takes cache points it also marks the last tool
-        when ``cache_config.tools_ttl`` asks for it and keeps the request within the backend's cache point limit;
+        Builds the request as ``OpenAIModel`` does. For a backend that takes cache points, with ``cache_config`` set,
+        it first places cache points on the system prompt and the latest user message, ahead of its rebuilt trailing
+        blocks. It also marks the last tool when ``cache_config.tools_ttl`` asks for it and keeps the request within
+        the backend's cache point limit;
         for any other backend it drops message cache points, which only those backends accept. It then leaves out
         the ``prompt_cache_key`` resolved from ``cache_config`` when LiteLLM would reject it for the model.
 
@@ -382,6 +382,8 @@ class LiteLLMModel(OpenAIModel):
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks to provide context to the model.
             agent_metadata: Invoking agent's metadata.
+            dynamic_trailing_blocks: How many trailing blocks of the latest user message are rebuilt on every call, so
+                the conversation cache point stays ahead of them.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -392,8 +394,13 @@ class LiteLLMModel(OpenAIModel):
                 format.
         """
         takes_cache_points = self.model_info.capabilities.prompt_caching == "cache_points"
+        cache_config = self.get_config().get("cache_config")
         if not takes_cache_points:
             messages = _without_message_cache_points(messages)
+        elif cache_config is not None:
+            system_prompt_content, messages = _with_cache_points(
+                cache_config, system_prompt, system_prompt_content, messages, dynamic_trailing_blocks
+            )
         request = super().format_request(
             messages,
             tool_specs,
@@ -404,7 +411,7 @@ class LiteLLMModel(OpenAIModel):
             **kwargs,
         )
         if takes_cache_points:
-            _add_tools_cache_point(request, self.get_config().get("cache_config"))
+            _add_tools_cache_point(request, cache_config)
             _limit_cache_points(request)
         self._drop_rejected_cache_key(request)
         return request
@@ -487,6 +494,7 @@ class LiteLLMModel(OpenAIModel):
             tool_choice,
             system_prompt_content=system_prompt_content,
             agent_metadata=agent_metadata,
+            dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
         )
         logger.debug("request=<%s>", request)
 
@@ -862,3 +870,79 @@ def _request_parts(request: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(message.get("content"), list):
             parts.extend(message["content"])
     return parts
+
+
+def _with_cache_points(
+    cache_config: CacheConfig,
+    system_prompt: str | None,
+    system_prompt_content: list[SystemContentBlock] | None,
+    messages: Messages,
+    dynamic_trailing_blocks: int,
+) -> tuple[list[SystemContentBlock] | None, Messages]:
+    """Add the automatic cache points: one at the end of the system prompt and one in the latest user message.
+
+    The conversation point goes ahead of the latest user message's rebuilt trailing blocks. A section where the
+    caller already placed a cache point keeps it, and neither input is changed.
+
+    Args:
+        cache_config: The provider's cache settings.
+        system_prompt: The system prompt string, used when no content blocks are given.
+        system_prompt_content: The system prompt content blocks.
+        messages: The messages to send.
+        dynamic_trailing_blocks: How many trailing blocks of the latest user message are rebuilt on every call.
+
+    Returns:
+        The system prompt content and the messages to send.
+    """
+    if cache_config.system_prompt_ttl is not False:
+        point = _cache_point(cache_config.system_prompt_ttl, cache_config.ttl)
+        system_prompt_content = _system_with_cache_point(system_prompt, system_prompt_content, point)
+    if cache_config.messages_ttl is not False:
+        point = _cache_point(cache_config.messages_ttl, cache_config.ttl)
+        messages = _messages_with_cache_point(messages, dynamic_trailing_blocks, point)
+    return system_prompt_content, messages
+
+
+def _cache_point(section_ttl: bool | str | None, ttl: str | None) -> CachePoint:
+    """A cache point carrying the section's own TTL, else the config-wide one."""
+    resolved = section_ttl if isinstance(section_ttl, str) else ttl
+    return CachePoint(type="default", ttl=resolved) if resolved else CachePoint(type="default")
+
+
+def _system_with_cache_point(
+    system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None, point: CachePoint
+) -> list[SystemContentBlock] | None:
+    """The system prompt content ending in ``point``, unless it is empty or already has a cache point."""
+    content = system_prompt_content if system_prompt_content is not None else []
+    if system_prompt_content is None and system_prompt:
+        content = [SystemContentBlock(text=system_prompt)]
+    if not content or any("cachePoint" in block for block in content):
+        return system_prompt_content
+    return [*content, SystemContentBlock(cachePoint=point)]
+
+
+def _messages_with_cache_point(messages: Messages, dynamic_trailing_blocks: int, point: CachePoint) -> Messages:
+    """The messages with ``point`` in the latest user message ahead of its rebuilt trailing blocks.
+
+    The latest user message is unchanged when it already has a cache point or holds only rebuilt blocks.
+    """
+    latest_user = _latest_user_index(messages)
+    if latest_user == -1:
+        return messages
+    content = messages[latest_user]["content"]
+    boundary = len(content) - dynamic_trailing_blocks
+    if boundary <= 0 or any("cachePoint" in block for block in content):
+        return messages
+    marked: Message = {
+        **messages[latest_user],
+        "content": [*content[:boundary], ContentBlock(cachePoint=point), *content[boundary:]],
+    }
+    return [*messages[:latest_user], marked, *messages[latest_user + 1 :]]
+
+
+def _latest_user_index(messages: Messages) -> int:
+    """Index of the latest user message, or -1 when there is none."""
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index]["role"] == "user":
+            return index
+    return -1

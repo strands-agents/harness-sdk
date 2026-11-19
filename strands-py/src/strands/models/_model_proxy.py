@@ -8,10 +8,6 @@ every other model gets its text. An ``injected`` block reaches a model whose ``t
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
 ones included, gets the latest user message's injected blocks as text and none of the earlier ones. An offload
 placeholder's ``offloaded`` bookkeeping reaches no model.
-
-A provider that sets ``_cache_points_from_proxy`` gets its automatic cache points from here: with ``cache_config`` set
-and a model whose ``model_info`` says it takes cache points, one at the end of the system prompt and one in the latest
-user message, ahead of the blocks rebuilt on every call. The provider only translates them.
 """
 
 import logging
@@ -23,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from pydantic import BaseModel
 
 from ..event_loop.streaming import _normalize_messages, process_stream
-from ..types.content import CachePoint, ContentBlock, Message, Messages, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.tools import ToolSpec
 
 if TYPE_CHECKING:
@@ -31,7 +27,7 @@ if TYPE_CHECKING:
     from ..agent.agent_metadata import AgentMetadata
     from ..agent.invocation_context import InvocationContext
     from ..types._events import TypedEvent
-    from .model import CacheConfig, Model
+    from .model import Model
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +88,6 @@ class ModelProxy:
         messages, injected_trailing_blocks = self._prepare(messages)
         # The cache point stays ahead of injected text, which the next call no longer sends.
         dynamic_trailing_blocks = max(dynamic_trailing_blocks, injected_trailing_blocks)
-        system_prompt_content, messages = _with_cache_points(
-            self._model, system_prompt, system_prompt_content, messages, dynamic_trailing_blocks
-        )
         start_time = time.time()
 
         # Omitted when unset, so an ordinary call's arguments are unchanged.
@@ -263,87 +256,6 @@ def _latest_user_index(messages: Messages) -> int:
         if messages[index]["role"] == "user":
             return index
     return -1
-
-
-def _with_cache_points(
-    model: "Model",
-    system_prompt: str | None,
-    system_prompt_content: list[SystemContentBlock] | None,
-    messages: Messages,
-    dynamic_trailing_blocks: int,
-) -> tuple[list[SystemContentBlock] | None, Messages]:
-    """Add the automatic cache points for a provider that leaves placing them to the proxy.
-
-    A section where the caller already placed a cache point keeps it, and neither input is changed.
-
-    Args:
-        model: The model the call goes to.
-        system_prompt: The system prompt string, used when no content blocks are given.
-        system_prompt_content: The system prompt content blocks.
-        messages: The messages to send.
-        dynamic_trailing_blocks: How many trailing blocks of the latest user message are rebuilt on every call.
-
-    Returns:
-        The system prompt content and the messages to send.
-    """
-    cache_config = _proxy_cache_config(model)
-    if cache_config is None:
-        return system_prompt_content, messages
-    if cache_config.system_prompt_ttl is not False:
-        point = _cache_point(cache_config.system_prompt_ttl, cache_config.ttl)
-        system_prompt_content = _system_with_cache_point(system_prompt, system_prompt_content, point)
-    if cache_config.messages_ttl is not False:
-        point = _cache_point(cache_config.messages_ttl, cache_config.ttl)
-        messages = _messages_with_cache_point(messages, dynamic_trailing_blocks, point)
-    return system_prompt_content, messages
-
-
-def _proxy_cache_config(model: "Model") -> "CacheConfig | None":
-    """The model's cache config when the proxy places its cache points, else None."""
-    if not getattr(model, "_cache_points_from_proxy", False):
-        return None
-    config = model.get_config()
-    cache_config = config.get("cache_config") if isinstance(config, dict) else None
-    if cache_config is None or model.model_info.capabilities.prompt_caching != "cache_points":
-        return None
-    return cast("CacheConfig", cache_config)
-
-
-def _cache_point(section_ttl: bool | str | None, ttl: str | None) -> CachePoint:
-    """A cache point carrying the section's own TTL, else the config-wide one."""
-    resolved = section_ttl if isinstance(section_ttl, str) else ttl
-    return CachePoint(type="default", ttl=resolved) if resolved else CachePoint(type="default")
-
-
-def _system_with_cache_point(
-    system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None, point: CachePoint
-) -> list[SystemContentBlock] | None:
-    """The system prompt content ending in ``point``, unless it is empty or already has a cache point."""
-    content = system_prompt_content if system_prompt_content is not None else []
-    if system_prompt_content is None and system_prompt:
-        content = [SystemContentBlock(text=system_prompt)]
-    if not content or any("cachePoint" in block for block in content):
-        return system_prompt_content
-    return [*content, SystemContentBlock(cachePoint=point)]
-
-
-def _messages_with_cache_point(messages: Messages, dynamic_trailing_blocks: int, point: CachePoint) -> Messages:
-    """The messages with ``point`` in the latest user message ahead of its rebuilt trailing blocks.
-
-    The latest user message is unchanged when it already has a cache point or holds only rebuilt blocks.
-    """
-    latest_user = _latest_user_index(messages)
-    if latest_user == -1:
-        return messages
-    content = messages[latest_user]["content"]
-    boundary = len(content) - dynamic_trailing_blocks
-    if boundary <= 0 or any("cachePoint" in block for block in content):
-        return messages
-    marked: Message = {
-        **messages[latest_user],
-        "content": [*content[:boundary], ContentBlock(cachePoint=point), *content[boundary:]],
-    }
-    return [*messages[:latest_user], marked, *messages[latest_user + 1 :]]
 
 
 def _with_summary_text(message: Message) -> Message:
