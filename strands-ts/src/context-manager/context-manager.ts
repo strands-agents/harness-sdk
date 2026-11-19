@@ -58,7 +58,8 @@ const PRESET_STRATEGIES: Record<ContextManagerPreset, () => ContextStrategy[]> =
  * Supported values for the `contextManager` parameter.
  *
  * - `"auto"`: Managed context with proactive compression + offloading.
- * - `"agentic"`: Model-driven context management via injected tools.
+ * - `"agentic"`: (Experimental) Model-driven context management via injected tools.
+ *   This mode may change in future versions.
  * - {@link ContextManagerConfig}: Custom strategy pipeline and archive configuration.
  * - {@link ContextManager}: A pre-built instance, used as-is. An instance binds to one agent;
  *   construct one per `Agent`.
@@ -74,8 +75,8 @@ export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig
  * window is still overflowing after the user strategies have run.
  *
  * Configured through the Agent's `contextManager` parameter — pass a preset
- * string (`'auto'`, `'agentic'`), a `ContextManagerConfig`, or a `ContextManager`
- * instance; the Agent registers the manager. When present, it owns overflow
+ * string (`'auto'`, or the experimental `'agentic'`), a `ContextManagerConfig`, or a
+ * `ContextManager` instance; the Agent registers the manager. When present, it owns overflow
  * recovery and proactive compression — no separate ConversationManager is needed.
  */
 export class ContextManager implements Plugin {
