@@ -65,6 +65,6 @@ JSON text. Image, audio, video, and document bytes aren't supported.
 | Response | Error |
 | --- | --- |
 | Rate limited or temporarily unavailable (HTTP 429 or 503) | `ModelThrottledError` |
-| The request is too large (HTTP 413) | `ContextWindowOverflowError` |
+| The input exceeds the model's token limit (HTTP 413, or HTTP 400 reporting the token limit) | `ContextWindowOverflowError` |
 | A refused question that sets `uncertainty: false` | `ModelError` |
 | Any other failed request, or an answer that doesn't match its question | `ModelError` |

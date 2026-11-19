@@ -1,3 +1,4 @@
+import { ContextWindowOverflowError, ModelError } from '../errors.js'
 import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
@@ -5,6 +6,7 @@ import {
   isRecord,
   RefusedAnswer,
   resolveSystemOneProviderConfig,
+  SystemOneHttpError,
   toWireQuestions,
   toWireStateText,
   type RequestBodyBuilder,
@@ -42,6 +44,9 @@ export interface OpenAIDecisionModelOptions {
  * reported as `Uncertain`, so the remaining answers stay usable; it throws only for a question that set
  * `uncertainty: false`.
  *
+ * HTTP 413 and OpenAI's HTTP 400 token-limit responses raise {@link ContextWindowOverflowError}, preserving
+ * the HTTP failure as the cause.
+ *
  * @example
  * ```typescript
  * const decisions = new OpenAIDecisionModel()
@@ -71,21 +76,39 @@ export class OpenAIDecisionModel extends DecisionModel {
     })
   }
 
-  protected _ask<const Q extends Record<string, Question>>(
+  protected async _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
     questions: Q,
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
     const transport = httpTransport(this._providerConfig)
-    return askSystemOne(
-      this._providerConfig,
-      async (body, cancelSignal) =>
-        toSystemOneResponse(await transport(body, cancelSignal), this._providerConfig.modelId),
-      state,
-      questions,
-      options.cancelSignal
-    )
+    try {
+      return await askSystemOne(
+        this._providerConfig,
+        async (body, cancelSignal) =>
+          toSystemOneResponse(await transport(body, cancelSignal), this._providerConfig.modelId),
+        state,
+        questions,
+        options.cancelSignal
+      )
+    } catch (error) {
+      if (isContextOverflow(error)) throw new ContextWindowOverflowError(error.message, { cause: error.cause })
+      throw error
+    }
   }
+}
+
+/**
+ * OpenAI reports input over the model's token limit as HTTP 400, with no error code observed so far, so the
+ * message is the signal; `context_length_exceeded` is also accepted in case the API starts sending it.
+ */
+function isContextOverflow(error: unknown): error is ModelError & { cause: SystemOneHttpError } {
+  if (!(error instanceof ModelError) || !(error.cause instanceof SystemOneHttpError)) return false
+  const { status, body } = error.cause
+  const detail = isRecord(body) ? body['error'] : undefined
+  if (status !== 400 || !isRecord(detail)) return false
+  const message = typeof detail['message'] === 'string' ? detail['message'].toLowerCase() : ''
+  return detail['code'] === 'context_length_exceeded' || message.includes('exceeds the token limit')
 }
 
 const openAIRequestBody: RequestBodyBuilder = (state, questions, modelId) => ({

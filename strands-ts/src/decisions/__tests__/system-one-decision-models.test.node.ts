@@ -1088,6 +1088,23 @@ describe('OpenAIDecisionModel', () => {
     await expect(decision.ask('state', { q: { question: 'Which?', choices: ['a', 'b'] } })).rejects.toThrow(ModelError)
   })
 
+  it.each([
+    { status: 400, message: 'Decision input exceeds the token limit.', expectedClass: ContextWindowOverflowError },
+    { status: 400, message: 'Invalid question type.', expectedClass: ModelError },
+    { status: 500, message: 'Decision input exceeds the token limit.', expectedClass: ModelError },
+  ])('scopes context overflow for HTTP $status: $message', async ({ status, message, expectedClass }) => {
+    const body = { error: { message, type: 'invalid_request_error', code: null } }
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch: fakeFetch(body, { status }) })
+    const error = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }).then(
+      () => undefined,
+      (caught: unknown) => caught
+    )
+
+    expect((error as Error).constructor).toBe(expectedClass)
+    expect((error as Error).message).toBe(`openai decision request failed with HTTP ${status}: ${message}`)
+    expect((error as Error).cause).toMatchObject({ status, body })
+  })
+
   it('sends message state as JSON text input', async () => {
     const captured: CapturedRequest[] = []
     const fetch = fakeFetch({ answers: [{ type: 'predicate', name: 'q', probability: 0.99 }] }, { captured })
