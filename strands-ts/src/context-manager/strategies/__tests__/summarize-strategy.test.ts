@@ -806,6 +806,29 @@ describe('server-side summary', () => {
     ])
   })
 
+  it('leaves the summary unplaced when the messages it covers leave the history', async () => {
+    const messages = serverSideMessages()
+    const { agent, summarize } = mockAgent(messages, { serverSideSummary: true })
+    summarize.mockImplementation(async () => {
+      // The messages the summary covers leave the history while the provider is writing it.
+      messages.splice(1, 2)
+      return { content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] }
+    })
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(false)
+
+    // A summary stands in for the conversation's exact start, so placing it over a shortened history would take the
+    // message the next model call responds to.
+    expect(turns(messages)).toEqual([
+      { role: 'user', content: [new TextBlock('task')] },
+      { role: 'assistant', content: [new TextBlock('old3')] },
+      { role: 'user', content: [new TextBlock('recent')] },
+    ])
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('leaving the summary unplaced'))
+    warnSpy.mockRestore()
+  })
+
   it('places a summary without a provider as a client-side marker', async () => {
     const messages = serverSideMessages()
     const { agent, summarize, countTokens } = mockAgent(messages, { serverSideSummary: true })
