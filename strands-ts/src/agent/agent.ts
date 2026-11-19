@@ -1665,12 +1665,6 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Invokes hook callbacks and printer for a stream event.
-   *
-   * @param event - The event to process
-   * @returns The event after processing
-   */
-  /**
    * Runs one tool call outside a model turn the way the executor runs a model-issued one: hooks,
    * middleware, the tool, and retry. Such a call cannot pause for a response, so `context.interrupt`
    * answers every interrupt it raises (hook, middleware, or tool): it returns the response, or throws to
@@ -1733,6 +1727,12 @@ export class Agent implements LocalAgent, InvokableAgent {
     )
   }
 
+  /**
+   * Invokes hook callbacks and printer for a stream event.
+   *
+   * @param event - The event to process
+   * @returns The event after processing
+   */
   private async _invokeCallbacks(event: AgentStreamEvent): Promise<AgentStreamEvent> {
     if (event instanceof HookableEvent) {
       await this._hooksRegistry.invokeCallbacks(event)
