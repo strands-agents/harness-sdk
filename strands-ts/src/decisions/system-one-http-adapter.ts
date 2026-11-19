@@ -173,7 +173,7 @@ interface WireChoiceQuestion {
 export type WireQuestion = WireNoulQuestion | WireChoiceQuestion
 
 /**
- * Answer a provider returns when its API declined to answer a question. The shared parser reports it as
+ * Answer a provider returns when its API refused to answer a question. The shared parser reports it as
  * {@link Uncertain} carrying `reason`, and throws for a question that disabled uncertainty. Probabilities
  * and confidence stay empty: the provider returned none. A class instance, so no server JSON can produce it.
  *

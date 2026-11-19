@@ -37,8 +37,10 @@ export interface OpenAIDecisionModelOptions {
  * Boolean questions are sent as `predicate` questions. The API returns only a probability for them, so
  * their confidence is `|2p - 1|`, where an even split is `0` and certainty is `1`.
  *
- * The API can decline one question and answer the rest. A declined question is reported as `Uncertain`,
- * so the remaining answers stay usable; it throws only for a question that set `uncertainty: false`.
+ * The API can refuse one question and answer the rest
+ * ({@link https://developers.openai.com/api/docs/guides/decisions | Decisions guide}). A refused question is
+ * reported as `Uncertain`, so the remaining answers stay usable; it throws only for a question that set
+ * `uncertainty: false`.
  *
  * @example
  * ```typescript
