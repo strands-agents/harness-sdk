@@ -826,6 +826,16 @@ def test_format_request_omits_params_set_to_none(openai_client, model_id, messag
     assert tru_request["top_p"] == 0.8
 
 
+def test_format_request_keeps_model_and_messages_when_params_sets_them_to_none(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, params={"model": None, "messages": None})
+
+    tru_request = model.format_request(messages)
+
+    assert tru_request["model"] == model_id
+    assert tru_request["messages"] == [{"role": "user", "content": [{"text": "test", "type": "text"}]}]
+
+
 def test_cache_key_maps_to_prompt_cache_key(openai_client, model_id, messages):
     _ = openai_client
     model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
