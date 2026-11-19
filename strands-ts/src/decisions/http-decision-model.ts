@@ -15,28 +15,8 @@ export type { SigV4Credentials } from './sigv4-signer.js'
 const CLASS_NAME = 'HttpDecisionModel'
 const DEFAULT_MIN_CONFIDENCE = 0.5
 const DEFAULT_TIMEOUT_MS = 60_000
-/** The largest delay a timer accepts; `AbortSignal.timeout` misbehaves above it. */
+/** The largest delay a timer accepts; above it `AbortSignal.timeout` fires after 1 ms. */
 const MAX_TIMEOUT_MS = 2_147_483_647
-
-/** Headers the transport or the connection sets itself. */
-const RESERVED_HEADERS = [
-  'content-type',
-  'content-length',
-  'host',
-  'transfer-encoding',
-  'expect',
-  'upgrade',
-  'keep-alive',
-]
-/** Headers a SigV4 signature sets itself, besides `authorization`, which any `auth` sets. */
-const SIGV4_HEADERS = ['x-amz-date', 'x-amz-security-token', 'x-amz-content-sha256']
-
-const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
-/** What fetch accepts in a header value: tab, printable ASCII, and Latin-1. */
-const HEADER_VALUE = /^[\t\u0020-\u007e\u0080-\u00ff]*$/
-const TOKEN = /^[\u0021-\u007e]+$/
-const REGION = /^[A-Za-z0-9-]+$/
-const SERVICE = /^[A-Za-z0-9._-]+$/
 
 /** How an {@link HttpDecisionModel} authenticates its requests. */
 export type HttpDecisionModelAuth =
@@ -62,7 +42,7 @@ export type HttpDecisionModelAuth =
 export interface HttpDecisionModelOptions {
   /**
    * Full URL of the System One endpoint, such as `http://localhost:8000/v1/systemone`. It must not contain
-   * a query string or credentials. The endpoint must not redirect: a redirect fails the request.
+   * a query string. The endpoint must not redirect: a redirect fails the request.
    */
   readonly endpoint: string
   /** How requests authenticate. Omit for a server that needs no authentication, such as a local one. */
@@ -98,16 +78,11 @@ export interface HttpDecisionModelOptions {
  *   endpoint: 'https://abc123.lambda-url.us-east-1.on.aws/v1/systemone',
  *   auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda' },
  * })
- *
- * const result = await lambda.ask('A customer needs a refund today.', {
- *   urgent: { question: 'Is this urgent?', choices: 'boolean' },
- * })
  * ```
  */
 export class HttpDecisionModel extends DecisionModel {
   private readonly _providerConfig: SystemOneProviderConfig
-  /** What to suggest checking when the server rejects the request's credentials. */
-  private readonly _authHint: string | undefined
+  private readonly _authenticated: boolean
 
   /**
    * @param options - Endpoint, authentication, and request configuration.
@@ -120,12 +95,26 @@ export class HttpDecisionModel extends DecisionModel {
       throw new Error(`${CLASS_NAME} cannot run in a browser because that would expose its credentials`)
     }
 
-    const endpoint = parseEndpoint(options.endpoint)
-    const auth = options.auth && validateAuth(options.auth)
-    const headers = validateHeaders(options.headers, auth)
+    // `new URL` rejects a malformed endpoint, and fetch rejects a URL with credentials and an invalid header.
+    const endpoint = new URL(options.endpoint)
+    // A URL password is echoed in fetch's own error message, so it is rejected before any request.
+    if (endpoint.username !== '' || endpoint.password !== '') {
+      throw new Error(`${CLASS_NAME} endpoint must not contain credentials: use auth instead`)
+    }
+    if (endpoint.search !== '') throw new Error(`${CLASS_NAME} endpoint must not contain a query string`)
+    // `new Headers` rejects an invalid name or value, but its message quotes the value, which may be a secret.
+    let headers: Record<string, string>
+    try {
+      headers = Object.fromEntries(new Headers(options.headers))
+    } catch {
+      throw new Error(`${CLASS_NAME} headers must have valid names and printable values`)
+    }
+    const { auth } = options
+    this._authenticated = auth !== undefined
     // A credential, signature or secret header sent in clear text is readable on the network.
     const sendsSecrets = auth !== undefined || Object.keys(headers).length > 0
-    if (sendsSecrets && endpoint.protocol === 'http:' && !isLoopback(endpoint)) {
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)
+    if (sendsSecrets && endpoint.protocol !== 'https:' && !loopback) {
       throw new Error(`${CLASS_NAME} auth and headers require an https endpoint unless the host is loopback`)
     }
 
@@ -133,30 +122,48 @@ export class HttpDecisionModel extends DecisionModel {
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
       throw new Error(`${CLASS_NAME} timeoutMs must be an integer from 1 to ${MAX_TIMEOUT_MS}`)
     }
+    const baseFetch = options.fetch ?? globalThis.fetch
+    if (typeof baseFetch !== 'function') throw new Error(`${CLASS_NAME} requires a fetch implementation`)
 
-    const fetchImplementation = options.fetch ?? globalThis.fetch
-    if (typeof fetchImplementation !== 'function') {
-      throw new Error(`${CLASS_NAME} requires a fetch implementation`)
+    let apiKey: string | undefined
+    if (auth?.type === 'bearer') {
+      apiKey = auth.token?.trim()
+      if (!apiKey || /\s/.test(apiKey))
+        throw new Error(`${CLASS_NAME} bearer token must be non-empty text without spaces`)
+    } else if (auth !== undefined && auth.type !== 'sigv4') {
+      throw new Error(`${CLASS_NAME} auth type must be 'bearer' or 'sigv4'`)
+    }
+    const sign = auth?.type === 'sigv4' ? createSigV4Signer(endpoint, auth) : undefined
+
+    // The shared transport only POSTs. Signing, the timeout and redirect handling wrap `fetch` here, so they stay local.
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const signal = AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(timeoutMs)])
+      // A credential lookup can stall, so it runs under the same timeout and cancel signal as the request.
+      const signed = sign ? await abortable(sign(String(init?.body), headers), signal) : {}
+      // `redirect: 'manual'`: following a redirect would replay the request's headers and body to another host.
+      const response = await baseFetch(input, {
+        ...init,
+        headers: mergeHeaders(headers, signed, init?.headers),
+        redirect: 'manual',
+        signal,
+      })
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel().catch(() => undefined)
+        throw new ModelError(`redirected (HTTP ${response.status}): set the endpoint to the redirect target`)
+      }
+      return response
     }
 
-    const modelId = options.modelId?.trim()
-    this._authHint =
-      auth?.type === 'sigv4'
-        ? 'check the IAM permission, region and service name'
-        : auth?.type === 'bearer'
-          ? 'check the token'
-          : undefined
     this._providerConfig = {
       providerName: 'http',
       endpoint: endpoint.href,
-      requestHeaders: requestHeaders(endpoint, auth, headers),
       defaultMinConfidence: resolveDefaultMinConfidence(
         options.defaultMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
         CLASS_NAME
       ),
-      timeoutMs,
-      fetch: (input, init): Promise<Response> => fetchImplementation(input, init),
-      ...(modelId && { modelId }),
+      fetch,
+      ...(apiKey && { apiKey }),
+      ...(options.modelId?.trim() && { modelId: options.modelId.trim() }),
     }
   }
 
@@ -176,102 +183,36 @@ export class HttpDecisionModel extends DecisionModel {
     } catch (error) {
       // The server's own message, such as a Lambda's "Forbidden", does not say what to check.
       if (
-        this._authHint !== undefined &&
+        this._authenticated &&
         error instanceof ModelError &&
         error.cause instanceof SystemOneHttpError &&
         (error.cause.status === 401 || error.cause.status === 403)
       ) {
-        throw new ModelError(`${error.message} | ${this._authHint}`, { cause: error.cause })
+        throw new ModelError(
+          `${error.message} | check the credentials, and for sigv4 the IAM permission, region and service`,
+          {
+            cause: error.cause,
+          }
+        )
       }
       throw error
     }
   }
 }
 
-function parseEndpoint(endpoint: string): URL {
-  let url: URL
-  try {
-    url = new URL(endpoint)
-  } catch (cause) {
-    throw new Error(`${CLASS_NAME} endpoint must be a valid URL`, { cause })
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`${CLASS_NAME} endpoint must use http or https`)
-  }
-  // Neither is part of a System One request, and a URL password would be echoed in fetch error messages.
-  if (url.username !== '' || url.password !== '') {
-    throw new Error(`${CLASS_NAME} endpoint must not contain credentials: use auth instead`)
-  }
-  if (url.search !== '' || url.hash !== '') {
-    throw new Error(`${CLASS_NAME} endpoint must not contain a query string or fragment`)
-  }
-  return url
+/** Merges header sets case-insensitively, later sets winning, so the transport's `Content-Type` replaces a static one. */
+function mergeHeaders(...sets: (HeadersInit | undefined)[]): Headers {
+  const merged = new Headers()
+  for (const set of sets) new Headers(set).forEach((value, name) => merged.set(name, value))
+  return merged
 }
 
-/** Returns `auth` with a trimmed bearer token, or throws without echoing any value. */
-function validateAuth(auth: HttpDecisionModelAuth): HttpDecisionModelAuth {
-  if (auth.type === 'bearer') {
-    const token = typeof auth.token === 'string' ? auth.token.trim() : ''
-    if (!TOKEN.test(token)) {
-      throw new Error(`${CLASS_NAME} bearer token must be non-empty printable text without spaces`)
-    }
-    return { type: 'bearer', token }
-  }
-  if (auth.type === 'sigv4') {
-    if (typeof auth.region !== 'string' || !REGION.test(auth.region)) {
-      throw new Error(`${CLASS_NAME} sigv4 region must contain only letters, digits and hyphens`)
-    }
-    if (typeof auth.service !== 'string' || !SERVICE.test(auth.service)) {
-      throw new Error(`${CLASS_NAME} sigv4 service must contain only letters, digits, dots, hyphens and underscores`)
-    }
-    return auth
-  }
-  throw new Error(`${CLASS_NAME} auth type must be 'bearer' or 'sigv4'`)
-}
-
-function isLoopback({ hostname }: URL): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
-}
-
-/** Rejects headers the transport or the auth owns, repeated names, and names or values that fetch would refuse. */
-function validateHeaders(
-  headers: Readonly<Record<string, string>> | undefined,
-  auth: HttpDecisionModelAuth | undefined
-): Record<string, string> {
-  const owned = [
-    ...RESERVED_HEADERS,
-    ...(auth ? ['authorization'] : []),
-    ...(auth?.type === 'sigv4' ? SIGV4_HEADERS : []),
-  ]
-  const result: Record<string, string> = {}
-  const seen = new Set<string>()
-  for (const [name, value] of Object.entries(headers ?? {})) {
-    if (!HEADER_NAME.test(name)) throw new Error(`${CLASS_NAME} header name '${name}' is not valid`)
-    if (typeof value !== 'string' || !HEADER_VALUE.test(value)) {
-      throw new Error(`${CLASS_NAME} header '${name}' must be a string of printable characters up to U+00FF`)
-    }
-    const lowerName = name.toLowerCase()
-    if (owned.includes(lowerName)) throw new Error(`${CLASS_NAME} headers cannot set '${name}'`)
-    // Names are case-insensitive: fetch would join the two values, and a signature would cover only one.
-    if (seen.has(lowerName)) throw new Error(`${CLASS_NAME} header '${name}' is set more than once`)
-    seen.add(lowerName)
-    result[name] = value
-  }
-  return result
-}
-
-function requestHeaders(
-  endpoint: URL,
-  auth: HttpDecisionModelAuth | undefined,
-  headers: Record<string, string>
-): SystemOneProviderConfig['requestHeaders'] {
-  if (auth?.type === 'bearer') {
-    const withAuth = { ...headers, Authorization: `Bearer ${auth.token}` }
-    return () => withAuth
-  }
-  if (auth?.type === 'sigv4') {
-    const sign = createSigV4Signer(endpoint, auth)
-    return async (body) => ({ ...headers, ...(await sign(body, headers)) })
-  }
-  return () => headers
+/** Settles like `promise`, or rejects with the signal's reason as soon as the signal aborts. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason)
+    const onAbort = (): void => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
 }
