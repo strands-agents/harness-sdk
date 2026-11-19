@@ -266,6 +266,9 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
             elif key == "chatCompletionsTools":
                 # Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
                 assert value in ("reasoningOff", "unsupported"), f"{model_id}.{key}"
+            elif key == "toolUse":
+                # A record that the model cannot call tools, not part of ModelCapabilities.
+                assert value is False, f"{model_id}.{key}"
             elif key == "defaultEffort":
                 assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
             else:

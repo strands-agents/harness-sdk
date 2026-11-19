@@ -463,6 +463,7 @@ async def test_stream(ollama_client, model, agenerator, alist, captured_warnings
     mock_event = unittest.mock.Mock()
     mock_event.message.tool_calls = None
     mock_event.message.content = "Hello"
+    mock_event.message.thinking = None
     mock_event.done_reason = "stop"
     mock_event.eval_count = 10
     mock_event.prompt_eval_count = 5
@@ -521,6 +522,135 @@ async def test_stream_empty_response(ollama_client, model, agenerator, alist):
 
 
 @pytest.mark.asyncio
+async def test_stream_thinking(ollama_client, model, agenerator, alist, captured_warnings):
+    think_event = unittest.mock.Mock()
+    think_event.message.tool_calls = None
+    think_event.message.content = None
+    think_event.message.thinking = "t1"
+    think_event.done_reason = "stop"
+    think_event.eval_count = 10
+    think_event.prompt_eval_count = 5
+    think_event.total_duration = 1000000  # 1ms in nanoseconds
+
+    text_event = unittest.mock.Mock()
+    text_event.message.tool_calls = None
+    text_event.message.content = "Hello"
+    text_event.message.thinking = None
+    text_event.done_reason = "stop"
+    text_event.eval_count = 10
+    text_event.prompt_eval_count = 5
+    text_event.total_duration = 1000000  # 1ms in nanoseconds
+
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([think_event, think_event, text_event]))
+
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    response = model.stream(messages)
+
+    tru_events = await alist(response)
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "t1"}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "t1"}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockDelta": {"delta": {"text": "Hello"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 5, "outputTokens": 10, "totalTokens": 15},
+                "metrics": {"latencyMs": 1},
+            }
+        },
+    ]
+
+    assert tru_events == exp_events
+    expected_request = {
+        "model": "m1",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "options": {},
+        "stream": True,
+        "tools": [],
+    }
+    ollama_client.chat.assert_called_once_with(**expected_request)
+
+    # Ensure no warnings emitted
+    assert len(captured_warnings) == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_thinking_and_text_in_one_chunk(ollama_client, model, agenerator, alist):
+    mixed_event = unittest.mock.Mock()
+    mixed_event.message.tool_calls = None
+    mixed_event.message.content = "Hel"
+    mixed_event.message.thinking = "t1"
+
+    text_event = unittest.mock.Mock()
+    text_event.message.tool_calls = None
+    text_event.message.content = "lo"
+    text_event.message.thinking = None
+    text_event.done_reason = "stop"
+    text_event.eval_count = 10
+    text_event.prompt_eval_count = 5
+    text_event.total_duration = 1000000  # 1ms in nanoseconds
+
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([mixed_event, text_event]))
+
+    tru_events = await alist(model.stream([{"role": "user", "content": [{"text": "Hello"}]}]))
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "t1"}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockDelta": {"delta": {"text": "Hel"}}},
+        {"contentBlockDelta": {"delta": {"text": "lo"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 5, "outputTokens": 10, "totalTokens": 15},
+                "metrics": {"latencyMs": 1},
+            }
+        },
+    ]
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+async def test_stream_ends_while_thinking(ollama_client, model, agenerator, alist):
+    think_event = unittest.mock.Mock()
+    think_event.message.tool_calls = None
+    think_event.message.content = ""
+    think_event.message.thinking = "t1"
+    think_event.done_reason = "length"
+    think_event.eval_count = 10
+    think_event.prompt_eval_count = 5
+    think_event.total_duration = 1000000  # 1ms in nanoseconds
+
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([think_event]))
+
+    tru_events = await alist(model.stream([{"role": "user", "content": [{"text": "Hello"}]}]))
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "t1"}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "max_tokens"}},
+        {
+            "metadata": {
+                "usage": {"inputTokens": 5, "outputTokens": 10, "totalTokens": 15},
+                "metrics": {"latencyMs": 1},
+            }
+        },
+    ]
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
 async def test_tool_choice_not_supported_warns(ollama_client, model, agenerator, alist, captured_warnings):
     """Test that non-None toolChoice emits warning for unsupported providers."""
     tool_choice = {"auto": {}}
@@ -528,6 +658,7 @@ async def test_tool_choice_not_supported_warns(ollama_client, model, agenerator,
     mock_event = unittest.mock.Mock()
     mock_event.message.tool_calls = None
     mock_event.message.content = "Hello"
+    mock_event.message.thinking = None
     mock_event.done_reason = "stop"
     mock_event.eval_count = 10
     mock_event.prompt_eval_count = 5
@@ -550,6 +681,7 @@ async def test_stream_with_tool_calls(ollama_client, model, agenerator, alist):
     mock_tool_call.function.arguments = {"expression": "2+2"}
     mock_event.message.tool_calls = [mock_tool_call]
     mock_event.message.content = "I'll calculate that for you"
+    mock_event.message.thinking = None
     mock_event.done_reason = "stop"
     mock_event.eval_count = 15
     mock_event.prompt_eval_count = 8
@@ -902,3 +1034,25 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by Ollama" in messages_logged[0]
+
+
+def test_format_request_skips_reasoning_content(model, caplog):
+    """Reasoning blocks in history are skipped with one log per request instead of raising TypeError (#5804)."""
+    caplog.set_level(logging.WARNING, logger="strands.models.ollama")
+    reasoning_turn = {
+        "role": "assistant",
+        "content": [{"reasoningContent": {"reasoningText": {"text": "7 x 13", "signature": "sig"}}}, {"text": "No"}],
+    }
+    messages = [{"role": "user", "content": [{"text": "Is 91 prime?"}]}, reasoning_turn, reasoning_turn]
+
+    tru_messages = model.format_request(messages)["messages"]
+    exp_messages = [
+        {"role": "user", "content": "Is 91 prime?"},
+        {"role": "assistant", "content": "No"},
+        {"role": "assistant", "content": "No"},
+    ]
+    assert tru_messages == exp_messages
+
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<2> | reasoningContent is not supported" in messages_logged[0]
