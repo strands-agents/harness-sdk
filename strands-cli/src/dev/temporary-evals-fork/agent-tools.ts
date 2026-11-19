@@ -687,6 +687,8 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     'Start the paid optimization run. This call starts the paid run itself and asks nothing first, so call it ' +
     'only after the developer answered yes, in an earlier turn, to the experiment and tuning scope you named. ' +
     'Being asked to improve the agent is not that answer, and a scope that looks obvious is not that answer. ' +
+    'Collect the settings with strands_dev_ask first and pass what the developer chose: a scope you picked for ' +
+    'them in a message is not their setup, however obvious its defaults looked. ' +
     'Tunes the createHarness options of this agent (instructions, model, effort, caching, tools, and more) ' +
     'against a saved experiment with the strands-evals optimizer, ' +
     'and reports the score before and after with the proposed edits. It changes no file. It can take a long time.',
