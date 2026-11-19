@@ -8,7 +8,8 @@
  * @internal
  */
 
-import { matchingSections, queryTokensOf } from '../storage/search/keyword.js'
+import { queryTokensOf, tokenOverlapScore } from '../storage/search/keyword.js'
+import { matchingSections } from '../storage/search/sections.js'
 
 /**
  * Lines of context kept on either side of a matching line. Matches the default the `pattern` path
@@ -82,7 +83,12 @@ export async function searchByQuery(
  * lines outside it are not handed over, so a section can neither be found in nor reach past them.
  */
 function rankSections(lines: string[], query: string, scopeStart: number, scopeEnd: number): LineWindow[] {
-  const sections = matchingSections(queryTokensOf(query), lines.slice(scopeStart, scopeEnd + 1), CONTEXT_LINES)
+  const queryTokens = queryTokensOf(query)
+  const sections = matchingSections(
+    lines.slice(scopeStart, scopeEnd + 1),
+    (text) => tokenOverlapScore(queryTokens, text),
+    CONTEXT_LINES
+  )
   return sections.map((section) => ({ start: scopeStart + section.start, end: scopeStart + section.end }))
 }
 
