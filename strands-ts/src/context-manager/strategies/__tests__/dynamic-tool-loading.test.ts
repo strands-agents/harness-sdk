@@ -21,6 +21,7 @@ import type { StrategyPresetName } from '../../presets.js'
 import type { Snapshot } from '../../../types/snapshot.js'
 import { Offload, type DeferTarget } from '../offload/index.js'
 import { ContextOffloader } from '../../../vended-plugins/context-offloader/plugin.js'
+import { AgentSkills, Skill } from '../../../vended-plugins/skills/index.js'
 import { ModelRouter } from '../../../models/routing/router.js'
 
 const makeTool = (name: string) =>
@@ -80,31 +81,41 @@ function routeTo(model: MockMessageModel, defaultCapability: DynamicToolLoading)
 }
 
 /**
- * Interrupts a load of these tools, then approves it on a restored agent, which runs it before its first model call.
+ * Runs the model's tool calls, interrupting the last one, then approves that call on a restored agent, which runs it
+ * before its first model call.
  *
- * @returns The load's result, and the restored agent's model
+ * @returns The interrupted call's result, and the restored agent's model
  */
-async function resumeLoad(
-  names: string[],
-  options: AgentOptions = {}
+async function resumeCall(
+  calls: { name: string; input: JSONValue }[],
+  options: AgentOptions = {},
+  dynamicToolLoading: DynamicToolLoading = 'native'
 ): Promise<{ result: ToolResultBlock; model: MockMessageModel }> {
+  const interrupted = calls.at(-1)!
   const approve = (event: BeforeToolCallEvent): void => {
+    if (event.toolUse.name !== interrupted.name) return
     if (event.interrupt<string>({ name: 'approve', reason: 'Run this tool?' }) !== 'yes') event.cancel = 'not approved'
   }
-  const { agent, model } = makeAgent('native', options)
+  const { agent, model } = makeAgent(dynamicToolLoading, options)
   agent.addHook(BeforeToolCallEvent, approve)
-  model.addTurn({ type: 'toolUseBlock', name: 'load_tools', toolUseId: 'load-1', input: { names } })
-  const interrupted = await agent.invoke('List the files.')
-  expect(interrupted.stopReason).toBe('interrupt')
+  calls.forEach(({ name, input }, index) =>
+    model.addTurn({ type: 'toolUseBlock', name, toolUseId: `call-${index}`, input })
+  )
+  const first = await agent.invoke('List the files.')
+  expect(first.stopReason).toBe('interrupt')
   const snapshot = JSON.parse(JSON.stringify(agent.takeSnapshot({ preset: 'session' }))) as Snapshot
 
-  const { agent: restored, model: restoredModel } = makeAgent('native', options)
+  const { agent: restored, model: restoredModel } = makeAgent(dynamicToolLoading, options)
   restored.addHook(BeforeToolCallEvent, approve)
   restoredModel.addTurn({ type: 'textBlock', text: 'done' })
   restored.loadSnapshot(snapshot)
-  const interruptId = interrupted.interrupts![0]!.id
+  const interruptId = first.interrupts![0]!.id
   await restored.invoke([new InterruptResponseContent({ interruptId, response: 'yes' })])
-  return { result: restored.messages[2]!.content[0] as ToolResultBlock, model: restoredModel }
+  const toolUseId = `call-${calls.length - 1}`
+  const result = restored.messages
+    .flatMap((message) => message.content)
+    .find((block): block is ToolResultBlock => block.type === 'toolResultBlock' && block.toolUseId === toolUseId)!
+  return { result, model: restoredModel }
 }
 
 describe('DynamicToolLoadingStrategy', () => {
@@ -187,6 +198,18 @@ describe('DynamicToolLoadingStrategy', () => {
 
     const [toolSpecs] = sentToolSpecs(model)
     expect(toolSpecs!.map((spec) => spec.name)).toContain('retrieve_offloaded_content')
+    expect(deferredNames(model)).toEqual(['shell', 'read', 'write'])
+  })
+
+  it('keeps the AgentSkills skills tool, which the skills listing tells the model to call, out of the deferred tools', async () => {
+    const skills = new AgentSkills({ skills: [new Skill({ name: 'notes', description: 'Take notes.' })] })
+    const { agent, model } = makeAgent('native', { plugins: [skills] })
+    model.addTurn({ type: 'textBlock', text: 'ok' })
+
+    await agent.invoke('Hi.')
+
+    const [toolSpecs] = sentToolSpecs(model)
+    expect(toolSpecs!.map((spec) => spec.name)).toContain('skills')
     expect(deferredNames(model)).toEqual(['shell', 'read', 'write'])
   })
 
@@ -365,15 +388,46 @@ describe('DynamicToolLoadingStrategy', () => {
   ] as [string, AgentOptions][])(
     'loads a tool %s when an interrupted load resumes on a restored agent, before its first model call',
     async (_name, options) => {
-      const { result, model } = await resumeLoad(['shell'], options)
+      const { result, model } = await resumeCall([{ name: 'load_tools', input: { names: ['shell'] } }], options)
 
       expect(result.content).toEqual([new ToolReferenceBlock({ name: 'shell' })])
       expect(deferredNames(model)).toEqual(['shell', 'read', 'write'])
     }
   )
 
+  it.each(['native', 'stubs'] as const)(
+    'answers a call to an unloaded deferred tool when the interrupted call resumes on a restored agent, on a %s model',
+    async (dynamicToolLoading) => {
+      const { result } = await resumeCall([{ name: 'shell', input: { value: 'ls' } }], {}, dynamicToolLoading)
+
+      expect(result).toEqual(
+        new ToolResultBlock({
+          toolUseId: 'call-0',
+          status: 'error',
+          content: [
+            new TextBlock(
+              'Not run: shell was called before its parameters were loaded. They are loaded now; call it again.'
+            ),
+            new ToolReferenceBlock({ name: 'shell' }),
+          ],
+        })
+      )
+    }
+  )
+
+  it('runs a resumed call on a restored agent to a tool its conversation loaded', async () => {
+    const { result } = await resumeCall([
+      { name: 'load_tools', input: { names: ['shell'] } },
+      { name: 'shell', input: { value: 'ls' } },
+    ])
+
+    expect(result).toMatchObject({ toolUseId: 'call-1', status: 'success' })
+  })
+
   it('loads no tool the target keeps in full when an interrupted load resumes on a restored agent', async () => {
-    const { result } = await resumeLoad(['read'], { strategy: Offload.defer(['!read']) })
+    const { result } = await resumeCall([{ name: 'load_tools', input: { names: ['read'] } }], {
+      strategy: Offload.defer(['!read']),
+    })
 
     expect(result.content).toEqual([
       new TextBlock(
@@ -550,24 +604,30 @@ describe('DynamicToolLoadingStrategy', () => {
       expect(deferredNames(model)).toEqual(['shell'])
     })
 
-    it('never defers a tool that takes no parameters, so a call to it runs without a load', async () => {
-      const ping = tool({
-        name: 'ping',
-        description: 'Ping the service.',
-        inputSchema: z.object({}),
-        callback: () => 'pong',
-      })
-      const { agent, model } = makeAgent('stubs', { tools: [shell, ping] })
-      model
-        .addTurn({ type: 'toolUseBlock', name: 'ping', toolUseId: 'ping-1', input: {} })
-        .addTurn({ type: 'textBlock', text: 'done' })
+    it.each([
+      ['', {}],
+      [', with background tasks adding a parameter to every schema in the call', { backgroundTasks: {} }],
+    ] as [string, AgentOptions][])(
+      'never defers a tool that takes no parameters%s, so a call to it runs without a load',
+      async (_name, options) => {
+        const ping = tool({
+          name: 'ping',
+          description: 'Ping the service.',
+          inputSchema: z.object({}),
+          callback: () => 'pong',
+        })
+        const { agent, model } = makeAgent('stubs', { tools: [shell, ping], ...options })
+        model
+          .addTurn({ type: 'toolUseBlock', name: 'ping', toolUseId: 'ping-1', input: {} })
+          .addTurn({ type: 'textBlock', text: 'done' })
 
-      await agent.invoke('Ping it.')
+        await agent.invoke('Ping it.')
 
-      expect(deferredNames(model)).toEqual(['shell'])
-      expect(sentToolSpecs(model)[0]!.find((spec) => spec.name === 'ping')).toEqual(ping.toolSpec)
-      expect(agent.messages[2]!.content[0]).toMatchObject({ toolUseId: 'ping-1', status: 'success' })
-    })
+        expect(deferredNames(model)).toEqual(['shell'])
+        expect(sentToolSpecs(model)[0]!.find((spec) => spec.name === 'ping')?.description).toBe('Ping the service.')
+        expect(agent.messages[2]!.content[0]).toMatchObject({ toolUseId: 'ping-1', status: 'success' })
+      }
+    )
 
     it.each([
       [{ type: 'object' }, false],

@@ -19,6 +19,7 @@ import { lookupModel } from '../../models/model-info.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
 import { RETRIEVAL_TOOL_NAME as OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME } from '../../vended-plugins/context-offloader/constants.js'
+import { SKILLS_TOOL_NAME } from '../../vended-plugins/skills/constants.js'
 import { TextBlock, ToolReferenceBlock, ToolResultBlock, type Message } from '../../types/messages.js'
 import { RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { parseCondition, type ParsedCondition, type Percent } from './offload/conditions.js'
@@ -37,6 +38,7 @@ const PROTECTED_TOOL_NAMES = new Set([
   RETRIEVAL_TOOL_NAME,
   OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
+  SKILLS_TOOL_NAME,
 ])
 
 const CONDITION_NAMES = ['toolCount', 'schemaTokens']
@@ -221,10 +223,12 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
 
   /** Whether the target covers the agent's tool and the tool may be deferred. */
   private _targets(agent: LocalAgent, spec: ToolSpec): boolean {
+    const tool = agent.toolRegistry.get(spec.name)
     return (
       !PROTECTED_TOOL_NAMES.has(spec.name) &&
-      !isManageTool(agent.toolRegistry.get(spec.name)) &&
-      takesParameters(spec) &&
+      !isManageTool(tool) &&
+      // The tool's own schema, since background tasks add a parameter to every schema in the call.
+      takesParameters(tool?.toolSpec ?? spec) &&
       (this._matcher?.matchesTool(spec.name) ?? true)
     )
   }
@@ -252,15 +256,17 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
    * Answers a call to a tool the latest model call deferred, made before the conversation loaded its schema, with the
    * schema instead of running the tool: a stub takes any input, and once a summary removes a load the model can call
    * a deferred tool from memory. Loads are read from the messages, so a load that was summarized away is delivered
-   * again.
+   * again. Before the agent's first model call, as when an interrupted call resumes on a restored agent, every tool the
+   * target covers counts as deferred, as in {@link deferredTools}: answering a call with the schema once more costs less
+   * than running it on guessed input.
    */
   private async *_guardUnloaded(
     context: ExecuteToolContext,
     next: MiddlewareNextOf<typeof ExecuteToolStage>
   ): AsyncGenerator<AgentStreamEvent, ExecuteToolResult, undefined> {
     const { name, toolUseId } = context.toolUse
-    const deferred = this._deferred.get(context.agent)
-    if (!context.tool || !deferred?.has(name) || loadedTools(context.agent.messages).has(name)) {
+    const deferred = this._deferred.get(context.agent) ?? new Set(this.deferredTools(context.agent))
+    if (!context.tool || !deferred.has(name) || loadedTools(context.agent.messages).has(name)) {
       return yield* next(context)
     }
     return {
