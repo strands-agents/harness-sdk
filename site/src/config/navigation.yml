@@ -430,6 +430,7 @@ sidebar:
                     slug: docs/user-guide/sdk/decision-models/models
                   - docs/user-guide/sdk/decision-models/models/llm
                   - docs/user-guide/sdk/decision-models/models/gemini
+                  - docs/user-guide/sdk/decision-models/models/openai
           - label: Tools
             items:
               - docs/user-guide/sdk/tools/tool-results

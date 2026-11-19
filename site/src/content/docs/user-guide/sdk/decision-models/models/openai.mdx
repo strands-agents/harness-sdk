@@ -1,0 +1,70 @@
+---
+title: OpenAI decision model
+description: "Answer decision model questions with OpenAI's Decisions API, which scores yes/no and multiple-choice questions and returns calibrated probabilities."
+tags: [decision-models]
+languages: TypeScript
+sourceLinks:
+  - path: strands-ts/src/decisions/openai-decision-model.ts
+---
+
+`OpenAIDecisionModel` answers questions with OpenAI's
+[Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`gpt-6-luna`).
+The API scores each question's choices instead of generating text, so every answer comes
+with a probability for each choice and a confidence. All the questions in one `ask` go in
+a single request, up to 400.
+
+## Configuration
+
+| Option | Description |
+| --- | --- |
+| `apiKey` | Your OpenAI API key. Defaults to the `OPENAI_API_KEY` environment variable. |
+| `modelId` | The decision model. Defaults to `gpt-6-luna`. |
+| `defaultMinConfidence` | The minimum confidence for questions that don't set their own. Defaults to `0.5`. |
+| `fetch` | A custom `fetch` implementation, for example to route requests through a proxy. |
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/models/openai_imports.ts:configuration_imports"
+
+--8<-- "user-guide/sdk/decision-models/models/openai.ts:configuration"
+```
+
+The API key is a server-side credential, so `OpenAIDecisionModel` refuses to run in a
+browser.
+
+## Confidence
+
+`metadata.confidence` reports each answer's confidence, and a
+[minimum confidence](../questions.mdx) is compared against it.
+
+| Question | Confidence | Range |
+| --- | --- | --- |
+| Yes/no | `\|2p - 1\|`, where `p` is the probability of yes | `0` to `1` |
+| Multiple choice | OpenAI's confidence for the chosen option | `0` to `1` |
+
+For yes/no questions the API returns only the probability of yes, so the decision model
+derives the confidence from it: an even split is `0` and certainty is `1`. The default of
+`0.5` makes a yes/no answer `Uncertain` when the probability of yes is between `0.25` and
+`0.75`. Confidence scales differ between decision models, so retune your thresholds when
+you switch to OpenAI from another decision model.
+
+## Refusals
+
+The API can refuse a question while still answering the others. A refused question's
+answer is `Uncertain`, with no probabilities and a confidence of `0`, so the other answers
+in the same `ask` stay usable. If the refused question sets `uncertainty: false`, the
+decision model throws a `ModelError` instead, because that question doesn't allow
+`Uncertain`.
+
+## Input
+
+A string is sent as the request's text input. Content blocks and messages are sent as
+JSON text. Image, audio, video, and document bytes aren't supported.
+
+## Errors
+
+| Response | Error |
+| --- | --- |
+| Rate limited or temporarily unavailable (HTTP 429 or 503) | `ModelThrottledError` |
+| The request is too large (HTTP 413) | `ContextWindowOverflowError` |
+| A refused question that sets `uncertainty: false` | `ModelError` |
+| Any other failed request, or an answer that doesn't match its question | `ModelError` |
