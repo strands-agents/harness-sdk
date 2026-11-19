@@ -322,7 +322,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const recorded = latestCallTools(agent)
     if (recorded) return recorded
     const toolSpecs = agent.toolRegistry.toolSpecs()
-    return agent.contextManager?.callTools(agent, toolSpecs, agent.model) ?? { toolSpecs }
+    return agent.contextManager?.callTools(agent, toolSpecs, agent.model, agent.messages) ?? { toolSpecs }
   }
 
   private _resolveModel(agent: LocalAgent): Model | undefined {

@@ -11,27 +11,27 @@ import type { JSONValue } from '../types/json.js'
 
 /**
  * Sends the tool references in each tool result as text, unless every block of the result is a reference to a tool
- * the request lists and keeps as a reference (`keptReferences`). The Claude API rejects a tool result that mixes tool
- * references with other content, and a reference to a tool its request doesn't list. The text gives the parameters of
- * the request's tool with the reference's name.
+ * the request lists and defers natively (`deferredTools`). The Claude API rejects a tool result that mixes tool
+ * references with other content, and a reference to a tool its request doesn't list. A reference to a tool the request
+ * defers becomes that tool's parameters, since the API keeps its schema out of the context; any other becomes
+ * `Loaded <name>.`, since the request carries the tool's spec.
  *
  * @param messages - The messages of a model call
  * @param toolSpecs - The tool specs of the call
- * @param keptReferences - The tools whose references stay as they are: those the call defers, when its model defers
- *   tools natively
+ * @param deferredTools - The tools the call defers natively; none for a model that doesn't defer tools natively
  * @returns The messages to send; the input is never changed
  * @internal
  */
 export function withToolReferenceText(
   messages: Message[],
   toolSpecs: ToolSpec[],
-  keptReferences: ReadonlySet<string> = new Set()
+  deferredTools: ReadonlySet<string> = new Set()
 ): Message[] {
   return replaceReferences(
     messages,
     toolSpecs,
-    keptReferences,
-    (name, spec) => new TextBlock(referenceText(name, spec))
+    deferredTools,
+    (name, spec) => new TextBlock(referenceText(name, spec, deferredTools))
   )
 }
 
@@ -46,7 +46,9 @@ export function withToolReferenceText(
  */
 export function withToolReferenceSchemas(messages: Message[], toolSpecs: ToolSpec[]): Message[] {
   return replaceReferences(messages, toolSpecs, new Set(), (name, spec) =>
-    spec ? new JsonBlock({ json: (spec.inputSchema ?? {}) as JSONValue }) : new TextBlock(referenceText(name, spec))
+    spec
+      ? new JsonBlock({ json: (spec.inputSchema ?? {}) as JSONValue })
+      : new TextBlock(referenceText(name, spec, new Set()))
   )
 }
 
@@ -62,7 +64,7 @@ export function hasToolReferences(messages: Message[]): boolean {
 }
 
 /**
- * Whether a tool result holds a tool reference, as a `load_tools` result and the answer to a call made before its
+ * Whether a tool result holds a tool reference, as a `search_tools` result and the answer to a call made before its
  * tool's load do. Such a result is what keeps a loaded tool's schema in the model's context.
  *
  * @param block - The tool result
@@ -109,9 +111,10 @@ function replaceReferences(
   )
 }
 
-function referenceText(name: string, spec: ToolSpec | undefined): string {
+function referenceText(name: string, spec: ToolSpec | undefined, deferredTools: ReadonlySet<string>): string {
   if (!spec) return `Loaded tool ${name}, which this request doesn't include.`
-  return `${name} parameters: ${JSON.stringify(spec.inputSchema ?? {})}`
+  if (deferredTools.has(name)) return `${name} parameters: ${JSON.stringify(spec.inputSchema ?? {})}`
+  return `Loaded ${name}.`
 }
 
 function hasToolReference(block: ContentBlock): block is ToolResultBlock {

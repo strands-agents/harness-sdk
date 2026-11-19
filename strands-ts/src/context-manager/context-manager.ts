@@ -23,7 +23,7 @@ import { DynamicToolLoadingStrategy } from './strategies/dynamic-tool-loading.js
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
-import { createLoadTools, LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
+import { createSearchTools, SEARCH_TOOLS_TOOL_NAME } from '../tools/search-tools.js'
 import { ToolUseBlock, type Message } from '../types/messages.js'
 
 /**
@@ -140,15 +140,19 @@ export class ContextManager implements Plugin {
    * @param agent - The agent making the call
    * @param toolSpecs - The tool specs of the call
    * @param model - The call's model
-   * @returns The call's tool specs, and the names of the ones it defers; every spec without an `Offload.defer` strategy
+   * @param messages - The messages of the call
+   * @returns The call's tool specs, and the names of the ones it defers natively; every spec without an `Offload.defer`
+   *   strategy
    * @internal
    */
   callTools(
     agent: LocalAgent,
     toolSpecs: readonly ToolSpec[],
-    model: Model
+    model: Model,
+    messages: readonly Message[]
   ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools'> {
-    return toolLoadingStrategy(this._strategies)?.callTools(agent, toolSpecs, model) ?? { toolSpecs: [...toolSpecs] }
+    const strategy = toolLoadingStrategy(this._strategies)
+    return strategy?.callTools(agent, toolSpecs, model, messages) ?? { toolSpecs: [...toolSpecs] }
   }
 
   async initAgent(agent: LocalAgent): Promise<void> {
@@ -180,7 +184,7 @@ export class ContextManager implements Plugin {
     }
 
     const retrievalTools = this._enableRetrievalTool && this._stash ? [createRetrievalTool(this._stash)] : []
-    this._tools = [...retrievalTools, ...loadToolsFor(toolLoadingStrategy(this._strategies), agent)]
+    this._tools = [...retrievalTools, ...searchToolsFor(toolLoadingStrategy(this._strategies), agent)]
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
       await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)
@@ -270,20 +274,20 @@ export class ContextManager implements Plugin {
 }
 
 /**
- * The `load_tools` tool for the `Offload.defer` strategy, if there is one. It loads the tools the strategy deferred on
+ * The `search_tools` tool for the `Offload.defer` strategy, if there is one. It loads the tools the strategy deferred on
  * the agent's latest model call.
  *
- * @throws Error when the agent already has a tool with the loader's name
+ * @throws Error when the agent already has a tool with the search tool's name
  */
-function loadToolsFor(strategy: DynamicToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
+function searchToolsFor(strategy: DynamicToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
   if (!strategy) return []
-  if (agent.toolRegistry.get(LOAD_TOOLS_TOOL_NAME)) {
+  if (agent.toolRegistry.get(SEARCH_TOOLS_TOOL_NAME)) {
     throw new Error(
-      `contextManager adds a tool named '${LOAD_TOOLS_TOOL_NAME}' for Offload.defer and the ` +
+      `contextManager adds a tool named '${SEARCH_TOOLS_TOOL_NAME}' for Offload.defer and the ` +
         "'dynamicToolLoading' preset, and the agent already has one; rename the agent's tool"
     )
   }
-  return [createLoadTools((callingAgent) => strategy.deferredTools(callingAgent))]
+  return [createSearchTools((callingAgent) => strategy.deferredTools(callingAgent))]
 }
 
 /** The `Offload.defer` strategy among these, if there is one. */
@@ -293,7 +297,7 @@ function toolLoadingStrategy(strategies: ContextStrategy[]): DynamicToolLoadingS
   )
 }
 
-/** Two `Offload.defer` strategies can't share an agent's tools list, which holds one `load_tools`. */
+/** Two `Offload.defer` strategies can't share an agent's tools list, which holds one `search_tools`. */
 function checkOneToolLoadingStrategy(strategies: ContextStrategy[]): void {
   if (strategies.filter((strategy) => strategy instanceof DynamicToolLoadingStrategy).length < 2) return
   throw new Error(

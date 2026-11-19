@@ -305,3 +305,13 @@ export class MockMessageModel extends Model<BaseModelConfig> {
     }
   }
 }
+
+/**
+ * A {@link MockMessageModel} whose provider sends deferred tools with a native deferral flag when
+ * `modelInfo.capabilities.dynamicToolLoading` is `'native'`, as `AnthropicModel` does.
+ */
+export class NativeDeferralMockModel extends MockMessageModel {
+  override get defersToolsNatively(): boolean {
+    return this.modelInfo.capabilities?.dynamicToolLoading === 'native'
+  }
+}

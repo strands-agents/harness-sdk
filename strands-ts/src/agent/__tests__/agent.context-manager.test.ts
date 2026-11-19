@@ -7,7 +7,7 @@ import { NullConversationManager } from '../../conversation-manager/null-convers
 import { ContextManager } from '../../context-manager/context-manager.js'
 import { Offload } from '../../context-manager/strategies/offload/index.js'
 import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
-import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
+import { SEARCH_TOOLS_TOOL_NAME } from '../../tools/search-tools.js'
 import { tool } from '../../tools/tool-factory.js'
 import { OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ConversationManager } from '../../conversation-manager/conversation-manager.js'
@@ -126,7 +126,7 @@ describe('Agent contextManager', () => {
       expect(plugins.get('strands:context-manager')).toBeInstanceOf(ContextManager)
     })
 
-    it('registers the loader of an Offload.defer strategy as a context manager tool', async () => {
+    it('registers the search tool of an Offload.defer strategy as a context manager tool', async () => {
       const agent = new Agent({
         model: new MockMessageModel(),
         contextManager: { strategies: [Offload.defer('toolSpecs')] },
@@ -135,27 +135,27 @@ describe('Agent contextManager', () => {
       await agent.initialize()
 
       const retrieval = agent.toolRegistry.get('retrieve_context')
-      const loader = agent.toolRegistry.get(LOAD_TOOLS_TOOL_NAME)
+      const searcher = agent.toolRegistry.get(SEARCH_TOOLS_TOOL_NAME)
       expect(retrieval).toBeDefined()
-      expect(loader).toBeDefined()
-      expect(agent.contextManager?.getTools()).toEqual([retrieval, loader])
+      expect(searcher).toBeDefined()
+      expect(agent.contextManager?.getTools()).toEqual([retrieval, searcher])
     })
 
-    it('rejects an agent tool named load_tools when it defers tools', async () => {
-      const loadTools = tool({
-        name: 'load_tools',
+    it('rejects an agent tool named search_tools when it defers tools', async () => {
+      const searchTools = tool({
+        name: 'search_tools',
         description: 'Load data.',
         inputSchema: z.object({}),
         callback: () => 'done',
       })
       const agent = new Agent({
         model: new MockMessageModel(),
-        tools: [loadTools],
+        tools: [searchTools],
         contextManager: { strategies: ['dynamicToolLoading'] },
       })
 
       await expect(agent.initialize()).rejects.toThrow(
-        "contextManager adds a tool named 'load_tools' for Offload.defer and the 'dynamicToolLoading' preset, and " +
+        "contextManager adds a tool named 'search_tools' for Offload.defer and the 'dynamicToolLoading' preset, and " +
           "the agent already has one; rename the agent's tool"
       )
     })

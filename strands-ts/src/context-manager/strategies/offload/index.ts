@@ -37,9 +37,9 @@ interface OffloadNamespace {
   /** Replace content with an LLM-generated summary. Without `.when()` conditions, summarizes each block on arrival. */
   summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategy
   /**
-   * Keep tools' input schemas out of the context until the model loads them with `load_tools`. The model still
-   * sees each deferred tool's name and description. Without `.when()` conditions, defers at any tool count. One per
-   * agent, the `dynamicToolLoading` preset included.
+   * Keep tools' input schemas out of the context until the model loads them with `search_tools`, whose description
+   * lists the deferred tools. Without `.when()` conditions, defers at any tool count. One per agent, the
+   * `dynamicToolLoading` preset included.
    */
   defer(target: DeferTarget): DeferStrategy
 }

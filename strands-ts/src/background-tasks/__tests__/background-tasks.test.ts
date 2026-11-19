@@ -259,17 +259,17 @@ describe('BackgroundTasks', () => {
     }
   })
 
-  it('lets a user tool named load_tools run in the background', async () => {
-    const loadTools = tool({
-      name: 'load_tools',
+  it('lets a user tool named search_tools run in the background', async () => {
+    const searchTools = tool({
+      name: 'search_tools',
       description: 'Load data.',
       inputSchema: z.object({}),
       callback: () => 'done',
     })
     const agent = new Agent({
       model: new MockMessageModel(),
-      tools: [loadTools],
-      backgroundTasks: { always: [loadTools] },
+      tools: [searchTools],
+      backgroundTasks: { always: [searchTools] },
       printer: false,
     })
 

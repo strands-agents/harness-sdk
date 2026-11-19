@@ -218,11 +218,12 @@ describe('AnthropicModel', () => {
     it.each([
       ['claude-haiku-4-5-20251001', 'native'],
       ['claude-opus-5-5', 'native'],
-      ['claude-opus-4-1', 'stubs'],
-      ['claude-3-5-haiku-20241022', 'stubs'],
+      ['claude-opus-4-1', 'unsupported'],
+      ['claude-3-5-haiku-20241022', 'unsupported'],
     ])('reports deferred tools from the shared model info for %s: %s', (modelId, expected) => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
       expect(model.modelInfo.capabilities?.dynamicToolLoading).toBe(expected)
+      expect(model.defersToolsNatively).toBe(expected === 'native')
     })
 
     it.each([
@@ -1587,8 +1588,10 @@ describe('AnthropicModel', () => {
           )
         })
 
-        it('sends a reference as text when the request does not defer the tool, as in a server-side summary', async () => {
-          expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' })], [])).toEqual(toolResult(shellText))
+        it('names the tool when the request does not defer it, as in a server-side summary, since it carries the spec', async () => {
+          expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' })], [])).toEqual(
+            toolResult('Loaded shell.')
+          )
         })
 
         it.each([
@@ -1596,7 +1599,7 @@ describe('AnthropicModel', () => {
           [
             'a reference to a tool the request does not defer',
             new ToolReferenceBlock({ name: 'read' }),
-            { type: 'text', text: `read parameters: ${JSON.stringify(read.inputSchema)}` },
+            { type: 'text', text: 'Loaded read.' },
           ],
         ])('sends every reference in a result as text when the result also holds %s', async (_name, other, sent) => {
           expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' }), other])).toEqual(
@@ -2060,23 +2063,6 @@ describe('AnthropicModel', () => {
         { name: 't2', description: 'tool two', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } },
         { name: 't3', description: 'tool three', input_schema: { type: 'object' }, defer_loading: true },
       ])
-    })
-
-    it('lists the deferred tools in the load_tools description, since the API hides them', async () => {
-      const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
-      const loader = {
-        name: 'load_tools',
-        description: 'Load tools.',
-        inputSchema: { type: 'object' as const },
-      }
-      await collectIterator(
-        provider.stream([userMessage('Hi')], {
-          toolSpecs: [loader, ...toolSpecs],
-          deferredTools: new Set(['t1']),
-        })
-      )
-      expect(captured.request.tools[0].description).toBe('Load tools.\n\nTools you can load:\n- t1: tool one')
     })
 
     it('omits defer_loading on a model without native deferred tools', async () => {

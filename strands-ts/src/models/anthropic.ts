@@ -20,7 +20,6 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import type { ToolSpec } from '../tools/types.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { withToolReferenceText } from './tool-references.js'
@@ -128,18 +127,11 @@ function validateAnthropicTools(anthropicTools: Anthropic.ToolUnion[]): void {
   }
 }
 
-/**
- * Formats tool specs as function tools. Each deferred tool goes with `defer_loading`, and `load_tools` lists
- * the deferred tools, since the API hides them until they are loaded.
- */
+/** Formats tool specs as function tools, each deferred one with `defer_loading`. */
 function formatFunctionTools(toolSpecs: ToolSpec[], deferredTools: ReadonlySet<string>): Anthropic.Tool[] {
-  const loadable = toolSpecs
-    .filter((tool) => deferredTools.has(tool.name))
-    .map((tool) => `- ${tool.name}: ${tool.description}`)
-  const listing = loadable.length > 0 ? `\n\nTools you can load:\n${loadable.join('\n')}` : ''
   return toolSpecs.map((tool) => ({
     name: tool.name,
-    description: tool.name === LOAD_TOOLS_TOOL_NAME ? `${tool.description}${listing}` : tool.description,
+    description: tool.description,
     input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
     ...(deferredTools.has(tool.name) && { defer_loading: true }),
   }))
@@ -422,6 +414,15 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       { capabilities: { temporaryMessages, dynamicToolLoading } },
       this._config.modelInfo
     )
+  }
+
+  /**
+   * Whether the model defers tools natively, sent with `defer_loading` and loaded with `tool_reference`.
+   *
+   * @internal
+   */
+  override get defersToolsNatively(): boolean {
+    return this.modelInfo.capabilities?.dynamicToolLoading === 'native'
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
@@ -1024,8 +1025,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
     if (this._serverSideSummary()) messages = fromLastCompaction(messages)
-    const defersTools = this.modelInfo.capabilities?.dynamicToolLoading === 'native'
-    const deferredTools: ReadonlySet<string> = (defersTools && options?.deferredTools) || new Set()
+    const deferredTools: ReadonlySet<string> = (this.defersToolsNatively && options?.deferredTools) || new Set()
     const toolSpecs = options?.toolSpecs ?? []
     // Requests that skip ModelProxy, such as server-side summaries and native token counts, can carry references too.
     messages = withToolReferenceText(messages, toolSpecs, deferredTools)

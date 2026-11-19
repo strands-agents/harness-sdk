@@ -588,8 +588,8 @@ describe('a summarized run replays the agent request', () => {
   it("sends the tools of the agent's latest model call, so the summary shares its prompt cache", async () => {
     const messages = replayMessages()
     const { agent, summarize } = mockAgent(messages)
-    const loader = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
-    const callTools = { toolSpecs: [AGENT_TOOL, loader], deferredTools: new Set(['shell']) }
+    const searcher = { name: 'search_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+    const callTools = { toolSpecs: [AGENT_TOOL, searcher], deferredTools: new Set(['shell']) }
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
     await collectGenerator(new ModelProxy(model, agent).streamAggregated(messages, callTools))
 

@@ -325,8 +325,7 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "nativeStructuredOutput": false
       }
     },
     "amazon.nova-lite-v1:0": {
@@ -335,8 +334,7 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "nativeStructuredOutput": false
       }
     },
     "amazon.nova-micro-v1:0": {
@@ -345,8 +343,7 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "nativeStructuredOutput": false
       }
     },
     "amazon.nova-premier-v1:0": {
@@ -355,8 +352,7 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "nativeStructuredOutput": false
       }
     },
     "amazon.nova-2-lite-v1:0": {
@@ -365,8 +361,7 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "nativeStructuredOutput": false
       }
     },
     "amazon.nova-2-pro-preview-20251202-v1:0": {
@@ -375,8 +370,7 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "nativeStructuredOutput": false
       }
     },
     "zai.glm-4.7": {
@@ -871,9 +865,6 @@
     "mistral.mistral-large-2402": {
       "limits": {
         "contextWindow": 32000
-      },
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
       }
     },
     "google.gemma-4-31b": {
@@ -894,85 +885,16 @@
     "xai.grok-4.7": {
       "limits": {
         "contextWindow": 524288
-      },
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
       }
     },
     "xai.grok-4.6": {
       "limits": {
         "contextWindow": 500000
-      },
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
       }
     },
     "xai.grok-4.3": {
       "limits": {
         "contextWindow": 1000000
-      },
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama3-1-8b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama3-1-70b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama3-1-405b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama3-2-1b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama3-2-3b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama3-2-11b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama3-2-90b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama3-3-70b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama4-scout-17b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "meta.llama4-maverick-17b-instruct": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "deepseek.v3": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
-      }
-    },
-    "qwen.qwen3-coder-480b-a35b": {
-      "capabilities": {
-        "dynamicToolLoading": "unsupported"
       }
     },
     "chat-latest": {

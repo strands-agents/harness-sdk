@@ -18,11 +18,10 @@ import modelInfoData from './model-info.json' with { type: 'json' }
 export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
 
 /**
- * How a model keeps deferred tool schemas out of its context until it loads them: `'native'` sends them with the
- * API's own deferral flag, `'stubs'` sends each as its name and description with an open schema, and `'unsupported'`
- * sends every schema.
+ * How a model takes deferred tools: `'native'` sends each with the API's own deferral flag and loads it with a tool
+ * reference, and `'unsupported'`, an API without one, sends a deferred tool only once the model loads it.
  */
-export type DynamicToolLoading = 'unsupported' | 'native' | 'stubs'
+export type DynamicToolLoading = 'unsupported' | 'native'
 
 /**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
@@ -56,14 +55,11 @@ export interface ModelCapabilities {
    */
   readonly temporaryMessages?: boolean | undefined
   /**
-   * How the model and provider defer tool schemas; see {@link DynamicToolLoading}. In the shared data, `'native'` is
-   * the path on the model vendor's own API and `'unsupported'` marks a model that can't fill in a stub's parameters,
-   * such as one that constrains its tool calls to the stub's open schema. `Model.modelInfo` reports `'stubs'` for every
-   * other model, `'native'` only where the provider sends the deferral flag (`AnthropicModel`), and `'unsupported'`
-   * where the provider needs each tool's full input schema (`BedrockModel` with `strictTools`). A `modelInfo` override
-   * that sets `'unsupported'` sends every full spec to a model that handles stubs badly. On a provider without the
-   * flag, an override that sets `'native'` sends every full spec and only changes the `load_tools` result:
-   * `BedrockModel` names each loaded tool and other providers leave it out.
+   * How the model and provider defer tool schemas; see {@link DynamicToolLoading}. The shared data lists `'native'`
+   * where the model vendor's own API defers tool schemas, and `Model.modelInfo` reports it only where the provider sends
+   * the deferral flag (`AnthropicModel`); every other model reports `'unsupported'`. A `modelInfo` override that sets
+   * `'native'` turns it on for a model the shared data doesn't list yet, and has no effect on a provider without the
+   * flag.
    */
   readonly dynamicToolLoading?: DynamicToolLoading | undefined
 }

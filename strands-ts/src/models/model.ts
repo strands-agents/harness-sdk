@@ -292,9 +292,9 @@ export interface StreamOptions {
   structuredOutputSchema?: z.ZodSchema
 
   /**
-   * Names of the tools in `toolSpecs` this call defers. A provider whose model defers tools natively
-   * (`modelInfo.capabilities.dynamicToolLoading` is `'native'`) keeps their input schemas out of the model's context
-   * until the model loads them; every other provider ignores it.
+   * Names of the tools in `toolSpecs` this call defers. A provider that defers tools natively
+   * ({@link Model.defersToolsNatively}) keeps their input schemas out of the model's context until the model loads
+   * them; every other provider gets no deferred tools.
    *
    * @internal
    */
@@ -433,9 +433,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
   /**
    * Everything the SDK knows about the configured model, resolved on each read. Layers, later ones winning: the shared
-   * model info for `modelId`, `temporaryMessages` off (a provider that sends them turns them back on),
-   * `dynamicToolLoading` as `'stubs'` unless the shared info says `'unsupported'` (a provider that defers natively says
-   * `'native'`), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new
+   * model info for `modelId`, `temporaryMessages` and `dynamicToolLoading` off (a provider that sends them turns them
+   * back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new
    * record, so do not compare reads by reference.
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
@@ -445,16 +444,25 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   get modelInfo(): ModelInfo {
     const config = this.getConfig()
-    const shared = lookupModelInfo(this.modelId ?? '')
-    const dynamicToolLoading = shared.capabilities?.dynamicToolLoading === 'unsupported' ? 'unsupported' : 'stubs'
     return ModelInfo.merge(
-      shared,
+      lookupModelInfo(this.modelId ?? ''),
       {
-        capabilities: { temporaryMessages: false, dynamicToolLoading },
+        capabilities: { temporaryMessages: false, dynamicToolLoading: 'unsupported' },
         limits: { contextWindow: config.contextWindowLimit },
       },
       config.modelInfo
     )
+  }
+
+  /**
+   * Whether the provider sends a call's deferred tools with its API's own deferral flag. Only a provider whose API has
+   * one can (`AnthropicModel`, when `modelInfo.capabilities.dynamicToolLoading` is `'native'`); every other model gets
+   * a deferred tool's spec once the model loads it.
+   *
+   * @internal
+   */
+  get defersToolsNatively(): boolean {
+    return false
   }
 
   /**

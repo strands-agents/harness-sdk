@@ -72,7 +72,7 @@ describe('shared model info data', () => {
       })
     }
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
-      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false, dynamicToolLoading: 'unsupported' },
+      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
       limits: { contextWindow: 300_000 },
     })
     expect(lookupModelInfo('claude-future-9')).toEqual({})
@@ -117,7 +117,7 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
-        else if (key === 'dynamicToolLoading') expect(['unsupported', 'native'], `${id}.${key}`).toContain(value)
+        else if (key === 'dynamicToolLoading') expect(value, `${id}.${key}`).toBe('native')
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         // Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.

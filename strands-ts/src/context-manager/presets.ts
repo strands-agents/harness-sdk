@@ -22,10 +22,11 @@ import { Offload } from './strategies/offload/index.js'
  * - `'largeToolOffloading'` — truncate tool results over 2500 tokens to a 1000-token preview
  * - `'overflowProtection'` — drop the oldest messages when the context window is full
  * - `'staleToolCleanup'` — drop tool results outside the newest 5 tool-result messages
- * - `'dynamicToolLoading'` — experimental: defer every tool's input schema from 20 tools, the SDK's own included.
- *   Claude 4.5 and later defer natively through `AnthropicModel`, most other models get each deferred tool as a stub
- *   (name and description), and models that can't use stubs (`dynamicToolLoading: 'unsupported'`) get every spec. It
- *   keeps no tool in full, so the model loads even its most used tools first; `Offload.defer` keeps the ones you name
+ * - `'dynamicToolLoading'` — experimental: from 20 tools, the SDK's own included, defer tools' input schemas until
+ *   the model loads them with `search_tools`. Claude 4.5 and later defer natively through `AnthropicModel`; every other
+ *   model gets a tool's spec once it loads the tool. The SDK's own tools and tools without parameters are always sent
+ *   in full, and the rest are deferred, so the model loads even its most used tools first; `Offload.defer` keeps the
+ *   ones you name
  */
 export const STRATEGY_PRESET_NAMES = [
   'proactiveSummarization',

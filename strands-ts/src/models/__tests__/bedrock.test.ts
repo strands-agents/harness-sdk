@@ -966,8 +966,8 @@ describe('BedrockModel', () => {
       ])
     })
 
-    it('names the tool for a tool reference a modelInfo override lets through', async () => {
-      const provider = new BedrockModel({ modelInfo: { capabilities: { dynamicToolLoading: 'native' } } })
+    it('names the tool for a tool reference in a request that skips ModelProxy', async () => {
+      const provider = new BedrockModel()
       const messages = [
         new Message({
           role: 'user',
@@ -1048,15 +1048,15 @@ describe('BedrockModel', () => {
 
     describe('deferred tools', () => {
       it.each([
-        ['Claude', { modelId: 'us.anthropic.claude-opus-5-5' }, 'stubs'],
-        ['another model', { modelId: 'qwen.qwen3-235b-a22b-2507-v1:0' }, 'stubs'],
-        ['a model with strictTools', { modelId: 'us.anthropic.claude-opus-5-5', strictTools: true }, 'unsupported'],
-        ['a model that can not take stubs', { modelId: 'us.amazon.nova-pro-v1:0' }, 'unsupported'],
-      ])('reports dynamicToolLoading for %s', (_name, config, expected) => {
-        expect(new BedrockModel(config).modelInfo.capabilities?.dynamicToolLoading).toBe(expected)
+        ['Claude', { modelId: 'us.anthropic.claude-opus-5-5' }],
+        ['another model', { modelId: 'qwen.qwen3-235b-a22b-2507-v1:0' }],
+      ])('reports no native tool deferral for %s, since Converse has no deferral flag', (_name, config) => {
+        const provider = new BedrockModel(config)
+        expect(provider.modelInfo.capabilities?.dynamicToolLoading).toBe('unsupported')
+        expect(provider.defersToolsNatively).toBe(false)
       })
 
-      it('sends a deferred tool as a full spec when called directly, since ModelProxy makes the stubs', async () => {
+      it('sends a tool named as deferred in full when called directly, since Converse has no deferral flag', async () => {
         const provider = new BedrockModel({ modelId: 'us.anthropic.claude-opus-5-5' })
         const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
         const inputSchema = { type: 'object' as const, properties: { expression: { type: 'string' as const } } }

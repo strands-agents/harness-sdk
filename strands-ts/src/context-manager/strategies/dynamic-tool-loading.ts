@@ -15,10 +15,10 @@ import {
 } from '../../middleware/stages.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../models/defaults.js'
 import { heuristicJson, type Model, type StreamOptions } from '../../models/model.js'
-import { lookupModel } from '../../models/model-info.js'
-import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
+import { SEARCH_TOOLS_TOOL_NAME, withToolListing } from '../../tools/search-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
 import { RETRIEVAL_TOOL_NAME as OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME } from '../../vended-plugins/context-offloader/constants.js'
+import { SKILLS_TOOL_NAME } from '../../vended-plugins/skills/constants.js'
 import { TextBlock, ToolReferenceBlock, ToolResultBlock, type Message } from '../../types/messages.js'
 import { RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { parseCondition, type ParsedCondition, type Percent } from './offload/conditions.js'
@@ -33,16 +33,21 @@ import type { ContextStrategy } from '../types.js'
  * background-tasks manage tool is one too, recognized by `isManageTool` since its name is configurable.
  */
 const PROTECTED_TOOL_NAMES = new Set([
-  LOAD_TOOLS_TOOL_NAME,
+  SEARCH_TOOLS_TOOL_NAME,
   RETRIEVAL_TOOL_NAME,
   OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
+  SKILLS_TOOL_NAME,
 ])
 
 const CONDITION_NAMES = ['toolCount', 'schemaTokens']
 
 /** Input schema keywords that describe no parameter. */
 const ANNOTATION_KEYWORDS = new Set(['$schema', 'type', 'title', 'description'])
+
+/** Share of the context window the listing of deferred tools may take, at the SDK's four characters per token. */
+const LISTING_SHARE = 0.01
+const CHARS_PER_TOKEN = 4
 
 /**
  * Which tools `Offload.defer` defers: `'toolSpecs'` for every one, or tool names as in other offload targets. Names to
@@ -55,9 +60,9 @@ export type DeferTarget = 'toolSpecs' | string[]
 
 /**
  * When `Offload.defer` defers tools, checked on every model call against that call's tools. Either condition is
- * enough; with none, it defers at any tool count. The same tools and conditions always defer the same tools, so the
- * tools list stays the same from call to call and after a session restore. A tool change that meets a condition
- * mid-conversation defers from the next call on, so the model then loads tools it was calling directly.
+ * enough; with none, it defers at any tool count. The same tools and conditions always defer the same tools, and a
+ * tool change that meets a condition mid-conversation defers from the next call on, so the model then loads tools it
+ * was calling directly.
  *
  * @experimental
  */
@@ -75,9 +80,12 @@ export interface DeferConditions {
 }
 
 /**
- * A strategy that keeps tools' input schemas out of the model's context until the model loads them with `load_tools`.
- * The model still sees each deferred tool's name and description. A call to a deferred tool made before its load
- * doesn't run: the model gets the tool's schema and calls it again. It never changes the messages.
+ * A strategy that keeps tools' input schemas out of the model's context until the model loads them with
+ * `search_tools`, whose description lists the deferred tools. A model that defers tools natively gets every tool with
+ * its API's deferral flag, so the tools list stays the same on every call. Any other model gets a deferred tool only
+ * once the conversation has loaded it, appended after the other tools, so each load costs one prompt cache miss. A
+ * call to a deferred tool made before its load doesn't run: the model gets the tool's schema and calls it again. It
+ * never changes the messages.
  *
  * @experimental
  */
@@ -92,11 +100,12 @@ export interface DeferStrategy extends ContextStrategy {
 
 /**
  * The strategy behind `Offload.defer`. On every model call it picks the tools to defer from that call's tools and
- * passes their names on the call as its `deferredTools`. The call's model decides how a deferred tool reaches it
- * (`modelInfo.capabilities.dynamicToolLoading`); a model that can't defer tools gets every spec. The model loads a
- * schema with `load_tools`, which the context manager registers, and a call to a deferred tool before its load gets
- * the schema back instead of running. SDK tools such as `load_tools` and `retrieve_context` are never deferred, nor
- * is a tool that takes no parameters, since its stub would leave nothing out.
+ * lists them in the description of `search_tools`, which the context manager registers. A model that defers tools
+ * natively (`Model.defersToolsNatively`) gets every spec and the deferred tools' names as the call's `deferredTools`.
+ * Any other model gets the specs the call doesn't defer, then each deferred tool a tool result in the messages loaded,
+ * in the order of their loads. A call to a deferred tool before its load gets the schema back instead of running. SDK
+ * tools such as `search_tools` and `retrieve_context` are never deferred, nor is a tool that takes no parameters,
+ * since deferring it would leave nothing out.
  *
  * @internal
  */
@@ -148,13 +157,12 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
   }
 
   /**
-   * The tools `load_tools` loads: the ones the agent's latest model call deferred. Before the agent's first call, as
+   * The tools `search_tools` loads: the ones the agent's latest model call deferred. Before the agent's first call, as
    * when an interrupted load resumes on a restored agent, every registered tool the target covers, since which of them
-   * the next call defers depends on that call's tools and model. A reference to a tool that call doesn't defer reaches
-   * the model as text.
+   * the next call defers depends on that call's tools and model.
    *
    * @param agent - The agent whose call it was
-   * @returns Their names; empty when the call deferred none
+   * @returns Their names, in tool order; empty when the call deferred none
    */
   deferredTools(agent: LocalAgent): string[] {
     const recorded = this._deferred.get(agent)
@@ -166,42 +174,59 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
   }
 
   /**
-   * The tools an agent's model call with these tool specs on this model sends: every spec and the names of the ones it
-   * defers, or every spec but `load_tools` when it defers none.
+   * The tools an agent's model call with these tool specs on this model sends, as the strategy's class description
+   * says, or every spec but `search_tools` when the call defers none.
    *
    * @param agent - The agent making the call
    * @param toolSpecs - The tool specs of the call
    * @param model - The call's model
-   * @returns The call's tool specs, and the names of the deferred ones when there are any
+   * @param messages - The messages of the call, whose tool results hold the loads
+   * @returns The call's tool specs, and the names of the deferred ones when the model defers them natively
    */
   callTools(
     agent: LocalAgent,
     toolSpecs: readonly ToolSpec[],
-    model: Model
+    model: Model,
+    messages: readonly Message[]
   ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools'> {
-    const deferred = defersTools(model) ? this._toDefer(agent, toolSpecs, model) : new Set<string>()
-    if (deferred.size > 0) return { toolSpecs: [...toolSpecs], deferredTools: deferred }
-    return { toolSpecs: toolSpecs.filter((spec) => spec.name !== LOAD_TOOLS_TOOL_NAME) }
+    return this._callTools(toolSpecs, model, messages, this._toDefer(agent, toolSpecs, model))
   }
 
-  /** Defers this call's tools, or sends every spec without the loader when the call defers none. */
+  /** Renders this call's tools, recording which it defers. */
   private _render(context: InvokeModelContext): InvokeModelContext {
-    const tools = this.callTools(context.agent, context.toolSpecs, context.model)
-    this._record(context.agent, tools.deferredTools ?? new Set(), context.model)
-    if (!defersTools(context.model) && this._toDefer(context.agent, context.toolSpecs, context.model).size > 0) {
+    const { agent, model } = context
+    const deferred = this._toDefer(agent, context.toolSpecs, model)
+    this._record(agent, deferred, model)
+    if (
+      deferred.size > 0 &&
+      !model.defersToolsNatively &&
+      model.modelInfo.capabilities?.dynamicToolLoading === 'native'
+    ) {
       warnOnce(
         logger,
-        `model_id=<${context.model.modelId}> | model or its config can not defer tool schemas | sending every tool spec`
+        `model_id=<${model.modelId}> | provider can not defer tools natively, so dynamicToolLoading native has no ` +
+          'effect | sending each deferred tool once it is loaded'
       )
     }
-    if (tools.deferredTools && takesStubsByDefault(context.model)) {
-      warnOnce(
-        logger,
-        `model_id=<${context.model.modelId}> | model is not in the shared model info | sending deferred tools as ` +
-          'stubs, set modelInfo.capabilities.dynamicToolLoading to unsupported if it calls them badly'
-      )
-    }
-    return { ...context, ...tools }
+    return { ...context, ...this._callTools(context.toolSpecs, model, context.messages, deferred) }
+  }
+
+  private _callTools(
+    toolSpecs: readonly ToolSpec[],
+    model: Model,
+    messages: readonly Message[],
+    deferred: ReadonlySet<string>
+  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools'> {
+    if (deferred.size === 0) return { toolSpecs: toolSpecs.filter((spec) => spec.name !== SEARCH_TOOLS_TOOL_NAME) }
+    const deferredSpecs = toolSpecs.filter((spec) => deferred.has(spec.name))
+    const listed = toolSpecs.map((spec) =>
+      spec.name === SEARCH_TOOLS_TOOL_NAME ? withToolListing(spec, deferredSpecs, listingBudget(model)) : spec
+    )
+    if (model.defersToolsNatively) return { toolSpecs: listed, deferredTools: deferred }
+    // Loaded tools go after the rest, in the order of their loads, so a load only adds to the end of the list.
+    const specs = new Map(deferredSpecs.map((spec) => [spec.name, spec]))
+    const loaded = [...loadedTools(messages)].flatMap((name) => specs.get(name) ?? [])
+    return { toolSpecs: [...listed.filter((spec) => !deferred.has(spec.name)), ...loaded] }
   }
 
   /** Records the tools an agent's call defers, and logs when they differ from its previous call's. */
@@ -221,10 +246,12 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
 
   /** Whether the target covers the agent's tool and the tool may be deferred. */
   private _targets(agent: LocalAgent, spec: ToolSpec): boolean {
+    const tool = agent.toolRegistry.get(spec.name)
     return (
       !PROTECTED_TOOL_NAMES.has(spec.name) &&
-      !isManageTool(agent.toolRegistry.get(spec.name)) &&
-      takesParameters(spec) &&
+      !isManageTool(tool) &&
+      // The tool's own schema, since background tasks add a parameter to every schema in the call.
+      takesParameters(tool?.toolSpec ?? spec) &&
       (this._matcher?.matchesTool(spec.name) ?? true)
     )
   }
@@ -238,9 +265,8 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
     const toolCount = toolSpecs.filter((spec) => spec.name !== STRUCTURED_OUTPUT_TOOL_NAME).length
     if (this._toolCount !== undefined && toolCount >= this._toolCount) return true
     if (this._schemaTokens === undefined) return false
-    const contextWindow = model.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
     const schemaTokens = candidates.reduce((total, spec) => total + heuristicJson(spec.inputSchema ?? {}), 0)
-    return schemaTokens >= this._schemaTokens.of(contextWindow)
+    return schemaTokens >= this._schemaTokens.of(contextWindow(model))
   }
 
   /** Whether the strategy has no conditions, so it defers at any tool count. */
@@ -249,29 +275,30 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
   }
 
   /**
-   * Answers a call to a tool the latest model call deferred, made before the conversation loaded its schema, with the
-   * schema instead of running the tool: a stub takes any input, and once a summary removes a load the model can call
-   * a deferred tool from memory. Loads are read from the messages, so a load that was summarized away is delivered
-   * again.
+   * Answers a call to a deferred tool made before the conversation loaded it with the tool's schema instead of running
+   * it. A model can call a deferred tool from memory once a summary removes its load, and on a model that doesn't defer
+   * natively such a call names a tool the request didn't send. Loads are read from the messages, so a load that was
+   * summarized away is delivered again. Before the agent's first model call, as when an interrupted call resumes on a
+   * restored agent, the tools the agent's model would defer stand in for the latest call's.
    */
   private async *_guardUnloaded(
     context: ExecuteToolContext,
     next: MiddlewareNextOf<typeof ExecuteToolStage>
   ): AsyncGenerator<AgentStreamEvent, ExecuteToolResult, undefined> {
-    const { name, toolUseId } = context.toolUse
-    const deferred = this._deferred.get(context.agent)
-    if (!context.tool || !deferred?.has(name) || loadedTools(context.agent.messages).has(name)) {
+    const { agent, toolUse } = context
+    const deferred = this._deferred.get(agent) ?? this._toDefer(agent, agent.toolRegistry.toolSpecs(), agent.model)
+    if (!context.tool || !deferred.has(toolUse.name) || loadedTools(agent.messages).has(toolUse.name)) {
       return yield* next(context)
     }
     return {
       result: new ToolResultBlock({
-        toolUseId,
+        toolUseId: toolUse.toolUseId,
         status: 'error',
         content: [
           new TextBlock(
-            `Not run: ${name} was called before its parameters were loaded. They are loaded now; call it again.`
+            `Not run: ${toolUse.name} was called before its parameters were loaded. They are loaded now; call it again.`
           ),
-          new ToolReferenceBlock({ name }),
+          new ToolReferenceBlock({ name: toolUse.name }),
         ],
       }),
     }
@@ -302,7 +329,7 @@ function checkConditionNames(conditions: DeferConditions | undefined): void {
   }
 }
 
-/** The tools a tool result in these messages loaded with a `ToolReferenceBlock`. */
+/** The tools a tool result in these messages loaded with a `ToolReferenceBlock`, in the order of their first loads. */
 function loadedTools(messages: readonly Message[]): Set<string> {
   const names = new Set<string>()
   for (const message of messages) {
@@ -323,7 +350,7 @@ function parseToolCount(raw: unknown): number | undefined {
   throw new Error(`toolCount=${shown} is invalid: expected a whole tool count above 0`)
 }
 
-/** Whether a tool's input schema describes parameters, which its stub leaves out. */
+/** Whether a tool's input schema describes parameters, which deferring it leaves out. */
 function takesParameters(spec: ToolSpec): boolean {
   const { properties = {}, required = [], additionalProperties, ...rest } = spec.inputSchema ?? {}
   return (
@@ -334,16 +361,11 @@ function takesParameters(spec: ToolSpec): boolean {
   )
 }
 
-/** Whether the model gets stubs only because nothing says otherwise: not the shared model info, not its config. */
-function takesStubsByDefault(model: Model): boolean {
-  return (
-    model.modelInfo.capabilities?.dynamicToolLoading === 'stubs' &&
-    model.getConfig().modelInfo?.capabilities?.dynamicToolLoading === undefined &&
-    lookupModel(model.modelId ?? '') === undefined
-  )
+function contextWindow(model: Model): number {
+  return model.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
 }
 
-/** Whether the model defers tools, which only a model that sends every full spec doesn't. */
-function defersTools(model: Model): boolean {
-  return (model.modelInfo.capabilities?.dynamicToolLoading ?? 'unsupported') !== 'unsupported'
+/** The characters the listing of deferred tools may take in the search tool's description. */
+function listingBudget(model: Model): number {
+  return Math.floor(contextWindow(model) * LISTING_SHARE) * CHARS_PER_TOKEN
 }

@@ -141,7 +141,7 @@ describe('ContextOffloader', () => {
       const plugin = new ContextOffloader({ storage: new InMemoryStorage(), maxResultTokens: 10, previewTokens: 5 })
       const agent = createMockAgent()
       plugin.initAgent(agent)
-      const event = makeEvent([new ToolReferenceBlock({ name: 'shell' })], { toolName: 'load_tools' })
+      const event = makeEvent([new ToolReferenceBlock({ name: 'shell' })], { toolName: 'search_tools' })
       vi.spyOn(event.agent.model, 'countTokens').mockResolvedValue(1000)
 
       await invokeTrackedHook(agent, event)
@@ -159,11 +159,11 @@ describe('ContextOffloader', () => {
       expect(event.result.content).toEqual(content)
     })
 
-    it('offloads a load_tools result that holds text, like any other tool result', async () => {
+    it('offloads a search_tools result that holds text, like any other tool result', async () => {
       const plugin = new ContextOffloader({ storage: new InMemoryStorage(), maxResultTokens: 100, previewTokens: 10 })
       const agent = createMockAgent()
       plugin.initAgent(agent)
-      const event = makeEvent([new TextBlock('a'.repeat(2000))], { toolName: 'load_tools' })
+      const event = makeEvent([new TextBlock('a'.repeat(2000))], { toolName: 'search_tools' })
 
       await invokeTrackedHook(agent, event)
 

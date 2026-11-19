@@ -131,7 +131,7 @@ describe.skipIf(anthropic.skip)('AnthropicModel Integration Tests', () => {
       const provider = anthropic.createModel({ maxTokens: 100, cacheConfig: { strategy: 'auto', messagesTTL: false } })
       const toolSpecs = [
         {
-          name: 'load_tools',
+          name: 'search_tools',
           description: `Load tool schemas by name ${Date.now()}-${Math.random()}. ${'The catalog is stable across requests. '.repeat(400)}`,
           inputSchema: { type: 'object' as const, properties: { names: { type: 'array' as const } } },
         },

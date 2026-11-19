@@ -1,7 +1,6 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
-import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import { latestUserIndex } from './model.js'
 import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
 import type { ToolSpec } from '../tools/types.js'
@@ -22,11 +21,9 @@ import { wellFormedRequest } from './well-formed-request.js'
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
  * of the earlier ones.
  *
- * Deferred tools take one of two paths, by the model's `modelInfo.capabilities.dynamicToolLoading`. With `'native'`,
- * the call's `deferredTools` and every `ToolReferenceBlock` reach the provider as they are, and the provider sends them
- * its API's way. With `'stubs'`, each deferred spec becomes a stub: its name, its description with a pointer to
- * `load_tools`, and an open schema, so the model can call the tool before it loads the schema. Every model but
- * a `'native'` one gets each `ToolReferenceBlock` as the parameters of the call's tool with that name, in text.
+ * For a model that defers tools natively (`Model.defersToolsNatively`), the call's `deferredTools` and every
+ * `ToolReferenceBlock` reach the provider as they are, and the provider sends them its API's way. Every other model
+ * gets each `ToolReferenceBlock` as the text `Loaded <name>.`, since the call carries a loaded tool's spec.
  *
  * A tool result whose content is all `UnknownBlock`s gets a placeholder text, since providers skip unknown blocks and
  * some reject an empty tool result. Lone UTF-16 surrogates in the messages, system prompt, and tool specs are sent as
@@ -70,7 +67,7 @@ export class ModelProxy {
     const { messages: prepared, dynamicTrailingBlocks } = this._prepare(messages, options?.toolSpecs)
     // The cache point stays ahead of injected text, which the next call no longer sends.
     const keepsCachePoint = dynamicTrailingBlocks > (options?.dynamicTrailingBlocks ?? 0)
-    const sent = this._withStubs(keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options)
+    const sent = keepsCachePoint ? { ...options, dynamicTrailingBlocks } : options
     const result = yield* this._model.streamAggregated(...wellFormedRequest(prepared, sent))
     this._record(result, invocationContext)
     return result
@@ -87,15 +84,7 @@ export class ModelProxy {
     return this._model.countTokens(...wellFormedRequest(this._prepare(messages, options?.toolSpecs).messages, options))
   }
 
-  /** Sends each of the call's deferred specs as a stub with an open schema when the model takes stubs. */
-  private _withStubs(options: StreamOptions | undefined): StreamOptions | undefined {
-    const deferred = options?.deferredTools
-    if (!deferred?.size || !options?.toolSpecs) return options
-    if (this._model.modelInfo.capabilities?.dynamicToolLoading !== 'stubs') return options
-    return { ...options, toolSpecs: options.toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec) : spec)) }
-  }
-
-  /** Records the tools an agent's own call sends, before any stubs. */
+  /** Records the tools an agent's own call sends. */
   private _recordTools(options: StreamOptions | undefined): void {
     if (!this._agent) return
     latestTools.set(this._agent, {
@@ -129,8 +118,7 @@ export class ModelProxy {
 
   /** Sends tool references as text to a model that doesn't defer tools natively; a native provider sends them. */
   private _withToolReferenceText(messages: Message[], toolSpecs: ToolSpec[]): Message[] {
-    if (!hasToolReferences(messages) || this._model.modelInfo.capabilities?.dynamicToolLoading === 'native')
-      return messages
+    if (!hasToolReferences(messages) || this._model.defersToolsNatively) return messages
     return withToolReferenceText(messages, toolSpecs)
   }
 
@@ -146,11 +134,10 @@ export class ModelProxy {
 
 /**
  * Counts what the next request carries: the messages, plus the system prompt and tool specs that occupy the same
- * context window, so a utilization gate that leaves them out reads low. A tool the request defers counts as the model
- * sees it before loading it, a stub or its name and description, since its input schema stays out of the model's
- * context until the model loads it; each load in the messages counts as the schema it brings in, whether the provider
- * expands the reference or sends it as text. These are the same inputs behind
- * `BeforeModelCallEvent.projectedInputTokens`.
+ * context window, so a utilization gate that leaves them out reads low. A tool the request defers natively counts by
+ * its name and description, since its input schema stays out of the model's context until a load brings it in where
+ * the load's reference is; on every other model a loaded tool's spec is among the request's tool specs. These are the
+ * same inputs behind `BeforeModelCallEvent.projectedInputTokens`.
  *
  * Counts that measure a single block or a subset rather than a whole request call `countTokens` directly — including
  * the system prompt there would inflate every block against its threshold.
@@ -162,18 +149,16 @@ export class ModelProxy {
  */
 export async function countRequestTokens(agent: LocalAgent, messages: Message[]): Promise<number> {
   const registered = agent.toolRegistry.toolSpecs()
-  const tools = agent.contextManager?.callTools(agent, registered, agent.model)
+  const tools = agent.contextManager?.callTools(agent, registered, agent.model, messages)
   const toolSpecs = tools?.toolSpecs ?? registered
   const deferred = tools?.deferredTools
-  return new ModelProxy(agent.model).countTokens(withToolReferenceSchemas(messages, toolSpecs), {
+  return new ModelProxy(agent.model).countTokens(deferred ? withToolReferenceSchemas(messages, toolSpecs) : messages, {
     ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
-    toolSpecs: deferred
-      ? toolSpecs.map((spec) => (deferred.has(spec.name) ? unloadedSpec(spec, agent.model) : spec))
-      : toolSpecs,
+    toolSpecs: deferred ? toolSpecs.map((spec) => (deferred.has(spec.name) ? unloadedSpec(spec) : spec)) : toolSpecs,
   })
 }
 
-/** Each agent's latest model call tools, as the call passed them, before any stubs. */
+/** Each agent's latest model call tools, as the call passed them. */
 const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'deferredTools'>>()
 
 /**
@@ -187,16 +172,8 @@ export function latestCallTools(agent: LocalAgent): Pick<StreamOptions, 'toolSpe
   return latestTools.get(agent)
 }
 
-const STUB_HINT = `Call ${LOAD_TOOLS_TOOL_NAME} with this name for its parameters first.`
-
-/** A deferred tool's spec as a model that takes stubs receives it: its name and description, and an open schema. */
-function stub(spec: ToolSpec): ToolSpec {
-  return { name: spec.name, description: `${spec.description}\n${STUB_HINT}`, inputSchema: { type: 'object' } }
-}
-
-/** A deferred tool's spec as the model sees it before loading it: a stub, or its name and description. */
-function unloadedSpec(spec: ToolSpec, model: Model): ToolSpec {
-  if (model.modelInfo.capabilities?.dynamicToolLoading === 'stubs') return stub(spec)
+/** A natively deferred tool's spec as the model sees it before loading it: its name and description. */
+function unloadedSpec(spec: ToolSpec): ToolSpec {
   return { name: spec.name, description: spec.description, inputSchema: { type: 'object' } }
 }
 

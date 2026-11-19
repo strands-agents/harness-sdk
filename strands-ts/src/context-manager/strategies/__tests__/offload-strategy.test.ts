@@ -243,7 +243,7 @@ describe('Offload builder', () => {
       new Message({
         role: 'assistant',
         content: [
-          new ToolUseBlock({ name: 'load_tools', toolUseId: 'load-1', input: { names: ['bash'] } }),
+          new ToolUseBlock({ name: 'search_tools', toolUseId: 'load-1', input: { names: ['bash'] } }),
           new ToolUseBlock({ name: 'bash', toolUseId: 'bash-1', input: {} }),
         ],
       }),
@@ -292,11 +292,11 @@ describe('Offload builder', () => {
     expect(readResult!.content).toEqual([offloadPlaceholder('drop', '[Dropped: ~25 tokens]', undefined, 25)])
   })
 
-  it('Offload.drop() drops a load_tools result that holds text, like any other tool result', async () => {
+  it('Offload.drop() drops a search_tools result that holds text, like any other tool result', async () => {
     const messages = [
       new Message({
         role: 'assistant',
-        content: [new ToolUseBlock({ name: 'load_tools', toolUseId: 'load-1', input: {} })],
+        content: [new ToolUseBlock({ name: 'search_tools', toolUseId: 'load-1', input: {} })],
       }),
       new Message({
         role: 'user',

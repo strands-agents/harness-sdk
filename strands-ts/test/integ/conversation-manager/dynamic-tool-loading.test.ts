@@ -16,7 +16,7 @@ describe.each([
     provider: bedrock,
     createModel: (): Model =>
       bedrock.createModel({ modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', maxTokens: 1024 }),
-    delivery: 'stubs',
+    delivery: 'unsupported',
   },
   {
     name: 'Bedrock Converse with Nova',
@@ -28,35 +28,35 @@ describe.each([
     name: 'Bedrock Converse with Qwen',
     provider: bedrock,
     createModel: (): Model => bedrock.createModel({ modelId: 'qwen.qwen3-next-80b-a3b', maxTokens: 1024 }),
-    delivery: 'stubs',
+    delivery: 'unsupported',
   },
   {
     name: 'Gemini',
     provider: gemini,
     createModel: (): Model => gemini.createModel({ modelId: 'gemini-2.5-flash' }),
-    delivery: 'stubs',
+    delivery: 'unsupported',
   },
   {
     name: 'OpenAI Chat Completions',
     provider: openai,
     createModel: (): Model => openai.createModel({ modelId: 'gpt-5.4' }),
-    delivery: 'stubs',
+    delivery: 'unsupported',
   },
   {
     name: 'OpenAI Responses',
     provider: openaiResponses,
     createModel: (): Model => openaiResponses.createModel({ modelId: 'gpt-5.4' }),
-    delivery: 'stubs',
+    delivery: 'unsupported',
   },
   {
     name: 'Vercel AI SDK on Bedrock',
     provider: vercelBedrock,
     createModel: (): Model => vercelBedrock.createModel(),
-    delivery: 'stubs',
+    delivery: 'unsupported',
   },
 ])('dynamic tool loading on $name', ({ provider, createModel, delivery }) => {
   it.skipIf(provider.skip)(
-    'calls the weather tool with valid input, loading it first when deferred, and sends one tools list',
+    'loads the weather tool through search_tools, then calls it with valid input',
     async () => {
       const weatherCalls: unknown[] = []
       const getWeather = tool({
@@ -84,7 +84,7 @@ describe.each([
         contextManager: { strategies: ['dynamicToolLoading'] },
         printer: false,
       })
-      // The provider's input, after ModelProxy builds any stubs.
+      // The provider's input, after the strategy renders each call's tools.
       const streamSpy = vi.spyOn(model, 'stream')
 
       const result = await agent.invoke('What is the weather in Paris, in celsius? Use the tools.')
@@ -92,23 +92,28 @@ describe.each([
       expect(model.modelInfo.capabilities?.dynamicToolLoading).toBe(delivery)
       expect(result.stopReason).toBe('endTurn')
       expect(weatherCalls).toEqual([{ city: 'Paris', unit: 'celsius' }])
-      const sent = streamSpy.mock.calls.map(([, options]) => options)
-      expect(new Set(sent.map((options) => JSON.stringify(options?.toolSpecs))).size).toBe(1)
-      const sentWeather = sent[0]?.toolSpecs?.find((spec) => spec.name === 'get_weather')
-      if (delivery === 'unsupported') {
-        // A model that can't take stubs gets every spec in full and no loader.
-        expect(sentWeather).toEqual(getWeather.toolSpec)
-        expect(sent[0]?.toolSpecs?.map((spec) => spec.name)).not.toContain('load_tools')
+      // The model loaded the tool first: the guard never turned a call away.
+      const results = agent.messages
+        .flatMap((message) => message.content)
+        .flatMap((block) => (block.type === 'toolResultBlock' ? [block] : []))
+      const turnedAway = results.filter((block) =>
+        block.content.some((content) => content.type === 'textBlock' && content.text.startsWith('Not run:'))
+      )
+      expect(turnedAway).toEqual([])
+      const loaded = results
+        .flatMap((block) => block.content)
+        .flatMap((content) => (content.type === 'toolReferenceBlock' ? [content.name] : []))
+      expect(loaded).toContain('get_weather')
+      const sent = streamSpy.mock.calls.map(([, options]) => options?.toolSpecs ?? [])
+      if (delivery === 'native') {
+        expect(new Set(sent.map((toolSpecs) => JSON.stringify(toolSpecs))).size).toBe(1)
+        expect(streamSpy.mock.calls[0]?.[1]?.deferredTools?.has('get_weather')).toBe(true)
         return
       }
-      if (delivery === 'native') expect(sent[0]?.deferredTools?.has('get_weather')).toBe(true)
-      else expect(sentWeather?.inputSchema).toEqual({ type: 'object' })
-      const loaded = agent.messages
-        .flatMap((message) => message.content)
-        .flatMap((block) => (block.type === 'toolResultBlock' ? block.content : []))
-        .filter((content) => content.type === 'toolReferenceBlock')
-        .map((content) => content.name)
-      expect(loaded).toContain('get_weather')
+      // Without native deferral the tool goes out once loaded, and a load only adds to the end of the tools list.
+      expect(sent[0]!.map((spec) => spec.name)).not.toContain('get_weather')
+      expect(sent.at(-1)!.at(-1)).toEqual(getWeather.toolSpec)
+      sent.slice(1).forEach((toolSpecs, index) => expect(toolSpecs.slice(0, sent[index]!.length)).toEqual(sent[index]))
     },
     120_000
   )

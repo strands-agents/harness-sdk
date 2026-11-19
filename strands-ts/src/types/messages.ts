@@ -501,13 +501,14 @@ export interface ToolReferenceBlockData {
 }
 
 /**
- * A tool whose input schema a tool result loads. `load_tools` returns one for each tool it loads, and any
- * tool can return them too, such as a custom loader that searches the tool catalog.
+ * A tool whose input schema a tool result loads. `search_tools` returns one for each tool it loads, and any tool can
+ * return them too, such as a custom loader.
  *
  * It reaches the model as a reference only when the model defers tools natively
  * (`modelInfo.capabilities.dynamicToolLoading` is `'native'`), the request defers this tool, and the tool result holds
  * only such references; the provider then sends a reference the API expands into the tool's definition. Otherwise the
- * model gets the parameters of the request's tool with this name as text, so a tool that changed is shown as it is now.
+ * model gets text: the parameters of the request's tool with this name when the request defers it, or `Loaded <name>.`
+ * when the request carries the tool's spec, as it does once a model that doesn't defer natively has loaded it.
  *
  * @example
  * ```typescript

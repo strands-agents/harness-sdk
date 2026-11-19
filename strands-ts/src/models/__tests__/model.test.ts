@@ -1552,22 +1552,29 @@ describe('countTokens', () => {
 })
 
 describe('info', () => {
-  it('knows only that temporary messages are off and deferred tools go as stubs for a provider with no model id, and unknown stateful reads as false', () => {
+  it('knows only that temporary messages and native tool deferral are off for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
     expect(provider.modelInfo).toEqual({
-      capabilities: { temporaryMessages: false, dynamicToolLoading: 'stubs' },
+      capabilities: { temporaryMessages: false, dynamicToolLoading: 'unsupported' },
     })
     expect(provider.stateful).toBe(false)
   })
 
   it.each([
-    ['a model whose own API defers natively', 'us.anthropic.claude-sonnet-4-6', 'stubs'],
-    ['a model the shared data does not list', 'some-gateway-model', 'stubs'],
-    ['a model the shared data says can not take stubs', 'us.amazon.nova-pro-v1:0', 'unsupported'],
-  ])('reports dynamic tool loading for %s', (_name, modelId, expected) => {
+    ['a model whose own API defers natively', 'us.anthropic.claude-sonnet-4-6'],
+    ['a model the shared data does not list', 'some-gateway-model'],
+  ])('reports no native tool deferral for %s, which only a provider that sends the flag reports', (_name, modelId) => {
     const provider = new TestModelProvider()
     provider.updateConfig({ modelId })
-    expect(provider.modelInfo.capabilities?.dynamicToolLoading).toBe(expected)
+    expect(provider.modelInfo.capabilities?.dynamicToolLoading).toBe('unsupported')
+    expect(provider.defersToolsNatively).toBe(false)
+  })
+
+  it('defers no tools natively under a native modelInfo override, since the provider sends no deferral flag', () => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading: 'native' } } })
+    expect(provider.modelInfo.capabilities?.dynamicToolLoading).toBe('native')
+    expect(provider.defersToolsNatively).toBe(false)
   })
 
   it('resolves facts from the shared model info for any provider by modelId', () => {
