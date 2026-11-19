@@ -459,11 +459,17 @@ async function runInnerCall(
  * (not this one, not another instance -- two callers exposing each other would recurse).
  */
 function resolveAvailableTools(agent: LocalAgent, allowedTools: string[] | undefined): string[] {
-  const others = agent.toolRegistry
-    .list()
-    .filter((t) => !INSTANCES.has(t))
-    .map((t) => t.name)
-  return allowedTools ? others.filter((n) => allowedTools.includes(n)) : others
+  const tools = agent.toolRegistry.list()
+  const others = tools.filter((t) => !INSTANCES.has(t)).map((t) => t.name)
+  if (!allowedTools) {
+    return others
+  }
+  // A name may be registered after the caller is created, so an unknown one is ignored rather than rejected.
+  const dropped = allowedTools.filter((name) => !tools.some((t) => t.name === name))
+  if (dropped.length > 0) {
+    logger.debug(`dropped=<${dropped.sort().join(', ')}> | allowedTools entries are not registered and were ignored`)
+  }
+  return others.filter((name) => allowedTools.includes(name))
 }
 
 /**

@@ -4,6 +4,7 @@ import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../../agent/agent.js'
 import { AfterToolCallEvent, BeforeToolCallEvent } from '../../../hooks/events.js'
 import { InterventionActions, InterventionHandler } from '../../../interventions/index.js'
+import { logger } from '../../../logging/logger.js'
 import { tool } from '../../../tools/tool-factory.js'
 import { ToolStreamEvent } from '../../../tools/tool.js'
 import type { Tool, ToolContext, ToolStreamGenerator } from '../../../tools/tool.js'
@@ -267,6 +268,20 @@ describe('programmatic_tool_caller', () => {
     const result = await run(agent, 'await boom()', 'run_code')
     expect(result.status).toBe('error')
     expect(text(result)).toContain('NameError')
+  })
+
+  it('ignores and logs allowedTools names that are not registered', async () => {
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+    try {
+      const caller = makeProgrammaticToolCaller({ allowedTools: ['calculator', 'not_registered'], name: 'run_code' })
+      const result = await run(agentOf(caller, calculator), 'print(await calculator(expression="2 + 2"))', 'run_code')
+      expect(text(result)).toBe('4')
+      expect(debug).toHaveBeenCalledWith(
+        'dropped=<not_registered> | allowedTools entries are not registered and were ignored'
+      )
+    } finally {
+      debug.mockRestore()
+    }
   })
 
   it('states the contract in the description', () => {
