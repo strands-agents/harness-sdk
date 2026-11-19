@@ -552,12 +552,27 @@ instance), reach for the TypeScript API. That's what it's there for.
 ## The vended prompt
 
 The system prompt is also available on its own, in case you want to build on it directly (for
-example, a serving layer that injects a timestamp or request context each turn):
+example, a serving layer that adds context that is fixed for the conversation):
 
 ```typescript
 import { HARNESS_CONTRACT, buildSystemPrompt } from '@strands-agents/harness'
 
-const prompt = buildSystemPrompt('You are a data-migration assistant.', [`Current time: ${now}`])
+const prompt = buildSystemPrompt('You are a data-migration assistant.', ['Deployment region: eu-west-1'])
+```
+
+The whole prompt is cached as one block, so keep `contextParts` the same for every turn of a
+conversation. A value that changes each turn, such as a timestamp, makes the provider write the
+system prompt and the conversation after it to the cache again on every turn. Put those values in
+a `ContextInjector` plugin instead. It adds them to the latest user message, so the system prompt
+stays the same and stays cached:
+
+```typescript
+import { ContextInjector } from '@strands-agents/sdk/vended-plugins/context-injector'
+
+const agent = await createHarness({
+  instructions: 'You are a data-migration assistant.',
+  plugins: [new ContextInjector({ renderContent: async () => `Current time: ${new Date().toISOString()}` })],
+})
 ```
 
 ## Versioning

@@ -14,8 +14,8 @@ describe('buildSystemPrompt', () => {
   })
 
   it('appends context parts last, in order', () => {
-    const prompt = buildSystemPrompt('domain block', ['Current time: noon', 'Repo: acme'])
-    expect(prompt.indexOf('domain block')).toBeLessThan(prompt.indexOf('Current time: noon'))
-    expect(prompt.indexOf('Current time: noon')).toBeLessThan(prompt.indexOf('Repo: acme'))
+    const prompt = buildSystemPrompt('domain block', ['Region: eu-west-1', 'Repo: acme'])
+    expect(prompt.indexOf('domain block')).toBeLessThan(prompt.indexOf('Region: eu-west-1'))
+    expect(prompt.indexOf('Region: eu-west-1')).toBeLessThan(prompt.indexOf('Repo: acme'))
   })
 })
