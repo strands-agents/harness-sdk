@@ -17,18 +17,18 @@ from typing_extensions import Unpack, override
 
 from ..agent.agent_metadata import AgentMetadata
 from ..tools import convert_pydantic_to_tool_spec
-from ..types.content import ContentBlock, Messages, SystemContentBlock
+from ..types.content import CachePoint, ContentBlock, Message, Messages, SystemContentBlock
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec, ToolUse
-from ._model_info import lookup_model_info
+from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
 from ._validation import validate_config_keys
 from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
 
 logger = logging.getLogger(__name__)
 
-# LiteLLM backends that translate an OpenAI-format ``cache_control`` part into their own cache points.
+# LiteLLM backends that turn an OpenAI-format ``cache_control`` part into their own cache points.
 _CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "bedrock", "vertex_ai"})
 
 # Separator used by LiteLLM to embed thought signatures inside tool call IDs.
@@ -41,6 +41,9 @@ T = TypeVar("T", bound=BaseModel)
 class LiteLLMModel(OpenAIModel):
     """LiteLLM model provider implementation."""
 
+    # ModelProxy places this provider's automatic cache points; the provider only translates them.
+    _cache_points_from_proxy = True
+
     class LiteLLMConfig(BaseModelConfig, total=False):
         """Configuration options for LiteLLM models.
 
@@ -51,10 +54,10 @@ class LiteLLMModel(OpenAIModel):
                 For a complete list of supported parameters, see
                 https://docs.litellm.ai/docs/completion/input#input-params-1.
             stream: Whether to use streaming. Defaults to True.
-            cache_config: Prompt-caching configuration. Consumed by LiteLLM's OpenAI-compatible
-                request path as by ``OpenAIModel``. On Anthropic, Bedrock and Vertex AI backends whose
-                model takes cache points, it also marks the system prompt and the latest message with
-                ``cache_control``; ``strategy="anthropic"`` marks them for any backend, such as a proxy alias.
+            cache_config: Prompt-caching configuration. LiteLLM's OpenAI-compatible request path consumes it
+                as ``OpenAIModel`` does. When the backend's model takes cache points (Anthropic, Bedrock and
+                Vertex AI Claude), the agent also places them on the system prompt and the latest user
+                message; ``strategy="anthropic"`` places them for any backend, such as a proxy alias.
         """
 
         model_id: str
@@ -98,60 +101,19 @@ class LiteLLMModel(OpenAIModel):
         """
         return cast(LiteLLMModel.LiteLLMConfig, self.config)
 
+    @property
     @override
-    def format_request(
-        self,
-        messages: Messages,
-        tool_specs: list[ToolSpec] | None = None,
-        system_prompt: str | None = None,
-        tool_choice: ToolChoice | None = None,
-        *,
-        system_prompt_content: list[SystemContentBlock] | None = None,
-        agent_metadata: AgentMetadata | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Format a LiteLLM chat request, adding cache points for backends that need them.
+    def model_info(self) -> ModelInfo:
+        """What the SDK knows about the backend model LiteLLM routes to.
 
-        Args:
-            messages: List of message objects to be processed by the model.
-            tool_specs: List of tool specifications to make available to the model.
-            system_prompt: System prompt to provide context to the model.
-            tool_choice: Selection strategy for tool invocation.
-            system_prompt_content: System prompt content blocks to provide context to the model.
-            agent_metadata: Invoking agent's metadata.
-            **kwargs: Additional keyword arguments for future extensibility.
-
-        Returns:
-            A LiteLLM chat request.
+        ``prompt_caching`` comes from the shared model info for the id without its LiteLLM provider prefix. A backend
+        that does not take ``cache_control`` reports ``auto`` instead of ``cache_points``, since no cache point
+        reaches it.
         """
-        request = super().format_request(
-            messages,
-            tool_specs,
-            system_prompt,
-            tool_choice,
-            system_prompt_content=system_prompt_content,
-            agent_metadata=agent_metadata,
-            **kwargs,
-        )
-        cache_config = self.get_config().get("cache_config")
-        if cache_config is not None and self._places_cache_points(cache_config):
-            _add_cache_points(request["messages"], cache_config)
-        return request
-
-    def _places_cache_points(self, cache_config: CacheConfig) -> bool:
-        """Whether the backend caches only where the request marks it, so Strands must place the points.
-
-        OpenAI-family backends cache automatically and take no marker, so ``"auto"`` leaves them alone.
-        """
-        if cache_config.strategy == "anthropic":
-            return True
-        try:
-            model_id, provider, _, _ = litellm.get_llm_provider(self.get_config()["model_id"])
-        except BadRequestError:
-            return False
-        return (
-            provider in _CACHE_CONTROL_PROVIDERS
-            and lookup_model_info(model_id).capabilities.prompt_caching == "cache_points"
+        return ModelInfo.merge(
+            super().model_info,
+            _backend_model_info(self.get_config().get("model_id")),
+            self.get_config().get("model_info"),
         )
 
     @override
@@ -323,9 +285,34 @@ class LiteLLMModel(OpenAIModel):
             A LiteLLM compatible messages array.
         """
         formatted_messages = cls._format_system_messages(system_prompt, system_prompt_content=system_prompt_content)
-        formatted_messages.extend(cls._format_regular_messages(messages))
+        formatted_messages.extend(cls._format_cacheable_messages(messages))
 
         return [message for message in formatted_messages if "content" in message or "tool_calls" in message]
+
+    @classmethod
+    def _format_cacheable_messages(cls, messages: Messages) -> list[dict[str, Any]]:
+        """Format messages, turning a message's first ``cachePoint`` into ``cache_control`` on the part before it."""
+        if not any("cachePoint" in block for message in messages for block in message["content"]):
+            return cls._format_regular_messages(messages)
+        formatted: list[dict[str, Any]] = []
+        for message in messages:
+            cls._format_cacheable_message(message, formatted)
+        return formatted
+
+    @classmethod
+    def _format_cacheable_message(cls, message: Message, formatted: list[dict[str, Any]]) -> None:
+        """Append one formatted message; the content after its cache point is formatted on its own, behind the point."""
+        content = message["content"]
+        index = next((i for i, block in enumerate(content) if "cachePoint" in block), None)
+        if index is None:
+            formatted.extend(cls._format_regular_messages([message]))
+            return
+        durable = cls._format_regular_messages([{"role": message["role"], "content": content[:index]}])
+        _mark_last_part(durable, content[index]["cachePoint"])
+        formatted.extend(durable)
+        tail = [block for block in content[index + 1 :] if "cachePoint" not in block]
+        if tail:
+            _append_tail(formatted, cls._format_regular_messages([{"role": message["role"], "content": tail}]))
 
     @override
     def format_chunk(self, event: dict[str, Any], **kwargs: Any) -> StreamEvent:
@@ -695,26 +682,39 @@ class LiteLLMModel(OpenAIModel):
                 self.config["model_id"] = f"litellm_proxy/{model_id}"
 
 
-def _add_cache_points(messages: list[dict[str, Any]], cache_config: CacheConfig) -> None:
-    """Mark the system prompt and the latest message with ``cache_control``, keeping any point already placed.
+def _backend_model_info(model_id: str | None) -> ModelInfo | None:
+    """How the backend model a LiteLLM id names caches prompts, or None when LiteLLM cannot map the id.
 
-    The latest message may be a tool result: in a tool loop it is the one whose prefix grows each call.
+    Only ``prompt_caching`` is taken from the backend's shared model info; the other capabilities are what the
+    OpenAI-compatible request path can send, which ``OpenAIModel`` already reports.
     """
-    if not messages:
-        return
-    system = messages[0] if messages[0]["role"] == "system" else None
-    latest = messages[-1] if messages[-1]["role"] != "system" else None
-    if system is not None and cache_config.system_prompt_ttl is not False:
-        _mark_last_part(system)
-    if latest is not None and cache_config.messages_ttl is not False:
-        _mark_last_part(latest)
+    try:
+        backend_id, provider, _, _ = litellm.get_llm_provider(model_id or "")
+    except BadRequestError:
+        return None
+    prompt_caching = lookup_model_info(backend_id).capabilities.prompt_caching
+    if prompt_caching == "cache_points" and provider not in _CACHE_CONTROL_PROVIDERS:
+        prompt_caching = "auto"
+    return ModelInfo(capabilities=ModelCapabilities(prompt_caching=prompt_caching))
 
 
-def _mark_last_part(message: dict[str, Any]) -> None:
-    """Put ``cache_control`` on the message's last content part, unless one of its parts already has it."""
-    content = message.get("content")
-    if isinstance(content, str) and content:
-        content = message["content"] = [{"type": "text", "text": content}]
-    if not isinstance(content, list) or not content or any("cache_control" in part for part in content):
+def _mark_last_part(formatted: list[dict[str, Any]], cache_point: CachePoint) -> None:
+    """Put ``cache_control`` on the last content part of the last formatted message that has content."""
+    message = next((message for message in reversed(formatted) if message.get("content")), None)
+    if message is None:
         return
-    content[-1]["cache_control"] = {"type": "ephemeral"}
+    if isinstance(message["content"], str):
+        message["content"] = [{"type": "text", "text": message["content"]}]
+    cache_control: dict[str, Any] = {"type": "ephemeral"}
+    if ttl := cache_point.get("ttl"):
+        cache_control["ttl"] = ttl
+    message["content"][-1]["cache_control"] = cache_control
+
+
+def _append_tail(formatted: list[dict[str, Any]], tail: list[dict[str, Any]]) -> None:
+    """Append content formatted after a cache point, joining it to the message it was split from when it can."""
+    last = formatted[-1] if formatted else None
+    first = tail[0] if tail else None
+    if last and first and last["role"] == first["role"] == "user" and "content" in last and "content" in first:
+        last["content"] = [*last["content"], *tail.pop(0)["content"]]
+    formatted.extend(tail)
