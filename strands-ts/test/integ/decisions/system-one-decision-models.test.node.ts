@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { DecisionsAPIDecisionModel, TypeSafeDecisionModel } from '@strands-agents/sdk'
+import { DecisionsAPIDecisionModel, GeminiDecisionModel, TypeSafeDecisionModel } from '@strands-agents/sdk'
 import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
 import type { DecisionModel } from '@strands-agents/sdk'
 
@@ -23,6 +23,12 @@ const providers: readonly SystemOneProvider[] = [
     skip: !process.env['JEV_API_KEY'],
     providerName: 'decisionsApi',
     create: () => new DecisionsAPIDecisionModel(),
+  },
+  {
+    name: 'GeminiDecisionModel',
+    skip: !process.env['GEMINI_API_KEY'],
+    providerName: 'gemini',
+    create: () => new GeminiDecisionModel(),
   },
   {
     name: 'SageMakerDecisionModel',

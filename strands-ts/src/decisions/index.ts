@@ -5,6 +5,8 @@
 export { DecisionModel } from './decision-model.js'
 export { DecisionsAPIDecisionModel } from './decisions-api-decision-model.js'
 export type { DecisionsAPIDecisionModelOptions } from './decisions-api-decision-model.js'
+export { GeminiDecisionModel } from './gemini-decision-model.js'
+export type { GeminiDecisionModelOptions } from './gemini-decision-model.js'
 export { LLMDecisionModel } from './llm-decision-model.js'
 export type { LLMDecisionModelOptions } from './llm-decision-model.js'
 export { TypeSafeDecisionModel } from './typesafe-decision-model.js'
