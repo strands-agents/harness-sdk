@@ -43,7 +43,10 @@ choice when it can't commit. Set `uncertainty` on a question to change that:
 The minimum confidence,
 <Syntax py='{"min_confidence": 0.8}' ts="{ minConfidence: 0.8 }" />, applies only to
 decision models that report a confidence for each answer. The
-[LLM decision model](models/llm.mdx) doesn't, so it ignores the threshold.
+[LLM decision model](models/llm.mdx) doesn't, so it ignores the threshold. Each decision
+model that does uses its own confidence scale, such as the
+[Gemini decision model](models/gemini.mdx), so a threshold tuned for one decision model
+needs retuning for another.
 
 `Uncertain` carries an optional reason. Check for it before you use an answer, with
 <Syntax py="isinstance(answer, Uncertain)" ts="answer instanceof Uncertain" />.
