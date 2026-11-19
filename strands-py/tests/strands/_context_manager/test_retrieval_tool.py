@@ -87,7 +87,8 @@ class TestRetrievalTool:
 
         assert result["status"] == "error"
         assert _text(result) == (
-            'Error: reference not found: [ref: nonexistent]. Pass only the <id> from the placeholder\'s "[ref: <id>]".'
+            'Error: reference not found: [ref: nonexistent]. Pass only the <id> from the placeholder\'s "[ref: <id>]". '
+            "If that is what you passed, the content is unavailable — do not retry."
         )
 
     @pytest.mark.asyncio
@@ -226,7 +227,7 @@ class TestToolResultReferencedByItsToolUseId:
         result = await _invoke(stash, {"reference": "tool-1", **extra_input})
 
         assert result["status"] == "error"
-        assert _text(result) == "Error: original content for reference tool-1 is no longer available"
+        assert _text(result) == "Error: original content for reference tool-1 is no longer available — do not retry."
 
 
 class TestRemovedMessages:

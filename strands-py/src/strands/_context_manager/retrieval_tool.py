@@ -50,11 +50,14 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
         if not entries:
             return _error(
                 tool_use_id,
-                f'reference not found: {reference}. Pass only the <id> from the placeholder\'s "[ref: <id>]".',
+                f'reference not found: {reference}. Pass only the <id> from the placeholder\'s "[ref: <id>]". '
+                "If that is what you passed, the content is unavailable — do not retry.",
             )
         # A placeholder stands where the original content no longer is.
         if any(not isinstance(entry, list) and is_offloaded(entry) for entry in entries):
-            return _error(tool_use_id, f"original content for reference {reference} is no longer available")
+            return _error(
+                tool_use_id, f"original content for reference {reference} is no longer available — do not retry."
+            )
 
         if inputs.get("pattern") is None and inputs.get("line_range") is None:
             return ToolResult(toolUseId=tool_use_id, status="success", content=_full_content(entries, max_chars))

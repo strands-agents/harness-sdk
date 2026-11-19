@@ -125,7 +125,10 @@ class TestTruncateWithStash:
             offload_placeholder("drop", "[Dropped: ~15 tokens]", "tool-123", 15)
         ]
         assert await stash.list() == []
-        unresolvable = 'Error: reference not found: tool-123. Pass only the <id> from the placeholder\'s "[ref: <id>]".'
+        unresolvable = (
+            'Error: reference not found: tool-123. Pass only the <id> from the placeholder\'s "[ref: <id>]". '
+            "If that is what you passed, the content is unavailable — do not retry."
+        )
         assert (await _retrieve(stash, "tool-123"))["content"] == [{"text": unresolvable}]
 
     @pytest.mark.asyncio
