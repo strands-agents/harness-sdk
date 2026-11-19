@@ -541,7 +541,7 @@ async def test_stream_thinking(ollama_client, model, agenerator, alist, captured
     text_event.prompt_eval_count = 5
     text_event.total_duration = 1000000  # 1ms in nanoseconds
 
-    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([think_event, text_event]))
+    ollama_client.chat = unittest.mock.AsyncMock(return_value=agenerator([think_event, think_event, text_event]))
 
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
     response = model.stream(messages)
@@ -551,6 +551,7 @@ async def test_stream_thinking(ollama_client, model, agenerator, alist, captured
         {"messageStart": {"role": "assistant"}},
         {"contentBlockStart": {"start": {}}},
         {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "t1"}}}},
         {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "t1"}}}},
         {"contentBlockStop": {}},
         {"contentBlockDelta": {"delta": {"text": "Hello"}}},
