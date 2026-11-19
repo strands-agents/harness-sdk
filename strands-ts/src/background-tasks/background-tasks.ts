@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { continuations } from '../agent/continuation.js'
 import { AgentAsTool } from '../agent/agent-as-tool.js'
 import type { InvocationContext } from '../agent/invocation-context.js'
+import { ToolValidationError } from '../errors.js'
 import { AfterInvocationEvent, BeforeModelCallEvent, InitializedEvent } from '../hooks/events.js'
 import { HookOrder } from '../hooks/types.js'
 import { InterruptError } from '../interrupt.js'
@@ -101,7 +102,7 @@ export class BackgroundTasks implements Plugin {
 
   initAgent(agent: LocalAgent): void {
     if (agent.toolRegistry.get(this._manageTool.name)) {
-      throw new Error(`manageToolName=<${this._manageTool.name}> | tool already registered`)
+      throw new ToolValidationError(`manageToolName=<${this._manageTool.name}> | tool already registered`)
     }
     this._agent = agent as Agent
     for (const tool of agent.toolRegistry.list()) {
