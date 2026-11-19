@@ -157,7 +157,7 @@ export const BOX_CAPABILITIES_HEADLINE = 'Control what your agent can access and
 export const BOX_CAPABILITIES_SUMMARY =
   'Give the agent only the access it needs, check sensitive actions as they happen, and keep real credentials outside the agent.'
 export const BOX_OVERVIEW_DESCRIPTION =
-  'Start your coding agent through Box. It gets the project access it needs while the rest of your computer stays out of reach.'
+  'Strands Box is an open source sandbox for agents. Start your agent with one command, give it the access it needs, and keep the rest of your computer and data out of reach.'
 
 export const BOX_CAPABILITIES = [
   {
@@ -243,7 +243,7 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     `$ ${BOX_VERIFY_COMMAND}`,
     '```',
     '',
-    heading(root + 1, 'Run the coding agent you already use'),
+    heading(root + 1, 'Run the agent you already use in a sandbox'),
     '',
     'Open a terminal in the project where you want to run the agent. The first `box run` creates a reusable profile and asks for its settings. Later runs reuse that profile.',
     '',
