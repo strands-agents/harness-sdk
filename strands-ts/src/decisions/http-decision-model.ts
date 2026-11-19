@@ -7,10 +7,7 @@ import {
   SystemOneHttpError,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
-import { createSigV4Signer, type SigV4Config, type SigV4Credentials } from './sigv4-signer.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
-
-export type { SigV4Credentials } from './sigv4-signer.js'
 
 const CLASS_NAME = 'HttpDecisionModel'
 const PROVIDER_NAME = 'http'
@@ -18,6 +15,13 @@ const DEFAULT_MIN_CONFIDENCE = 0.5
 const DEFAULT_TIMEOUT_MS = 60_000
 /** The largest delay a timer accepts; above it `AbortSignal.timeout` fires after 1 ms. */
 const MAX_TIMEOUT_MS = 2_147_483_647
+
+/** AWS credentials used to sign a request. */
+export interface SigV4Credentials {
+  readonly accessKeyId: string
+  readonly secretAccessKey: string
+  readonly sessionToken?: string
+}
 
 /** How an {@link HttpDecisionModel} authenticates its requests. */
 export type HttpDecisionModelAuth =
@@ -149,7 +153,7 @@ export class HttpDecisionModel extends DecisionModel {
     } else if (auth !== undefined && auth.type !== 'sigv4') {
       throw new Error(`${CLASS_NAME} auth type must be 'bearer' or 'sigv4'`)
     }
-    const sign = auth?.type === 'sigv4' ? createSigV4Signer(endpoint, resolveSigV4(auth)) : undefined
+    const sign = auth?.type === 'sigv4' ? sigV4Signer(endpoint, auth) : undefined
 
     // The shared transport only POSTs. Signing, the timeout and redirect handling wrap `fetch` here, so they stay local.
     const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -218,8 +222,17 @@ export class HttpDecisionModel extends DecisionModel {
   }
 }
 
-/** Resolves the region like the SDK's other AWS paths do, and requires a service, so a bad config fails early. */
-function resolveSigV4(auth: Extract<HttpDecisionModelAuth, { type: 'sigv4' }>): SigV4Config {
+type SigV4Signer = (body: string, headers: Record<string, string>) => Promise<Record<string, string>>
+
+/**
+ * Returns a function that gives the headers signing one POST of `body` to `url`, including the static `headers`
+ * it is given. They omit `host` and `content-type`: fetch derives the first and the transport sets the second.
+ *
+ * The region is resolved like the SDK's other AWS paths, and a missing region or service fails here, at
+ * construction. The signing packages are optional peers: they load on the first call, concurrent calls share
+ * the load, and a failed load is retried on the next call.
+ */
+function sigV4Signer(url: URL, auth: Extract<HttpDecisionModelAuth, { type: 'sigv4' }>): SigV4Signer {
   const service = auth.service?.trim()
   if (!service) throw new Error(`${CLASS_NAME} sigv4 auth requires a service`)
   const env = globalThis.process?.env
@@ -227,7 +240,63 @@ function resolveSigV4(auth: Extract<HttpDecisionModelAuth, { type: 'sigv4' }>): 
   if (!region) {
     throw new Error(`${CLASS_NAME} sigv4 auth requires a region: pass region or set AWS_REGION or AWS_DEFAULT_REGION`)
   }
-  return { region, service, ...(auth.credentials !== undefined && { credentials: auth.credentials }) }
+
+  let runtime: Promise<SigV4Runtime> | undefined
+  return async (body, headers) => {
+    runtime ??= loadSigV4(region, service, auth.credentials).catch((error: unknown) => {
+      runtime = undefined
+      throw error
+    })
+    const { signer, HttpRequest } = await runtime
+    const signed = await signer.sign(
+      new HttpRequest({
+        method: 'POST',
+        protocol: url.protocol,
+        hostname: url.hostname,
+        path: url.pathname,
+        // The signed `host` carries a non-default port, as fetch's does.
+        headers: { ...headers, host: url.host, 'content-type': 'application/json' },
+        body,
+      })
+    )
+    return Object.fromEntries(
+      Object.entries(signed.headers).filter(([name]) => !['host', 'content-type'].includes(name.toLowerCase()))
+    )
+  }
+}
+
+interface SigV4Runtime {
+  signer: import('@smithy/signature-v4').SignatureV4
+  HttpRequest: typeof import('@smithy/protocol-http').HttpRequest
+}
+
+async function loadSigV4(
+  region: string,
+  service: string,
+  credentials: SigV4Credentials | (() => Promise<SigV4Credentials>) | undefined
+): Promise<SigV4Runtime> {
+  const [{ SignatureV4 }, { HttpRequest }, { Sha256 }] = await Promise.all([
+    importOptional(() => import('@smithy/signature-v4'), '@smithy/signature-v4'),
+    importOptional(() => import('@smithy/protocol-http'), '@smithy/protocol-http'),
+    importOptional(() => import('@aws-crypto/sha256-js'), '@aws-crypto/sha256-js'),
+  ])
+  const resolved =
+    credentials ??
+    (
+      await importOptional(() => import('@aws-sdk/credential-providers'), '@aws-sdk/credential-providers')
+    ).fromNodeProviderChain()
+  return { HttpRequest, signer: new SignatureV4({ service, region, sha256: Sha256, credentials: resolved }) }
+}
+
+async function importOptional<T>(load: () => Promise<T>, packageName: string): Promise<T> {
+  try {
+    return await load()
+  } catch (cause) {
+    throw new Error(
+      `${CLASS_NAME} sigv4 auth requires the '${packageName}' package | install it with: npm install '${packageName}'`,
+      { cause }
+    )
+  }
 }
 
 /** Merges header sets case-insensitively, later sets winning, so the transport's `Content-Type` replaces a static one. */
