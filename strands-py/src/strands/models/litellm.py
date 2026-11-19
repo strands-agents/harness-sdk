@@ -6,6 +6,7 @@
 import json
 import logging
 import uuid
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -55,7 +56,8 @@ class LiteLLMModel(OpenAIModel):
                 https://docs.litellm.ai/docs/completion/input#input-params-1.
             stream: Whether to use streaming. Defaults to True.
             cache_config: Prompt-caching configuration. LiteLLM's OpenAI-compatible request path consumes it
-                as ``OpenAIModel`` does. When the backend's model takes cache points (Anthropic, Bedrock and
+                as ``OpenAIModel`` does, except that the routing key is sent only to models LiteLLM accepts
+                ``prompt_cache_key`` for. When the backend's model takes cache points (Anthropic, Bedrock and
                 Vertex AI Claude), the agent also places them on the system prompt and the latest user
                 message; ``strategy="anthropic"`` places them for any backend, such as a proxy alias.
         """
@@ -349,6 +351,79 @@ class LiteLLMModel(OpenAIModel):
                 tool_use_dict["reasoningSignature"] = signature
 
         return chunk
+
+    @override
+    def format_request(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        tool_choice: ToolChoice | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        agent_metadata: AgentMetadata | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Format a LiteLLM chat request.
+
+        Builds the request as ``OpenAIModel`` does, then leaves out the ``prompt_cache_key`` resolved from
+        ``cache_config`` when LiteLLM would reject it for the configured model. A key set in ``params`` is kept.
+
+        Args:
+            messages: List of message objects to be processed by the model.
+            tool_specs: List of tool specifications to make available to the model.
+            system_prompt: System prompt to provide context to the model.
+            tool_choice: Selection strategy for tool invocation.
+            system_prompt_content: System prompt content blocks to provide context to the model.
+            agent_metadata: Invoking agent's metadata.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            A LiteLLM chat request.
+
+        Raises:
+            TypeError: If a message contains a content block type that cannot be converted to a LiteLLM-compatible
+                format.
+        """
+        request = super().format_request(
+            messages,
+            tool_specs,
+            system_prompt,
+            tool_choice,
+            system_prompt_content=system_prompt_content,
+            agent_metadata=agent_metadata,
+            **kwargs,
+        )
+
+        config = self.get_config()
+        if (
+            "prompt_cache_key" not in request
+            or "prompt_cache_key" in (config.get("params") or {})
+            or self._accepts_prompt_cache_key()
+        ):
+            return request
+
+        del request["prompt_cache_key"]
+        cache_config = config.get("cache_config")
+        if cache_config and cache_config.cache_key:
+            warnings.warn(
+                f"cache_config.cache_key has no effect on {request['model']}, which does not accept "
+                "prompt_cache_key through LiteLLM; it will be ignored.",
+                stacklevel=3,
+            )
+        return request
+
+    def _accepts_prompt_cache_key(self) -> bool:
+        """Whether LiteLLM passes ``prompt_cache_key`` for the configured model instead of raising."""
+        # LiteLLM versions that do not know the parameter forward it without validation.
+        if "prompt_cache_key" not in litellm.OPENAI_CHAT_COMPLETION_PARAMS:
+            return True
+
+        supported_params = litellm.get_supported_openai_params(
+            model=self.get_config()["model_id"],
+            custom_llm_provider=self.client_args.get("custom_llm_provider"),
+        )
+        return supported_params is None or "prompt_cache_key" in supported_params
 
     @override
     async def stream(
