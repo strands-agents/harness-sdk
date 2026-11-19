@@ -65,6 +65,7 @@
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^1.1.2",
+    "@aws-sdk/client-bedrock-agentcore": "^3.1165.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",

@@ -19,7 +19,7 @@ questions in one `ask` go in a single request.
 | --- | --- |
 | `apiKey` | Your Gemini API key. Defaults to the `GEMINI_API_KEY` environment variable. |
 | `modelId` | The decision model. Defaults to `gemini-decision-1`. |
-| `defaultMinConfidence` | The minimum confidence for questions that don't set their own. Defaults to `0.75`. |
+| `defaultMinConfidence` | The minimum confidence for questions that don't set their own. Defaults to `0.75` for yes/no questions and `0.5` for multiple-choice questions; a value you pass applies to both. |
 | `fetch` | A custom `fetch` implementation, for example to route requests through a proxy. |
 
 ```typescript
@@ -42,7 +42,8 @@ reports it, and a [minimum confidence](../questions.mdx) is compared against it.
 | Multiple choice | The probability of the chosen option | `1 / number of choices` to `1` |
 
 The default of `0.75` makes a yes/no answer `Uncertain` when the probability of yes is
-between `0.25` and `0.75`. Confidence scales differ between decision models, so retune
+between `0.25` and `0.75`. Multiple-choice questions default to `0.5`, so a clear favorite,
+such as `0.7` of four options, is still returned. Confidence scales differ between decision models, so retune
 your thresholds when you switch to Gemini from another decision model.
 
 Gemini rounds each probability to about two significant figures, so a multiple-choice
@@ -59,6 +60,7 @@ document bytes aren't supported.
 
 | Response | Error |
 | --- | --- |
-| The input was blocked by Gemini's safety filters | `ModelError`, with Gemini's reason in the message |
-| Rate limited or temporarily unavailable (HTTP 429 or 503) | `ModelThrottledError` |
+| Gemini blocked the input (an HTTP 400 safety error, or `prompt_feedback.block_reason`) | `ModelError`, with Gemini's reason in the message |
+| Rate limited or temporarily unavailable (HTTP 429, 503, or 529) | `ModelThrottledError` |
+| Request too large (HTTP 413) | `ContextWindowOverflowError` |
 | Any other failed request, or an answer that doesn't match its question | `ModelError` |

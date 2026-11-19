@@ -15,8 +15,9 @@ import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } fro
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/decisions'
 const GEMINI_DEFAULT_MODEL_ID = 'gemini-decision-1'
 // Gemini's confidence is the top answer's probability: 0.5-1 for Noul, 1/N-1 for Choice. 0.75 keeps Noul answers
-// Uncertain between p = 0.25 and 0.75.
+// Uncertain between p = 0.25 and 0.75; Choice keeps 0.5 so a clear favorite (e.g. 0.7 of 4 options) still commits.
 const GEMINI_DEFAULT_MIN_CONFIDENCE = 0.75
+const GEMINI_DEFAULT_CHOICE_MIN_CONFIDENCE = 0.5
 const GEMINI_MAX_QUESTIONS = 1000
 // Gemini rounds each Choice probability on the server (about 2 significant figures). That moves each value by
 // at most 5% of itself, so a distribution can sum anywhere within 1 +/- 0.05 (e.g. 6 x 0.17 = 1.02); the default
@@ -29,7 +30,10 @@ export interface GeminiDecisionModelOptions {
   readonly apiKey?: string
   /** Gemini decision model identifier. Defaults to `gemini-decision-1`. */
   readonly modelId?: string
-  /** Default minimum confidence, on Gemini's confidence scale. Defaults to `0.75`. */
+  /**
+   * Default minimum confidence for both question types, on Gemini's confidence scale. Defaults to `0.75` for
+   * boolean questions and `0.5` for choice questions.
+   */
   readonly defaultMinConfidence?: number
   /** Custom fetch implementation, primarily for transport configuration and tests. */
   readonly fetch?: typeof globalThis.fetch
@@ -70,6 +74,7 @@ export class GeminiDecisionModel extends DecisionModel {
       authHeaders: (apiKey) => ({ 'x-goog-api-key': apiKey }),
       modelId: GEMINI_DEFAULT_MODEL_ID,
       defaultMinConfidence: GEMINI_DEFAULT_MIN_CONFIDENCE,
+      defaultChoiceMinConfidence: GEMINI_DEFAULT_CHOICE_MIN_CONFIDENCE,
       maxQuestions: GEMINI_MAX_QUESTIONS,
       probabilitySumTolerance: GEMINI_PROBABILITY_SUM_TOLERANCE,
       buildRequestBody: geminiRequestBody,

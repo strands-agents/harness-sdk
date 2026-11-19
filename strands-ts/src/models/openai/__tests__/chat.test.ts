@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import OpenAI, { APIUserAbortError } from 'openai'
+import OpenAI, { APIError, APIUserAbortError, BadRequestError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
+import { formatChatRequest } from '../chat-adapter.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import {
@@ -14,6 +15,7 @@ import {
   UnknownBlock,
 } from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
+import type { OpenAIChatConfig } from '../types.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
 import { warnOnce } from '../../../logging/warn-once.js'
 import { logger } from '../../../logging/logger.js'
@@ -359,9 +361,9 @@ describe('OpenAIModel', () => {
     it('warns on updateConfig when params contains provider-managed keys', () => {
       const model = new OpenAIModel({ api: 'chat', client: {} as OpenAI })
       const warnSpy = vi.spyOn(logger, 'warn')
-      model.updateConfig({ params: { stream_options: { include_usage: false } } })
+      model.updateConfig({ params: { stream: false } })
       expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'stream_options'"))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'stream'"))
       warnSpy.mockRestore()
     })
 
@@ -384,17 +386,29 @@ describe('OpenAIModel', () => {
           model: 'attacker-model',
           messages: [{ role: 'user', content: 'hijacked' }],
           stream: false,
-          stream_options: { include_usage: false },
         },
       })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
       await collectIterator(provider.stream(messages))
       expect(captured.request.model).toBe('gpt-5.4')
       expect(captured.request.stream).toBe(true)
-      expect(captured.request.stream_options).toEqual({ include_usage: true })
       expect(Array.isArray(captured.request.messages)).toBe(true)
       expect(captured.request.messages[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Hi' }] })
       warnSpy.mockRestore()
+    })
+
+    it('keeps managed fields when params sets them to null', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: createMockClientWithCapture(captured),
+        params: { model: null, messages: null, stream: null },
+      })
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      expect(captured.request.model).toBe('gpt-5.4')
+      expect(captured.request.stream).toBe(true)
+      expect(captured.request.messages).toStrictEqual([{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }])
     })
 
     it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
@@ -417,6 +431,53 @@ describe('OpenAIModel', () => {
         { role: 'assistant', content: '[Dropped] [ref: tu-1]' },
         { role: 'tool', tool_call_id: 'tu-1', content: '[Dropped] [ref: tu-1]' },
       ])
+    })
+  })
+
+  describe('params', () => {
+    const streamWithParams = async (config: Partial<OpenAIChatConfig>): Promise<any> => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: createMockClientWithCapture(captured),
+        ...config,
+      })
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      return captured.request
+    }
+
+    it('defaults stream_options to include usage when params does not set it', async () => {
+      const request = await streamWithParams({ params: { seed: 42 } })
+      expect(request.stream_options).toStrictEqual({ include_usage: true })
+    })
+
+    it('keeps the stream_options default when params sets it to undefined', async () => {
+      const request = await streamWithParams({ params: { stream_options: undefined } })
+      expect(request.stream_options).toStrictEqual({ include_usage: true })
+    })
+
+    it('passes a set stream_options through without a warning', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const request = await streamWithParams({ params: { stream_options: { include_usage: false } } })
+      expect(request.stream_options).toStrictEqual({ include_usage: false })
+      expect(warnSpy).not.toHaveBeenCalled()
+      warnSpy.mockRestore()
+    })
+
+    it('omits every params key set to null and passes set keys through', async () => {
+      const request = await streamWithParams({
+        params: { seed: null, top_p: 0.8, prompt_cache_key: null, stream_options: null },
+      })
+      expect('seed' in request).toBe(false)
+      expect('stream_options' in request).toBe(false)
+      expect('prompt_cache_key' in request).toBe(false)
+      expect(request.top_p).toBe(0.8)
+    })
+
+    it('lets dedicated config properties win over a null params key', async () => {
+      const request = await streamWithParams({ temperature: 0.5, params: { temperature: null } })
+      expect(request.temperature).toBe(0.5)
     })
   })
 
@@ -1397,6 +1458,149 @@ describe('OpenAIModel', () => {
         expect.stringContaining('have no effect')
       )
     })
+  })
+
+  describe('tools on models that limit them', () => {
+    const OPENAI_URL = 'https://api.openai.com/v1'
+    const MANTLE_URL = 'https://bedrock-mantle.us-east-1.api.aws/openai/v1'
+    const PROXY_URL = 'http://localhost:4000/v1'
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const toolSpecs = [{ name: 'echo', description: 'Echo a value', inputSchema: { type: 'object' as const } }]
+
+    interface Sent {
+      baseURL?: string
+      modelId: string
+      params?: Record<string, unknown>
+      withTools?: boolean
+    }
+
+    const send = async ({ baseURL, modelId, params, withTools = true }: Sent): Promise<any> => {
+      const captured: { request: any } = { request: null }
+      const client = { ...createMockClientWithCapture(captured), ...(baseURL ? { baseURL } : {}) }
+      const provider = new OpenAIModel({ api: 'chat', client, modelId, ...(params ? { params } : {}) })
+      await collectIterator(provider.stream(messages, withTools ? { toolSpecs } : {}))
+      return captured.request
+    }
+
+    it.each([
+      { baseURL: OPENAI_URL, modelId: 'gpt-6-sol' },
+      { baseURL: 'https://API.OPENAI.COM:443/v1', modelId: 'gpt-6-sol' },
+      { baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-terra' },
+    ])('turns reasoning off and warns when $modelId is sent tools at $baseURL', async (sent) => {
+      const request = await send(sent)
+
+      expect(request).toStrictEqual({
+        ...formatChatRequest({ modelId: sent.modelId }, messages, { toolSpecs }),
+        reasoning_effort: 'none',
+      })
+      expect(warnOnce).toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining(`model_id=<${sent.modelId}> | this model accepts tools`)
+      )
+    })
+
+    it.each([
+      { name: 'no tools', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', withTools: false },
+      { name: 'effort none', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'none' } },
+      { name: 'effort low', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'low' } },
+      { name: 'tool-less model', baseURL: OPENAI_URL, modelId: 'gpt-6-astra' },
+      {
+        name: 'tool-less model, effort none',
+        baseURL: OPENAI_URL,
+        modelId: 'gpt-6.1-sol',
+        params: { reasoning_effort: 'none' },
+      },
+      { name: 'tool-less model on Mantle', baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-sol' },
+      { name: 'older model', baseURL: OPENAI_URL, modelId: 'gpt-5.4', params: { reasoning_effort: 'low' } },
+      { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-sol' },
+      {
+        name: 'bedrock-runtime',
+        baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
+        modelId: 'openai.gpt-6.1-terra',
+      },
+      { name: 'look-alike host', baseURL: 'https://api.openai.com.evil.example/v1', modelId: 'gpt-6-sol' },
+      { name: 'client without a base URL', modelId: 'gpt-6-sol' },
+    ])('sends the request as formatted unless it turns reasoning off: $name', async (sent) => {
+      const request = await send(sent)
+      const formatted = formatChatRequest(
+        { modelId: sent.modelId, ...(sent.params ? { params: sent.params } : {}) },
+        messages,
+        sent.withTools === false ? {} : { toolSpecs }
+      )
+
+      expect(request).toStrictEqual(formatted)
+      expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('accepts tools'))
+    })
+
+    const apiError = (status: number, param: string | null): APIError =>
+      APIError.generate(
+        status,
+        { error: { message: 'Function tools with reasoning_effort are not supported', param } },
+        undefined,
+        new Headers({ 'x-request-id': 'req_1' })
+      )
+
+    const reject = async ({ baseURL, modelId, params, withTools = true }: Sent, error: Error): Promise<any> => {
+      const client = { chat: { completions: { create: vi.fn().mockRejectedValue(error) } }, baseURL } as any
+      const provider = new OpenAIModel({ api: 'chat', client, modelId, ...(params ? { params } : {}) })
+      return collectIterator(provider.stream(messages, withTools ? { toolSpecs } : {})).catch((thrown) => thrown)
+    }
+
+    it.each([
+      { baseURL: OPENAI_URL, modelId: 'gpt-6-astra' },
+      { baseURL: OPENAI_URL, modelId: 'gpt-6.1-sol', params: { reasoning_effort: 'none' } },
+      { baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-sol' },
+    ])('points to the Responses API when tools are rejected for $modelId, which takes none', async (sent) => {
+      const error = apiError(400, 'reasoning_effort')
+
+      const thrown = await reject(sent, error)
+
+      expect(thrown).toBeInstanceOf(BadRequestError)
+      expect(thrown).not.toBe(error)
+      expect(thrown.cause).toBe(error)
+      expect({ ...thrown, message: thrown.message }).toStrictEqual({
+        ...error,
+        message: `400 Function tools with reasoning_effort are not supported ${sent.modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`,
+        cause: error,
+      })
+    })
+
+    it('keeps the class of a rejection that comes from another copy of the openai package', async () => {
+      class OtherCopyBadRequestError extends APIError<400, Headers> {}
+      const error = new OtherCopyBadRequestError(
+        400,
+        { message: 'Function tools with reasoning_effort are not supported', param: 'reasoning_effort' },
+        undefined,
+        new Headers()
+      )
+
+      const thrown = await reject({ baseURL: OPENAI_URL, modelId: 'gpt-6-astra' }, error)
+
+      expect(thrown).toBeInstanceOf(OtherCopyBadRequestError)
+      expect(thrown.message).toContain('gpt-6-astra does not accept tools on the Chat Completions API')
+      expect(thrown.cause).toBe(error)
+    })
+
+    it.each([
+      { name: 'no tools', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', withTools: false },
+      {
+        name: 'model that takes tools',
+        baseURL: OPENAI_URL,
+        modelId: 'gpt-6-sol',
+        params: { reasoning_effort: 'low' },
+      },
+      { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-astra' },
+      { name: 'other param', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', param: 'max_completion_tokens' },
+      { name: 'no param', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', param: null },
+      { name: 'server error', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', status: 500 },
+    ])(
+      'passes an error through unless tools are rejected for a model that takes none: $name',
+      async ({ status = 400, param = 'reasoning_effort', ...sent }) => {
+        const error = apiError(status, param)
+
+        expect(await reject(sent, error)).toBe(error)
+      }
+    )
   })
 
   describe('systemPrompt handling', () => {

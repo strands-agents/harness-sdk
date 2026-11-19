@@ -16,11 +16,12 @@ from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
 from ..types.exceptions import ContextWindowOverflowException
+from .message_trimming import _index_of
 from .presets import _resolve_strategies
-from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
+from .retrieval_tool import _create_retrieval_tool, _retrieval_calls_before
 from .stash import Stash
 from .strategies.offload import Offload
-from .strategies.offload.truncate import EmergencyTruncateStrategy
+from .strategies.offload.base import EmergencyTruncateStrategy
 from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
 if TYPE_CHECKING:
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 _AUTO_TRUNCATE_THRESHOLD = 1_500
 _AGENTIC_TRUNCATE_THRESHOLD = 8_000
 _TRUNCATE_PREVIEW_TOKENS = 750
-_AUTO_SUMMARIZE_UTILIZATION = 0.85
+_AUTO_SUMMARIZE_UTILIZATION = "85%"
 
 CONTEXT_MANAGER_PRESETS: tuple[str, ...] = ("auto", "agentic")
 
@@ -85,9 +86,9 @@ class ContextManager(Plugin):
         else:
             user_strategies = [
                 Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
-                    threshold=_AUTO_TRUNCATE_THRESHOLD,
+                    block_threshold=_AUTO_TRUNCATE_THRESHOLD,
                 ),
-                Offload.summarize("*").when(utilization=_AUTO_SUMMARIZE_UTILIZATION, preserve_recent=4),
+                Offload.summarize("*").when(context_utilization=_AUTO_SUMMARIZE_UTILIZATION, preserve_recent=4),
             ]
         self._strategies: list[ContextStrategy] = [*user_strategies, EmergencyTruncateStrategy()]
 
@@ -100,7 +101,6 @@ class ContextManager(Plugin):
 
         self._stash: Stash | None = None
         self._stash_is_durable: bool = False
-        self._retrieval_tool_use_ids: set[str] = set()
         self._backfill_done: bool = False
 
         super().__init__()
@@ -143,9 +143,9 @@ class ContextManager(Plugin):
         if strategy == "agentic":
             agentic_strategies: list[ContextStrategy | str] = [
                 Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
-                    threshold=_AGENTIC_TRUNCATE_THRESHOLD,
+                    block_threshold=_AGENTIC_TRUNCATE_THRESHOLD,
                 ),
-                Offload.summarize("*").when(utilization=1, preserve_recent=4),
+                Offload.summarize("*").when(context_utilization="100%", preserve_recent=4),
             ]
             return ContextManager(strategies=agentic_strategies)
         if isinstance(strategy, str):
@@ -206,11 +206,11 @@ class ContextManager(Plugin):
 
         if self._stash is not None:
             stash = self._stash
-            skip_set = self._retrieval_tool_use_ids
 
             async def _on_message_added(event: MessageAddedEvent) -> None:
-                _track_retrieval_tool_use_ids(event.message, skip_set)
-                await stash.store_message(event.message, frozenset(skip_set))
+                messages = event.agent.messages
+                index = _index_of(messages, event.message)
+                await stash.store_message(event.message, _retrieval_calls_before(messages, index))
 
             agent.hooks.add_callback(MessageAddedEvent, _on_message_added)
 
@@ -267,10 +267,11 @@ class ContextManager(Plugin):
         if self._backfill_done or self._stash is None:
             return
         self._backfill_done = True
-        skip = frozenset(self._retrieval_tool_use_ids)
-        for message in agent.messages:
+        for index, message in enumerate(agent.messages):
             try:
-                await self._stash.store_message(message, skip, keep_existing=True)
+                await self._stash.store_message(
+                    message, _retrieval_calls_before(agent.messages, index), keep_existing=True
+                )
             except Exception:
                 logger.warning("agent_id=<%s> | failed to backfill stash", agent.agent_id, exc_info=True)
 
