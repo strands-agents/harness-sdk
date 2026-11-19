@@ -21,7 +21,7 @@ import type { StrategyPresetName } from '../../presets.js'
 import type { Snapshot } from '../../../types/snapshot.js'
 import { Offload, type DeferTarget } from '../offload/index.js'
 import { ContextOffloader } from '../../../vended-plugins/context-offloader/plugin.js'
-import { AgentSkills, Skill } from '../../../vended-plugins/skills/index.js'
+import { SKILLS_TOOL_NAME } from '../../../vended-plugins/skills/constants.js'
 import { ModelRouter } from '../../../models/routing/router.js'
 
 const makeTool = (name: string) =>
@@ -202,8 +202,8 @@ describe('DynamicToolLoadingStrategy', () => {
   })
 
   it('keeps the AgentSkills skills tool, which the skills listing tells the model to call, out of the deferred tools', async () => {
-    const skills = new AgentSkills({ skills: [new Skill({ name: 'notes', description: 'Take notes.' })] })
-    const { agent, model } = makeAgent('native', { plugins: [skills] })
+    // Protected by name, so a tool with the name AgentSkills gives its tool stands in for the plugin, which reads files.
+    const { agent, model } = makeAgent('native', { tools: [shell, read, write, makeTool(SKILLS_TOOL_NAME)] })
     model.addTurn({ type: 'textBlock', text: 'ok' })
 
     await agent.invoke('Hi.')
