@@ -19,12 +19,42 @@ import { isOffloaded } from './placeholder.js'
 /** @internal */
 export const STASH_PREFIX = 'context'
 
-function encode(value: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(value))
+/**
+ * Suffix on the storage key of an entry holding a block's text.
+ *
+ * `JSON.stringify` escapes every newline, so a JSON entry is one long line and anything reading the
+ * stored bytes — a search strategy scoring lines, a section slice — sees one line however many the
+ * text had. Text is stored as its own bytes instead. The key carries that fact rather than a header
+ * in the payload, because the payload is what an external index reads: `QmdSearchStrategy` points
+ * SQLite FTS5 at these files directly, and a header would be indexed as content.
+ *
+ * Only text entries take the suffix. Every other block stays JSON under the bare key, which is also
+ * what every entry written before this looks like, so there is nothing to migrate.
+ */
+const TEXT_SUFFIX = '.txt'
+
+/** How a value is stored: text as its own bytes under a suffixed key, or JSON under the bare key. */
+function frame(value: unknown): { suffix: string; data: Uint8Array } {
+  const text = flatText(value)
+  if (text === null) return { suffix: '', data: new TextEncoder().encode(JSON.stringify(value)) }
+  return { suffix: TEXT_SUFFIX, data: new TextEncoder().encode(text) }
 }
 
-function decode(bytes: Uint8Array): unknown {
-  return JSON.parse(new TextDecoder().decode(bytes))
+function decode(key: string, bytes: Uint8Array): unknown {
+  const content = new TextDecoder().decode(bytes)
+  return key.endsWith(TEXT_SUFFIX) ? { text: content } : JSON.parse(content)
+}
+
+/**
+ * The text of a value serialized as `{ text }` and nothing else, or `null` when it carries more than
+ * text and so has to stay JSON.
+ */
+function flatText(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null
+  const keys = Object.keys(value)
+  if (keys.length !== 1 || keys[0] !== 'text') return null
+  const { text } = value as { text: unknown }
+  return typeof text === 'string' ? text : null
 }
 
 /**
@@ -114,6 +144,17 @@ export class Stash {
   }
 
   /**
+   * Write a block's serialized form under `key`, framed by what it holds.
+   *
+   * A reference never carries {@link TEXT_SUFFIX}: the suffix is how the bytes are stored, not part
+   * of the key a placeholder quotes, so callers resolve the same `<id>_<index>` either way.
+   */
+  private async _writeValue(key: string, value: unknown): Promise<void> {
+    const { suffix, data } = frame(value)
+    await this._storage.write(`${key}${suffix}`, data)
+  }
+
+  /**
    * The reference an offload placeholder carries for the block it replaces, with the block stored
    * under that reference if it is not already.
    *
@@ -137,7 +178,7 @@ export class Stash {
     }
     const key = formatStashKey({ id: message.trackingId, index: blockIndex })
     if (!(await this.list(key)).includes(key)) {
-      await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
+      await this._writeValue(key, block.toJSON())
     }
     return key
   }
@@ -150,7 +191,10 @@ export class Stash {
    */
   async storeRemoved(removed: Message[]): Promise<string> {
     const id = `removed-${removed[0]!.trackingId}`
-    await this.store(id, 0, encode(removed.map((message) => message.toJSON())))
+    await this._writeValue(
+      formatStashKey({ id, index: 0 }),
+      removed.map((message) => message.toJSON())
+    )
     return id
   }
 
@@ -177,7 +221,7 @@ export class Stash {
         continue
       }
       try {
-        await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
+        await this._writeValue(formatStashKey({ id: message.trackingId, index: blockIndex }), block.toJSON())
       } catch (error) {
         logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
       }
@@ -207,16 +251,23 @@ export class Stash {
    * @returns The deserialized block data (from `toJSON()`), or null if not found
    */
   async retrieve(reference: string): Promise<{ data: unknown } | null> {
-    const bytes = await this._storage.read(reference)
-    if (bytes === null) return null
-    return { data: decode(bytes) }
+    // Text is the common case, so it is read first; a bare key holds JSON.
+    for (const key of [`${reference}${TEXT_SUFFIX}`, reference]) {
+      const bytes = await this._storage.read(key)
+      if (bytes !== null) return { data: decode(key, bytes) }
+    }
+    return null
   }
 
   /**
    * List stashed references, optionally only those starting with `prefix`.
+   *
+   * {@link TEXT_SUFFIX} is stripped, so a reference is the same `<id>_<index>` whichever framing its
+   * entry was stored under. Every caller that parses or resolves a reference depends on that.
    */
   async list(prefix = ''): Promise<string[]> {
-    return this._storage.list(prefix)
+    const keys = await this._storage.list(prefix)
+    return [...new Set(keys.map((key) => (key.endsWith(TEXT_SUFFIX) ? key.slice(0, -TEXT_SUFFIX.length) : key)))]
   }
 
   /**
@@ -231,10 +282,10 @@ export class Stash {
   }
 
   /**
-   * Delete a stashed entry.
+   * Delete a stashed entry, under either framing.
    */
   async delete(reference: string): Promise<void> {
-    await this._storage.delete(reference)
+    await Promise.all([this._storage.delete(`${reference}${TEXT_SUFFIX}`), this._storage.delete(reference)])
     logger.debug(`reference=<${reference}> | stash entry deleted`)
   }
 
@@ -297,14 +348,14 @@ export class Stash {
    * @param entries - Map of reference keys to their JSON values (from {@link takeSnapshot})
    */
   async loadSnapshot(entries: Record<string, JSONValue>): Promise<void> {
-    await Promise.all(Object.entries(entries).map(([key, data]) => this._storage.write(key, encode(data))))
+    await Promise.all(Object.entries(entries).map(([key, data]) => this._writeValue(key, data)))
   }
 
   private async _storeToolResult(block: ToolResultBlock): Promise<void> {
     for (let blockIndex = 0; blockIndex < block.content.length; blockIndex++) {
       const item = block.content[blockIndex]!
       try {
-        await this.store(block.toolUseId, blockIndex, encode(item.toJSON()))
+        await this._writeValue(formatStashKey({ id: block.toolUseId, index: blockIndex }), item.toJSON())
       } catch (error) {
         logger.warn(
           `toolUseId=<${block.toolUseId}>, blockIndex=<${blockIndex}>, error=<${error}> | failed to stash sub-block`

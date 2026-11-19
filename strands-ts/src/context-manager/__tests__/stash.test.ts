@@ -117,6 +117,123 @@ describe('Stash', () => {
     })
   })
 
+  describe('text framing', () => {
+    const ROOT = 'context/test-session/scopes/agent/test-agent'
+    /** Reads the stored bytes at an exact storage key, so a test names the framing it expects. */
+    const storedAt = async (storage: InMemoryStorage, key: string): Promise<string> =>
+      new TextDecoder().decode((await storage.read(`${ROOT}/${key}`))!)
+
+    it('stores a text block as its own bytes, so what reads them sees the lines the text had', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const text = 'first line\nsecond line\nthird line'
+      const message = new Message({ role: 'user', content: [new TextBlock(text)], trackingId: 'track-1' })
+
+      await stash.storeMessage(message)
+
+      expect(await storage.list('')).toStrictEqual([`${ROOT}/track-1_0.txt`])
+      expect(await storedAt(storage, 'track-1_0.txt')).toBe(text)
+    })
+
+    it.each([
+      ['multi-line', 'alpha\nbeta\ngamma'],
+      ['empty', ''],
+      ['trailing newline', 'alpha\n'],
+      ['text that is itself a JSON object', '{"status":"degraded"}'],
+      ['text that is itself a JSON array', '[{"role":"user"}]'],
+      ['multi-byte', '\u{1F600} \u03C9\nsecond'],
+    ])('round-trips %s text unchanged', async (_name, text) => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const message = new Message({ role: 'user', content: [new TextBlock(text)], trackingId: 'track-1' })
+
+      await stash.storeMessage(message)
+
+      expect(await stash.retrieve('track-1_0')).toStrictEqual({ data: { text } })
+    })
+
+    it('keeps a block that carries more than text as JSON under the bare key', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
+      const message = new Message({ role: 'user', content: [image], trackingId: 'track-1' })
+
+      await stash.storeMessage(message)
+
+      expect(await storage.list('')).toStrictEqual([`${ROOT}/track-1_0`])
+      expect((await storedAt(storage, 'track-1_0')).startsWith('{')).toBe(true)
+      expect((await stash.retrieve('track-1_0'))!.data).toStrictEqual(image.toJSON())
+    })
+
+    it('stores removed messages as JSON, since they are a list rather than one text', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const message = new Message({ role: 'user', content: [new TextBlock('alpha')], trackingId: 'track-1' })
+
+      const reference = await stash.storeRemoved([message])
+
+      expect((await storedAt(storage, `${reference}_0`)).startsWith('[')).toBe(true)
+    })
+
+    it('reports references without the suffix, so they parse and resolve either way', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('a')] })
+      const message = new Message({ role: 'user', content: [new TextBlock('t'), toolResult], trackingId: 'track-1' })
+
+      await stash.storeMessage(message)
+
+      expect(await stash.list()).toStrictEqual(['track-1_0', 'tu-1_0'])
+      expect(await stash.keysOf('tu-1')).toStrictEqual(['tu-1_0'])
+      expect(Object.keys(await stash.takeSnapshot())).toStrictEqual(['track-1_0', 'tu-1_0'])
+    })
+
+    it('deletes a text entry by its reference', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const message = new Message({ role: 'user', content: [new TextBlock('alpha')], trackingId: 'track-1' })
+      await stash.storeMessage(message)
+
+      await stash.delete('track-1_0')
+
+      expect(await storage.list('')).toStrictEqual([])
+      expect(await stash.retrieve('track-1_0')).toBeNull()
+    })
+
+    it('reads an entry written as JSON under the bare key', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const text = 'alpha\nbeta'
+
+      await stash.store('track-1', 0, new TextEncoder().encode(JSON.stringify({ text })))
+
+      expect(await stash.list()).toStrictEqual(['track-1_0'])
+      expect(await stash.retrieve('track-1_0')).toStrictEqual({ data: { text } })
+    })
+
+    it('prefers the text entry when both framings exist for one reference', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stash.store('track-1', 0, new TextEncoder().encode(JSON.stringify({ text: 'stale' })))
+      const message = new Message({ role: 'user', content: [new TextBlock('current')], trackingId: 'track-1' })
+
+      await stash.storeMessage(message)
+
+      expect(await stash.list()).toStrictEqual(['track-1_0'])
+      expect(await stash.retrieve('track-1_0')).toStrictEqual({ data: { text: 'current' } })
+    })
+
+    it('restores a snapshot of JSON-framed entries as text, leaving the snapshot shape alone', async () => {
+      const storage = new InMemoryStorage()
+      const source = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await source.store('track-1', 0, new TextEncoder().encode(JSON.stringify({ text: 'alpha\nbeta' })))
+      const snapshot = await source.takeSnapshot()
+      expect(snapshot).toStrictEqual({ 'track-1_0': { text: 'alpha\nbeta' } })
+
+      const restored = new Stash(storage, 'test-session', 'test-agent')
+      await restored.loadSnapshot(snapshot)
+
+      expect(await storedAt(storage, 'track-1_0.txt')).toBe('alpha\nbeta')
+      expect(await restored.takeSnapshot()).toStrictEqual(snapshot)
+    })
+  })
+
   describe('stash keys', () => {
     it.each([
       { id: 'tu-1', index: 0 },
