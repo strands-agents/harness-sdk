@@ -622,12 +622,12 @@ const objectiveFor = async (experiment: ExperimentSummary, input: Input): Promis
 
 const planTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_optimization_plan',
-  readOnly: true,
   description:
     'Read what an optimization of one experiment could tune, and what it would cost, without starting anything. ' +
     'Call it before you ask the developer to set up a run, so the knobs, the choices, and the estimate you show ' +
     'them are this agent’s own and not a guess. A knob with a reason cannot be tuned: show the reason and do not ' +
-    'offer it. Call it again after the developer changes a setting if you want a fresh estimate.',
+    'offer it. Call it again after the developer changes a setting if you want a fresh estimate. ' +
+    'It plans a fresh run, so it clears a setup that the developer already has open in /optimize.',
   inputSchema: {
     type: 'object',
     properties: { experiment: { type: 'string', description: 'The name of a saved experiment.' } },

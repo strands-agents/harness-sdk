@@ -113,6 +113,35 @@ describe('WizardBroker', () => {
     await expect(second).resolves.toEqual({})
   })
 
+  it('shouldKeepTheSecondRequestOnScreenWhenTheFirstIsAnswered', async () => {
+    const broker = new WizardBroker()
+    const open = vi.fn(() => true)
+    broker.attachOpener(open)
+    const seen: (string | undefined)[] = []
+    broker.subscribe((pending) => seen.push(pending?.name))
+    const first = broker.ask(request({ name: 'first' }))
+    void broker.ask(request({ name: 'second' }))
+
+    broker.respond(broker.pending()!.id, {})
+    await first
+
+    expect(broker.pending()?.name).toBe('second')
+    expect(seen).toEqual(['first', 'second'])
+    expect(open).toHaveBeenCalledTimes(2)
+  })
+
+  it('shouldSeedAnUnavailableToggleAsFalseEvenWhenTheSpecChecksIt', () => {
+    const blocked: WizardStepSpec[] = [
+      {
+        key: 'a',
+        title: 'A',
+        fields: [{ kind: 'toggle', key: 'tools', label: 'tools', checked: true, unavailable: 'not yet' }],
+      },
+    ]
+
+    expect(defaultAnswers(blocked)).toEqual({ tools: false })
+  })
+
   it('shouldResolveWithNothingWhenTheBrokerIsCancelled', async () => {
     const broker = new WizardBroker()
     const asked = broker.ask(request())

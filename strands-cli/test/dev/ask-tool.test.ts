@@ -45,7 +45,7 @@ describe('askRequestFrom', () => {
     [{ steps: [{ ...knobStep, fields: [] }] }, 'At least one step must have a field'],
     [
       { steps: [knobStep, { ...budgetStep, fields: knobStep.fields }] },
-      'Two fields use the key instructions. Every field key must be unique.',
+      'The key instructions is used twice. Every step key and field key must be unique.',
     ],
     [
       { steps: [{ key: 'a', title: 'A', fields: [{ kind: 'slider', key: 'x', label: 'x' }] }] },
@@ -57,6 +57,42 @@ describe('askRequestFrom', () => {
     ],
   ])('shouldRefuseABadRequest', (input, message) => {
     expect(() => askRequestFrom(input as never)).toThrow(message)
+  })
+
+  it('shouldRefuseTwoStepsThatShareAKey', () => {
+    const steps = [budgetStep, { ...budgetStep, fields: [] }]
+
+    expect(() => askRequestFrom({ steps } as never)).toThrow('The key budget is used twice')
+  })
+
+  it('shouldRefuseAChoiceThatRepeatsAnOption', () => {
+    const steps = [{ key: 'a', title: 'A', fields: [{ kind: 'choice', key: 'x', label: 'x', options: ['f', 'f'] }] }]
+
+    expect(() => askRequestFrom({ steps } as never)).toThrow('options must not repeat a choice.')
+  })
+
+  it('shouldRefuseAToggleThatIsCheckedAndUnavailableAtOnce', () => {
+    const steps = [
+      { key: 'a', title: 'A', fields: [{ kind: 'toggle', key: 'x', label: 'x', checked: true, unavailable: 'no' }] },
+    ]
+
+    expect(() => askRequestFrom({ steps } as never)).toThrow('cannot be checked and unavailable at once.')
+  })
+
+  it('shouldRefuseAnErrorNoticeBecauseItCouldNeverBeCleared', () => {
+    const steps = [{ ...budgetStep, notice: { tone: 'error', text: 'pick one' } }]
+
+    expect(() => askRequestFrom({ steps } as never)).toThrow('tone must be one of success, warning, muted.')
+  })
+
+  it.each(['value', 'placeholder'])('shouldTreatAnEmpty%sAsAbsentRatherThanAnError', (field) => {
+    const steps = [{ key: 'a', title: 'A', fields: [{ kind: 'text', key: 'notes', label: 'notes', [field]: '' }] }]
+
+    expect(() => askRequestFrom({ steps } as never)).not.toThrow()
+  })
+
+  it('shouldTreatAnEmptyStatusAsAbsentRatherThanAnError', () => {
+    expect(askRequestFrom({ steps: [budgetStep], status: '' }).status).toBeUndefined()
   })
 
   it('shouldRefuseAChoiceWhoseValueIsNotOneOfItsOptions', () => {

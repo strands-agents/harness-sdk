@@ -341,7 +341,7 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_read_experiment', true],
       ['strands_dev_evaluation_results', true],
       ['strands_dev_evaluate', false],
-      ['strands_dev_optimization_plan', true],
+      ['strands_dev_optimization_plan', false],
       ['strands_dev_ask', false],
       ['strands_dev_optimize', false],
       ['strands_dev_cancel_optimization', false],

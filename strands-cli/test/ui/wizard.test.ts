@@ -262,6 +262,46 @@ describe('Wizard', () => {
     expect(toggle).toHaveBeenCalled()
   })
 
+  it('shouldFocusAndToggleTheRowTheCursorIsOnWhenAStepMixesChoicesAndToggles', async () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    const steps: WizardStep[] = [
+      {
+        key: 'one',
+        title: 'One',
+        fields: [
+          choices(vi.fn()),
+          { kind: 'toggle', key: 'a', label: 'alpha', checked: false, hint: 'Enter toggle', toggle: first },
+          { kind: 'toggle', key: 'b', label: 'beta', checked: false, hint: 'Enter toggle', toggle: second },
+        ],
+      },
+    ]
+    const { press } = await wizard(steps)
+
+    await press(DOWN)
+    await press(ENTER)
+
+    expect(first).toHaveBeenCalled()
+    expect(second).not.toHaveBeenCalled()
+  })
+
+  it('shouldKeepTheDeclaredOrderWhenAStepMixesChoicesAndToggles', async () => {
+    const steps: WizardStep[] = [
+      {
+        key: 'one',
+        title: 'One',
+        fields: [
+          choices(vi.fn()),
+          { kind: 'toggle', key: 'a', label: 'alpha', checked: false, hint: 'Enter toggle', toggle: vi.fn() },
+        ],
+      },
+    ]
+    const { text } = await wizard(steps)
+    const rows = text().split('\n')
+
+    expect(rows.findIndex((row) => row.includes('size'))).toBeLessThan(rows.findIndex((row) => row.includes('alpha')))
+  })
+
   it('shouldNotToggleAnUnavailableField', async () => {
     const toggle = vi.fn()
     const steps: WizardStep[] = [

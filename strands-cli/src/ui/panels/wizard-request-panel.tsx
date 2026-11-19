@@ -28,6 +28,7 @@ const choiceOf = (field: WizardFieldSpec & { kind: 'choice' }, answer: WizardAns
 const toField = (
   spec: WizardFieldSpec,
   answers: Answers,
+  live: () => Answers,
   update: (key: string, value: WizardAnswer) => void
 ): WizardField => {
   if (spec.kind === 'toggle')
@@ -39,7 +40,7 @@ const toField = (
       ...(spec.unavailable === undefined ? {} : { unavailable: spec.unavailable }),
       checked: answers[spec.key] === true,
       hint: 'Enter toggle',
-      toggle: () => update(spec.key, answers[spec.key] !== true),
+      toggle: () => update(spec.key, live()[spec.key] !== true),
     }
   if (spec.kind === 'text') {
     const value = typeof answers[spec.key] === 'string' ? (answers[spec.key] as string) : ''
@@ -66,7 +67,8 @@ const toField = (
     detail: current,
     hint: spec.hint ?? '←→ choose',
     move: (step): void => {
-      const next = spec.options[spec.options.indexOf(current) + step]
+      const at = spec.options.indexOf(choiceOf(spec, live()[spec.key]))
+      const next = spec.options[at + step]
       if (next !== undefined) update(spec.key, next)
     },
   }
@@ -75,11 +77,12 @@ const toField = (
 const toStep = (
   spec: WizardStepSpec,
   answers: Answers,
+  live: () => Answers,
   update: (key: string, value: WizardAnswer) => void
 ): WizardStep => ({
   key: spec.key,
   title: spec.title,
-  fields: spec.fields.map((field) => toField(field, answers, update)),
+  fields: spec.fields.map((field) => toField(field, answers, live, update)),
   ...(spec.notice ? { notice: spec.notice } : {}),
   ...(spec.listLabel === undefined ? {} : { listLabel: spec.listLabel }),
   ...(spec.footnote === undefined ? {} : { footnote: spec.footnote }),
@@ -99,7 +102,7 @@ const RequestView = ({
   const answers = useSyncedState<Answers>(() => defaultAnswers(request.steps))
   const position = useWizardPosition()
   const update = (key: string, value: WizardAnswer): void => answers.set((current) => ({ ...current, [key]: value }))
-  const steps = request.steps.map((step) => toStep(step, answers.value, update))
+  const steps = request.steps.map((step) => toStep(step, answers.value, answers.current, update))
   return (
     <Wizard
       name={request.name}

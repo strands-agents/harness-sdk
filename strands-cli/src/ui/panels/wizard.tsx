@@ -440,8 +440,31 @@ export const Wizard = ({
     />
   )
   const rowOf = (key: string): number => rows.findIndex((row) => row.kind === 'field' && row.field.key === key)
+  const toggleRows = toggles.map(({ key }) => rowOf(key))
+  // One scrolling list for every toggle of the step, placed where the first one was declared.
+  const toggleList = (): ReactNode => (
+    <>
+      {compact || step.listLabel === undefined ? null : <Line>{`  ${step.listLabel}`}</Line>}
+      <ItemList
+        items={toggles.map(toggleItem)}
+        selected={toggleRows.indexOf(cursor.index)}
+        capacity={Math.max(MIN_LIST_ROWS, Math.min(toggles.length, height - LIST_CHROME_ROWS))}
+        labelWidth={labelWidthFor(
+          toggles.map(({ label }) => label),
+          width
+        )}
+        onClick={(item) => choose(toggleRows[item] ?? 0)}
+        onHover={(item) => cursor.set(toggleRows[item] ?? 0)}
+      />
+    </>
+  )
   const fieldView = (field: WizardField): ReactNode => {
-    if (field.kind === 'toggle') return null
+    if (field.kind === 'toggle')
+      return field.key === toggles[0]?.key ? (
+        <Box key={field.key} flexDirection="column">
+          {toggleList()}
+        </Box>
+      ) : null
     const row = rowOf(field.key)
     const point = row < 0 ? undefined : (): void => cursor.set(row)
     if (field.kind === 'text')
@@ -492,22 +515,6 @@ export const Wizard = ({
       <PanelTitle name={name} parts={titleParts} />
       <StepBar steps={steps} at={index} right={status} onPick={pickStep} />
       {compact ? null : <Gap />}
-      {toggles.length > 0 ? (
-        <>
-          {compact || step.listLabel === undefined ? null : <Line>{`  ${step.listLabel}`}</Line>}
-          <ItemList
-            items={toggles.map(toggleItem)}
-            selected={focused?.kind === 'field' && focused.field.kind === 'toggle' ? cursor.index : -1}
-            capacity={Math.max(MIN_LIST_ROWS, Math.min(toggles.length, height - LIST_CHROME_ROWS))}
-            labelWidth={labelWidthFor(
-              toggles.map(({ label }) => label),
-              width
-            )}
-            onClick={choose}
-            onHover={cursor.set}
-          />
-        </>
-      ) : null}
       {step.fields.map(fieldView)}
       {step.body ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)) : null}
       {editor && step.editFootnote ? <Line tone="muted">{`  ${step.editFootnote}`}</Line> : null}

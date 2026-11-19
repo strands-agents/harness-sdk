@@ -91,7 +91,8 @@ export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string,
   const answers: Record<string, WizardAnswer> = {}
   for (const step of steps)
     for (const field of step.fields) {
-      if (field.kind === 'toggle') answers[field.key] = field.checked === true
+      // An unavailable toggle renders unchecked and refuses to flip, so it must not answer true.
+      if (field.kind === 'toggle') answers[field.key] = field.unavailable === undefined && field.checked === true
       else if (field.kind === 'text') answers[field.key] = field.value ?? ''
       else answers[field.key] = field.value ?? field.options[0] ?? ''
     }
@@ -121,7 +122,6 @@ export class WizardBroker {
     return new Promise((resolve) => {
       this._queue.push({ request, resolve })
       this._activateNext()
-      this._open?.()
     })
   }
 
@@ -134,8 +134,9 @@ export class WizardBroker {
     if (!active || active.request.id !== id) return false
     this._active = undefined
     active.resolve(outcome)
-    this._notify(undefined)
-    void Promise.resolve().then(() => this._activateNext())
+    // Activating before notifying keeps a queued request on screen: the panel closes itself on undefined.
+    if (this._queue.length > 0) this._activateNext()
+    else this._notify(undefined)
     return true
   }
 
@@ -165,6 +166,7 @@ export class WizardBroker {
     if (this._active || this._queue.length === 0) return
     this._active = this._queue.shift()
     this._notify(this._active?.request)
+    this._open?.()
   }
 
   private _notify(request: WizardRequest | undefined): void {

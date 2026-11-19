@@ -7,7 +7,8 @@ import type { DevChatTool } from '../chat-extension.js'
 type Input = Readonly<Record<string, JSONValue>>
 
 const FIELD_KINDS = ['choice', 'toggle', 'text'] as const
-const TONES: readonly Tone[] = ['success', 'error', 'warning', 'muted']
+// 'error' is left out on purpose: a static error notice blocks finishing with no way to clear it.
+const TONES: readonly Tone[] = ['success', 'warning', 'muted']
 const MAX_STEPS = 8
 const MAX_FIELDS = 24
 
@@ -19,8 +20,11 @@ const stringAt = (value: JSONValue | undefined, what: string): string => {
   return value.trim()
 }
 
-const optionalString = (value: JSONValue | undefined, what: string): string | undefined =>
-  value === undefined || value === null ? undefined : stringAt(value, what)
+const optionalString = (value: JSONValue | undefined, what: string): string | undefined => {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string') throw new Error(`${what} must be text.`)
+  return value.trim() || undefined
+}
 
 const optionalFlag = (value: JSONValue | undefined, what: string): boolean | undefined => {
   if (value === undefined || value === null) return undefined
@@ -41,7 +45,9 @@ const fieldAt = (value: JSONValue, what: string): WizardFieldSpec => {
   const kind = stringAt(value.kind, `${what}.kind`)
   const key = stringAt(value.key, `${what}.key`)
   const label = stringAt(value.label, `${what}.label`)
-  if (kind === 'toggle')
+  if (kind === 'toggle') {
+    if (value.checked === true && optionalString(value.unavailable, `${what}.unavailable`) !== undefined)
+      throw new Error(`${what} cannot be checked and unavailable at once.`)
     return {
       kind: 'toggle',
       key,
@@ -56,12 +62,15 @@ const fieldAt = (value: JSONValue, what: string): WizardFieldSpec => {
         ? {}
         : { checked: optionalFlag(value.checked, `${what}.checked`)! }),
     }
+  }
   if (kind === 'text')
     return {
       kind: 'text',
       key,
       label,
-      ...(value.value === undefined || value.value === null ? {} : { value: stringAt(value.value, `${what}.value`) }),
+      ...(optionalString(value.value, `${what}.value`) === undefined
+        ? {}
+        : { value: optionalString(value.value, `${what}.value`)! }),
       ...(optionalString(value.placeholder, `${what}.placeholder`) === undefined
         ? {}
         : { placeholder: optionalString(value.placeholder, `${what}.placeholder`)! }),
@@ -70,6 +79,7 @@ const fieldAt = (value: JSONValue, what: string): WizardFieldSpec => {
   const options = value.options
   if (!Array.isArray(options) || options.length === 0) throw new Error(`${what}.options must list at least one choice.`)
   const choices = options.map((option, index) => stringAt(option, `${what}.options[${index}]`))
+  if (new Set(choices).size !== choices.length) throw new Error(`${what}.options must not repeat a choice.`)
   const picked = optionalString(value.value, `${what}.value`)
   if (picked !== undefined && !choices.includes(picked))
     throw new Error(`${what}.value must be one of its own options: ${choices.join(', ')}.`)
@@ -105,11 +115,14 @@ const stepAt = (value: JSONValue, what: string): WizardStepSpec => {
 
 const duplicateKey = (steps: readonly WizardStepSpec[]): string | undefined => {
   const seen = new Set<string>()
-  for (const step of steps)
+  for (const step of steps) {
+    if (seen.has(step.key)) return step.key
+    seen.add(step.key)
     for (const field of step.fields) {
       if (seen.has(field.key)) return field.key
       seen.add(field.key)
     }
+  }
   return undefined
 }
 
@@ -119,7 +132,7 @@ export const askRequestFrom = (input: Input): WizardRequestSpec => {
   if (steps.length > MAX_STEPS) throw new Error(`steps can hold at most ${MAX_STEPS} steps.`)
   const parsed = steps.map((step, index) => stepAt(step, `steps[${index}]`))
   const clash = duplicateKey(parsed)
-  if (clash) throw new Error(`Two fields use the key ${clash}. Every field key must be unique.`)
+  if (clash) throw new Error(`The key ${clash} is used twice. Every step key and field key must be unique.`)
   if (parsed.every((step) => step.fields.length === 0))
     throw new Error('At least one step must have a field, or there is nothing to answer.')
   const subtitle = input.subtitle
