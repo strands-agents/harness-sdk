@@ -1,0 +1,64 @@
+---
+title: Gemini decision model
+description: "Answer decision model questions with Google's Gemini Decisions API, which scores yes/no and multiple-choice questions and returns calibrated probabilities."
+tags: [decision-models]
+languages: TypeScript
+sourceLinks:
+  - path: strands-ts/src/decisions/gemini-decision-model.ts
+---
+
+`GeminiDecisionModel` answers questions with Google's
+[Gemini Decisions API](https://ai.google.dev/gemini-api/docs/decisions-api)
+(`gemini-decision-1`). The API scores each question's choices instead of generating text,
+so every answer comes with a probability for each choice and a confidence. All the
+questions in one `ask` go in a single request.
+
+## Configuration
+
+| Option | Description |
+| --- | --- |
+| `apiKey` | Your Gemini API key. Defaults to the `GEMINI_API_KEY` environment variable. |
+| `modelId` | The decision model. Defaults to `gemini-decision-1`. |
+| `defaultMinConfidence` | The minimum confidence for questions that don't set their own. Defaults to `0.75`. |
+| `fetch` | A custom `fetch` implementation, for example to route requests through a proxy. |
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/models/gemini_imports.ts:configuration_imports"
+
+--8<-- "user-guide/sdk/decision-models/models/gemini.ts:configuration"
+```
+
+The API key is a server-side credential, so `GeminiDecisionModel` refuses to run in a
+browser.
+
+## Confidence
+
+The confidence is Gemini's own: the probability of the top answer. `metadata.confidence`
+reports it, and a [minimum confidence](../questions.mdx) is compared against it.
+
+| Question | Confidence | Range |
+| --- | --- | --- |
+| Yes/no | `max(p, 1 - p)`, where `p` is the probability of yes | `0.5` to `1` |
+| Multiple choice | The probability of the chosen option | `1 / number of choices` to `1` |
+
+The default of `0.75` makes a yes/no answer `Uncertain` when the probability of yes is
+between `0.25` and `0.75`. Confidence scales differ between decision models, so retune
+your thresholds when you switch to Gemini from another decision model.
+
+Gemini rounds each probability to about two significant figures, so a multiple-choice
+answer's probabilities can sum to slightly more or less than 1. The decision model
+accepts a sum within `0.05` of 1 and returns the probabilities as Gemini sent them.
+
+## Input
+
+A string is sent as the request's text input. Content blocks and messages are sent as
+JSON text, because the API doesn't accept conversation history. Image, audio, video, and
+document bytes aren't supported.
+
+## Errors
+
+| Response | Error |
+| --- | --- |
+| The input was blocked by Gemini's safety filters | `ModelError`, with Gemini's reason in the message |
+| Rate limited or temporarily unavailable (HTTP 429 or 503) | `ModelThrottledError` |
+| Any other failed request, or an answer that doesn't match its question | `ModelError` |

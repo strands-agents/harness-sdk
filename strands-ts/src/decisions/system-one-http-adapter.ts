@@ -19,13 +19,8 @@ export interface SystemOneRequestConfig {
   modelId?: string
   defaultMinConfidence: number
   maxQuestions?: number
-  /** Builds the request body for APIs that differ from the System One `{ state, model, questions }` shape. */
-  buildRequestBody?: (state: DecisionInput, questions: Record<string, Question>) => unknown
-  /**
-   * Whether Noul answers carry the API's own `confidence`. That value is reported in metadata, while
-   * `Uncertain` is still decided on the shared `|2p - 1|` scale.
-   */
-  noulConfidenceFromProvider?: boolean
+  /** Builds the request body. {@link systemOneRequestBody} builds the System One `{ state, model, questions }` shape. */
+  buildRequestBody: RequestBodyBuilder
   /**
    * How far a Choice answer's probabilities may sum from `1`, for APIs that round more coarsely than the
    * default check allows. Defaults to the 4-decimal rounding tolerance.
@@ -39,9 +34,57 @@ export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   apiKey: string
   modelId: string
   fetch: typeof globalThis.fetch
-  /** Header that carries the API key as is. Defaults to `Authorization: Bearer <apiKey>`. */
-  apiKeyHeader?: string
+  /** Builds the request's authentication headers from the API key. */
+  authHeaders: AuthHeadersProvider
 }
+
+/**
+ * Builds the HTTP headers that authenticate a request with the provider's API key.
+ *
+ * @internal
+ */
+export type AuthHeadersProvider = (apiKey: string) => Record<string, string>
+
+/**
+ * Sends the API key as `Authorization: Bearer <apiKey>`.
+ *
+ * @internal
+ */
+export const bearerAuth: AuthHeadersProvider = (apiKey) => ({ Authorization: `Bearer ${apiKey}` })
+
+/**
+ * A decision API's JSON request body. Every System One API takes `questions`, keyed by question id or as an
+ * ordered array that names each question; the rest of the body varies.
+ *
+ * @internal
+ */
+export interface WireRequestBody {
+  model?: string
+  questions: Record<string, WireQuestion> | readonly Record<string, unknown>[]
+  [field: string]: unknown
+}
+
+/**
+ * Builds a request body from the decision state, questions, and configured model id.
+ *
+ * @internal
+ */
+export type RequestBodyBuilder = (
+  state: DecisionInput,
+  questions: Record<string, Question>,
+  modelId: string | undefined
+) => WireRequestBody
+
+/**
+ * Builds the System One `{ state, model, questions }` request body; `model` is omitted when undefined.
+ *
+ * @internal
+ */
+export const systemOneRequestBody: RequestBodyBuilder = (state, questions, modelId) => ({
+  state: toWireState(state),
+  ...(modelId !== undefined && { model: modelId }),
+  questions: toWireQuestions(questions),
+})
 
 /**
  * Sends a serialized System One request and resolves to the parsed JSON response payload.
@@ -67,10 +110,14 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence?: number
     fetch?: typeof globalThis.fetch
   },
-  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch' | 'buildRequestBody'> & {
+  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch' | 'buildRequestBody' | 'authHeaders'> & {
     apiKeyEnvironmentVariable: string
     modelId: string
     className: string
+    /** Defaults to {@link systemOneRequestBody}. */
+    buildRequestBody?: RequestBodyBuilder
+    /** Defaults to {@link bearerAuth}. */
+    authHeaders?: AuthHeadersProvider
   }
 ): SystemOneProviderConfig {
   if (typeof window !== 'undefined') {
@@ -101,12 +148,10 @@ export function resolveSystemOneProviderConfig(
     apiKey,
     modelId,
     defaultMinConfidence,
+    buildRequestBody: defaults.buildRequestBody ?? systemOneRequestBody,
+    authHeaders: defaults.authHeaders ?? bearerAuth,
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
-    ...(defaults.apiKeyHeader !== undefined && { apiKeyHeader: defaults.apiKeyHeader }),
-    ...(defaults.noulConfidenceFromProvider !== undefined && {
-      noulConfidenceFromProvider: defaults.noulConfidenceFromProvider,
-    }),
     ...(defaults.probabilitySumTolerance !== undefined && {
       probabilitySumTolerance: defaults.probabilitySumTolerance,
     }),
@@ -124,7 +169,8 @@ interface WireChoiceQuestion {
   criteria: Record<string, null | ''>
 }
 
-type WireQuestion = WireNoulQuestion | WireChoiceQuestion
+/** @internal */
+export type WireQuestion = WireNoulQuestion | WireChoiceQuestion
 
 /**
  * Answer a provider returns when its API declined to answer a question. The shared parser reports it as
@@ -140,10 +186,7 @@ export class RefusedAnswer {
 interface ParsedAnswer {
   answer: boolean | string | Uncertain
   probabilities: Readonly<Record<string, number>>
-  /** Reported in metadata. */
   confidence: number
-  /** Compared with `minConfidence`; defaults to `confidence`. */
-  thresholdConfidence?: number
 }
 
 class SystemOneHttpError extends Error {
@@ -175,13 +218,7 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
     throw new Error(`${config.providerName} accepts at most ${config.maxQuestions} questions per request`)
   }
 
-  const body = JSON.stringify(
-    config.buildRequestBody?.(state, questions) ?? {
-      state: toWireState(state),
-      ...(config.modelId !== undefined && { model: config.modelId }),
-      questions: toWireQuestions(questions),
-    }
-  )
+  const body = JSON.stringify(config.buildRequestBody(state, questions, config.modelId))
 
   const startedAt = globalThis.performance.now()
   const payload = await transport(body, cancelSignal)
@@ -269,9 +306,7 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
     response = await config.fetch(config.endpoint, {
       method: 'POST',
       headers: {
-        ...(config.apiKeyHeader !== undefined
-          ? { [config.apiKeyHeader]: config.apiKey }
-          : { Authorization: `Bearer ${config.apiKey}` }),
+        ...config.authHeaders(config.apiKey),
         'Content-Type': 'application/json',
       },
       body,
@@ -358,7 +393,7 @@ function parseResult<const Q extends Record<string, Question>>(
 function parseAnswer(rawAnswer: unknown, question: Question, id: string, config: SystemOneRequestConfig): ParsedAnswer {
   if (rawAnswer instanceof RefusedAnswer) return parseRefusedAnswer(rawAnswer, question, id)
   const answer = requireRecord(rawAnswer, `answer for question id=<${id}>`)
-  if (question.choices === 'boolean') return parseNoulAnswer(answer, id, config.noulConfidenceFromProvider === true)
+  if (question.choices === 'boolean') return parseNoulAnswer(answer, id)
   return parseChoiceAnswer(answer, question.choices, id, config.probabilitySumTolerance)
 }
 
@@ -371,30 +406,23 @@ function parseRefusedAnswer(refused: RefusedAnswer, question: Question, id: stri
 
 function resolveAnswer(parsed: ParsedAnswer, minConfidence: number | undefined): boolean | string | Uncertain {
   if (parsed.answer instanceof Uncertain) return parsed.answer
-  const thresholdConfidence = parsed.thresholdConfidence ?? parsed.confidence
-  if (minConfidence !== undefined && thresholdConfidence < minConfidence) return new Uncertain()
+  if (minConfidence !== undefined && parsed.confidence < minConfidence) return new Uncertain()
   return parsed.answer
 }
 
-function parseNoulAnswer(
-  answer: Record<string, unknown>,
-  id: string,
-  noulConfidenceFromProvider: boolean
-): ParsedAnswer {
+function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAnswer {
   if (answer['type'] !== 'noul') {
     throw new ModelError(`answer for boolean question id=<${id}> must have type 'noul'`)
   }
   const probability = requireProbability(answer['noul'], `noul for question id=<${id}>`)
-  const normalizedConfidence = Math.abs(2 * probability - 1)
   return {
     answer: probability >= 0.5,
     probabilities: { true: probability, false: 1 - probability },
-    ...(noulConfidenceFromProvider
-      ? {
-          confidence: requireProbability(answer['confidence'], `confidence for question id=<${id}>`),
-          thresholdConfidence: normalizedConfidence,
-        }
-      : { confidence: normalizedConfidence }),
+    // Use the API's own confidence when it returns one; otherwise derive it from the yes probability.
+    confidence:
+      answer['confidence'] === undefined
+        ? Math.abs(2 * probability - 1)
+        : requireProbability(answer['confidence'], `confidence for question id=<${id}>`),
   }
 }
 

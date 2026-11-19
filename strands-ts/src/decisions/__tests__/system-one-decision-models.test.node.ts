@@ -654,8 +654,8 @@ describe('GeminiDecisionModel', () => {
           department: {
             type: 'choice',
             choice: 'billing',
-            probabilities: { billing: 0.7, support: 0.3 },
-            confidence: 0.7,
+            probabilities: { billing: 0.8, support: 0.2 },
+            confidence: 0.8,
           },
         },
         usage: { total_input_tokens: 12, total_output_tokens: 0, total_tokens: 12 },
@@ -696,21 +696,28 @@ describe('GeminiDecisionModel', () => {
         modelId: 'gemini-decision-1',
         probabilities: {
           urgent: { true: 0.9, false: 0.09999999999999998 },
-          department: { billing: 0.7, support: 0.3 },
+          department: { billing: 0.8, support: 0.2 },
         },
-        confidence: { urgent: 0.9, department: 0.7 },
+        confidence: { urgent: 0.9, department: 0.8 },
       },
     })
   })
 
-  it('reports Gemini Noul confidence but thresholds on the normalized scale', async () => {
-    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.74, confidence: 0.74 } } })
-    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+  it('thresholds Noul answers on Gemini confidence with a 0.75 default', async () => {
+    const noul = (p: number): GeminiDecisionModel =>
+      new GeminiDecisionModel({
+        apiKey: 'test-key',
+        fetch: fakeFetch({ answers: { q: { type: 'noul', noul: p, confidence: Math.max(p, 1 - p) } } }),
+      })
 
-    const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+    const unsure = await noul(0.74).ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+    const sure = await noul(0.99).ask('state', {
+      q: { question: 'ok?', choices: 'boolean', uncertainty: { minConfidence: 0.99 } },
+    })
 
-    expect(result.answers.q).toEqual(new Uncertain())
-    expect(result.metadata.confidence).toEqual({ q: 0.74 })
+    expect(unsure.answers.q).toEqual(new Uncertain())
+    expect(unsure.metadata.confidence).toEqual({ q: 0.74 })
+    expect(sure.answers.q).toBe(true)
   })
 
   it('sends message state as JSON text input', async () => {
@@ -788,28 +795,14 @@ describe('GeminiDecisionModel', () => {
     )
   })
 
-  it('rejects a Noul answer without the Gemini confidence', async () => {
-    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.9 } } })
+  it('fills a missing Noul confidence on Gemini scale', async () => {
+    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.2 } } })
     const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
 
-    await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
-      /confidence for question id=<q>/
-    )
-  })
+    const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
 
-  it('caps the normalized Noul confidence at 0.98 for the threshold', async () => {
-    const fetch = fakeFetch({ answers: { q: { type: 'noul', noul: 0.99, confidence: 0.99 } } })
-    const decision = new GeminiDecisionModel({ apiKey: 'test-key', fetch })
-
-    const passes = await decision.ask('state', {
-      q: { question: 'ok?', choices: 'boolean', uncertainty: { minConfidence: 0.98 } },
-    })
-    const blocked = await decision.ask('state', {
-      q: { question: 'ok?', choices: 'boolean', uncertainty: { minConfidence: 0.99 } },
-    })
-
-    expect(passes.answers.q).toBe(true)
-    expect(blocked.answers.q).toEqual(new Uncertain())
+    expect(result.answers.q).toBe(false)
+    expect(result.metadata.confidence).toEqual({ q: 0.8 })
   })
 
   it('rejects binary content blocks before sending', async () => {

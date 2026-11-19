@@ -7,6 +7,7 @@ import {
   resolveSystemOneProviderConfig,
   toWireQuestions,
   toWireStateText,
+  type RequestBodyBuilder,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
@@ -34,7 +35,7 @@ export interface OpenAIDecisionModelOptions {
  * String state is sent as the request input. Content block and message state is sent as JSON text.
  *
  * Boolean questions are sent as `predicate` questions. The API returns only a probability for them, so
- * their confidence is `|2p - 1|`, the scale every System One provider shares.
+ * their confidence is `|2p - 1|`, where an even split is `0` and certainty is `1`.
  *
  * The API can decline one question and answer the rest. A declined question is reported as `Uncertain`,
  * so the remaining answers stay usable; it throws only for a question that set `uncertainty: false`.
@@ -56,7 +57,7 @@ export class OpenAIDecisionModel extends DecisionModel {
    */
   constructor(options: OpenAIDecisionModelOptions = {}) {
     super()
-    const providerConfig = resolveSystemOneProviderConfig(options, {
+    this._providerConfig = resolveSystemOneProviderConfig(options, {
       className: 'OpenAIDecisionModel',
       providerName: 'openai',
       endpoint: OPENAI_ENDPOINT,
@@ -64,15 +65,8 @@ export class OpenAIDecisionModel extends DecisionModel {
       modelId: OPENAI_DEFAULT_MODEL_ID,
       defaultMinConfidence: OPENAI_DEFAULT_MIN_CONFIDENCE,
       maxQuestions: OPENAI_MAX_QUESTIONS,
+      buildRequestBody: openAIRequestBody,
     })
-    this._providerConfig = {
-      ...providerConfig,
-      buildRequestBody: (state, questions): Record<string, unknown> => ({
-        model: providerConfig.modelId,
-        input: toWireStateText(state),
-        questions: toOpenAIQuestions(questions),
-      }),
-    }
   }
 
   protected _ask<const Q extends Record<string, Question>>(
@@ -91,6 +85,12 @@ export class OpenAIDecisionModel extends DecisionModel {
     )
   }
 }
+
+const openAIRequestBody: RequestBodyBuilder = (state, questions, modelId) => ({
+  ...(modelId !== undefined && { model: modelId }),
+  input: toWireStateText(state),
+  questions: toOpenAIQuestions(questions),
+})
 
 /** OpenAI takes an ordered question array, named by question id, with `predicate` in place of `noul`. */
 function toOpenAIQuestions(questions: Record<string, Question>): Record<string, unknown>[] {
