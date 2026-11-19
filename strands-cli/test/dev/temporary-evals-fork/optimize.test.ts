@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import { runTemporaryOptimization } from '../../../src/dev/temporary-evals-fork/optimize.js'
+import { TEMPORARY_DECISION_DEFAULTS } from '../../../src/dev/temporary-evals-fork/plan.js'
+import type { OptimizeDecision } from '../../../src/dev/panels/model.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { writeOptimizerRun } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
@@ -198,6 +200,54 @@ describe('TEMPORARY dev optimization', () => {
     ])
     expect(await readFile(optimizationFile(workspace, '.state/task.py'), 'utf8')).toContain(
       `    space_file=${JSON.stringify(space)},\n`
+    )
+  })
+
+  it.each<[string, Partial<OptimizeDecision>, readonly string[]]>([
+    ['NoFlagForTheDefaults', {}, []],
+    ['TheFeasibilityThreshold', { feasibility: 0.95 }, ['--feasibility-threshold', '0.95']],
+    ['NoDataForACrash', { crashScore: 'none' }, ['--agent-failure-score', 'none']],
+    ['TheFinalists', { finalists: 5 }, ['--n-finalists', '5']],
+  ])('shouldGiveTheOptimizer%sOfTheDecisionWhenARunStarts', async (_case, change, flags) => {
+    const workspace = await workspaceFixture()
+    const spawnOptimizer = succeeding()
+
+    await runTemporaryOptimization(
+      { workspace, settings: { decision: { ...TEMPORARY_DECISION_DEFAULTS, ...change } }, now: () => NOW },
+      { run: environmentRunner(), spawnOptimizer }
+    )
+
+    const { args } = spawnOptimizer.mock.calls[0]![0]
+    expect(args.slice(args.indexOf('--seed') + 2)).toEqual(flags)
+    expect(args).not.toContain('--final-pick')
+  })
+
+  it('shouldDefineTheFinalPickInTheTaskFileAndGiveItInsteadOfTheFinalistsWhenThePickIsALowerBound', async () => {
+    const workspace = await workspaceFixture()
+    const spawnOptimizer = succeeding()
+    const decision: OptimizeDecision = { ...TEMPORARY_DECISION_DEFAULTS, pickRule: 'lower-bound-10', finalists: 2 }
+
+    await runTemporaryOptimization(
+      { workspace, settings: { decision }, now: () => NOW },
+      { run: environmentRunner(), spawnOptimizer }
+    )
+
+    const { args } = spawnOptimizer.mock.calls[0]![0]
+    const task = optimizationFile(workspace, '.state/task.py')
+    expect(args.slice(args.indexOf('--final-pick'), args.indexOf('--final-pick') + 2)).toEqual([
+      '--final-pick',
+      `${task}:final_pick`,
+    ])
+    expect(args).not.toContain('--n-finalists')
+    expect(await readFile(task, 'utf8')).toContain(
+      [
+        'search = _task.search',
+        '',
+        'from strands_evals.optimization import FinalPick, LowerBound',
+        '',
+        'final_pick = FinalPick(n_finalists=2, rule=LowerBound(q=0.1))',
+        '',
+      ].join('\n')
     )
   })
 

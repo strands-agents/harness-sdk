@@ -9,16 +9,23 @@ export interface EvalsRunEntry {
   readonly temporaryTypescriptRunner?: string
 }
 
+export interface EvalsFinalPick {
+  readonly finalists: number
+  readonly lowerBound: number
+}
+
 export interface EvalsOptimizeEntry extends EvalsRunEntry {
   readonly spaceFile?: string
   readonly settings: readonly string[]
   readonly baselineOnly: boolean
+  readonly finalPick?: EvalsFinalPick
 }
 
 const PACKAGE_FOLDER = dirname(fileURLToPath(import.meta.url))
 const OPTIMIZE_TASK = '_task'
 const OPTIMIZE_EXPORTS = ['agent', 'rollout', 'search'] as const
 const RUN_TASK = 'task'
+const FINAL_PICK = 'final_pick'
 
 const pythonText = (value: string): string => JSON.stringify(value)
 
@@ -54,6 +61,13 @@ const harnessArguments = ({
   ...(temporaryTypescriptRunner ? [`temporary_typescript_runner=${pythonText(temporaryTypescriptRunner)}`] : []),
 ]
 
+const finalPickLines = ({ finalists, lowerBound }: EvalsFinalPick): string[] => [
+  '',
+  'from strands_evals.optimization import FinalPick, LowerBound',
+  '',
+  `${FINAL_PICK} = FinalPick(n_finalists=${finalists}, rule=LowerBound(q=${lowerBound}))`,
+]
+
 const writeEntry = async (file: string, lines: readonly string[]): Promise<string> => {
   await mkdir(dirname(file), { recursive: true })
   await writeFile(file, `${lines.join('\n')}\n`)
@@ -70,6 +84,7 @@ export const writeEvalsOptimizeEntry = async (file: string, entry: EvalsOptimize
       `baseline_only=${pythonBoolean(entry.baselineOnly)}`,
     ]),
     ...OPTIMIZE_EXPORTS.map((name) => `${name} = ${OPTIMIZE_TASK}.${name}`),
+    ...(entry.finalPick ? finalPickLines(entry.finalPick) : []),
   ])
   return [
     '--agent',
@@ -77,6 +92,7 @@ export const writeEvalsOptimizeEntry = async (file: string, entry: EvalsOptimize
     '--rollout',
     `${written}:rollout`,
     ...(entry.baselineOnly ? ['--search', `${written}:search`] : []),
+    ...(entry.finalPick ? ['--final-pick', `${written}:${FINAL_PICK}`] : []),
   ]
 }
 

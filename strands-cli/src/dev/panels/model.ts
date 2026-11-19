@@ -232,6 +232,19 @@ export interface OptimizeObjective {
   readonly constraints: string
 }
 
+export type CrashScore = 'worst' | 'none'
+
+export type PickRule = 'mean' | 'lower-bound-25' | 'lower-bound-10'
+
+export interface OptimizeDecision {
+  readonly feasibility: number
+  readonly crashScore: CrashScore
+  readonly pickRule: PickRule
+  readonly finalists: number
+}
+
+export type DecisionChoices = { readonly [Setting in keyof OptimizeDecision]: readonly OptimizeDecision[Setting][] }
+
 export interface ObjectivePreset {
   readonly label: string
   readonly objective: OptimizeObjective
@@ -263,6 +276,11 @@ export interface OptimizePlan {
   readonly metrics: readonly string[]
   readonly split: CaseSplit
   readonly splitChoices: readonly CaseSplit[]
+  readonly testShare: number
+  readonly testShareChoices: readonly number[]
+  readonly decision: OptimizeDecision
+  readonly decisionChoices: DecisionChoices
+  readonly validatedFinalists: number
   readonly repetitions: number
   readonly repetitionChoices: readonly number[]
   readonly width: number
@@ -439,7 +457,9 @@ export interface OptimizeSession {
   setWidth(width: number): void
   setWorkers(workers: number): void
   setSplit(split: CaseSplit): void
+  setTestShare(share: number): void
   setObjective(objective: OptimizeObjective): void
+  setDecision<Setting extends keyof OptimizeDecision>(setting: Setting, value: OptimizeDecision[Setting]): void
   openExperiment(experiment?: ExperimentSummary): void
   openPastRun(record: string): void
   openRun(id: string): void

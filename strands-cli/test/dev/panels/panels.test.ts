@@ -550,7 +550,9 @@ const optimizeSession = (initial: OptimizeState, experimentsState: Partial<Exper
       setWidth: vi.fn(),
       setWorkers: vi.fn(),
       setSplit: vi.fn(),
+      setTestShare: vi.fn(),
       setObjective: vi.fn(),
+      setDecision: vi.fn(),
       openExperiment: vi.fn(),
       openPastRun: vi.fn(),
       openRun: vi.fn(),
@@ -606,6 +608,16 @@ const setup: OptimizeState = {
       { train: 10, validation: 5, test: 5 },
       { train: 12, validation: 4, test: 4 },
     ],
+    testShare: 1 / 2,
+    testShareChoices: [1 / 2, 1 / 3, 0],
+    decision: { feasibility: 0.9, crashScore: 'worst', pickRule: 'mean', finalists: 3 },
+    decisionChoices: {
+      feasibility: [0.8, 0.9, 0.95, 0.99],
+      crashScore: ['worst', 'none'],
+      pickRule: ['mean', 'lower-bound-25', 'lower-bound-10'],
+      finalists: [1, 2, 3, 5],
+    },
+    validatedFinalists: 3,
     repetitions: 1,
     repetitionChoices: [1, 2, 3, 5],
     width: 4,
@@ -763,14 +775,23 @@ const PAST_RUNS: readonly PastRun[] = [
   },
 ]
 
-const OBJECTIVE_ROW = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
+const TAB_KEY = '\t'
+const SHIFT_TAB_KEY = '\u001b[Z'
+const GOAL_TAB = [TAB_KEY]
+const CASES_TAB = [TAB_KEY, TAB_KEY]
+const BUDGET_TAB = [TAB_KEY, TAB_KEY, TAB_KEY]
+const OBJECTIVE_ROW = GOAL_TAB
 const CONSTRAINTS_ROW = [...OBJECTIVE_ROW, DOWN_KEY]
-const CASES_ROW = [...CONSTRAINTS_ROW, DOWN_KEY]
-const RUNS_ROW = [...CASES_ROW, DOWN_KEY]
-const BUDGET_ROW = [...RUNS_ROW, DOWN_KEY]
+const CRASHES_ROW = [...CONSTRAINTS_ROW, DOWN_KEY]
+const PICK_ROW = [...CRASHES_ROW, DOWN_KEY]
+const CASES_ROW = CASES_TAB
+const TEST_ROW = [...CASES_ROW, DOWN_KEY]
+const BUDGET_ROW = BUDGET_TAB
 const PER_STEP_ROW = [...BUDGET_ROW, DOWN_KEY]
-const ADVANCED_ROW = [...PER_STEP_ROW, DOWN_KEY]
-const START_BUTTON = [...ADVANCED_ROW, DOWN_KEY]
+const RUNS_ROW = [...PER_STEP_ROW, DOWN_KEY]
+const FINALISTS_ROW = [...RUNS_ROW, DOWN_KEY]
+const PARALLEL_ROW = [...FINALISTS_ROW, DOWN_KEY]
+const START_BUTTON = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
 const CANCEL_BUTTON = [...START_BUTTON, DOWN_KEY]
 const LEFT_KEY = '\u001b[D'
 
@@ -800,7 +821,7 @@ describe('OptimizePanel', () => {
       enabled: index === 0,
     }))
     const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, knobs } })
-    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 21, session }), 23)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 15, session }), 17)
 
     for (let step = 0; step < downs; step++) await press(DOWN_KEY)
 
@@ -821,7 +842,13 @@ describe('OptimizePanel', () => {
     ['RightOnTheRuns', [...RUNS_ROW, RIGHT_KEY], 'setRepetitions', [2]],
     ['RightOnTheCandidatesPerStep', [...PER_STEP_ROW, RIGHT_KEY], 'setWidth', [6]],
     ['LeftOnTheCandidatesPerStep', [...PER_STEP_ROW, LEFT_KEY], 'setWidth', [2]],
-    ['RightOnParallelTrialsInAdvanced', [...ADVANCED_ROW, '\r', DOWN_KEY, RIGHT_KEY], 'setWorkers', [8]],
+    ['RightOnTheParallelTrials', [...PARALLEL_ROW, RIGHT_KEY], 'setWorkers', [8]],
+    ['RightOnTheTestCases', [...TEST_ROW, RIGHT_KEY], 'setTestShare', [1 / 3]],
+    ['RightOnTheCrashes', [...CRASHES_ROW, RIGHT_KEY], 'setDecision', ['crashScore', 'none']],
+    ['RightOnThePick', [...PICK_ROW, RIGHT_KEY], 'setDecision', ['pickRule', 'lower-bound-25']],
+    ['RightOnTheFinalists', [...FINALISTS_ROW, RIGHT_KEY], 'setDecision', ['finalists', 5]],
+    ['LeftOnTheFinalists', [...FINALISTS_ROW, LEFT_KEY], 'setDecision', ['finalists', 2]],
+    ['EnterOnStartOfTheReviewTab', [SHIFT_TAB_KEY, '\r', '\r'], 'start', []],
     [
       'RightOnTheObjective',
       [...OBJECTIVE_ROW, RIGHT_KEY],
@@ -1015,10 +1042,11 @@ describe('OptimizePanel', () => {
       { split: { train: 4, validation: 1, test: 1 }, warning: 'The split leaves 1 validation case and 1 test case.' },
       'The split leaves 1 validation case and 1 test case.',
     ],
-  ])('shouldShowTheSplitWarningNextToStartWhenTheSetupHas%s', async (_case, change, warning) => {
+  ])('shouldShowTheSplitWarningOnTheCasesTabWhenTheSetupHas%s', async (_case, change, warning) => {
     const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, ...change } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
 
-    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+    for (const key of CASES_TAB) await press(key)
 
     expect(text()).toContain(warning)
     expect(
@@ -1278,34 +1306,134 @@ describe('OptimizePanel', () => {
     ['ACustomObjective', { expression: 'Minimize(seconds)', constraints: '' }, 'custom', 'Minimize(seconds)'],
   ])('shouldShowTheObjectiveAndItsExpressionWhenItIs%s', async (_case, objective, label, expression) => {
     const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, objective } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+    for (const key of GOAL_TAB) await press(key)
 
     expect(text()).toMatch(new RegExp(`objective\\s+─*█─*\\s+${label}`, 'u'))
     expect(text()).toContain(expression)
   })
 
-  it('shouldShowTheConstraintsUnderTheObjectiveWhenThePlanHasThem', async () => {
-    const objective = { expression: '', constraints: 'tokens <= 4000' }
+  it.each([
+    ['Constraints', 'tokens <= 4000', true],
+    ['NoConstraint', '', false],
+  ])('shouldShowTheCertaintyOfTheConstraintsOnlyWhenThePlanHas%s', async (_case, constraints, shown) => {
+    const objective = { expression: '', constraints }
     const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, objective } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+    for (const key of GOAL_TAB) await press(key)
 
-    expect(text()).toMatch(/ {2}constraints tokens <= 4000/u)
+    expect(text()).toMatch(new RegExp(` {2}constraints ${constraints || 'none'}`, 'u'))
+    expect(/met at\s+─*█─*\s+90% sure that each constraint holds/u.test(text())).toBe(shown)
+    expect(text()).toMatch(/crashes\s+█─*\s+a crashed run scores the worst value/u)
+    expect(text()).toMatch(/pick\s+█─*\s+the posterior mean/u)
   })
 
-  it('shouldHideParallelTrialsUntilTheUserOpensAdvanced', async () => {
+  it('shouldShowEveryBudgetSettingOnTheBudgetTab', async () => {
     const { session } = optimizeSession(setup)
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 24, session }), 26)
 
-    const closed = text()
-    for (const key of [...ADVANCED_ROW, '\r']) await press(key)
+    for (const key of BUDGET_TAB) await press(key)
 
-    expect(closed).toMatch(/advanced\s+4 parallel trials/u)
-    expect(closed).not.toMatch(/parallel\s+─*█─*/u)
-    expect(text()).toMatch(/parallel\s+─*█─*\s+4 trials at once/u)
-    expect(text()).toMatch(/runs\s+─*█─*\s+1 run of each case per candidate/u)
+    expect(text()).toMatch(/budget\s+─*█─*\s+4 steps × 4 candidates/u)
     expect(text()).toMatch(/per step\s+─*█─*\s+4 candidates in each step/u)
+    expect(text()).toMatch(/runs\s+█─*\s+1 run of each case per candidate/u)
+    expect(text()).toMatch(/finalists\s+─*█─*\s+3 finalists on validation/u)
+    expect(text()).toMatch(/parallel\s+─*█─*\s+4 trials at once/u)
+    expect(text()).not.toMatch(/› [☑☐]/u)
+  })
+
+  it('shouldSayThatParetoTakesMoreFinalistsWhenThePlanValidatesMoreThanItAsks', async () => {
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, validatedFinalists: 5 } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 24, session }), 26)
+
+    for (const key of BUDGET_TAB) await press(key)
+
+    expect(text()).toContain('5 finalists on validation, the least that Pareto takes')
+  })
+
+  it.each<[string, string[], RegExp]>([
+    ['TabGoesToTheGoal', [TAB_KEY], /› objective/u],
+    ['TabTwiceGoesToTheCases', [TAB_KEY, TAB_KEY], /› cases/u],
+    ['ShiftTabGoesBackToTheTune', [TAB_KEY, SHIFT_TAB_KEY], /› ☑ instructions/u],
+    ['ShiftTabOnTheFirstTabGoesToTheReview', [SHIFT_TAB_KEY], /› \[ Start \]/u],
+    ['TabOnTheLastTabGoesToTheTune', [SHIFT_TAB_KEY, TAB_KEY], /› ☑ instructions/u],
+  ])('shouldChangeTheTabWhen%s', async (_case, keys, focused) => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 24, session }), 26)
+
+    for (const key of keys) await press(key)
+
+    expect(text()).toMatch(focused)
+    expect(text()).toContain('Tab next tab')
+  })
+
+  it('shouldShowTheWholeRunOnTheReviewTab', async () => {
+    const objective = { expression: 'Maximize(Contains)', constraints: 'tokens <= 4000' }
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, objective } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 24, session }), 26)
+
+    await press(SHIFT_TAB_KEY)
+
+    const lines = text()
+      .split('\n')
+      .map((line) => line.trim().replace(/\s+/gu, ' '))
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        'tune instructions',
+        'goal Maximize(Contains)',
+        'constraints tokens <= 4000, 90% sure that each constraint holds',
+        'crashes a crashed run scores the worst value',
+        'pick the posterior mean of 3 finalists',
+        'cases 10 train / 5 validation / 5 test',
+        'budget 4 steps × 4 candidates, 1 run of each case',
+        'parallel 4 trials at once',
+      ])
+    )
+  })
+
+  it.each<[string, Partial<OptimizePlan>, string, string]>([
+    ['AnObjectiveProblem', { objectiveProblem: 'Nope is not an evaluator.' }, 'Goal', 'Nope is not an evaluator.'],
+    ['ABudgetProblem', { budgetProblem: 'Needs about 620 rollouts.' }, 'Budget', 'Needs about 620 rollouts.'],
+    [
+      'NoKnob',
+      { knobs: setup.plan.knobs.map((knob) => ({ ...knob, enabled: false })) },
+      'Tune',
+      'Check a knob to tune.',
+    ],
+  ])('shouldMarkTheTabAndShowTheProblemOnEveryTabWhenThePlanHas%s', async (_case, change, tab, problem) => {
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, ...change } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 24, session }), 26)
+    const first = text()
+
+    for (const key of CASES_TAB) await press(key)
+
+    expect(first).toContain(`${tab} !`)
+    expect(first).toContain(problem)
+    expect(text()).toContain(problem)
+  })
+
+  it('shouldShowAWarningOnlyOnItsOwnTab', async () => {
+    const warning = 'Every goal is a usage number, so a broken agent can look best.'
+    const { session } = optimizeSession({ ...setup, plan: { ...setup.plan, objectiveWarning: warning } })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 24, session }), 26)
+    const tune = text()
+
+    for (const key of GOAL_TAB) await press(key)
+
+    expect(tune).toContain('Goal !')
+    expect(tune).not.toContain(warning)
+    expect(text()).toContain(warning)
+  })
+
+  it('shouldOpenATabWhenTheUserClicksIt', async () => {
+    const { session } = optimizeSession(setup)
+    const { click, text } = await showOptimizeInFrame(session, new DevPanelClicks())
+
+    await click('Budget')
+
+    await vi.waitFor(() => expect(text()).toMatch(/› budget\s+─*█─*/u))
   })
 
   it('shouldBlockStartAndSayWhyWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
@@ -1321,7 +1449,7 @@ describe('OptimizePanel', () => {
     expect(session.start).not.toHaveBeenCalled()
   })
 
-  it('shouldSkipASettingWithOneChoiceButKeepTheObjectiveSelectable', async () => {
+  it('shouldShowASettingWithOneChoiceAsTextAndSelectTheNextSetting', async () => {
     const only = { train: 10, validation: 5, test: 5 }
     const { session } = optimizeSession({
       ...setup,
@@ -1329,10 +1457,10 @@ describe('OptimizePanel', () => {
     })
     const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    for (const key of [...CONSTRAINTS_ROW, DOWN_KEY]) await press(key)
+    for (const key of CASES_TAB) await press(key)
 
     expect(text()).toMatch(/ {2}cases {7}10 train/u)
-    expect(text()).toMatch(/› runs\s+─*█─*/u)
+    expect(text()).toMatch(/› test\s+█─*\s+1 test case for each validation case/u)
   })
 
   it('shouldSaveTheTypedObjectiveWhenTheUserEditsItAndPressesEnter', async () => {
@@ -1402,8 +1530,9 @@ describe('OptimizePanel', () => {
         objectiveWarning: warning,
       },
     })
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
 
-    const { text } = await show(createElement(OptimizePanel, { ...panelProps, session }), 24)
+    for (const key of GOAL_TAB) await press(key)
 
     expect(text()).toContain(warning)
   })

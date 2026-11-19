@@ -19,6 +19,11 @@ import type {
   TestState,
 } from '../../../src/dev/panels/model.js'
 import { temporaryDevChatPart } from '../../../src/dev/temporary-evals-fork/agent-tools.js'
+import {
+  TEMPORARY_DECISION_CHOICES,
+  TEMPORARY_DECISION_DEFAULTS,
+  TEMPORARY_TEST_SHARES,
+} from '../../../src/dev/temporary-evals-fork/plan.js'
 import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/evaluators.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import { generationSettings } from '../panels/fixtures.js'
@@ -91,6 +96,11 @@ const plan = (): OptimizePlan => ({
   metrics: ['OutputEvaluator', 'tokens'],
   split: { train: 1, validation: 1, test: 0 },
   splitChoices: [{ train: 1, validation: 1, test: 0 }],
+  testShare: TEMPORARY_TEST_SHARES[0]!,
+  testShareChoices: TEMPORARY_TEST_SHARES,
+  decision: TEMPORARY_DECISION_DEFAULTS,
+  decisionChoices: TEMPORARY_DECISION_CHOICES,
+  validatedFinalists: TEMPORARY_DECISION_DEFAULTS.finalists,
   repetitions: 1,
   repetitionChoices: [1, 2, 3, 5],
   width: 4,
@@ -189,6 +199,7 @@ const fakeSessions = () => {
       setRepetitions: vi.fn(),
       setWorkers: vi.fn(),
       setObjective: vi.fn(),
+      setDecision: vi.fn(),
       start: vi.fn((): string => {
         finishRun({ step: 'running', progress: progress() })
         return 'run-1'
@@ -751,6 +762,29 @@ describe('TEMPORARY dev chat part', () => {
     expect(sessions.optimize.setWorkers).toHaveBeenCalledWith(8)
   })
 
+  it('shouldSetTheDecisionSettingsWhenItOptimizes', async () => {
+    const { tool, sessions, finishRun } = setup()
+
+    const running = tool('strands_dev_optimize').run({
+      experiment: 'refunds',
+      tune: ['instructions'],
+      feasibilityThreshold: 0.95,
+      crashes: 'none',
+      pick: 'lower-bound-10',
+      finalists: 5,
+    })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
+    finishRun({ step: 'review', review: review() })
+    await running
+
+    expect(sessions.optimize.setDecision.mock.calls).toEqual([
+      ['feasibility', 0.95],
+      ['crashScore', 'none'],
+      ['pickRule', 'lower-bound-10'],
+      ['finalists', 5],
+    ])
+  })
+
   it('shouldSayWhyAndNotStartWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
     const { tool, sessions, optimize } = setup()
     const budgetProblem = 'Needs about 620 rollouts, but one run can use 500. Lower the steps, candidates, or runs.'
@@ -771,6 +805,11 @@ describe('TEMPORARY dev chat part', () => {
       'an iteration count it does not offer',
       { experiment: 'refunds', iterations: 3 },
       'iterations must be one of 1, 2, 4, 6, 8.',
+    ],
+    [
+      'a pick rule it does not offer',
+      { experiment: 'refunds', pick: 'median' },
+      'pick must be one of mean, lower-bound-25, lower-bound-10.',
     ],
   ])('shouldKeepTheLastReviewAndRefuseToOptimizeWhenTheRequestHas%s', async (_case, input, message) => {
     const { tool, optimize, sessions } = setup()

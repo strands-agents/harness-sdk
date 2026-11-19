@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   checkTemporaryObjective,
+  isTemporaryPareto,
   temporaryObjectiveArguments,
   temporaryObjectivePresets,
   temporaryObjectiveFromRequest,
@@ -199,5 +200,16 @@ describe('TEMPORARY optimize objective', () => {
       expression: '',
       constraints: 'Contains >= 0.8, tokens <= 4000',
     })
+  })
+
+  it.each([
+    ['AParetoOfTwoGoals', 'Pareto(Maximize(Contains), Minimize(tokens, scale=1000))', true],
+    ['AParetoOfOneGoal', 'Pareto(Maximize(Contains))', false],
+    ['AWeightedSum', 'WeightedSum(Maximize(Contains), Minimize(tokens, scale=1000))', false],
+    ['OneGoal', 'Maximize(Contains)', false],
+    ['TheMeanOfEveryEvaluator', '', false],
+    ['AnObjectiveThatDoesNotFit', 'Pareto(Maximize(Contains), Nope)', false],
+  ])('shouldTellWhetherTheOptimizerUsesAParetoFrontWhenTheObjectiveIs%s', (_case, expression, pareto) => {
+    expect(isTemporaryPareto({ expression, constraints: '' })).toBe(pareto)
   })
 })

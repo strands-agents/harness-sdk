@@ -1,4 +1,12 @@
-import { sameCaseSplit, type CaseSplit, type UsageEstimate, type UsageRange } from '../panels/model.js'
+import {
+  sameCaseSplit,
+  type CaseSplit,
+  type DecisionChoices,
+  type OptimizeDecision,
+  type PickRule,
+  type UsageEstimate,
+  type UsageRange,
+} from '../panels/model.js'
 import type { TemporaryUsageProfile } from './study.js'
 
 export type TemporarySplitShares = readonly [train: number, validation: number, test: number]
@@ -11,6 +19,7 @@ export interface TemporaryOptimizeSettings {
   readonly concurrency: number
   readonly maxRollouts: number
   readonly seed: number
+  readonly decision: OptimizeDecision
 }
 
 export interface TemporaryRolloutPlan {
@@ -19,6 +28,8 @@ export interface TemporaryRolloutPlan {
   readonly iterations: number
   readonly width: number
   readonly evaluators: number
+  readonly finalists?: number
+  readonly pareto?: boolean
   readonly profile?: TemporaryUsageProfile
 }
 
@@ -26,6 +37,25 @@ export interface TemporaryRolloutEstimate {
   readonly rollouts: number
   readonly judgeCalls: number
   readonly usage?: UsageEstimate
+}
+
+export const TEMPORARY_DECISION_DEFAULTS: OptimizeDecision = {
+  feasibility: 0.9,
+  crashScore: 'worst',
+  pickRule: 'mean',
+  finalists: 3,
+}
+
+export const TEMPORARY_DECISION_CHOICES: DecisionChoices = {
+  feasibility: [0.8, 0.9, 0.95, 0.99],
+  crashScore: ['worst', 'none'],
+  pickRule: ['mean', 'lower-bound-25', 'lower-bound-10'],
+  finalists: [1, 2, 3, 5],
+}
+
+export const TEMPORARY_PICK_QUANTILES: Readonly<Record<Exclude<PickRule, 'mean'>, number>> = {
+  'lower-bound-25': 0.25,
+  'lower-bound-10': 0.1,
 }
 
 export const TEMPORARY_OPTIMIZE_DEFAULTS: TemporaryOptimizeSettings = {
@@ -36,6 +66,7 @@ export const TEMPORARY_OPTIMIZE_DEFAULTS: TemporaryOptimizeSettings = {
   concurrency: 4,
   maxRollouts: 500,
   seed: 0,
+  decision: TEMPORARY_DECISION_DEFAULTS,
 }
 
 export const TEMPORARY_ITERATION_CHOICES: readonly number[] = [1, 2, 4, 6, 8]
@@ -55,8 +86,10 @@ export const temporaryRolloutCapProblem = (rollouts: number): string | undefined
 
 export const TEMPORARY_TRAIN_SHARES: readonly number[] = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 
-const VALIDATED_CANDIDATES = 4
-const TESTED_CANDIDATES = 2
+export const TEMPORARY_TEST_SHARES: readonly number[] = [1 / 2, 1 / 3, 0]
+
+const PARETO_MIN_FINALISTS = 5
+const TESTED_WITHOUT_PARETO = 2
 const MINIMUM_HELD_OUT_CASES = 2
 const SHARE_TOLERANCE = 1e-9
 const CASE_SEARCH_LIMIT = 1000
@@ -74,10 +107,24 @@ export const temporaryCaseSplit = (
   return { train, validation, test }
 }
 
-export const temporarySplitChoices = (caseCount: number): CaseSplit[] =>
-  TEMPORARY_TRAIN_SHARES.map((train) => temporaryCaseSplit(caseCount, [train, (1 - train) / 2, (1 - train) / 2]))
+export const temporarySplitChoices = (caseCount: number, testShare = TEMPORARY_TEST_SHARES[0]!): CaseSplit[] =>
+  TEMPORARY_TRAIN_SHARES.map((train) =>
+    temporaryCaseSplit(caseCount, [train, (1 - train) * (1 - testShare), (1 - train) * testShare])
+  )
     .filter(({ train, validation }) => train > 0 && validation > 0)
     .filter((split, index, choices) => choices.findIndex((choice) => sameCaseSplit(choice, split)) === index)
+
+export const temporaryNearestSplit = (choices: readonly CaseSplit[], split: CaseSplit): CaseSplit | undefined =>
+  choices.reduce<CaseSplit | undefined>(
+    (nearest, choice) =>
+      nearest === undefined || Math.abs(choice.train - split.train) < Math.abs(nearest.train - split.train)
+        ? choice
+        : nearest,
+    undefined
+  )
+
+export const temporaryValidatedFinalists = (finalists: number, pareto: boolean): number =>
+  pareto ? Math.max(finalists, PARETO_MIN_FINALISTS) : finalists
 
 export const temporarySplitShares = (split: CaseSplit): TemporarySplitShares => {
   const total = split.train + split.validation + split.test
@@ -99,10 +146,13 @@ export const temporaryRolloutEstimate = ({
   iterations,
   width,
   evaluators,
+  finalists = TEMPORARY_DECISION_DEFAULTS.finalists,
+  pareto = false,
   profile,
 }: TemporaryRolloutPlan): TemporaryRolloutEstimate => {
-  const rollouts =
-    repetitions * (train + iterations * width * train + VALIDATED_CANDIDATES * validation + TESTED_CANDIDATES * test)
+  const validated = temporaryValidatedFinalists(finalists, pareto) + 1
+  const tested = pareto ? validated : TESTED_WITHOUT_PARETO
+  const rollouts = repetitions * (train + iterations * width * train + validated * validation + tested * test)
   return {
     rollouts,
     judgeCalls: rollouts * evaluators,
@@ -117,14 +167,21 @@ const sharesProblem = ([train, validation, test]: TemporarySplitShares): string 
   return undefined
 }
 
-const isHealthy = ({ train, validation, test }: CaseSplit): boolean =>
-  train > 0 && validation >= MINIMUM_HELD_OUT_CASES && test >= MINIMUM_HELD_OUT_CASES
+const hasTest = ([, , test]: TemporarySplitShares): boolean => test > 0
+
+const isHealthy = ({ train, validation, test }: CaseSplit, shares: TemporarySplitShares): boolean =>
+  train > 0 && validation >= MINIMUM_HELD_OUT_CASES && (!hasTest(shares) || test >= MINIMUM_HELD_OUT_CASES)
 
 const counted = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`
 
+const heldOutText = ({ validation, test }: CaseSplit, shares: TemporarySplitShares): string =>
+  hasTest(shares)
+    ? `${counted(validation, 'validation case')} and ${counted(test, 'test case')}`
+    : counted(validation, 'validation case')
+
 const casesToAdd = (caseCount: number, split: TemporarySplitShares): string => {
   const needed = Array.from({ length: CASE_SEARCH_LIMIT }, (_, extra) => caseCount + extra + 1).find((count) =>
-    isHealthy(temporaryCaseSplit(count, split))
+    isHealthy(temporaryCaseSplit(count, split), split)
   )
   return needed === undefined
     ? 'Give the validation and test shares more of the cases.'
@@ -141,9 +198,6 @@ export const temporaryOptimizeWarning = (
   if (caseCount === 0) return `The experiment has no cases, so the optimizer refuses to run. ${casesToAdd(0, split)}`
   if (parts.train === 0)
     return `This split leaves no train cases, so the optimizer refuses to run. ${casesToAdd(caseCount, split)}`
-  if (isHealthy(parts)) return undefined
-  return (
-    `The split leaves ${counted(parts.validation, 'validation case')} and ${counted(parts.test, 'test case')}, ` +
-    `so the scores can be luck. ${casesToAdd(caseCount, split)}`
-  )
+  if (isHealthy(parts, split)) return undefined
+  return `The split leaves ${heldOutText(parts, split)}, so the scores can be luck. ${casesToAdd(caseCount, split)}`
 }

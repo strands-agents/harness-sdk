@@ -29,6 +29,7 @@ import type { TemporaryStore } from './jobs.js'
 import { TEMPORARY_KNOB_NAMES } from './knobs.js'
 import { checkTemporaryObjective, temporaryObjectiveFromRequest } from './objective.js'
 import {
+  TEMPORARY_DECISION_CHOICES,
   TEMPORARY_ITERATION_CHOICES,
   TEMPORARY_REPETITION_CHOICES,
   TEMPORARY_WIDTH_CHOICES,
@@ -679,6 +680,32 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
           'Constraints that the chosen candidate must meet, such as "tokens <= 4000" or "Correctness >= 0.8". ' +
           'Add an evaluator floor when every goal is a usage number.',
       },
+      feasibilityThreshold: {
+        type: 'number',
+        enum: [...TEMPORARY_DECISION_CHOICES.feasibility],
+        description: 'How sure the optimizer must be that a candidate meets each constraint. Default: 0.9.',
+      },
+      crashes: {
+        type: 'string',
+        enum: [...TEMPORARY_DECISION_CHOICES.crashScore],
+        description:
+          'What a crashed run of the agent scores: worst gives each evaluator its worst value, none counts the ' +
+          'run as no data. Default: worst.',
+      },
+      pick: {
+        type: 'string',
+        enum: [...TEMPORARY_DECISION_CHOICES.pickRule],
+        description:
+          'How the final pick values each finalist: mean uses the posterior mean, and lower-bound-25 or ' +
+          'lower-bound-10 uses that lower bound to ship cautiously. Default: mean.',
+      },
+      finalists: {
+        type: 'integer',
+        enum: [...TEMPORARY_DECISION_CHOICES.finalists],
+        description:
+          'How many of the best candidates the optimizer measures on the validation cases before the pick. ' +
+          'Under Pareto, at least 5 go. Default: 3.',
+      },
     },
     required: ['experiment'],
     additionalProperties: false,
@@ -697,6 +724,10 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     const width = choiceOf(input, 'candidatesPerStep', TEMPORARY_WIDTH_CHOICES)
     const repetitions = choiceOf(input, 'runsPerCase', TEMPORARY_REPETITION_CHOICES)
     const workers = choiceOf(input, 'parallelTrials', TEMPORARY_WORKER_CHOICES)
+    const feasibility = oneOf(input, 'feasibilityThreshold', TEMPORARY_DECISION_CHOICES.feasibility)
+    const crashScore = oneOf(input, 'crashes', TEMPORARY_DECISION_CHOICES.crashScore)
+    const pickRule = oneOf(input, 'pick', TEMPORARY_DECISION_CHOICES.pickRule)
+    const finalists = oneOf(input, 'finalists', TEMPORARY_DECISION_CHOICES.finalists)
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
     const objective = await objectiveFor(experiment, input)
     if (pendingReview(current))
@@ -720,6 +751,10 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     if (repetitions !== undefined) optimize.setRepetitions(repetitions)
     if (workers !== undefined) optimize.setWorkers(workers)
     if (objective) optimize.setObjective(objective)
+    if (feasibility !== undefined) optimize.setDecision('feasibility', feasibility)
+    if (crashScore !== undefined) optimize.setDecision('crashScore', crashScore)
+    if (pickRule !== undefined) optimize.setDecision('pickRule', pickRule)
+    if (finalists !== undefined) optimize.setDecision('finalists', finalists)
     const ready = optimize.snapshot()
     if (ready.step === 'setup' && ready.plan.budgetProblem) throw new Error(ready.plan.budgetProblem)
     const started = optimize.start()
@@ -742,6 +777,14 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     return reply(reviewReport(finished.review))
   },
 })
+
+const oneOf = <Value extends JSONValue>(input: Input, key: string, choices: readonly Value[]): Value | undefined => {
+  const value = input[key]
+  if (value === undefined || value === null) return undefined
+  const chosen = choices.find((choice) => choice === value)
+  if (chosen === undefined) throw new Error(`${key} must be one of ${choices.join(', ')}.`)
+  return chosen
+}
 
 const choiceOf = (input: Input, key: string, choices: readonly number[]): number | undefined => {
   const value = whole(input, key, 1, Number.MAX_SAFE_INTEGER)

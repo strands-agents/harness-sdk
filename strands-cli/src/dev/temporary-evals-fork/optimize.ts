@@ -3,8 +3,8 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { isRecord } from '../../values.js'
-import { writeEvalsOptimizeEntry, type EvalsOptimizeEntry } from '../evals-agent/entry-files.js'
-import type { OptimizeObjective } from '../panels/model.js'
+import { writeEvalsOptimizeEntry, type EvalsFinalPick, type EvalsOptimizeEntry } from '../evals-agent/entry-files.js'
+import type { OptimizeDecision, OptimizeObjective } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryModelDiscovery } from './knobs.js'
 import { hasTemporaryRunResult, temporaryRunFolder } from './study.js'
@@ -31,7 +31,12 @@ import {
 } from './layout.js'
 import { temporaryObjectiveArguments } from './objective.js'
 import { readTemporaryOptimizeFlags, type TemporaryOptimizeFlags } from './optimize-flags.js'
-import { TEMPORARY_OPTIMIZE_DEFAULTS, type TemporaryOptimizeSettings } from './plan.js'
+import {
+  TEMPORARY_DECISION_DEFAULTS,
+  TEMPORARY_OPTIMIZE_DEFAULTS,
+  TEMPORARY_PICK_QUANTILES,
+  type TemporaryOptimizeSettings,
+} from './plan.js'
 
 export interface TemporaryOptimizationRequest {
   workspace: DevWorkspace
@@ -101,6 +106,18 @@ const summaryLines = ({ stdout }: TemporaryEvalsExit): string[] =>
 
 const isBaselineOnly = ({ iterations }: TemporaryOptimizeSettings): boolean => iterations === 0
 
+const decisionArguments = ({ feasibility, crashScore, pickRule, finalists }: OptimizeDecision): string[] => {
+  const defaults = TEMPORARY_DECISION_DEFAULTS
+  return [
+    ...(feasibility === defaults.feasibility ? [] : ['--feasibility-threshold', String(feasibility)]),
+    ...(crashScore === defaults.crashScore ? [] : ['--agent-failure-score', crashScore]),
+    ...(pickRule !== 'mean' || finalists === defaults.finalists ? [] : ['--n-finalists', String(finalists)]),
+  ]
+}
+
+const finalPickOf = ({ pickRule, finalists }: OptimizeDecision): EvalsFinalPick | undefined =>
+  pickRule === 'mean' ? undefined : { finalists, lowerBound: TEMPORARY_PICK_QUANTILES[pickRule] }
+
 const settingArguments = (settings: TemporaryOptimizeSettings): string[] => [
   '--split',
   settings.split.join(','),
@@ -115,6 +132,7 @@ const settingArguments = (settings: TemporaryOptimizeSettings): string[] => [
   String(settings.maxRollouts),
   '--seed',
   String(settings.seed),
+  ...decisionArguments(settings.decision),
 ]
 
 const tunesText = async (space: string | undefined, tuned: readonly string[]): Promise<boolean> => {
@@ -147,16 +165,20 @@ const entryOf = (
   { workspace, space }: TemporaryOptimizationRequest,
   runnable: string,
   passed: TemporaryOptimizeFlags,
-  baselineOnly: boolean
-): EvalsOptimizeEntry => ({
-  agentFile: resolve(workspace.entrypoint),
-  experimentFile: resolve(runnable),
-  customEvaluators: passed.customEvaluators,
-  ...temporaryTypescriptRunnerOf(workspace),
-  ...(space ? { spaceFile: resolve(space) } : {}),
-  settings: passed.tuned ?? TUNED_BY_DEFAULT,
-  baselineOnly,
-})
+  settings: TemporaryOptimizeSettings
+): EvalsOptimizeEntry => {
+  const finalPick = finalPickOf(settings.decision)
+  return {
+    agentFile: resolve(workspace.entrypoint),
+    experimentFile: resolve(runnable),
+    customEvaluators: passed.customEvaluators,
+    ...temporaryTypescriptRunnerOf(workspace),
+    ...(space ? { spaceFile: resolve(space) } : {}),
+    settings: passed.tuned ?? TUNED_BY_DEFAULT,
+    baselineOnly: isBaselineOnly(settings),
+    ...(finalPick ? { finalPick } : {}),
+  }
+}
 
 const newRunArguments = async (
   request: TemporaryOptimizationRequest,
@@ -167,7 +189,7 @@ const newRunArguments = async (
   const settings = runSettings(request, passed)
   const baselineOnly = isBaselineOnly(settings)
   const runnable = await temporaryRunnableExperiment(experiment, files.copy)
-  const entry = entryOf(request, runnable, passed, baselineOnly)
+  const entry = entryOf(request, runnable, passed, settings)
   return [
     'run',
     runnable,
@@ -189,9 +211,8 @@ const resumeArguments = async (
   passed: TemporaryOptimizeFlags,
   runFolder: string
 ): Promise<string[]> => {
-  const baselineOnly = isBaselineOnly(runSettings(request, passed))
   const runnable = await temporaryRunnableExperiment(experiment, files.copy)
-  await writeEvalsOptimizeEntry(files.task, entryOf(request, runnable, passed, baselineOnly))
+  await writeEvalsOptimizeEntry(files.task, entryOf(request, runnable, passed, runSettings(request, passed)))
   const workers = request.settings?.concurrency
   return ['resume', runFolder, '--rich', ...(workers === undefined ? [] : ['--max-workers', String(workers)])]
 }

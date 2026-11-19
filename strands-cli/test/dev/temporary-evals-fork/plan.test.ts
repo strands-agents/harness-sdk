@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  TEMPORARY_DECISION_CHOICES,
+  TEMPORARY_DECISION_DEFAULTS,
   TEMPORARY_ITERATION_CHOICES,
   TEMPORARY_OPTIMIZE_DEFAULTS,
+  TEMPORARY_PICK_QUANTILES,
+  TEMPORARY_TEST_SHARES,
   temporaryCaseSplit,
+  temporaryNearestSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
   temporarySplitChoices,
   temporarySplitShares,
+  temporaryValidatedFinalists,
   type TemporarySplitShares,
 } from '../../../src/dev/temporary-evals-fork/plan.js'
 
@@ -43,9 +49,36 @@ describe('TEMPORARY optimize plan', () => {
       concurrency: 4,
       maxRollouts: 500,
       seed: 0,
+      decision: { feasibility: 0.9, crashScore: 'worst', pickRule: 'mean', finalists: 3 },
     })
     expect(temporaryCaseSplit(8)).toEqual({ train: 4, validation: 2, test: 2 })
   })
+
+  it('shouldOfferTheForkDefaultOfEachDecisionSettingWhenTheChoicesAreShown', () => {
+    expect(TEMPORARY_DECISION_CHOICES.feasibility).toContain(TEMPORARY_DECISION_DEFAULTS.feasibility)
+    expect(TEMPORARY_DECISION_CHOICES.crashScore).toContain(TEMPORARY_DECISION_DEFAULTS.crashScore)
+    expect(TEMPORARY_DECISION_CHOICES.pickRule).toContain(TEMPORARY_DECISION_DEFAULTS.pickRule)
+    expect(TEMPORARY_DECISION_CHOICES.finalists).toContain(TEMPORARY_DECISION_DEFAULTS.finalists)
+  })
+
+  it('shouldGiveEachLowerBoundAQuantileThatTheForkAccepts', () => {
+    expect(Object.values(TEMPORARY_PICK_QUANTILES).every((quantile) => quantile > 0 && quantile < 0.5)).toBe(true)
+    expect(TEMPORARY_DECISION_CHOICES.pickRule.filter((rule) => rule !== 'mean').sort()).toEqual(
+      Object.keys(TEMPORARY_PICK_QUANTILES).sort()
+    )
+  })
+
+  it.each([
+    { finalists: 3, pareto: false, validated: 3 },
+    { finalists: 1, pareto: false, validated: 1 },
+    { finalists: 3, pareto: true, validated: 5 },
+    { finalists: 8, pareto: true, validated: 8 },
+  ])(
+    'shouldValidate$validatedFinalistsWhen$finalistsAreAskedAndParetoIs$pareto',
+    ({ finalists, pareto, validated }) => {
+      expect(temporaryValidatedFinalists(finalists, pareto)).toBe(validated)
+    }
+  )
 
   it('shouldOfferTheDefaultIterationsWhenTheIterationChoicesAreShown', () => {
     expect(TEMPORARY_ITERATION_CHOICES).toEqual([1, 2, 4, 6, 8])
@@ -64,6 +97,30 @@ describe('TEMPORARY optimize plan', () => {
       const estimate = temporaryRolloutEstimate({ split, repetitions, iterations, width, evaluators })
 
       expect(estimate).toEqual({ rollouts, judgeCalls })
+    }
+  )
+
+  it.each([
+    { finalists: 3, pareto: false, rollouts: 80 },
+    { finalists: 1, pareto: false, rollouts: 76 },
+    { finalists: 5, pareto: false, rollouts: 84 },
+    { finalists: 3, pareto: true, rollouts: 92 },
+  ])(
+    'shouldReserveTheEndPhaseLikeTheOptimizerWhen$finalistsFinalistsAreAskedAndParetoIs$pareto',
+    ({ finalists, pareto, rollouts }) => {
+      const split = { train: 4, validation: 2, test: 2 }
+
+      const estimate = temporaryRolloutEstimate({
+        split,
+        repetitions: 1,
+        iterations: 4,
+        width: 4,
+        evaluators: 1,
+        finalists,
+        pareto,
+      })
+
+      expect(estimate.rollouts).toBe(rollouts)
     }
   )
 
@@ -121,6 +178,13 @@ describe('TEMPORARY optimize plan', () => {
     expect(temporaryOptimizeWarning(cases)).toBeUndefined()
   })
 
+  it('shouldNotAskForTestCasesWhenTheSplitChoosesNone', () => {
+    expect(temporaryOptimizeWarning(4, [0.5, 0.5, 0])).toBeUndefined()
+    expect(temporaryOptimizeWarning(3, [0.7, 0.3, 0])).toBe(
+      'The split leaves 1 validation case, so the scores can be luck. Add 3 more cases.'
+    )
+  })
+
   it.each([
     {
       cases: 20,
@@ -146,6 +210,48 @@ describe('TEMPORARY optimize plan', () => {
     expect(temporarySplitChoices(cases).map(({ train, validation, test }) => [train, validation, test])).toEqual(
       choices
     )
+  })
+
+  it.each([
+    {
+      share: 1 / 3,
+      choices: [
+        [6, 9, 5],
+        [8, 8, 4],
+        [10, 7, 3],
+        [12, 5, 3],
+        [14, 4, 2],
+        [16, 3, 1],
+      ],
+    },
+    {
+      share: 0,
+      choices: [
+        [6, 14, 0],
+        [8, 12, 0],
+        [10, 10, 0],
+        [12, 8, 0],
+        [14, 6, 0],
+        [16, 4, 0],
+      ],
+    },
+  ])('shouldGiveTheTestCasesTheirShareOfTheHeldOutCasesWhenTheTestShareIs$share', ({ share, choices }) => {
+    expect(TEMPORARY_TEST_SHARES).toContain(share)
+    expect(temporarySplitChoices(20, share).map(({ train, validation, test }) => [train, validation, test])).toEqual(
+      choices
+    )
+  })
+
+  it.each([
+    { split: { train: 10, validation: 5, test: 5 }, nearest: { train: 10, validation: 10, test: 0 } },
+    { split: { train: 11, validation: 5, test: 4 }, nearest: { train: 10, validation: 10, test: 0 } },
+    { split: { train: 17, validation: 2, test: 1 }, nearest: { train: 16, validation: 4, test: 0 } },
+  ])('shouldKeepTheTrainCountClosestToTheCurrentOneWhenTheChoicesChange', ({ split, nearest }) => {
+    expect(temporaryNearestSplit(temporarySplitChoices(20, 0), split)).toEqual(nearest)
+  })
+
+  it('shouldFindNoSplitWhenThereIsNoChoice', () => {
+    expect(temporaryNearestSplit([], { train: 1, validation: 1, test: 1 })).toBeUndefined()
   })
 
   it.each([4, 7, 20, 33])('shouldOfferTheDefaultSplitWhenTheExperimentHas%iCases', (cases) => {

@@ -54,7 +54,7 @@ export const useElapsed = (startedAt: number): number => {
   return Math.max(0, (now - startedAt) / ELAPSED_TICK_MS)
 }
 
-const useToneColor = (): ((tone: Tone | undefined) => { color?: string; dimColor?: boolean }) => {
+export const useToneColor = (): ((tone: Tone | undefined) => { color?: string; dimColor?: boolean }) => {
   const { success, error, warning } = useTheme()
   return (tone) => {
     if (tone === 'success') return { color: success }

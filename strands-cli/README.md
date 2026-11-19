@@ -324,7 +324,10 @@ Inside a `strands dev` chat:
 - `/evaluate` selects saved experiments, runs the agent on their cases, and shows results and reports. It runs four cases at once. To stop a run, open it and press `s`. A run continues after strands dev closes. When strands dev opens the workspace again, it follows a run that is still active and shows the results of a run that finished. It also resumes a run that stopped, for example after a restart. Cases that finished before are not run again.
 - `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval.
   The list shows each experiment with its number of runs. Select an experiment to start a new run, or to open one of its runs.
-  The setup sets the runs of each case and the candidates of each step. Its Advanced section sets the number of parallel trials.
+  The setup has five tabs: Tune, Goal, Cases, Budget, and Review. Tab goes to the next tab, and Shift+Tab goes to the previous tab. Start is on each tab.
+  Tune selects the knobs. Goal sets the objective, the constraints, how sure a candidate must be to meet them, what a crashed run scores, and the pick rule.
+  Cases sets the train share and how the other cases divide between validation and test. Budget sets the steps, the candidates of each step, the runs of each case, the finalists, and the parallel trials.
+  Review shows the whole run. A `!` marks a tab with a problem. A problem that stops the run shows on each tab.
   Start is not available when the plan needs more rollouts than one run can use (500). Then lower the steps, the candidates, or the runs.
   Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
 
@@ -364,6 +367,9 @@ Dev uses the `--agent` route for each agent, because only that route can tune ev
 
 Dev gives each setting to the command explicitly. These settings are the split, the iterations, the candidates per step, the runs per case, the parallel trials, the rollout cap, and the seed.
 Thus the setup page and the estimate show the numbers of the run. A run with 0 iterations measures only the baseline.
+Dev gives the decision settings only when they are different from the optimizer defaults. These settings are `--feasibility-threshold`, `--agent-failure-score`, and `--n-finalists`.
+A cautious pick rule needs a `FinalPick` object. Thus `task.py` defines `final_pick`, and dev gives `--final-pick` instead of `--n-finalists`.
+The estimate counts the end phase like the optimizer. Under `Pareto`, at least 5 finalists go to validation, and each front member goes to test.
 
 The objective row of the setup sets what the run improves, for example `Minimize(tokens)`.
 The constraints row sets what the chosen candidate must meet, for example `tokens <= 4000, Correctness >= 0.8`.

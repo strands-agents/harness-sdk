@@ -2,12 +2,12 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import type { OptimizeObjective } from '../panels/model.js'
+import type { OptimizeDecision, OptimizeObjective } from '../panels/model.js'
 import { isRecord } from '../../values.js'
 import { isTemporaryProcessAlive } from './background-runs.js'
 import { stopTemporaryProcessGroup } from './evals-process.js'
 import { listTemporaryOptimizations, temporaryOptimizationFiles, temporaryOptimizationOf } from './layout.js'
-import type { TemporarySplitShares } from './plan.js'
+import { TEMPORARY_DECISION_CHOICES, type TemporarySplitShares } from './plan.js'
 
 const RECORD_VERSION = 1
 const POLL_MS = 1000
@@ -23,6 +23,7 @@ export interface TemporaryOptimizeRecord {
   readonly workers?: number
   readonly split?: TemporarySplitShares
   readonly objective?: OptimizeObjective
+  readonly decision?: OptimizeDecision
   readonly startedAt: number
   readonly pid?: number
 }
@@ -43,6 +44,16 @@ const recordedObjective = (value: unknown): OptimizeObjective | undefined => {
   return undefined
 }
 
+const isDecision = (value: unknown): value is OptimizeDecision =>
+  isRecord(value) &&
+  typeof value.feasibility === 'number' &&
+  value.feasibility > 0 &&
+  value.feasibility < 1 &&
+  TEMPORARY_DECISION_CHOICES.crashScore.some((score) => score === value.crashScore) &&
+  TEMPORARY_DECISION_CHOICES.pickRule.some((rule) => rule === value.pickRule) &&
+  Number.isInteger(value.finalists) &&
+  Number(value.finalists) >= 1
+
 const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
   isRecord(value) &&
   value.version === RECORD_VERSION &&
@@ -54,6 +65,7 @@ const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
       value.split.length === 3 &&
       value.split.every((share) => typeof share === 'number'))) &&
   (value.objective === undefined || recordedObjective(value.objective) !== undefined) &&
+  (value.decision === undefined || isDecision(value.decision)) &&
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid))
 

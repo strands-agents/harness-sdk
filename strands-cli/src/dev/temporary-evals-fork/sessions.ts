@@ -19,6 +19,7 @@ import {
   type ExperimentRun,
   type ExperimentSummary,
   type KnobKey,
+  type OptimizeDecision,
   type OptimizeObjective,
   type OptimizePage,
   type OptimizePlan,
@@ -74,7 +75,12 @@ import {
   type TemporaryKnobChange,
   type TemporarySpaceVariable,
 } from './knobs.js'
-import { checkTemporaryObjective, temporaryObjectivePresets, TEMPORARY_USAGE_METRICS } from './objective.js'
+import {
+  checkTemporaryObjective,
+  isTemporaryPareto,
+  temporaryObjectivePresets,
+  TEMPORARY_USAGE_METRICS,
+} from './objective.js'
 import { runTemporaryOptimization } from './optimize.js'
 import {
   dropTemporaryOptimizeRecord,
@@ -85,17 +91,22 @@ import {
   type TemporaryOptimizeRecord,
 } from './optimize-runs.js'
 import {
+  TEMPORARY_DECISION_CHOICES,
+  TEMPORARY_DECISION_DEFAULTS,
   TEMPORARY_ITERATION_CHOICES,
   TEMPORARY_REPETITION_CHOICES,
   temporaryRolloutCapProblem,
+  TEMPORARY_TEST_SHARES,
   TEMPORARY_WIDTH_CHOICES,
   TEMPORARY_WORKER_CHOICES,
   TEMPORARY_OPTIMIZE_DEFAULTS,
   temporaryCaseSplit,
+  temporaryNearestSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
   temporarySplitChoices,
   temporarySplitShares,
+  temporaryValidatedFinalists,
 } from './plan.js'
 import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import {
@@ -138,7 +149,10 @@ const REPETITIONS = 1
 const WORKERS = 4
 const MILLISECONDS = 1000
 
-type RunPlan = Pick<OptimizePlan, 'experiment' | 'iterations' | 'width' | 'repetitions' | 'workers' | 'split'> & {
+type RunPlan = Pick<
+  OptimizePlan,
+  'experiment' | 'iterations' | 'width' | 'repetitions' | 'workers' | 'split' | 'decision'
+> & {
   readonly objective?: OptimizeObjective
 }
 
@@ -700,16 +714,30 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   setSplit(split: CaseSplit): void {
+    this.updatePlan((plan) =>
+      plan.splitChoices.some((choice) => sameCaseSplit(choice, split)) ? this.withSplit(plan, split) : plan
+    )
+  }
+
+  setTestShare(share: number): void {
     this.updatePlan((plan) => {
-      if (!plan.splitChoices.some((choice) => sameCaseSplit(choice, split))) return plan
-      const { warning: _warning, ...rest } = plan
-      const warning = temporaryOptimizeWarning(plan.experiment.caseCount, temporarySplitShares(split))
-      return this.estimate({ ...rest, split, ...(warning ? { warning } : {}) })
+      if (!plan.testShareChoices.includes(share)) return plan
+      const splitChoices = temporarySplitChoices(plan.experiment.caseCount, share)
+      const split = temporaryNearestSplit(splitChoices, plan.split)
+      return split ? this.withSplit({ ...plan, testShare: share, splitChoices }, split) : plan
     })
   }
 
   setObjective(objective: OptimizeObjective): void {
-    this.updatePlan((plan) => withObjective(plan, objective, this.evaluatorNames))
+    this.updatePlan((plan) => this.estimate(withObjective(plan, objective, this.evaluatorNames)))
+  }
+
+  setDecision<Setting extends keyof OptimizeDecision>(setting: Setting, value: OptimizeDecision[Setting]): void {
+    this.updatePlan((plan) =>
+      plan.decisionChoices[setting].includes(value)
+        ? this.estimate({ ...plan, decision: { ...plan.decision, [setting]: value } })
+        : plan
+    )
   }
 
   start(): string | undefined {
@@ -925,17 +953,32 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     if (this.page.step === 'setup') this.showPage({ step: 'setup', plan: change(this.page.plan) })
   }
 
+  private withSplit({ warning: _warning, ...plan }: OptimizePlan, split: CaseSplit): OptimizePlan {
+    const warning = temporaryOptimizeWarning(plan.experiment.caseCount, temporarySplitShares(split))
+    return this.estimate({ ...plan, split, ...(warning ? { warning } : {}) })
+  }
+
   private estimate({ usage: _earlier, budgetProblem: _over, ...plan }: OptimizePlan): OptimizePlan {
+    const pareto = isTemporaryPareto(plan.objective)
     const { rollouts, judgeCalls, usage } = temporaryRolloutEstimate({
       split: plan.split,
       repetitions: plan.repetitions,
       iterations: plan.iterations,
       width: plan.width,
       evaluators: this.evaluators,
+      finalists: plan.decision.finalists,
+      pareto,
       ...(this.usageProfile ? { profile: this.usageProfile } : {}),
     })
     const budgetProblem = temporaryRolloutCapProblem(rollouts)
-    return { ...plan, rollouts, judgeCalls, ...(usage ? { usage } : {}), ...(budgetProblem ? { budgetProblem } : {}) }
+    return {
+      ...plan,
+      validatedFinalists: temporaryValidatedFinalists(plan.decision.finalists, pareto),
+      rollouts,
+      judgeCalls,
+      ...(usage ? { usage } : {}),
+      ...(budgetProblem ? { budgetProblem } : {}),
+    }
   }
 
   private async loadModelOptions(): Promise<void> {
@@ -987,6 +1030,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
           metrics: [...experiment.evaluators, ...TEMPORARY_USAGE_METRICS],
           split,
           splitChoices,
+          testShare: TEMPORARY_TEST_SHARES[0]!,
+          testShareChoices: TEMPORARY_TEST_SHARES,
+          decision: TEMPORARY_DECISION_DEFAULTS,
+          decisionChoices: TEMPORARY_DECISION_CHOICES,
+          validatedFinalists: TEMPORARY_DECISION_DEFAULTS.finalists,
           repetitions: REPETITIONS,
           repetitionChoices: TEMPORARY_REPETITION_CHOICES,
           width: WIDTH,
@@ -1067,6 +1115,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       repetitions: saved.repetitions ?? REPETITIONS,
       workers: saved.workers ?? WORKERS,
       split: temporaryCaseSplit(caseCount, saved.split ?? TEMPORARY_OPTIMIZE_DEFAULTS.split),
+      decision: saved.decision ?? TEMPORARY_DECISION_DEFAULTS,
       ...(saved.objective ? { objective: saved.objective } : {}),
     }
   }
@@ -1176,6 +1225,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
             width: plan.width,
             repetitions: plan.repetitions,
             concurrency: plan.workers,
+            decision: plan.decision,
             ...(shares ? { split: shares } : {}),
           },
           ...(plan.objective ? { objective: plan.objective } : {}),
@@ -1202,6 +1252,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
               workers: plan.workers,
               ...(shares ? { split: shares } : {}),
               ...(plan.objective ? { objective: plan.objective } : {}),
+              decision: plan.decision,
               startedAt,
             })
             reader = temporaryStudyReader({

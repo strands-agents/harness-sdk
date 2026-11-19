@@ -264,6 +264,16 @@ const objectiveSpecs = ({ combination, goals }: Goals): string[] => {
 const constraintSpec = ({ metric, bound, value }: Constraint): string =>
   `${metric}${bound === 'at-most' ? '<=' : '>='}${value}`
 
+export const isTemporaryPareto = ({ expression }: OptimizeObjective): boolean => {
+  try {
+    const { combination, goals } = readGoals(expression)
+    return combination === 'Pareto' && goals.length > 1
+  } catch (error) {
+    if (error instanceof ObjectiveProblem) return false
+    throw error
+  }
+}
+
 export const temporaryObjectiveArguments = ({ expression, constraints }: OptimizeObjective): string[] => [
   ...(expression.trim() ? objectiveSpecs(readGoals(expression)) : []),
   ...readConstraints(constraints).flatMap((constraint) => ['--constraint', constraintSpec(constraint)]),

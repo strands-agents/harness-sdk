@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CliConfigStore } from '../../../src/config/store.js'
 import { createDevWorkspace } from '../../../src/dev/create.js'
-import type { ExperimentSummary } from '../../../src/dev/panels/model.js'
+import type { ExperimentSummary, OptimizePlan } from '../../../src/dev/panels/model.js'
 import * as installer from '../../../src/project/archive.js'
 import {
   readTemporaryRunRecords,
@@ -93,6 +93,12 @@ const experimentDocument = (names: readonly string[], evaluators: readonly strin
 })
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
+
+const setupPlan = ({ optimize }: { readonly optimize: TemporaryOptimize }): OptimizePlan => {
+  const state = optimize.snapshot()
+  if (state.step !== 'setup') throw new Error('the plan closed')
+  return state.plan
+}
 
 const recordOf = (args: readonly string[]): string =>
   args[3] === 'resume' ? dirname(args[4]!) : flagValue(args, '--base-dir')
@@ -959,6 +965,86 @@ describe('TEMPORARY dev sessions', () => {
     expect(optimizing).not.toHaveBeenCalled()
   })
 
+  it('shouldChangeADecisionSettingOnlyToOneOfItsChoicesAndCountTheFinalistsInTheEstimate', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const before = setupPlan(sessions).rollouts
+
+    sessions.optimize.setDecision('finalists', 5)
+    sessions.optimize.setDecision('feasibility', 0.5)
+
+    const plan = setupPlan(sessions)
+    expect(plan.decision).toEqual({ feasibility: 0.9, crashScore: 'worst', pickRule: 'mean', finalists: 5 })
+    expect(plan.validatedFinalists).toBe(5)
+    expect(plan.rollouts).toBe(before + 2)
+  })
+
+  it('shouldCountTheParetoEndPhaseInTheEstimateWhenTheObjectiveIsAParetoFront', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const before = setupPlan(sessions).rollouts
+
+    sessions.optimize.setObjective({
+      expression: 'Pareto(Maximize(Contains), Minimize(tokens, scale=1000))',
+      constraints: '',
+    })
+
+    expect(setupPlan(sessions)).toMatchObject({ validatedFinalists: 5, rollouts: before + 6 })
+  })
+
+  it('shouldMoveToTheNearestSplitOfTheNewChoicesWhenTheTestShareChanges', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const experiment = await savedExperiment(
+      workspace,
+      Array.from({ length: 20 }, (_, index) => `c${index}`)
+    )
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.setTestShare(0)
+    sessions.optimize.setTestShare(0.25)
+
+    const plan = setupPlan(sessions)
+    expect(plan.testShare).toBe(0)
+    expect(plan.split).toEqual({ train: 10, validation: 10, test: 0 })
+    expect(plan.splitChoices.every(({ test }) => test === 0)).toBe(true)
+  })
+
+  it('shouldGiveTheOptimizerTheDecisionAndRecordItWhenTheRunStarts', async () => {
+    let recorded: unknown
+    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+      process.onSpawn?.(4242)
+      await vi.waitFor(async () => {
+        recorded = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
+        expect(recorded).toMatchObject({ pid: 4242 })
+      })
+      await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.setDecision('feasibility', 0.95)
+    sessions.optimize.setDecision('crashScore', 'none')
+
+    sessions.optimize.start()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    const { args } = optimizing.mock.calls[0]![0]
+    expect([flagValue(args, '--feasibility-threshold'), flagValue(args, '--agent-failure-score')]).toEqual([
+      '0.95',
+      'none',
+    ])
+    expect(recorded).toMatchObject({
+      decision: { feasibility: 0.95, crashScore: 'none', pickRule: 'mean', finalists: 3 },
+    })
+  })
+
   it('shouldStartFromTheMeanOfEveryEvaluatorAndOfferPresetsAndEveryMetric', async () => {
     const { workspace, sessions } = await sessionsFor()
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
@@ -1086,6 +1172,39 @@ describe('TEMPORARY dev sessions', () => {
 
     await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
     expect(objectiveFlags(continuing.mock.calls[0]![0].args)).toEqual(flags)
+  })
+
+  it('shouldStartARunThatStoppedBeforeItsRunFolderAgainWithTheDecisionOfTheFirstRun', async () => {
+    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
+    const { record, space, resume } = optimizationFiles(workspace)
+    await writeFileAt(
+      space,
+      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
+    )
+    await writeFileAt(
+      resume,
+      JSON.stringify({
+        version: 1,
+        experiment: experiment.path,
+        record,
+        space,
+        iterations: 4,
+        decision: { feasibility: 0.8, crashScore: 'worst', pickRule: 'mean', finalists: 1 },
+        startedAt: 1,
+        pid: 999999,
+      })
+    )
+
+    await sessions.optimize.resume()
+
+    await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
+    const { args } = continuing.mock.calls[0]![0]
+    expect([flagValue(args, '--feasibility-threshold'), flagValue(args, '--n-finalists')]).toEqual(['0.8', '1'])
   })
 
   it('shouldKeepTheRunGoingAndListItWhenTheDeveloperGoesBackToTheList', async () => {
