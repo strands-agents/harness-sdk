@@ -41,7 +41,13 @@ import { ResourcePanel } from '../panels/panel.js'
 import { DevPanelFrame, type DevPanelClicks } from '../panels/dev.js'
 import { AgentsPanel, agentGridLayout, clampAgentGridViewport } from '../panels/agents.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant, VOICE_FROG_HEIGHT, VoiceFrog } from '../frog.js'
-import { StartupContentRows, StartupView, startupHeaderLayout, useBrandAnimation } from '../startup.js'
+import {
+  RisingStartupCard,
+  StartupContentRows,
+  StartupView,
+  startupHeaderLayout,
+  useBrandAnimation,
+} from '../startup.js'
 import { TranscriptViewport } from './transcript.js'
 import { PARTY_FRAME_INTERVAL_MS, usePartyFrame, useSpinner, FadeIn } from '../animation.js'
 import { Box, Text, ThemeProvider, useTheme } from '../theme.js'
@@ -707,7 +713,13 @@ function ChatViewContent({
         </Box>
       </FadeIn>
       {startupContent ? (
-        <Box position="absolute" width={editorWidth} height={terminalHeight} flexDirection="column">
+        <RisingStartupCard
+          introStartedAt={introStartedAt}
+          animate={settings.animations && startupHeader.fullLockup}
+          width={editorWidth}
+          height={terminalHeight}
+          rise={terminalHeight - startupCard.top}
+        >
           <Box flexBasis={startupCard.top} flexShrink={1} />
           <Box
             flexGrow={1}
@@ -727,7 +739,7 @@ function ChatViewContent({
               <StartupContentRows value={startupCard.contentRows}>{startupContent}</StartupContentRows>
             </Box>
           </Box>
-        </Box>
+        </RisingStartupCard>
       ) : null}
       {snapshot.panel && snapshot.panel.kind !== 'config' && !devPanel && !composerPanel ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={canvas}>

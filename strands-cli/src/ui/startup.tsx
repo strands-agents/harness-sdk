@@ -1,5 +1,14 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
-import { Box, type DOMElement, useStdout } from 'ink'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
+import { Box, type DOMElement, useInput, useStdin, useStdout } from 'ink'
 import { type FrogTheme } from './chat/controller.js'
 import {
   FROG_BRAND_EASTER_EGG_DURATION_MS,
@@ -219,6 +228,36 @@ export function useStartupIntro(startedAt: number | undefined, animate: boolean)
     return (): void => clearInterval(timer)
   }, [startedAt, animate])
   return animate ? elapsedMs : FROG_INTRO_DURATION_MS
+}
+
+const easeOutCubic = (progress: number): number => 1 - (1 - progress) ** 3
+
+export function RisingStartupCard({
+  introStartedAt,
+  animate,
+  width,
+  height,
+  rise,
+  children,
+}: {
+  introStartedAt: number | undefined
+  animate: boolean
+  width: number
+  height: number
+  rise: number
+  children: ReactNode
+}): ReactElement {
+  const { isRawModeSupported } = useStdin()
+  const [skipped, setSkipped] = useState(false)
+  const elapsedMs = useStartupIntro(introStartedAt, animate && !skipped)
+  const rising = elapsedMs < FROG_INTRO_DURATION_MS
+  useInput(() => setSkipped(true), { isActive: rising && isRawModeSupported })
+  const offset = Math.round(rise * (1 - easeOutCubic(elapsedMs / FROG_INTRO_DURATION_MS)))
+  return (
+    <Box position="absolute" width={width} height={height} marginTop={offset} flexDirection="column">
+      {children}
+    </Box>
+  )
 }
 
 export function useBrandAnimationFrame(elapsedMs: number, width: number, height: number): number {

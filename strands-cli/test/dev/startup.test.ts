@@ -1,5 +1,5 @@
 import { createElement, type ReactElement } from 'react'
-import { Text, useInput } from 'ink'
+import { Box, Text, useInput } from 'ink'
 import { describe, expect, it, vi } from 'vitest'
 import { runInkChat } from '../../src/ui/run.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
@@ -7,6 +7,7 @@ import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.
 import { CliConfigStore } from '../../src/config/store.js'
 import { chooseHarness } from '../../src/dev/picker.js'
 import { ChatRoot } from '../../src/ui/app.js'
+import { useStartupContentRows } from '../../src/ui/startup.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { FROG_INTRO_DURATION_MS } from '../../src/ui/frog-renderer.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
@@ -345,6 +346,50 @@ describe('dev startup screen', () => {
     expect(await running).toBe(130)
     expect(signal?.aborted).toBe(true)
     expect(factory).not.toHaveBeenCalled()
+  })
+
+  it('shouldPutTheStartupCardInPlaceAtOnceWhenAKeyIsPressedWhileItRises', async () => {
+    vi.useFakeTimers()
+    const input = ttyInput()
+    const output = ttyOutput(120, 40)
+    const frame = captureFrame(output)
+    const cardTop = (): number => frame().findIndex((line) => line.includes('╭'))
+    const logo = (): string[] => frame().slice(0, 18)
+    const keys: string[] = []
+    const KeyProbe = (): ReactElement => {
+      useInput((key) => {
+        keys.push(key)
+      })
+      return createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Choose a harness'))
+    }
+    const instance = render(
+      createElement(ChatRoot, {
+        intro: true,
+        setup: false,
+        setupBridge: { request: () => {}, confirmMcp: async () => true },
+        onSetupComplete: () => {},
+        onExitSetup: () => {},
+        startupContent: createElement(KeyProbe),
+      }),
+      { stdin: input, stdout: output, stderr: ttyOutput(120, 40) }
+    )
+    try {
+      await vi.advanceTimersByTimeAsync(500)
+      const rising = cardTop()
+      input.write('x')
+      await vi.advanceTimersByTimeAsync(100)
+      const fastTracked = cardTop()
+      const playing = logo()
+      await vi.advanceTimersByTimeAsync(FROG_INTRO_DURATION_MS)
+
+      expect(rising).toBeGreaterThan(fastTracked)
+      expect(fastTracked).toBe(cardTop())
+      expect(playing).not.toEqual(logo())
+      expect(keys).toEqual(['x'])
+    } finally {
+      instance.unmount()
+      vi.useRealTimers()
+    }
   })
 
   it.each([

@@ -8,6 +8,7 @@ import { render, ttyOutput } from '../fixtures/terminal.js'
 
 import { ChatView } from '../../src/ui/chat/view.js'
 import { useStartupContentRows } from '../../src/ui/startup.js'
+import { FROG_INTRO_DURATION_MS } from '../../src/ui/frog-renderer.js'
 import { TurnView } from '../../src/ui/chat/transcript-turn.js'
 import { Markdown } from '../../src/ui/markdown.js'
 import {
@@ -3138,11 +3139,16 @@ describe('ChatView', () => {
   const StartupRowsProbe = (): ReactElement =>
     createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Startup rows'))
 
-  const logoFrames = (terminalHeight: number, introStartedAt?: number): { chat: string[]; card: string[] } => {
+  const logoFrames = (
+    terminalHeight: number,
+    introStartedAt?: number,
+    animations = true
+  ): { chat: string[]; card: string[] } => {
+    const settings = { ...snapshot().settings, animations }
     const frame = (startupContent?: ReactElement): string[] =>
       renderView(
         {
-          snapshot: snapshot(),
+          snapshot: snapshot({ settings }),
           terminalWidth: 120,
           terminalHeight,
           ...(startupContent ? { startupContent } : {}),
@@ -3169,12 +3175,45 @@ describe('ChatView', () => {
     }
   )
 
+  const CARD_LANDED_MS = FROG_INTRO_DURATION_MS - 700
+
+  it.each([32, 40, 60])('shouldRaiseTheStartupCardFromTheBottomWhileTheIntroPlaysAt%sRows', (terminalHeight) => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(100_000)
+      const resting = cardTop(logoFrames(terminalHeight).card)
+      const starting = cardTop(logoFrames(terminalHeight, Date.now()).card)
+      const early = cardTop(logoFrames(terminalHeight, Date.now() - 500).card)
+      const later = cardTop(logoFrames(terminalHeight, Date.now() - 1_000).card)
+      const landed = cardTop(logoFrames(terminalHeight, Date.now() - CARD_LANDED_MS).card)
+
+      expect(starting).toBe(-1)
+      expect(early).toBeGreaterThan(later)
+      expect(later).toBeGreaterThan(resting)
+      expect(landed).toBe(resting)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shouldShowTheStartupCardInPlaceDuringTheIntroWhenAnimationsAreOff', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(100_000)
+      const resting = cardTop(logoFrames(40).card)
+
+      expect(cardTop(logoFrames(40, Date.now() - 500, false).card)).toBe(resting)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each([32, 35, 36, 40, 60])('shouldPlayTheChatScreenIntroAboveTheStartupCardAt%sRows', (terminalHeight) => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(100_000)
       const resting = logoFrames(terminalHeight)
-      const playing = logoFrames(terminalHeight, Date.now() - 1_500)
+      const playing = logoFrames(terminalHeight, Date.now() - CARD_LANDED_MS)
       const top = cardTop(playing.card)
 
       expect(top).toBe(cardTop(resting.card))
