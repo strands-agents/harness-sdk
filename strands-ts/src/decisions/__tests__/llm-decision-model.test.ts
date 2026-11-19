@@ -29,15 +29,16 @@ class RecordingModel extends TestModelProvider {
  * metadata event carrying usage and latency.
  *
  * `input` entries may be bare strings (shorthand for `{ answer }`) or
- * full `{ answer, reason? }` objects.
+ * full `{ answer, reason? }` objects. Set `raw` to send `input` exactly as
+ * given, as a model that returns a bare option string would.
  */
 function toolUseModel(
   input: Record<string, string | { answer: string; reason?: string }>,
-  options: { usage?: Usage | null; latencyMs?: number | null } = {}
+  options: { usage?: Usage | null; latencyMs?: number | null; raw?: boolean } = {}
 ): RecordingModel {
-  const normalized: Record<string, { answer: string; reason?: string }> = {}
+  const normalized: Record<string, string | { answer: string; reason?: string }> = {}
   for (const [id, value] of Object.entries(input)) {
-    normalized[id] = typeof value === 'string' ? { answer: value } : value
+    normalized[id] = typeof value === 'string' && options.raw !== true ? { answer: value } : value
   }
   const usage = options.usage === undefined ? DEFAULT_USAGE : options.usage
   const latencyMs = options.latencyMs === undefined ? 42 : options.latencyMs
@@ -351,6 +352,46 @@ describe('LLMDecisionModel', () => {
       await expect(decision.ask('x', { color: { question: 'c?', choices: ['red', 'green'] } })).rejects.toThrow(
         /invalid answer set/
       )
+    })
+
+    // Claude Haiku 4.5 returns { candidate: 'c1' } rather than { candidate: { answer: 'c1' } } (#4949).
+    it.each([
+      ['without uncertainty', false],
+      ['with uncertainty', true],
+    ])('accepts an answer the model returned without its wrapper object (%s)', async (_label, uncertainty) => {
+      const decision = new LLMDecisionModel({ model: toolUseModel({ candidate: 'c1' }, { raw: true }) })
+
+      const result = await decision.ask('x', {
+        candidate: { question: 'Which?', choices: ['c0', 'c1'], uncertainty },
+      })
+
+      expect(result.answers).toStrictEqual({ candidate: 'c1' })
+    })
+
+    it('accepts a bare boolean answer', async () => {
+      const decision = new LLMDecisionModel({ model: toolUseModel({ isFruit: 'true' }, { raw: true }) })
+
+      const result = await decision.ask('x', {
+        isFruit: { question: 'Fruit?', choices: 'boolean', uncertainty: false },
+      })
+
+      expect(result.answers).toStrictEqual({ isFruit: true })
+    })
+
+    it('reads a bare uncertain answer as Uncertain without a reason', async () => {
+      const decision = new LLMDecisionModel({ model: toolUseModel({ color: 'uncertain' }, { raw: true }) })
+
+      const result = await decision.ask('x', { color: { question: 'c?', choices: ['red', 'green'] } })
+
+      expect(result.answers).toStrictEqual({ color: new Uncertain() })
+    })
+
+    it('still rejects a bare answer outside the allowed options', async () => {
+      const decision = new LLMDecisionModel({ model: toolUseModel({ candidate: 'c9' }, { raw: true }) })
+
+      await expect(
+        decision.ask('x', { candidate: { question: 'Which?', choices: ['c0', 'c1'], uncertainty: false } })
+      ).rejects.toThrow(/invalid answer set/)
     })
   })
 

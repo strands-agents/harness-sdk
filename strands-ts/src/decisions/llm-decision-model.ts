@@ -128,7 +128,7 @@ export class LLMDecisionModel extends DecisionModel {
 
     let parsed: Record<string, { answer: string; reason?: string }>
     try {
-      parsed = schema.parse(toolUse.input) as Record<string, { answer: string; reason?: string }>
+      parsed = schema.parse(wrapBareAnswers(toolUse.input)) as Record<string, { answer: string; reason?: string }>
     } catch (error) {
       throw new Error(`decision model returned an invalid answer set: ${normalizeError(error).message}`, {
         cause: error,
@@ -170,6 +170,20 @@ function buildAnswerSchema<const Q extends Record<string, Question>>(
     shape[id] = entry.describe(question.question)
   }
   return z.object(shape).describe('Answer for each question in the input decision set.')
+}
+
+/**
+ * Reads a bare option string as `{ answer: value }`.
+ *
+ * Models can collapse a one-field `{ answer }` object to the option itself (Claude Haiku 4.5 returns
+ * `{ candidate: 'c1' }` for an `{ answer }`-only schema). The option is still checked against the
+ * question's allowed values by the schema; the schema sent to the model is unchanged.
+ */
+function wrapBareAnswers(input: unknown): unknown {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return input
+  return Object.fromEntries(
+    Object.entries(input).map(([id, entry]) => [id, typeof entry === 'string' ? { answer: entry } : entry])
+  )
 }
 
 function answerLiterals(question: Question, allowUncertain: boolean): readonly string[] {
