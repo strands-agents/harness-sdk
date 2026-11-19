@@ -5,13 +5,15 @@ Command and code execution spawn a real ``sh``; file operations hit the host
 filesystem directly. These require a POSIX shell, so they are skipped on Windows.
 """
 
+import asyncio
 import os
 import sys
+import threading
 
 import pytest
 
 from strands.sandbox import FileInfo
-from strands.sandbox.errors import SandboxPathNotFoundError
+from strands.sandbox.errors import SandboxAbortError, SandboxPathNotFoundError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 
 WINDOWS = sys.platform == "win32"
@@ -20,6 +22,7 @@ PRINT_CWD = "(Get-Location).Path" if WINDOWS else "pwd"
 FAIL_WITH_STDERR = "[Console]::Error.WriteLine('oops'); exit 3" if WINDOWS else "echo oops >&2; exit 3"
 PRINT_GREETING = "echo $env:GREETING" if WINDOWS else "printenv GREETING"
 PYTHON = "python" if WINDOWS else "python3"
+SLEEP_A_MINUTE = "Start-Sleep -Seconds 60" if WINDOWS else "sleep 60"
 # PowerShell and Windows Python end lines with \r\n.
 EOL = "\r\n" if WINDOWS else "\n"
 
@@ -86,6 +89,25 @@ async def test_execute_code_reports_missing_interpreter_as_127(sandbox):
     result = await sandbox.execute_code("x", "strands-definitely-not-an-interpreter")
     assert result.exit_code == 127
     assert "not found" in result.stderr
+
+
+# ---- cancel_signal ----
+
+
+@pytest.mark.asyncio
+async def test_execute_stops_when_cancel_signal_is_set(sandbox):
+    cancel_signal = threading.Event()
+    asyncio.get_event_loop().call_later(0.2, cancel_signal.set)
+    with pytest.raises(SandboxAbortError):
+        await sandbox.execute(SLEEP_A_MINUTE, cancel_signal=cancel_signal)
+
+
+@pytest.mark.asyncio
+async def test_execute_code_stops_when_cancel_signal_is_set(sandbox):
+    cancel_signal = threading.Event()
+    asyncio.get_event_loop().call_later(0.2, cancel_signal.set)
+    with pytest.raises(SandboxAbortError):
+        await sandbox.execute_code("import time; time.sleep(60)", PYTHON, cancel_signal=cancel_signal)
 
 
 # ---- execute on Windows (PowerShell) ----

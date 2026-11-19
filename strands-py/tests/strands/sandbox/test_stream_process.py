@@ -10,10 +10,11 @@ shell, so they are skipped on Windows.
 import asyncio
 import os
 import sys
+import threading
 
 import pytest
 
-from strands.sandbox.errors import SandboxTimeoutError
+from strands.sandbox.errors import SandboxAbortError, SandboxTimeoutError
 from strands.sandbox.stream_process import _stream_process
 from strands.sandbox.types import ExecutionResult, StreamChunk
 
@@ -135,6 +136,53 @@ async def test_cancellation_kills_the_process():
         await asyncio.sleep(0.02)
     else:
         pytest.fail("process survived cancellation")
+
+
+@pytest.mark.asyncio
+async def test_cancel_signal_kills_the_process_tree_and_raises_abort():
+    cancel_signal = threading.Event()
+    asyncio.get_event_loop().call_later(0.2, cancel_signal.set)
+    pids: list[int] = []
+
+    with pytest.raises(SandboxAbortError, match="Execution aborted"):
+        # The backgrounded sleep is a child of sh; killing only sh would leave it running.
+        async for item in _stream_process("sh", ["-c", "sleep 60 & echo $!; wait"], cancel_signal=cancel_signal):
+            if isinstance(item, StreamChunk):
+                pids.append(int(item.data.strip()))
+
+    for _ in range(50):
+        try:
+            os.kill(pids[0], 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.02)
+    else:
+        pytest.fail("child process survived the cancel signal")
+
+
+@pytest.mark.asyncio
+async def test_cancel_signal_already_set_does_not_spawn(tmp_path):
+    cancel_signal = threading.Event()
+    cancel_signal.set()
+    marker = tmp_path / "ran"
+
+    with pytest.raises(SandboxAbortError):
+        await _collect(_stream_process("sh", ["-c", f"touch {marker}"], cancel_signal=cancel_signal))
+
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_unset_cancel_signal_leaves_the_result_alone():
+    _, result = await _collect(_stream_process("sh", ["-c", "echo done"], cancel_signal=threading.Event()))
+    assert result.exit_code == 0
+    assert result.stdout == "done\n"
+
+
+@pytest.mark.asyncio
+async def test_timeout_still_raises_timeout_when_cancel_signal_is_unset():
+    with pytest.raises(SandboxTimeoutError):
+        await _collect(_stream_process("sh", ["-c", "sleep 60"], timeout=0.2, cancel_signal=threading.Event()))
 
 
 @pytest.mark.asyncio

@@ -35,7 +35,7 @@ All Sandbox implementations share the same abstract interface:
 | <Syntax py="remove_file" ts="removeFile" /> | Delete a file |
 | <Syntax py="list_files" ts="listFiles" /> | List directory contents |
 
-The execution methods accept optional parameters: `timeout` (seconds, throws `SandboxTimeoutError` when exceeded), `cwd` (working directory override), `env` (environment variables), and in TypeScript, `signal` (AbortSignal, throws `SandboxAbortError`).
+The execution methods accept optional parameters: `timeout` (seconds, throws `SandboxTimeoutError` when exceeded), `cwd` (working directory override), `env` (environment variables), and a cancellation signal that throws `SandboxAbortError` when it fires: `cancel_signal` (a `threading.Event`) in Python, `signal` (an `AbortSignal`) in TypeScript.
 
 ## Getting started
 

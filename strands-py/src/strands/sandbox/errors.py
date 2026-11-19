@@ -25,6 +25,14 @@ class SandboxTimeoutError(TimeoutError):
         self.stderr = stderr
 
 
+class SandboxAbortError(Exception):
+    """Raised by sandbox execution when the caller's ``cancel_signal`` is set."""
+
+    def __init__(self) -> None:
+        """Initialize the error."""
+        super().__init__("Execution aborted")
+
+
 class SandboxPathNotFoundError(FileNotFoundError):
     """Raised by ``list_files`` and ``read_file`` when the path does not exist.
 

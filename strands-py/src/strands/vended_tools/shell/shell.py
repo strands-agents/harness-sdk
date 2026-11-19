@@ -16,7 +16,7 @@ import json
 import math
 from typing import TYPE_CHECKING
 
-from ...sandbox.errors import SandboxTimeoutError
+from ...sandbox.errors import SandboxAbortError, SandboxTimeoutError
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
 from .types import SANDBOX_SHELL_DESCRIPTION, ShellExecutionError, ShellOutput
@@ -70,7 +70,10 @@ def make_shell(
         """
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
         try:
-            result = await active.execute(command, timeout=timeout)
+            result = await active.execute(command, timeout=timeout, cancel_signal=tool_context.cancel_signal)
+        except SandboxAbortError:
+            # Let cancellation propagate as-is rather than reporting it as a shell failure.
+            raise
         except SandboxTimeoutError as e:
             # The model only sees str(e), so the partial output rides in the message with the success field names.
             partial: ShellOutput = {"output": e.stdout, "error": e.stderr, "exit_code": 124}

@@ -16,6 +16,7 @@ import errno
 import os
 import shlex
 import sys
+import threading
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -708,6 +709,21 @@ async def test_execute_raises_if_no_execution_result():
 
     with pytest.raises(RuntimeError, match="did not yield an ExecutionResult"):
         await _Fake().execute("noop")
+
+
+@pytest.mark.asyncio
+async def test_execute_and_execute_code_forward_cancel_signal_to_execute_streaming():
+    seen = []
+
+    class _Fake(PosixShellSandbox):
+        async def execute_streaming(self, command, **kwargs):
+            seen.append(kwargs["cancel_signal"])
+            yield ExecutionResult(exit_code=0, stdout="", stderr="")
+
+    cancel_signal = threading.Event()
+    await _Fake().execute("noop", cancel_signal=cancel_signal)
+    await _Fake().execute_code("pass", "python3", cancel_signal=cancel_signal)
+    assert seen == [cancel_signal, cancel_signal]
 
 
 def test_file_info_defaults():

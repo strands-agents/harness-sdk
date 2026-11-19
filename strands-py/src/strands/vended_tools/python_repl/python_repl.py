@@ -14,7 +14,7 @@ import json
 from typing import TYPE_CHECKING
 
 from ...sandbox.constants import LANGUAGE_PATTERN
-from ...sandbox.errors import SandboxTimeoutError
+from ...sandbox.errors import SandboxAbortError, SandboxTimeoutError
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
 from .types import PYTHON_REPL_DESCRIPTION, PythonReplError, PythonReplOutput
@@ -73,6 +73,7 @@ def make_python_repl(
             ValueError: If ``timeout`` is not positive.
             SandboxTimeoutError: If execution exceeds ``timeout``. The message carries the partial
                 output as JSON with the success field names and ``exit_code``.
+            SandboxAbortError: If the agent is cancelled while the code runs.
             PythonReplError: If the sandbox fails to run the code.
         """
         # The model sets timeout; reject non-positive values rather than rely on backend-specific semantics.
@@ -80,7 +81,12 @@ def make_python_repl(
             raise ValueError(f"timeout must be a positive number of seconds, got {timeout}")
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
         try:
-            result = await active.execute_code(code, language, timeout=timeout)
+            result = await active.execute_code(
+                code, language, timeout=timeout, cancel_signal=tool_context.cancel_signal
+            )
+        except SandboxAbortError:
+            # Let cancellation propagate as-is rather than reporting it as a sandbox failure.
+            raise
         except SandboxTimeoutError as e:
             # The model only sees str(e), so the partial output rides in the message with the success field names.
             partial: PythonReplOutput = {"output": e.stdout, "error": e.stderr, "exit_code": 124}
