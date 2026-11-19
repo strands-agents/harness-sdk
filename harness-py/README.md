@@ -545,7 +545,9 @@ With caching on (the harness default), the system prompt is part of the cached p
 `context_parts` the same for every turn of a conversation. A value that changes each turn, such as a
 timestamp, changes that prefix, so the system prompt and the conversation after it miss the cache
 on every turn. Put those values in a `ContextInjector` plugin instead. It adds them to the latest
-user message, so the system prompt stays the same and stays cached:
+user message, so the system prompt stays the same and stays cached. The built-in `environment`
+plugin already does this for the current date, so add your own `ContextInjector` only for something
+finer-grained (the time of day, as below) or for other per-turn values:
 
 ```python
 from datetime import datetime
