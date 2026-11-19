@@ -43,31 +43,81 @@ export class ToolRegistry {
   }
 
   /**
-   * Swaps one source's tools for its new list in a single step. Each new tool is checked against the registry without
-   * `current` and against the new tools before it. A tool that fails the check is skipped, so another source's tool
-   * with the same name stays registered.
+   * Swaps one source's tools for its new list in a single step, preserving the source's slot in registration order.
+   * Each new tool is checked against the registry without `current` and against the new tools before it. A tool that
+   * fails the check is skipped, so another source's tool with the same name stays registered.
    *
    * @param current - The source's registered tools; a tool not registered under its name is left alone
    * @param next - The source's new tools
+   * @param options - Optional placement hints used when `current` has no registered tools in the registry
    * @returns The tools of `next` that were skipped, each with the reason
    * @internal
    */
-  swap(current: Tool[], next: Tool[]): { tool: Tool; error: ToolValidationError }[] {
-    const tools = new Map(this._tools)
+  swap(current: Tool[], next: Tool[], options?: { insertBefore?: Tool }): { tool: Tool; error: ToolValidationError }[] {
+    const removedNames = new Set<string>()
     for (const tool of current) {
-      if (tools.get(tool.name) === tool) tools.delete(tool.name)
+      if (this._tools.get(tool.name) === tool) {
+        removedNames.add(tool.name)
+      }
     }
+
+    const remaining = new Map<string, Tool>()
+    let insertAt = -1
+    for (const [name, tool] of this._tools) {
+      if (removedNames.has(name)) {
+        if (insertAt === -1) insertAt = remaining.size
+      } else {
+        remaining.set(name, tool)
+      }
+    }
+
+    if (insertAt === -1) {
+      insertAt = remaining.size
+      const anchor = options?.insertBefore
+      if (anchor !== undefined && remaining.get(anchor.name) === anchor) {
+        let index = 0
+        for (const tool of remaining.values()) {
+          if (tool === anchor) {
+            insertAt = index
+            break
+          }
+          index += 1
+        }
+      }
+    }
+
+    const validationMap = new Map(remaining)
+    const accepted: Tool[] = []
     const skipped: { tool: Tool; error: ToolValidationError }[] = []
     for (const tool of next) {
       try {
-        this._validateNewTool(tool, tools)
-        tools.set(tool.name, tool)
+        this._validateNewTool(tool, validationMap)
+        validationMap.set(tool.name, tool)
+        accepted.push(tool)
       } catch (error) {
         if (!(error instanceof ToolValidationError)) throw error
         skipped.push({ tool, error })
       }
     }
-    this._tools = tools
+
+    const rebuilt = new Map<string, Tool>()
+    let index = 0
+    for (const [name, tool] of remaining) {
+      if (index === insertAt) {
+        for (const nextTool of accepted) {
+          rebuilt.set(nextTool.name, nextTool)
+        }
+      }
+      rebuilt.set(name, tool)
+      index += 1
+    }
+    if (insertAt >= remaining.size) {
+      for (const nextTool of accepted) {
+        rebuilt.set(nextTool.name, nextTool)
+      }
+    }
+
+    this._tools = rebuilt
     return skipped
   }
 

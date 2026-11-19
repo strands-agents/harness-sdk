@@ -2826,6 +2826,115 @@ describe('normalizeToolUseNames', () => {
         expect(agent.toolRegistry.get('tool_d')?.description).toBe('MCP tool_d')
       })
     })
+
+    it('registers MCP tools in configured client order regardless of listTools completion order', async () => {
+      const clientA = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+      const clientB = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+      const toolA = new McpTool({ name: 'a_tool', description: 'A', inputSchema: {}, client: clientA })
+      const toolB = new McpTool({ name: 'b_tool', description: 'B', inputSchema: {}, client: clientB })
+
+      let resolveA!: (tools: McpTool[]) => void
+      const pendingA = new Promise<McpTool[]>((resolve) => {
+        resolveA = resolve
+      })
+      vi.spyOn(clientA, 'listTools').mockReturnValue(pendingA)
+      vi.spyOn(clientB, 'listTools').mockResolvedValue([toolB])
+
+      const agent = new Agent({ model: new MockMessageModel(), tools: [clientA, clientB], printer: false })
+      const initPromise = agent.initialize()
+      await Promise.resolve()
+      resolveA([toolA])
+      await initPromise
+
+      expect(agent.tools.map((t) => t.name)).toEqual(['a_tool', 'b_tool'])
+      expect(agent.toolRegistry.toolSpecs().map((s) => s.name)).toEqual(['a_tool', 'b_tool'])
+    })
+
+    it('keeps a refreshed MCP client in its slot before later MCP and plugin tools', async () => {
+      const clientA = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+      const clientB = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+      const makeTool = (client: McpClient, name: string): McpTool =>
+        new McpTool({ name, description: name, inputSchema: {}, client })
+
+      vi.spyOn(clientA, 'listTools').mockResolvedValue([makeTool(clientA, 'a_tool')])
+      vi.spyOn(clientB, 'listTools').mockResolvedValue([makeTool(clientB, 'b_tool')])
+
+      const callbacks = new Map<McpClient, (oldTools: string[], newTools: McpTool[]) => void>()
+      using _setterSpy = vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation(function (
+        this: McpClient,
+        cb
+      ) {
+        if (cb) callbacks.set(this, cb)
+      })
+
+      const localTool = createMockTool(
+        'local_tool',
+        () => new ToolResultBlock({ toolUseId: 'local', status: 'success', content: [] })
+      )
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        tools: [localTool, clientA, clientB],
+        contextManager: 'auto',
+        printer: false,
+      })
+      await agent.initialize()
+
+      expect(agent.tools.map((t) => t.name)).toEqual(['local_tool', 'a_tool', 'b_tool', 'retrieve_context'])
+
+      // No-op refresh leaves order unchanged.
+      callbacks.get(clientA)!(['a_tool'], [makeTool(clientA, 'a_tool')])
+      expect(agent.tools.map((t) => t.name)).toEqual(['local_tool', 'a_tool', 'b_tool', 'retrieve_context'])
+
+      // Replacing with a new tool set keeps clientA before clientB and plugin tools.
+      callbacks.get(clientA)!(['a_tool'], [makeTool(clientA, 'a_one'), makeTool(clientA, 'a_two')])
+      expect(agent.tools.map((t) => t.name)).toEqual(['local_tool', 'a_one', 'a_two', 'b_tool', 'retrieve_context'])
+    })
+
+    it('inserts deferred MCP tools in configured client order when a later client populates first', async () => {
+      const clientA = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+      const clientB = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+      const makeTool = (client: McpClient, name: string): McpTool =>
+        new McpTool({ name, description: name, inputSchema: {}, client })
+
+      vi.spyOn(clientA, 'listTools').mockResolvedValue([])
+      vi.spyOn(clientB, 'listTools').mockResolvedValue([])
+
+      const callbacks = new Map<McpClient, (oldTools: string[], newTools: McpTool[]) => void>()
+      using _setterSpy = vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation(function (
+        this: McpClient,
+        cb
+      ) {
+        if (cb) callbacks.set(this, cb)
+      })
+
+      const localTool = createMockTool(
+        'local_tool',
+        () => new ToolResultBlock({ toolUseId: 'local', status: 'success', content: [] })
+      )
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        tools: [localTool, clientA, clientB],
+        contextManager: 'auto',
+        printer: false,
+      })
+      await agent.initialize()
+
+      expect(agent.tools.map((t) => t.name)).toEqual(['local_tool', 'retrieve_context'])
+
+      // Client B populates first; it lands before plugin tools.
+      callbacks.get(clientB)!([], [makeTool(clientB, 'b_tool')])
+      expect(agent.tools.map((t) => t.name)).toEqual(['local_tool', 'b_tool', 'retrieve_context'])
+
+      // Client A populates second; it lands in its configured slot before client B.
+      callbacks.get(clientA)!([], [makeTool(clientA, 'a_tool')])
+      expect(agent.tools.map((t) => t.name)).toEqual(['local_tool', 'a_tool', 'b_tool', 'retrieve_context'])
+
+      // Dropping all tools from client A and re-adding preserves its slot before client B.
+      callbacks.get(clientA)!(['a_tool'], [])
+      expect(agent.tools.map((t) => t.name)).toEqual(['local_tool', 'b_tool', 'retrieve_context'])
+      callbacks.get(clientA)!([], [makeTool(clientA, 'a_tool_v2')])
+      expect(agent.tools.map((t) => t.name)).toEqual(['local_tool', 'a_tool_v2', 'b_tool', 'retrieve_context'])
+    })
   })
 
   describe('limits', () => {

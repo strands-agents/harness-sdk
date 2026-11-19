@@ -191,6 +191,40 @@ describe('ToolRegistry', () => {
 
       expect(registry.get('tool-a')).toBe(other)
     })
+
+    it('preserves the slot position of replaced tools relative to surrounding tools', () => {
+      const first = createMockTool({ name: 'first' })
+      const [oldA, oldB] = [createMockTool({ name: 'tool-a' }), createMockTool({ name: 'tool-b' })]
+      const last = createMockTool({ name: 'last' })
+      const [newB, newC] = [createMockTool({ name: 'tool-b' }), createMockTool({ name: 'tool-c' })]
+      registry.add([first, oldA, oldB, last])
+
+      expect(registry.swap([oldA, oldB], [newB, newC])).toEqual([])
+
+      expect(registry.list()).toEqual([first, newB, newC, last])
+    })
+
+    it('inserts before the insertBefore anchor when current has no registered tools', () => {
+      const first = createMockTool({ name: 'first' })
+      const last = createMockTool({ name: 'last' })
+      const inserted = createMockTool({ name: 'inserted' })
+      registry.add([first, last])
+
+      expect(registry.swap([], [inserted], { insertBefore: last })).toEqual([])
+
+      expect(registry.list()).toEqual([first, inserted, last])
+    })
+
+    it('appends when insertBefore is not registered', () => {
+      const first = createMockTool({ name: 'first' })
+      const unregistered = createMockTool({ name: 'unregistered' })
+      const inserted = createMockTool({ name: 'inserted' })
+      registry.add([first])
+
+      expect(registry.swap([], [inserted], { insertBefore: unregistered })).toEqual([])
+
+      expect(registry.list()).toEqual([first, inserted])
+    })
   })
 
   describe('get', () => {

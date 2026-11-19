@@ -885,17 +885,26 @@ export class Agent implements LocalAgent, InvokableAgent {
       return
     }
 
-    // Initialize MCP clients and register their tools
-    await Promise.all(
-      this._mcpClients.map(async (client) => {
-        let registered = await client.listTools()
-        this._toolRegistry.add(registered)
-        // The client's own list of old names includes tools this agent skipped, so track what was registered.
-        client.onToolsChanged = (_oldTools, newTools): void => {
-          registered = this._replaceMcpTools(client, registered, newTools)
-        }
-      })
-    )
+    const preMcpTools = new Set(this._toolRegistry.list())
+
+    // Fetch MCP tool lists concurrently, then register in configured client order so tool specs stay deterministic.
+    const initialToolsByClient = await Promise.all(this._mcpClients.map((client) => client.listTools()))
+    const registeredByClient: McpTool[][] = initialToolsByClient.map((tools) => {
+      this._toolRegistry.add(tools)
+      return tools
+    })
+
+    for (const [index, client] of this._mcpClients.entries()) {
+      // The client's own list of old names includes tools this agent skipped, so track what was registered.
+      client.onToolsChanged = (_oldTools, newTools): void => {
+        registeredByClient[index] = this._replaceMcpTools(
+          client,
+          registeredByClient[index]!,
+          newTools,
+          this._findMcpInsertAnchor(index, registeredByClient, preMcpTools)
+        )
+      }
+    }
 
     // Register tools vended by the sandbox. The host default vends nothing. A tool
     // is skipped if the user already registered one with that name.
@@ -926,6 +935,45 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Finds the first registered tool that should follow an MCP client's slot when the client has no registered tools
+   * (for example after deferred background connection or after temporarily returning no tools). Checks later MCP
+   * clients in configured order first, then tools registered after the MCP block.
+   *
+   * @param clientIndex - Position of the MCP client in {@link _mcpClients}
+   * @param registeredByClient - Currently registered tools tracked per MCP client
+   * @param preMcpTools - Tools registered before MCP initialization
+   * @returns The tool to insert before, or undefined to append
+   */
+  private _findMcpInsertAnchor(
+    clientIndex: number,
+    registeredByClient: McpTool[][],
+    preMcpTools: ReadonlySet<Tool>
+  ): Tool | undefined {
+    for (let i = clientIndex + 1; i < registeredByClient.length; i += 1) {
+      for (const tool of registeredByClient[i]!) {
+        if (this._toolRegistry.get(tool.name) === tool) {
+          return tool
+        }
+      }
+    }
+
+    const mcpTools = new Set<Tool>()
+    for (const tools of registeredByClient) {
+      for (const tool of tools) {
+        mcpTools.add(tool)
+      }
+    }
+
+    for (const tool of this._toolRegistry.list()) {
+      if (!preMcpTools.has(tool) && !mcpTools.has(tool)) {
+        return tool
+      }
+    }
+
+    return undefined
+  }
+
+  /**
    * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
    * name of a tool from another source such as `retrieve_context`, is skipped with a warning; the rest of the refresh
    * applies. A skipped tool comes back only on this client's next refresh, even if the other source drops the name first.
@@ -933,10 +981,16 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param client - The MCP client whose tools changed
    * @param current - The tools the client has registered
    * @param refreshed - The client's refreshed tools
+   * @param insertBefore - Optional anchor tool to insert before when `current` has no registered tools
    * @returns The tools the client has registered afterwards
    */
-  private _replaceMcpTools(client: McpClient, current: McpTool[], refreshed: McpTool[]): McpTool[] {
-    const skipped = this._toolRegistry.swap(current, refreshed)
+  private _replaceMcpTools(
+    client: McpClient,
+    current: McpTool[],
+    refreshed: McpTool[],
+    insertBefore?: Tool
+  ): McpTool[] {
+    const skipped = this._toolRegistry.swap(current, refreshed, insertBefore ? { insertBefore } : undefined)
     for (const { tool, error } of skipped) {
       logger.warn(
         `client=<${client.clientName}>, tool_name=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
