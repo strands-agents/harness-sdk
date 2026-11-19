@@ -240,6 +240,7 @@ export type {
   HttpDecisionModelOptions,
   LLMDecisionModelOptions,
   Question,
+  SigV4Credentials,
   TypeSafeDecisionModelOptions,
 } from './decisions/index.js'
 

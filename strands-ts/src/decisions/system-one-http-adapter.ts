@@ -221,48 +221,49 @@ export function httpTransport(config: SystemOneProviderConfig): SystemOneTranspo
 }
 
 async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSignal?: AbortSignal): Promise<unknown> {
-  const timeout = config.timeoutMs !== undefined ? AbortSignal.timeout(config.timeoutMs) : undefined
-  const signal =
-    cancelSignal !== undefined && timeout !== undefined
-      ? AbortSignal.any([cancelSignal, timeout])
-      : (cancelSignal ?? timeout)
-  // A cancel by the caller is not a timeout, even if both signals have fired.
-  const timedOut = (): boolean => timeout?.aborted === true && cancelSignal?.aborted !== true
-  const timeoutError = (cause: unknown): ModelError =>
-    new ModelError(`${config.providerName} decision request timed out after ${config.timeoutMs}ms`, { cause })
+  const timeout = config.timeoutMs === undefined ? undefined : AbortSignal.timeout(config.timeoutMs)
+  const signals = [cancelSignal, timeout].filter((signal): signal is AbortSignal => signal !== undefined)
+  const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0]
 
   // Resolved outside the request's error handling so a signing or credential failure is not reported as a failed
   // request. Awaited only when asynchronous, so a synchronous provider still calls fetch without yielding first.
   const providerHeaders = config.requestHeaders(body)
   const headers = {
-    ...(providerHeaders instanceof Promise ? await providerHeaders : providerHeaders),
+    ...(isPromiseLike(providerHeaders) ? await providerHeaders : providerHeaders),
     'Content-Type': 'application/json',
   }
 
+  let payload: unknown
   let response: Response
   try {
     response = await config.fetch(config.endpoint, {
       method: 'POST',
       headers,
       body,
+      // A System One endpoint does not redirect, and a redirect would replay the request's headers and body.
+      redirect: 'error',
       ...(signal !== undefined && { signal }),
     })
+    payload = await readPayload(response)
   } catch (error) {
-    if (timedOut()) throw timeoutError(error)
+    // A decision-provider error such as a non-JSON body is already described.
+    if (error instanceof ModelError) throw error
+    // A cancel by the caller is not a timeout, even if both signals have fired.
+    if (timeout?.aborted === true && cancelSignal?.aborted !== true) {
+      throw new ModelError(`${config.providerName} decision request timed out after ${config.timeoutMs}ms`, {
+        cause: error,
+      })
+    }
     throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
       cause: error,
     })
   }
-
-  let payload: unknown
-  try {
-    payload = await readPayload(response)
-  } catch (error) {
-    if (timedOut()) throw timeoutError(error)
-    throw error
-  }
   if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
   return payload
+}
+
+function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
+  return typeof (value as PromiseLike<T>).then === 'function'
 }
 
 async function readPayload(response: Response): Promise<unknown> {
@@ -291,12 +292,24 @@ function errorDetail(body: unknown): string | undefined {
   if (typeof body === 'string') return body
   if (!isRecord(body)) return undefined
   for (const field of ['error', 'message', 'detail']) {
-    const value = body[field]
-    if (typeof value === 'string') return value
-    if (isRecord(value)) {
-      const nested = value['message'] || value['error_type']
-      if (typeof nested === 'string') return nested
-    }
+    // Servers differ in casing: a Lambda Function URL answers `{"Message": ...}`.
+    const key = Object.keys(body).find((name) => name.toLowerCase() === field)
+    const detail = key === undefined ? undefined : detailText(body[key])
+    if (detail) return detail
+  }
+  return undefined
+}
+
+function detailText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  // FastAPI validation errors: `[{ loc, msg, ... }]`.
+  if (Array.isArray(value)) {
+    const messages = value.flatMap((item) => (isRecord(item) && typeof item['msg'] === 'string' ? [item['msg']] : []))
+    return messages.length > 0 ? messages.join('; ') : undefined
+  }
+  if (isRecord(value)) {
+    const nested = value['message'] || value['error_type']
+    return typeof nested === 'string' ? nested : undefined
   }
   return undefined
 }

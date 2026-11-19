@@ -8,12 +8,24 @@ import {
 import { createSigV4Signer, type SigV4Credentials } from './sigv4-signer.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
-const HTTP_PROVIDER_NAME = 'http'
-const HTTP_DEFAULT_MIN_CONFIDENCE = 0.5
-const HTTP_DEFAULT_TIMEOUT_MS = 60_000
+export type { SigV4Credentials } from './sigv4-signer.js'
 
-/** Header names the transport sets itself, so a caller cannot supply them. */
-const RESERVED_HEADERS = new Set(['content-type', 'content-length', 'host'])
+const CLASS_NAME = 'HttpDecisionModel'
+const DEFAULT_MIN_CONFIDENCE = 0.5
+const DEFAULT_TIMEOUT_MS = 60_000
+/** The largest delay a timer accepts; `AbortSignal.timeout` misbehaves above it. */
+const MAX_TIMEOUT_MS = 2_147_483_647
+
+/** Headers the transport sets itself. */
+const RESERVED_HEADERS = ['content-type', 'content-length', 'host']
+/** Headers a bearer token or a SigV4 signature sets itself. */
+const BEARER_HEADERS = ['authorization']
+const SIGV4_HEADERS = ['authorization', 'x-amz-date', 'x-amz-security-token', 'x-amz-content-sha256']
+
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
+const TOKEN = /^[\u0021-\u007e]+$/
+const REGION = /^[A-Za-z0-9-]+$/
+const SERVICE = /^[A-Za-z0-9._-]+$/
 
 /** How an {@link HttpDecisionModel} authenticates its requests. */
 export type HttpDecisionModelAuth =
@@ -37,7 +49,10 @@ export type HttpDecisionModelAuth =
 
 /** Options for constructing an {@link HttpDecisionModel}. */
 export interface HttpDecisionModelOptions {
-  /** Full URL of the System One endpoint, such as `http://localhost:8000/v1/systemone`. */
+  /**
+   * Full URL of the System One endpoint, such as `http://localhost:8000/v1/systemone`. It must not contain
+   * a query string or credentials. The endpoint must not redirect: a redirect fails the request.
+   */
   readonly endpoint: string
   /** How requests authenticate. Omit for a server that needs no authentication, such as a local one. */
   readonly auth?: HttpDecisionModelAuth
@@ -47,7 +62,10 @@ export interface HttpDecisionModelOptions {
   readonly modelId?: string
   /** Default minimum confidence. Defaults to `0.5`. */
   readonly defaultMinConfidence?: number
-  /** Aborts a request that takes longer than this many milliseconds. Defaults to `60000`. */
+  /**
+   * Aborts a request that takes longer than this many milliseconds, counting the response body. An integer
+   * from 1 to 2147483647. Defaults to `60000`, which is longer than API Gateway's 29 second limit.
+   */
   readonly timeoutMs?: number
   /** Custom fetch implementation, primarily for transport configuration and tests. */
   readonly fetch?: typeof globalThis.fetch
@@ -56,6 +74,8 @@ export interface HttpDecisionModelOptions {
 /**
  * Decision model backed by any server that speaks the System One wire format over HTTP, such as a
  * local `strands-decider` server, a Lambda Function URL, or an API Gateway route.
+ *
+ * Results report `http` as the provider name and the model the server names in its response.
  *
  * @example
  * ```typescript
@@ -83,34 +103,32 @@ export class HttpDecisionModel extends DecisionModel {
    */
   constructor(options: HttpDecisionModelOptions) {
     super()
-    const className = 'HttpDecisionModel'
     if (typeof window !== 'undefined') {
-      throw new Error(`${className} cannot run in a browser because that would expose its credentials`)
+      throw new Error(`${CLASS_NAME} cannot run in a browser because that would expose its credentials`)
     }
 
-    const endpoint = parseEndpoint(options.endpoint, className)
-    const { auth } = options
-    const staticHeaders = validateHeaders(options.headers, auth !== undefined, className)
-    if (auth !== undefined) validateAuth(auth, endpoint, className)
+    const endpoint = parseEndpoint(options.endpoint)
+    const auth = options.auth && validateAuth(options.auth, endpoint)
+    const headers = validateHeaders(options.headers, auth)
 
-    const timeoutMs = options.timeoutMs ?? HTTP_DEFAULT_TIMEOUT_MS
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      throw new Error(`${className} timeoutMs must be a positive number`)
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
+      throw new Error(`${CLASS_NAME} timeoutMs must be an integer from 1 to ${MAX_TIMEOUT_MS}`)
     }
 
     const fetchImplementation = options.fetch ?? globalThis.fetch
     if (typeof fetchImplementation !== 'function') {
-      throw new Error(`${className} requires a fetch implementation`)
+      throw new Error(`${CLASS_NAME} requires a fetch implementation`)
     }
 
     const modelId = options.modelId?.trim()
     this._providerConfig = {
-      providerName: HTTP_PROVIDER_NAME,
+      providerName: 'http',
       endpoint: endpoint.href,
-      requestHeaders: authHeaders(auth, endpoint.href, staticHeaders),
+      requestHeaders: requestHeaders(endpoint, auth, headers),
       defaultMinConfidence: resolveDefaultMinConfidence(
-        options.defaultMinConfidence ?? HTTP_DEFAULT_MIN_CONFIDENCE,
-        className
+        options.defaultMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
+        CLASS_NAME
       ),
       timeoutMs,
       fetch: (input, init): Promise<Response> => fetchImplementation(input, init),
@@ -133,75 +151,97 @@ export class HttpDecisionModel extends DecisionModel {
   }
 }
 
-function parseEndpoint(endpoint: string, className: string): URL {
+function parseEndpoint(endpoint: string): URL {
   let url: URL
   try {
     url = new URL(endpoint)
   } catch (cause) {
-    throw new Error(`${className} endpoint must be a valid URL`, { cause })
+    throw new Error(`${CLASS_NAME} endpoint must be a valid URL`, { cause })
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`${className} endpoint must use http or https`)
+    throw new Error(`${CLASS_NAME} endpoint must use http or https`)
+  }
+  // Neither is part of a System One request, and a URL password would be echoed in fetch error messages.
+  if (url.username !== '' || url.password !== '') {
+    throw new Error(`${CLASS_NAME} endpoint must not contain credentials: use auth instead`)
+  }
+  if (url.search !== '' || url.hash !== '') {
+    throw new Error(`${CLASS_NAME} endpoint must not contain a query string or fragment`)
   }
   return url
 }
 
-function validateHeaders(
-  headers: Readonly<Record<string, string>> | undefined,
-  hasAuth: boolean,
-  className: string
-): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const [name, value] of Object.entries(headers ?? {})) {
-    const lowerName = name.toLowerCase()
-    if (RESERVED_HEADERS.has(lowerName)) throw new Error(`${className} headers cannot set '${name}'`)
-    if (hasAuth && lowerName === 'authorization') {
-      throw new Error(`${className} headers cannot set 'authorization' when auth is set`)
-    }
-    result[name] = value
-  }
-  return result
-}
-
-function validateAuth(auth: HttpDecisionModelAuth, endpoint: URL, className: string): void {
+/** Returns `auth` with a trimmed bearer token, or throws without echoing any value. */
+function validateAuth(auth: HttpDecisionModelAuth, endpoint: URL): HttpDecisionModelAuth {
+  let validated: HttpDecisionModelAuth
   if (auth.type === 'bearer') {
-    if (typeof auth.token !== 'string' || auth.token.trim().length === 0) {
-      throw new Error(`${className} bearer auth requires a non-empty token`)
-    }
+    const token = typeof auth.token === 'string' ? auth.token.trim() : ''
+    if (!TOKEN.test(token))
+      throw new Error(`${CLASS_NAME} bearer token must be non-empty printable text without spaces`)
+    validated = { type: 'bearer', token }
   } else if (auth.type === 'sigv4') {
-    if (!auth.region?.trim() || !auth.service?.trim()) {
-      throw new Error(`${className} sigv4 auth requires a region and a service`)
+    if (typeof auth.region !== 'string' || !REGION.test(auth.region)) {
+      throw new Error(`${CLASS_NAME} sigv4 region must contain only letters, digits and hyphens`)
     }
+    if (typeof auth.service !== 'string' || !SERVICE.test(auth.service)) {
+      throw new Error(`${CLASS_NAME} sigv4 service must contain only letters, digits, dots, hyphens and underscores`)
+    }
+    validated = auth
   } else {
-    throw new Error(`${className} auth type must be 'bearer' or 'sigv4'`)
+    throw new Error(`${CLASS_NAME} auth type must be 'bearer' or 'sigv4'`)
   }
 
   // A credential or signature sent in clear text is readable on the network.
   if (endpoint.protocol === 'http:' && !isLoopback(endpoint.hostname)) {
-    throw new Error(`${className} auth requires an https endpoint unless the host is loopback`)
+    throw new Error(`${CLASS_NAME} auth requires an https endpoint unless the host is loopback`)
   }
+  return validated
 }
 
 function isLoopback(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 }
 
-function authHeaders(
+/** Rejects headers the transport or the signature owns, and names or values that fetch would refuse. */
+function validateHeaders(
+  headers: Readonly<Record<string, string>> | undefined,
+  auth: HttpDecisionModelAuth | undefined
+): Record<string, string> {
+  const authHeaders = auth?.type === 'bearer' ? BEARER_HEADERS : auth?.type === 'sigv4' ? SIGV4_HEADERS : []
+  const result: Record<string, string> = {}
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (!HEADER_NAME.test(name)) throw new Error(`${CLASS_NAME} header name '${name}' is not valid`)
+    if (typeof value !== 'string' || hasControlCharacter(value)) {
+      throw new Error(`${CLASS_NAME} header '${name}' must be a string without control characters`)
+    }
+    const lowerName = name.toLowerCase()
+    if (RESERVED_HEADERS.includes(lowerName) || authHeaders.includes(lowerName)) {
+      throw new Error(`${CLASS_NAME} headers cannot set '${name}'`)
+    }
+    result[name] = value
+  }
+  return result
+}
+
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0)
+    return (code < 0x20 && code !== 0x09) || code === 0x7f
+  })
+}
+
+function requestHeaders(
+  endpoint: URL,
   auth: HttpDecisionModelAuth | undefined,
-  endpoint: string,
-  staticHeaders: Record<string, string>
+  headers: Record<string, string>
 ): SystemOneProviderConfig['requestHeaders'] {
   if (auth?.type === 'bearer') {
-    const headers = { ...staticHeaders, Authorization: `Bearer ${auth.token.trim()}` }
-    return () => headers
+    const withAuth = { ...headers, Authorization: `Bearer ${auth.token}` }
+    return () => withAuth
   }
   if (auth?.type === 'sigv4') {
-    const sign = createSigV4Signer(endpoint, {
-      region: auth.region.trim(),
-      service: auth.service.trim(),
-      ...(auth.credentials !== undefined && { credentials: auth.credentials }),
-    })
-    return async (body) => ({ ...staticHeaders, ...(await sign(body, staticHeaders)) })
+    const sign = createSigV4Signer(endpoint.href, auth)
+    return async (body) => ({ ...headers, ...(await sign(body, headers)) })
   }
-  return () => staticHeaders
+  return () => headers
 }
