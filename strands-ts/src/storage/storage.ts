@@ -81,6 +81,15 @@ export interface StorageSearchResult {
   score: number
   /** Stored bytes, present only when the backend includes them. */
   data?: Uint8Array
+  /**
+   * The part of the entry that matched, as byte offsets into the stored bytes: `start` inclusive,
+   * `end` exclusive.
+   *
+   * Present only when the strategy was configured to report sections rather than whole entries —
+   * see `KeywordSearchConfig.sectionContextLines`. Absent means the whole entry is the match, which
+   * is the default.
+   */
+  byteRange?: { start: number; end: number }
 }
 
 /**

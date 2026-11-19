@@ -40,6 +40,62 @@ describe('KeywordSearchStrategy', () => {
     expect(results.map((result) => result.key)).toStrictEqual(['good.md'])
   })
 
+  describe('configured to report sections', () => {
+    const buriedAnswer = (): string => {
+      const lines = Array.from({ length: 60 }, (_, index) => `line ${index + 1}: nothing of note`)
+      lines[40] = 'line 41: the payment database connection pool was exhausted'
+      return lines.join('\n')
+    }
+
+    const sectionOf = (content: string, range: { start: number; end: number }): string =>
+      new TextDecoder().decode(new TextEncoder().encode(content).slice(range.start, range.end))
+
+    it('reports the matching section of the entry rather than the whole entry', async () => {
+      const storage = new InMemoryStorage()
+      const content = buriedAnswer()
+      await storage.write('incident.md', new TextEncoder().encode(content))
+
+      const results = await new KeywordSearchStrategy({ sectionContextLines: 2 }).search(
+        storage,
+        'database connection pool exhausted'
+      )
+
+      const section = sectionOf(content, results[0]!.byteRange!)
+      expect(section).toContain('line 41: the payment database connection pool was exhausted')
+      expect(section.split('\n')).toHaveLength(5)
+      expect(section).not.toContain('line 38:')
+    })
+
+    it('reads the section as byte offsets, so multi-byte content does not shift it', async () => {
+      const storage = new InMemoryStorage()
+      const content = ['😀'.repeat(10), 'the connection pool was exhausted', 'tail'].join('\n')
+      await storage.write('incident.md', new TextEncoder().encode(content))
+
+      const results = await new KeywordSearchStrategy({ sectionContextLines: 0 }).search(storage, 'connection pool')
+
+      expect(sectionOf(content, results[0]!.byteRange!)).toBe('the connection pool was exhausted')
+    })
+
+    it('reports no section when only the key matched', async () => {
+      const storage = new InMemoryStorage()
+      await storage.write('connection-pool.md', new TextEncoder().encode('unrelated body text'))
+
+      const results = await new KeywordSearchStrategy({ sectionContextLines: 2 }).search(storage, 'connection pool')
+
+      expect(results[0]!.score).toBeGreaterThan(0)
+      expect(results[0]!.byteRange).toBeUndefined()
+    })
+
+    it('covers the whole entry when left unconfigured', async () => {
+      const storage = new InMemoryStorage()
+      await storage.write('incident.md', new TextEncoder().encode(buriedAnswer()))
+
+      const results = await new KeywordSearchStrategy().search(storage, 'connection pool')
+
+      expect(results[0]!.byteRange).toBeUndefined()
+    })
+  })
+
   it('returns empty array for empty query', async () => {
     const storage = new InMemoryStorage()
     await storage.write('key', new TextEncoder().encode('content'))

@@ -8,18 +8,13 @@
  * @internal
  */
 
-import { InMemoryStorage } from '../storage/in-memory-storage.js'
+import { matchingSections, queryTokensOf } from '../storage/search/keyword.js'
 
 /**
- * Size and step of the line windows a query ranks. Windows overlap so an answer that straddles a
- * boundary stays whole in at least one of them.
- *
- * The size is the knee of a cost/quality curve: coarser windows rank the answer higher but each one
- * returned costs the caller more of the result budget, and past ~100 lines a single window exceeds
- * the whole budget.
+ * Lines of context kept on either side of a matching line. Matches the default the `pattern` path
+ * uses, so both searches return a section of the same shape.
  */
-const WINDOW_LINES = 12
-const WINDOW_STRIDE = 6
+const CONTEXT_LINES = 5
 
 /** A line window of the content. Bounds are 0-indexed and inclusive. */
 interface LineWindow {
@@ -57,7 +52,7 @@ export async function searchByQuery(
   const scopeLabel = lineRange ? ` in lines ${lineRange.start}-${scope.end + 1}` : ''
   const label = query.replace(/[\n\r/\]]/g, ' ').slice(0, 50)
 
-  const ranked = await rankWindows(lines, query, scope.start, scope.end)
+  const ranked = rankSections(lines, query, scope.start, scope.end)
   if (ranked.length === 0) return `No relevant content found for query '${label}'${scopeLabel}.`
 
   const header = (shown: number): string => {
@@ -80,45 +75,15 @@ export async function searchByQuery(
 }
 
 /**
- * Ranks the scope's line windows in an ephemeral store, discarded when the query returns.
+ * The scope's matching sections, best-first.
  *
- * The store is scratch space rather than the caller's storage: ranking needs each candidate span to
- * be a separately addressable entry, and building that out of the caller's storage would mean
- * writing derived data into it to answer a read. The cost is that a search strategy configured on
- * the caller's storage does not apply here, since it was never written for this store.
+ * Section finding and scoring are the storage layer's, so a query ranks the same way here as it
+ * does through a `search()` configured to report sections. Only the scope is this module's: the
+ * lines outside it are not handed over, so a section can neither be found in nor reach past them.
  */
-async function rankWindows(
-  lines: string[],
-  query: string,
-  scopeStart: number,
-  scopeEnd: number
-): Promise<LineWindow[]> {
-  const storage = new InMemoryStorage()
-  const encoder = new TextEncoder()
-  const windows = windowsOf(scopeStart, scopeEnd)
-
-  await Promise.all(
-    [...windows].map(([key, window]) =>
-      storage.write(key, encoder.encode(lines.slice(window.start, window.end + 1).join('\n')))
-    )
-  )
-
-  const results = (await storage.search?.(query)) ?? []
-  return results.flatMap((result) => {
-    const window = windows.get(result.key)
-    return window ? [window] : []
-  })
-}
-
-/** The windows of `[scopeStart, scopeEnd]`, keyed by their bounds. */
-function windowsOf(scopeStart: number, scopeEnd: number): Map<string, LineWindow> {
-  const windows = new Map<string, LineWindow>()
-  for (let start = scopeStart; start <= scopeEnd; start += WINDOW_STRIDE) {
-    const end = Math.min(start + WINDOW_LINES - 1, scopeEnd)
-    windows.set(`${start}-${end}`, { start, end })
-    if (start + WINDOW_LINES > scopeEnd) break
-  }
-  return windows
+function rankSections(lines: string[], query: string, scopeStart: number, scopeEnd: number): LineWindow[] {
+  const sections = matchingSections(queryTokensOf(query), lines.slice(scopeStart, scopeEnd + 1), CONTEXT_LINES)
+  return sections.map((section) => ({ start: scopeStart + section.start, end: scopeStart + section.end }))
 }
 
 /** The 0-indexed inclusive bounds a query ranks within. */
