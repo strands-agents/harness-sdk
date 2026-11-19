@@ -262,6 +262,29 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.instructions).toBe('Be helpful.')
     })
 
+    it.each([
+      ['gpt-6.2-sol', { cacheConfig: {} }, true],
+      ['openai.gpt-6.2-astra', {}, true],
+      ['gpt-6.1-sol', { cacheConfig: {} }, false],
+      ['gpt-6.2-sol', { stateful: true }, false],
+    ])(
+      'sends the system prompt where %s caches it, given %o',
+      async (modelId, modelOptions, expectDeveloperMessage) => {
+        const systemPrompt = [new TextBlock('Be '), new TextBlock('helpful.')]
+        const req = await runOnce({ modelId, ...modelOptions }, [mkUserMessage()], { systemPrompt })
+        const withoutSystemPrompt = await runOnce({ modelId, ...modelOptions })
+
+        const developer = { role: 'developer', content: [{ type: 'input_text', text: 'Be helpful.' }] }
+        expect(req).toStrictEqual({
+          ...withoutSystemPrompt,
+          ...(expectDeveloperMessage
+            ? { input: [developer, ...withoutSystemPrompt.input] }
+            : { instructions: 'Be helpful.' }),
+        })
+        expect(withoutSystemPrompt).not.toHaveProperty('instructions')
+      }
+    )
+
     it('merges toolSpecs with built-in tools from params', async () => {
       const req = await runOnce({ params: { tools: [{ type: 'web_search' }] } }, [mkUserMessage()], {
         toolSpecs: [

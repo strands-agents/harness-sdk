@@ -2838,6 +2838,34 @@ def test_message_cache_dynamic_tail_skips_unsupported_blocks(caplog):
     assert "reasoningContent is not yet supported" in caplog.text
 
 
+_DEVELOPER_PROMPT = {"role": "developer", "content": [{"type": "input_text", "text": "Be precise."}]}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "config", "exp_leading_input", "exp_instructions"),
+    [
+        ("gpt-6.2-sol", {}, [_DEVELOPER_PROMPT], None),
+        ("openai.gpt-6.2-astra", {"cache_config": CacheConfig()}, [_DEVELOPER_PROMPT], None),
+        ("gpt-6.1-sol", {"cache_config": CacheConfig()}, [], "Be precise."),
+        ("gpt-6.2-sol", {"stateful": True}, [], "Be precise."),
+        ("gpt-6.2-sol", {"params": {"input": [{"role": "user", "content": "native input"}]}}, [], "Be precise."),
+    ],
+)
+def test_format_request_sends_system_prompt_where_the_model_caches_it(
+    model_id, config, exp_leading_input, exp_instructions
+):
+    model = OpenAIResponsesModel(model_id=model_id, **config)
+    messages = [{"role": "user", "content": [{"text": "hello"}]}]
+
+    request = model._format_request(messages, system_prompt="Be precise.")
+    without_system_prompt = model._format_request(messages)
+
+    assert request["input"] == [*exp_leading_input, *without_system_prompt["input"]]
+    assert request.get("instructions") == exp_instructions
+    assert request.get("prompt_cache_options") == without_system_prompt.get("prompt_cache_options")
+    assert "instructions" not in without_system_prompt
+
+
 def test_message_cache_leaves_native_input_override_under_caller_control():
     params = {"input": [{"role": "user", "content": "native input"}]}
     model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)

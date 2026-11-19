@@ -167,10 +167,11 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     return section(**known)
 
 
-def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTools]]:
+def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTools], frozenset[str]]:
     """Read the shared model info data, re-casing its camelCase keys onto the record fields.
 
-    The third item is ``capabilities.chatCompletionsTools`` by entry, which ``ModelCapabilities`` does not carry.
+    The third item is ``capabilities.chatCompletionsTools`` by entry, and the fourth the entries whose
+    ``capabilities.responsesInstructions`` is ``"uncached"``; ``ModelCapabilities`` carries neither.
     """
     package_copy = resources.files("strands.models").joinpath("model_info.json")
     try:
@@ -196,7 +197,13 @@ def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTo
             for model_id, entry in data["models"].items()
             if isinstance(entry.get("capabilities"), dict) and "chatCompletionsTools" in entry["capabilities"]
         }
-        return data["defaults"]["limits"]["contextWindow"], models, chat_completions_tools
+        uncached_instructions = frozenset(
+            model_id
+            for model_id, entry in data["models"].items()
+            if isinstance(entry.get("capabilities"), dict)
+            and entry["capabilities"].get("responsesInstructions") == "uncached"
+        )
+        return data["defaults"]["limits"]["contextWindow"], models, chat_completions_tools, uncached_instructions
     except (ValueError, KeyError, TypeError) as error:
         raise ValueError(
             f"The model info data in the installed package is malformed: {package_copy}. "
@@ -205,7 +212,7 @@ def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTo
 
 
 # Context window limit (in tokens) assumed for a model whose window is unknown, and the known models.
-DEFAULT_CONTEXT_WINDOW_LIMIT, _MODELS, _CHAT_COMPLETIONS_TOOLS = _load_data()
+DEFAULT_CONTEXT_WINDOW_LIMIT, _MODELS, _CHAT_COMPLETIONS_TOOLS, _UNCACHED_RESPONSES_INSTRUCTIONS = _load_data()
 
 
 def lookup_model(model_id: str) -> ModelInfo | None:
@@ -253,6 +260,18 @@ def lookup_chat_completions_tools(model_id: str) -> ChatCompletionsTools | None:
     """
     key = _lookup_key(model_id)
     return None if key is None else _CHAT_COMPLETIONS_TOOLS.get(key)
+
+
+def lookup_responses_instructions_uncached(model_id: str) -> bool:
+    """Report whether OpenAI's Responses API never caches the ``instructions`` field for a model.
+
+    Args:
+        model_id: The model id to look up.
+
+    Returns:
+        True when the data says so, False when it does not say.
+    """
+    return _lookup_key(model_id) in _UNCACHED_RESPONSES_INSTRUCTIONS
 
 
 def lookup_model_info(model_id: object) -> ModelInfo:

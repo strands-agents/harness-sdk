@@ -23,6 +23,7 @@ from strands.models._model_info import (
     lookup_chat_completions_tools,
     lookup_model,
     lookup_model_info,
+    lookup_responses_instructions_uncached,
 )
 
 BASE = ModelInfo(
@@ -210,6 +211,21 @@ def test_lookup_chat_completions_tools_reads_the_fact_from_the_entry_the_id_reso
     assert lookup_chat_completions_tools(model_id) == exp_support
 
 
+@pytest.mark.parametrize(
+    ("model_id", "exp_uncached"),
+    [
+        ("gpt-6.2-sol", True),
+        ("openai.gpt-6.2-astra", True),
+        ("gpt-6.1-sol", False),
+        ("unknown-model", False),
+    ],
+)
+def test_lookup_responses_instructions_uncached_reads_the_fact_from_the_entry_the_id_resolves_to(
+    model_id, exp_uncached
+):
+    assert lookup_responses_instructions_uncached(model_id) is exp_uncached
+
+
 def test_load_data_says_how_to_restore_the_package_copy_when_it_is_missing():
     """The copy is only written on install, so an environment installed without it needs the fix named."""
     with unittest.mock.patch("strands.models._model_info.resources") as mock_resources:
@@ -266,6 +282,9 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
             elif key == "chatCompletionsTools":
                 # Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
                 assert value in ("reasoningOff", "unsupported"), f"{model_id}.{key}"
+            elif key == "responsesInstructions":
+                # Read by the OpenAI Responses provider, not part of ModelCapabilities.
+                assert value == "uncached", f"{model_id}.{key}"
             elif key == "toolUse":
                 # A record that the model cannot call tools, not part of ModelCapabilities.
                 assert value is False, f"{model_id}.{key}"

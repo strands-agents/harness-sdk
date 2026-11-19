@@ -355,6 +355,8 @@ model = OpenAIResponsesModel(
 </Tab>
 </Tabs>
 
+GPT-6.2 and later models append the `instructions` field after the input, so OpenAI never caches it. On these models the provider sends the system prompt as a leading `developer` message instead, with or without a cache configuration, so it is part of the cached prefix. A [stateful](#server-side-conversation-state) model still sends the system prompt as `instructions`, because a message sent again on every call would be stored again each time.
+
 Cache points do not change what a [stateful](#server-side-conversation-state) model stores server-side: injected content is still kept in the stored conversation.
 
 ## Advanced Features

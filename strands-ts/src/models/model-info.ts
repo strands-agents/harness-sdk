@@ -202,6 +202,21 @@ export function lookupChatCompletionsTools(modelId: string): ChatCompletionsTool
 }
 
 /**
+ * Whether OpenAI's Responses API never caches the `instructions` field for a model. The data carries this as
+ * `capabilities.responsesInstructions`, which `ModelCapabilities` does not carry.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns True when the data says so, false when it does not say
+ */
+export function lookupResponsesInstructionsUncached(modelId: string): boolean {
+  const key = lookupKey(modelId)
+  if (key === undefined) return false
+  const capabilities = data.models[key]?.capabilities as { responsesInstructions?: string } | undefined
+  return capabilities?.responsesInstructions === 'uncached'
+}
+
+/**
  * What the shared model info data knows about a model.
  *
  * @internal
