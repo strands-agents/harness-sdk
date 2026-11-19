@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from strands.models import BedrockModel, Model
+from strands.models._model_info import _lookup_key
 from strands.models.anthropic import AnthropicModel
 from strands.models.gemini import GeminiModel
 from strands.models.mistral import MistralModel
@@ -27,9 +28,12 @@ from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ModelThrottledException
 from tests_integ.models import providers
 
-_SHARED = json.loads(
-    (pathlib.Path(__file__).parents[2] / ".." / "shared" / "conformance.json").read_text(encoding="utf-8")
-)
+_SHARED_DIRECTORY = pathlib.Path(__file__).parents[2] / ".." / "shared"
+_SHARED = json.loads((_SHARED_DIRECTORY / "conformance.json").read_text(encoding="utf-8"))
+# The entries as written, for the capabilities ModelInfo does not carry.
+_MODEL_ENTRIES: dict[str, dict[str, Any]] = json.loads(
+    (_SHARED_DIRECTORY / "model-info.json").read_text(encoding="utf-8")
+)["models"]
 CASES: dict[str, dict[str, Any]] = _SHARED["cases"]
 # (provider, model, case) -> the shared known failure entry, which names the issue tracking it.
 KNOWN_FAILURES: dict[tuple[str, str, str], dict[str, Any]] = {
@@ -68,6 +72,8 @@ MODE = os.environ.get("STRANDS_CONFORMANCE", "")
 # HTTP statuses that mean the provider could not serve the call, which says nothing about the case.
 _PROVIDER_ERROR_STATUSES = frozenset({401, 403, 404, 408, 429})
 _MANTLE_CONFIG = {"region": "us-east-1"}
+# Shared provider ids that call OpenAI's Chat Completions API.
+_CHAT_COMPLETIONS_PROVIDERS = frozenset({"openai", "mantle"})
 
 
 def _openai_responses(**kwargs: Any) -> Model:
@@ -252,6 +258,18 @@ def not_applicable_reason(case_id: str, model: Model) -> str | None:
     return None if value == expected else f"{path} is not {spec['equals']}"
 
 
+def tool_limit_reason(case_id: str, target: Target) -> str | None:
+    """Why the shared model info says the target cannot call the tools a case needs, or None."""
+    if not CASES[case_id].get("tools"):
+        return None
+    capabilities = _MODEL_ENTRIES.get(_lookup_key(target.model_id) or "", {}).get("capabilities", {})
+    if capabilities.get("toolUse") is False:
+        return "capabilities.toolUse is false"
+    if target.provider in _CHAT_COMPLETIONS_PROVIDERS and capabilities.get("chatCompletionsTools") == "unsupported":
+        return "capabilities.chatCompletionsTools is unsupported"
+    return None
+
+
 def _http_status(error: BaseException) -> int | None:
     """The HTTP status a vendor SDK error carries, wherever that SDK keeps it."""
     response = getattr(error, "response", None)
@@ -285,11 +303,6 @@ def _will_not_clear(error: BaseException | None) -> bool:
     return False
 
 
-def known_reference(known: dict[str, Any]) -> str:
-    """Where a known failure is explained: its issue, or its link when it has no issue."""
-    return f"#{known['issue']}" if "issue" in known else known["link"]
-
-
 def _known_failure(item: pytest.Item) -> dict[str, Any] | None:
     case_id = getattr(getattr(item, "function", None), "conformance_case", None)
     if case_id is None:
@@ -321,12 +334,11 @@ def apply_known_failure(item: pytest.Item, call: pytest.CallInfo, report: pytest
         if not known.get("intermittent"):
             report.outcome = "failed"
             report.longrepr = (
-                f"known failure {known_reference(known)} now passes; "
-                "remove it from knownFailures in shared/conformance.json"
+                f"known failure #{known['issue']} now passes; remove it from knownFailures in shared/conformance.json"
             )
     elif _is_tracked_failure(known, call.excinfo.value):
         report.outcome = "skipped"
-        report.wasxfail = f"known failure: {known['reason']} See {known_reference(known)}"
+        report.wasxfail = f"known failure: {known['reason']} See #{known['issue']}"
 
 
 def _outcome(report: pytest.TestReport, error: BaseException | None) -> dict[str, str]:
@@ -355,7 +367,7 @@ def record(item: pytest.Item, report: pytest.TestReport, error: BaseException | 
     result.update(_outcome(report, error))
     known = _known_failure(item)
     if known and hasattr(report, "wasxfail"):
-        result["known"] = {name: known[name] for name in ("reason", "issue", "link") if name in known}
+        result["known"] = {"reason": known["reason"], "issue": known["issue"]}
     attempts = getattr(item, "conformance_attempts", 1)
     if attempts > 1:
         result["attempts"] = attempts
