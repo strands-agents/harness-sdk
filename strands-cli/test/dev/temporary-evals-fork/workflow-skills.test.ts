@@ -183,32 +183,33 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('Do not promise an improvement')
   })
 
-  it('shouldGuideTheSetupWithAFormBuiltFromThePlan', () => {
-    expect(instructions).toContain('Guide the setup on screen, always')
+  it('shouldAskOneQuestionAtATimeFromThePlan', () => {
+    expect(instructions).toContain('Ask the settings on screen, one question at a time')
     expect(instructions).toContain('Call strands_dev_optimization_plan with {experiment}')
-    expect(instructions).toContain('Call strands_dev_ask with all five steps below')
-    expect(instructions).toContain('Both are fixed text: they do not follow the sliders')
-    expect(instructions).toContain('A cancelled form is a no')
-    expect(instructions).toContain('The form collects settings; it is not the paid-run approval')
+    expect(instructions).toContain('Each strands_dev_ask call puts one component on screen')
+    expect(instructions).toContain('Never send the steps form for an optimization setup')
+    expect(instructions).toContain('Three short questions beat one form with every setting on it')
+    expect(instructions).toContain('A cancelled question is a no')
   })
 
-  it('shouldRefuseToSetUpARunInChatProseInsteadOfTheForm', () => {
+  it('shouldRefuseToSetUpARunInChatProseInsteadOfAsking', () => {
     expect(instructions).toContain('never through chat prose')
     expect(instructions).toContain(
       'Calling strands_dev_optimize without strands_dev_ask in the same turn skips the developer'
     )
-    expect(instructions).toContain('is not the form and does not replace it')
-    expect(instructions).toContain('Declare them even when the plan')
+    expect(instructions).toContain('does not replace asking on screen')
   })
 
-  it.each(['Tune:', 'Goal:', 'Cases:', 'Budget:', 'Review:'])('shouldDeclareThe%sStep', (step) => {
-    expect(instructions).toContain(step)
-  })
-
-  it('shouldCarryEveryKnobAndItsReasonIntoTheTuneStep', () => {
-    expect(instructions).toContain('with listLabel "knobs"')
+  it('shouldNameTheComponentForTheKnobsAndTheBudget', () => {
+    expect(instructions).toContain('ask selectMany, key "tune"')
+    expect(instructions).toContain('ask selectOne, key "iterations"')
     expect(instructions).toContain('Never drop a knob because it looks irrelevant')
-    expect(instructions).toContain("set checked from the plan's onByDefault")
+    expect(instructions).toContain("put the plan's onByDefault knobs in selected")
+  })
+
+  it('shouldStopAskingOnceNothingIsOpen', () => {
+    expect(instructions).toContain('stop asking once nothing is open')
+    expect(instructions).toContain('they are not the paid-run approval')
   })
 
   it('shouldMaximizeTheMeanOfEveryEvaluatorUnlessTheDeveloperNamesOne', () => {

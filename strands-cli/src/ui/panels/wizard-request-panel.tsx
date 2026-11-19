@@ -8,6 +8,7 @@ import {
   type WizardBroker,
   type WizardFieldSpec,
   type WizardRequest,
+  type WizardSelectSpec,
   type WizardStepSpec,
 } from './wizard-request.js'
 
@@ -20,6 +21,36 @@ export interface WizardRequestPanelProps {
 
 type Answers = Record<string, WizardAnswer>
 
+const chosen = (answer: WizardAnswer | undefined): readonly string[] => {
+  if (Array.isArray(answer)) return answer
+  return typeof answer === 'string' && answer ? [answer] : []
+}
+
+const selectFields = (
+  spec: WizardSelectSpec,
+  answers: Answers,
+  live: () => Answers,
+  update: (key: string, value: WizardAnswer) => void
+): WizardField[] => {
+  const single = spec.multiple === false
+  const pick = (value: string): void => {
+    const was = chosen(live()[spec.key])
+    if (single) return update(spec.key, value)
+    update(spec.key, was.includes(value) ? was.filter((item) => item !== value) : [...was, value])
+  }
+  return spec.options.map((option): WizardField => ({
+    kind: 'toggle',
+    key: `${spec.key}.${option.value}`,
+    label: option.label,
+    ...(option.detail === undefined ? {} : { detail: option.detail }),
+    ...(option.unavailable === undefined ? {} : { unavailable: option.unavailable }),
+    mark: single ? 'radio' : 'check',
+    checked: chosen(answers[spec.key]).includes(option.value),
+    hint: single ? 'Enter pick' : 'Enter toggle',
+    toggle: () => pick(option.value),
+  }))
+}
+
 const choiceOf = (field: WizardFieldSpec & { kind: 'choice' }, answer: WizardAnswer | undefined): string => {
   const picked = typeof answer === 'string' ? answer : undefined
   return picked !== undefined && field.options.includes(picked) ? picked : (field.options[0] ?? '')
@@ -31,6 +62,7 @@ const toField = (
   live: () => Answers,
   update: (key: string, value: WizardAnswer) => void
 ): WizardField => {
+  if (spec.kind === 'select') throw new Error('A select spec expands into several fields.')
   if (spec.kind === 'toggle')
     return {
       kind: 'toggle',
@@ -74,6 +106,10 @@ const toField = (
   }
 }
 
+const selectLabel = (spec: WizardStepSpec): string | undefined =>
+  spec.listLabel ??
+  spec.fields.flatMap((field) => (field.kind === 'select' && field.listLabel ? [field.listLabel] : []))[0]
+
 const toStep = (
   spec: WizardStepSpec,
   answers: Answers,
@@ -82,9 +118,11 @@ const toStep = (
 ): WizardStep => ({
   key: spec.key,
   title: spec.title,
-  fields: spec.fields.map((field) => toField(field, answers, live, update)),
+  fields: spec.fields.flatMap((field) =>
+    field.kind === 'select' ? selectFields(field, answers, live, update) : [toField(field, answers, live, update)]
+  ),
   ...(spec.notice ? { notice: spec.notice } : {}),
-  ...(spec.listLabel === undefined ? {} : { listLabel: spec.listLabel }),
+  ...(selectLabel(spec) === undefined ? {} : { listLabel: selectLabel(spec)! }),
   ...(spec.footnote === undefined ? {} : { footnote: spec.footnote }),
 })
 
@@ -106,6 +144,7 @@ const RequestView = ({
   return (
     <Wizard
       name={request.name}
+      {...(request.question === undefined ? {} : { question: request.question })}
       {...(request.titleParts ? { titleParts: request.titleParts } : {})}
       steps={steps}
       {...(request.status === undefined ? {} : { status: request.status })}

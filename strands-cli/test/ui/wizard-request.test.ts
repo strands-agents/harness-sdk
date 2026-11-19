@@ -207,6 +207,144 @@ describe('WizardRequestPanel', () => {
     await expect(asked).resolves.toBeUndefined()
   })
 
+  it('shouldShowOneQuestionWithNoTabs', async () => {
+    const broker = new WizardBroker()
+    void broker.ask({
+      name: 'optimize',
+      question: 'What should the run tune?',
+      status: 'Defaults: 57 rollouts',
+      steps: [
+        {
+          key: 'question',
+          title: 'Question',
+          fields: [
+            {
+              kind: 'select',
+              key: 'tune',
+              listLabel: 'knobs',
+              multiple: true,
+              selected: ['instructions'],
+              options: [
+                { value: 'instructions', label: 'instructions', detail: 'the system prompt' },
+                { value: 'model', label: 'model', unavailable: 'set in code' },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const { text } = await panel(broker)
+
+    expect(text()).toContain('What should the run tune?')
+    expect(text()).toContain('☑ instructions')
+    expect(text()).toContain('☐ model')
+    expect(text()).toContain('Defaults: 57 rollouts')
+    expect(text()).not.toContain('Question')
+    expect(text()).not.toContain('Tab next tab')
+  })
+
+  it('shouldReturnEveryPickOfASelectMany', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask({
+      name: 'optimize',
+      question: 'What should the run tune?',
+      steps: [
+        {
+          key: 'question',
+          title: 'Question',
+          fields: [
+            {
+              kind: 'select',
+              key: 'tune',
+              multiple: true,
+              options: [
+                { value: 'instructions', label: 'instructions' },
+                { value: 'caching', label: 'caching' },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const { press } = await panel(broker)
+
+    await press(ENTER)
+    await press(DOWN)
+    await press(ENTER)
+    await press(DOWN)
+    await press(ENTER)
+
+    await expect(asked).resolves.toEqual({ tune: ['instructions', 'caching'] })
+  })
+
+  it('shouldKeepOnlyTheLastPickOfASelectOne', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask({
+      name: 'optimize',
+      question: 'How many steps?',
+      steps: [
+        {
+          key: 'question',
+          title: 'Question',
+          fields: [
+            {
+              kind: 'select',
+              key: 'iterations',
+              multiple: false,
+              selected: ['4'],
+              options: [
+                { value: '4', label: '4' },
+                { value: '8', label: '8' },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const { text, press } = await panel(broker)
+
+    expect(text()).toContain('◉ 4')
+    expect(text()).toContain('○ 8')
+
+    await press(DOWN)
+    await press(ENTER)
+    await press(DOWN)
+    await press(ENTER)
+
+    await expect(asked).resolves.toEqual({ iterations: '8' })
+  })
+
+  it('shouldRefuseToPickAnUnavailableOption', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask({
+      name: 'optimize',
+      question: 'What should the run tune?',
+      steps: [
+        {
+          key: 'question',
+          title: 'Question',
+          fields: [
+            {
+              kind: 'select',
+              key: 'tune',
+              multiple: true,
+              options: [{ value: 'model', label: 'model', unavailable: 'set in code' }],
+            },
+          ],
+        },
+      ],
+    })
+    const { text, press } = await panel(broker)
+
+    await press(ENTER)
+    expect(text()).toContain('not available')
+
+    await press(DOWN)
+    await press(ENTER)
+
+    await expect(asked).resolves.toEqual({ tune: [] })
+  })
+
   it('shouldSayWhenNoQuestionIsWaiting', async () => {
     const { text } = await panel(new WizardBroker())
 

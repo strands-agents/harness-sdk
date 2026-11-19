@@ -1,12 +1,23 @@
 import type { JSONSchema, JSONValue } from '@strands-agents/sdk'
 
-import type { WizardFieldSpec, WizardRequestSpec, WizardStepSpec } from '../../ui/panels/wizard-request.js'
+import type {
+  WizardFieldSpec,
+  WizardOption,
+  WizardOutcome,
+  WizardRequestSpec,
+  WizardStepSpec,
+} from '../../ui/panels/wizard-request.js'
 import type { Tone } from '../../ui/panels/kit.js'
 import type { DevChatTool } from '../chat-extension.js'
 
 type Input = Readonly<Record<string, JSONValue>>
 
 const FIELD_KINDS = ['choice', 'toggle', 'text'] as const
+const ASK_KINDS = ['selectMany', 'selectOne', 'text', 'confirm'] as const
+const CONFIRM_OPTIONS = [
+  { value: 'yes', label: 'yes' },
+  { value: 'no', label: 'no' },
+]
 // 'error' is left out on purpose: a static error notice blocks finishing with no way to clear it.
 const TONES: readonly Tone[] = ['success', 'warning', 'muted']
 const MAX_STEPS = 8
@@ -40,10 +51,53 @@ const noticeAt = (value: JSONValue | undefined, what: string): WizardStepSpec['n
   return { tone: tone as Tone, text: stringAt(value.text, `${what}.text`) }
 }
 
+const optionAt = (value: JSONValue, what: string): WizardOption => {
+  if (!isObject(value)) throw new Error(`${what} must be an object with value and label.`)
+  const detail = optionalString(value.detail, `${what}.detail`)
+  const unavailable = optionalString(value.unavailable, `${what}.unavailable`)
+  return {
+    value: stringAt(value.value, `${what}.value`),
+    label: stringAt(value.label, `${what}.label`),
+    ...(detail === undefined ? {} : { detail }),
+    ...(unavailable === undefined ? {} : { unavailable }),
+  }
+}
+
+const optionsAt = (value: JSONValue | undefined, what: string): readonly WizardOption[] => {
+  if (!Array.isArray(value) || value.length === 0) throw new Error(`${what} must list at least one option.`)
+  const options = value.map((option, index) => optionAt(option, `${what}[${index}]`))
+  const values = options.map(({ value: name }) => name)
+  if (new Set(values).size !== values.length) throw new Error(`${what} must not repeat a value.`)
+  return options
+}
+
+const selectAt = (value: { [key: string]: JSONValue }, what: string, key: string): WizardFieldSpec => {
+  const options = optionsAt(value.options, `${what}.options`)
+  const selected = value.selected
+  if (selected !== undefined && selected !== null && !Array.isArray(selected))
+    throw new Error(`${what}.selected must be a list of option values.`)
+  const picked = Array.isArray(selected)
+    ? selected.map((item, index) => stringAt(item, `${what}.selected[${index}]`))
+    : []
+  const unknown = picked.filter((item) => !options.some(({ value: name }) => name === item))
+  if (unknown.length > 0) throw new Error(`${what}.selected names no such option: ${unknown.join(', ')}.`)
+  const multiple = optionalFlag(value.multiple, `${what}.multiple`)
+  const listLabel = optionalString(value.listLabel, `${what}.listLabel`)
+  return {
+    kind: 'select',
+    key,
+    options,
+    ...(multiple === undefined ? {} : { multiple }),
+    ...(picked.length === 0 ? {} : { selected: picked }),
+    ...(listLabel === undefined ? {} : { listLabel }),
+  }
+}
+
 const fieldAt = (value: JSONValue, what: string): WizardFieldSpec => {
   if (!isObject(value)) throw new Error(`${what} must be an object.`)
   const kind = stringAt(value.kind, `${what}.kind`)
   const key = stringAt(value.key, `${what}.key`)
+  if (kind === 'select') return selectAt(value, what, key)
   const label = stringAt(value.label, `${what}.label`)
   if (kind === 'toggle') {
     if (value.checked === true && optionalString(value.unavailable, `${what}.unavailable`) !== undefined)
@@ -126,9 +180,50 @@ const duplicateKey = (steps: readonly WizardStepSpec[]): string | undefined => {
   return undefined
 }
 
+/** One component, one answer: the shape a skill uses to ask a single thing. */
+const oneQuestion = (input: Input): WizardRequestSpec => {
+  const kind = stringAt(input.ask, 'ask')
+  if (!ASK_KINDS.includes(kind as (typeof ASK_KINDS)[number]))
+    throw new Error(`ask must be one of ${ASK_KINDS.join(', ')}.`)
+  const question = stringAt(input.question, 'question')
+  const key = optionalString(input.key, 'key') ?? 'answer'
+  const field = ((): WizardFieldSpec => {
+    if (kind === 'text') {
+      const value = optionalString(input.value, 'value')
+      const placeholder = optionalString(input.placeholder, 'placeholder')
+      return {
+        kind: 'text',
+        key,
+        label: optionalString(input.label, 'label') ?? key,
+        ...(value === undefined ? {} : { value }),
+        ...(placeholder === undefined ? {} : { placeholder }),
+      }
+    }
+    if (kind === 'confirm') return { kind: 'select', key, options: CONFIRM_OPTIONS, multiple: false, selected: ['yes'] }
+    // ask names the component, so it decides how many answers the list takes.
+    return selectAt({ ...input, multiple: kind === 'selectMany' }, 'this question', key)
+  })()
+  const status = optionalString(input.status, 'status')
+  const footer = optionalString(input.footer, 'footer')
+  return {
+    name: optionalString(input.title, 'title') ?? 'setup',
+    question,
+    steps: [{ key: 'question', title: 'Question', fields: [field] }],
+    finishLabel: optionalString(input.finishLabel, 'finishLabel') ?? '[ OK ]',
+    ...(status === undefined ? {} : { status }),
+    ...(footer === undefined ? {} : { footer }),
+  }
+}
+
 export const askRequestFrom = (input: Input): WizardRequestSpec => {
+  if (input.ask !== undefined && input.ask !== null) {
+    if (input.steps !== undefined && input.steps !== null)
+      throw new Error('Send ask for one question, or steps for a walked form, not both.')
+    return oneQuestion(input)
+  }
   const steps = input.steps
-  if (!Array.isArray(steps) || steps.length === 0) throw new Error('steps must list at least one step.')
+  if (!Array.isArray(steps) || steps.length === 0)
+    throw new Error('Send ask with a question for one question, or steps for a walked form.')
   if (steps.length > MAX_STEPS) throw new Error(`steps can hold at most ${MAX_STEPS} steps.`)
   const parsed = steps.map((step, index) => stepAt(step, `steps[${index}]`))
   const clash = duplicateKey(parsed)
@@ -175,18 +270,56 @@ const FIELD_SCHEMA: JSONSchema = {
   additionalProperties: false,
 }
 
-export const askTool = (broker: () => { ask: (spec: WizardRequestSpec) => Promise<unknown> }): DevChatTool => ({
+export const askTool = (broker: () => { ask: (spec: WizardRequestSpec) => Promise<WizardOutcome> }): DevChatTool => ({
   name: 'strands_dev_ask',
   description:
-    'Ask the developer to fill in a setup form on screen, and wait for their answers. Use it to guide them ' +
-    'through the settings of a run before you start it, one step at a time or all steps at once. ' +
-    'It asks nothing by itself: you declare the steps and the fields, and it returns what they picked. ' +
-    'The numbers you put in status and footer are fixed text, so compute them before the call and keep them ' +
-    'honest, or leave them out. Returns cancelled when the developer declines, and that is a no: do not ask ' +
-    'again with the same question or start the run anyway.',
+    'Ask the developer one question on screen and wait for their answer. Guide them through a setup one question ' +
+    'at a time: ask, read the answer, then ask the next thing. Send ask with one of selectMany, selectOne, text, ' +
+    'or confirm, and a question that says what you need. Keep each question about one decision, and skip the ones ' +
+    'the developer already answered or that do not matter for this request. ' +
+    'Use steps instead only for a form the developer walks with Next and Back, which is heavier and rarely what ' +
+    'they want. Returns cancelled when they decline, and that is a no: do not ask again with the same question ' +
+    'and do not act as if they agreed.',
   inputSchema: {
     type: 'object',
     properties: {
+      ask: {
+        type: 'string',
+        enum: [...ASK_KINDS],
+        description:
+          'One question: selectMany is a checkbox list, selectOne is a radio list, text types a value, and ' +
+          'confirm is yes or no. With ask, send question and (for the lists) options.',
+      },
+      question: { type: 'string', description: 'With ask: what you are asking, in one plain line.' },
+      key: { type: 'string', description: 'With ask: the name the answer comes back under. Default: answer.' },
+      label: { type: 'string', description: 'With ask text: the short name beside the field. Default: the key.' },
+      options: {
+        type: 'array',
+        description: 'With ask selectMany or selectOne: the rows to choose from.',
+        items: {
+          type: 'object',
+          properties: {
+            value: { type: 'string', description: 'What the answer holds when this row is picked.' },
+            label: { type: 'string', description: 'The row as the developer reads it.' },
+            detail: { type: 'string', description: 'The explanation shown beside the label.' },
+            unavailable: {
+              type: 'string',
+              description: 'Why this row cannot be picked. It shows the reason and refuses to pick.',
+            },
+          },
+          required: ['value', 'label'],
+          additionalProperties: false,
+        },
+      },
+      selected: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'With ask selectMany or selectOne: the option values that start picked.',
+      },
+      multiple: { type: 'boolean', description: 'Overrides whether the list takes more than one answer.' },
+      listLabel: { type: 'string', description: 'With ask selectMany or selectOne: the heading above the rows.' },
+      value: { type: 'string', description: 'With ask text: the starting text.' },
+      placeholder: { type: 'string', description: 'With ask text: the grey hint while the field is empty.' },
       title: { type: 'string', description: 'The name on the top line, such as optimize. Default: setup.' },
       subtitle: {
         type: 'array',
@@ -195,7 +328,9 @@ export const askTool = (broker: () => { ask: (spec: WizardRequestSpec) => Promis
       },
       steps: {
         type: 'array',
-        description: `The steps, in the order the developer walks them. At most ${MAX_STEPS}.`,
+        description:
+          'A form the developer walks with Next and Back, in this order. Prefer ask for one question. ' +
+          `At most ${MAX_STEPS} steps.`,
         items: {
           type: 'object',
           properties: {
@@ -226,20 +361,23 @@ export const askTool = (broker: () => { ask: (spec: WizardRequestSpec) => Promis
       footer: { type: 'string', description: 'The bottom-right line, such as the token and time estimate.' },
       finishLabel: { type: 'string', description: 'The finish button text. Default: [ Start ].' },
     },
-    required: ['steps'],
     additionalProperties: false,
   },
   run: async (input): Promise<string> => {
+    const one = input.ask !== undefined && input.ask !== null
     const outcome = await broker().ask(askRequestFrom(input))
     if (outcome === undefined)
       return JSON.stringify(
         {
           status: 'cancelled',
-          detail: 'The developer closed the form without finishing it. Treat this as a no.',
+          detail: `The developer closed the ${one ? 'question' : 'form'} without answering. Treat this as a no.`,
         },
         null,
         2
       )
-    return JSON.stringify({ status: 'answered', answers: outcome }, null, 2)
+    const key = typeof input.key === 'string' && input.key.trim() ? input.key.trim() : 'answer'
+    const answer = outcome[key]
+    if (!one) return JSON.stringify({ status: 'answered', answers: outcome }, null, 2)
+    return JSON.stringify({ status: 'answered', answer: input.ask === 'confirm' ? answer === 'yes' : answer }, null, 2)
   },
 })

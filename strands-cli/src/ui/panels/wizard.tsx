@@ -56,6 +56,7 @@ export interface WizardToggle extends FieldBase {
   readonly detail?: string
   readonly checked: boolean
   readonly unavailable?: string
+  readonly mark?: 'check' | 'radio'
   readonly toggle: () => void
 }
 
@@ -90,6 +91,7 @@ export interface WizardProps {
   readonly name: string
   readonly titleParts?: readonly string[]
   readonly steps: readonly WizardStep[]
+  readonly question?: string
   readonly status?: string
   readonly footer?: string
   readonly width: number
@@ -146,20 +148,26 @@ const stepRows = (step: WizardStep, at: number, count: number): WizardRow[] => [
 const blockingNotice = (steps: readonly WizardStep[]): WizardNotice | undefined =>
   steps.map(({ notice }) => notice).find((notice) => notice?.tone === 'error')
 
+const MARKS = {
+  check: { on: '☑', off: '☐' },
+  radio: { on: '◉', off: '○' },
+} as const
+
 const toggleItem = (field: WizardToggle): ListItem => {
+  const marks = MARKS[field.mark ?? 'check']
   if (field.unavailable !== undefined)
     return {
       key: field.key,
       label: field.label,
       detail: field.unavailable,
-      mark: { text: '☐', tone: 'muted' },
+      mark: { text: marks.off, tone: 'muted' },
       tone: 'warning',
     }
   return {
     key: field.key,
     label: field.label,
     ...(field.detail === undefined ? {} : { detail: field.detail }),
-    mark: field.checked ? { text: '☑', tone: 'success' } : { text: '☐', tone: 'muted' },
+    mark: field.checked ? { text: marks.on, tone: 'success' } : { text: marks.off, tone: 'muted' },
     tone: 'muted',
   }
 }
@@ -330,11 +338,13 @@ const buttonHint = (
 const rowHints = (
   row: WizardRow | undefined,
   finishHint: (blocking: WizardNotice | undefined) => string,
-  blocking: WizardNotice | undefined
+  blocking: WizardNotice | undefined,
+  walked: boolean
 ): string[] => {
-  const hints = (action: string): string[] => ['Tab next tab', '↑↓', action, 'Esc cancel']
+  const tab = walked ? ['Tab next tab'] : []
+  const hints = (action: string): string[] => [...tab, '↑↓', action, 'Esc cancel']
   if (row?.kind === 'button') return hints(buttonHint(row.button, finishHint, blocking))
-  if (row?.kind !== 'field') return ['Tab next tab', 'Esc cancel']
+  if (row?.kind !== 'field') return [...tab, 'Esc cancel']
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
   return hints(row.field.hint)
 }
@@ -343,6 +353,7 @@ export const Wizard = ({
   name,
   titleParts = [],
   steps,
+  question,
   status = '',
   footer = '',
   width,
@@ -448,7 +459,10 @@ export const Wizard = ({
       <ItemList
         items={toggles.map(toggleItem)}
         selected={toggleRows.indexOf(cursor.index)}
-        capacity={Math.max(MIN_LIST_ROWS, Math.min(toggles.length, height - LIST_CHROME_ROWS))}
+        capacity={Math.max(
+          MIN_LIST_ROWS,
+          Math.min(toggles.length, height - LIST_CHROME_ROWS + (steps.length > 1 ? 0 : 1))
+        )}
         labelWidth={labelWidthFor(
           toggles.map(({ label }) => label),
           width
@@ -512,8 +526,13 @@ export const Wizard = ({
   const notice = step.body ? undefined : (step.notice ?? blocking)
   return (
     <>
-      <PanelTitle name={name} parts={titleParts} />
-      <StepBar steps={steps} at={index} right={status} onPick={pickStep} />
+      <PanelTitle
+        name={name}
+        parts={titleParts}
+        {...(steps.length > 1 ? {} : { right: <Text dimColor>{status}</Text> })}
+      />
+      {steps.length > 1 ? <StepBar steps={steps} at={index} right={status} onPick={pickStep} /> : null}
+      {question === undefined ? null : <Line>{`  ${question}`}</Line>}
       {compact ? null : <Gap />}
       {step.fields.map(fieldView)}
       {step.body ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)) : null}
@@ -532,7 +551,9 @@ export const Wizard = ({
         onHover={(button) => cursor.set(firstButton + buttons.indexOf(button))}
       />
       <Fill />
-      <KeyHints hints={editor ? ['Enter save', 'Esc cancel'] : rowHints(focused, finishHint, blocking)} />
+      <KeyHints
+        hints={editor ? ['Enter save', 'Esc cancel'] : rowHints(focused, finishHint, blocking, steps.length > 1)}
+      />
     </>
   )
 }

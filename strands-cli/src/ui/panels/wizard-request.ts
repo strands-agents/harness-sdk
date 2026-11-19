@@ -1,7 +1,24 @@
 import { sanitizeTerminalText } from '../../terminal/text.js'
 import type { Tone } from './kit.js'
 
-export type WizardAnswer = string | boolean
+export type WizardAnswer = string | boolean | readonly string[]
+
+export interface WizardOption {
+  readonly value: string
+  readonly label: string
+  readonly detail?: string
+  readonly unavailable?: string
+}
+
+/** One question, many rows: checkboxes when multiple, radio buttons when not. */
+export interface WizardSelectSpec {
+  readonly kind: 'select'
+  readonly key: string
+  readonly options: readonly WizardOption[]
+  readonly multiple?: boolean
+  readonly selected?: readonly string[]
+  readonly listLabel?: string
+}
 
 export interface WizardChoiceSpec {
   readonly kind: 'choice'
@@ -29,7 +46,7 @@ export interface WizardTextSpec {
   readonly placeholder?: string
 }
 
-export type WizardFieldSpec = WizardChoiceSpec | WizardToggleSpec | WizardTextSpec
+export type WizardFieldSpec = WizardChoiceSpec | WizardToggleSpec | WizardTextSpec | WizardSelectSpec
 
 export interface WizardStepSpec {
   readonly key: string
@@ -43,6 +60,7 @@ export interface WizardStepSpec {
 export interface WizardRequest {
   readonly id: string
   readonly name: string
+  readonly question?: string
   readonly titleParts?: readonly string[]
   readonly steps: readonly WizardStepSpec[]
   readonly status?: string
@@ -65,6 +83,17 @@ interface PendingWizard {
 const cleanText = (text: string): string => sanitizeTerminalText(text)
 
 const cleanField = (field: WizardFieldSpec): WizardFieldSpec => {
+  if (field.kind === 'select')
+    return {
+      ...field,
+      options: field.options.map((option) => ({
+        ...option,
+        label: cleanText(option.label),
+        ...(option.detail === undefined ? {} : { detail: cleanText(option.detail) }),
+        ...(option.unavailable === undefined ? {} : { unavailable: cleanText(option.unavailable) }),
+      })),
+      ...(field.listLabel === undefined ? {} : { listLabel: cleanText(field.listLabel) }),
+    }
   const label = cleanText(field.label)
   if (field.kind === 'choice') return { ...field, label, options: field.options.map(cleanText) }
   if (field.kind === 'toggle')
@@ -91,6 +120,12 @@ export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string,
   const answers: Record<string, WizardAnswer> = {}
   for (const step of steps)
     for (const field of step.fields) {
+      if (field.kind === 'select') {
+        const open = field.options.filter(({ unavailable }) => unavailable === undefined).map(({ value }) => value)
+        const picked = (field.selected ?? []).filter((value) => open.includes(value))
+        answers[field.key] = field.multiple === false ? (picked[0] ?? '') : picked
+        continue
+      }
       // An unavailable toggle renders unchecked and refuses to flip, so it must not answer true.
       if (field.kind === 'toggle') answers[field.key] = field.unavailable === undefined && field.checked === true
       else if (field.kind === 'text') answers[field.key] = field.value ?? ''

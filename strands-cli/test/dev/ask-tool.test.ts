@@ -41,7 +41,7 @@ describe('askRequestFrom', () => {
   })
 
   it.each([
-    [{ steps: [] }, 'steps must list at least one step.'],
+    [{ steps: [] }, 'Send ask with a question for one question, or steps for a walked form.'],
     [{ steps: [{ ...knobStep, fields: [] }] }, 'At least one step must have a field'],
     [
       { steps: [knobStep, { ...budgetStep, fields: knobStep.fields }] },
@@ -110,6 +110,101 @@ describe('askRequestFrom', () => {
   })
 })
 
+describe('one question', () => {
+  const knobs = {
+    ask: 'selectMany',
+    key: 'tune',
+    question: 'What should the run tune?',
+    listLabel: 'knobs',
+    options: [
+      { value: 'instructions', label: 'instructions', detail: 'the system prompt' },
+      { value: 'tools', label: 'tools', unavailable: 'cannot tune tools yet' },
+    ],
+    selected: ['instructions'],
+  }
+
+  it('shouldBuildOneStepWithNoTabsFromASelectMany', () => {
+    const request = askRequestFrom(knobs)
+
+    expect(request.steps).toHaveLength(1)
+    expect(request.question).toBe('What should the run tune?')
+    expect(request.finishLabel).toBe('[ OK ]')
+    expect(request.steps[0]?.fields[0]).toMatchObject({ kind: 'select', key: 'tune', selected: ['instructions'] })
+  })
+
+  it('shouldMakeASelectOnePickOnlyOne', () => {
+    const field = askRequestFrom({
+      ask: 'selectOne',
+      key: 'iterations',
+      question: 'How many steps?',
+      options: [{ value: '4', label: '4' }],
+    }).steps[0]?.fields[0]
+
+    expect(field).toMatchObject({ kind: 'select', multiple: false })
+  })
+
+  it('shouldTurnAConfirmIntoAYesOrNoPick', () => {
+    const field = askRequestFrom({ ask: 'confirm', question: 'Start the run?' }).steps[0]?.fields[0]
+
+    expect(field).toMatchObject({ kind: 'select', multiple: false, selected: ['yes'] })
+  })
+
+  it('shouldAskForTextWithItsPlaceholder', () => {
+    const field = askRequestFrom({
+      ask: 'text',
+      key: 'objective',
+      question: 'What should it optimize?',
+      placeholder: 'Minimize(tokens)',
+    }).steps[0]?.fields[0]
+
+    expect(field).toMatchObject({ kind: 'text', key: 'objective', placeholder: 'Minimize(tokens)' })
+  })
+
+  it.each([
+    [{ ask: 'slider', question: 'how much?' }, 'ask must be one of selectMany, selectOne, text, confirm.'],
+    [{ ask: 'selectMany', question: 'pick' }, 'options must list at least one option.'],
+    [
+      { ask: 'selectMany', question: 'pick', options: [{ value: 'a', label: 'A' }], selected: ['b'] },
+      'selected names no such option: b.',
+    ],
+    [
+      {
+        ask: 'selectOne',
+        question: 'pick',
+        options: [
+          { value: 'a', label: 'A' },
+          { value: 'a', label: 'again' },
+        ],
+      },
+      'must not repeat a value.',
+    ],
+    [{ ask: 'selectMany', question: 'pick', steps: [] }, 'not both.'],
+    [{ question: 'pick' }, 'Send ask with a question for one question'],
+  ])('shouldRefuseABadQuestion', (input, message) => {
+    expect(() => askRequestFrom(input as never)).toThrow(message)
+  })
+
+  it('shouldReturnTheAnswerUnwrappedUnderItsOwnKey', async () => {
+    const broker = new WizardBroker()
+    const answered = askTool(() => broker).run(knobs)
+
+    await vi.waitFor(() => expect(broker.pending()).toBeDefined())
+    broker.respond(broker.pending()!.id, { tune: ['instructions', 'caching'] })
+
+    expect(JSON.parse(await answered)).toEqual({ status: 'answered', answer: ['instructions', 'caching'] })
+  })
+
+  it('shouldReturnABooleanForAConfirm', async () => {
+    const broker = new WizardBroker()
+    const answered = askTool(() => broker).run({ ask: 'confirm', question: 'Start?' })
+
+    await vi.waitFor(() => expect(broker.pending()).toBeDefined())
+    broker.respond(broker.pending()!.id, { answer: 'no' })
+
+    expect(JSON.parse(await answered)).toEqual({ status: 'answered', answer: false })
+  })
+})
+
 describe('askTool', () => {
   it('shouldReturnTheAnswersWhenTheFormIsFinished', async () => {
     const broker = new WizardBroker()
@@ -151,7 +246,7 @@ describe('askTool', () => {
   it('shouldFailWithoutAskingWhenTheStepsAreBad', async () => {
     const broker = new WizardBroker()
 
-    await expect(askTool(() => broker).run({ steps: [] })).rejects.toThrow('at least one step')
+    await expect(askTool(() => broker).run({ steps: [] })).rejects.toThrow('Send ask with a question')
     expect(broker.pending()).toBeUndefined()
   })
 })
