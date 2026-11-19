@@ -839,16 +839,33 @@
     "mistral.pixtral-large-2502": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "streamingToolUse": false
       }
     },
     "mistral.mistral-small-2402": {
       "limits": {
         "contextWindow": 32000
+      },
+      "capabilities": {
+        "streamingToolUse": false
       }
     },
     "mistral.mistral-large-2402": {
       "limits": {
         "contextWindow": 32000
+      },
+      "capabilities": {
+        "streamingToolUse": false
+      }
+    },
+    "mistral.mistral-large-2407": {
+      "limits": {
+        "contextWindow": 128000
+      },
+      "capabilities": {
+        "streamingToolUse": false
       }
     },
     "google.gemma-4-31b": {

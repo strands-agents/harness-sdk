@@ -115,7 +115,15 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
-        else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
+        else if (
+          [
+            'forcedToolChoice',
+            'nativeStructuredOutput',
+            'serverSideSummary',
+            'temporaryMessages',
+            'streamingToolUse',
+          ].includes(key)
+        )
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         // Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
         else if (key === 'chatCompletionsTools')

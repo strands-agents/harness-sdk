@@ -81,6 +81,14 @@ async function streamingExample() {
     modelId: 'us.meta.llama3-2-90b-instruct-v1:0',
     stream: false, // Disable streaming
   })
+
+  // Model that cannot stream tool use and is not in the model info:
+  // only requests that carry tools are sent without streaming
+  const toolUseModel = new BedrockModel({
+    modelId:
+      'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123',
+    modelInfo: { capabilities: { streamingToolUse: false } },
+  })
   // --8<-- [end:streaming]
 }
 

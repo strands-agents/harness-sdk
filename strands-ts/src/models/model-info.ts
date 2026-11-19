@@ -48,6 +48,11 @@ export interface ModelCapabilities {
    * (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.
    */
   readonly temporaryMessages?: boolean | undefined
+  /**
+   * Whether the model accepts tools on a streaming request. When `false`, `BedrockModel` sends a request with tools
+   * without streaming.
+   */
+  readonly streamingToolUse?: boolean | undefined
 }
 
 /** Size limits of the model. */
@@ -126,6 +131,7 @@ const CAPABILITY_FIELDS = Object.keys({
   nativeStructuredOutput: true,
   serverSideSummary: true,
   temporaryMessages: true,
+  streamingToolUse: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,

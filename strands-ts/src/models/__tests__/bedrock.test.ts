@@ -1824,6 +1824,95 @@ describe('BedrockModel', () => {
   })
 
   describe('stream', () => {
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/6241: some Bedrock models reject a
+    // ConverseStream request that carries tools, so those requests go to Converse.
+    describe('when the model cannot call tools while streaming', () => {
+      const modelInfo = { capabilities: { streamingToolUse: false } }
+      const toolSpecs = [
+        { name: 'calc', description: 'Calculator', inputSchema: { type: 'object' as const, properties: {} } },
+      ]
+      const prompt = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const toolHistory = [
+        ...prompt,
+        new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'calc', toolUseId: 't1', input: {} })] }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })],
+        }),
+      ]
+
+      it.each([
+        {
+          name: 'a listed model with tools unstreamed',
+          config: { modelId: 'mistral.mistral-large-2402-v1:0' },
+          messages: prompt,
+          options: { toolSpecs },
+          streamed: false,
+        },
+        {
+          name: 'a listed inference profile with tools unstreamed',
+          config: { modelId: 'us.mistral.pixtral-large-2502-v1:0' },
+          messages: prompt,
+          options: { toolSpecs },
+          streamed: false,
+        },
+        {
+          name: 'a modelInfo override with tools unstreamed',
+          config: { modelId: 'm1', modelInfo },
+          messages: prompt,
+          options: { toolSpecs },
+          streamed: false,
+        },
+        {
+          name: 'tool history without tools unstreamed',
+          config: { modelId: 'm1', modelInfo },
+          messages: toolHistory,
+          options: {},
+          streamed: false,
+        },
+        {
+          name: 'a request without tools streamed',
+          config: { modelId: 'm1', modelInfo },
+          messages: prompt,
+          options: {},
+          streamed: true,
+        },
+        {
+          name: 'an unlisted model with tools streamed',
+          config: { modelId: 'm1' },
+          messages: prompt,
+          options: { toolSpecs },
+          streamed: true,
+        },
+        {
+          name: 'a listed model with a modelInfo override and tools streamed',
+          config: {
+            modelId: 'mistral.mistral-large-2402-v1:0',
+            modelInfo: { capabilities: { streamingToolUse: true } },
+          },
+          messages: prompt,
+          options: { toolSpecs },
+          streamed: true,
+        },
+      ])('sends $name', async ({ config, messages, options, streamed }) => {
+        const mockSend = vi.fn(async (command: unknown) =>
+          command instanceof ConverseCommand
+            ? {
+                output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+                stopReason: 'end_turn',
+                usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+              }
+            : { stream: (async function* (): AsyncGenerator<unknown> {})() }
+        )
+        mockBedrockClientImplementation({ send: mockSend })
+
+        await collectIterator(new BedrockModel(config).stream(messages, options))
+
+        expect(vi.mocked(ConverseStreamCommand)).toHaveBeenCalledTimes(streamed ? 1 : 0)
+        expect(vi.mocked(ConverseCommand)).toHaveBeenCalledTimes(streamed ? 0 : 1)
+      })
+    })
+
     // Guards against https://github.com/strands-agents/harness-sdk/issues/5763: after a tool result, Bedrock
     // can end an empty turn with messageStop and metadata but no messageStart.
     describe('when Bedrock ends an empty turn without a messageStart', () => {
