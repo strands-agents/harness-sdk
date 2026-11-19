@@ -551,21 +551,30 @@ describe('GeminiDecisionModel', () => {
     })
   })
 
-  it('thresholds Noul answers on Gemini confidence with a 0.75 default', async () => {
+  it('thresholds on Gemini confidence with 0.75 for Noul and 0.5 for Choice by default', async () => {
     const noul = (p: number): GeminiDecisionModel =>
       new GeminiDecisionModel({
         apiKey: 'test-key',
         fetch: fakeFetch({ answers: { q: { type: 'noul', noul: p, confidence: Math.max(p, 1 - p) } } }),
       })
+    const choiceFetch = fakeFetch({
+      answers: {
+        q: { type: 'choice', choice: 'a', probabilities: { a: 0.7, b: 0.1, c: 0.1, d: 0.1 }, confidence: 0.7 },
+      },
+    })
 
     const unsure = await noul(0.74).ask('state', { q: { question: 'ok?', choices: 'boolean' } })
     const sure = await noul(0.99).ask('state', {
       q: { question: 'ok?', choices: 'boolean', uncertainty: { minConfidence: 0.99 } },
     })
+    const choice = await new GeminiDecisionModel({ apiKey: 'test-key', fetch: choiceFetch }).ask('state', {
+      q: { question: 'Which?', choices: ['a', 'b', 'c', 'd'] },
+    })
 
     expect(unsure.answers.q).toEqual(new Uncertain())
     expect(unsure.metadata.confidence).toEqual({ q: 0.74 })
     expect(sure.answers.q).toBe(true)
+    expect(choice.answers.q).toBe('a')
   })
 
   it('sends message state as JSON text input', async () => {

@@ -18,6 +18,11 @@ export interface SystemOneRequestConfig {
   /** Sent as the request's `model`; omitted when undefined so the server uses its own. */
   modelId?: string
   defaultMinConfidence: number
+  /**
+   * Default minimum confidence for Choice questions, for APIs whose Noul and Choice confidence need different
+   * defaults. Defaults to `defaultMinConfidence`.
+   */
+  defaultChoiceMinConfidence?: number
   maxQuestions?: number
   /** Builds the request body. {@link systemOneRequestBody} builds the System One `{ state, model, questions }` shape. */
   buildRequestBody: RequestBodyBuilder
@@ -151,6 +156,15 @@ export function resolveSystemOneProviderConfig(
     authHeaders: defaults.authHeaders ?? bearerAuth,
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
+    // A caller's defaultMinConfidence applies to every question type, so the provider's Choice default only
+    // applies when the caller didn't set one.
+    ...(options.defaultMinConfidence === undefined &&
+      defaults.defaultChoiceMinConfidence !== undefined && {
+        defaultChoiceMinConfidence: resolveDefaultMinConfidence(
+          defaults.defaultChoiceMinConfidence,
+          defaults.className
+        ),
+      }),
     ...(defaults.probabilitySumTolerance !== undefined && {
       probabilitySumTolerance: defaults.probabilitySumTolerance,
     }),
@@ -368,7 +382,12 @@ function parseResult<const Q extends Record<string, Question>>(
     if (rawAnswer === undefined)
       throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
     const parsed = parseAnswer(rawAnswer, question, String(id), config)
-    const minConfidence = resolveMinConfidence(question, config.defaultMinConfidence)
+    const minConfidence = resolveMinConfidence(
+      question,
+      question.choices === 'boolean'
+        ? config.defaultMinConfidence
+        : (config.defaultChoiceMinConfidence ?? config.defaultMinConfidence)
+    )
     answers[id] = (
       minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
     ) as AnswerOf<Q[typeof id]>
