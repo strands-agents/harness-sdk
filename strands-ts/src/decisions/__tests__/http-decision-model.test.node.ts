@@ -91,7 +91,7 @@ describe('HttpDecisionModel', () => {
           url: LOCAL_ENDPOINT,
           headers: { 'content-type': 'application/json' },
           rawBody: expect.any(String),
-          redirect: 'error',
+          redirect: 'manual',
           body: {
             state: 'Refund this today',
             questions: { urgent: { type: 'noul', instructions: 'Is this urgent?' } },
@@ -121,6 +121,49 @@ describe('HttpDecisionModel', () => {
 
       expect(result.answers.urgent).toBe(true)
       expect(strict.answers.urgent).toBeInstanceOf(Uncertain)
+    })
+
+    it('defaults the minimum confidence to 0.5', async () => {
+      // A yes probability of 0.7 is a confidence of 0.4.
+      const fetch = fakeFetch(systemOneBody(0.7))
+
+      const result = await create({ fetch }).ask('state', QUESTIONS)
+      const permissive = await create({ fetch, defaultMinConfidence: 0 }).ask('state', QUESTIONS)
+
+      expect(result.answers.urgent).toBeInstanceOf(Uncertain)
+      expect(permissive.answers.urgent).toBe(true)
+    })
+
+    it.each([
+      [
+        'a sigv4 endpoint',
+        { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: CREDENTIALS },
+        'check the IAM permission, region and service name',
+      ],
+      ['a bearer endpoint', { type: 'bearer', token: 't' }, 'check the token'],
+    ] as const)('adds a hint when %s answers 403', async (_name, auth, hint) => {
+      const decision = create({
+        endpoint: LAMBDA_ENDPOINT,
+        auth,
+        fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }),
+      })
+
+      const error = await decision.ask('state', QUESTIONS).catch((e: unknown) => e)
+
+      expect(error).toBeInstanceOf(ModelError)
+      expect((error as Error).message).toBe(`http decision request failed with HTTP 403: Forbidden | ${hint}`)
+    })
+
+    it('adds no hint without auth, or for other statuses', async () => {
+      const unauthenticated = create({ fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }) })
+      const serverError = create({
+        endpoint: LAMBDA_ENDPOINT,
+        auth: { type: 'bearer', token: 't' },
+        fetch: fakeFetch({ message: 'boom' }, { status: 500 }),
+      })
+
+      await expect(unauthenticated.ask('state', QUESTIONS)).rejects.toThrow(/HTTP 403: Forbidden$/)
+      await expect(serverError.ask('state', QUESTIONS)).rejects.toThrow(/HTTP 500: boom$/)
     })
 
     it('maps HTTP failures to model errors that name the provider and status', async () => {
@@ -180,11 +223,28 @@ describe('HttpDecisionModel', () => {
       try {
         const decision = create({ endpoint: `${origin.url}/v1/systemone`, headers: { 'x-api-key': 'key-1' } })
 
-        await expect(decision.ask('state', QUESTIONS)).rejects.toBeInstanceOf(ModelError)
+        await expect(decision.ask('state', QUESTIONS)).rejects.toThrow(
+          `redirected (HTTP 307) to ${target.url}/v1/systemone: set the endpoint to the redirect target`
+        )
         expect(received).not.toHaveBeenCalled()
       } finally {
         await origin.close()
         await target.close()
+      }
+    })
+
+    it('names the target of a trailing-slash redirect without its query', async () => {
+      const origin = await serve((_req, res) => {
+        res.writeHead(307, { Location: '/v1/systemone?token=abc' }).end()
+      })
+      try {
+        const decision = create({ endpoint: `${origin.url}/v1/systemone/` })
+
+        await expect(decision.ask('state', QUESTIONS)).rejects.toThrow(
+          `redirected (HTTP 307) to ${origin.url}/v1/systemone: set the endpoint`
+        )
+      } finally {
+        await origin.close()
       }
     })
   })
@@ -394,6 +454,29 @@ describe('HttpDecisionModel', () => {
     })
   })
 
+  describe('stalled credentials', () => {
+    const stalled = (): Promise<typeof CREDENTIALS> => new Promise(() => {})
+    const sigv4 = { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: stalled } as const
+
+    it('times out a credential lookup that never answers', async () => {
+      const fetch = fakeFetch()
+      const decision = create({ endpoint: LAMBDA_ENDPOINT, auth: sigv4, timeoutMs: 20, fetch })
+
+      await expect(decision.ask('state', QUESTIONS)).rejects.toThrow('http decision request timed out after 20ms')
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('cancels a credential lookup that never answers', async () => {
+      const decision = create({ endpoint: LAMBDA_ENDPOINT, auth: sigv4, fetch: fakeFetch() })
+      const controller = new AbortController()
+
+      const pending = decision.ask('state', QUESTIONS, { cancelSignal: controller.signal })
+      controller.abort(new Error('stop'))
+
+      await expect(pending).rejects.toThrow('http decision request failed: stop')
+    })
+  })
+
   describe('constructor validation', () => {
     const bearer = { type: 'bearer', token: 't' } as const
 
@@ -441,12 +524,12 @@ describe('HttpDecisionModel', () => {
       [
         'a bearer token over plain http to a remote host',
         { endpoint: 'http://example.com/v1/systemone', auth: bearer },
-        'auth requires an https endpoint',
+        'auth and headers require an https endpoint',
       ],
       [
         'a bearer token over plain http to a host that only starts with localhost',
         { endpoint: 'http://localhost.evil.com/v1/systemone', auth: bearer },
-        'auth requires an https endpoint',
+        'auth and headers require an https endpoint',
       ],
       [
         'sigv4 over plain http to a remote host',
@@ -454,7 +537,7 @@ describe('HttpDecisionModel', () => {
           endpoint: 'http://abc.lambda-url.us-east-1.on.aws/v1/systemone',
           auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda' },
         },
-        'auth requires an https endpoint',
+        'auth and headers require an https endpoint',
       ],
       [
         'an authorization header alongside auth',
@@ -475,6 +558,25 @@ describe('HttpDecisionModel', () => {
       ],
       ['an invalid header name', { headers: { 'bad name': 'x' } }, "header name 'bad name' is not valid"],
       ['a header value with a newline', { headers: { 'x-api-key': 'abc\n' } }, "header 'x-api-key' must be a string"],
+      [
+        'a header value above U+00FF',
+        { headers: { 'x-note': 'a\u2028b' } },
+        "header 'x-note' must be a string of printable characters up to U+00FF",
+      ],
+      ['a transfer-encoding header', { headers: { 'Transfer-Encoding': 'chunked' } }, "cannot set 'Transfer-Encoding'"],
+      ['an expect header', { headers: { Expect: '100-continue' } }, "cannot set 'Expect'"],
+      ['an upgrade header', { headers: { Upgrade: 'websocket' } }, "cannot set 'Upgrade'"],
+      ['a keep-alive header', { headers: { 'Keep-Alive': 'timeout=5' } }, "cannot set 'Keep-Alive'"],
+      [
+        'header names that differ only by case',
+        { headers: { 'X-Foo': 'a', 'x-foo': 'b' } },
+        "header 'x-foo' is set more than once",
+      ],
+      [
+        'a secret header over plain http to a remote host',
+        { endpoint: 'http://example.com/v1/systemone', headers: { 'x-api-key': 'k' } },
+        'auth and headers require an https endpoint',
+      ],
       ['a zero timeout', { timeoutMs: 0 }, 'timeoutMs must be an integer from 1 to 2147483647'],
       ['a fractional timeout', { timeoutMs: 1.5 }, 'timeoutMs must be an integer'],
       ['a non-finite timeout', { timeoutMs: Number.POSITIVE_INFINITY }, 'timeoutMs must be an integer'],

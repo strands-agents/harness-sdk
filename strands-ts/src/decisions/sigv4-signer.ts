@@ -29,11 +29,10 @@ export interface SigV4Config {
 export type SigV4Signer = (body: string, headers: Record<string, string>) => Promise<Record<string, string>>
 
 /**
- * Builds a signer for `endpoint`, which must not carry a query string. The signing packages load on the
+ * Builds a signer for the endpoint `url`, which must not carry a query string. The signing packages load on the
  * first call and are shared by concurrent calls; a failed load is retried on the next call.
  */
-export function createSigV4Signer(endpoint: string, config: SigV4Config): SigV4Signer {
-  const url = new URL(endpoint)
+export function createSigV4Signer(url: URL, config: SigV4Config): SigV4Signer {
   let runtime: Promise<Runtime> | undefined
 
   return async (body, headers) => {

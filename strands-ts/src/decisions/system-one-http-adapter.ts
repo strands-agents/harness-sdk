@@ -225,12 +225,25 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
   const signals = [cancelSignal, timeout].filter((signal): signal is AbortSignal => signal !== undefined)
   const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0]
 
+  // A cancel by the caller is not a timeout, even if both signals have fired.
+  const interrupted = (error: unknown): ModelError =>
+    timeout?.aborted === true && cancelSignal?.aborted !== true
+      ? new ModelError(`${config.providerName} decision request timed out after ${config.timeoutMs}ms`, {
+          cause: error,
+        })
+      : new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
+          cause: error,
+        })
+
   // Resolved outside the request's error handling so a signing or credential failure is not reported as a failed
-  // request. Awaited only when asynchronous, so a synchronous provider still calls fetch without yielding first.
-  const providerHeaders = config.requestHeaders(body)
-  const headers = {
-    ...(isPromiseLike(providerHeaders) ? await providerHeaders : providerHeaders),
-    'Content-Type': 'application/json',
+  // request, but still under the timeout and cancel signal, since a credential lookup can stall. Awaited only when
+  // asynchronous, so a synchronous provider still calls fetch without yielding first.
+  let providerHeaders: Record<string, string>
+  try {
+    const resolved = config.requestHeaders(body)
+    providerHeaders = isPromiseLike(resolved) ? await abortable(resolved, signal) : resolved
+  } catch (error) {
+    throw signal?.aborted === true ? interrupted(error) : error
   }
 
   let payload: unknown
@@ -238,32 +251,55 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
   try {
     response = await config.fetch(config.endpoint, {
       method: 'POST',
-      headers,
+      headers: { ...providerHeaders, 'Content-Type': 'application/json' },
       body,
-      // A System One endpoint does not redirect, and a redirect would replay the request's headers and body.
-      redirect: 'error',
+      // A System One endpoint does not redirect, and following one would replay the request's headers and body.
+      redirect: 'manual',
       ...(signal !== undefined && { signal }),
     })
+    if (REDIRECT_STATUSES.includes(response.status)) throw await redirectError(config, response)
     payload = await readPayload(response)
   } catch (error) {
-    // A decision-provider error such as a non-JSON body is already described.
+    // A decision-provider error such as a redirect or a non-JSON body is already described.
     if (error instanceof ModelError) throw error
-    // A cancel by the caller is not a timeout, even if both signals have fired.
-    if (timeout?.aborted === true && cancelSignal?.aborted !== true) {
-      throw new ModelError(`${config.providerName} decision request timed out after ${config.timeoutMs}ms`, {
-        cause: error,
-      })
-    }
-    throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
-      cause: error,
-    })
+    throw interrupted(error)
   }
   if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
   return payload
 }
 
+const REDIRECT_STATUSES = [301, 302, 303, 307, 308]
+
 function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
   return typeof (value as PromiseLike<T>).then === 'function'
+}
+
+/** Settles like `promise`, or rejects with the signal's reason as soon as the signal aborts. */
+function abortable<T>(promise: PromiseLike<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return Promise.resolve(promise)
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason)
+    const onAbort = (): void => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(promise)
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
+/** Names the redirect target, without its query, so the caller can fix the endpoint. */
+async function redirectError(config: SystemOneProviderConfig, response: Response): Promise<ModelError> {
+  await response.body?.cancel().catch(() => undefined)
+  let target = ''
+  try {
+    const url = new URL(response.headers.get('location') ?? '', config.endpoint)
+    target = ` to ${url.origin}${url.pathname}`
+  } catch {
+    // A missing or malformed Location header leaves the target out.
+  }
+  return new ModelError(
+    `${config.providerName} decision request was redirected (HTTP ${response.status})${target}: set the endpoint to the redirect target`
+  )
 }
 
 async function readPayload(response: Response): Promise<unknown> {
