@@ -10,8 +10,8 @@ ones included, gets the latest user message's injected blocks as text and none o
 placeholder's ``offloaded`` bookkeeping reaches no model.
 
 A provider that sets ``_cache_points_from_proxy`` gets its automatic cache points from here: with ``cache_config`` set
-and a model that takes cache points, one at the end of the system prompt and one in the latest user message, ahead of
-the blocks rebuilt on every call. The provider only translates them.
+and a model whose ``model_info`` says it takes cache points, one at the end of the system prompt and one in the latest
+user message, ahead of the blocks rebuilt on every call. The provider only translates them.
 """
 
 import logging
@@ -304,11 +304,9 @@ def _proxy_cache_config(model: "Model") -> "CacheConfig | None":
         return None
     config = model.get_config()
     cache_config = config.get("cache_config") if isinstance(config, dict) else None
-    if cache_config is None:
+    if cache_config is None or model.model_info.capabilities.prompt_caching != "cache_points":
         return None
-    if cache_config.strategy == "anthropic" or model.model_info.capabilities.prompt_caching == "cache_points":
-        return cast("CacheConfig", cache_config)
-    return None
+    return cast("CacheConfig", cache_config)
 
 
 def _cache_point(section_ttl: bool | str | None, ttl: str | None) -> CachePoint:

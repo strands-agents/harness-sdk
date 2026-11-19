@@ -1262,3 +1262,39 @@ def test_format_request_messages_turns_a_message_cache_point_into_cache_control_
     assert [message["role"] for message in formatted] == ["tool", "user"]
     assert formatted[0]["content"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
     assert formatted[1]["content"] == [{"type": "text", "text": "Current time: 1 ms"}]
+
+
+@pytest.mark.parametrize(
+    ("prompt_caching", "sends_key"), [("cache_points", False), (None, True)], ids=["declared_claude", "undeclared"]
+)
+def test_format_request_resolves_a_proxy_alias_session_key_from_model_info(prompt_caching, sends_key):
+    from strands.models import ModelCapabilities, ModelInfo
+
+    model = LiteLLMModel(
+        model_id="litellm_proxy/claude-alias",
+        cache_config=CacheConfig(),
+        model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching=prompt_caching)),
+    )
+
+    request = model.format_request(
+        [{"role": "user", "content": [{"text": "hi"}]}], agent_metadata=AgentMetadata(session_id="s1")
+    )
+
+    assert ("prompt_cache_key" in request) is sends_key
+
+
+def test_format_request_drops_the_session_key_for_a_cache_point_model_on_litellm_without_key_validation(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        strands.models.litellm.litellm,
+        "OPENAI_CHAT_COMPLETION_PARAMS",
+        [p for p in strands.models.litellm.litellm.OPENAI_CHAT_COMPLETION_PARAMS if p != "prompt_cache_key"],
+    )
+    model = LiteLLMModel(model_id="bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0", cache_config=CacheConfig())
+
+    request = model.format_request(
+        [{"role": "user", "content": [{"text": "hi"}]}], agent_metadata=AgentMetadata(session_id="s1")
+    )
+
+    assert "prompt_cache_key" not in request

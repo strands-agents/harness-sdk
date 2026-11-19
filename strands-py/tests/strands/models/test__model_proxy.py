@@ -225,11 +225,12 @@ def cache_messages():
     ]
 
 
-def _cache_model(model_id: str, **cache_config):
+def _cache_model(model_id: str, model_info=None, **cache_config):
     from strands.models import CacheConfig
     from strands.models.litellm import LiteLLMModel
 
-    return LiteLLMModel(model_id=model_id, cache_config=CacheConfig(**cache_config))
+    extra = {"model_info": model_info} if model_info else {}
+    return LiteLLMModel(model_id=model_id, cache_config=CacheConfig(**cache_config), **extra)
 
 
 def test_with_cache_points_marks_the_system_prompt_and_the_latest_user_message_ahead_of_rebuilt_blocks(
@@ -259,13 +260,23 @@ def test_with_cache_points_leaves_a_provider_that_places_its_own_alone(model, ca
     assert (system, messages) == (None, cache_messages)
 
 
-def test_with_cache_points_anthropic_strategy_marks_a_proxy_alias(cache_messages):
-    model = _cache_model("litellm_proxy/claude-alias", strategy="anthropic")
+def test_with_cache_points_marks_a_proxy_alias_declared_through_model_info(cache_messages):
+    from strands.models import ModelCapabilities, ModelInfo
+
+    declared = ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points"))
+    model = _cache_model("litellm_proxy/claude-alias", model_info=declared)
 
     system, messages = _with_cache_points(model, "s1", None, cache_messages, 0)
 
     assert system[-1] == {"cachePoint": {"type": "default"}}
     assert messages[-1]["content"][-1] == {"cachePoint": {"type": "default"}}
+
+
+@pytest.mark.parametrize("model_id", ["litellm_proxy/claude-alias", "gemini/gemini-3.5-flash"])
+def test_with_cache_points_does_not_let_the_anthropic_strategy_override_model_info(model_id, cache_messages):
+    model = _cache_model(model_id, strategy="anthropic")
+
+    assert _with_cache_points(model, "s1", None, cache_messages, 0) == (None, cache_messages)
 
 
 def test_with_cache_points_keeps_the_callers_points_and_ttls(cache_messages):

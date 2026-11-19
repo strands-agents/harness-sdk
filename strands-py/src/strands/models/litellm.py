@@ -57,9 +57,10 @@ class LiteLLMModel(OpenAIModel):
             stream: Whether to use streaming. Defaults to True.
             cache_config: Prompt-caching configuration. LiteLLM's OpenAI-compatible request path consumes it
                 as ``OpenAIModel`` does, except that the routing key is sent only to models LiteLLM accepts
-                ``prompt_cache_key`` for. When the backend's model takes cache points (Anthropic, Bedrock and
-                Vertex AI Claude), the agent also places them on the system prompt and the latest user
-                message; ``strategy="anthropic"`` places them for any backend, such as a proxy alias.
+                ``prompt_cache_key`` for. When ``model_info`` says the backend's model takes cache points
+                (Anthropic, Bedrock and Vertex AI Claude), the agent also places them on the system prompt and
+                the latest user message. For a proxy alias, whose backend the id does not name, declare it with
+                ``model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points"))``.
         """
 
         model_id: str
@@ -415,10 +416,13 @@ class LiteLLMModel(OpenAIModel):
 
     def _accepts_prompt_cache_key(self) -> bool:
         """Whether LiteLLM passes ``prompt_cache_key`` for the configured model instead of raising."""
+        if "prompt_cache_key" in (self.client_args.get("allowed_openai_params") or []):
+            return True
+        # A model that takes cache points is not an OpenAI one, even when a proxy alias hides its backend.
+        if self.model_info.capabilities.prompt_caching == "cache_points":
+            return False
         # LiteLLM versions that do not know the parameter forward it without validation.
         if "prompt_cache_key" not in litellm.OPENAI_CHAT_COMPLETION_PARAMS:
-            return True
-        if "prompt_cache_key" in (self.client_args.get("allowed_openai_params") or []):
             return True
 
         supported_params = litellm.get_supported_openai_params(
