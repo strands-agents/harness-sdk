@@ -1,11 +1,17 @@
 import type { LocalFileStorage } from '../local-file-storage.js'
-import type { StorageSearchResult } from '../storage.js'
+import type { StorageSearchOptions, StorageSearchResult } from '../storage.js'
 import type { SearchStrategy } from './types.js'
 
 import { STOP_WORDS, tokenize } from './keyword.js'
 
 const COLLECTION_NAME = 'storage'
 const COLLECTION_PREFIX = `${COLLECTION_NAME}/`
+
+/**
+ * Stands in for the limit QMD has no way to omit. Its `searchLex` defaults to 20 results, so a
+ * caller wanting every match has to name a number instead of leaving it out.
+ */
+const EVERY_MATCH = Number.MAX_SAFE_INTEGER
 
 /** Configuration for {@link QmdSearchStrategy}. */
 export interface QmdSearchStrategyConfig {
@@ -73,21 +79,36 @@ export class QmdSearchStrategy implements SearchStrategy<LocalFileStorage> {
    * results reflect the latest writes. For high-throughput workloads, prefer
    * calling {@link update} on a schedule rather than relying on per-search sync.
    *
+   * A `prefix` is applied to the matches rather than to the query: QMD scopes a search by collection
+   * or by document metadata, and this index holds the whole directory as one collection with none.
+   * So a prefixed search asks QMD for every match and narrows it here, which costs the early stop
+   * FTS5 can make when it knows how many rows the caller wants.
+   *
    * @param storage - A LocalFileStorage instance (reads `baseDir` for the index path)
    * @param query - Natural-language search query
+   * @param options - Narrows the search to a key prefix and a result count
    * @returns Matched keys with BM25 relevance scores, ranked best-first
    * @throws Error if storage is not a filesystem storage or `@tobilu/qmd` is not installed
    */
-  async search(storage: LocalFileStorage, query: string): Promise<StorageSearchResult[]> {
+  async search(
+    storage: LocalFileStorage,
+    query: string,
+    options?: StorageSearchOptions
+  ): Promise<StorageSearchResult[]> {
     const store = await this._ensureStore(storage)
     await store.update()
     const ftsQuery = buildQuery(query)
     if (!ftsQuery) return []
-    const results = await store.searchLex(ftsQuery)
-    return results.map((result) => ({
+
+    const prefix = options?.prefix ?? ''
+    const limit = options?.limit ?? EVERY_MATCH
+    const results = await store.searchLex(ftsQuery, { limit: prefix ? EVERY_MATCH : limit })
+    const matched = results.map((result) => ({
       key: result.displayPath.slice(COLLECTION_PREFIX.length),
       score: Math.abs(result.score) / (1 + Math.abs(result.score)),
     }))
+    const scoped = prefix ? matched.filter((result) => result.key.startsWith(prefix)) : matched
+    return scoped.length <= limit ? scoped : scoped.slice(0, limit)
   }
 
   /**
@@ -167,7 +188,7 @@ type QmdCreateStore = (config: {
 interface QmdStore {
   update(): Promise<unknown>
   close(): Promise<void>
-  searchLex(query: string): Promise<Array<{ displayPath: string; score: number }>>
+  searchLex(query: string, options?: { limit?: number }): Promise<Array<{ displayPath: string; score: number }>>
 }
 
 function buildQuery(query: string): string | null {
