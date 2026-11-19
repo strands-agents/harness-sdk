@@ -289,7 +289,7 @@ const caseItem = (item: DraftCase, index: number): ListItem => ({
 })
 
 interface CaseEditor {
-  readonly index?: number
+  readonly name?: string
   readonly field: CaseField
   readonly input: TextValue
   readonly expected: TextValue
@@ -297,8 +297,8 @@ interface CaseEditor {
   readonly problem?: string
 }
 
-const editorFor = (field: CaseField, input: string, expected: string, index?: number): CaseEditor => ({
-  ...(index === undefined ? {} : { index }),
+const editorFor = (field: CaseField, input: string, expected: string, name?: string): CaseEditor => ({
+  ...(name === undefined ? {} : { name }),
   field,
   input: textValue(input),
   expected: textValue(expected),
@@ -342,10 +342,20 @@ const ReviewView = ({
       return
     }
     const change = changedFields(open)
-    if (open.index === undefined) {
+    if (open.name === undefined) {
       session.add({ input: open.input.input, expected: open.expected.input })
       cursor.set(review.cases.length)
-    } else if (Object.keys(change).length > 0) session.edit(open.index, change)
+    } else {
+      const at = review.cases.findIndex(({ name }) => name === open.name)
+      if (at < 0) {
+        editing.set({
+          ...open,
+          problem: `${open.name} is no longer in this experiment: it changed on disk. Press Esc.`,
+        })
+        return
+      }
+      if (Object.keys(change).length > 0) session.edit(at, change)
+    }
     editing.set(undefined)
   }
   useInput((input, key) => {
@@ -368,7 +378,7 @@ const ReviewView = ({
     else if (typed === 'd' && item) session.drop(at)
     else if (typed === 'a') session.keepAll()
     else if (typed === 'e' && item)
-      editing.set(editorFor(missingCaseField(item) ?? 'expected', item.input, item.expected ?? '', at))
+      editing.set(editorFor(missingCaseField(item) ?? 'expected', item.input, item.expected ?? '', item.name))
     else if (typed === 'n') editing.set(editorFor('input', '', ''))
     else if (typed === BROWSER_KEY && browser && review.path)
       onBrowser({ view: 'experiment', experiment: review.path, ...(item ? { case: item.name } : {}) })
@@ -397,7 +407,7 @@ const ReviewView = ({
       {editor ? (
         <>
           <TextField
-            label={editor.index === undefined ? 'new input' : 'input'}
+            label={editor.name === undefined ? 'new input' : 'input'}
             value={editor.input}
             active={editor.field === 'input'}
             labelWidth={DETAIL_LABEL_WIDTH + 2}

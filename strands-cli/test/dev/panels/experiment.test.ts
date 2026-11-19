@@ -269,6 +269,32 @@ describe('ExperimentPanel review', () => {
     expect(session.edit).toHaveBeenCalledWith(0, { expected: 'answer cX' })
   })
 
+  it('shouldEditTheSameCaseWhenTheListChangesWhileTheEditorIsOpen', async () => {
+    const { session, states, press } = await reviewing()
+    await press(DOWN)
+    await press('e')
+    const review = states.snapshot().review!
+
+    states.set({ ...states.snapshot(), review: { ...review, cases: [review.cases[1]!] } })
+    await press('X')
+    await press(ENTER)
+
+    expect(session.edit).toHaveBeenCalledWith(0, { expected: 'answer c1X' })
+  })
+
+  it('shouldSayTheCaseIsGoneWhenItLeavesTheListWhileTheEditorIsOpen', async () => {
+    const { session, states, press, text } = await reviewing()
+    await press('e')
+    const review = states.snapshot().review!
+
+    states.set({ ...states.snapshot(), review: { ...review, cases: [review.cases[1]!] } })
+    await press('X')
+    await press(ENTER)
+
+    expect(session.edit).not.toHaveBeenCalled()
+    expect(text()).toContain('c0 is no longer in this experiment: it changed on disk. Press Esc.')
+  })
+
   it('shouldPutTheCursorOnTheNewCaseWhenTheUserAddsOne', async () => {
     const { session, states, press, text } = await reviewing()
     session.add.mockImplementation(({ input = '', expected = '' }) => {
