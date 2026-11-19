@@ -245,9 +245,9 @@ Tool calls made by the code fire the agent's `BeforeToolCallEvent` and
   same way, because a call made from code cannot prompt. The error tells the model to
   make that call as a normal tool call instead.
 
-In TypeScript, tool calls made by the code run the hooks only. Tool
-[middleware](../../agents/middleware.mdx), `AfterToolCallEvent.retry`, tool spans, and
-stream-update events do not apply to them.
+These calls go through the agent's tool executor, like the calls the model makes, so
+tool [middleware](../../agents/middleware.mdx) and `AfterToolCallEvent.retry` apply to
+them too.
 
 A programmatic tool caller is never exposed to the code: not itself, and not another
 instance, even when its name is in <Syntax py="allowed_tools" ts="allowedTools" />.

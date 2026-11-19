@@ -17,23 +17,22 @@
  * load, in a worker thread as WebAssembly; the language-level sandbox holds either way. For an OS
  * boundary around the *tools*, run the agent under a Docker/SSH sandbox.
  *
- * Inner tool calls run the way the executor runs a model-issued call (`beforeToolCall` hooks, then the
- * tool, then `afterToolCall` hooks), so `interventions` gate them: a denied call raises a catchable
- * `RuntimeError` in the code, and a call that needs interactive approval is refused the same way,
- * since a direct call cannot prompt. Not reproduced from the executor: `AfterToolCallEvent.retry`,
- * tool middleware/guards, tool spans, and stream-update events.
+ * Inner tool calls run through the agent's tool executor, like a model-issued call: `beforeToolCall`
+ * hooks, tool middleware, the tool, `afterToolCall` hooks and retry. So `interventions` gate them: a
+ * denied call raises a catchable `RuntimeError` in the code, and a call that needs interactive approval
+ * is refused the same way, since a call made from code cannot prompt.
  */
 
 import { z } from 'zod'
 import { assertTimerDelay } from '../../background-tasks/timer.js'
-import { AfterToolCallEvent, BeforeToolCallEvent } from '../../hooks/events.js'
-import type { ToolUseData } from '../../hooks/events.js'
+import { Agent } from '../../agent/agent.js'
 import { logger } from '../../logging/logger.js'
 import { tool } from '../../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../../tools/tool.js'
 import type { LocalAgent } from '../../types/agent.js'
+import type { InterruptParams } from '../../types/interrupt.js'
 import type { JSONValue } from '../../types/json.js'
-import { TextBlock, ToolResultBlock } from '../../types/messages.js'
+import type { ToolResultBlock } from '../../types/messages.js'
 
 type MontyModule = typeof import('@pydantic/monty')
 
@@ -194,43 +193,6 @@ function unwrapResult(result: ToolResultBlock): unknown {
   return text
 }
 
-/** The request an inner call runs in: a copy of the parent's invocation state, and its invocation context. */
-interface InnerRequest {
-  invocationState: ToolContext['invocationState']
-  invocationContext: ToolContext['invocationContext']
-}
-
-interface HookInvoker {
-  invokeCallbacks<T>(event: T): Promise<T>
-}
-
-/**
- * The agent's hook registry, which is private to `Agent`. When it cannot be reached the call is
- * refused rather than run ungated, because the hooks are where `interventions` enforce policy.
- */
-function hookInvoker(agent: LocalAgent, toolName: string): HookInvoker {
-  const registry = (agent as unknown as { _hooksRegistry?: Partial<HookInvoker> })._hooksRegistry
-  if (typeof registry?.invokeCallbacks !== 'function') {
-    throw new Error(`Cannot reach the agent's hooks to gate the call to '${toolName}'; refusing to run it ungated.`)
-  }
-  return registry as HookInvoker
-}
-
-/** Fire `AfterToolCallEvent` for an inner call and return the (possibly hook-replaced) result. */
-async function afterInnerCall(
-  agent: LocalAgent,
-  hooks: HookInvoker,
-  toolUse: ToolUseData,
-  tool: Tool,
-  result: ToolResultBlock,
-  request: InnerRequest
-): Promise<ToolResultBlock> {
-  const event = new AfterToolCallEvent({ agent, toolUse, tool, result, ...request })
-  return (await hooks.invokeCallbacks(event)).result
-}
-
-class ApprovalRequired extends Error {}
-
 class ToolTimedOut extends Error {}
 
 /** A fixed pool of slots; `run` waits for one, holds it for the callback, then hands it on. */
@@ -259,67 +221,6 @@ class Semaphore {
       }
     }
   }
-}
-
-/**
- * Fire `BeforeToolCallEvent` for an inner call and apply what the hooks decided: a cancel (an
- * intervention's deny) or an unanswered approval request is refused -- as an error result that still
- * goes through `afterToolCall`, as the executor does -- and a hook-substituted tool or transformed
- * input is honored. Approval is refused out of band rather than only by throwing from `interrupt`,
- * since a handler with `onError: 'proceed'` would swallow that throw.
- */
-async function gateInnerCall(
-  agent: LocalAgent,
-  hooks: HookInvoker,
-  toolUse: ToolUseData,
-  registryTool: Tool,
-  request: InnerRequest,
-  signal: AbortSignal
-): Promise<{ tool: Tool; toolUse: ToolUseData }> {
-  const event = new BeforeToolCallEvent({ agent, toolUse, tool: registryTool, ...request })
-  let approval: string | undefined
-  event.interrupt = <T>(params: { name: string; reason?: string; response?: JSONValue }): T => {
-    if (params.response !== undefined) {
-      return params.response as T
-    }
-    approval = params.reason ?? params.name ?? 'no reason given'
-    throw new ApprovalRequired()
-  }
-  try {
-    await hooks.invokeCallbacks(event)
-  } catch (error) {
-    // A handler with `onError: 'throw'` (the HumanInTheLoop default) re-raises the sentinel; any other
-    // error is a real hook failure.
-    if (!(error instanceof ApprovalRequired)) {
-      throw error
-    }
-  }
-  let refusal: string | undefined
-  if (approval !== undefined) {
-    refusal =
-      `Tool '${toolUse.name}' needs approval (${approval}), which programmatic_tool_caller cannot prompt for; ` +
-      'call it as a normal tool call instead.'
-  } else if (signal.aborted) {
-    // The hooks may have taken long enough (an approval classifier, say) for the run to end.
-    refusal = 'programmatic_tool_caller was cancelled; no further tool calls are made.'
-  } else if (event.cancel) {
-    refusal = typeof event.cancel === 'string' ? event.cancel : `Tool '${toolUse.name}' was cancelled by a hook.`
-  }
-  if (refusal !== undefined) {
-    const refused = new ToolResultBlock({
-      toolUseId: toolUse.toolUseId,
-      status: 'error',
-      content: [new TextBlock(refusal)],
-    })
-    const result = await afterInnerCall(agent, hooks, toolUse, registryTool, refused, request)
-    throw new Error(extractText(result.content) || refusal)
-  }
-  // Hooks may rename in place (then `event.toolUse` is this same object), so compare against the tool
-  // the name was resolved from.
-  const tool =
-    event.selectedTool ??
-    (event.toolUse.name !== registryTool.name ? agent.toolRegistry.resolve(event.toolUse.name) : registryTool)
-  return { tool, toolUse: { ...event.toolUse, toolUseId: toolUse.toolUseId } }
 }
 
 /**
@@ -415,7 +316,10 @@ async function withToolTimeout<T>(
   }
 }
 
-/** One inner call, the way the executor runs it: `beforeToolCall` hooks, then the tool, then `afterToolCall` hooks. */
+/**
+ * One inner call, run through the agent's tool executor. An interrupt (a request for approval) that has
+ * no answer yet refuses the call, since nothing can prompt from here.
+ */
 async function runInnerCall(
   agent: LocalAgent,
   toolName: string,
@@ -423,35 +327,27 @@ async function runInnerCall(
   signal: AbortSignal,
   input: JSONValue
 ): Promise<ToolResultBlock> {
-  // A copy, so an inner call cannot change the parent's invocation state.
-  const request: InnerRequest = {
-    invocationState: { ...parent.invocationState },
-    invocationContext: parent.invocationContext,
+  if (!(agent instanceof Agent)) {
+    throw new Error(`Cannot reach the agent's tool executor to run '${toolName}'; refusing to run it ungated.`)
   }
-  const hooks = hookInvoker(agent, toolName)
-  const registryTool = agent.toolRegistry.resolve(toolName)
-  const requested: ToolUseData = {
-    toolUseId: `ptc_${globalThis.crypto.randomUUID()}`,
-    name: registryTool.name,
-    input,
-  }
-  const { tool, toolUse } = await gateInnerCall(agent, hooks, requested, registryTool, request, signal)
-  const toolContext: ToolContext = {
-    toolUse,
-    agent,
-    invocationState: request.invocationState,
-    cancelSignal: signal,
-    ...(request.invocationContext && { invocationContext: request.invocationContext }),
-    interrupt: () => {
-      throw new Error('Interrupts are not supported from programmatic_tool_caller.')
-    },
-  }
-  const generator = tool.stream(toolContext)
-  let next = await generator.next()
-  while (!next.done) {
-    next = await generator.next()
-  }
-  return afterInnerCall(agent, hooks, toolUse, tool, next.value, request)
+  return agent._executeToolCall(
+    { toolUseId: `ptc_${globalThis.crypto.randomUUID()}`, name: toolName, input },
+    {
+      // A copy, so an inner call cannot change the parent's invocation state.
+      invocationState: { ...parent.invocationState },
+      cancelSignal: signal,
+      ...(parent.invocationContext && { invocationContext: parent.invocationContext }),
+      interrupt: <T>(params: InterruptParams): T => {
+        if (params.response !== undefined) {
+          return params.response as T
+        }
+        throw new Error(
+          `needs approval (${params.reason ?? params.name}), which programmatic_tool_caller cannot prompt for; ` +
+            'call it as a normal tool call instead.'
+        )
+      },
+    }
+  )
 }
 
 /**

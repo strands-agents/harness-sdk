@@ -27,7 +27,7 @@ import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
 import type { McpTool } from '../tools/mcp-tool.js'
-import { isValidToolName, type Tool } from '../tools/tool.js'
+import { isValidToolName, type Tool, type ToolContext } from '../tools/tool.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
@@ -80,6 +80,7 @@ import {
   AfterToolsEvent,
   BeforeInvocationEvent,
   BeforeModelCallEvent,
+  BeforeToolCallEvent,
   BeforeToolsEvent,
   HookableEvent,
   MessageAddedEvent,
@@ -90,6 +91,7 @@ import {
   AgentResultEvent,
   InterruptEvent,
   type ModelStopData,
+  type ToolUseData,
 } from '../hooks/events.js'
 import { StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { ConcurrentToolExecutor } from '../tools/executors/concurrent.js'
@@ -565,6 +567,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _structuredOutputSchema?: z.ZodSchema | undefined
   /** Tracer instance for creating and managing OpenTelemetry spans. */
   private _tracer: Tracer
+  private readonly _traceAttributes: Record<string, AttributeValue> | undefined
   /** Meter instance for accumulating loop metrics during invocation. */
   private _meter: Meter
   /** Interrupt state for human-in-the-loop workflows. */
@@ -726,6 +729,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     // Initialize tracer - OTEL returns no-op tracer if not configured
     this._tracer = new Tracer(config?.traceAttributes)
+    this._traceAttributes = config?.traceAttributes
 
     // Initialize meter for local metrics accumulation
     this._meter = new Meter()
@@ -1666,6 +1670,69 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param event - The event to process
    * @returns The event after processing
    */
+  /**
+   * Runs one tool call outside a model turn the way the executor runs a model-issued one: hooks,
+   * middleware, the tool, and retry. Such a call cannot pause for a response, so `context.interrupt`
+   * answers every interrupt it raises (hook, middleware, or tool): it returns the response, or throws to
+   * refuse the call with the error's message.
+   *
+   * @param toolUse - Tool call to execute
+   * @param context - Invocation state, cancel signal, request, and interrupt handler for the call
+   * @returns The tool result
+   * @internal
+   */
+  async _executeToolCall(
+    toolUse: ToolUseData,
+    context: Pick<ToolContext, 'invocationState' | 'cancelSignal' | 'invocationContext' | 'interrupt'>
+  ): Promise<ToolResultBlock> {
+    let refusal: unknown
+    const interrupt: ToolContext['interrupt'] = (params) => {
+      try {
+        return context.interrupt(params)
+      } catch (error) {
+        refusal = error
+        throw error
+      }
+    }
+    return this._toolExecutor.executeDirect(
+      {
+        agent: this,
+        middlewareRegistry: this._middlewareRegistry,
+        // As for background tasks: keep local trace state apart from the tool call this one runs inside.
+        tracer: new Tracer(this._traceAttributes),
+        meter: this._meter,
+        cancelSignal: context.cancelSignal,
+        toolInterrupt: interrupt,
+        middlewareInterrupt: (params) => ({ response: interrupt(params) }),
+        invocationContext: context.invocationContext,
+      },
+      toolUse,
+      context.invocationState,
+      async (event) => {
+        if (!(event instanceof HookableEvent)) {
+          return
+        }
+        if (!(event instanceof BeforeToolCallEvent)) {
+          await this._hooksRegistry.invokeCallbacks(event)
+          return
+        }
+        refusal = undefined
+        event.interrupt = interrupt
+        try {
+          await this._hooksRegistry.invokeCallbacks(event)
+        } catch (error) {
+          if (refusal === undefined || error !== refusal) {
+            throw error
+          }
+        }
+        // Applied here rather than by the throw alone, which a hook's error handling may swallow.
+        if (refusal !== undefined) {
+          event.cancel = normalizeError(refusal).message
+        }
+      }
+    )
+  }
+
   private async _invokeCallbacks(event: AgentStreamEvent): Promise<AgentStreamEvent> {
     if (event instanceof HookableEvent) {
       await this._hooksRegistry.invokeCallbacks(event)

@@ -9,7 +9,7 @@ Lets the agent orchestrate its other tools with Python code. The model passes a 
 - The sandbox is language-level, not OS-level: the code has no filesystem, network, environment, or subprocess access of its own, but it reaches whatever the exposed tools reach
 - Narrow the exposed tools with `allowedTools`
 - Inner tool calls fire the agent's `beforeToolCall` / `afterToolCall` hooks, so interventions still gate them. A call that needs interactive approval is refused, since a call made from code cannot prompt
-- Inner tool calls do not run tool middleware, `AfterToolCallEvent.retry`, tool spans, or stream-update events
+- Inner tool calls go through the agent's tool executor, so tool middleware and `AfterToolCallEvent.retry` apply to them too
 
 ## Install
 

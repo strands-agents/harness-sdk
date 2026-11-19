@@ -4,10 +4,12 @@ import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../../agent/agent.js'
 import { AfterToolCallEvent, BeforeToolCallEvent } from '../../../hooks/events.js'
 import { InterventionActions, InterventionHandler } from '../../../interventions/index.js'
+import { ExecuteToolStage } from '../../../middleware/stages.js'
+import type { MiddlewareHandlerOf } from '../../../middleware/types.js'
 import { logger } from '../../../logging/logger.js'
 import { tool } from '../../../tools/tool-factory.js'
-import { ToolStreamEvent } from '../../../tools/tool.js'
-import type { Tool, ToolContext, ToolStreamGenerator } from '../../../tools/tool.js'
+import { Tool, ToolStreamEvent } from '../../../tools/tool.js'
+import type { ToolContext, ToolStreamGenerator } from '../../../tools/tool.js'
 import { TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import {
   DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
@@ -847,12 +849,90 @@ describe('inner calls run through the agent hooks', () => {
     expect(seen).toEqual(['before:shell_like', 'after:shell_like'])
   })
 
-  it('refuses inner calls when the agent hooks cannot be reached', async () => {
+  it('leaves no interrupt pending on the agent after refusing an approval', async () => {
     calls.length = 0
-    const agent = agentOf(programmaticToolCaller, shellLike)
-    delete (agent as unknown as { _hooksRegistry?: unknown })._hooksRegistry
+    const agent = agentWith(shellLike)
+    agent.addHook(BeforeToolCallEvent, (event) => void event.interrupt({ name: 'approve-shell', reason: 'Run shell?' }))
     const result = await run(agent, gatedCode)
-    expect(text(result)).toMatch(/refusing to run it ungated/)
+    expect(text(result)).toBe(
+      "ERR Tool 'shell_like' error: needs approval (Run shell?), which programmatic_tool_caller cannot prompt for; " +
+        'call it as a normal tool call instead.'
+    )
+    expect(calls).toEqual([])
+    expect(agent._interruptState.interrupts).toEqual({})
+    expect(agent._interruptState.activated).toBe(false)
+  })
+
+  it('reports a hook cancel that gives no reason', async () => {
+    const agent = agentWith(shellLike)
+    agent.addHook(BeforeToolCallEvent, (event) => void (event.cancel = true))
+    expect(text(await run(agent, gatedCode))).toBe("ERR Tool 'shell_like' error: Tool cancelled by hook")
+  })
+
+  it('runs tool middleware around inner calls', async () => {
+    calls.length = 0
+    const order: string[] = []
+    const agent = agentWith(shellLike)
+    const middleware: MiddlewareHandlerOf<typeof ExecuteToolStage> = async function* (context, next) {
+      order.push(`before:${context.toolUse.name}`)
+      const result = yield* next({ ...context, toolUse: { ...context.toolUse, input: { command: 'guarded' } } })
+      order.push('after')
+      return result
+    }
+    agent.addMiddleware(ExecuteToolStage, middleware)
+    expect(text(await run(agent, "print(await shell_like(command='ls'))"))).toBe('ran:guarded')
+    expect(order).toEqual(['before:shell_like', 'after'])
+    expect(calls).toEqual(['guarded'])
+  })
+
+  it('refuses an inner call when tool middleware asks for approval', async () => {
+    calls.length = 0
+    const agent = agentWith(shellLike)
+    const middleware: MiddlewareHandlerOf<typeof ExecuteToolStage> = async function* (context, next) {
+      context.interrupt({ name: 'approve-shell', reason: 'Run shell?' })
+      return yield* next(context)
+    }
+    agent.addMiddleware(ExecuteToolStage, middleware)
+    const result = await run(agent, gatedCode)
+    expect(text(result)).toContain('needs approval (Run shell?)')
+    expect(calls).toEqual([])
+    expect(agent._interruptState.interrupts).toEqual({})
+  })
+
+  it('retries an inner call when an afterToolCall hook asks for it', async () => {
+    calls.length = 0
+    const agent = agentWith(shellLike)
+    agent.addHook(AfterToolCallEvent, (event) => void (event.retry = calls.length < 2))
+    expect(text(await run(agent, "print(await shell_like(command='ls'))"))).toBe('ran:ls')
+    expect(calls).toEqual(['ls', 'ls'])
+  })
+
+  it('fires afterToolCall with an error result when the tool throws', async () => {
+    const seen: string[] = []
+    class Throwing extends Tool {
+      name = 'throwing'
+      description = 'Throws from stream.'
+      toolSpec = { name: 'throwing', description: 'Throws from stream.', inputSchema: { type: 'object' as const } }
+      // eslint-disable-next-line require-yield
+      async *stream(): ToolStreamGenerator {
+        throw new Error('stream exploded')
+      }
+    }
+    const agent = agentWith(new Throwing())
+    agent.addHook(AfterToolCallEvent, (event) => void seen.push(`${event.toolUse.name}:${event.result.status}`))
+    const result = await run(agent, "try:\n    await throwing()\nexcept RuntimeError as e:\n    print('ERR', e)")
+    expect(text(result)).toBe("ERR Tool 'throwing' error: stream exploded")
+    expect(seen).toEqual(['throwing:error'])
+  })
+
+  it('refuses inner calls for an agent that has no tool executor', async () => {
+    calls.length = 0
+    const notAnAgent = { toolRegistry: agentWith(shellLike).toolRegistry } as unknown as Agent
+    const result = await runWithContext(notAnAgent, gatedCode, {})
+    expect(text(result)).toBe(
+      "ERR Failed to execute tool 'shell_like': Cannot reach the agent's tool executor to run 'shell_like'; " +
+        'refusing to run it ungated.'
+    )
     expect(calls).toEqual([])
   })
 })
