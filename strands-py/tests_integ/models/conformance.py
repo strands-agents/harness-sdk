@@ -285,6 +285,11 @@ def _will_not_clear(error: BaseException | None) -> bool:
     return False
 
 
+def known_reference(known: dict[str, Any]) -> str:
+    """Where a known failure is explained: its issue, or its link when it has no issue."""
+    return f"#{known['issue']}" if "issue" in known else known["link"]
+
+
 def _known_failure(item: pytest.Item) -> dict[str, Any] | None:
     case_id = getattr(getattr(item, "function", None), "conformance_case", None)
     if case_id is None:
@@ -316,11 +321,12 @@ def apply_known_failure(item: pytest.Item, call: pytest.CallInfo, report: pytest
         if not known.get("intermittent"):
             report.outcome = "failed"
             report.longrepr = (
-                f"known failure #{known['issue']} now passes; remove it from knownFailures in shared/conformance.json"
+                f"known failure {known_reference(known)} now passes; "
+                "remove it from knownFailures in shared/conformance.json"
             )
     elif _is_tracked_failure(known, call.excinfo.value):
         report.outcome = "skipped"
-        report.wasxfail = f"known failure, see #{known['issue']}"
+        report.wasxfail = f"known failure: {known['reason']} See {known_reference(known)}"
 
 
 def _outcome(report: pytest.TestReport, error: BaseException | None) -> dict[str, str]:
@@ -347,6 +353,9 @@ def record(item: pytest.Item, report: pytest.TestReport, error: BaseException | 
     target: Target = item.callspec.params["target"]
     result = {"sdk": "python", "provider": target.provider, "model": target.model_id, "case": case_id}
     result.update(_outcome(report, error))
+    known = _known_failure(item)
+    if known and hasattr(report, "wasxfail"):
+        result["known"] = {name: known[name] for name in ("reason", "issue", "link") if name in known}
     attempts = getattr(item, "conformance_attempts", 1)
     if attempts > 1:
         result["attempts"] = attempts
