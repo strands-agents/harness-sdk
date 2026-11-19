@@ -231,6 +231,8 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
     // Read inside the try: a connection that drops mid-body is a failed request too.
     payload = await readPayload(response)
   } catch (error) {
+    // An error that is already described, such as a non-JSON body or a redirect, passes through unchanged.
+    if (error instanceof ModelError) throw error
     throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
       cause: error,
     })

@@ -7,12 +7,13 @@ import {
   SystemOneHttpError,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
-import { createSigV4Signer, type SigV4Credentials } from './sigv4-signer.js'
+import { createSigV4Signer, type SigV4Config, type SigV4Credentials } from './sigv4-signer.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
 export type { SigV4Credentials } from './sigv4-signer.js'
 
 const CLASS_NAME = 'HttpDecisionModel'
+const PROVIDER_NAME = 'http'
 const DEFAULT_MIN_CONFIDENCE = 0.5
 const DEFAULT_TIMEOUT_MS = 60_000
 /** The largest delay a timer accepts; above it `AbortSignal.timeout` fires after 1 ms. */
@@ -32,7 +33,8 @@ export type HttpDecisionModelAuth =
    */
   | {
       readonly type: 'sigv4'
-      readonly region: string
+      /** AWS region to sign for. Defaults to the `AWS_REGION` or `AWS_DEFAULT_REGION` environment variable. */
+      readonly region?: string
       readonly service: string
       /** Static credentials or a provider called on every request. Defaults to the standard AWS credential chain. */
       readonly credentials?: SigV4Credentials | (() => Promise<SigV4Credentials>)
@@ -43,11 +45,17 @@ export interface HttpDecisionModelOptions {
   /**
    * Full URL of the System One endpoint, such as `http://localhost:8000/v1/systemone`. It must not contain
    * a query string. The endpoint must not redirect: a redirect fails the request.
+   *
+   * With `auth` or `headers`, the URL must be `https` unless the host is `localhost`, `127.0.0.1` or `[::1]`,
+   * so a credential is never sent in clear text. A server on a private network needs https as well.
    */
   readonly endpoint: string
   /** How requests authenticate. Omit for a server that needs no authentication, such as a local one. */
   readonly auth?: HttpDecisionModelAuth
-  /** Static request headers that are not credentials, such as `x-api-key` for API Gateway. */
+  /**
+   * Static request headers, such as `x-api-key` for API Gateway. They are treated as secrets: they need an
+   * `https` endpoint unless the host is loopback, and a browser cannot send them.
+   */
   readonly headers?: Readonly<Record<string, string>>
   /** Sent as the request's `model`. Omitted when unset, so the server uses its own. */
   readonly modelId?: string
@@ -86,17 +94,21 @@ export class HttpDecisionModel extends DecisionModel {
 
   /**
    * @param options - Endpoint, authentication, and request configuration.
-   * @throws Error if the endpoint, authentication, headers, timeout, or confidence threshold is invalid,
-   * or if constructed in a browser.
+   * @throws Error if the endpoint, authentication, headers, timeout, or confidence threshold is invalid, or if
+   * `auth` or `headers` is set in a browser.
    */
   constructor(options: HttpDecisionModelOptions) {
     super()
-    if (typeof window !== 'undefined') {
-      throw new Error(`${CLASS_NAME} cannot run in a browser because that would expose its credentials`)
-    }
 
-    // `new URL` rejects a malformed endpoint, and fetch rejects a URL with credentials and an invalid header.
-    const endpoint = new URL(options.endpoint)
+    let endpoint: URL
+    try {
+      endpoint = new URL(options.endpoint)
+    } catch (cause) {
+      throw new Error(`${CLASS_NAME} endpoint must be a valid URL`, { cause })
+    }
+    if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
+      throw new Error(`${CLASS_NAME} endpoint must use http or https`)
+    }
     // A URL password is echoed in fetch's own error message, so it is rejected before any request.
     if (endpoint.username !== '' || endpoint.password !== '') {
       throw new Error(`${CLASS_NAME} endpoint must not contain credentials: use auth instead`)
@@ -111,8 +123,12 @@ export class HttpDecisionModel extends DecisionModel {
     }
     const { auth } = options
     this._authenticated = auth !== undefined
-    // A credential, signature or secret header sent in clear text is readable on the network.
     const sendsSecrets = auth !== undefined || Object.keys(headers).length > 0
+    // A page's users could read credentials sent from a browser. A public endpoint that needs none is fine.
+    if (sendsSecrets && typeof window !== 'undefined') {
+      throw new Error(`${CLASS_NAME} cannot send auth or headers from a browser because that would expose them`)
+    }
+    // A credential, signature or secret header sent in clear text is readable on the network.
     const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname)
     if (sendsSecrets && endpoint.protocol !== 'https:' && !loopback) {
       throw new Error(`${CLASS_NAME} auth and headers require an https endpoint unless the host is loopback`)
@@ -133,7 +149,7 @@ export class HttpDecisionModel extends DecisionModel {
     } else if (auth !== undefined && auth.type !== 'sigv4') {
       throw new Error(`${CLASS_NAME} auth type must be 'bearer' or 'sigv4'`)
     }
-    const sign = auth?.type === 'sigv4' ? createSigV4Signer(endpoint, auth) : undefined
+    const sign = auth?.type === 'sigv4' ? createSigV4Signer(endpoint, resolveSigV4(auth)) : undefined
 
     // The shared transport only POSTs. Signing, the timeout and redirect handling wrap `fetch` here, so they stay local.
     const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -149,13 +165,15 @@ export class HttpDecisionModel extends DecisionModel {
       })
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel().catch(() => undefined)
-        throw new ModelError(`redirected (HTTP ${response.status}): set the endpoint to the redirect target`)
+        throw new ModelError(
+          `${PROVIDER_NAME} decision request was redirected (HTTP ${response.status}): set the endpoint to the redirect target`
+        )
       }
       return response
     }
 
     this._providerConfig = {
-      providerName: 'http',
+      providerName: PROVIDER_NAME,
       endpoint: endpoint.href,
       defaultMinConfidence: resolveDefaultMinConfidence(
         options.defaultMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
@@ -198,6 +216,18 @@ export class HttpDecisionModel extends DecisionModel {
       throw error
     }
   }
+}
+
+/** Resolves the region like the SDK's other AWS paths do, and requires a service, so a bad config fails early. */
+function resolveSigV4(auth: Extract<HttpDecisionModelAuth, { type: 'sigv4' }>): SigV4Config {
+  const service = auth.service?.trim()
+  if (!service) throw new Error(`${CLASS_NAME} sigv4 auth requires a service`)
+  const env = globalThis.process?.env
+  const region = auth.region?.trim() || env?.AWS_REGION || env?.AWS_DEFAULT_REGION
+  if (!region) {
+    throw new Error(`${CLASS_NAME} sigv4 auth requires a region: pass region or set AWS_REGION or AWS_DEFAULT_REGION`)
+  }
+  return { region, service, ...(auth.credentials !== undefined && { credentials: auth.credentials }) }
 }
 
 /** Merges header sets case-insensitively, later sets winning, so the transport's `Content-Type` replaces a static one. */

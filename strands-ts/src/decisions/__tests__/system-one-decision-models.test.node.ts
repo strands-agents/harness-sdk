@@ -266,6 +266,19 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect(inits[1]).not.toHaveProperty('signal')
     })
 
+    it('reports a non-JSON 200 response with the provider message unchanged', async () => {
+      const fetch = vi.fn(async () => new Response('<html>oops</html>', { status: 200 })) as typeof globalThis.fetch
+      const decision = create({ apiKey: 'test-key', fetch })
+
+      const error = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+
+      expect(error).toBeInstanceOf(ModelError)
+      expect((error as Error).message).toBe('decision provider returned a non-JSON response')
+    })
+
     it('rejects with ModelError when the cancel signal aborts the request', async () => {
       const controller = new AbortController()
       const fetch = vi.fn(

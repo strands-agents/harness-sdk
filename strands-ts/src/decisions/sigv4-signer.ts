@@ -3,8 +3,6 @@
  *
  * The signing packages are optional peer dependencies, loaded on the first signed request, so
  * callers that never sign do not need them and no AWS types reach the public declarations.
- *
- * @internal
  */
 
 /** AWS credentials used to sign a request. */
@@ -14,7 +12,7 @@ export interface SigV4Credentials {
   readonly sessionToken?: string
 }
 
-/** Where and how to sign: the AWS region and signing service name, such as `lambda` or `execute-api`. */
+/** @internal Where and how to sign: the AWS region and signing service name, such as `lambda` or `execute-api`. */
 export interface SigV4Config {
   readonly region: string
   readonly service: string
@@ -23,13 +21,13 @@ export interface SigV4Config {
 }
 
 /**
- * Returns the headers that sign one POST of `body`, including the static `headers` it was given. The
+ * @internal Returns the headers that sign one POST of `body`, including the static `headers` it was given. The
  * returned headers omit `host` and `content-type`: fetch derives the first and the transport sets the second.
  */
 export type SigV4Signer = (body: string, headers: Record<string, string>) => Promise<Record<string, string>>
 
 /**
- * Builds a signer for the endpoint `url`, which must not carry a query string. The signing packages load on the
+ * @internal Builds a signer for the endpoint `url`, which must not carry a query string. The signing packages load on the
  * first call and are shared by concurrent calls; a failed load is retried on the next call.
  */
 export function createSigV4Signer(url: URL, config: SigV4Config): SigV4Signer {

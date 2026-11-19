@@ -72,7 +72,18 @@ function create(options: Partial<HttpDecisionModelOptions> = {}): HttpDecisionMo
   return new HttpDecisionModel({ endpoint: LOCAL_ENDPOINT, ...options })
 }
 
+/** Asserts that `pending` rejects with a ModelError that has exactly `message`. */
+async function expectModelError(pending: Promise<unknown>, message: string): Promise<void> {
+  const error = await pending.then(
+    () => undefined,
+    (caught: unknown) => caught
+  )
+  expect(error).toBeInstanceOf(ModelError)
+  expect((error as Error).message).toBe(message)
+}
+
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -98,9 +109,16 @@ describe('HttpDecisionModel', () => {
           },
         },
       ])
-      expect(result.answers.urgent).toBe(true)
-      expect(result.metadata.providerName).toBe('http')
-      expect(result.metadata.modelId).toBe('resolved-model')
+      expect(result).toEqual({
+        answers: { urgent: true },
+        metadata: {
+          latencyMs: expect.any(Number),
+          providerName: 'http',
+          modelId: 'resolved-model',
+          probabilities: { urgent: { true: 0.9, false: expect.closeTo(0.1) } },
+          confidence: { urgent: expect.closeTo(0.8) },
+        },
+      })
     })
 
     it('sends modelId only when one is configured', async () => {
@@ -109,7 +127,11 @@ describe('HttpDecisionModel', () => {
 
       await create({ fetch, modelId: ' my-model ' }).ask('state', QUESTIONS)
 
-      expect(captured[0]?.body.model).toBe('my-model')
+      expect(captured[0]?.body).toEqual({
+        state: 'state',
+        model: 'my-model',
+        questions: { urgent: { type: 'noul', instructions: 'Is this urgent?' } },
+      })
     })
 
     it('applies defaultMinConfidence to the answers', async () => {
@@ -119,8 +141,8 @@ describe('HttpDecisionModel', () => {
       const result = await create({ fetch, defaultMinConfidence: 0.5 }).ask('state', QUESTIONS)
       const strict = await create({ fetch, defaultMinConfidence: 0.85 }).ask('state', QUESTIONS)
 
-      expect(result.answers.urgent).toBe(true)
-      expect(strict.answers.urgent).toBeInstanceOf(Uncertain)
+      expect(result.answers).toEqual({ urgent: true })
+      expect(strict.answers).toEqual({ urgent: new Uncertain() })
     })
 
     it('defaults the minimum confidence to 0.5', async () => {
@@ -130,8 +152,8 @@ describe('HttpDecisionModel', () => {
       const result = await create({ fetch }).ask('state', QUESTIONS)
       const permissive = await create({ fetch, defaultMinConfidence: 0 }).ask('state', QUESTIONS)
 
-      expect(result.answers.urgent).toBeInstanceOf(Uncertain)
-      expect(permissive.answers.urgent).toBe(true)
+      expect(result.answers).toEqual({ urgent: new Uncertain() })
+      expect(permissive.answers).toEqual({ urgent: true })
     })
 
     it.each([
@@ -148,10 +170,8 @@ describe('HttpDecisionModel', () => {
         fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }),
       })
 
-      const error = await decision.ask('state', QUESTIONS).catch((e: unknown) => e)
-
-      expect(error).toBeInstanceOf(ModelError)
-      expect((error as Error).message).toBe(
+      await expectModelError(
+        decision.ask('state', QUESTIONS),
         `http decision request failed with HTTP 403: Forbidden | ${hint}, and for sigv4 the IAM permission, region and service`
       )
     })
@@ -248,16 +268,19 @@ describe('HttpDecisionModel', () => {
     it('aborts a request that exceeds timeoutMs', async () => {
       const decision = create({ fetch: hangingFetch(), timeoutMs: 20 })
 
-      const error = await decision.ask('state', QUESTIONS).catch((e: unknown) => e)
-
-      expect(error).toBeInstanceOf(ModelError)
-      expect((error as Error).message).toMatch(/^http decision request failed: .*timeout/)
+      await expectModelError(
+        decision.ask('state', QUESTIONS),
+        'http decision request failed: The operation was aborted due to timeout'
+      )
     })
 
     it('covers reading the response body', async () => {
       const decision = create({ fetch: brokenBodyFetch('stall'), timeoutMs: 20 })
 
-      await expect(decision.ask('state', QUESTIONS)).rejects.toThrow(/decision request failed: .*timeout/)
+      await expectModelError(
+        decision.ask('state', QUESTIONS),
+        'http decision request failed: The operation was aborted due to timeout'
+      )
     })
 
     it('reports a caller cancel as a failed request, not a timeout', async () => {
@@ -267,9 +290,7 @@ describe('HttpDecisionModel', () => {
       const pending = decision.ask('state', QUESTIONS, { cancelSignal: controller.signal })
       controller.abort(new Error('stop'))
 
-      const error = await pending.catch((e: unknown) => e)
-      expect(error).toBeInstanceOf(ModelError)
-      expect((error as Error).message).toBe('http decision request failed: stop')
+      await expectModelError(pending, 'http decision request failed: stop')
     })
 
     it('reports a failure as a failed request when the caller cancelled and the timeout fired too', async () => {
@@ -284,7 +305,7 @@ describe('HttpDecisionModel', () => {
       const pending = decision.ask('state', QUESTIONS, { cancelSignal: controller.signal })
       setTimeout(() => controller.abort(), 30)
 
-      await expect(pending).rejects.toThrow('http decision request failed: boom')
+      await expectModelError(pending, 'http decision request failed: boom')
     })
   })
 
@@ -354,7 +375,11 @@ describe('HttpDecisionModel', () => {
       return signed.headers['authorization']!
     }
 
-    it('signs the exact request that is sent', async () => {
+    it('sends exactly the headers a reference implementation signs', async () => {
+      // botocore, an independent SigV4 implementation, signs this request with the same credentials and clock
+      // and produces the same signature and `x-amz-content-sha256`.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2025-01-01T00:00:00Z'))
       const captured: CapturedRequest[] = []
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
@@ -364,13 +389,59 @@ describe('HttpDecisionModel', () => {
 
       await decision.ask('Refund this today', QUESTIONS)
 
-      const [request] = captured
-      expect(request?.headers['authorization']).toMatch(
-        /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/\d{8}\/us-east-1\/lambda\/aws4_request, SignedHeaders=.*host.*, Signature=[0-9a-f]{64}$/
-      )
-      expect(request?.headers['x-amz-security-token']).toBe('session-token')
-      expect(request?.headers['content-type']).toBe('application/json')
-      expect(request?.headers['authorization']).toBe(await expectedSignature(request!, 'lambda', 'us-east-1'))
+      expect(captured).toEqual([
+        {
+          url: LAMBDA_ENDPOINT,
+          redirect: 'manual',
+          rawBody:
+            '{"state":"Refund this today","questions":{"urgent":{"type":"noul","instructions":"Is this urgent?"}}}',
+          body: {
+            state: 'Refund this today',
+            questions: { urgent: { type: 'noul', instructions: 'Is this urgent?' } },
+          },
+          headers: {
+            authorization:
+              'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20250101/us-east-1/lambda/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=28c06bbba2d7124a34910841b248e482099aff90df4ae39081c9eb05549cf83a',
+            'content-type': 'application/json',
+            'x-amz-content-sha256': 'ece0a488cf6a03d34d97a98a7fc8e2fc5977d41a09624b292eb34551d0b461e5',
+            'x-amz-date': '20250101T000000Z',
+            'x-amz-security-token': 'session-token',
+          },
+        },
+      ])
+    })
+
+    it.each([
+      ['AWS_REGION', 'us-west-2'],
+      ['AWS_DEFAULT_REGION', 'eu-central-1'],
+    ])('takes the region from %s when none is given', async (variable, region) => {
+      vi.stubEnv('AWS_REGION', undefined)
+      vi.stubEnv('AWS_DEFAULT_REGION', undefined)
+      vi.stubEnv(variable, region)
+      const captured: CapturedRequest[] = []
+      const decision = create({
+        endpoint: LAMBDA_ENDPOINT,
+        auth: { type: 'sigv4', service: 'lambda', credentials: CREDENTIALS },
+        fetch: fakeFetch(systemOneBody(), { captured }),
+      })
+
+      await decision.ask('state', QUESTIONS)
+
+      expect(captured[0]?.headers['authorization']).toContain(`/${region}/lambda/aws4_request`)
+    })
+
+    it('prefers an explicit region to the environment', async () => {
+      vi.stubEnv('AWS_REGION', 'us-west-2')
+      const captured: CapturedRequest[] = []
+      const decision = create({
+        endpoint: LAMBDA_ENDPOINT,
+        auth: { type: 'sigv4', region: 'ap-south-1', service: 'lambda', credentials: CREDENTIALS },
+        fetch: fakeFetch(systemOneBody(), { captured }),
+      })
+
+      await decision.ask('state', QUESTIONS)
+
+      expect(captured[0]?.headers['authorization']).toContain('/ap-south-1/lambda/aws4_request')
     })
 
     it('signs a non-default port, a path, and static headers', async () => {
@@ -434,7 +505,7 @@ describe('HttpDecisionModel', () => {
       expect(captured[0]?.headers['authorization']).toContain('Credential=AKIDFROMENV/')
     })
 
-    it('does not report a credential failure as a failed request, and recovers on the next call', async () => {
+    it('reports a credential failure as a model error, and recovers on the next call', async () => {
       const fetch = fakeFetch()
       const provider = vi
         .fn<() => Promise<typeof CREDENTIALS>>()
@@ -446,7 +517,7 @@ describe('HttpDecisionModel', () => {
         fetch,
       })
 
-      await expect(decision.ask('state', QUESTIONS)).rejects.toThrow('no credentials')
+      await expectModelError(decision.ask('state', QUESTIONS), 'http decision request failed: no credentials')
       expect(fetch).not.toHaveBeenCalled()
 
       await expect(decision.ask('state', QUESTIONS)).resolves.toBeDefined()
@@ -462,7 +533,10 @@ describe('HttpDecisionModel', () => {
       const fetch = fakeFetch()
       const decision = create({ endpoint: LAMBDA_ENDPOINT, auth: sigv4, timeoutMs: 20, fetch })
 
-      await expect(decision.ask('state', QUESTIONS)).rejects.toThrow(/decision request failed: .*timeout/)
+      await expectModelError(
+        decision.ask('state', QUESTIONS),
+        'http decision request failed: The operation was aborted due to timeout'
+      )
       expect(fetch).not.toHaveBeenCalled()
     })
 
@@ -473,7 +547,7 @@ describe('HttpDecisionModel', () => {
       const pending = decision.ask('state', QUESTIONS, { cancelSignal: controller.signal })
       controller.abort(new Error('stop'))
 
-      await expect(pending).rejects.toThrow('http decision request failed: stop')
+      await expectModelError(pending, 'http decision request failed: stop')
     })
   })
 
@@ -481,7 +555,13 @@ describe('HttpDecisionModel', () => {
     const bearer = { type: 'bearer', token: 't' } as const
 
     it.each([
-      ['an invalid endpoint', { endpoint: 'not a url' }, 'Invalid URL'],
+      ['an invalid endpoint', { endpoint: 'not a url' }, 'endpoint must be a valid URL'],
+      ['a non-http endpoint', { endpoint: 'ftp://example.com/x' }, 'endpoint must use http or https'],
+      [
+        'sigv4 without a service',
+        { endpoint: LAMBDA_ENDPOINT, auth: { type: 'sigv4', region: 'us-east-1', service: ' ' } },
+        'sigv4 auth requires a service',
+      ],
       [
         'credentials in the endpoint',
         { endpoint: 'https://user:hunter2@example.com/v1/systemone' },
@@ -575,10 +655,30 @@ describe('HttpDecisionModel', () => {
       expect(() => create({ headers: { 'x-amz-date': 'x' } })).not.toThrow()
     })
 
-    it('rejects construction in a browser', () => {
-      vi.stubGlobal('window', {})
+    describe('in a browser', () => {
+      it('allows an endpoint that needs no auth or headers', () => {
+        vi.stubGlobal('window', {})
 
-      expect(() => create()).toThrow('cannot run in a browser')
+        expect(() => create()).not.toThrow()
+      })
+
+      it.each([
+        ['auth', { auth: bearer }],
+        ['headers', { headers: { 'x-api-key': 'k' } }],
+      ])('rejects %s', (_name, options) => {
+        vi.stubGlobal('window', {})
+
+        expect(() => create(options)).toThrow('cannot send auth or headers from a browser')
+      })
+    })
+
+    it('requires a region from the option or the environment', () => {
+      vi.stubEnv('AWS_REGION', undefined)
+      vi.stubEnv('AWS_DEFAULT_REGION', undefined)
+
+      expect(() => create({ endpoint: LAMBDA_ENDPOINT, auth: { type: 'sigv4', service: 'lambda' } })).toThrow(
+        'sigv4 auth requires a region: pass region or set AWS_REGION or AWS_DEFAULT_REGION'
+      )
     })
   })
 })
