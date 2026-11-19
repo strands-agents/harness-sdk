@@ -1043,7 +1043,7 @@ describe('OpenAIDecisionModel', () => {
     })
 
     expect(result).toEqual({
-      answers: { refused: new Uncertain('openai declined to answer'), answered: true },
+      answers: { refused: new Uncertain('openai refused to answer'), answered: true },
       metadata: {
         latencyMs: expect.any(Number),
         providerName: 'openai',
@@ -1072,7 +1072,7 @@ describe('OpenAIDecisionModel', () => {
 
     await expect(
       decision.ask('state', { q: { question: 'ok?', choices: 'boolean', uncertainty: false } })
-    ).rejects.toThrow(/question id=<q> \| decision provider declined to answer/)
+    ).rejects.toThrow(/question id=<q> \| decision provider refused to answer/)
   })
 
   it.each([

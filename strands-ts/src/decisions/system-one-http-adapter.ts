@@ -440,7 +440,7 @@ function parseAnswer(rawAnswer: unknown, question: Question, id: string, config:
 
 function parseRefusedAnswer(refused: RefusedAnswer, question: Question, id: string): ParsedAnswer {
   if (question.uncertainty === false) {
-    throw new ModelError(`question id=<${id}> | decision provider declined to answer and uncertainty is disabled`)
+    throw new ModelError(`question id=<${id}> | decision provider refused to answer and uncertainty is disabled`)
   }
   return { answer: new Uncertain(refused.reason), probabilities: {}, confidence: 0 }
 }
