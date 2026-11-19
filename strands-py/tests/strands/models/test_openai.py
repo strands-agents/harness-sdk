@@ -802,6 +802,30 @@ def test_format_request_respects_legacy_stream_param(openai_client, model_id, me
     assert "stream_options" not in tru_request
 
 
+def test_format_request_passes_stream_options_param_through(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, params={"stream_options": {"include_usage": False}})
+
+    tru_request = model.format_request(messages)
+
+    assert tru_request["stream_options"] == {"include_usage": False}
+
+
+def test_format_request_omits_params_set_to_none(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(
+        model_id=model_id,
+        params={"seed": None, "top_p": 0.8, "prompt_cache_key": None, "stream_options": None},
+    )
+
+    tru_request = model.format_request(messages)
+
+    assert "seed" not in tru_request
+    assert "stream_options" not in tru_request
+    assert "prompt_cache_key" not in tru_request
+    assert tru_request["top_p"] == 0.8
+
+
 def test_cache_key_maps_to_prompt_cache_key(openai_client, model_id, messages):
     _ = openai_client
     model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
