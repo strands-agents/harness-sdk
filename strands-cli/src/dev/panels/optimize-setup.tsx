@@ -119,9 +119,19 @@ const ChoiceSlider = ({ count, position }: { count: number; position: number }):
   )
 }
 
-type SetupButton = 'start' | 'cancel'
+type SetupButton = 'next' | 'back' | 'start' | 'cancel'
 
-const SETUP_BUTTONS: readonly SetupButton[] = ['start', 'cancel']
+const BUTTON_LABELS: Readonly<Record<SetupButton, string>> = {
+  next: '[ Next ]',
+  back: 'Back',
+  start: '[ Start ]',
+  cancel: 'Cancel',
+}
+
+const tabButtons = (tab: SetupTab): readonly SetupButton[] => {
+  if (tab === 'review') return ['start', 'cancel']
+  return tab === 'tune' ? ['next', 'cancel'] : ['next', 'back']
+}
 
 interface SetupSlider {
   readonly key: string
@@ -367,7 +377,7 @@ const tabRows = (tab: SetupTab, plan: OptimizePlan, sliders: readonly SetupSlide
             ? [{ kind: 'slider', slider }, { kind: 'constraints' }]
             : [{ kind: 'slider', slider }]
         )),
-  ...SETUP_BUTTONS.map((button): SetupRow => ({ kind: 'button', button })),
+  ...tabButtons(tab).map((button): SetupRow => ({ kind: 'button', button })),
 ]
 
 const tunedKnobs = ({ knobs }: OptimizePlan): Knob[] => knobs.filter((knob) => knob.enabled && !knob.unavailable)
@@ -401,11 +411,17 @@ const startHint = (plan: OptimizePlan, ready: boolean): string => {
   return plan.budgetProblem ? 'lower the budget to start' : 'check a knob to start'
 }
 
+const buttonHint = (button: SetupButton, plan: OptimizePlan, ready: boolean): string => {
+  if (button === 'start') return startHint(plan, ready)
+  if (button === 'next') return 'Enter next'
+  return button === 'back' ? 'Enter back' : 'Enter cancel'
+}
+
 const setupHints = (focused: SetupRow | undefined, plan: OptimizePlan, ready: boolean): string[] => {
   const hints = (action: string): string[] => ['Tab next tab', '↑↓', action, 'Esc cancel']
   if (focused?.kind === 'slider') return hints(focused.slider.hint)
   if (focused?.kind === 'constraints') return hints('Enter edit')
-  if (focused?.kind === 'button') return hints(focused.button === 'start' ? startHint(plan, ready) : 'Enter cancel')
+  if (focused?.kind === 'button') return hints(buttonHint(focused.button, plan, ready))
   if (focused?.kind !== 'knob') return ['Tab next tab', 'Esc cancel']
   if (focused.knob.unavailable) return hints('not available')
   return hints(focused.knob.kind === 'models' ? 'Enter choose models' : 'Enter toggle')
@@ -768,9 +784,19 @@ export const SetupView = ({ session, width, height, plan }: SetupViewProps): Rea
     tab.set(next)
     cursor.set(0)
   }
-  const moveTab = (step: 1 | -1): void => {
+  const nextTab = (step: 1 | -1): SetupTab => {
     const at = SETUP_TABS.indexOf(tab.current())
-    pickTab(SETUP_TABS[(at + step + SETUP_TABS.length) % SETUP_TABS.length]!)
+    return SETUP_TABS[(at + step + SETUP_TABS.length) % SETUP_TABS.length]!
+  }
+  const moveTab = (step: 1 | -1): void => pickTab(nextTab(step))
+  const stepTab = (step: 1 | -1, keep: readonly SetupButton[]): void => {
+    const next = nextTab(step)
+    const nextRows = tabRows(next, plan, tabSliders(next, source))
+    const at = keep
+      .map((button) => nextRows.findIndex((row) => row.kind === 'button' && row.button === button))
+      .find((index) => index >= 0)
+    tab.set(next)
+    cursor.set(at ?? 0)
   }
   const edit = (field: ObjectiveField): void => editing.set({ field, value: textValue(latest().objective[field]) })
   const save = ({ field, value }: ObjectiveEditor): void => {
@@ -780,6 +806,8 @@ export const SetupView = ({ session, width, height, plan }: SetupViewProps): Rea
   const activate = (row: SetupRow | undefined): void => {
     if (row?.kind === 'button') {
       if (row.button === 'cancel') cancel()
+      else if (row.button === 'next') stepTab(1, ['next', 'start'])
+      else if (row.button === 'back') stepTab(-1, ['next'])
       else if (ready) confirm.ask(paidOptimization(latest(), session.agent?.(), () => session.start()))
     } else if (row?.kind === 'slider' && row.slider.editable) edit('expression')
     else if (row?.kind === 'constraints') edit('constraints')
@@ -910,11 +938,12 @@ export const SetupView = ({ session, width, height, plan }: SetupViewProps): Rea
       ) : null}
       {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : compact ? null : <Gap />}
       <SetupButtons
+        buttons={tabButtons(tab.value)}
         ready={ready}
         estimate={usageShort(plan.usage)}
         focused={focused?.kind === 'button' ? focused.button : undefined}
-        onChoose={(button) => choose(firstButton + SETUP_BUTTONS.indexOf(button))}
-        onHover={(button) => cursor.set(firstButton + SETUP_BUTTONS.indexOf(button))}
+        onChoose={(button) => choose(firstButton + tabButtons(tab.value).indexOf(button))}
+        onHover={(button) => cursor.set(firstButton + tabButtons(tab.value).indexOf(button))}
       />
       <Fill />
       <KeyHints hints={editor ? ['Enter save', 'Esc cancel'] : setupHints(focused, plan, ready)} />
@@ -923,12 +952,14 @@ export const SetupView = ({ session, width, height, plan }: SetupViewProps): Rea
 }
 
 const SetupButtons = ({
+  buttons,
   ready,
   estimate,
   focused,
   onChoose,
   onHover,
 }: {
+  buttons: readonly SetupButton[]
   ready: boolean
   estimate: string
   focused: SetupButton | undefined
@@ -958,8 +989,16 @@ const SetupButtons = ({
   )
   return (
     <Box height={1} flexShrink={0} overflow="hidden">
-      {button('start', <Text {...(ready ? { color: accent, bold: true } : { dimColor: true })}>{'[ Start ]'}</Text>)}
-      {button('cancel', <Text bold={focused === 'cancel'}>Cancel</Text>)}
+      {buttons.map((name) =>
+        name === 'next' || name === 'start'
+          ? button(
+              name,
+              <Text {...(name === 'next' || ready ? { color: accent, bold: true } : { dimColor: true })}>
+                {BUTTON_LABELS[name]}
+              </Text>
+            )
+          : button(name, <Text bold={focused === name}>{BUTTON_LABELS[name]}</Text>)
+      )}
       <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" overflow="hidden">
         <Text dimColor wrap="truncate-end">
           {estimate}

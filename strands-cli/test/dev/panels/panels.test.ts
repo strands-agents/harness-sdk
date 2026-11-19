@@ -791,8 +791,10 @@ const PER_STEP_ROW = [...BUDGET_ROW, DOWN_KEY]
 const RUNS_ROW = [...PER_STEP_ROW, DOWN_KEY]
 const FINALISTS_ROW = [...RUNS_ROW, DOWN_KEY]
 const PARALLEL_ROW = [...FINALISTS_ROW, DOWN_KEY]
-const START_BUTTON = [DOWN_KEY, DOWN_KEY, DOWN_KEY]
+const REVIEW_TAB = [SHIFT_TAB_KEY]
+const START_BUTTON = REVIEW_TAB
 const CANCEL_BUTTON = [...START_BUTTON, DOWN_KEY]
+const GOAL_NEXT_BUTTON = [...GOAL_TAB, DOWN_KEY, DOWN_KEY, DOWN_KEY, DOWN_KEY]
 const LEFT_KEY = '\u001b[D'
 
 describe('OptimizePanel', () => {
@@ -855,7 +857,12 @@ describe('OptimizePanel', () => {
       'setObjective',
       [{ expression: 'Maximize(Contains)', constraints: '' }],
     ],
-    ['EnterOnStartAndEnterOnTheConfirm', [...START_BUTTON, '\r', '\r'], 'start', []],
+    [
+      'EnterOnNextThroughTheTabsAndEnterOnStartAndTheConfirm',
+      [...GOAL_NEXT_BUTTON, '\r', '\r', '\r', '\r', '\r'],
+      'start',
+      [],
+    ],
   ])('shouldCallTheSessionWhenTheUserPresses%sInTheSetup', async (_key, keys, action, args) => {
     const { session } = optimizeSession(setup)
     const { press } = await show(createElement(OptimizePanel, { ...panelProps, session }))
@@ -921,7 +928,7 @@ describe('OptimizePanel', () => {
 
   it.each<[string, string[], OptimizeAction, unknown[]]>([
     ['AKnob', ['effort'], 'toggleKnob', ['effort']],
-    ['StartAndThenStartTheRun', ['[ Start ]', '[ Start the run ]'], 'start', []],
+    ['StartAndThenStartTheRun', ['Review', '[ Start ]', '[ Start the run ]'], 'start', []],
   ])('shouldActWhenTheUserClicks%sInTheSetup', async (_target, labels, action, args) => {
     const { session } = optimizeSession(setup)
     const { click } = await showOptimizeInFrame(session, new DevPanelClicks())
@@ -935,6 +942,7 @@ describe('OptimizePanel', () => {
     const { session } = optimizeSession(setup)
     const { click, text } = await showOptimizeInFrame(session, new DevPanelClicks())
 
+    await click('Review')
     await click('[ Start ]')
 
     await vi.waitFor(() => expect(text()).toContain('optimize · refunds · start a paid run?'))
@@ -1001,7 +1009,7 @@ describe('OptimizePanel', () => {
     expect(
       text()
         .split('\n')
-        .find((line) => line.includes('[ Start ]'))
+        .find((line) => line.includes('[ Next ]'))
     ).toContain(usage)
   })
 
@@ -1822,7 +1830,7 @@ describe('OptimizePanel', () => {
       openCommand: props.openCommand,
     }
     const shown = await show(createElement(DevPanelFrame, { panel, width: 120, height: 22, clicks }), 24)
-    await shown.press(label === 'effort' ? '\u001b[B\u001b[B\u001b[B' : '\u001b[B')
+    await shown.press(label === 'effort' ? '\u001b[B\u001b[B\u001b[B' : SHIFT_TAB_KEY)
     const lines = shown.text().split('\n')
     const row = lines.findIndex((line) => line.includes(label))
     const column = stringWidth(lines[row]!.slice(0, lines[row]!.indexOf(label))) + 1
@@ -1881,9 +1889,28 @@ describe('OptimizePanel', () => {
 
     const { text } = await show(createElement(OptimizePanel, { ...panelProps, height: 10, session }), 12)
 
-    expect(text()).toContain('[ Start ]')
+    expect(text()).toContain('[ Next ]')
     expect(text()).toContain('Enter toggle')
     expect(text()).not.toContain('The best candidate on the validation cases wins')
+  })
+
+  it('shouldShowNextAndCancelOnTheFirstTabAndNextAndBackInTheMiddleAndStartOnTheReview', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    const bar = (): string =>
+      text()
+        .split('\n')
+        .find((line) => line.includes('[')) ?? ''
+    expect(bar()).toContain('[ Next ]')
+    expect(bar()).toContain('Cancel')
+    await press(TAB_KEY)
+    expect(bar()).toContain('[ Next ]')
+    expect(bar()).toContain('Back')
+    expect(bar()).not.toContain('Cancel')
+    for (const key of [TAB_KEY, TAB_KEY, TAB_KEY]) await press(key)
+    expect(bar()).toContain('[ Start ]')
+    expect(bar()).toContain('Cancel')
   })
 
   it('shouldGoBackToTheListWhenTheUserPressesEscOnAReviewWithNothingToApply', async () => {
