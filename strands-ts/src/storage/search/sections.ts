@@ -10,12 +10,16 @@
  *
  * A strategy that chunks at index time (a vector store) gets spans from its own chunks and does not
  * need this.
+ *
+ * @internal
  */
 
 /** Lines of context reported on either side of a matching line. */
 const CONTEXT_LINES = 5
 
-/** A matching section of an entry's text: 0-indexed inclusive line bounds and its relevance score. */
+/** A matching section of an entry's text: 0-indexed inclusive line bounds and its relevance score.  *
+ * @internal
+ */
 export interface MatchingSection {
   start: number
   end: number
@@ -25,6 +29,8 @@ export interface MatchingSection {
 /**
  * Scores how relevant a piece of text is to a query the scorer already holds. Must return 0 when
  * the text does not match, since that is what rules a line out as the centre of a section.
+ *
+ * @internal
  */
 export type TextScorer = (text: string) => number
 
@@ -41,6 +47,8 @@ export type TextScorer = (text: string) => number
  * @param score - Scores a candidate section; 0 means no match
  * @param contextLines - Lines of context to keep on either side of a matching line
  * @returns The matching sections, best-first
+ *
+ * @internal
  */
 export function matchingSections(
   lines: string[],
@@ -73,6 +81,8 @@ export function matchingSections(
  * @param score - Scores a candidate section; 0 means no match
  * @param contextLines - Lines of context to keep on either side of a matching line
  * @returns The byte offsets, `end` exclusive, or `undefined` when nothing in the content matched
+ *
+ * @internal
  */
 export function bestSectionRange(
   content: string,
