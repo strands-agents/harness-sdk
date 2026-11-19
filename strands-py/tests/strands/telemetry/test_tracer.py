@@ -549,6 +549,64 @@ def test_end_model_invoke_span_latest_conventions_does_not_export_redacted_reaso
     assert parts == [{"type": "reasoningContent"}, {"type": "text", "content": "done"}]
 
 
+def test_end_model_invoke_span_stable_conventions_maps_reasoning_text_to_reasoning_part(mock_span):
+    tracer = Tracer()
+    message = {
+        "role": "assistant",
+        "content": [
+            {"reasoningContent": {"reasoningText": {"text": "Multiply 17 by 23.", "signature": "sig-secret"}}},
+            {"text": "391"},
+        ],
+    }
+
+    usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
+    tracer.end_model_invoke_span(mock_span, message, usage, Metrics(latencyMs=20), "end_turn")
+
+    mock_span.add_event.assert_called_once_with(
+        "gen_ai.choice",
+        attributes={
+            "finish_reason": "end_turn",
+            "message": json.dumps([{"type": "reasoning", "text": "Multiply 17 by 23."}, {"text": "391"}]),
+        },
+    )
+
+
+@pytest.mark.parametrize("reasoning_content", [{"redactedContent": b"\x01\x02\x03"}, {"reasoningText": None}])
+def test_end_model_invoke_span_stable_conventions_does_not_export_redacted_reasoning(mock_span, reasoning_content):
+    tracer = Tracer()
+    message = {"role": "assistant", "content": [{"reasoningContent": reasoning_content}, {"text": "done"}]}
+
+    usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
+    tracer.end_model_invoke_span(mock_span, message, usage, Metrics(latencyMs=20), "end_turn")
+
+    assert mock_span.add_event.call_args.kwargs["attributes"]["message"] == json.dumps([{"text": "done"}])
+
+
+def test_end_event_loop_cycle_span_stable_conventions_maps_reasoning_text_to_reasoning_part(mock_span):
+    tracer = Tracer()
+    message = {
+        "role": "assistant",
+        "content": [
+            {"reasoningContent": {"reasoningText": {"text": "Multiply 17 by 23.", "signature": "sig-secret"}}},
+            {"toolUse": {"toolUseId": "calc-1", "name": "calc", "input": {"expression": "17 * 23"}}},
+        ],
+    }
+    tool_result_message = {
+        "role": "user",
+        "content": [{"toolResult": {"toolUseId": "calc-1", "status": "success", "content": [{"text": "391"}]}}],
+    }
+
+    tracer.end_event_loop_cycle_span(mock_span, message, tool_result_message)
+
+    mock_span.add_event.assert_called_once_with(
+        "gen_ai.choice",
+        attributes={
+            "message": json.dumps([{"type": "reasoning", "text": "Multiply 17 by 23."}, message["content"][1]]),
+            "tool.result": json.dumps(tool_result_message["content"]),
+        },
+    )
+
+
 def test_start_tool_call_span(mock_tracer):
     """Test starting a tool call span."""
     with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
