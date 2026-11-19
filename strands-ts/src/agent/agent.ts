@@ -88,6 +88,7 @@ import {
   ContentBlockEvent,
   ModelMessageEvent,
   ToolResultEvent,
+  ToolStreamUpdateEvent,
   AgentResultEvent,
   InterruptEvent,
   type ModelStopData,
@@ -1673,6 +1674,10 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param toolUse - Tool call to execute
    * @param context - Invocation state, cancel signal, request, and interrupt handler for the call
    * @returns The tool result
+   * @throws The error of a hook or middleware that fails, which includes an interrupt that middleware
+   *   raises and `context.interrupt` refuses
+   * @throws InterruptError if the tool registers an interrupt on the agent itself, as a child agent that
+   *   pauses does; the interrupt is removed from the agent first
    * @internal
    */
   async _executeToolCall(
@@ -1688,43 +1693,54 @@ export class Agent implements LocalAgent, InvokableAgent {
         throw error
       }
     }
-    return this._toolExecutor.executeDirect(
-      {
-        agent: this,
-        middlewareRegistry: this._middlewareRegistry,
-        // As for background tasks: keep local trace state apart from the tool call this one runs inside.
-        tracer: new Tracer(this._traceAttributes),
-        meter: this._meter,
-        cancelSignal: context.cancelSignal,
-        toolInterrupt: interrupt,
-        middlewareInterrupt: (params) => ({ response: interrupt(params) }),
-        invocationContext: context.invocationContext,
-      },
-      toolUse,
-      context.invocationState,
-      async (event) => {
-        if (!(event instanceof HookableEvent)) {
-          return
-        }
-        if (!(event instanceof BeforeToolCallEvent)) {
-          await this._hooksRegistry.invokeCallbacks(event)
-          return
-        }
-        refusal = undefined
-        event.interrupt = interrupt
-        try {
-          await this._hooksRegistry.invokeCallbacks(event)
-        } catch (error) {
-          if (refusal === undefined || error !== refusal) {
-            throw error
+    try {
+      return await this._toolExecutor.executeDirect(
+        {
+          agent: this,
+          middlewareRegistry: this._middlewareRegistry,
+          // As for background tasks: keep local trace state apart from the tool call this one runs inside.
+          tracer: new Tracer(this._traceAttributes),
+          meter: this._meter,
+          cancelSignal: context.cancelSignal,
+          toolInterrupt: interrupt,
+          middlewareInterrupt: (params) => ({ response: interrupt(params) }),
+          invocationContext: context.invocationContext,
+        },
+        toolUse,
+        context.invocationState,
+        async (event) => {
+          // The tool's own stream events stay inside the call, so hooks do not see them either.
+          if (!(event instanceof HookableEvent) || event instanceof ToolStreamUpdateEvent) {
+            return
+          }
+          if (!(event instanceof BeforeToolCallEvent)) {
+            await this._hooksRegistry.invokeCallbacks(event)
+            return
+          }
+          refusal = undefined
+          event.interrupt = interrupt
+          try {
+            await this._hooksRegistry.invokeCallbacks(event)
+          } catch (error) {
+            if (refusal === undefined || error !== refusal) {
+              throw error
+            }
+          }
+          // Applied here rather than by the throw alone, which a hook's error handling may swallow.
+          if (refusal !== undefined) {
+            event.cancel = normalizeError(refusal).message
           }
         }
-        // Applied here rather than by the throw alone, which a hook's error handling may swallow.
-        if (refusal !== undefined) {
-          event.cancel = normalizeError(refusal).message
+      )
+    } catch (error) {
+      // A tool can register interrupts on the agent itself; nothing resumes them from here.
+      if (error instanceof InterruptError) {
+        for (const pending of error.interrupts) {
+          delete this._interruptState.interrupts[pending.id]
         }
       }
-    )
+      throw error
+    }
   }
 
   /**

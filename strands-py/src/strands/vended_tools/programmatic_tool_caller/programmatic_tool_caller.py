@@ -197,8 +197,10 @@ async def _execute_tool(tool_context: ToolContext, tool_name: str, tool_input: d
         "input": tool_input,
     }
     tool_results: list[ToolResult] = []
-    # A copy, so an inner call cannot change the parent's invocation state.
+    # A copy, so an inner call cannot change the parent's invocation state. Without the cycle id the
+    # executor treats the call as a direct one and runs it inline, never as a background task.
     invocation_state = {**tool_context.invocation_state}
+    invocation_state.pop("event_loop_cycle_id", None)
     try:
         async for event in ToolExecutor._stream(
             agent, tool_use, tool_results, invocation_state, invocation_context=tool_context.invocation_context

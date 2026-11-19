@@ -224,6 +224,28 @@ def test_inner_calls_join_the_parent_request():
     assert seen == [request]
 
 
+def test_inner_call_to_a_background_tool_runs_inline_and_returns_its_result():
+    code = "print(await calculator(expression='20 + 1'))"
+    tool_use = {"toolUseId": "t1", "name": "programmatic_tool_caller", "input": {"code": code}}
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"toolUse": tool_use}]},
+            {"role": "assistant", "content": [{"text": "done"}]},
+        ]
+    )
+    agent = Agent(
+        model=model,
+        tools=[programmatic_tool_caller, calculator],
+        background_tasks={"always": ["calculator"]},
+        callback_handler=None,
+    )
+
+    agent("go")
+
+    tool_result = agent.messages[2]["content"][0]["toolResult"]
+    assert tool_result["content"] == [{"text": "21"}]
+
+
 def test_inner_calls_do_not_change_the_parent_state():
     @tool(context="tool_context")
     def whoami(tool_context: ToolContext) -> str:

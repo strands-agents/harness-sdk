@@ -113,6 +113,7 @@ export abstract class ToolExecutor {
    * @param invocationState - State the call runs with
    * @param onEvent - Receives each lifecycle event before execution continues
    * @returns The tool result
+   * @throws The error `onEvent` or tool middleware throws, and any `InterruptError` the tool raises
    * @internal
    */
   async executeDirect(

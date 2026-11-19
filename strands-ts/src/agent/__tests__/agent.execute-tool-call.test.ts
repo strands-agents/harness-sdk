@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { Agent } from '../agent.js'
-import { AfterToolCallEvent, BeforeToolCallEvent } from '../../hooks/index.js'
+import { AfterToolCallEvent, BeforeToolCallEvent, ToolStreamUpdateEvent } from '../../hooks/index.js'
+import { Interrupt, InterruptError } from '../../interrupt.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { ExecuteToolStage } from '../../middleware/stages.js'
 import type { MiddlewareHandlerOf } from '../../middleware/types.js'
-import type { ToolContext } from '../../tools/tool.js'
+import { ToolStreamEvent } from '../../tools/tool.js'
+import type { Tool, ToolContext } from '../../tools/tool.js'
 import type { InterruptParams } from '../../types/interrupt.js'
 import { TextBlock, ToolResultBlock } from '../../types/messages.js'
 
@@ -104,12 +106,106 @@ describe('Agent._executeToolCall', () => {
       return 'echoed'
     })
     const agent = new Agent({ model: new MockMessageModel(), tools: [flaky], printer: false })
-    agent.addHook(AfterToolCallEvent, (event) => void (event.retry = event.result.status === 'error'))
+    // Bounded by hook runs, so a refusal that leaks into the retry fails the test instead of looping.
+    let afterCalls = 0
+    agent.addHook(
+      AfterToolCallEvent,
+      (event) => void (event.retry = event.result.status === 'error' && ++afterCalls < 3)
+    )
 
     const result = await agent._executeToolCall(toolUse, callContext())
 
     expect(result.status).toBe('success')
     expect(attempts).toBe(2)
+  })
+
+  it('rejects with a hook error and does not run the tool', async () => {
+    const calls: unknown[] = []
+    const agent = echoAgent(calls)
+    const failure = new Error('hook failed')
+    agent.addHook(BeforeToolCallEvent, () => {
+      throw failure
+    })
+
+    await expect(agent._executeToolCall(toolUse, callContext())).rejects.toBe(failure)
+    expect(calls).toEqual([])
+  })
+
+  it('rejects with a hook error raised after another hook swallowed an interrupt', async () => {
+    const calls: unknown[] = []
+    const agent = echoAgent(calls)
+    const failure = new Error('hook failed')
+    agent.addHook(BeforeToolCallEvent, (event) => {
+      try {
+        event.interrupt({ name: 'approve' })
+      } catch {
+        // a handler that proceeds on error
+      }
+    })
+    agent.addHook(BeforeToolCallEvent, () => {
+      throw failure
+    })
+
+    await expect(agent._executeToolCall(toolUse, callContext())).rejects.toBe(failure)
+    expect(calls).toEqual([])
+  })
+
+  it('wraps the interrupt response for tool middleware', async () => {
+    const answers: unknown[] = []
+    const agent = echoAgent()
+    const middleware: MiddlewareHandlerOf<typeof ExecuteToolStage> = async function* (context, next) {
+      answers.push(context.interrupt({ name: 'approve' }))
+      return yield* next(context)
+    }
+    agent.addMiddleware(ExecuteToolStage, middleware)
+
+    await agent._executeToolCall(
+      toolUse,
+      callContext(<T>(): T => 'yes' as T)
+    )
+
+    expect(answers).toEqual([{ response: 'yes' }])
+  })
+
+  it('keeps the stream events of the tool away from hooks', async () => {
+    const streaming: Tool = {
+      ...createMockTool('echo', () => 'unused'),
+      async *stream(context) {
+        yield new ToolStreamEvent({ data: 'progress' })
+        return new ToolResultBlock({
+          toolUseId: context.toolUse.toolUseId,
+          status: 'success',
+          content: [new TextBlock('echoed')],
+        })
+      },
+    }
+    const agent = new Agent({ model: new MockMessageModel(), tools: [streaming], printer: false })
+    const seen: string[] = []
+    agent.addHook(ToolStreamUpdateEvent, () => void seen.push('stream'))
+    agent.addHook(AfterToolCallEvent, () => void seen.push('after'))
+
+    const result = await agent._executeToolCall(toolUse, callContext())
+
+    expect(result.status).toBe('success')
+    expect(seen).toEqual(['after'])
+  })
+
+  it('removes an interrupt the tool registered on the agent and rejects with it', async () => {
+    const agent: Agent = new Agent({
+      model: new MockMessageModel(),
+      tools: [
+        createMockTool('echo', () => {
+          const pending = agent._interruptState.registerInterrupt(
+            new Interrupt({ id: 'child:approve', name: 'approve', source: 'tool' })
+          )
+          throw new InterruptError(pending)
+        }),
+      ],
+      printer: false,
+    })
+
+    await expect(agent._executeToolCall(toolUse, callContext())).rejects.toBeInstanceOf(InterruptError)
+    expect(agent._interruptState.interrupts).toEqual({})
   })
 
   it('retries when an afterToolCall hook asks for it', async () => {

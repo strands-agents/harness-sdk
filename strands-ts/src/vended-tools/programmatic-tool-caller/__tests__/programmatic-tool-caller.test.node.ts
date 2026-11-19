@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../../agent/agent.js'
-import { AfterToolCallEvent, BeforeToolCallEvent } from '../../../hooks/events.js'
+import { AfterToolCallEvent, BeforeToolCallEvent, ToolStreamUpdateEvent } from '../../../hooks/events.js'
 import { InterventionActions, InterventionHandler } from '../../../interventions/index.js'
 import { ExecuteToolStage } from '../../../middleware/stages.js'
 import type { MiddlewareHandlerOf } from '../../../middleware/types.js'
@@ -897,6 +897,44 @@ describe('inner calls run through the agent hooks', () => {
     expect(text(result)).toContain('needs approval (Run shell?)')
     expect(calls).toEqual([])
     expect(agent._interruptState.interrupts).toEqual({})
+  })
+
+  it('runs an inner call to a background tool inline and returns its result', async () => {
+    const code = "print(await calculator(expression='20 + 1'))"
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'programmatic_tool_caller', toolUseId: 't1', input: { code } })
+      .addTurn({ type: 'textBlock', text: 'done' })
+    const agent = new Agent({
+      model,
+      tools: [programmaticToolCaller, calculator],
+      backgroundTasks: { always: ['calculator'] },
+      printer: false,
+    })
+    await agent.invoke('go')
+    const toolResult = agent.messages[2]!.content[0] as ToolResultBlock
+    expect(text(toolResult)).toBe('21')
+  })
+
+  it("keeps inner tools' stream events away from ToolStreamUpdateEvent hooks", async () => {
+    const chatty = tool({
+      name: 'chatty',
+      description: 'Yields progress, then returns.',
+      inputSchema: z.object({}),
+      callback: async function* () {
+        yield 'progress'
+        return 'done'
+      },
+    })
+    const code = "print('started')\nprint(await chatty())"
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'programmatic_tool_caller', toolUseId: 't1', input: { code } })
+      .addTurn({ type: 'textBlock', text: 'done' })
+    const agent = new Agent({ model, tools: [programmaticToolCaller, chatty], printer: false })
+    const hookData: unknown[] = []
+    agent.addHook(ToolStreamUpdateEvent, (event) => void hookData.push(event.event.data))
+    await agent.invoke('go')
+    expect(hookData.map((data) => (data as { type?: string }).type)).toEqual(hookData.map(() => 'print'))
+    expect(hookData.map((data) => (data as { text: string }).text).join('')).toBe('started\ndone\n')
   })
 
   it('retries an inner call when an afterToolCall hook asks for it', async () => {
