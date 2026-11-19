@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 # LiteLLM backends that turn an OpenAI-format ``cache_control`` part into their own cache points.
 _CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "bedrock", "vertex_ai"})
 
+# Cache points Anthropic, Bedrock and Vertex AI accept per request, across tools, system and messages.
+_CACHE_POINT_LIMIT = 4
+
 # Separator used by LiteLLM to embed thought signatures inside tool call IDs.
 # See: https://ai.google.dev/gemini-api/docs/thought-signatures
 _THOUGHT_SIGNATURE_SEPARATOR = "__thought__"
@@ -367,8 +370,10 @@ class LiteLLMModel(OpenAIModel):
     ) -> dict[str, Any]:
         """Format a LiteLLM chat request.
 
-        Builds the request as ``OpenAIModel`` does, then leaves out the ``prompt_cache_key`` resolved from
-        ``cache_config`` when LiteLLM would reject it for the configured model. A key set in ``params`` is kept.
+        Builds the request as ``OpenAIModel`` does. For a backend that takes cache points it also marks the last tool
+        when ``cache_config.tools_ttl`` asks for it and keeps the request within the backend's cache point limit;
+        for any other backend it drops message cache points, which only those backends accept. It then leaves out
+        the ``prompt_cache_key`` resolved from ``cache_config`` when LiteLLM would reject it for the model.
 
         Args:
             messages: List of message objects to be processed by the model.
@@ -386,6 +391,9 @@ class LiteLLMModel(OpenAIModel):
             TypeError: If a message contains a content block type that cannot be converted to a LiteLLM-compatible
                 format.
         """
+        takes_cache_points = self.model_info.capabilities.prompt_caching == "cache_points"
+        if not takes_cache_points:
+            messages = _without_message_cache_points(messages)
         request = super().format_request(
             messages,
             tool_specs,
@@ -395,14 +403,29 @@ class LiteLLMModel(OpenAIModel):
             agent_metadata=agent_metadata,
             **kwargs,
         )
+        if takes_cache_points:
+            _add_tools_cache_point(request, self.get_config().get("cache_config"))
+            _limit_cache_points(request)
+        self._drop_rejected_cache_key(request)
+        return request
 
+    @override
+    def _routing_cache_config(self) -> CacheConfig | None:
+        """Only the routing key, for a backend that takes cache points; the other fields shape its cache points."""
+        cache_config = super()._routing_cache_config()
+        if cache_config is None or self.model_info.capabilities.prompt_caching != "cache_points":
+            return cache_config
+        return CacheConfig(cache_key=cache_config.cache_key)
+
+    def _drop_rejected_cache_key(self, request: dict[str, Any]) -> None:
+        """Leave out the resolved ``prompt_cache_key`` when LiteLLM would reject it; a key set in ``params`` stays."""
         config = self.get_config()
         if (
             "prompt_cache_key" not in request
             or "prompt_cache_key" in (config.get("params") or {})
             or self._accepts_prompt_cache_key()
         ):
-            return request
+            return
 
         del request["prompt_cache_key"]
         cache_config = config.get("cache_config")
@@ -410,9 +433,8 @@ class LiteLLMModel(OpenAIModel):
             warnings.warn(
                 f"cache_config.cache_key has no effect on {request['model']}, which does not accept "
                 "prompt_cache_key through LiteLLM; it will be ignored.",
-                stacklevel=3,
+                stacklevel=4,
             )
-        return request
 
     def _accepts_prompt_cache_key(self) -> bool:
         """Whether LiteLLM passes ``prompt_cache_key`` for the configured model instead of raising."""
@@ -799,3 +821,44 @@ def _append_tail(formatted: list[dict[str, Any]], tail: list[dict[str, Any]]) ->
     if last and first and last["role"] == first["role"] == "user" and "content" in last and "content" in first:
         last["content"] = [*last["content"], *tail.pop(0)["content"]]
     formatted.extend(tail)
+
+
+def _without_message_cache_points(messages: Messages) -> Messages:
+    """The messages without their cache point blocks."""
+    if not any("cachePoint" in block for message in messages for block in message["content"]):
+        return messages
+    return [{**message, "content": [b for b in message["content"] if "cachePoint" not in b]} for message in messages]
+
+
+def _add_tools_cache_point(request: dict[str, Any], cache_config: CacheConfig | None) -> None:
+    """Mark the last tool with ``cache_control`` when ``tools_ttl`` is True or a TTL string."""
+    if cache_config is None or cache_config.tools_ttl in (None, False) or not request.get("tools"):
+        return
+    ttl = cache_config.tools_ttl if isinstance(cache_config.tools_ttl, str) else cache_config.ttl
+    request["tools"][-1]["cache_control"] = {"type": "ephemeral", **({"ttl": ttl} if ttl else {})}
+
+
+def _limit_cache_points(request: dict[str, Any]) -> None:
+    """Drop cache points over the backend's limit, keeping the first ones and the last.
+
+    The last is the conversation point that grows each call; the first are tools and system, which every call reads.
+    """
+    marked = [part for part in _request_parts(request) if "cache_control" in part]
+    if len(marked) <= _CACHE_POINT_LIMIT:
+        return
+    for part in marked[_CACHE_POINT_LIMIT - 1 : -1]:
+        del part["cache_control"]
+    logger.warning(
+        "count=<%d>, limit=<%d> | dropped cache points over the limit, keeping the first ones and the last",
+        len(marked) - _CACHE_POINT_LIMIT,
+        _CACHE_POINT_LIMIT,
+    )
+
+
+def _request_parts(request: dict[str, Any]) -> list[dict[str, Any]]:
+    """The tools, then every content part of every message, in request order."""
+    parts: list[dict[str, Any]] = list(request.get("tools") or [])
+    for message in request["messages"]:
+        if isinstance(message.get("content"), list):
+            parts.extend(message["content"])
+    return parts

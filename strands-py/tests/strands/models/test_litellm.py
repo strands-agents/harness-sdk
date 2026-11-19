@@ -1298,3 +1298,60 @@ def test_format_request_drops_the_session_key_for_a_cache_point_model_on_litellm
     )
 
     assert "prompt_cache_key" not in request
+
+
+@pytest.fixture
+def read_tool_spec():
+    return {"name": "read", "description": "read a section", "inputSchema": {"json": {"type": "object"}}}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "tools_ttl", "exp_cache_control"),
+    [
+        ("anthropic/claude-haiku-4-5", True, {"type": "ephemeral"}),
+        ("anthropic/claude-haiku-4-5", "1h", {"type": "ephemeral", "ttl": "1h"}),
+        ("anthropic/claude-haiku-4-5", None, None),
+        ("openai/gpt-6-luna", True, None),
+    ],
+)
+def test_format_request_marks_the_last_tool_when_tools_ttl_asks(model_id, tools_ttl, exp_cache_control, read_tool_spec):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(tools_ttl=tools_ttl))
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}], [read_tool_spec])
+
+    assert request["tools"][-1].get("cache_control") == exp_cache_control
+
+
+def test_format_request_keeps_cache_points_within_the_limit_keeping_the_first_and_the_last():
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig())
+    point = {"cachePoint": {"type": "default"}}
+    system_prompt_content = [{"text": "a"}, point, {"text": "b"}, point, {"text": "c"}, point, {"text": "d"}, point]
+    messages = [{"role": "user", "content": [{"text": "q"}, point]}]
+
+    request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+    system_marks = ["cache_control" in part for part in request["messages"][0]["content"]]
+    assert system_marks == [True, True, True, False]
+    assert "cache_control" in request["messages"][-1]["content"][-1]
+
+
+def test_format_request_drops_message_cache_points_for_a_backend_without_them():
+    model = LiteLLMModel(model_id="openai/gpt-6-luna", cache_config=CacheConfig())
+    messages = [{"role": "user", "content": [{"text": "q"}, {"cachePoint": {"type": "default"}}]}]
+
+    request = model.format_request(messages)
+
+    assert request["messages"] == [{"role": "user", "content": [{"type": "text", "text": "q"}]}]
+
+
+@pytest.mark.parametrize(
+    ("model_id", "warns"),
+    [("anthropic/claude-haiku-4-5", False), ("openai/gpt-6-luna", True)],
+    ids=["claude", "openai"],
+)
+def test_format_request_warns_only_about_cache_config_fields_the_backend_ignores(model_id, warns, captured_warnings):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(ttl="1h", messages_ttl="1h", tools_ttl=True))
+
+    model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert any("no effect on OpenAI" in str(warning.message) for warning in captured_warnings) is warns
