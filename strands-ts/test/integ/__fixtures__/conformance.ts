@@ -4,15 +4,18 @@
 
 import { appendFile } from 'node:fs/promises'
 import conformance from '../../../../shared/conformance.json' with { type: 'json' }
+import modelInfoData from '../../../../shared/model-info.json' with { type: 'json' }
 
 import { anthropic, bedrock, gemini, mantle, openai, openaiResponses } from './model-providers.js'
 import { ModelThrottledError } from '@strands-agents/sdk'
+import { lookupKey } from '$/sdk/models/model-info.js'
 import type { CacheConfig, Model, ModelInfo } from '@strands-agents/sdk'
 
 export interface ConformanceCase {
   passes: string
   requires?: string
   equals?: unknown
+  tools?: boolean
 }
 
 export interface ConformanceTarget {
@@ -25,8 +28,7 @@ export interface ConformanceTarget {
 export interface KnownFailure extends ConformanceTarget {
   case: string
   reason: string
-  issue?: number
-  link?: string
+  issue: number
   error?: string
   intermittent?: boolean
 }
@@ -67,22 +69,12 @@ export const cachePrompt = [
  *
  * @param target - The provider and model
  * @param caseId - The case id
- * @returns The entry, which says why the pair fails and where that is explained
+ * @returns The entry, which says why the pair fails and names the issue that explains it
  */
 export function knownFailure(target: ConformanceTarget, caseId: string): KnownFailure | undefined {
   return knownFailures.find(
     (known) => known.provider === target.provider && known.model === target.model && known.case === caseId
   )
-}
-
-/**
- * Where a known failure is explained: its issue, or its link when it has no issue.
- *
- * @param known - The known failure entry
- * @returns The issue reference or the URL
- */
-export function knownReference(known: KnownFailure): string {
-  return known.issue === undefined ? `${known.link}` : `#${known.issue}`
 }
 
 /**
@@ -154,6 +146,29 @@ export const omittedProviders: Record<string, string> = {
 
 /** Shared case ids this SDK does not implement, with the reason. */
 export const omittedCases: Record<string, string> = {}
+
+// The entries as written, for the capabilities ModelInfo does not carry.
+const modelEntries: Record<string, { limits?: object; capabilities?: Record<string, unknown> }> = modelInfoData.models
+
+// Shared provider ids that call OpenAI's Chat Completions API.
+const chatCompletionsProviders = new Set(['openai', 'mantle'])
+
+/**
+ * Why the shared model info says a target cannot call the tools a case needs, or undefined.
+ *
+ * @param conformanceCase - The case from the shared file
+ * @param target - The provider and model
+ * @returns The capability that rules the case out
+ */
+export function toolLimitReason(conformanceCase: ConformanceCase, target: ConformanceTarget): string | undefined {
+  if (!conformanceCase.tools) return undefined
+  const capabilities = modelEntries[lookupKey(target.model) ?? '']?.capabilities
+  if (capabilities?.toolUse === false) return 'capabilities.toolUse is false'
+  if (chatCompletionsProviders.has(target.provider) && capabilities?.chatCompletionsTools === 'unsupported') {
+    return 'capabilities.chatCompletionsTools is unsupported'
+  }
+  return undefined
+}
 
 /**
  * Why a case does not apply to a model, or undefined when it applies.
@@ -252,13 +267,7 @@ export async function recordResult(
     case: caseId,
     status,
     ...(reason && { reason }),
-    ...(known && {
-      known: {
-        reason: known.reason,
-        ...(known.issue !== undefined && { issue: known.issue }),
-        ...(known.link && { link: known.link }),
-      },
-    }),
+    ...(known && { known: { reason: known.reason, issue: known.issue } }),
     ...(attempts > 1 && { attempts }),
   }
   await appendFile(file, `${JSON.stringify(record)}\n`)

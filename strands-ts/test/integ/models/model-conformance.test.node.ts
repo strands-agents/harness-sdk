@@ -13,13 +13,13 @@ import {
   isTrackedFailure,
   knownFailure,
   knownFailures,
-  knownReference,
   notApplicableReason,
   omittedCases,
   omittedProviders,
   providerErrorReason,
   providers,
   recordResult,
+  toolLimitReason,
   willNotClear,
   targets,
 } from '../__fixtures__/conformance.js'
@@ -208,10 +208,8 @@ describe('Model conformance coverage', () => {
     ).toStrictEqual([])
   })
 
-  it('says why and where it is explained in every known failure', () => {
-    expect(knownFailures.filter((known) => !known.reason || (known.issue === undefined && !known.link))).toStrictEqual(
-      []
-    )
+  it('says why and names its issue in every known failure', () => {
+    expect(knownFailures.filter((known) => !known.reason || known.issue === undefined)).toStrictEqual([])
   })
 })
 
@@ -234,9 +232,7 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
   for (const caseId of Object.keys(cases)) {
     const known = knownFailure(target, caseId)
     const stale = (problem: string): Error =>
-      new Error(
-        `known failure ${known && knownReference(known)} ${problem}; remove it from knownFailures in shared/conformance.json`
-      )
+      new Error(`known failure #${known?.issue} ${problem}; remove it from knownFailures in shared/conformance.json`)
 
     // A provider can be unavailable for a short while, so an error that may clear gets three attempts half a
     // minute apart. One that will not clear is not retried, and a failed assertion, the case's verdict, is retried
@@ -265,7 +261,9 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
 
       const run = implementations[caseId]
       const model = provider!.create(target.model)
-      const notApplicable = run ? notApplicableReason(cases[caseId]!, model.modelInfo) : omittedCases[caseId]
+      const notApplicable = run
+        ? (notApplicableReason(cases[caseId]!, model.modelInfo) ?? toolLimitReason(cases[caseId]!, target))
+        : omittedCases[caseId]
       if (known && notApplicable) throw stale(`no longer applies (${notApplicable})`)
       if (!run || notApplicable) return skip('not-applicable', notApplicable)
 
@@ -282,7 +280,7 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
           // Only the tracked failure is expected. Any other error on a known failure still fails the run.
           if (known && isTrackedFailure(known, error)) {
             trackedFailure = known
-            await ctx.annotate(`known failure: ${known.reason} See ${knownReference(known)}`)
+            await ctx.annotate(`known failure: ${known.reason} See #${known.issue}`)
             return
           }
           if (attempt === 3 || !mayPassOnRetry(error)) throw error
