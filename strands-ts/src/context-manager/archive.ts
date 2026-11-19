@@ -9,6 +9,7 @@
  */
 
 import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
+import type { StorageSearchResult } from '../storage/storage.js'
 import { Message, ToolResultBlock } from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
@@ -43,6 +44,49 @@ function frame(value: unknown): { suffix: string; data: Uint8Array } {
 function decode(key: string, bytes: Uint8Array): unknown {
   const content = new TextDecoder().decode(bytes)
   return key.endsWith(TEXT_SUFFIX) ? { text: content } : JSON.parse(content)
+}
+
+/**
+ * An archived entry matching a query, as the storage backend's configured search strategy ranked it.
+ *
+ * @internal
+ */
+export interface ArchiveMatch {
+  /** The reference the entry is stored under, without {@link TEXT_SUFFIX}. */
+  key: string
+  /** Relevance of the entry, as the strategy scored it. */
+  score: number
+  /**
+   * The matching sections of the entry's text, best-first, as 0-indexed inclusive line bounds.
+   *
+   * Empty when the strategy ranked the entry without saying which part of it matched, which a
+   * document-level index cannot: BM25 and vector similarity score whole entries.
+   */
+  sections: Array<{ start: number; end: number }>
+}
+
+/**
+ * The line bounds of a result's byte ranges.
+ *
+ * Empty unless the entry holds text and the strategy returned the bytes it measured. A JSON entry is
+ * excluded even when ranges are reported, because the stored bytes are compact JSON while a consumer
+ * renders the entry pretty-printed, so an offset into one names the wrong line of the other.
+ */
+function sectionLines(result: StorageSearchResult): Array<{ start: number; end: number }> {
+  if (!result.key.endsWith(TEXT_SUFFIX) || !result.byteRanges || !result.data) return []
+
+  const encoder = new TextEncoder()
+  const offsets = [0]
+  for (const line of new TextDecoder().decode(result.data).split('\n')) {
+    offsets.push(offsets[offsets.length - 1]! + encoder.encode(line).length + 1)
+  }
+  return result.byteRanges.map((range) => ({ start: lineAt(offsets, range.start), end: lineAt(offsets, range.end) }))
+}
+
+/** The 0-indexed line containing `offset`, given each line's start offset plus the content's length. */
+function lineAt(offsets: number[], offset: number): number {
+  const next = offsets.findIndex((start) => start > offset)
+  return next === -1 ? offsets.length - 2 : next - 1
 }
 
 /**
@@ -257,6 +301,30 @@ export class Archive {
       if (bytes !== null) return { data: decode(key, bytes) }
     }
     return null
+  }
+
+  /**
+   * The entries under `prefix` that match `query`, best-first, as ranked by the storage backend's
+   * configured search strategy.
+   *
+   * The strategy is the point: a backend given a BM25 index, a vector index, or a keyword scan
+   * answers a question about archived content with the index it was configured with, rather than
+   * having every caller scan the content the same way regardless.
+   *
+   * @param query - Natural-language question to answer from the archived content
+   * @param prefix - Reference prefix the search is scoped to
+   * @returns The matches, or `null` when the backend has no `search` at all — the caller's signal to
+   *   scan the content itself rather than read an empty result as "nothing matched"
+   */
+  async search(query: string, prefix: string): Promise<ArchiveMatch[] | null> {
+    if (!this._storage.search) return null
+
+    const results = await this._storage.search(query, { prefix })
+    return results.map((result) => ({
+      key: result.key.endsWith(TEXT_SUFFIX) ? result.key.slice(0, -TEXT_SUFFIX.length) : result.key,
+      score: result.score,
+      sections: sectionLines(result),
+    }))
   }
 
   /**
