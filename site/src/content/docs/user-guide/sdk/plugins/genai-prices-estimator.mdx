@@ -76,7 +76,9 @@ asyncio.run(main())
 
 Each event carries two estimates:
 
-- `event["model_call"]` is the estimate for the model call that just ended.
+- `event["model_call"]` is the estimate for the model call that just ended. It names the
+  model the plugin saw: wrap middleware you add after the plugin that swaps the model is
+  not reflected in it.
 - `event["cost_estimate"]` is the running estimate for the request so far, including the
   agents your tools ran in the same request. Do not add events together.
 
@@ -231,6 +233,7 @@ Each of these makes your bill differ from the estimate:
 | Negotiated discounts | Overpriced; pass your own prices |
 | Application inference profile ARNs | Unpriced; pass your own price |
 | A model call that fails or is cancelled mid-stream | A failed call is not counted; a cancelled call counts only the usage reported before the cancel |
+| Background tasks that finish after the result | Counted only in an estimate you take after they finish |
 | `Agent.structured_output()` | Runs outside any request, so not counted |
 | Agents your own tools start without passing `invocation_context` | Not counted |
 | Tool, knowledge base, and other non-model costs | Not counted |

@@ -240,6 +240,12 @@ def test_init_loads_the_price_data_and_never_raises(monkeypatch):
     assert len(lookups) == 1
 
 
+@pytest.mark.parametrize("model_id", ["", None])
+def test_model_price_rejects_an_empty_model_id(model_id):
+    with pytest.raises(ValueError, match="a price needs the id of the model"):
+        ModelPrice(model_id=model_id, input_per_million=1.0, output_per_million=1.0)
+
+
 @pytest.mark.parametrize(
     "rates",
     [
@@ -415,8 +421,10 @@ def test_estimate_accepts_usage_records():
         lambda: Agent(model=NamedModel("main", [], []), callback_handler=None),
         lambda: object(),
         lambda: [_usage(1, 1)],
+        lambda: "",
+        lambda: {},
     ],
-    ids=["none", "agent", "object", "usage-dicts"],
+    ids=["none", "agent", "object", "usage-dicts", "string", "mapping"],
 )
 def test_estimate_rejects_what_is_not_a_request_or_usage_records(make_request):
     request = make_request()
@@ -493,6 +501,22 @@ async def test_stream_emits_the_model_call_and_the_request_estimate_after_each_m
     ]
     assert callback_events == tru_events
     assert tru_events[-1]["cost_estimate"] == cost.estimate(events[-1]["result"])
+
+
+@pytest.mark.asyncio
+async def test_stream_names_the_model_an_input_middleware_routed_the_call_to(alist):
+    routed = NamedModel("small", [_text("done")], [_usage(1_000, 100)])
+    agent = Agent(
+        model=NamedModel("main", [], []),
+        plugins=[GenAIPricesEstimator(prices=[MAIN_PRICE, SMALL_PRICE])],
+        callback_handler=None,
+    )
+    agent.add_middleware(InvokeModelStage.Input, lambda context: context.replace(model=routed))
+
+    events = await alist(agent.stream_async("go"))
+
+    tru_model_ids = [event["model_call"].model_id for event in events if "model_call" in event]
+    assert tru_model_ids == ["small"]
 
 
 @pytest.mark.asyncio

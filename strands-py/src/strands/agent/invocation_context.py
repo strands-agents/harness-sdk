@@ -35,7 +35,8 @@ class ModelUsage:
         provider_name: Name of the model's provider. For the SDK's own model classes it is one of
             ``anthropic``, ``bedrock``, ``bedrock-mantle``, ``google``, ``litellm``, ``llamaapi``,
             ``llamacpp``, ``mistral``, ``ollama``, ``openai``, ``sagemaker``, or ``writer``. A decision model
-            reports the provider name from its own metadata. ``None`` when the SDK cannot tell. Existing names
+            reports the provider name from its own metadata, or its wrapped model's name when it has one.
+            ``None`` when the SDK cannot tell. Existing names
             do not change, more may be added, and a ``None`` may later get a name. It is not the OpenTelemetry
             provider value.
         model_id: The model id the calls were made with, or the endpoint name for a SageMaker model; ``None``

@@ -10,7 +10,7 @@ import contextlib
 import logging
 import math
 import sys
-from collections.abc import AsyncGenerator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -67,7 +67,7 @@ class ModelPrice:
             the usage; ``None`` matches the model id on any provider.
 
     Raises:
-        ValueError: If a price is not a finite, non-negative number.
+        ValueError: If ``model_id`` is not a non-empty string, or a price is not a finite, non-negative number.
     """
 
     model_id: str
@@ -78,7 +78,9 @@ class ModelPrice:
     provider_name: str | None = None
 
     def __post_init__(self) -> None:
-        """Reject prices that are not finite, non-negative numbers."""
+        """Reject an empty model id and prices that are not finite, non-negative numbers."""
+        if not isinstance(self.model_id, str) or not self.model_id:
+            raise ValueError(f"model_id=<{self.model_id!r}> | a price needs the id of the model it is for")
         for name in ("input_per_million", "output_per_million", "cache_read_per_million", "cache_write_per_million"):
             value = getattr(self, name)
             if value is None and name.startswith("cache_"):
@@ -129,7 +131,11 @@ class CostEstimate:
 
 
 class CostEstimateEvent(TypedEvent):
-    """Stream event emitted after each model call, carrying its estimated cost and the request's so far."""
+    """Stream event emitted after each model call, carrying its estimated cost and the request's so far.
+
+    ``model_call`` names the model the plugin saw. Wrap middleware added after the plugin that swaps the
+    model, or answers without calling one, is not reflected in it; the request's estimate is.
+    """
 
     def __init__(self, cost_estimate: CostEstimate, model_call: ModelCostEstimate) -> None:
         """Initialize with the estimates.
@@ -204,7 +210,8 @@ class GenAIPricesEstimator(Plugin):
             request = request.invocation_context
         if isinstance(request, InvocationContext):
             return self._estimate(request.usage_by_model)
-        usage_by_model = list(request) if isinstance(request, Iterable) else None
+        is_records = isinstance(request, Iterable) and not isinstance(request, (str, bytes, Mapping))
+        usage_by_model = list(request) if is_records else None
         if usage_by_model is None or not all(isinstance(model_usage, ModelUsage) for model_usage in usage_by_model):
             raise TypeError(
                 f"request=<{type(request).__name__}> | expected an agent or multi-agent result, "
