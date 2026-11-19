@@ -184,6 +184,7 @@ class CacheConfig:
             a session manager, so repeat runs of a session share a cache prefix with no key management.
             Set it to a string to pin your own key, or ``False`` to opt out of routing entirely. The
             resolved key (whether set or derived from the session id) is transmitted to the provider.
+            ``LiteLLMModel`` sends it only to models LiteLLM accepts ``prompt_cache_key`` for.
         tools_ttl: Cache the tool definitions, auto-injecting a cache point on the tool block so repeated calls
             with the same tools hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
