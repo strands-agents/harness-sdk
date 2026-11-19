@@ -292,7 +292,13 @@ export class Tracer {
       }
 
       if (this._includeToolDefinitions && toolsConfig) {
-        attributes['gen_ai.tool.definitions'] = JSON.stringify(toolsConfig, jsonReplacer)
+        const toolDefinitions = Object.entries(toolsConfig).map(([name, spec]) => ({
+          name,
+          description: spec.description,
+          inputSchema: spec.inputSchema ?? null,
+          outputSchema: spec.outputSchema ?? null,
+        }))
+        attributes['gen_ai.tool.definitions'] = JSON.stringify(toolDefinitions, jsonReplacer)
       }
 
       if (systemPrompt !== undefined) {

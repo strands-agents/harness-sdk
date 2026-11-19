@@ -222,6 +222,7 @@
     { "provider": "bedrock", "model": "global.xai.grok-4.6" },
     { "provider": "openai-responses", "model": "chat-latest" },
     { "provider": "gemini", "model": "gemini-3.7-flash" },
+    { "provider": "gemini", "model": "gemini-4-neon" },
     { "provider": "mistral", "model": "codestral-latest" },
     { "provider": "mistral", "model": "mistral-large-4" },
     { "provider": "mistral", "model": "mistral-medium-3" },
