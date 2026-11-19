@@ -167,7 +167,7 @@ describe('HttpDecisionModel', () => {
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
         auth,
-        fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }),
+        fetch: fakeFetch({ message: 'Forbidden' }, { status: 403 }),
       })
 
       await expectModelError(
@@ -177,7 +177,7 @@ describe('HttpDecisionModel', () => {
     })
 
     it('adds no hint without auth, or for other statuses', async () => {
-      const unauthenticated = create({ fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }) })
+      const unauthenticated = create({ fetch: fakeFetch({ message: 'Forbidden' }, { status: 403 }) })
       const serverError = create({
         endpoint: LAMBDA_ENDPOINT,
         auth: { type: 'bearer', token: 't' },
@@ -195,20 +195,6 @@ describe('HttpDecisionModel', () => {
       await expect(throttled.ask('state', QUESTIONS)).rejects.toBeInstanceOf(ModelThrottledError)
       await expect(forbidden.ask('state', QUESTIONS)).rejects.toThrow('http decision request failed with HTTP 403')
       await expect(forbidden.ask('state', QUESTIONS)).rejects.toBeInstanceOf(ModelError)
-    })
-
-    it.each([
-      ['a capitalized Message, as a Lambda Function URL answers', 403, { Message: 'Forbidden' }, 'HTTP 403: Forbidden'],
-      [
-        'a validation error list, as strands-decider answers',
-        422,
-        { detail: [{ loc: ['body', 'questions'], msg: 'Field required' }, { msg: 'Too short' }] },
-        'HTTP 422: Field required; Too short',
-      ],
-    ])('reports the detail of %s', async (_name, status, payload, message) => {
-      const decision = create({ fetch: fakeFetch(payload, { status }) })
-
-      await expect(decision.ask('state', QUESTIONS)).rejects.toThrow(message)
     })
 
     it('reports a connection that drops mid-body as a model error', async () => {

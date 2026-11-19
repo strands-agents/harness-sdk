@@ -169,11 +169,12 @@ export class HttpDecisionModel extends DecisionModel {
       })
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel().catch(() => undefined)
-        throw new ModelError(
-          `${PROVIDER_NAME} decision request was redirected (HTTP ${response.status}): set the endpoint to the redirect target`
-        )
+        throw new Error(`redirected (HTTP ${response.status}): set the endpoint to the redirect target`)
       }
-      return response
+      // Read the body here, under the timeout, so a slow or dropped body fails as a request error. The shared
+      // transport reads the returned copy.
+      const text = await response.text()
+      return new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers })
     }
 
     this._providerConfig = {

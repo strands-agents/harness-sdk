@@ -217,7 +217,6 @@ export function httpTransport(config: SystemOneProviderConfig): SystemOneTranspo
 
 async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSignal?: AbortSignal): Promise<unknown> {
   let response: Response
-  let payload: unknown
   try {
     response = await config.fetch(config.endpoint, {
       method: 'POST',
@@ -228,15 +227,13 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
       body,
       ...(cancelSignal !== undefined && { signal: cancelSignal }),
     })
-    // Read inside the try: a connection that drops mid-body is a failed request too.
-    payload = await readPayload(response)
   } catch (error) {
-    // An error that is already described, such as a non-JSON body or a redirect, passes through unchanged.
-    if (error instanceof ModelError) throw error
     throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
       cause: error,
     })
   }
+
+  const payload = await readPayload(response)
   if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
   return payload
 }
@@ -267,24 +264,12 @@ function errorDetail(body: unknown): string | undefined {
   if (typeof body === 'string') return body
   if (!isRecord(body)) return undefined
   for (const field of ['error', 'message', 'detail']) {
-    // Servers differ in casing: a Lambda Function URL answers `{"Message": ...}`.
-    const key = Object.keys(body).find((name) => name.toLowerCase() === field)
-    const detail = key === undefined ? undefined : detailText(body[key])
-    if (detail) return detail
-  }
-  return undefined
-}
-
-function detailText(value: unknown): string | undefined {
-  if (typeof value === 'string') return value
-  // FastAPI validation errors: `[{ loc, msg, ... }]`.
-  if (Array.isArray(value)) {
-    const messages = value.flatMap((item) => (isRecord(item) && typeof item['msg'] === 'string' ? [item['msg']] : []))
-    return messages.length > 0 ? messages.join('; ') : undefined
-  }
-  if (isRecord(value)) {
-    const nested = value['message'] || value['error_type']
-    return typeof nested === 'string' ? nested : undefined
+    const value = body[field]
+    if (typeof value === 'string') return value
+    if (isRecord(value)) {
+      const nested = value['message'] || value['error_type']
+      if (typeof nested === 'string') return nested
+    }
   }
   return undefined
 }
