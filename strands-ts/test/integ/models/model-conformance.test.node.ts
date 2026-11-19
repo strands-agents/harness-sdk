@@ -22,6 +22,7 @@ import {
   providerErrorReason,
   providers,
   recordResult,
+  toolLimitReason,
   willNotClear,
   targets,
 } from '../__fixtures__/conformance.js'
@@ -209,6 +210,10 @@ describe('Model conformance coverage', () => {
       knownFailures.filter((known) => !live.has(`${known.provider} ${known.model}`) || !(known.case in cases))
     ).toStrictEqual([])
   })
+
+  it('says why and names its issue in every known failure', () => {
+    expect(knownFailures.filter((known) => !known.reason || known.issue === undefined)).toStrictEqual([])
+  })
 })
 
 // The cases call every listed model, so they only run when asked: 'core' runs the targets marked core and any
@@ -255,14 +260,17 @@ describe.skipIf(!mode && !probeTarget).each(targets)('Model conformance: $provid
       if (unavailableStatus) return skip(unavailableStatus, unavailableReason)
 
       const run = implementations[caseId]
+      // A probe still runs a tool case the model info rules out, to see whether the limit holds.
+      const toolLimit = run ? toolLimitReason(cases[caseId]!, target) : undefined
       const notApplicable = run
-        ? notApplicableReason(cases[caseId]!, provider!.create(target.model).modelInfo)
+        ? (notApplicableReason(cases[caseId]!, provider!.create(target.model).modelInfo) ??
+          (probeTarget ? undefined : toolLimit))
         : omittedCases[caseId]
       // A probe runs a case the model does not declare, with the model info set to what the case requires.
       const override = probeTarget ? probeOverride(cases[caseId]!) : undefined
       if (known && notApplicable) throw stale(`no longer applies (${notApplicable})`)
       if (!run || (notApplicable && !override)) return skip('not-applicable', notApplicable)
-      if (probeTarget) result.declared = !notApplicable
+      if (probeTarget) result.declared = !notApplicable && !toolLimit
 
       const create = (config?: ConformanceConfig): Model =>
         provider!.create(target.model, { ...(override && { modelInfo: override }), ...config })
@@ -275,7 +283,11 @@ describe.skipIf(!mode && !probeTarget).each(targets)('Model conformance: $provid
           result.reason = providerErrorReason(error)
           result.status = result.reason ? 'error' : 'failed'
           // Only the tracked failure is expected. Any other error on a known failure still fails the run.
-          if (known && isTrackedFailure(known, error)) return
+          if (known && isTrackedFailure(known, error)) {
+            result.known = known
+            await ctx.annotate(`known failure: ${known.reason} See #${known.issue}`)
+            return
+          }
           if (result.attempts < 3 && mayPassOnRetry(error)) {
             await new Promise((resolve) => setTimeout(resolve, 30_000))
             continue

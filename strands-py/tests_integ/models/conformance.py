@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from strands.models import BedrockModel, Model, ModelCapabilities, ModelInfo
+from strands.models._model_info import _lookup_key
 from strands.models.anthropic import AnthropicModel
 from strands.models.gemini import GeminiModel
 from strands.models.mistral import MistralModel
@@ -27,9 +28,12 @@ from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ModelThrottledException
 from tests_integ.models import providers
 
-_SHARED = json.loads(
-    (pathlib.Path(__file__).parents[2] / ".." / "shared" / "conformance.json").read_text(encoding="utf-8")
-)
+_SHARED_DIRECTORY = pathlib.Path(__file__).parents[2] / ".." / "shared"
+_SHARED = json.loads((_SHARED_DIRECTORY / "conformance.json").read_text(encoding="utf-8"))
+# The entries as written, for the capabilities ModelInfo does not carry.
+_MODEL_ENTRIES: dict[str, dict[str, Any]] = json.loads(
+    (_SHARED_DIRECTORY / "model-info.json").read_text(encoding="utf-8")
+)["models"]
 CASES: dict[str, dict[str, Any]] = _SHARED["cases"]
 # (provider, model, case) -> the shared known failure entry, which names the issue tracking it.
 KNOWN_FAILURES: dict[tuple[str, str, str], dict[str, Any]] = {
@@ -71,6 +75,8 @@ PROBE_TARGET = os.environ.get("STRANDS_CONFORMANCE_TARGET", "")
 # HTTP statuses that mean the provider could not serve the call, which says nothing about the case.
 _PROVIDER_ERROR_STATUSES = frozenset({401, 403, 404, 408, 429})
 _MANTLE_CONFIG = {"region": "us-east-1"}
+# Shared provider ids that call OpenAI's Chat Completions API.
+_CHAT_COMPLETIONS_PROVIDERS = frozenset({"openai", "mantle"})
 
 
 def _openai_responses(**kwargs: Any) -> Model:
@@ -256,6 +262,18 @@ def not_applicable_reason(case_id: str, model: Model) -> str | None:
     return None if value == expected else f"{path} is not {spec['equals']}"
 
 
+def tool_limit_reason(case_id: str, target: Target) -> str | None:
+    """Why the shared model info says the target cannot call the tools a case needs, or None."""
+    if not CASES[case_id].get("tools"):
+        return None
+    capabilities = _MODEL_ENTRIES.get(_lookup_key(target.model_id) or "", {}).get("capabilities", {})
+    if capabilities.get("toolUse") is False:
+        return "capabilities.toolUse is false"
+    if target.provider in _CHAT_COMPLETIONS_PROVIDERS and capabilities.get("chatCompletionsTools") == "unsupported":
+        return "capabilities.chatCompletionsTools is unsupported"
+    return None
+
+
 def _http_status(error: BaseException) -> int | None:
     """The HTTP status a vendor SDK error carries, wherever that SDK keeps it."""
     response = getattr(error, "response", None)
@@ -299,12 +317,15 @@ def _probe_override(case_id: str) -> ModelInfo | None:
     return ModelInfo(capabilities=ModelCapabilities(**{_snake(field): value}))
 
 
-def prepare_probe(item: pytest.Item, case_id: str, model: Model, reason: str | None) -> Model:
-    """Set the model up for a probe of the case, noting on the test whether the model declares it."""
+def prepare_probe(item: pytest.Item, case_id: str, model: Model, reason: str | None, tool_limit: str | None) -> Model:
+    """Set the model up for a probe of the case, noting on the test whether the model declares it.
+
+    A probe still runs a tool case the model info rules out, to see whether the limit holds.
+    """
     override = _probe_override(case_id)
     if reason and override is None:
         pytest.skip(f"{NOT_APPLICABLE}: {reason}")
-    item.conformance_declared = reason is None
+    item.conformance_declared = reason is None and tool_limit is None
     if override is not None:
         model.update_config(model_info=override)
     return model
@@ -352,7 +373,7 @@ def apply_known_failure(item: pytest.Item, call: pytest.CallInfo, report: pytest
             )
     elif _is_tracked_failure(known, call.excinfo.value):
         report.outcome = "skipped"
-        report.wasxfail = f"known failure, see #{known['issue']}"
+        report.wasxfail = f"known failure: {known['reason']} See #{known['issue']}"
 
 
 def _outcome(report: pytest.TestReport, error: BaseException | None) -> dict[str, str]:
@@ -379,6 +400,9 @@ def record(item: pytest.Item, report: pytest.TestReport, error: BaseException | 
     target: Target = item.callspec.params["target"]
     result = {"sdk": "python", "provider": target.provider, "model": target.model_id, "case": case_id}
     result.update(_outcome(report, error))
+    known = _known_failure(item)
+    if known and hasattr(report, "wasxfail"):
+        result["known"] = {"reason": known["reason"], "issue": known["issue"]}
     attempts = getattr(item, "conformance_attempts", 1)
     if attempts > 1:
         result["attempts"] = attempts

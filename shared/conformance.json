@@ -2,12 +2,14 @@
   "$comment": "Model conformance: the cases every SDK runs against live models, and the provider and model pairs they run on. Edit here; each SDK's integration tests read this file (see shared/README.md).",
   "cases": {
     "tool-use": {
+      "tools": true,
       "passes": "An agent turn that asks for a tool calls it and ends the turn normally."
     },
     "context-window": {
       "passes": "The model id resolves to a model info entry, and the model config reports that entry's context window."
     },
     "structured-output": {
+      "tools": true,
       "passes": "An agent asked for structured output returns an object that matches the schema."
     },
     "max-output-tokens": {
@@ -15,11 +17,13 @@
       "passes": "A turn that sets no output token limit is accepted, so the default taken from the model info is within the model's ceiling."
     },
     "forced-tool-choice": {
+      "tools": true,
       "requires": "capabilities.forcedToolChoice",
       "equals": true,
       "passes": "A model call with a tool choice that forces a tool returns a tool use."
     },
     "forced-tool-choice-refused": {
+      "tools": true,
       "requires": "capabilities.forcedToolChoice",
       "equals": false,
       "passes": "A model call with a tool choice that forces a tool is refused by the provider, with an error the SDK recognizes as forced tool choice not being supported."
@@ -228,21 +232,15 @@
     { "provider": "mistral", "model": "ministral-3b-latest" }
   ],
   "knownFailures": [
-    { "provider": "anthropic", "model": "claude-fable-5-1", "case": "temporary-messages", "issue": 6227, "intermittent": true },
-    { "provider": "anthropic", "model": "claude-haiku-5-5", "case": "forced-tool-choice-refused", "issue": 6236 },
-    { "provider": "bedrock", "model": "us.anthropic.claude-haiku-5-5", "case": "forced-tool-choice-refused", "issue": 6236 },
-    { "provider": "openai", "model": "gpt-6-astra", "case": "tool-use", "issue": 6240, "error": "does not accept tools on the Chat Completions API with any reasoning_effort" },
-    { "provider": "openai", "model": "gpt-6-astra", "case": "structured-output", "issue": 6240, "error": "does not accept tools on the Chat Completions API with any reasoning_effort" },
-    { "provider": "openai", "model": "gpt-6.1-sol", "case": "tool-use", "issue": 6240, "error": "does not accept tools on the Chat Completions API with any reasoning_effort" },
-    { "provider": "openai", "model": "gpt-6.1-sol", "case": "structured-output", "issue": 6240, "error": "does not accept tools on the Chat Completions API with any reasoning_effort" },
-    { "provider": "bedrock", "model": "mistral.mistral-large-2402-v1:0", "case": "tool-use", "issue": 6241, "error": "doesn't support tool use in streaming mode" },
-    { "provider": "bedrock", "model": "mistral.mistral-large-2402-v1:0", "case": "structured-output", "issue": 6241, "error": "doesn't support tool use in streaming mode" },
-    { "provider": "bedrock", "model": "mistral.mistral-small-2402-v1:0", "case": "tool-use", "issue": 6241, "error": "doesn't support tool use in streaming mode" },
-    { "provider": "bedrock", "model": "mistral.mistral-small-2402-v1:0", "case": "structured-output", "issue": 6241, "error": "doesn't support tool use in streaming mode" },
-    { "provider": "bedrock", "model": "us.mistral.pixtral-large-2502-v1:0", "case": "tool-use", "issue": 6241, "error": "doesn't support tool use in streaming mode" },
-    { "provider": "bedrock", "model": "us.mistral.pixtral-large-2502-v1:0", "case": "structured-output", "issue": 6241, "error": "doesn't support tool use in streaming mode" },
-    { "provider": "bedrock", "model": "mistral.magistral-small-2509", "case": "tool-use", "issue": 6241 },
-    { "provider": "bedrock", "model": "mistral.magistral-small-2509", "case": "structured-output", "issue": 6241, "error": "did not produce structured output" }
+    { "provider": "anthropic", "model": "claude-fable-5-1", "case": "temporary-messages", "issue": 6227, "intermittent": true, "reason": "The model accepts temporary messages but uses their text only some of the time." },
+    { "provider": "anthropic", "model": "claude-haiku-5-5", "case": "forced-tool-choice-refused", "issue": 6236, "reason": "The model accepts a forced tool choice. The table says false on purpose: a forced call skips thinking, so Strands uses native output for it." },
+    { "provider": "bedrock", "model": "us.anthropic.claude-haiku-5-5", "case": "forced-tool-choice-refused", "issue": 6236, "reason": "The model accepts a forced tool choice. The table says false on purpose: a forced call skips thinking, so Strands uses native output for it." },
+    { "provider": "bedrock", "model": "mistral.mistral-large-2402-v1:0", "case": "tool-use", "issue": 6241, "error": "doesn't support tool use in streaming mode", "reason": "Bedrock rejects tools for this model on ConverseStream, and the provider does not fall back to Converse." },
+    { "provider": "bedrock", "model": "mistral.mistral-large-2402-v1:0", "case": "structured-output", "issue": 6241, "error": "doesn't support tool use in streaming mode", "reason": "Bedrock rejects tools for this model on ConverseStream, and the provider does not fall back to Converse." },
+    { "provider": "bedrock", "model": "mistral.mistral-small-2402-v1:0", "case": "tool-use", "issue": 6241, "error": "doesn't support tool use in streaming mode", "reason": "Bedrock rejects tools for this model on ConverseStream, and the provider does not fall back to Converse." },
+    { "provider": "bedrock", "model": "mistral.mistral-small-2402-v1:0", "case": "structured-output", "issue": 6241, "error": "doesn't support tool use in streaming mode", "reason": "Bedrock rejects tools for this model on ConverseStream, and the provider does not fall back to Converse." },
+    { "provider": "bedrock", "model": "us.mistral.pixtral-large-2502-v1:0", "case": "tool-use", "issue": 6241, "error": "doesn't support tool use in streaming mode", "reason": "Bedrock rejects tools for this model on ConverseStream, and the provider does not fall back to Converse." },
+    { "provider": "bedrock", "model": "us.mistral.pixtral-large-2502-v1:0", "case": "structured-output", "issue": 6241, "error": "doesn't support tool use in streaming mode", "reason": "Bedrock rejects tools for this model on ConverseStream, and the provider does not fall back to Converse." }
   ],
   "cachePrompt": {
     "intro": "You are a support assistant for an online store. Follow these guidelines.",

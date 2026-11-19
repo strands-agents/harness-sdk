@@ -4,15 +4,18 @@
 
 import { appendFile } from 'node:fs/promises'
 import conformance from '../../../../shared/conformance.json' with { type: 'json' }
+import modelInfoData from '../../../../shared/model-info.json' with { type: 'json' }
 
 import { anthropic, bedrock, gemini, mantle, openai, openaiResponses } from './model-providers.js'
 import { ModelThrottledError } from '@strands-agents/sdk'
+import { lookupKey } from '$/sdk/models/model-info.js'
 import type { CacheConfig, Model, ModelInfo } from '@strands-agents/sdk'
 
 export interface ConformanceCase {
   passes: string
   requires?: string
   equals?: unknown
+  tools?: boolean
 }
 
 export interface ConformanceTarget {
@@ -24,6 +27,7 @@ export interface ConformanceTarget {
 
 export interface KnownFailure extends ConformanceTarget {
   case: string
+  reason: string
   issue: number
   error?: string
   intermittent?: boolean
@@ -77,7 +81,7 @@ export const cachePrompt = [
  *
  * @param target - The provider and model
  * @param caseId - The case id
- * @returns The entry, which names the issue that tracks the failure
+ * @returns The entry, which says why the pair fails and names the issue that explains it
  */
 export function knownFailure(target: ConformanceTarget, caseId: string): KnownFailure | undefined {
   return knownFailures.find(
@@ -154,6 +158,29 @@ export const omittedProviders: Record<string, string> = {
 
 /** Shared case ids this SDK does not implement, with the reason. */
 export const omittedCases: Record<string, string> = {}
+
+// The entries as written, for the capabilities ModelInfo does not carry.
+const modelEntries: Record<string, { limits?: object; capabilities?: Record<string, unknown> }> = modelInfoData.models
+
+// Shared provider ids that call OpenAI's Chat Completions API.
+const chatCompletionsProviders = new Set(['openai', 'mantle'])
+
+/**
+ * Why the shared model info says a target cannot call the tools a case needs, or undefined.
+ *
+ * @param conformanceCase - The case from the shared file
+ * @param target - The provider and model
+ * @returns The capability that rules the case out
+ */
+export function toolLimitReason(conformanceCase: ConformanceCase, target: ConformanceTarget): string | undefined {
+  if (!conformanceCase.tools) return undefined
+  const capabilities = modelEntries[lookupKey(target.model) ?? '']?.capabilities
+  if (capabilities?.toolUse === false) return 'capabilities.toolUse is false'
+  if (chatCompletionsProviders.has(target.provider) && capabilities?.chatCompletionsTools === 'unsupported') {
+    return 'capabilities.chatCompletionsTools is unsupported'
+  }
+  return undefined
+}
 
 /**
  * The model info that turns on what a case requires, or undefined when the case names no capability value.
@@ -245,6 +272,8 @@ export interface ConformanceResult {
   attempts?: number
   /** In a probe, whether the model declares what the case requires. */
   declared?: boolean | undefined
+  /** The known failure entry, when the result is the failure it tracks. */
+  known?: KnownFailure
 }
 
 /**
@@ -268,6 +297,7 @@ export async function recordResult(
     case: caseId,
     status: result.status,
     ...(result.reason && { reason: result.reason }),
+    ...(result.known && { known: { reason: result.known.reason, issue: result.known.issue } }),
     ...((result.attempts ?? 1) > 1 && { attempts: result.attempts }),
     ...(result.declared !== undefined && { declared: result.declared }),
   }

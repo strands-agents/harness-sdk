@@ -56,8 +56,10 @@ def model(request, target):
     model = target.create_model()
     case_id = request.function.conformance_case
     reason = conformance.not_applicable_reason(case_id, model)
+    tool_limit = conformance.tool_limit_reason(case_id, target)
     if conformance.PROBE_TARGET:
-        return conformance.prepare_probe(request.node, case_id, model, reason)
+        return conformance.prepare_probe(request.node, case_id, model, reason, tool_limit)
+    reason = reason or tool_limit
     known = conformance.KNOWN_FAILURES.get((target.provider, target.model_id, case_id))
     if reason and known:
         pytest.fail(
@@ -93,6 +95,13 @@ def test_known_failures_name_a_live_target_and_a_case():
         if key[:2] not in conformance.LIVE_TARGETS or key[2] not in conformance.CASES
     ]
     assert stale == []
+
+
+def test_known_failures_say_why_and_name_their_issue():
+    unexplained = [
+        key for key, known in conformance.KNOWN_FAILURES.items() if not known.get("reason") or "issue" not in known
+    ]
+    assert unexplained == []
 
 
 @conformance.case("tool-use")
