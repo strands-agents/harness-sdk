@@ -4,7 +4,8 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
-import { Agent, Offload } from '@strands-agents/sdk'
+import { Agent } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/context-manager'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { z } from 'zod'
 

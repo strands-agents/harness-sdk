@@ -1,7 +1,7 @@
 import { createHarness, type HarnessAgentConfig, type HarnessAgentOptions } from '@strands-agents/harness'
 import { resolveInterventions } from '@strands-agents/harness/internal'
 import { Agent, type Message, type Tool } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { randomUUID } from 'node:crypto'

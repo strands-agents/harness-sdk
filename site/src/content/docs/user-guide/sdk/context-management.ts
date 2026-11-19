@@ -1,4 +1,5 @@
-import { Agent, BedrockModel, Offload } from '@strands-agents/sdk'
+import { Agent, BedrockModel } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/context-manager'
 import { LocalFileStorage, S3Storage } from '@strands-agents/sdk/storage'
 
 async function basic() {

@@ -22,7 +22,7 @@ import {
   tool,
   type ToolContext,
 } from '@strands-agents/sdk'
-import { ContextManager } from '@strands-agents/sdk/experimental'
+import { ContextManager } from '@strands-agents/sdk/context-manager'
 import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { BedrockAgentCoreClient } from '@aws-sdk/client-bedrock-agentcore'

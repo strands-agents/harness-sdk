@@ -1,4 +1,5 @@
-import { Agent, Offload } from '@strands-agents/sdk'
+import { Agent } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 async function basicConfig() {
   // --8<-- [start:basic_config]
