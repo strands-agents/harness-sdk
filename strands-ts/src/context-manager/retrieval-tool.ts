@@ -127,7 +127,8 @@ async function retrieve(
     throw new Error('pass either query or pattern, not both. Use query for a question, pattern for a literal string.')
   }
 
-  const entries = await resolveReference(stash, reference)
+  const resolved = await resolveReference(stash, reference)
+  const entries = resolved.entries.map(({ entry }) => entry)
   // Thrown, not returned: the tool factory gives a returned string success status, and a model that
   // reads "Error" under success retries and then invents the content. A missing reference is terminal
   // only once the id was passed as the placeholder lists it; content offloaded again never comes back.
@@ -144,7 +145,7 @@ async function retrieve(
   const fallback = input.query ? Math.min(DEFAULT_QUERY_TOKENS * CHARS_PER_TOKEN, maxChars) : maxChars
   const budget = input.max_tokens ? Math.min(input.max_tokens * CHARS_PER_TOKEN, maxChars) : fallback
   if (!input.query && !input.pattern && !input.line_range) return fullContent(entries, budget)
-  return searchEntries(entries, input, budget)
+  return searchEntries(stash, resolved, input, budget)
 }
 
 /**
@@ -196,18 +197,44 @@ function clipText(blocks: ToolResultContent[], maxChars: number): ToolResultCont
 }
 
 /** The lines of the entries' text that answer `query`, match `pattern`, or fall in `line_range`. */
-function searchEntries(entries: StashEntry[], input: z.infer<typeof retrievalInputSchema>, maxChars: number): string {
-  const text = joinText(entries.map(entryText))
+async function searchEntries(
+  stash: Stash,
+  resolved: ResolvedReference,
+  input: z.infer<typeof retrievalInputSchema>,
+  maxChars: number
+): Promise<string> {
+  const parts = textParts(resolved.entries)
+  const text = joinText(parts.map(({ text }) => text))
   // Actionable rather than terminal: the content is there, the search arguments are what cannot apply.
   if (!text) throw new Error('cannot search non-text content. Omit query/pattern/line_range to retrieve full content.')
   if (input.query) {
-    return searchByQuery(text, input.query, input.line_range, input.context_lines ?? CONTEXT_LINES, maxChars)
+    const contextLines = input.context_lines ?? CONTEXT_LINES
+    return searchByQuery(stash, resolved, parts, input.query, input.line_range, contextLines, maxChars)
   }
   return searchContent(
     text,
     { pattern: input.pattern, line_range: input.line_range, context_lines: input.context_lines ?? CONTEXT_LINES },
     maxChars
   )
+}
+
+/** An entry's rendered text with the line it starts at in the joined content. Entries with no text are left out. */
+interface TextPart {
+  key: string
+  text: string
+  firstLine: number
+}
+
+function textParts(entries: ResolvedReference['entries']): TextPart[] {
+  const parts: TextPart[] = []
+  let firstLine = 0
+  for (const { key, entry } of entries) {
+    const text = entryText(entry)
+    if (text === null) continue
+    parts.push({ key, text, firstLine })
+    firstLine += text.split('\n').length
+  }
+  return parts
 }
 
 /** A line window of the content. Bounds are 0-indexed and inclusive. */
@@ -225,21 +252,23 @@ interface LineWindow {
  * Throws rather than returns on a bad `line_range`, mirroring `searchContent`: the tool factory turns
  * a throw into an error-status result, so returning the message would report the failure as a success.
  */
-function searchByQuery(
-  text: string,
+async function searchByQuery(
+  stash: Stash,
+  resolved: ResolvedReference,
+  parts: TextPart[],
   query: string,
   lineRange: { start: number; end: number } | undefined,
   contextLines: number,
   maxChars: number
-): string {
-  const lines = text.split('\n')
+): Promise<string> {
+  const lines = parts.flatMap(({ text }) => text.split('\n'))
   if (lines.length === 0 || (lines.length === 1 && lines[0] === '')) return 'Content is empty (0 lines).'
 
   const scope = resolveScope(lines.length, lineRange)
   const scopeLabel = lineRange ? ` in lines ${lineRange.start}-${scope.end + 1}` : ''
   const label = query.replace(/[\n\r/\]]/g, ' ').slice(0, 50)
 
-  const ranked = rankSections(lines, query, scope, contextLines)
+  const ranked = await rankSections(stash, resolved, parts, lines, query, scope, contextLines)
   if (ranked.length === 0) return `No relevant content found for query '${label}'${scopeLabel}.`
 
   const header = (shown: number): string => {
@@ -279,10 +308,71 @@ function resolveScope(
 /**
  * The scope's matching sections, best-first.
  *
- * Only the scope is this module's: the lines outside it are not handed over, so a section can
+ * Ranked by the storage backend's configured search strategy where it reports which part of an entry
+ * matched, and by a local scan over the rendered text where it does not. A document-level index
+ * cannot say which lines of an entry answer a query — BM25 and vector similarity score whole
+ * entries — so for those the scan still chooses the lines, at the cost of the strategy call that
+ * found out. Which strategy is configured is not visible from here, so asking is the only way.
+ */
+async function rankSections(
+  stash: Stash,
+  resolved: ResolvedReference,
+  parts: TextPart[],
+  lines: string[],
+  query: string,
+  scope: LineWindow,
+  contextLines: number
+): Promise<LineWindow[]> {
+  const delegated = await delegatedSections(stash, resolved.prefix, parts, query)
+  if (delegated) return clipToScope(delegated, scope)
+  return localSections(lines, query, scope, contextLines)
+}
+
+/**
+ * The strategy's sections as line windows of the joined content: entries in the order it ranked
+ * them, and within each entry its sections best-first.
+ *
+ * `null` when the strategy reported no section at all, which is the caller's signal to scan the text
+ * itself. That covers a strategy that found nothing as well as one that cannot report sections, and
+ * conflating the two is deliberate: scanning content that holds no match costs a pass and finds
+ * nothing, where reading "cannot report" as "nothing matched" would answer a question the strategy
+ * never addressed.
+ */
+async function delegatedSections(
+  stash: Stash,
+  prefix: string,
+  parts: TextPart[],
+  query: string
+): Promise<LineWindow[] | null> {
+  const matches = await stash.search(query, prefix)
+  if (!matches) return null
+
+  const offsets = new Map(parts.map(({ key, firstLine }) => [key, firstLine]))
+  const windows: LineWindow[] = []
+  for (const match of matches) {
+    const firstLine = offsets.get(match.key)
+    if (firstLine === undefined) continue
+    for (const section of match.sections) {
+      windows.push({ start: firstLine + section.start, end: firstLine + section.end })
+    }
+  }
+  return windows.length > 0 ? windows : null
+}
+
+/** Drops the windows outside `scope` and cuts back the ones reaching past it, so `line_range` holds. */
+function clipToScope(windows: LineWindow[], scope: LineWindow): LineWindow[] {
+  return windows
+    .filter((window) => window.start <= scope.end && window.end >= scope.start)
+    .map((window) => ({ start: Math.max(window.start, scope.start), end: Math.min(window.end, scope.end) }))
+}
+
+/**
+ * The scope's matching sections by token overlap, best-first.
+ *
+ * Only the scope is this function's: the lines outside it are not handed over, so a section can
  * neither be found in nor reach past them.
  */
-function rankSections(lines: string[], query: string, scope: LineWindow, contextLines: number): LineWindow[] {
+function localSections(lines: string[], query: string, scope: LineWindow, contextLines: number): LineWindow[] {
   const queryTokens = queryTokensOf(query)
   const sections = matchingSections(
     lines.slice(scope.start, scope.end + 1),
@@ -328,24 +418,31 @@ function render(header: string, body: string, maxChars: number, message: string)
   return `${header}\n\n${body.slice(0, cut > 0 ? cut : limit)}\n\n[${message}]`
 }
 
+/** A resolved reference: the prefix its entries are stored under, and the entries in key order. */
+interface ResolvedReference {
+  /** Prefix every resolved key starts with, for scoping a search to this reference. */
+  prefix: string
+  entries: Array<{ key: string; entry: StashEntry }>
+}
+
 /**
  * Resolves a reference to its stored entries. An id (a tool result's `toolUseId`, or
  * `removed-<trackingId>`) resolves to every entry keyed under it, in index order; otherwise the
  * reference is an exact key and resolves to that entry. Ids take precedence because a placeholder
  * references a tool result by id, and an id may itself end like a key (`tool_1`).
  */
-async function resolveReference(stash: Stash, reference: string): Promise<StashEntry[]> {
+async function resolveReference(stash: Stash, reference: string): Promise<ResolvedReference> {
   const keys = await stash.keysOf(reference)
-  if (keys.length > 0) return entriesFrom(await Promise.all(keys.map((key) => stash.retrieve(key))))
+  if (keys.length > 0) return { prefix: `${reference}_`, entries: await entriesFrom(stash, keys) }
 
-  const exact = await stash.retrieve(reference)
-  return exact ? entriesFrom([exact]) : []
+  return { prefix: reference, entries: await entriesFrom(stash, [reference]) }
 }
 
-function entriesFrom(results: ReadonlyArray<{ data: unknown } | null>): StashEntry[] {
-  return results.flatMap((result) => {
+async function entriesFrom(stash: Stash, keys: string[]): Promise<ResolvedReference['entries']> {
+  const results = await Promise.all(keys.map((key) => stash.retrieve(key)))
+  return results.flatMap((result, index) => {
     const entry = result && stashEntryFromData(result.data)
-    return entry ? [entry] : []
+    return entry ? [{ key: keys[index]!, entry }] : []
   })
 }
 

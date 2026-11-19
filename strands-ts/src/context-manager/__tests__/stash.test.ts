@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Stash, formatStashKey, parseStashKey } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { KeywordSearchStrategy } from '../../storage/search/keyword.js'
 import { Message, TextBlock, ToolResultBlock, OffloadedBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
 
@@ -231,6 +232,85 @@ describe('Stash', () => {
 
       expect(await storedAt(storage, 'track-1_0.txt')).toBe('alpha\nbeta')
       expect(await restored.takeSnapshot()).toStrictEqual(snapshot)
+    })
+  })
+
+  describe('search', () => {
+    /** Stashes `text` under `track-1_0`, the framing a strategy can report sections of. */
+    const stashText = async (stash: Stash, text: string): Promise<void> => {
+      await stash.storeMessage(new Message({ role: 'user', content: [new TextBlock(text)], trackingId: 'track-1' }))
+    }
+
+    const sectioned = (): InMemoryStorage =>
+      new InMemoryStorage({ searchStrategy: new KeywordSearchStrategy({ sectionContextLines: 1 }) })
+
+    it('reports no search at all, so the caller scans rather than reads an empty result as no match', async () => {
+      const backing = new InMemoryStorage()
+      // A minimal custom backend: the Storage contract without the optional search().
+      const stash = new Stash(
+        {
+          write: (key, data) => backing.write(key, data),
+          read: (key) => backing.read(key),
+          delete: (key) => backing.delete(key),
+          list: (prefix) => backing.list(prefix),
+        },
+        'test-session',
+        'test-agent'
+      )
+      await stashText(stash, 'alpha\nbeta gamma\ndelta')
+
+      expect(await stash.search('gamma', 'track-1_0')).toBeNull()
+    })
+
+    it('reports the strategy sections as line bounds, under the reference rather than the stored key', async () => {
+      const stash = new Stash(sectioned(), 'test-session', 'test-agent')
+      await stashText(stash, 'alpha\nbeta gamma\ndelta\nepsilon\nzeta')
+
+      expect(await stash.search('gamma', 'track-1_0')).toStrictEqual([
+        { key: 'track-1_0', score: 1, sections: [{ start: 0, end: 2 }] },
+      ])
+    })
+
+    it('measures the line bounds in bytes, as the ranges are', async () => {
+      const stash = new Stash(
+        new InMemoryStorage({ searchStrategy: new KeywordSearchStrategy({ sectionContextLines: 0 }) }),
+        'test-session',
+        'test-agent'
+      )
+      await stashText(stash, '\u{1F600}\u{1F600}\nbeta gamma\ndelta')
+
+      const matches = await stash.search('gamma', 'track-1_0')
+
+      expect(matches![0]!.sections).toStrictEqual([{ start: 1, end: 1 }])
+    })
+
+    it('reports no section for an entry the strategy ranked whole', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      await stashText(stash, 'alpha\nbeta gamma\ndelta')
+
+      expect(await stash.search('gamma', 'track-1_0')).toStrictEqual([{ key: 'track-1_0', score: 1, sections: [] }])
+    })
+
+    // A JSON entry's stored bytes are compact while a consumer renders it pretty-printed, so an
+    // offset into one names the wrong line of the other.
+    it('reports no section for a JSON entry even when the strategy measured one', async () => {
+      const stash = new Stash(sectioned(), 'test-session', 'test-agent')
+      const message = new Message({ role: 'user', content: [new TextBlock('beta gamma')], trackingId: 'track-1' })
+      const reference = await stash.storeRemoved([message])
+
+      expect(await stash.search('gamma', reference)).toStrictEqual([{ key: `${reference}_0`, score: 1, sections: [] }])
+    })
+
+    it('searches only the entries under the prefix', async () => {
+      const stash = new Stash(sectioned(), 'test-session', 'test-agent')
+      await stashText(stash, 'alpha\nbeta gamma\ndelta')
+      await stash.storeMessage(
+        new Message({ role: 'user', content: [new TextBlock('gamma elsewhere')], trackingId: 'track-2' })
+      )
+
+      const matches = await stash.search('gamma', 'track-2_0')
+
+      expect(matches!.map(({ key }) => key)).toStrictEqual(['track-2_0'])
     })
   })
 

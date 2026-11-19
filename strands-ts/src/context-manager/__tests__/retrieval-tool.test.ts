@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { Stash } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { KeywordSearchStrategy } from '../../storage/search/keyword.js'
 import { ImageBlock } from '../../types/media.js'
-import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import type { SearchStrategy } from '../../storage/search/types.js'
 import type { JSONValue } from '../../types/json.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockContext } from '../../__fixtures__/tool-helpers.js'
@@ -521,6 +523,125 @@ describe('retrieval tool', () => {
         query: 'kubernetes ingress certificate',
       })) as string
       expect(result).toBe("No relevant content found for query 'kubernetes ingress certificate'.")
+    })
+
+    describe('delegated to the configured search strategy', () => {
+      /** Stashes `text` under `track-1_0`, the framing a strategy can report sections of. */
+      async function stashText(stash: Stash, text: string): Promise<string> {
+        await stash.storeMessage(new Message({ role: 'user', content: [new TextBlock(text)], trackingId: 'track-1' }))
+        return 'track-1_0'
+      }
+
+      /**
+       * A strategy standing in for a backend index: it reports the given lines as the matching
+       * sections of every entry, whatever the query. A result holding a line with none of the
+       * query's terms can only have come from the strategy rather than the local scan.
+       */
+      function lineStrategy(...matches: number[]): SearchStrategy<InMemoryStorage> {
+        return {
+          search: async (storage, _query, options) => {
+            const keys = await storage.list(options?.prefix ?? '')
+            const entries = await Promise.all(keys.map(async (key) => ({ key, data: (await storage.read(key))! })))
+            return entries.map(({ key, data }) => ({
+              key,
+              score: 1,
+              data,
+              byteRanges: matches.map((line) => byteRangeOfLine(data, line)),
+            }))
+          },
+        }
+      }
+
+      /** The byte offsets of one 0-indexed line of `data`, `end` exclusive, as a strategy reports them. */
+      function byteRangeOfLine(data: Uint8Array, line: number): { start: number; end: number } {
+        const encoder = new TextEncoder()
+        const lines = new TextDecoder().decode(data).split('\n')
+        const start = lines.slice(0, line).reduce((total, text) => total + encoder.encode(text).length + 1, 0)
+        return { start, end: start + encoder.encode(lines[line]!).length }
+      }
+
+      it('returns the sections the strategy ranked rather than scanning the text itself', async () => {
+        const stash = new Stash(new InMemoryStorage({ searchStrategy: lineStrategy(9) }), 'test-session', 'test-agent')
+        const ref = await stashText(stash, buriedAnswerLines().join('\n'))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: ref,
+          query: 'kubernetes ingress certificate',
+        })) as string
+
+        expect(result).toContain('line 10: nothing of note')
+        expect(result).toMatch(/^\[showing 1 of 1 relevant section for/)
+      })
+
+      it('scans the text itself when the strategy ranked the entry without reporting a section', async () => {
+        const wholeEntry: SearchStrategy<InMemoryStorage> = {
+          search: async (storage, _query, options) =>
+            (await storage.list(options?.prefix ?? '')).map((key) => ({ key, score: 1 })),
+        }
+        const stash = new Stash(new InMemoryStorage({ searchStrategy: wholeEntry }), 'test-session', 'test-agent')
+        const ref = await stashText(stash, buriedAnswerLines().join('\n'))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: ref,
+          query: 'why was the database connection pool exhausted',
+        })) as string
+
+        expect(result).toContain('connection pool was exhausted')
+      })
+
+      it('drops a strategy section outside line_range', async () => {
+        const stash = new Stash(new InMemoryStorage({ searchStrategy: lineStrategy(9) }), 'test-session', 'test-agent')
+        const ref = await stashText(stash, buriedAnswerLines().join('\n'))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: ref,
+          query: 'kubernetes ingress certificate',
+          line_range: { start: 55, end: 70 },
+        })) as string
+
+        expect(result).toBe("No relevant content found for query 'kubernetes ingress certificate' in lines 55-70.")
+      })
+
+      it('cuts a strategy section back to line_range', async () => {
+        const stash = new Stash(
+          new InMemoryStorage({ searchStrategy: new KeywordSearchStrategy({ sectionContextLines: 5 }) }),
+          'test-session',
+          'test-agent'
+        )
+        const ref = await stashText(stash, buriedAnswerLines().join('\n'))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: ref,
+          query: 'connection pool exhausted',
+          line_range: { start: 60, end: 64 },
+        })) as string
+
+        expect(result).toContain('connection pool was exhausted')
+        expect(result).toMatch(/ 60\| line 60/)
+        expect(result).toMatch(/ 64\| line 64/)
+        expect(result).not.toMatch(/ 59\| line 59/)
+        expect(result).not.toMatch(/ 65\| line 65/)
+      })
+
+      it('places each strategy section at its own entry lines across a multi-entry reference', async () => {
+        const stash = new Stash(new InMemoryStorage({ searchStrategy: lineStrategy(1) }), 'test-session', 'test-agent')
+        const toolResult = new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success',
+          content: [new TextBlock('first alpha\nfirst beta'), new TextBlock('second alpha\nsecond beta')],
+        })
+        await stash.storeMessage(new Message({ role: 'user', content: [toolResult], trackingId: 'track-1' }))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: 'tool-1',
+          query: 'kubernetes ingress certificate',
+        })) as string
+
+        // Line 2 of each entry: the second entry's lines are offset by the first entry's length.
+        expect(result).toContain('2| first beta')
+        expect(result).toContain('4| second beta')
+        expect(result).not.toContain('first alpha')
+      })
     })
 
     it('rejects a query against an entry with no text to rank', async () => {
