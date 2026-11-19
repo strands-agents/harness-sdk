@@ -1,6 +1,7 @@
 name: ClickHouse Loom
 description: Shared long-term memory for agents on a self-hosted Loom server; memories are stored in ClickHouse and found again by any agent on the namespace.
 integrationType: memory-store
+maintainedBy: partner
 languages:
   python:
     package: clickhouse-loom
