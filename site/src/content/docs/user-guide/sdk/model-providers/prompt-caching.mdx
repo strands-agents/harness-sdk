@@ -1,0 +1,354 @@
+---
+title: Prompt caching
+description: "How Strands caches prompts: explicit cache points, implicit provider caching, which models and APIs cache, and how to avoid the common misses."
+tags: [caching, bedrock]
+sourceLinks:
+  - path: strands-ts/src/models/bedrock.ts
+  - path: strands-ts/src/models/openai/responses-adapter.ts
+  - path: strands-ts/src/models/model-proxy.ts
+  - path: strands-py/src/strands/models/bedrock.py
+  - path: strands-py/src/strands/models/_model_proxy.py
+---
+
+An agent re-sends its system prompt, tool definitions, and conversation on every model
+provider reuse that work: cached input is billed at a fraction of the normal rate and
+returns faster. This page explains how Strands caches on each kind of model provider,
+what limits each kind has, and how to work around the gaps. It is for developers who
+run long agent loops and want to know whether caching is working for their model.
+
+## How does prompt caching decide what to reuse?
+
+Every provider caches a **prefix**: the request from its first byte up to some point.
+A later request reads the cache only if it starts with exactly the same bytes. Change
+one character early in the request and everything after it is a miss.
+
+Providers decide where the prefix ends in one of two ways:
+
+| Kind | Who marks the end of the prefix | Providers |
+|---|---|---|
+| Explicit | The request carries cache points, and Strands places them | Claude, Amazon Nova, OpenAI GPT-5.6 and later on the Responses API |
+| Implicit | The provider decides, with no markers in the request | OpenAI GPT on the Converse API, GPT-5.5 and earlier, xAI Grok, Gemini, OpenAI Chat Completions |
+
+The difference matters most when part of your prompt changes on every call. With
+explicit caching, Strands puts the changing part after the last cache point, so it never
+enters the cache. With implicit caching there is no point to put it after.
+
+Reads are cheap and writes can be expensive. On Claude (with the 5-minute TTL) and on
+GPT-5.6 and later, writing to the cache costs 1.25 times the normal input price, so a
+prefix that is written on every call and never read costs more than no caching at all. See
+[Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for per-model rates.
+
+## How do you turn caching on?
+
+Set a cache configuration with the `auto` strategy on the model provider. Strands then
+places cache points where the model takes them and relies on the provider where it
+doesn't.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import BedrockModel, CacheConfig
+
+model = BedrockModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    cache_config=CacheConfig(strategy="auto"),
+)
+
+agent = Agent(model=model, system_prompt="You are a support agent for Acme.")
+agent("How do I reset my password?")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/prompt-caching_imports.ts:enable_imports"
+
+--8<-- "user-guide/sdk/model-providers/prompt-caching.ts:enable"
+```
+</Tab>
+</Tabs>
+
+Without a cache configuration, the SDK places no cache points, so Claude and Nova don't
+cache at all. Providers with implicit caching still cache on their own. The
+[harness](../../harness/configure/context-and-caching.md) turns `auto` caching on by
+default.
+
+## How does Strands place explicit cache points?
+
+You get the most from explicit caching when the stable parts of the request sit before a
+cache point and everything that changes sits after the last one. With `auto`, Strands
+places the points for you:
+
+| Model | Where Strands places cache points |
+|---|---|
+| Claude on Amazon Bedrock and Anthropic | After the system prompt, after the tool definitions, and on the latest user message, so the cached prefix grows with the conversation. The TypeScript SDK caches the tools by default; the Python SDK needs a tools TTL |
+| Amazon Nova | After the system prompt and after the latest user text. Nova accepts no point after tools or tool results, no TTL, and doesn't look back for an earlier point |
+| GPT-5.6 and later on the Responses API (OpenAI and Amazon Bedrock Mantle) | On every user message that stays in the conversation, with explicit mode, so only those points create cache entries |
+
+Per-call content, such as text a [context injector](../plugins/context-injector.md)
+adds before a model call, always goes after the last cache point. On Claude models that
+support temporary messages through <Syntax py="AnthropicModel" ts="AnthropicModel" />,
+it is sent as a turn-scoped system message instead, outside any cache entry.
+
+Explicit caching has hard limits:
+
+- **At most four cache points per request** on Claude and Nova. Strands keeps the system
+  prompt cache points you place yourself and adds its own, so three hand-placed system
+  points plus tools are rejected with "A maximum of 4 blocks with cache_control may be
+  provided. Found 5."
+- **A minimum prefix size.** A prefix below it is accepted but not cached, with no
+  warning.
+
+| Model | Minimum cacheable prefix |
+|---|---|
+| Claude Opus 5, Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5 and later | 512 tokens |
+| Claude Sonnet 5, Sonnet 4.6, Opus 4.8 | 1,024 tokens |
+| Claude Haiku 4.5, Opus 4.5 to 4.7 | 4,096 tokens |
+| Amazon Nova | About 1,000 tokens, and nothing beyond 20,000 |
+| GPT-5.6 and later | 1,024 tokens |
+
+For per-section TTLs, tool caching, and placing cache points by hand on Amazon Bedrock,
+see [Bedrock prompt caching](./amazon-bedrock-prompt-caching.md).
+
+## How does implicit caching work through Strands?
+
+On implicit providers, Strands sends no cache markers. The provider caches whatever
+prefix it sees and reads it back when a later request starts with the same bytes. This
+works well for a plain tool loop: each call extends the previous one, so the whole
+earlier request is a prefix of the next. GPT-6 Luna on the Converse API reads about 98%
+of each later call from cache in a five-call loop.
+
+It breaks when a request stops being an exact extension of the previous one. Amazon
+Bedrock's rule for GPT-5.6 and later is strict: a request reads the cache only if it
+starts with an entire earlier request. Three things cause that in practice.
+
+- **Content that changes on every call.** Strands sends a context injector's text only
+  on the latest message and drops it from earlier ones, which is what keeps it out of the
+  cache on explicit providers. On implicit providers it means each request no longer
+  starts with the previous one. With an injector that fires on every model call, GPT-6
+  Luna on Converse reads 0% and writes the whole prompt on every call.
+- **A short prompt.** OpenAI and Amazon Bedrock implicit caching starts at 1,024 tokens.
+  Gemini 3.5 Flash on Vertex AI reads reliably only from about 8,200 tokens.
+- **Noise.** Implicit caching is best effort. GPT-5.4 read anywhere from 24% to 96% of
+  the same workload across runs.
+
+Older models soften the cost: GPT-5.5 and earlier bill no cache writes, so a miss costs
+the normal input price rather than 1.25 times it.
+
+## Which models and APIs cache today?
+
+Measured on 2026-11-19 in us-east-1 with a five-call tool loop and a 5,600-token system
+prompt, with `auto` caching, up to three runs each. "Per-call context" is a context
+injector that fires before every model call.
+
+| Model | Model provider and API | Tool loop | With per-call context | Chat across turns |
+|---|---|---|---|---|
+| Claude Haiku 4.5, Sonnet 4.6, Opus 5.5 | `BedrockModel`, or `AnthropicModel` on Amazon Bedrock | 98% | 97–98% | 98–99% |
+| Claude, same models | Vercel AI SDK with Amazon Bedrock | 94–96% | 89–95% | 99% |
+| GPT-6 Luna | `OpenAIModel`, Responses API on Amazon Bedrock Mantle | 98% | 98% | 99% |
+| GPT-6 Luna | `BedrockModel` (Converse) | 98% | 0%, full rewrite | 99% |
+| GPT-6 Luna | `OpenAIModel`, Chat Completions on Mantle | 98% | 0%, full rewrite | 99% |
+| GPT-5.4 | `BedrockModel` (Converse) | 24–94% | 45–72% | 64% |
+| Gemma 3 and Gemma 4 on Amazon Bedrock | `BedrockModel`, `OpenAIModel` | Not cached | Not cached | Not cached |
+
+Amazon Bedrock models outside this table (Llama, Mistral, DeepSeek, gpt-oss) don't cache.
+Gemini isn't available on Amazon Bedrock.
+
+## Known gaps and how to work around them
+
+Each gap below is a case where caching silently does nothing or costs more than leaving
+it off. They are listed roughly by how often they bite.
+
+### Per-call context on an implicit provider
+
+**Symptom:** every call writes the whole prompt and reads nothing. On GPT-5.6 and later
+this costs more than no caching.
+
+**Workaround:** move the model to an API with explicit cache points. For GPT-5.6 and
+later on Amazon Bedrock, use the Responses API instead of Converse:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import CacheConfig
+from strands.models.openai_responses import OpenAIResponsesModel
+
+# GPT-5.6 and later take cache points on the Responses API, not on Converse
+model = OpenAIResponsesModel(
+    model_id="openai.gpt-6-luna",
+    bedrock_mantle_config={"region": "us-east-1"},
+    cache_config=CacheConfig(strategy="auto"),
+)
+
+agent = Agent(model=model)
+agent("Summarize the open incidents.")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/prompt-caching_imports.ts:responses_imports"
+
+--8<-- "user-guide/sdk/model-providers/prompt-caching.ts:responses"
+```
+</Tab>
+</Tabs>
+
+If you have to stay on an implicit provider, inject less often. An injector that fires
+once per user turn changes the prefix only around the start of each turn, instead of on
+every call in the tool loop:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from datetime import date
+
+from strands import Agent
+from strands.models import BedrockModel, CacheConfig
+from strands.vended_plugins.context_injector import ContextInjector
+
+# Inject once per user turn, not on every model call in the tool loop
+today = ContextInjector(
+    lambda context: f"Today is {date.today():%A, %B %d}.", trigger="userTurn"
+)
+
+agent = Agent(
+    model=BedrockModel(
+        model_id="us.openai.gpt-6-luna",
+        cache_config=CacheConfig(strategy="auto"),
+    ),
+    plugins=[today],
+)
+agent("What is due this week?")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/prompt-caching_imports.ts:injector_imports"
+
+--8<-- "user-guide/sdk/model-providers/prompt-caching.ts:injector"
+```
+</Tab>
+</Tabs>
+
+Never put a timestamp or other per-call value in the system prompt. It comes first in
+the request, so it invalidates the tools and the whole conversation on every provider.
+
+### GPT-5.6 and later without a cache configuration
+
+The Responses API gets cache points only when a cache configuration is set. Without one,
+GPT-5.6 and later fall back to implicit caching and hit the gap above. Set the `auto`
+strategy even though the provider caches on its own.
+
+### OpenAI Chat Completions
+
+Strands places no cache points on the Chat Completions API, so it behaves as an implicit
+provider on OpenAI, on Amazon Bedrock Mantle, and through a LiteLLM proxy. Use the
+Responses API for agents with per-call context.
+
+### Too many cache points
+
+Requests with more than four cache points are rejected. Let `auto` place the points, or
+place at most two of your own in the system prompt when the agent has tools.
+
+### Prompts below the minimum size
+
+A prefix under the model's minimum is accepted and never cached, and the request reports
+zero cache reads and writes. Keep the stable part of the prompt, meaning the system prompt
+plus tool definitions, above the minimum in the table earlier on this page, or expect no
+savings.
+
+### Conversation managers that rewrite history
+
+Anything that changes an earlier message moves the prefix. The default sliding window
+conversation manager trims the oldest messages once a conversation passes its window
+(40 messages by default), and from then on every turn starts with a different message.
+Context strategies that keep only the most recent tool results rewrite an older result
+before each call. Expect few cache reads in long conversations under these managers.
+
+### Memory injected for a single call
+
+Middleware that adds text to the latest message for one call only, which is how the
+[memory manager](../memory/managing-memory.md) injects retrieved memories, rewrites the
+conversation from that message on every call. On Claude the tools and system prompt still
+come from cache, but the conversation does not. Prefer a context injector for text the
+model should see on every turn.
+
+### LiteLLM
+
+In the Python SDK, with a cache configuration and a session manager, `LiteLLMModel` fails
+on every call to a non-OpenAI backend such as Amazon Bedrock, Anthropic, or
+Gemini, because LiteLLM rejects the prompt cache key it sends. Without a session manager
+the request succeeds, but on Amazon Bedrock it isn't cached. For Claude or Nova on Amazon
+Bedrock, use <Syntax py="BedrockModel" ts="BedrockModel" /> directly.
+
+### Vercel AI SDK with Amazon Bedrock
+
+The Vercel model provider places no cache point after tool results and ignores cache
+points you place yourself. A five-call loop reads 4 to 6% less than
+<Syntax py="BedrockModel" ts="BedrockModel" />, and the gap grows with longer loops and
+with per-call context. Use <Syntax py="BedrockModel" ts="BedrockModel" /> for long agent
+loops on Amazon Bedrock.
+
+## How do you check whether caching works?
+
+The model response's usage reports how many input tokens were read from and written to
+the cache. Run the same agent twice and compare: a working cache shows reads on the second
+call and small writes.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import BedrockModel, CacheConfig
+
+agent = Agent(
+    model=BedrockModel(
+        model_id="global.anthropic.claude-sonnet-4-6",
+        cache_config=CacheConfig(strategy="auto"),
+    ),
+    system_prompt="You are a support agent for Acme. " * 200,
+)
+
+agent("How do I reset my password?")
+result = agent("And how do I enable two-factor sign-in?")
+usage = result.metrics.accumulated_usage
+print(f"read: {usage.get('cacheReadInputTokens', 0)}")
+print(f"written: {usage.get('cacheWriteInputTokens', 0)}")
+
+# Typical output:
+# read: 2013
+# written: 2242
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/prompt-caching_imports.ts:check_imports"
+
+--8<-- "user-guide/sdk/model-providers/prompt-caching.ts:check"
+```
+</Tab>
+</Tabs>
+
+Zero reads and zero writes on every call means the prompt is below the minimum size or
+the model doesn't cache. Writes on every call that never turn into reads mean something
+changes before the cached prefix ends: look for per-call content, a changing system
+prompt, or a conversation manager that rewrites history.
+
+## Related pages
+
+- [Bedrock prompt caching](./amazon-bedrock-prompt-caching.md): cache points, TTLs, and
+  tool caching on Amazon Bedrock
+- [OpenAI Responses](./openai-responses.md): cache keys and cache points for GPT-5.6 and
+  later
+- [Context injector](../plugins/context-injector.md): per-turn and per-call context
+- [Harness context and caching](../../harness/configure/context-and-caching.md): the
+  harness's caching defaults
