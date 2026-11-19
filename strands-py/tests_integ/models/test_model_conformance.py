@@ -59,7 +59,7 @@ def model(request, target):
     known = conformance.KNOWN_FAILURES.get((target.provider, target.model_id, case_id))
     if reason and known:
         pytest.fail(
-            f"known failure #{known['issue']} no longer applies ({reason}); "
+            f"known failure {conformance.known_reference(known)} no longer applies ({reason}); "
             "remove it from knownFailures in shared/conformance.json"
         )
     if reason:
@@ -91,6 +91,15 @@ def test_known_failures_name_a_live_target_and_a_case():
         if key[:2] not in conformance.LIVE_TARGETS or key[2] not in conformance.CASES
     ]
     assert stale == []
+
+
+def test_known_failures_say_why_and_where_it_is_explained():
+    unexplained = [
+        key
+        for key, known in conformance.KNOWN_FAILURES.items()
+        if not known.get("reason") or not ("issue" in known or known.get("link"))
+    ]
+    assert unexplained == []
 
 
 @conformance.case("tool-use")
