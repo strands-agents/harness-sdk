@@ -145,6 +145,9 @@ def _marks(row: dict[str, Any]) -> list[pytest.MarkDecorator]:
 
 
 TARGET_PROVIDERS = {row["provider"] for row in _SHARED["targets"]}
+# Model info entries no target resolves to, and the ones the shared file says are left out, with the reason.
+UNTARGETED_ENTRIES = set(_MODEL_ENTRIES) - {_lookup_key(row["model"]) for row in _SHARED["targets"]}
+UNTESTED: dict[str, str] = _SHARED["untested"]
 LIVE_TARGETS = {(row["provider"], row["model"]) for row in _SHARED["targets"] if not row.get("endOfLife")}
 TARGETS = [
     pytest.param(
