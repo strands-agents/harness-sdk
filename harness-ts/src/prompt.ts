@@ -43,8 +43,9 @@ do not need to wrap up early or hand off mid-task.`
  * @param instructions - A domain block appended after the contract: identity, scope, and any
  *   task-specific policy the consumer wants the agent to follow.
  * @param contextParts - Additional blocks appended last, e.g. a deployment region supplied by a
- *   serving layer. They become part of the cached system prompt, so keep them the same for every
- *   turn of a conversation; put per-turn values in a `ContextInjector`.
+ *   serving layer. They are part of the system prompt, which prompt caching reuses across turns,
+ *   so keep them the same for every turn of a conversation; put per-turn values in a
+ *   `ContextInjector`.
  * @returns The assembled system prompt.
  */
 export function buildSystemPrompt(instructions?: string, contextParts?: string[]): string {

@@ -560,11 +560,11 @@ import { HARNESS_CONTRACT, buildSystemPrompt } from '@strands-agents/harness'
 const prompt = buildSystemPrompt('You are a data-migration assistant.', ['Deployment region: eu-west-1'])
 ```
 
-The whole prompt is cached as one block, so keep `contextParts` the same for every turn of a
-conversation. A value that changes each turn, such as a timestamp, makes the provider write the
-system prompt and the conversation after it to the cache again on every turn. Put those values in
-a `ContextInjector` plugin instead. It adds them to the latest user message, so the system prompt
-stays the same and stays cached:
+With caching on (the harness default), the system prompt is part of the cached prefix, so keep
+`contextParts` the same for every turn of a conversation. A value that changes each turn, such as a
+timestamp, changes that prefix, so the system prompt and the conversation after it miss the cache
+on every turn. Put those values in a `ContextInjector` plugin instead. It adds them to the latest
+user message, so the system prompt stays the same and stays cached:
 
 ```typescript
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins/context-injector'
