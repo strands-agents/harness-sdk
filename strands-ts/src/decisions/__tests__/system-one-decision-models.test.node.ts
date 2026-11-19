@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { ImageBlock } from '../../types/media.js'
 import { Message, TextBlock } from '../../types/messages.js'
@@ -363,6 +364,27 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
 
       expect(result.usage).toBeUndefined()
+    })
+
+    it.each([
+      '{"input_tokens":1e999,"output_tokens":3}',
+      '{"input_tokens":12,"output_tokens":1e999}',
+      '{"input_tokens":-1e999,"output_tokens":3}',
+      '{"input_tokens":1e308,"output_tokens":1e308}',
+      '{"input_tokens":12.5,"output_tokens":3}',
+    ])('omits non-integer usage %s without changing invocation counters', async (usage) => {
+      const raw = `{"model":"resolved-model","answers":{"q":{"type":"noul","noul":1}},"usage":${usage}}`
+      const fetch = vi.fn(async (): Promise<Response> => new Response(raw)) as typeof globalThis.fetch
+      const decision = create({ apiKey: 'test-key', fetch })
+      const invocationContext = new InvocationContextImpl()
+      invocationContext.recordUsage({ inputTokens: 5, outputTokens: 2, totalTokens: 7 })
+      const originalUsage = { ...invocationContext.usage }
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }, { invocationContext })
+
+      expect(result.answers).toEqual({ q: true })
+      expect(result.usage).toBeUndefined()
+      expect(invocationContext.usage).toEqual(originalUsage)
     })
 
     it('rejects an invalid response model id', async () => {
