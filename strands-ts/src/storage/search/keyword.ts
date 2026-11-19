@@ -1,6 +1,7 @@
 import { logger } from '../../logging/logger.js'
 import type { Storage, StorageSearchResult } from '../storage.js'
 import type { SearchStrategy } from './types.js'
+import { bestSectionRange } from './sections.js'
 
 /** Split text into a set of lowercased word tokens for keyword matching. */
 export function tokenize(text: string): Set<string> {
@@ -149,66 +150,9 @@ export const STOP_WORDS = new Set([
 /** Entries read concurrently per batch during a keyword scan, to avoid throttling remote backends such as S3. */
 const READ_BATCH_SIZE = 8
 
-/** Lines of context reported on either side of a matching line. */
-const CONTEXT_LINES = 5
-
-/** A matching section of an entry's text: 0-indexed inclusive line bounds and its relevance score. */
-export interface MatchingSection {
-  start: number
-  end: number
-  score: number
-}
-
-/**
- * The sections of `lines` that the query tokens match, best-first: each matching line with
- * `contextLines` of context on either side.
- *
- * Sections are centred on the match rather than cut on a fixed grid, so a match sits in the middle
- * of its section instead of wherever a boundary happened to fall. Where several overlap — adjacent
- * matching lines produce near-identical sections — only the best-scoring is kept, so one passage is
- * not reported as several.
- *
- * @param queryTokens - Query tokens to match, already lowercased and stop-word filtered
- * @param lines - The text to search, split into lines
- * @param contextLines - Lines of context to keep on either side of a matching line
- * @returns The matching sections, best-first
- */
-export function matchingSections(
-  queryTokens: Set<string>,
-  lines: string[],
-  contextLines: number = CONTEXT_LINES
-): MatchingSection[] {
-  const candidates: MatchingSection[] = []
-  for (const [line, text] of lines.entries()) {
-    if (tokenOverlapScore(queryTokens, text) === 0) continue
-    const start = Math.max(0, line - contextLines)
-    const end = Math.min(lines.length - 1, line + contextLines)
-    // Scored over the whole section, not the matching line: a passage whose query terms are spread
-    // across neighbouring lines outranks one line repeating a single term.
-    candidates.push({ start, end, score: tokenOverlapScore(queryTokens, lines.slice(start, end + 1).join('\n')) })
-  }
-  candidates.sort((left, right) => right.score - left.score)
-
-  const sections: MatchingSection[] = []
-  for (const candidate of candidates) {
-    if (sections.some((section) => candidate.start <= section.end && candidate.end >= section.start)) continue
-    sections.push(candidate)
-  }
-  return sections
-}
-
 /** The query tokens of `query`: lowercased, with stop words dropped so they cannot match on their own. */
 export function queryTokensOf(query: string): Set<string> {
   return new Set([...tokenize(query)].filter((token) => !STOP_WORDS.has(token)))
-}
-
-/** The byte offsets the lines `[start, end]` occupy in `lines` joined by `\n`, `end` exclusive. */
-function byteRangeOf(lines: string[], start: number, end: number): { start: number; end: number } {
-  const encoder = new TextEncoder()
-  const byteLength = (from: number, to: number): number =>
-    lines.slice(from, to).reduce((total, line) => total + encoder.encode(line).length + 1, 0)
-  const startByte = byteLength(0, start)
-  return { start: startByte, end: startByte + byteLength(start, end + 1) - 1 }
 }
 
 /** Strip a key's file extension so it is not scored as a word (e.g. `md` on every `.md` entry). */
@@ -328,23 +272,12 @@ function scoreEntry(
   const score = tokenOverlapScore(queryTokens, `${stripExtension(key)} ${content}`)
   if (score === 0) return null
 
-  const range = sectionContextLines === undefined ? undefined : bestSection(queryTokens, content, sectionContextLines)
+  const range =
+    sectionContextLines === undefined
+      ? undefined
+      : bestSectionRange(content, (text) => tokenOverlapScore(queryTokens, text), sectionContextLines)
   // Returns the bytes already read so callers (e.g. FileMemoryStore) need not re-read each hit.
   return range ? { key, score, data: bytes, byteRange: range } : { key, score, data: bytes }
-}
-
-/**
- * The byte offsets of `content`'s best-matching section, or `undefined` when only the key matched
- * and the content holds nothing to point at.
- */
-function bestSection(
-  queryTokens: Set<string>,
-  content: string,
-  contextLines: number
-): { start: number; end: number } | undefined {
-  const lines = content.split('\n')
-  const best = matchingSections(queryTokens, lines, contextLines)[0]
-  return best ? byteRangeOf(lines, best.start, best.end) : undefined
 }
 
 /** Read `key`, returning `null` when the read throws so one unreadable entry (e.g. a permissions error) cannot fail a search. */
