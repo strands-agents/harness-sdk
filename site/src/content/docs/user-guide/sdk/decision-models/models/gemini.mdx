@@ -60,6 +60,7 @@ document bytes aren't supported.
 
 | Response | Error |
 | --- | --- |
-| The input was blocked by Gemini's safety filters | `ModelError`, with Gemini's reason in the message |
-| Rate limited or temporarily unavailable (HTTP 429 or 503) | `ModelThrottledError` |
+| Gemini blocked the input (an HTTP 400 safety error, or `prompt_feedback.block_reason`) | `ModelError`, with Gemini's reason in the message |
+| Rate limited or temporarily unavailable (HTTP 429, 503, or 529) | `ModelThrottledError` |
+| Request too large (HTTP 413) | `ContextWindowOverflowError` |
 | Any other failed request, or an answer that doesn't match its question | `ModelError` |
