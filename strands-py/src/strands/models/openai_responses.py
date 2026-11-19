@@ -687,10 +687,10 @@ class OpenAIResponsesModel(Model):
         return request
 
     def _format_request_system_prompt(self, system_prompt: str, request: dict[str, Any]) -> dict[str, Any]:
-        """Format the system prompt as the request field the model caches it in.
+        """Format the system prompt as ``instructions``, or as a leading developer message where they never cache.
 
-        Some models append ``instructions`` after the input, where they never cache; a leading developer
-        message does. A stored conversation would keep every resent copy, and a native input stays the caller's.
+        Some models append ``instructions`` after the input, past every cache breakpoint. A stored conversation
+        keeps ``instructions`` because it would store every resent message, and a native input stays the caller's.
 
         Args:
             system_prompt: System prompt to provide context to the model.

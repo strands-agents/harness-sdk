@@ -268,7 +268,8 @@ describe("OpenAIModel (api: 'responses')", () => {
       ['gpt-6.1-sol', { cacheConfig: {} }, false],
       ['gpt-6.2-sol', { stateful: true }, false],
     ])(
-      'sends the system prompt where %s caches it, given %o',
+      // Guards against GPT-6.2 never caching instructions (#6367).
+      'sends the system prompt as a developer message only where instructions never cache: %s %o',
       async (modelId, modelOptions, expectDeveloperMessage) => {
         const systemPrompt = [new TextBlock('Be '), new TextBlock('helpful.')]
         const req = await runOnce({ modelId, ...modelOptions }, [mkUserMessage()], { systemPrompt })
@@ -281,7 +282,6 @@ describe("OpenAIModel (api: 'responses')", () => {
             ? { input: [developer, ...withoutSystemPrompt.input] }
             : { instructions: 'Be helpful.' }),
         })
-        expect(withoutSystemPrompt).not.toHaveProperty('instructions')
       }
     )
 
