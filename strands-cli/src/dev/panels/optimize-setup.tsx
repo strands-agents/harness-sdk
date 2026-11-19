@@ -60,6 +60,8 @@ const SLIDER_WIDTH = 21
 const SLIDER_LABEL_WIDTH = 12
 const FULL_SETUP_ROWS = 12
 const TUNE_CHROME_ROWS = 9
+const REVIEW_CHROME_ROWS = 6
+const COMPACT_REVIEW_CHROME_ROWS = 4
 const MODEL_CHOOSER_CHROME_ROWS = 5
 const MODEL_FILTER = /^[\w.:/-]$/u
 const PERCENT = 100
@@ -741,21 +743,31 @@ const ReviewTab = ({
   plan,
   agent,
   notices,
+  room,
 }: {
   plan: OptimizePlan
   agent: RunAgent | undefined
   notices: TabNotices
-}): ReactElement => (
-  <>
-    {reviewFacts(plan, agent).map(([label, value]) => (
-      <SummaryRow key={label} label={label} value={value} />
-    ))}
-    {SETUP_TABS.flatMap((tab) => {
-      const notice = notices[tab]
-      return notice ? [<Line key={tab} tone={notice.tone}>{`  ${TAB_TITLES[tab]}: ${notice.text}`}</Line>] : []
-    })}
-  </>
-)
+  room: number
+}): ReactElement => {
+  const lines = SETUP_TABS.flatMap((tab) => {
+    const notice = notices[tab]
+    return notice ? [<Line key={tab} tone={notice.tone}>{`  ${TAB_TITLES[tab]}: ${notice.text}`}</Line>] : []
+  })
+  const facts = reviewFacts(plan, agent)
+  const space = Math.max(0, room - lines.length)
+  const shown = facts.length > space ? facts.slice(0, Math.max(0, space - 1)) : facts
+  const hidden = facts.length - shown.length
+  return (
+    <>
+      {shown.map(([label, value]) => (
+        <SummaryRow key={label} label={label} value={value} />
+      ))}
+      {hidden > 0 ? <Line tone="muted">{`  ↓ ${hidden} more, in the tabs`}</Line> : null}
+      {lines}
+    </>
+  )
+}
 
 export const SetupView = ({ session, width, height, plan }: SetupViewProps): ReactElement => {
   const latest = (): OptimizePlan => {
@@ -807,7 +819,7 @@ export const SetupView = ({ session, width, height, plan }: SetupViewProps): Rea
     if (row?.kind === 'button') {
       if (row.button === 'cancel') cancel()
       else if (row.button === 'next') stepTab(1, ['next', 'start'])
-      else if (row.button === 'back') stepTab(-1, ['next'])
+      else if (row.button === 'back') stepTab(-1, ['back', 'next'])
       else if (ready) confirm.ask(paidOptimization(latest(), session.agent?.(), () => session.start()))
     } else if (row?.kind === 'slider' && row.slider.editable) edit('expression')
     else if (row?.kind === 'constraints') edit('constraints')
@@ -929,7 +941,14 @@ export const SetupView = ({ session, width, height, plan }: SetupViewProps): Rea
         </>
       ) : null}
       {sliders.map(sliderRow)}
-      {tab.value === 'review' ? <ReviewTab plan={plan} agent={session.agent?.()} notices={notices} /> : null}
+      {tab.value === 'review' ? (
+        <ReviewTab
+          plan={plan}
+          agent={session.agent?.()}
+          notices={notices}
+          room={height - (compact ? COMPACT_REVIEW_CHROME_ROWS : REVIEW_CHROME_ROWS)}
+        />
+      ) : null}
       {editor ? <Line tone="muted">{`  metrics: ${plan.metrics.join(', ')}`}</Line> : null}
       {tab.value === 'cases' && !compact ? (
         <Line tone="muted">

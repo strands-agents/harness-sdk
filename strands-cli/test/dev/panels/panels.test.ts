@@ -1913,6 +1913,33 @@ describe('OptimizePanel', () => {
     expect(bar()).toContain('Cancel')
   })
 
+  it('shouldWalkBackOneTabPerEnterWhenTheUserPressesEnterOnBackTwice', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, session }))
+
+    for (const key of [...GOAL_NEXT_BUTTON, '\r']) await press(key)
+    expect(text()).toContain('cases')
+    await press(DOWN_KEY)
+    await press('\r')
+    expect(text()).toContain('› Back')
+    expect(text()).toContain('objective')
+    await press('\r')
+
+    expect(text()).toContain('☑ instructions')
+    expect(text()).toContain('Cancel')
+  })
+
+  it('shouldKeepStartAndTheKeysOnScreenWhenTheReviewIsTallerThanThePanel', async () => {
+    const { session } = optimizeSession(setup)
+    const { press, text } = await show(createElement(OptimizePanel, { ...panelProps, height: 12, session }), 14)
+
+    await press(SHIFT_TAB_KEY)
+
+    expect(text()).toContain('[ Start ]')
+    expect(text()).toContain('Esc cancel')
+    expect(text()).toContain('more, in the tabs')
+  })
+
   it('shouldGoBackToTheListWhenTheUserPressesEscOnAReviewWithNothingToApply', async () => {
     const { session } = optimizeSession({
       step: 'review',
