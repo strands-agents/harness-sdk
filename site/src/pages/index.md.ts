@@ -28,6 +28,8 @@ export const GET: APIRoute = () => {
     '',
     '- [GitHub repository](https://github.com/strands-agents/harness-sdk)',
     '- [Samples](https://github.com/strands-agents/samples)',
+    `- [OpenAPI description](${siteLink('/openapi.json')})`,
+    `- [Integrations catalog](${siteLink('/integrations.json')})`,
     `- [Documentation index for language models](${siteLink('/llms.txt')})`,
     `- [Complete documentation corpus](${siteLink('/llms-full.txt')})`,
     '',

@@ -6,6 +6,7 @@ import pytest
 from mcp.types import Tool as MCPTool
 
 from strands import Agent
+from strands.hooks import BeforeToolCallEvent
 from strands.interventions.actions import Deny
 from strands.interventions.handler import InterventionHandler
 from strands.multiagent.spec import (
@@ -22,6 +23,7 @@ from strands.multiagent.spec import (
     _resolve_specs,
     _to_schema_properties,
 )
+from strands.plugins import Plugin, hook
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.tools.decorator import tool
 from strands.tools.mcp import MCPAgentTool, MCPClient
@@ -371,3 +373,45 @@ def test_default_builder_child_tool_calls_go_through_parent_interventions():
     child("run danger_tool")
 
     assert calls == []
+
+
+def test_default_builder_child_gets_plugin_tools_without_parent_hooks_or_plugins():
+    """The child inherits a tool the parent's plugin added, but runs it without the parent's hooks or the plugin's."""
+    events = []
+
+    class AuditPlugin(Plugin):
+        name = "audit"
+
+        @hook
+        def record(self, event: BeforeToolCallEvent) -> None:
+            events.append(("plugin hook", event.agent.name))
+
+        @tool
+        def plugin_tool(self) -> str:
+            """A tool the plugin adds to the agent."""
+            events.append("tool ran")
+            return "done"
+
+    def parent_hook(event: BeforeToolCallEvent) -> None:
+        events.append(("parent hook", event.agent.name))
+
+    def calls_plugin_tool():
+        return MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "t1", "name": "plugin_tool", "input": {}}}],
+                },
+                {"role": "assistant", "content": [{"text": "finished"}]},
+            ]
+        )
+
+    parent = Agent(name="parent", model=calls_plugin_tool(), hooks=[parent_hook], plugins=[AuditPlugin()])
+    child = _default_builder(parent)(AgentSpec(name="child", model=calls_plugin_tool()))
+
+    parent("run plugin_tool")
+    assert events == [("parent hook", "parent"), ("plugin hook", "parent"), "tool ran"]
+
+    events.clear()
+    child("run plugin_tool")
+    assert events == ["tool ran"]
