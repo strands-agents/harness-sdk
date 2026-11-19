@@ -256,17 +256,19 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
    * Answers a call to a tool the latest model call deferred, made before the conversation loaded its schema, with the
    * schema instead of running the tool: a stub takes any input, and once a summary removes a load the model can call
    * a deferred tool from memory. Loads are read from the messages, so a load that was summarized away is delivered
-   * again. Before the agent's first model call, as when an interrupted call resumes on a restored agent, every tool the
-   * target covers counts as deferred, as in {@link deferredTools}: answering a call with the schema once more costs less
-   * than running it on guessed input.
+   * again. Before the agent's first model call, as when an interrupted call resumes on a restored agent, the guard uses
+   * the tools a model call would defer with the agent's tools and model, so an approved call to a tool that wouldn't be
+   * deferred runs.
    */
   private async *_guardUnloaded(
     context: ExecuteToolContext,
     next: MiddlewareNextOf<typeof ExecuteToolStage>
   ): AsyncGenerator<AgentStreamEvent, ExecuteToolResult, undefined> {
-    const { name, toolUseId } = context.toolUse
-    const deferred = this._deferred.get(context.agent) ?? new Set(this.deferredTools(context.agent))
-    if (!context.tool || !deferred.has(name) || loadedTools(context.agent.messages).has(name)) {
+    const { agent, toolUse } = context
+    const { name, toolUseId } = toolUse
+    const deferred =
+      this._deferred.get(agent) ?? this.callTools(agent, agent.toolRegistry.toolSpecs(), agent.model).deferredTools
+    if (!context.tool || !deferred?.has(name) || loadedTools(agent.messages).has(name)) {
       return yield* next(context)
     }
     return {

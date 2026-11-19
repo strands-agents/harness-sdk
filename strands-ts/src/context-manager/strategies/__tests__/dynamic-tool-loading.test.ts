@@ -415,6 +415,19 @@ describe('DynamicToolLoadingStrategy', () => {
     }
   )
 
+  it.each([
+    ['its tools are below the conditions', { strategy: 'dynamicToolLoading' }, 'native'],
+    ['its model can not defer tools', {}, 'unsupported'],
+  ] as [string, AgentOptions, DynamicToolLoading][])(
+    'runs an approved call that resumes on a restored agent when %s, so nothing was deferred',
+    async (_name, options, dynamicToolLoading) => {
+      using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { result } = await resumeCall([{ name: 'shell', input: { value: 'ls' } }], options, dynamicToolLoading)
+
+      expect(result).toMatchObject({ toolUseId: 'call-0', status: 'success' })
+    }
+  )
+
   it('runs a resumed call on a restored agent to a tool its conversation loaded', async () => {
     const { result } = await resumeCall([
       { name: 'load_tools', input: { names: ['shell'] } },
@@ -519,6 +532,8 @@ describe('DynamicToolLoadingStrategy', () => {
   it('sends every spec without the loader on a model that can not defer tools', async () => {
     using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const { agent, model } = makeAgent('unsupported')
+    // The warning is once per process and model, so this model has an id no other test uses.
+    model.updateConfig({ modelId: 'never-defers' })
     model.addTurn({ type: 'textBlock', text: 'ok' })
 
     await agent.invoke('Hi.')
@@ -526,7 +541,9 @@ describe('DynamicToolLoadingStrategy', () => {
     const [toolSpecs] = sentToolSpecs(model)
     expect(deferredNames(model)).toEqual([])
     expect(toolSpecs!.map((spec) => spec.name)).not.toContain('load_tools')
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('model or its config can not defer tool schemas'))
+    expect(warnSpy).toHaveBeenCalledWith(
+      'model_id=<never-defers> | model or its config can not defer tool schemas | sending every tool spec'
+    )
   })
 
   it.each([
