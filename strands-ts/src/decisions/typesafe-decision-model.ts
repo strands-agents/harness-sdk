@@ -17,7 +17,7 @@ export interface TypeSafeDecisionModelOptions {
   readonly apiKey?: string
   /** Jev model identifier. Defaults to `jev-latest`. */
   readonly modelId?: string
-  /** Default minimum confidence. Defaults to `0.5`. */
+  /** Default minimum confidence, in `[0.0, 1.0]`. Defaults to `0.5`. */
   readonly defaultMinConfidence?: number
   /** Custom fetch implementation, primarily for transport configuration and tests. */
   readonly fetch?: typeof globalThis.fetch

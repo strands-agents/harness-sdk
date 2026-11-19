@@ -22,7 +22,7 @@ export interface SageMakerDecisionModelOptions {
    * with `region` or `clientConfig`.
    */
   readonly client?: SageMakerRuntimeClient
-  /** Default minimum confidence. Defaults to `0.5`. */
+  /** Default minimum confidence, in `[0.0, 1.0]`. Defaults to `0.5`. */
   readonly defaultMinConfidence?: number
 }
 

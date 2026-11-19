@@ -22,11 +22,6 @@ export interface SystemOneRequestConfig {
   /** Builds the request body for APIs that differ from the System One `{ state, model, questions }` shape. */
   buildRequestBody?: (state: DecisionInput, questions: Record<string, Question>) => unknown
   /**
-   * Whether Noul answers carry the API's own `confidence`. That value is reported in metadata, while
-   * `Uncertain` is still decided on the shared `|2p - 1|` scale.
-   */
-  noulConfidenceFromProvider?: boolean
-  /**
    * How far a Choice answer's probabilities may sum from `1`, for APIs that round more coarsely than the
    * default check allows. Defaults to the 4-decimal rounding tolerance.
    */
@@ -104,9 +99,6 @@ export function resolveSystemOneProviderConfig(
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
     ...(defaults.apiKeyHeader !== undefined && { apiKeyHeader: defaults.apiKeyHeader }),
-    ...(defaults.noulConfidenceFromProvider !== undefined && {
-      noulConfidenceFromProvider: defaults.noulConfidenceFromProvider,
-    }),
     ...(defaults.probabilitySumTolerance !== undefined && {
       probabilitySumTolerance: defaults.probabilitySumTolerance,
     }),
@@ -129,10 +121,7 @@ type WireQuestion = WireNoulQuestion | WireChoiceQuestion
 interface ParsedAnswer {
   answer: boolean | string
   probabilities: Readonly<Record<string, number>>
-  /** Reported in metadata. */
   confidence: number
-  /** Compared with `minConfidence`; defaults to `confidence`. */
-  thresholdConfidence?: number
 }
 
 class SystemOneHttpError extends Error {
@@ -335,9 +324,8 @@ function parseResult<const Q extends Record<string, Question>>(
       throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
     const parsed = parseAnswer(rawAnswer, question, String(id), config)
     const minConfidence = resolveMinConfidence(question, config.defaultMinConfidence)
-    const thresholdConfidence = parsed.thresholdConfidence ?? parsed.confidence
     answers[id] = (
-      minConfidence !== undefined && thresholdConfidence < minConfidence ? new Uncertain() : parsed.answer
+      minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
     ) as AnswerOf<Q[typeof id]>
     probabilities[id] = parsed.probabilities
     confidence[id] = parsed.confidence
@@ -349,29 +337,23 @@ function parseResult<const Q extends Record<string, Question>>(
 
 function parseAnswer(rawAnswer: unknown, question: Question, id: string, config: SystemOneRequestConfig): ParsedAnswer {
   const answer = requireRecord(rawAnswer, `answer for question id=<${id}>`)
-  if (question.choices === 'boolean') return parseNoulAnswer(answer, id, config.noulConfidenceFromProvider === true)
+  if (question.choices === 'boolean') return parseNoulAnswer(answer, id)
   return parseChoiceAnswer(answer, question.choices, id, config.probabilitySumTolerance)
 }
 
-function parseNoulAnswer(
-  answer: Record<string, unknown>,
-  id: string,
-  noulConfidenceFromProvider: boolean
-): ParsedAnswer {
+function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAnswer {
   if (answer['type'] !== 'noul') {
     throw new ModelError(`answer for boolean question id=<${id}> must have type 'noul'`)
   }
   const probability = requireProbability(answer['noul'], `noul for question id=<${id}>`)
-  const normalizedConfidence = Math.abs(2 * probability - 1)
   return {
     answer: probability >= 0.5,
     probabilities: { true: probability, false: 1 - probability },
-    ...(noulConfidenceFromProvider
-      ? {
-          confidence: requireProbability(answer['confidence'], `confidence for question id=<${id}>`),
-          thresholdConfidence: normalizedConfidence,
-        }
-      : { confidence: normalizedConfidence }),
+    // Use the API's own confidence when it returns one; otherwise derive it from the yes probability.
+    confidence:
+      answer['confidence'] === undefined
+        ? Math.abs(2 * probability - 1)
+        : requireProbability(answer['confidence'], `confidence for question id=<${id}>`),
   }
 }
 

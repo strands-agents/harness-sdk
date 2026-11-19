@@ -89,11 +89,11 @@ const result = await llmDecisionModel.ask('The fruit is an apple', {
 `Uncertain` is a possible answer for every question unless the caller sets `uncertainty: false`. Each implementation handles uncertainty according to the evidence it has:
 
 - `LLMDecisionModel` includes `uncertain` as an allowed model answer.
-- API-backed decision models compare per-answer confidence with a threshold. An explicit `uncertainty.minConfidence` takes precedence over the provider instance's `defaultMinConfidence`; otherwise each provider uses its API-wide default of `0.5`.
-- Choice uses the API-returned confidence. Noul returns only a yes probability `p`, so its confidence is `|2p - 1|`, on the same scale where an even split is `0` and certainty is `1`.
-- Some APIs return their own Noul confidence on a different scale. Gemini Decisions reports `max(p, 1 - p)`, where an even split is `0.5`. The provider reports that value in metadata, so callers see the confidence the API documents, but normalizes it to `|2p - 1|` (equal to `2 * confidence - 1`) before comparing it with `minConfidence`. A threshold therefore means the same thing for every provider. Because Gemini caps `p` at `[0.01, 0.99]`, its normalized Noul confidence is at most `0.98`, so a `minConfidence` above `0.98` always yields `Uncertain` for its Noul answers.
+- API-backed decision models compare per-answer confidence with a threshold. An explicit `uncertainty.minConfidence` takes precedence over the provider instance's `defaultMinConfidence`; otherwise each provider uses its API-wide default.
+- Confidence is on each provider's own scale. Choice uses the API-returned confidence. For Noul, a provider uses the API's confidence when it returns one; an API that returns only a yes probability `p` gets `|2p - 1|`, where an even split is `0` and certainty is `1`. Gemini Decisions returns `max(p, 1 - p)`, where an even split is `0.5`, so `GeminiDecisionModel` defaults to `0.75`, which keeps Noul answers `Uncertain` between `p = 0.25` and `0.75`; the other providers default to `0.5`.
+- Different models are calibrated differently even on the same scale, so a threshold tuned for one provider is not equivalent on another. Callers who switch providers should retune `minConfidence` against that provider's documented scale.
 
-A provider returns `Uncertain` when uncertainty is enabled and the threshold confidence is below `minConfidence`; equality passes. The threshold confidence is the reported confidence, except for Noul answers from APIs that report their own scale, which use the normalized value above. Metadata retains every question's probability distribution and reported confidence even when its public answer is `Uncertain`.
+A provider returns `Uncertain` when uncertainty is enabled and `confidence < minConfidence`; equality passes. Metadata reports that same confidence, and retains every question's probability distribution, even when its public answer is `Uncertain`.
 
 Customers can handle `Uncertainty` in there code as follows:
 
