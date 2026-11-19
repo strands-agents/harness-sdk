@@ -503,8 +503,8 @@ def test_graph_builder_validation():
     # Create mock GraphNode objects for invalid entry points
     invalid_node1 = GraphNode("invalid1", agent1)
     invalid_node2 = GraphNode("invalid2", agent2)
-    builder.entry_points.add(invalid_node1)
-    builder.entry_points.add(invalid_node2)
+    builder.entry_points.append(invalid_node1)
+    builder.entry_points.append(invalid_node2)
     with pytest.raises(ValueError, match="Entry points not found in nodes"):
         builder.build()
 
@@ -3159,6 +3159,38 @@ class TestInvocationStatePropagation:
         node_input = graph._build_node_input(node_b)
         input_text = " ".join(str(block) for block in node_input)
         assert "result from A" in input_text
+
+
+class TestGraphFanInOrder:
+    def test_fan_in_input_preserves_edge_insertion_order(self):
+        """Fan-in input follows edge insertion order, not set iteration order."""
+        builder = GraphBuilder()
+        builder.set_execution_timeout(10)
+        builder.add_node(create_mock_agent("target"), "target")
+
+        source_ids = ["alpha", "bravo", "charlie", "delta", "echo"]
+        for source_id in source_ids:
+            builder.add_node(create_mock_agent(source_id), source_id)
+            builder.add_edge(source_id, "target")
+
+        # The builder must not store edges in a set; a set's iteration order is
+        # randomized by PYTHONHASHSEED and makes the fan-in prompt unstable.
+        assert isinstance(builder.edges, list)
+
+        graph = builder.build()
+        graph._current_invocation_state = {}
+        graph.state.task = "Investigate the incident."
+        graph.state.completed_nodes = {graph.nodes[source_id] for source_id in source_ids}
+        graph.state.results = {
+            source_id: NodeResult(result=create_mock_agent(source_id).return_value) for source_id in source_ids
+        }
+
+        node_input = graph._build_node_input(graph.nodes["target"])
+        input_text = "\n".join(str(block) for block in node_input)
+        positions = [input_text.index(f"From {source_id}:") for source_id in source_ids]
+
+        assert positions == sorted(positions)
+        assert [edge.from_node.node_id for edge in graph.edges] == source_ids
 
 
 class TestResumeDeadlockFix:
