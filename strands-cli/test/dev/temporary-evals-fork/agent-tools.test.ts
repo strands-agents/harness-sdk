@@ -747,13 +747,33 @@ describe('TEMPORARY dev chat part', () => {
     expect(planned.estimate.rollouts).toBeDefined()
   })
 
-  it('shouldRefuseToPlanWhileAnOptimizationIsRunning', async () => {
-    const { tool, optimize } = setup()
-    optimize.set({ step: 'running', run: 'run-1', experiment: 'refunds', progress: { run: 'run-1' } } as never)
+  it('shouldStartARunWhileAnotherIsStillRunning', async () => {
+    const { tool, sessions, optimize, finishRun } = setup()
+    const first = tool('strands_dev_optimize').run({ experiment: 'refunds' })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalledTimes(1))
+    optimize.set({
+      step: 'pick',
+      runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: { step: 'running', progress: {} } }],
+    } as never)
 
-    await expect(tool('strands_dev_optimization_plan').run({ experiment: 'refunds' })).rejects.toThrow(
-      'is still running'
-    )
+    const second = tool('strands_dev_optimize').run({ experiment: 'refunds', tune: ['effort'] })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalledTimes(2))
+    finishRun({ step: 'review', review: review() })
+
+    expect(JSON.parse(await second)).toMatchObject({ run: expect.any(String) })
+    await first.catch(() => undefined)
+  })
+
+  it('shouldPlanWhileAnotherOptimizationIsRunning', async () => {
+    const { tool, optimize } = setup()
+    optimize.set({
+      step: 'pick',
+      runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: { step: 'running', progress: {} } }],
+    } as never)
+
+    const planned = JSON.parse(await tool('strands_dev_optimization_plan').run({ experiment: 'refunds' }))
+
+    expect(planned.knobs.length).toBeGreaterThan(0)
   })
 
   it('shouldWaitForItsOwnRunWhenTheDeveloperGoesBackToTheOptimizeList', async () => {
@@ -962,11 +982,15 @@ describe('TEMPORARY dev chat part', () => {
     }
   })
 
-  it('shouldRefuseToStartASecondOptimizationWhenOneIsRunning', async () => {
-    const { tool, optimize } = setup()
+  it('shouldStartAnotherOptimizationWhileOneIsRunning', async () => {
+    const { tool, optimize, sessions, finishRun } = setup()
     optimize.set({ step: 'running', progress: progress() })
 
-    await expect(tool('strands_dev_optimize').run({ experiment: 'refunds' })).rejects.toThrow('is still running')
+    const running = tool('strands_dev_optimize').run({ experiment: 'refunds' })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
+    finishRun({ step: 'review', review: review() })
+
+    expect(JSON.parse(await running)).toMatchObject({ run: expect.any(String) })
   })
 
   it('shouldWriteOnlyTheAcceptedEditsWhenTheDeveloperApproves', async () => {

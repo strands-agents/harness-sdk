@@ -12,7 +12,6 @@ import type {
   EvalsBrowser,
   KnobKey,
   OptimizeObjective,
-  OptimizeProgress,
   OptimizeReview,
   OptimizeRunState,
   OptimizeState,
@@ -339,11 +338,6 @@ const pendingReview = (state: OptimizeState): ChosenReview | undefined =>
     hasPendingEdits(review)
   )
 
-const runningProgress = (state: OptimizeState): OptimizeProgress | undefined =>
-  [state, ...(state.runs ?? []).map((run) => run.state)].flatMap((entry) =>
-    entry.step === 'running' ? [entry.progress] : []
-  )[0]
-
 const runState = ({ runs = [] }: OptimizeState, id: string): OptimizeRunState | undefined =>
   runs.find((run) => run.id === id)?.state
 
@@ -637,9 +631,6 @@ const planTool = (sessions: Sessions): DevChatTool => ({
   run: async (input): Promise<string> => {
     const { optimize } = sessions()
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
-    const current = optimize.snapshot()
-    const running = runningProgress(current)
-    if (running) throw new Error(`The optimization ${running.run} is still running. Read its status instead.`)
     optimize.reset()
     optimize.plan(experiment)
     const planned = await until(optimize, (state) =>
@@ -706,6 +697,8 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     'Being asked to improve the agent is not that answer, and a scope that looks obvious is not that answer. ' +
     'Collect the settings with strands_dev_ask first and pass what the developer chose: a scope you picked for ' +
     'them in a message is not their setup, however obvious its defaults looked. ' +
+    'Runs alongside the optimizations already going, so a run that is still going is not a reason to wait: say ' +
+    'what is already running, and start this one when the developer wants it. ' +
     'Tunes the createHarness options of this agent (instructions, model, effort, caching, tools, and more) ' +
     'against a saved experiment with the strands-evals optimizer, ' +
     'and reports the score before and after with the proposed edits. It changes no file. It can take a long time.',
@@ -794,9 +787,6 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
   run: async (input): Promise<string> => {
     const { optimize } = sessions()
     const current = optimize.snapshot()
-    const running = runningProgress(current)
-    if (running)
-      throw new Error(`The optimization ${running.run} is still running. Wait for it, or stop it in /optimize.`)
     const tune = tuneFrom(input)
     const models = textList(input, 'models') ?? []
     if (tune.includes('model') && models.length === 0)
