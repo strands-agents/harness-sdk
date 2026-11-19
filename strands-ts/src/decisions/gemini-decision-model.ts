@@ -67,7 +67,7 @@ export class GeminiDecisionModel extends DecisionModel {
       providerName: 'gemini',
       endpoint: GEMINI_ENDPOINT,
       apiKeyEnvironmentVariable: 'GEMINI_API_KEY',
-      apiKeyHeader: 'x-goog-api-key',
+      authHeaders: (apiKey) => ({ 'x-goog-api-key': apiKey }),
       modelId: GEMINI_DEFAULT_MODEL_ID,
       defaultMinConfidence: GEMINI_DEFAULT_MIN_CONFIDENCE,
       maxQuestions: GEMINI_MAX_QUESTIONS,

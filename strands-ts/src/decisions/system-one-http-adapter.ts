@@ -34,9 +34,23 @@ export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   apiKey: string
   modelId: string
   fetch: typeof globalThis.fetch
-  /** Header that carries the API key as is. Defaults to `Authorization: Bearer <apiKey>`. */
-  apiKeyHeader?: string
+  /** Builds the request's authentication headers from the API key. */
+  authHeaders: AuthHeadersProvider
 }
+
+/**
+ * Builds the HTTP headers that authenticate a request with the provider's API key.
+ *
+ * @internal
+ */
+export type AuthHeadersProvider = (apiKey: string) => Record<string, string>
+
+/**
+ * Sends the API key as `Authorization: Bearer <apiKey>`.
+ *
+ * @internal
+ */
+export const bearerAuth: AuthHeadersProvider = (apiKey) => ({ Authorization: `Bearer ${apiKey}` })
 
 /**
  * A decision API's JSON request body. Every System One API takes `questions`; the rest of the body varies.
@@ -95,12 +109,14 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence?: number
     fetch?: typeof globalThis.fetch
   },
-  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch' | 'buildRequestBody'> & {
+  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch' | 'buildRequestBody' | 'authHeaders'> & {
     apiKeyEnvironmentVariable: string
     modelId: string
     className: string
     /** Defaults to {@link systemOneRequestBody}. */
     buildRequestBody?: RequestBodyBuilder
+    /** Defaults to {@link bearerAuth}. */
+    authHeaders?: AuthHeadersProvider
   }
 ): SystemOneProviderConfig {
   if (typeof window !== 'undefined') {
@@ -132,9 +148,9 @@ export function resolveSystemOneProviderConfig(
     modelId,
     defaultMinConfidence,
     buildRequestBody: defaults.buildRequestBody ?? systemOneRequestBody,
+    authHeaders: defaults.authHeaders ?? bearerAuth,
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
-    ...(defaults.apiKeyHeader !== undefined && { apiKeyHeader: defaults.apiKeyHeader }),
     ...(defaults.probabilitySumTolerance !== undefined && {
       probabilitySumTolerance: defaults.probabilitySumTolerance,
     }),
@@ -278,9 +294,7 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
     response = await config.fetch(config.endpoint, {
       method: 'POST',
       headers: {
-        ...(config.apiKeyHeader !== undefined
-          ? { [config.apiKeyHeader]: config.apiKey }
-          : { Authorization: `Bearer ${config.apiKey}` }),
+        ...config.authHeaders(config.apiKey),
         'Content-Type': 'application/json',
       },
       body,
