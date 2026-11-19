@@ -44,7 +44,18 @@ Help with requests such as "improve this agent on refunds" or "tune its effort".
 
 For now, optimization of a TypeScript agent scores the final answer only, so it supports evaluators that read the answer, such as OutputEvaluator, Contains, Equals, and StartsWith. Optimization of a Python agent also scores trajectory and tool-use evaluators. Check the saved evaluators, explain an incompatible experiment, and help the developer choose a compatible one; do not silently remove evaluators or rewrite the experiment to make it compatible.
 
-Call strands_dev_optimize with {experiment, tune?: ('instructions' | 'effort')[], iterations?, objective?, constraints?}. Only instructions and effort are tunable here, not arbitrary tools, models, or configuration. Keep the default tune of instructions and default iteration count unless the developer requests otherwise. The run maximizes the mean of every evaluator score by default. When the developer wants to optimize something else, such as one evaluator, fewer tokens, less time, or a trade-off, pass objective in the notation of the optimization API, such as Minimize(tokens) or WeightedSum(Maximize(Correctness), Minimize(tokens, scale=1000)). With a usage goal, also pass constraints such as "Correctness >= 0.8" so that a cheaper agent cannot get worse. Name the objective and the constraints in the scope you explain. Explain the experiment, tuning scope, iteration budget, repeated model calls and scoring costs, and potentially long runtime, then obtain approval for that specific run. Do not promise an improvement.
+Call strands_dev_optimize with {experiment, tune?, iterations?, objective?, constraints?}. What this agent can tune is not fixed: call strands_dev_optimization_plan to read its knobs, and never name a knob from memory. A knob that cannot be tuned carries the reason; give that reason and offer the ones that work. Keep the default tune of instructions and default iteration count unless the developer requests otherwise.
+
+## Guide the setup on screen
+
+When the developer is setting up a run and more than one setting is open, put a form on screen instead of asking a list of questions in chat. One clear question still belongs in chat.
+
+1. Call strands_dev_optimization_plan with {experiment}. It returns this agent's knobs, the choices of every setting, and the estimate. Declaring a form without it invents knobs and choices that this agent does not have.
+2. Call strands_dev_ask with the steps. Put the knobs on the first step as toggle fields, with listLabel "knobs", and carry the detail and unavailable text of each knob through unchanged. Put the settings on later steps as choice fields whose options are the plan's choices for that setting, in the order the plan gives them. Set status and footer from the estimate.
+3. status and footer are fixed text: they do not follow the sliders. Either leave them out, or ask one step per call and call the plan tool again between steps so each number is fresh.
+4. Call strands_dev_optimize with the answers. A cancelled form is a no: do not ask again with the same question, and do not start the run anyway.
+
+Keep the form short. Ask only about the settings that matter for this request, and leave the rest at the defaults the plan returned. The form collects settings; it is not the paid-run approval. Explain the scope and the cost, and get that approval, before you start the run. The run maximizes the mean of every evaluator score by default. When the developer wants to optimize something else, such as one evaluator, fewer tokens, less time, or a trade-off, pass objective in the notation of the optimization API, such as Minimize(tokens) or WeightedSum(Maximize(Correctness), Minimize(tokens, scale=1000)). With a usage goal, also pass constraints such as "Correctness >= 0.8" so that a cheaper agent cannot get worse. Name the objective and the constraints in the scope you explain. Explain the experiment, tuning scope, iteration budget, repeated model calls and scoring costs, and potentially long runtime, then obtain approval for that specific run. Do not promise an improvement.
 
 Preserve an unaccepted optimization review. Before starting a new optimization that would overwrite it, ask whether the developer wants to keep reviewing it or explicitly discard it. Only call strands_dev_reject_optimization with {} on explicit intent to discard the pending review. If an optimization is running, inspect its status rather than launching another. Call strands_dev_cancel_optimization with {} only when the developer explicitly asks to stop the optimization. Cancelling the chat turn may leave the optimization running; never equate the two.
 
@@ -75,10 +86,11 @@ export const temporaryWorkflowSkills = (): AgentExtensionSkill[] => [
   {
     name: 'optimize-harness',
     description:
-      'Propose instruction or effort edits that raise the score of this agent, and write only the edits the developer ' +
-      'accepts, in dev chat. Use it when the developer asks to make the agent better, in any wording, including ' +
-      '"can you make my agent better at this", "improve this agent on refunds", "how do I fix these failures", ' +
-      '"tune its effort", and "make it smarter". Not part of the exported agent.',
+      'Guide the developer through setting up an optimization run, then propose edits that raise the score of this ' +
+      'agent and write only the edits they accept, in dev chat. Use it when the developer asks to make the agent ' +
+      'better or to set up a run, in any wording, including "can you make my agent better at this", ' +
+      '"improve this agent on refunds", "how do I fix these failures", "tune its effort", "optimize", and ' +
+      '"make it smarter". Not part of the exported agent.',
     instructions: OPTIMIZE_HARNESS,
   },
 ]

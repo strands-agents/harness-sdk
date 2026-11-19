@@ -11,6 +11,7 @@ import type {
 import { ExperimentPanel } from '../panels/experiment.js'
 import { OptimizePanel } from '../panels/optimize.js'
 import { TestPanel } from '../panels/test.js'
+import { WizardRequestPanel } from '../../ui/panels/wizard-request-panel.js'
 import type { DevChatPart } from '../chat-extension.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryAgentFacts } from './agent-context.js'
@@ -156,6 +157,27 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
     ),
 ]
 
+const ASK_DETAILS = paragraphs(
+  'Shows the question that the agent is asking about a run it wants to set up.',
+  'The agent sends the steps and the fields, so each question looks like the flow it is guiding you through. Tab and Shift+Tab move between steps, ↑↓ go to a row, and ←→ move a slider. Enter on a text row edits it.',
+  'Finish sends your answers back to the agent, and Cancel tells it you declined. One question shows at a time; a second one waits.',
+  'Open /ask again to return to a question you left.'
+)
+
+const askCommand = (sessions: Sessions): DevChatCommand => ({
+  spec: {
+    name: 'ask',
+    usage: '/ask',
+    description: 'Answer the setup question that the agent is asking',
+    details: ASK_DETAILS,
+  },
+  open:
+    (context): DevChatPanelView =>
+    (props) =>
+      createElement(WizardRequestPanel, { ...props, broker: sessions(context).ask }),
+  attach: (context): void => sessions(context).ask.attachOpener(() => context.openPanel('ask')),
+})
+
 const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject): DevWorkspace => ({
   ...workspace,
   root: project.root,
@@ -184,5 +206,5 @@ export const temporaryDevCommands = (
   const target = targetWorkspace(workspace, project)
   const sessions: Sessions = (context) =>
     temporaryDevSessions({ workspace: target, agent, ...(context ? { context } : {}) })
-  return PANEL_COMMANDS.map((make) => make(sessions))
+  return [...PANEL_COMMANDS.map((make) => make(sessions)), askCommand(sessions)]
 }

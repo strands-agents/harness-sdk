@@ -29,20 +29,22 @@ const context: DevChatCommandContext = {
   report: () => ({ update: vi.fn() }),
   fail: vi.fn(),
   submit: vi.fn(),
+  openPanel: vi.fn(() => true),
 }
 
 describe('TEMPORARY dev commands', () => {
-  it('shouldOfferExperimentTestAndOptimizeWithoutArgumentsWhenTheChatStarts', async () => {
+  it('shouldOfferExperimentTestOptimizeAndAskWithoutArgumentsWhenTheChatStarts', async () => {
     const { workspace, project } = await fixture()
 
     const commands = temporaryDevCommands(workspace, project)
 
-    expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/evaluate', '/optimize'])
+    expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/evaluate', '/optimize', '/ask'])
     expect(commands.every(({ spec }) => spec.replacement === undefined)).toBe(true)
     expect(commands.map(({ spec }) => spec.description)).toEqual([
       'Generate test cases for this agent with strands-evals, and review them',
       'Run this agent on an experiment and show what failed',
       'Tune this agent against an experiment and review the changes',
+      'Answer the setup question that the agent is asking',
     ])
   })
 
@@ -55,9 +57,10 @@ describe('TEMPORARY dev commands', () => {
       'strands-dev/experiments/<name>/<name>.json',
       'strands-dev/experiments/<name>/runs/',
       'strands-dev/experiments/<name>/optimizations/',
+      undefined,
     ])
     expect(details[1]).toContain('the latest one as <name>.report.json')
-    expect(details.every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
+    expect(details.slice(0, 3).every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
     expect(details.some((text) => text.includes('TEMPORARY'))).toBe(false)
   })
 
@@ -83,7 +86,7 @@ describe('TEMPORARY dev commands', () => {
 
     const commands = temporaryDevCommands(workspace, project)
 
-    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], []])
+    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], [], undefined])
   })
 
   it('shouldShowATestThatFinishedWhileStrandsDevWasClosedWhenTheChatAttaches', async () => {

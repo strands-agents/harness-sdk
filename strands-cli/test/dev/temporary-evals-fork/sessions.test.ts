@@ -218,6 +218,7 @@ const chat = () => {
     },
     fail: vi.fn(),
     submit: vi.fn(),
+    openPanel: vi.fn(() => true),
   }
   return { context, notices }
 }

@@ -106,8 +106,14 @@ export class WizardBroker {
   private readonly _listeners = new Set<WizardListener>()
   private readonly _queue: PendingWizard[] = []
   private _active: PendingWizard | undefined
+  private _open: (() => boolean) | undefined
   private _next = 1
   private _disposed = false
+
+  /** The panel command registers this, so asking also brings the panel on screen. */
+  attachOpener(open: () => boolean): void {
+    this._open = open
+  }
 
   ask(spec: WizardRequestSpec): Promise<WizardOutcome> {
     if (this._disposed || spec.steps.length === 0) return Promise.resolve(undefined)
@@ -115,6 +121,7 @@ export class WizardBroker {
     return new Promise((resolve) => {
       this._queue.push({ request, resolve })
       this._activateNext()
+      this._open?.()
     })
   }
 

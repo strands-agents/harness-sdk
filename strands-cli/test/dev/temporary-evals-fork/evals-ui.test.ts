@@ -66,6 +66,7 @@ const harness = async (dependencies: Partial<TemporaryUiDependencies> = {}): Pro
       },
       fail: () => undefined,
       submit: () => undefined,
+      openPanel: () => true,
     },
   }
   const ui = new TemporaryEvalsUi(() => host, {

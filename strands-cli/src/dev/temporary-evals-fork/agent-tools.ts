@@ -21,6 +21,7 @@ import type {
   TestResults,
   TestRun,
 } from '../panels/model.js'
+import { askTool } from './ask-tool.js'
 import { temporaryWorkflowSkills } from './workflow-skills.js'
 import { readTemporaryExperimentFile } from './experiment-files.js'
 import { temporaryCreateExperimentSkill } from './create-experiment-skill.js'
@@ -619,6 +620,67 @@ const objectiveFor = async (experiment: ExperimentSummary, input: Input): Promis
   return chosen
 }
 
+const planTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_optimization_plan',
+  readOnly: true,
+  description:
+    'Read what an optimization of one experiment could tune, and what it would cost, without starting anything. ' +
+    'Call it before you ask the developer to set up a run, so the knobs, the choices, and the estimate you show ' +
+    'them are this agent’s own and not a guess. A knob with a reason cannot be tuned: show the reason and do not ' +
+    'offer it. Call it again after the developer changes a setting if you want a fresh estimate.',
+  inputSchema: {
+    type: 'object',
+    properties: { experiment: { type: 'string', description: 'The name of a saved experiment.' } },
+    required: ['experiment'],
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const { optimize } = sessions()
+    const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
+    const current = optimize.snapshot()
+    const running = runningProgress(current)
+    if (running) throw new Error(`The optimization ${running.run} is still running. Read its status instead.`)
+    optimize.reset()
+    optimize.plan(experiment)
+    const planned = await until(optimize, (state) =>
+      state.step === 'setup' || state.step === 'failed' ? state : undefined
+    )
+    if (planned.step === 'failed') throw new Error(planned.message)
+    if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
+    const { plan } = planned
+    return reply(
+      defined({
+        experiment: { name: plan.experiment.name, cases: plan.experiment.caseCount },
+        knobs: plan.knobs.map(({ key, label, detail, unavailable, enabled }) =>
+          defined({ key, label, detail, unavailable, onByDefault: enabled === true ? true : undefined })
+        ),
+        metrics: plan.metrics,
+        objective: defined({
+          current: plan.objective.expression || 'the mean of every evaluator',
+          constraints: plan.objective.constraints || undefined,
+          presets: plan.objectivePresets.map(({ label }) => label),
+        }),
+        cases: { split: plan.split, choices: plan.splitChoices, testShare: plan.testShare },
+        budget: {
+          iterations: { value: plan.iterations, choices: plan.iterationChoices },
+          candidatesPerStep: { value: plan.width, choices: plan.widthChoices },
+          runsPerCase: { value: plan.repetitions, choices: plan.repetitionChoices },
+          parallelTrials: { value: plan.workers, choices: plan.workerChoices },
+          finalists: { value: plan.decision.finalists, choices: plan.decisionChoices.finalists },
+        },
+        decision: {
+          feasibility: { value: plan.decision.feasibility, choices: plan.decisionChoices.feasibility },
+          crashes: { value: plan.decision.crashScore, choices: plan.decisionChoices.crashScore },
+          pick: { value: plan.decision.pickRule, choices: plan.decisionChoices.pickRule },
+        },
+        estimate: defined({ rollouts: plan.rollouts, judgeCalls: plan.judgeCalls, usage: plan.usage }),
+        problem: plan.budgetProblem ?? plan.objectiveProblem,
+        warning: plan.warning ?? plan.objectiveWarning,
+      })
+    )
+  },
+})
+
 const optimizeTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_optimize',
   description:
@@ -921,6 +983,8 @@ export const temporaryDevChatPart = ({ sessions, evaluators, history }: Temporar
     readExperimentTool(sessions),
     testResultsTool(sessions),
     testTool(sessions),
+    planTool(sessions),
+    askTool(() => sessions().ask),
     optimizeTool(sessions),
     cancelOptimizationTool(sessions),
     rejectOptimizationTool(sessions),

@@ -68,6 +68,8 @@ export interface DevChatCommandContext {
   report(status: ChatNotice['status'], text: string): DevChatNotice
   fail(title: string, detail: string): void
   submit(prompt: string): void
+  /** Opens another dev command's panel, so a tool can put a question on screen. */
+  openPanel(name: string): boolean
 }
 
 export interface DevChatPanelProps {

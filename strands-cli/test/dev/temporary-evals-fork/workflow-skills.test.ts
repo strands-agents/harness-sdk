@@ -172,14 +172,24 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('do not require or start a separate paid baseline evaluation')
   })
 
-  it('shouldLimitTuningToSupportedKnobsAndExplainCostsWithoutPromisingImprovement', () => {
+  it('shouldReadTheKnobsFromThePlanAndExplainCostsWithoutPromisingImprovement', () => {
     expect(instructions).toContain(
-      "strands_dev_optimize with {experiment, tune?: ('instructions' | 'effort')[], iterations?, objective?, constraints?}"
+      'strands_dev_optimize with {experiment, tune?, iterations?, objective?, constraints?}'
     )
-    expect(instructions).toContain('not arbitrary tools, models, or configuration')
+    expect(instructions).toContain('call strands_dev_optimization_plan to read its knobs')
+    expect(instructions).toContain('never name a knob from memory')
     expect(instructions).toContain('default tune of instructions and default iteration count')
     expect(instructions).toContain('iteration budget, repeated model calls and scoring costs')
     expect(instructions).toContain('Do not promise an improvement')
+  })
+
+  it('shouldGuideTheSetupWithAFormBuiltFromThePlan', () => {
+    expect(instructions).toContain('Guide the setup on screen')
+    expect(instructions).toContain('Call strands_dev_optimization_plan with {experiment}')
+    expect(instructions).toContain('Call strands_dev_ask with the steps')
+    expect(instructions).toContain('status and footer are fixed text: they do not follow the sliders')
+    expect(instructions).toContain('A cancelled form is a no')
+    expect(instructions).toContain('The form collects settings; it is not the paid-run approval')
   })
 
   it('shouldMaximizeTheMeanOfEveryEvaluatorUnlessTheDeveloperNamesOne', () => {

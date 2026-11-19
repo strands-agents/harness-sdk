@@ -4,6 +4,7 @@ import { basename, dirname, join, relative } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import type { DevChatJob } from '../../ui/chat/types.js'
+import { WizardBroker } from '../../ui/panels/wizard-request.js'
 import { resolveModelTarget } from '../../model/selection.js'
 import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
@@ -140,6 +141,7 @@ export interface TemporaryDevSessions {
   readonly test: TemporaryTest
   readonly optimize: TemporaryOptimize
   readonly ui: TemporaryEvalsUi
+  readonly ask: WizardBroker
 }
 
 const DEFAULT_ITERATIONS = 4
@@ -1469,6 +1471,7 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
     test: new TemporaryTest(current, experiments),
     optimize: new TemporaryOptimize(current, experiments),
     ui: new TemporaryEvalsUi(current, host.evalsUi),
+    ask: new WizardBroker(),
   }
   registry.set(key, {
     use: (next) => {

@@ -3102,6 +3102,7 @@ export class ChatController implements ChatControllerApi {
       submit: (prompt): void => {
         void this.submit(prompt)
       },
+      openPanel: (name): boolean => this.openDevCommand(name),
     }
   }
 
