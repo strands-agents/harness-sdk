@@ -1,5 +1,4 @@
-import { Agent } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Agent, Offload } from '@strands-agents/sdk'
 
 async function basicConfig() {
   // --8<-- [start:basic_config]
@@ -66,11 +65,11 @@ async function conditions() {
   // --8<-- [end:conditions_both]
 }
 
-async function stash() {
+async function archive() {
   // --8<-- [start:stash_disabled]
   const agent = new Agent({
     contextManager: {
-      stash: false,
+      archive: false,
     },
   })
   // --8<-- [end:stash_disabled]

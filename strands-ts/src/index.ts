@@ -324,9 +324,10 @@ export {
   type RetryDecision,
 } from './retry/index.js'
 
-// Context Manager (experimental)
+// Context Manager
+export { ContextManager } from './context-manager/context-manager.js'
 export type { ContextManagerStrategy } from './context-manager/context-manager.js'
-export type { ContextManagerConfig, ContextStrategy, ContextState, StashConfig } from './context-manager/types.js'
+export type { ContextManagerConfig, ContextStrategy, ContextState, ArchiveConfig } from './context-manager/types.js'
 export { Offload } from './context-manager/strategies/offload/index.js'
 export type { OffloadTarget, OffloadConditions, OffloadStrategy } from './context-manager/strategies/offload/index.js'
 export type { TruncateConfig } from './context-manager/methods/truncate.js'

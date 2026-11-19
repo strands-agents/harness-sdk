@@ -25,8 +25,6 @@ import type { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../..
  * - `string[]` — tool results from tools to include (e.g. `['bash']` or `['tool::bash']`) and, prefixed with `!`, tools
  *   to exclude. A list of only exclusions acts on every other tool.
  * - `"*"` — whole messages
- *
- * @experimental
  */
 export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | 'media' | string[]
 

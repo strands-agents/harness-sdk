@@ -303,7 +303,7 @@ export interface OffloadedBlockData extends TextBlockData {
   method: OffloadMethod
 
   /**
-   * Stash reference under which the original is retrievable; absent when it was not stashed.
+   * Archive reference under which the original is retrievable; absent when it was not archived.
    */
   ref?: string
 
@@ -329,7 +329,7 @@ export class OffloadedBlock extends TextBlock implements OffloadedBlockData {
   readonly method: OffloadMethod
 
   /**
-   * Stash reference under which the original is retrievable; absent when it was not stashed.
+   * Archive reference under which the original is retrievable; absent when it was not archived.
    */
   readonly ref?: string
 

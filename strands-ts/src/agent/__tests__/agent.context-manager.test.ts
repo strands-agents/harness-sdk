@@ -177,7 +177,7 @@ describe('Agent contextManager', () => {
       expect(received).toBeInstanceOf(TextBlock)
       expect((received as TextBlock).text).toBe(stored.text)
 
-      const retrieve = createRetrievalTool(agent.contextManager!.stash!) as unknown as {
+      const retrieve = createRetrievalTool(agent.contextManager!.archive!) as unknown as {
         invoke(input: unknown): Promise<unknown>
       }
       expect(await retrieve.invoke({ reference: 'tu-1', pattern: 'row-4321' })).toContain('row-4321')

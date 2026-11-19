@@ -35,8 +35,6 @@ export type Percent = `${number}%`
  *
  * Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
  * strategy's threshold and gets skipped.
- *
- * @experimental
  */
 export interface OffloadConditions {
   /**

@@ -349,7 +349,7 @@ Tool name lists use the `tool::` prefix. Prefix a name with `!` to exclude it (a
 
 The stash stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
 
-Stash uses in-memory storage by default. Configure it through the <Syntax py="stash" ts="stash" /> key:
+Stash uses in-memory storage by default. Configure it through the <Syntax py="stash" ts="archive" /> key:
 
 - Omit or pass `true` for defaults (in-memory storage)
 - Pass a config with a custom storage backend

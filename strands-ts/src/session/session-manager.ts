@@ -8,7 +8,7 @@ import type { Snapshot } from '../types/snapshot.js'
 import type { JSONValue } from '../types/json.js'
 import type { Plugin } from '../plugins/plugin.js'
 import type { LocalAgent } from '../types/agent.js'
-import { Stash } from '../context-manager/stash.js'
+import { Archive } from '../context-manager/archive.js'
 import { AfterInvocationEvent, AfterModelCallEvent, InitializedEvent, MessageAddedEvent } from '../hooks/events.js'
 import { v7 as uuidV7 } from 'uuid'
 import { logger } from '../logging/logger.js'
@@ -86,22 +86,22 @@ export interface SessionManagerConfig {
 }
 
 /**
- * Stash data envelope stored in snapshot.data.stash.
+ * Archive data envelope stored in snapshot.data.archive.
  *
  * Extends `Record<string, JSONValue>` so it is directly assignable to
  * `Snapshot.data` entries without casts.
  *
  * @internal
  */
-interface InlineStashSnapshot extends Record<string, JSONValue> {
+interface InlineArchiveSnapshot extends Record<string, JSONValue> {
   location: 'inline'
   entries: Record<string, JSONValue>
 }
-interface ExternalStashSnapshot extends Record<string, JSONValue> {
+interface ExternalArchiveSnapshot extends Record<string, JSONValue> {
   location: 'external'
   storageType: string
 }
-type StashSnapshotData = InlineStashSnapshot | ExternalStashSnapshot
+type ArchiveSnapshotData = InlineArchiveSnapshot | ExternalArchiveSnapshot
 
 /**
  * Manages session persistence for agents, enabling conversation state
@@ -125,7 +125,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   private readonly _sessionId: string
   private _storage!: { snapshot: SnapshotStorage }
   private readonly _configStorage?: Storage | { snapshot: SnapshotStorage } | undefined
-  private _agentStash: Stash | undefined
+  private _agentArchive: Archive | undefined
   private readonly _saveLatestOn: SaveLatestStrategy
   private readonly _snapshotTrigger?: SnapshotTriggerCallback | undefined
   private readonly _multiAgentSaveLatestOn: MultiAgentSaveLatestStrategy
@@ -181,7 +181,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
       }
       this._storage = { snapshot: this._resolveSnapshotStorage(agent.storage) }
     }
-    this._agentStash = agent.contextManager?.stash
+    this._agentArchive = agent.contextManager?.archive
     agent.addHook(InitializedEvent, async (event) => {
       await this._onAgentInitialized(event)
     })
@@ -221,7 +221,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
       ? (params.target as LocalAgent).takeSnapshot({ preset: 'session' })
       : takeMultiAgentSnapshot(params.target as Graph | Swarm, params.state)
     if (isAgent) {
-      await this._includeStashData(params.target as LocalAgent, snapshot)
+      await this._includeArchiveData(params.target as LocalAgent, snapshot)
     }
     const snapshotId = params.isLatest ? 'latest' : uuidV7()
     const location = isAgent
@@ -230,10 +230,10 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
     await this._snapshotStorage.saveSnapshot({ location, snapshotId, isLatest: params.isLatest, snapshot })
   }
 
-  /** Deletes all snapshots, manifests, and stash data for this session from storage. */
+  /** Deletes all snapshots, manifests, and archive data for this session from storage. */
   async deleteSession(): Promise<void> {
     await this._snapshotStorage.deleteSession({ sessionId: this._sessionId })
-    await this._deleteStashData()
+    await this._deleteArchiveData()
   }
 
   /** Lists all available immutable snapshot IDs for the given agent target. */
@@ -270,7 +270,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
 
     if (isAgent) {
       ;(params.target as LocalAgent).loadSnapshot(snapshot)
-      await this._restoreStashData(params.target as LocalAgent, snapshot)
+      await this._restoreArchiveData(params.target as LocalAgent, snapshot)
     } else {
       loadMultiAgentSnapshot(params.target as Graph | Swarm, snapshot, params.state)
     }
@@ -330,7 +330,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   /** Captures one snapshot and writes it to both immutable history and snapshot_latest. */
   private async _saveImmutableAndLatest(agent: LocalAgent): Promise<void> {
     const snapshot = agent.takeSnapshot({ preset: 'session' })
-    await this._includeStashData(agent, snapshot)
+    await this._includeArchiveData(agent, snapshot)
     const snapshotId = uuidV7()
     await Promise.all([
       this._snapshotStorage.saveSnapshot({ location: this._location(agent), snapshotId, isLatest: false, snapshot }),
@@ -344,50 +344,50 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   }
 
   // ---------------------------------------------------------------------------
-  // Stash integration
+  // Archive integration
   // ---------------------------------------------------------------------------
 
-  private async _includeStashData(agent: LocalAgent, snapshot: Snapshot): Promise<void> {
+  private async _includeArchiveData(agent: LocalAgent, snapshot: Snapshot): Promise<void> {
     const contextManager = agent.contextManager
-    if (!contextManager?.stash) return
+    if (!contextManager?.archive) return
 
-    if (contextManager.stashIsDurable) {
-      const storageType = contextManager.stash.storageTypeName
-      snapshot.data.stash = { location: 'external', storageType } satisfies StashSnapshotData
+    if (contextManager.archiveIsDurable) {
+      const storageType = contextManager.archive.storageTypeName
+      snapshot.data.archive = { location: 'external', storageType } satisfies ArchiveSnapshotData
       return
     }
 
-    const entries = await contextManager.stash.takeSnapshot()
+    const entries = await contextManager.archive.takeSnapshot()
     if (Object.keys(entries).length > 0) {
-      snapshot.data.stash = { location: 'inline', entries } satisfies StashSnapshotData
+      snapshot.data.archive = { location: 'inline', entries } satisfies ArchiveSnapshotData
     }
   }
 
-  private async _restoreStashData(agent: LocalAgent, snapshot: Snapshot): Promise<void> {
-    if (!('stash' in snapshot.data) || !snapshot.data.stash) return
-    const stash = agent.contextManager?.stash
-    if (!stash) return
+  private async _restoreArchiveData(agent: LocalAgent, snapshot: Snapshot): Promise<void> {
+    if (!('archive' in snapshot.data) || !snapshot.data.archive) return
+    const archive = agent.contextManager?.archive
+    if (!archive) return
 
-    const stashData = snapshot.data.stash as StashSnapshotData
-    if (stashData.location === 'external') {
-      const currentType = stash.storageTypeName
-      if (stashData.storageType && currentType && stashData.storageType !== currentType) {
+    const archiveData = snapshot.data.archive as ArchiveSnapshotData
+    if (archiveData.location === 'external') {
+      const currentType = archive.storageTypeName
+      if (archiveData.storageType && currentType && archiveData.storageType !== currentType) {
         logger.warn(
-          `session_id=<${this._sessionId}>, snapshot_storage=<${stashData.storageType}>, current_storage=<${currentType}> | stash storage type changed since snapshot was created, stash data may be inaccessible`
+          `session_id=<${this._sessionId}>, snapshot_storage=<${archiveData.storageType}>, current_storage=<${currentType}> | archive storage type changed since snapshot was created, archive data may be inaccessible`
         )
       }
       return
     }
-    if (stashData.location === 'inline') {
-      await stash.loadSnapshot(stashData.entries)
+    if (archiveData.location === 'inline') {
+      await archive.loadSnapshot(archiveData.entries)
     }
   }
 
-  private async _deleteStashData(): Promise<void> {
-    if (this._agentStash) {
+  private async _deleteArchiveData(): Promise<void> {
+    if (this._agentArchive) {
       // clearSession() covers every key clear() would delete, and calling clear() on a
-      // caller-scoped stash would wipe the shared view.
-      await this._agentStash.clearSession()
+      // caller-scoped archive would wipe the shared view.
+      await this._agentArchive.clearSession()
     }
   }
 
