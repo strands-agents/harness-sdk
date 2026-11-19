@@ -30,7 +30,12 @@ import {
   type TemporaryGenerationEvent,
   type TemporaryGenerationFiles,
 } from './experiment.js'
-import { temporaryDraftsFolder, temporaryExperimentFile, temporaryExperimentsFolder } from './layout.js'
+import {
+  temporaryDraftsFolder,
+  temporaryExperimentFile,
+  temporaryExperimentsFolder,
+  watchTemporaryExperiments,
+} from './layout.js'
 import { temporaryWorkspaceReady } from './layout-migration.js'
 import {
   createTemporaryExperimentCases,
@@ -150,6 +155,10 @@ const rawOf = ({ raw, draft, change }: ReviewCase): TemporaryRawCase => {
   return change.expected === undefined ? edited : temporaryCaseWithExpected(edited, change.expected)
 }
 
+const hasUnsavedChanges = ({ raw, cases }: OpenReview): boolean =>
+  cases.length !== raw.cases.length ||
+  cases.some(({ draft, change }) => !draft.saved || !draft.kept || Object.keys(change).length > 0)
+
 const reviewOf = ({ key, name, path, cases, notice }: OpenReview): Review => ({
   key,
   name,
@@ -181,6 +190,8 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
   private summary = ''
   private opened: OpenReview | undefined
   private reloading: Promise<readonly ExperimentSummary[]> | undefined
+  private saving: Promise<unknown> = Promise.resolve()
+  private stopWatching: (() => void) | undefined
   private nextId = 1
 
   constructor(private readonly host: TemporaryHost) {
@@ -209,6 +220,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       this.saved = saved
       this.summary = context.summary
       this.error = undefined
+      this.watch(folder)
       await this.recoverDrafts()
     } catch (error) {
       this.error = `Could not read the experiments in ${folder}: ${errorMessage(error)}`
@@ -329,7 +341,13 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     this.change((cases) => [...cases, blankCase(cases, change)])
   }
 
-  async save(): Promise<ExperimentSummary | undefined> {
+  save(): Promise<ExperimentSummary | undefined> {
+    const saving = this.saveOpened()
+    this.saving = saving.catch(() => undefined)
+    return saving
+  }
+
+  private async saveOpened(): Promise<ExperimentSummary | undefined> {
     const opened = this.opened
     if (!opened) return undefined
     const kept = opened.cases.filter(({ draft }) => draft.kept)
@@ -378,6 +396,68 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
 
   private directory(): string {
     return temporaryWorkspaceDirectory(this.host().workspace)
+  }
+
+  private watch(folder: string): void {
+    if (this.stopWatching || !existsSync(folder)) return
+    try {
+      this.stopWatching = watchTemporaryExperiments(
+        folder,
+        () => void this.syncWithDisk(),
+        (error) => {
+          this.stopWatching = undefined
+          this.error = this.cannotWatch(folder, error)
+          this.publish()
+        }
+      )
+    } catch (error) {
+      this.error = this.cannotWatch(folder, error)
+    }
+  }
+
+  private cannotWatch(folder: string, error: unknown): string {
+    return `strands dev cannot watch ${shownPath(this.host().workspace, folder)} for changes (${errorMessage(error)}). Open /experiment again to see changes made elsewhere.`
+  }
+
+  private async syncWithDisk(): Promise<void> {
+    await this.saving
+    await this.reload()
+    await this.reloadOpened()
+  }
+
+  private async reloadOpened(): Promise<void> {
+    const opened = this.opened
+    if (!opened?.path) return
+    const onDisk = await fileText(opened.path)
+    if (onDisk === undefined || onDisk === opened.onDisk || this.opened !== opened) return
+    if (hasUnsavedChanges(opened)) {
+      this.note({
+        tone: 'error',
+        text: `${opened.name} changed on disk, for example in the evals UI. Your changes here are not saved. Press Esc, then open it again.`,
+      })
+      return
+    }
+    try {
+      const { raw } = await readTemporaryExperimentFile(opened.path)
+      if (this.opened !== opened) return
+      this.opened = {
+        ...opened,
+        onDisk,
+        raw,
+        cases: reviewCases(raw, true),
+        notice: { tone: 'success', text: `${opened.name} changed on disk, so this shows the new cases.` },
+      }
+    } catch (error) {
+      if (this.opened !== opened) return
+      this.opened = {
+        ...opened,
+        notice: {
+          tone: 'error',
+          text: `${opened.name} changed on disk, but it cannot be read: ${errorMessage(error)}`,
+        },
+      }
+    }
+    this.publish()
   }
 
   private folder(): string {

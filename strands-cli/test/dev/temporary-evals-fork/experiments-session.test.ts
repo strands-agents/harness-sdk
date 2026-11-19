@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CaseChange, GenerationSettings } from '../../../src/dev/panels/model.js'
@@ -380,6 +380,119 @@ describe('TEMPORARY experiment generation session', () => {
     expect(result).toEqual({ name: 'refunds', path, caseCount: 2 })
     const written = JSON.parse(await readFile(path, 'utf8')) as ReturnType<typeof experimentDocument>
     expect(written.cases.map(({ expected_output }) => expected_output)).toEqual(['first edit', 'second edit'])
+  })
+
+  describe('an experiment that changes on disk', () => {
+    const DISK = { timeout: 5000 }
+    const replaceFile = async (path: string, text: string): Promise<void> => {
+      const staging = join(dirname(path), `.${basename(path)}.ui.tmp`)
+      await writeFile(staging, text)
+      await rename(staging, path)
+    }
+    const opened = async () => {
+      const context = await setup()
+      const path = join(context.workspace.directory!, 'experiments/refunds/refunds.json')
+      await writeFileAt(path, JSON.stringify(experimentDocument(['c0', 'c1'])))
+      const [saved] = await context.experiments.reload()
+      context.experiments.open(saved!)
+      await vi.waitFor(() => expect(context.experiments.snapshot().review?.cases).toHaveLength(2))
+      return { ...context, path }
+    }
+    const editedOnDisk = () => {
+      const document = experimentDocument(['c0', 'c1', 'c2'])
+      return {
+        ...document,
+        cases: document.cases.map((item, index) => (index === 0 ? { ...item, input: 'new question' } : item)),
+      }
+    }
+
+    it('shouldShowTheNewCasesWhenTheOpenExperimentChangesOnDisk', async () => {
+      const { experiments, path } = await opened()
+
+      await replaceFile(path, JSON.stringify(editedOnDisk()))
+
+      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(3), DISK)
+      expect(experiments.snapshot().review?.cases[0]).toMatchObject({ name: 'c0', input: 'new question' })
+      expect(experiments.snapshot().review?.notice).toEqual({
+        tone: 'success',
+        text: 'refunds changed on disk, so this shows the new cases.',
+      })
+      expect(experiments.snapshot().saved).toEqual([expect.objectContaining({ name: 'refunds', caseCount: 3 })])
+    })
+
+    it('shouldKeepFollowingTheFileWhenItChangesOnDiskAgain', async () => {
+      const { experiments, path } = await opened()
+      await replaceFile(path, JSON.stringify(editedOnDisk()))
+      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(3), DISK)
+
+      await replaceFile(path, JSON.stringify(experimentDocument(['c0'])))
+      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(1), DISK)
+      await writeFile(path, JSON.stringify(experimentDocument(['c0', 'c1', 'c2', 'c3'])))
+
+      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(4), DISK)
+    })
+
+    it('shouldListAnExperimentThatAppearsOnDisk', async () => {
+      const { workspace, experiments } = await opened()
+      experiments.closeReview()
+
+      await writeFileAt(
+        join(workspace.directory!, 'experiments/billing/billing.json'),
+        JSON.stringify(experimentDocument(['b0']))
+      )
+
+      await vi.waitFor(
+        () =>
+          expect(experiments.snapshot().saved.map(({ name, caseCount }) => [name, caseCount])).toEqual([
+            ['billing', 1],
+            ['refunds', 2],
+          ]),
+        DISK
+      )
+    })
+
+    it('shouldSaveTheReloadedCasesWhenTheUserEditsThemAfterTheChange', async () => {
+      const { experiments, path } = await opened()
+      await replaceFile(path, JSON.stringify(editedOnDisk()))
+      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(3), DISK)
+
+      experiments.edit(1, { expected: 'a better answer' })
+      const result = await experiments.save()
+
+      expect(result).toEqual({ name: 'refunds', path, caseCount: 3 })
+      const written = JSON.parse(await readFile(path, 'utf8')) as ReturnType<typeof experimentDocument>
+      expect(written.cases.map(({ input }) => input)).toEqual(['new question', 'question c1', 'question c2'])
+      expect(written.cases[1]).toMatchObject({ expected_output: 'a better answer' })
+    })
+
+    it('shouldKeepUnsavedChangesAndSayWhyWhenTheOpenExperimentChangesOnDisk', async () => {
+      const { experiments, path } = await opened()
+      experiments.toggle(1)
+
+      await replaceFile(path, JSON.stringify(editedOnDisk()))
+
+      await vi.waitFor(() => expect(experiments.snapshot().review?.notice?.tone).toBe('error'), DISK)
+      expect(experiments.snapshot().review?.notice?.text).toBe(
+        'refunds changed on disk, for example in the evals UI. Your changes here are not saved. Press Esc, then open it again.'
+      )
+      expect(experiments.snapshot().review?.cases.map(({ input, kept }) => [input, kept])).toEqual([
+        ['question c0', true],
+        ['question c1', false],
+      ])
+    })
+
+    it('shouldKeepItsOwnSaveNoticeWhenTheTerminalSavesTheFile', async () => {
+      const { experiments } = await opened()
+      experiments.edit(0, { expected: 'first edit' })
+
+      await experiments.save()
+      await new Promise((resolve) => setTimeout(resolve, 800))
+
+      expect(experiments.snapshot().review?.notice).toEqual({
+        tone: 'success',
+        text: `Saved 2 cases to ${join('strands-dev', 'experiments', 'refunds', 'refunds.json')}`,
+      })
+    })
   })
 
   it('shouldRefuseToSaveWhenNoCaseIsKept', async () => {

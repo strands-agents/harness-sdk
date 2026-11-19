@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -26,6 +26,7 @@ const TASK_FILE = 'task.py'
 const LATEST_FILE = 'latest.json'
 const EXPERIMENTS_IGNORE_FILE = '.gitignore'
 const STAMP = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-(\d+))?$/u
+const EXPERIMENT_CHANGE_DEBOUNCE_MS = 200
 
 export const TEMPORARY_KEPT_TEST_RUNS = 20
 
@@ -200,6 +201,57 @@ export const listTemporaryExperimentFiles = async (experimentsFolder: string): P
   (await folderNames(experimentsFolder))
     .map((name) => join(experimentsFolder, name, `${name}${EXPERIMENT_SUFFIX}`))
     .filter((file) => existsSync(file))
+
+export const watchTemporaryExperiments = (
+  experimentsFolder: string,
+  onChange: () => void,
+  onStop: (error: Error) => void
+): (() => void) => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const folders = new Map<string, FSWatcher>()
+  const changed = (): void => {
+    clearTimeout(timer)
+    timer = setTimeout(onChange, EXPERIMENT_CHANGE_DEBOUNCE_MS)
+    timer.unref()
+  }
+  const forget = (name: string): void => {
+    folders.get(name)?.close()
+    folders.delete(name)
+  }
+  const follow = (name: string): void => {
+    if (folders.has(name)) return
+    const file = `${name}${EXPERIMENT_SUFFIX}`
+    try {
+      const watcher = watch(join(experimentsFolder, name), { persistent: false }, (_event, entry) => {
+        if (!entry || entry.toString() === file) changed()
+      })
+      watcher.on('error', () => forget(name))
+      folders.set(name, watcher)
+    } catch (error) {
+      if (!missing(error)) throw error
+    }
+  }
+  const followAll = async (): Promise<void> => {
+    const names = new Set(await folderNames(experimentsFolder))
+    for (const name of folders.keys()) if (!names.has(name)) forget(name)
+    names.forEach(follow)
+  }
+  const stop = (): void => {
+    clearTimeout(timer)
+    top.close()
+    for (const name of [...folders.keys()]) forget(name)
+  }
+  const fail = (error: unknown): void => {
+    stop()
+    onStop(error instanceof Error ? error : new Error(String(error)))
+  }
+  const top = watch(experimentsFolder, { persistent: false }, () => {
+    followAll().then(changed, fail)
+  })
+  top.on('error', fail)
+  followAll().catch(fail)
+  return stop
+}
 
 const homes = async (workspaceDirectory: string): Promise<string[]> => {
   const inside = temporaryExperimentsFolder(workspaceDirectory)
