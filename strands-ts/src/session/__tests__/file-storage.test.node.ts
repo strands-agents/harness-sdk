@@ -198,6 +198,7 @@ describe('FileStorage', () => {
     })
 
     // Vitest caches imported modules, so a loader hook only delays `import()` in compiled code run by Node.
+    // Only Node 22 reorders here; on Node 24 this passes with or without the shared imports.
     it('keeps call order when a module loader hook delays imports', { timeout: 60_000 }, async () => {
       const source = fileURLToPath(new URL('../..', import.meta.url))
       ts.createProgram([join(source, 'session', 'file-storage.ts')], {
