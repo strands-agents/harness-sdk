@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from ..types.exceptions import ContextWindowOverflowException
 from ._system_one_http_adapter import _ask_system_one, _http_transport, _resolve_system_one_provider_config
 from .decision_model import DecisionModel
 from .types import DecisionInput, DecisionResult, Question
@@ -18,7 +19,8 @@ class TypeSafeDecisionModel(DecisionModel):
 
     ``ask`` raises ``ModelThrottledException`` on provider throttling (HTTP 429/503/529, with the
     ``httpx.HTTPStatusError`` as ``__cause__``), ``ContextWindowOverflowException`` when the request
-    exceeds the provider's size limit (HTTP 413), ``ValueError`` for
+    exceeds the provider's size limit (HTTP 413) or context window (HTTP 400 with
+    ``max_tokens_exceeded``, with the ``httpx.HTTPStatusError`` as ``__cause__``), ``ValueError`` for
     request-level violations (too many choices, binary content, state that is not JSON-serializable
     or contains NaN/infinity), ``httpx.HTTPStatusError`` for any other non-2xx response, and
     ``StructuredOutputException`` for a malformed provider response. Transport errors from the HTTP
@@ -70,4 +72,23 @@ class TypeSafeDecisionModel(DecisionModel):
         )
 
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
-        return await _ask_system_one(self._provider_config, _http_transport(self._provider_config), state, questions)
+        try:
+            return await _ask_system_one(
+                self._provider_config, _http_transport(self._provider_config), state, questions
+            )
+        except httpx.HTTPStatusError as error:
+            if _is_context_overflow(error.response):
+                raise ContextWindowOverflowException(str(error)) from error
+            raise
+
+
+def _is_context_overflow(response: httpx.Response) -> bool:
+    # TypeSafe reports a request longer than the model's context as HTTP 400 `max_tokens_exceeded`.
+    if response.status_code != 400:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return isinstance(detail, dict) and detail.get("error_type") == "max_tokens_exceeded"
