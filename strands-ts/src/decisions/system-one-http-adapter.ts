@@ -24,9 +24,14 @@ export interface SystemOneRequestConfig {
 /** @internal */
 export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   endpoint: string
-  apiKey: string
-  modelId: string
+  /**
+   * Headers added to each request, such as credentials. Receives the serialized request body so a
+   * signer can cover it. `Content-Type` is always set by the transport and cannot be overridden.
+   */
+  requestHeaders: (body: string) => Record<string, string> | Promise<Record<string, string>>
   fetch: typeof globalThis.fetch
+  /** Aborts a request that takes longer than this many milliseconds. No limit when undefined. */
+  timeoutMs?: number
 }
 
 /**
@@ -53,7 +58,7 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence?: number
     fetch?: typeof globalThis.fetch
   },
-  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch'> & {
+  defaults: Omit<SystemOneProviderConfig, 'requestHeaders' | 'modelId' | 'fetch' | 'timeoutMs'> & {
     apiKeyEnvironmentVariable: string
     modelId: string
     className: string
@@ -84,7 +89,7 @@ export function resolveSystemOneProviderConfig(
   return {
     providerName: defaults.providerName,
     endpoint: defaults.endpoint,
-    apiKey,
+    requestHeaders: () => ({ Authorization: `Bearer ${apiKey}` }),
     modelId,
     defaultMinConfidence,
     fetch: (input, init) => fetchImplementation(input, init),
@@ -207,7 +212,7 @@ function toWireQuestions(questions: Record<string, Question>): Record<string, Wi
 }
 
 /**
- * The HTTP transport for hosted System One APIs: POSTs the request with the provider's API key.
+ * The HTTP transport for System One APIs: POSTs the request with the provider's headers.
  *
  * @internal
  */
@@ -216,24 +221,46 @@ export function httpTransport(config: SystemOneProviderConfig): SystemOneTranspo
 }
 
 async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSignal?: AbortSignal): Promise<unknown> {
+  const timeout = config.timeoutMs !== undefined ? AbortSignal.timeout(config.timeoutMs) : undefined
+  const signal =
+    cancelSignal !== undefined && timeout !== undefined
+      ? AbortSignal.any([cancelSignal, timeout])
+      : (cancelSignal ?? timeout)
+  // A cancel by the caller is not a timeout, even if both signals have fired.
+  const timedOut = (): boolean => timeout?.aborted === true && cancelSignal?.aborted !== true
+  const timeoutError = (cause: unknown): ModelError =>
+    new ModelError(`${config.providerName} decision request timed out after ${config.timeoutMs}ms`, { cause })
+
+  // Resolved outside the request's error handling so a signing or credential failure is not reported as a failed
+  // request. Awaited only when asynchronous, so a synchronous provider still calls fetch without yielding first.
+  const providerHeaders = config.requestHeaders(body)
+  const headers = {
+    ...(providerHeaders instanceof Promise ? await providerHeaders : providerHeaders),
+    'Content-Type': 'application/json',
+  }
+
   let response: Response
   try {
     response = await config.fetch(config.endpoint, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body,
-      ...(cancelSignal !== undefined && { signal: cancelSignal }),
+      ...(signal !== undefined && { signal }),
     })
   } catch (error) {
+    if (timedOut()) throw timeoutError(error)
     throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
       cause: error,
     })
   }
 
-  const payload = await readPayload(response)
+  let payload: unknown
+  try {
+    payload = await readPayload(response)
+  } catch (error) {
+    if (timedOut()) throw timeoutError(error)
+    throw error
+  }
   if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
   return payload
 }
