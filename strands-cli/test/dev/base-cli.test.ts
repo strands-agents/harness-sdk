@@ -12,7 +12,9 @@ import {
   refreshBaseCliView,
   saveBaseCliChoices,
   savedProjectChoices,
+  sessionModelSyncEnabled,
 } from '../../src/dev/base-cli.js'
+import { updateWorkspaceCli } from '../../src/dev/binding.js'
 import { createDevWorkspace } from '../../src/dev/create.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -234,6 +236,32 @@ describe('profileBaseCliChat', () => {
 
     expect(chat!.configWatch.path).toBe(path)
     expect(await view()).toContain("instructions: 'Answer in full sentences.'")
+  })
+})
+
+describe('sessionModelSyncEnabled', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('shouldPreferTheBaseCliWorkspaceValueOverCliTomlWhenTheWorkspaceSetsIt', async () => {
+    const home = await temporaryDirectory()
+    vi.stubEnv('HOME', home)
+    const path = join(home, '.strands', 'cli.toml')
+    await mkdir(join(home, '.strands'))
+    await writeFile(path, `${profileToml('Answer briefly.')}\n[settings]\nsessionModelSync = true\n`)
+    const snapshot = await snapshotOf(path)
+
+    expect(await sessionModelSyncEnabled(snapshot)).toBe(true)
+
+    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+    const workspace = await createDevWorkspace({
+      cwd: home,
+      destination: join(home, '.strands', 'strands-dev'),
+      kind: 'cli',
+      snapshot,
+    })
+    await updateWorkspaceCli(workspace.directory!, { settings: { sessionModelSync: false } })
+
+    expect(await sessionModelSyncEnabled(snapshot)).toBe(false)
   })
 })
 

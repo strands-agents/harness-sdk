@@ -43,6 +43,7 @@ import {
   DEFAULT_SETTINGS_CATEGORY,
   SETTINGS_CATEGORIES,
   parseSettingUpdate,
+  type SettingsCategory,
 } from '../../config/settings.js'
 import type { ProfileEffort } from '../../config/store.js'
 import { agentLaunchCommand } from '../../project/import.js'
@@ -2674,13 +2675,7 @@ export class ChatController implements ChatControllerApi {
       if (this._panel?.kind === 'settings') {
         this._panel = {
           ...this._panel,
-          rows: sanitizeRows(
-            settingsRows(
-              this._settings,
-              this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY,
-              this._requestSetup !== undefined
-            )
-          ),
+          rows: sanitizeRows(this._settingsCategoryRows(this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
         }
       }
       return true
@@ -2692,6 +2687,21 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
+  private _settingsCategoryRows(category: SettingsCategory): ChatPanelRow[] {
+    const rows = settingsRows(this._settings, category, this._requestSetup !== undefined)
+    if (category !== 'Workspace') return rows
+    return [
+      { label: 'Workspace folder', description: this._runtime.devWorkspace!.root },
+      { label: 'Current agent', description: this._runtime.devWorkspace!.entrypoint },
+      {
+        label: 'Edit workspace configuration',
+        description: 'Open .config; changes apply on next launch',
+        value: 'workspace:edit',
+      },
+      ...rows,
+    ]
+  }
+
   private _openSettingsCategory(value: string, replace = false): boolean {
     const category =
       value === 'settings:Workspace' && this._workspaceAction && this._runtime.devWorkspace
@@ -2700,22 +2710,10 @@ export class ChatController implements ChatControllerApi {
     if (!category) {
       return false
     }
-    const rows =
-      category.id === 'Workspace'
-        ? [
-            { label: 'Workspace folder', description: this._runtime.devWorkspace!.root },
-            { label: 'Current agent', description: this._runtime.devWorkspace!.entrypoint },
-            {
-              label: 'Edit workspace configuration',
-              description: 'Open .config; changes apply on next launch',
-              value: 'workspace:edit',
-            },
-          ]
-        : settingsRows(this._settings, category.id, this._requestSetup !== undefined)
     const panel = {
       kind: 'settings',
       title: category.label,
-      rows,
+      rows: this._settingsCategoryRows(category.id),
       filters: settingsCategoryFilters(Boolean(this._workspaceAction && this._runtime.devWorkspace)),
       settingsCategory: category.id,
     } satisfies NewChatPanel

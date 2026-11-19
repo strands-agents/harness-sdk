@@ -2,7 +2,12 @@ import { resolve } from 'node:path'
 import { containsPath } from '../../paths.js'
 import { type HarnessAgentConfig } from '@strands-agents/harness'
 
-import { configurationFromStore, createBuiltinToolsRuntime, type RequestSetup } from '../../agent/configuration.js'
+import {
+  configurationFromStore,
+  createBuiltinToolsRuntime,
+  type RequestSetup,
+  type WorkspaceAction,
+} from '../../agent/configuration.js'
 import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
@@ -31,7 +36,12 @@ import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
 import type { AgentExtensionHost } from '../../agent/extension.js'
 import { saveAgentChoices } from '../../dev/agent-choices.js'
-import { profileBaseCliChat, savedProjectChoices } from '../../dev/base-cli.js'
+import {
+  baseCliWorkspaceConfigPath,
+  profileBaseCliChat,
+  savedProjectChoices,
+  sessionModelSyncEnabled,
+} from '../../dev/base-cli.js'
 import type { AgentOptions } from '../../dev/agent-options.js'
 import { devChatExtension } from '../../dev/chat-extension.js'
 import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/agent-context.js'
@@ -162,6 +172,7 @@ export async function createTypescriptChat(
         requestSetup,
         ...(devWorkspace
           ? {
+              workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
               devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
               skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
               saveAgentOptions: (change: AgentOptions): Promise<boolean> =>
@@ -375,6 +386,7 @@ export async function createPythonChat(
       requestSetup,
       ...(devWorkspace
         ? {
+            workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
             devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
             skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
             saveAgentOptions: (change: AgentOptions): Promise<boolean> =>
@@ -490,8 +502,16 @@ const profileReload = (
   const { path } = config.snapshot()
   const requestSetup = options.requestSetup
   if (!options.agentProfile || !requestSetup || path === 'in-memory') return {}
+  // A profile change seen while sessionModelSync is off stays pending until the toggle turns on.
+  let pending = false
+  const changed = async (): Promise<boolean> => {
+    pending = (await config.reload()) || pending
+    if (!pending || !(await sessionModelSyncEnabled(config.snapshot()))) return false
+    pending = false
+    return true
+  }
   return {
-    configWatch: { path, changed: () => config.reload() },
+    configWatch: { path, alsoWatch: [baseCliWorkspaceConfigPath()], changed },
     reloadProject: (conversationId: string, paths: readonly string[]): void =>
       requestSetup({ profile: config.snapshot().profile, profileSaved: true, conversationId, reloadedFiles: paths }),
   }

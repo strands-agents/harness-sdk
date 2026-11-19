@@ -62,6 +62,29 @@ describe('workspace Settings', () => {
     }
   })
 
+  it('shouldKeepTheWorkspaceRowsWhenTheSessionModelSyncToggleChanges', async () => {
+    const setSettings = vi.fn(async () => undefined)
+    const dev = new ChatController(idleBackend(), {
+      runtime: { devWorkspace: info },
+      workspaceAction: vi.fn(),
+      setSettings,
+    })
+    try {
+      await dev.submit('/settings')
+      await dev.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })
+      const toggle = () => dev.getSnapshot().panel?.rows.find(({ value }) => value === 'sessionModelSync')
+      expect(toggle()).toMatchObject({ label: 'Sync model to existing sessions', control: { checked: false } })
+
+      await dev.activatePanelRow(toggle()!)
+
+      expect(setSettings).toHaveBeenCalledExactlyOnceWith({ sessionModelSync: true })
+      expect(toggle()).toMatchObject({ control: { checked: true } })
+      expect(dev.getSnapshot().panel?.rows).toContainEqual(expect.objectContaining({ value: 'workspace:edit' }))
+    } finally {
+      await dev.dispose()
+    }
+  })
+
   it('shouldNotOfferTheImportOfADifferentAgentWhenTheWorkspaceSectionOpens', async () => {
     const action = vi.fn()
     const dev = new ChatController(idleBackend(), { runtime: { devWorkspace: info }, workspaceAction: action })

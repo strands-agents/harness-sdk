@@ -296,7 +296,7 @@ A notice in the chat tells you what dev deactivated. Without the session manager
 Dev saves each change that you make in the CLI during a dev session.
 
 - `/model` and `/effort` write `model` and `effort` into the `createHarness` or `create_harness` call of the agent file. Dev uses the same code writer as `/export`.
-- For a Base CLI that is a saved profile, `/model`, `/effort`, and the Apply step of `/optimize` write the profile in `~/.strands/cli.toml`. Then dev writes the view again, and plain `strands` reloads the agent.
+- For a Base CLI that is a saved profile, `/model`, `/effort`, and the Apply step of `/optimize` write the profile in `~/.strands/cli.toml`. Then dev writes the view again. A running plain `strands` reloads the agent only when **Sync model to existing sessions** (`sessionModelSync`) is on, in the **Strands dev workspace** section of `/settings`.
 - When plain `strands` runs the saved agent project of the Base CLI, it writes `/model` and `/effort` into that agent file, as dev does.
 - The harness ignores `effort` when the agent passes a model object, for example `new BedrockModel({...})`. For a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object, `/effort` writes the reasoning fields into the object instead. These are the same fields that the harness sends for that model id at that effort, in `additionalRequestFields` or `params`. Fields for other purposes do not change.
 - `/settings`, `/permissions`, `/mcp`, and the AWS profile go into the `cli` section of `strands-dev/.config`. This section has the same shape as `cli.toml`, and dev loads it at each start.

@@ -50,7 +50,8 @@ export interface ConversationManagerOptions {
   project?: ImportedAgentProject
   projectPrivatePaths?: readonly string[] | null
   reloadProject?(conversationId: string, paths: readonly string[]): void
-  configWatch?: { path: string; changed(): Promise<boolean> }
+  /** `path` names the reload; `alsoWatch` files only re-run `changed`. */
+  configWatch?: { path: string; alsoWatch?: readonly string[]; changed(): Promise<boolean> }
 }
 
 export class ConversationManager implements ChatControllerApi {
@@ -142,9 +143,12 @@ export class ConversationManager implements ChatControllerApi {
           )
         : undefined
     const configWatch = options.configWatch
-    this._stopConfigWatch = configWatch
-      ? watchConfigFile(configWatch.path, () => void this._configChanged(configWatch))
+    const stopWatches = configWatch
+      ? [configWatch.path, ...(configWatch.alsoWatch ?? [])].map((path) =>
+          watchConfigFile(path, () => void this._configChanged(configWatch))
+        )
       : undefined
+    this._stopConfigWatch = stopWatches ? (): void => stopWatches.forEach((stop) => stop()) : undefined
     if (project && options.reloadProject && options.projectPrivatePaths === null) {
       this._openError(
         'live reload unavailable',

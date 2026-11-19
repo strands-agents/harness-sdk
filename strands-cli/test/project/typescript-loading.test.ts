@@ -736,7 +736,7 @@ const timer = setInterval(() => {
     }
   }, 30000)
 
-  it('shouldLeaveTheStrandsDevWorkspaceOutOfSettingsWhenADevChatOpensThem', async () => {
+  it('shouldOfferTheStrandsDevWorkspaceInSettingsWhenADevChatOpensThem', async () => {
     await writeFile(
       project().entrypoint,
       `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness(${JSON.stringify({ ...defaults, name: 'Dev' })})\n`
@@ -757,8 +757,11 @@ const timer = setInterval(() => {
     try {
       await chat.submit('/settings')
       expect(chat.getSnapshot().panel?.kind).toBe('settings')
-      expect(chat.getSnapshot().panel?.filters?.map(({ id }) => id)).not.toContain('settings:Workspace')
-      expect(await chat.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })).toBe(false)
+      expect(chat.getSnapshot().panel?.filters?.map(({ id }) => id)).toContain('settings:Workspace')
+      expect(await chat.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })).toBe(true)
+      expect(chat.getSnapshot().panel?.rows.map(({ value }) => value)).toEqual(
+        expect.arrayContaining(['workspace:edit', 'sessionModelSync'])
+      )
     } finally {
       await chat.dispose()
     }

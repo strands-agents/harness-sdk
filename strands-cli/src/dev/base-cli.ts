@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 
 import { CliConfigStore, savedAgentProject, userConfigPath, type CliConfigSnapshot } from '../config/store.js'
-import { containsPath } from '../paths.js'
+import { containsPath, strandsUserPath } from '../paths.js'
 import { writeAgentProject } from '../project/export.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { installProjectDependencies } from '../project/install.js'
@@ -16,8 +16,10 @@ import {
   type AgentOptionEdit,
   type AgentOptions,
 } from './agent-options.js'
+import { readWorkspaceBinding } from './binding.js'
 import { profileProject } from './create.js'
-import type { DevWorkspace } from './workspace.js'
+import { WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
+import { isRecord } from '../values.js'
 
 const VIEW_KEPT = new Set(['node_modules', 'package-lock.json', '.agent', '.strands', 'dist', '.venv', '__pycache__'])
 const VIEW_FOLDER = 'agent'
@@ -241,4 +243,15 @@ export const savedProjectChoices = (config: CliConfigStore, project: ImportedAge
   if (!saved || !samePath(saved, project.entrypoint)) return {}
   const workspace = { root: project.root, entrypoint: project.entrypoint, config: { language: project.language } }
   return { saveAgentOptions: (change: AgentOptions): Promise<boolean> => saveAgentChoices(workspace, change) }
+}
+
+/** The `.config` of the default Base CLI workspace, where dev saves its `/settings` changes. */
+export const baseCliWorkspaceConfigPath = (): string => join(strandsUserPath(WORKSPACE_FOLDER), '.config')
+
+/** Whether plain strands applies Base CLI profile changes to its open sessions; the dev workspace value wins. */
+export const sessionModelSyncEnabled = async (snapshot: CliConfigSnapshot): Promise<boolean> => {
+  const bound = await readWorkspaceBinding(dirname(baseCliWorkspaceConfigPath())).catch(() => undefined)
+  const settings = bound?.binding.cli?.settings
+  const saved = isRecord(settings) ? settings.sessionModelSync : undefined
+  return typeof saved === 'boolean' ? saved : snapshot.settings.sessionModelSync
 }
