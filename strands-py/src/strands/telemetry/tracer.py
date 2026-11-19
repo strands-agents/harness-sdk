@@ -1386,14 +1386,18 @@ class Tracer:
                     {"content": self._redact(redact_key, serialize(message["content"]))},
                 )
 
+    @staticmethod
+    def _reasoning_text(block: dict[str, Any]) -> str | None:
+        """Return a reasoning block's text; its signature and redacted content are never exported."""
+        return (block["reasoningContent"].get("reasoningText") or {}).get("text")
+
     def _map_content_blocks_to_stable_format(self, content_blocks: list[ContentBlock]) -> list[dict[str, Any]]:
         """Map reasoning blocks to their text for the stable conventions; other blocks are exported as is."""
         blocks: list[dict[str, Any]] = []
 
         for block in cast(list[dict[str, Any]], content_blocks):
             if "reasoningContent" in block:
-                # The signature and redacted content are not exported
-                text = (block["reasoningContent"].get("reasoningText") or {}).get("text")
+                text = self._reasoning_text(block)
                 if text:
                     blocks.append({"type": "reasoning", "text": text})
             else:
@@ -1422,8 +1426,8 @@ class Tracer:
             elif "injected" in block:
                 parts.append({"type": "text", "content": block["injected"]["text"]})
             elif "reasoningContent" in block:
-                # Standard ReasoningPart; the signature and redacted content are not exported
-                text = (block["reasoningContent"].get("reasoningText") or {}).get("text")
+                # Standard ReasoningPart
+                text = self._reasoning_text(block)
                 parts.append({"type": "reasoning", "content": text} if text else {"type": "reasoningContent"})
             elif "toolUse" in block:
                 # Standard ToolCallRequestPart

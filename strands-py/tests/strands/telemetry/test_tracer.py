@@ -586,7 +586,10 @@ def test_end_model_invoke_span_stable_conventions_does_not_export_reasoning_with
     usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
     tracer.end_model_invoke_span(mock_span, message, usage, Metrics(latencyMs=20), "end_turn")
 
-    assert mock_span.add_event.call_args.kwargs["attributes"]["message"] == json.dumps([{"text": "done"}])
+    mock_span.add_event.assert_called_once_with(
+        "gen_ai.choice",
+        attributes={"finish_reason": "end_turn", "message": json.dumps([{"text": "done"}])},
+    )
 
 
 def test_start_tool_call_span(mock_tracer):
