@@ -162,6 +162,14 @@ export const omittedCases: Record<string, string> = {}
 // The entries as written, for the capabilities ModelInfo does not carry.
 const modelEntries: Record<string, { limits?: object; capabilities?: Record<string, unknown> }> = modelInfoData.models
 
+/** Model info entries no target resolves to. */
+export const untargetedEntries: string[] = Object.keys(modelEntries).filter(
+  (key) => !targets.some((target) => lookupKey(target.model) === key)
+)
+
+/** The model info entries the shared file says are left out, with the reason. */
+export const untested: Record<string, string> = conformance.untested
+
 // Shared provider ids that call OpenAI's Chat Completions API.
 const chatCompletionsProviders = new Set(['openai', 'mantle'])
 

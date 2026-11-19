@@ -88,6 +88,10 @@ def test_shared_cases_and_providers_are_all_accounted_for():
     assert unmapped_providers == set()
 
 
+def test_every_model_info_entry_has_a_target_or_a_reason_it_is_untested():
+    assert conformance.UNTARGETED_ENTRIES == set(conformance.UNTESTED)
+
+
 def test_known_failures_name_a_live_target_and_a_case():
     stale = [
         key

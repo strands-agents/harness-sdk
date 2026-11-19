@@ -23,6 +23,8 @@ import {
   providers,
   recordResult,
   toolLimitReason,
+  untargetedEntries,
+  untested,
   willNotClear,
   targets,
 } from '../__fixtures__/conformance.js'
@@ -199,6 +201,10 @@ describe('Model conformance coverage', () => {
     const known = new Set([...Object.keys(providers), ...Object.keys(omittedProviders)])
 
     expect(listedTargets.filter((target) => !known.has(target.provider))).toStrictEqual([])
+  })
+
+  it('has a target, or a reason it is untested, for every model info entry', () => {
+    expect([...untargetedEntries].sort()).toStrictEqual(Object.keys(untested).sort())
   })
 
   it('names a live target and a case in every known failure', () => {
