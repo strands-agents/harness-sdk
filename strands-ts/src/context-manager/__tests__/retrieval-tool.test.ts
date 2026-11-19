@@ -476,6 +476,23 @@ describe('retrieval tool', () => {
       expect(result).not.toContain('connection pool was exhausted')
     })
 
+    it('widens a section with context_lines, the same parameter the pattern path takes', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+      const linesOf = (result: string): number => result.split('\n').filter((line) => /^\s*\d+\|/.test(line)).length
+
+      const narrow = (await invoke(retrievalTool, { reference: ref, query: 'connection pool exhausted' })) as string
+      const wide = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'connection pool exhausted',
+        context_lines: 12,
+      })) as string
+
+      expect(linesOf(narrow)).toBe(11)
+      expect(linesOf(wide)).toBe(25)
+    })
+
     it('returns the best-scoring section first rather than the earliest', async () => {
       const lines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: nothing of note`)
       lines[19] = 'line 20: the database was briefly slow'
