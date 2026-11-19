@@ -9,8 +9,7 @@
 import { z } from 'zod'
 import { tool } from '../tools/tool-factory.js'
 import { searchContent } from '../vended-plugins/context-offloader/search.js'
-import { queryTokensOf, tokenOverlapScore } from '../storage/search/keyword.js'
-import { matchingSections } from '../storage/search/sections.js'
+import { matchingSections, queryTokensOf, tokenOverlapScore } from '../storage/search/keyword.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../types/media.js'
 import { CitationsBlock } from '../types/citations.js'
 import {

@@ -131,7 +131,7 @@ describe('S3Storage', () => {
 
       const results = await storage.search!('hello')
 
-      expect(mockStrategy.search).toHaveBeenCalledWith(storage, 'hello')
+      expect(mockStrategy.search).toHaveBeenCalledWith(storage, 'hello', undefined)
       expect(results).toEqual([{ key: 'found.md', score: 1 }])
     })
 
@@ -345,7 +345,7 @@ describe('S3Storage', () => {
       await scoped.search('query')
 
       expect(strategy.index).toHaveBeenCalledWith(scoped, 'deploy.md', expect.any(Uint8Array))
-      expect(strategy.search).toHaveBeenCalledWith(scoped, 'query')
+      expect(strategy.search).toHaveBeenCalledWith(scoped, 'query', undefined)
     })
   })
 })

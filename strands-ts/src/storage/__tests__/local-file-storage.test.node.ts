@@ -187,7 +187,7 @@ describe('LocalFileStorage', () => {
       await configured.write('a.txt', new Uint8Array([1]))
       expect(strategy.index).toHaveBeenCalledWith(configured, 'a.txt', new Uint8Array([1]))
       expect(await configured.search('query')).toEqual([{ key: 'hit.txt', score: 1 }])
-      expect(strategy.search).toHaveBeenCalledWith(configured, 'query')
+      expect(strategy.search).toHaveBeenCalledWith(configured, 'query', undefined)
     })
 
     it('routes I/O through a sandbox from config', async () => {

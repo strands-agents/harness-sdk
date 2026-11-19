@@ -1,4 +1,4 @@
-import type { StorageSearchResult } from '../storage.js'
+import type { StorageSearchOptions, StorageSearchResult } from '../storage.js'
 import type { S3Storage } from '../s3-storage.js'
 import type { SearchStrategy } from './types.js'
 import type { Embedder } from '../embeddings/embedder.js'
@@ -121,9 +121,10 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
    *
    * @param storage - The storage to search over
    * @param query - Natural-language search query
+   * @param options - Narrows the search to a key prefix and a result count
    * @returns Matched keys under the storage's prefix with similarity scores, ranked best-first
    */
-  async search(storage: S3Storage, query: string): Promise<StorageSearchResult[]> {
+  async search(storage: S3Storage, query: string, options?: StorageSearchOptions): Promise<StorageSearchResult[]> {
     const embedder = await this._getEmbedder(storage)
     const queryVector = await embedder.embed(query)
     const { client, sdk } = await this._vectors(storage)
@@ -131,16 +132,18 @@ export class S3VectorSearchStrategy implements SearchStrategy<S3Storage> {
       new sdk.QueryVectorsCommand({
         ...this._target,
         queryVector: { float32: queryVector },
-        topK: this._config.maxResults ?? 10,
+        topK: options?.limit ?? this._config.maxResults ?? 10,
         returnDistance: true,
       })
     )
-    const prefix = storage.prefix
+    // Filtered rather than queried: an S3 Vectors query selects on vector metadata, and these
+    // vectors are keyed by object key with none, so a prefix can only narrow what topK returned.
+    const prefix = storage.prefix + (options?.prefix ?? '')
     const results: StorageSearchResult[] = []
     for (const vector of response.vectors ?? []) {
       if (vector.key == null || !vector.key.startsWith(prefix)) continue
       results.push({
-        key: vector.key.slice(prefix.length),
+        key: vector.key.slice(storage.prefix.length),
         score: vector.distance != null ? 1 / (1 + vector.distance) : 0,
       })
     }

@@ -82,14 +82,37 @@ export interface StorageSearchResult {
   /** Stored bytes, present only when the backend includes them. */
   data?: Uint8Array
   /**
-   * The part of the entry that matched, as byte offsets into the stored bytes: `start` inclusive,
-   * `end` exclusive.
+   * The parts of the entry that matched, best-first, as byte offsets into the stored bytes:
+   * `start` inclusive, `end` exclusive.
+   *
+   * Several rather than one, because a consumer showing as much of an entry as a budget allows
+   * needs to know which part to drop next; given only the best it can only choose between that
+   * part and the whole entry.
    *
    * Present only when the strategy was configured to report sections rather than whole entries —
    * see `KeywordSearchConfig.sectionContextLines`. Absent means the whole entry is the match, which
    * is the default.
    */
-  byteRange?: { start: number; end: number }
+  byteRanges?: Array<{ start: number; end: number }>
+}
+
+/** Options narrowing a {@link Storage.search} call. */
+export interface StorageSearchOptions {
+  /**
+   * Search only keys starting with this prefix, empty or absent for every key.
+   *
+   * A backend with its own index must scope the query it issues rather than filter what comes
+   * back: a limit applied inside the index fills its window with the best matches overall, which
+   * for a narrow prefix are mostly out of scope, and the scope then reads as empty.
+   */
+  prefix?: string
+  /**
+   * Maximum results to return, best-first. Absent for every match.
+   *
+   * A backend whose index has its own default limit must send this one in place of it, so the
+   * number of results a caller gets is the number it asked for.
+   */
+  limit?: number
 }
 
 /**
@@ -181,9 +204,10 @@ export interface Storage<ListQuery = string, SearchQuery = string> {
    * Optional — when absent, consumers fall back to client-side search.
    *
    * @param query - A string query or backend-specific query object
+   * @param options - Narrows the search to a key prefix and a result count. See {@link StorageSearchOptions}.
    * @returns Matched keys with relevance scores, ranked best-first
    */
-  search?(query: SearchQuery): Promise<StorageSearchResult[]>
+  search?(query: SearchQuery, options?: StorageSearchOptions): Promise<StorageSearchResult[]>
 }
 
 /**
@@ -214,11 +238,12 @@ export function namespace(storage: Storage, prefix: string): Storage {
     ;(view as unknown as Record<symbol, boolean>)[EPHEMERAL] = true
   }
   if (storage.search) {
-    view.search = (query: string): Promise<StorageSearchResult[]> =>
-      storage.search!(query).then((results) =>
-        results
-          .filter((result) => result.key.startsWith(p))
-          .map((result) => ({ ...result, key: result.key.slice(p.length) }))
+    // The namespace is pushed down as a prefix rather than filtered out of the results, so a backend
+    // whose index applies a limit scores only keys in the namespace and cannot return a window of
+    // better-matching keys outside it, which filtering would leave empty.
+    view.search = (query: string, options?: StorageSearchOptions): Promise<StorageSearchResult[]> =>
+      storage.search!(query, { ...options, prefix: `${p}${options?.prefix ?? ''}` }).then((results) =>
+        results.map((result) => ({ ...result, key: result.key.slice(p.length) }))
       )
   }
   return view
