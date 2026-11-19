@@ -131,7 +131,7 @@ async def test_stream_adds_the_call_usage_under_the_model_it_wraps(alist):
 
     await alist(ModelProxy(model).stream([user({"text": "go"})], None, None, invocation_context=invocation_context))
 
-    assert invocation_context.usage_by_model == [ModelUsage(None, "model-a", usage)]
+    assert invocation_context.usage_by_model == [ModelUsage(provider_name=None, model_id="model-a", usage=usage)]
 
 
 @pytest.mark.asyncio

@@ -80,6 +80,11 @@ reached one of its [invocation limits](../agents/agent-loop.mdx#invocation-limit
 it doesn't count as a turn. Its tokens do count toward the request's token limits, so
 later turns can stop sooner.
 
+In Python, `result.invocation_context.usage_by_model` splits the request's usage by
+model. It is a list of `ModelUsage` records, each with a `provider_name`, a `model_id`,
+and the model's summed `usage`, and their token counts add up to the request's usage. A
+decision's tokens are in the record of the model that answered it.
+
 Without the invocation context, the decision still reports its tokens in its own result,
 but the request doesn't include them.
 

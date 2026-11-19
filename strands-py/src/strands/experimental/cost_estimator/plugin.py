@@ -6,8 +6,10 @@ batch or provisioned pricing, negotiated discounts, or long-context price tiers.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
+import sys
 from collections.abc import AsyncGenerator, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -17,10 +19,13 @@ try:
     from genai_prices import calc_price
     from genai_prices.types import TieredPrices
 except ImportError as error:
-    raise ImportError(
-        "strands.experimental.cost_estimator requires the genai-prices package, which needs Python 3.11+. "
-        "Install with: pip install 'strands-agents[cost-estimation]'"
-    ) from error
+    if sys.version_info < (3, 11):
+        reason = "requires Python 3.11 or later; InvocationContext.usage_by_model works without it"
+    elif isinstance(error, ModuleNotFoundError) and error.name == "genai_prices":
+        reason = "requires the genai-prices package. Install with: pip install 'strands-agents[cost-estimator]'"
+    else:
+        reason = "supports genai-prices>=0.2.4,<0.3; the installed version is not compatible"
+    raise ImportError(f"strands.experimental.cost_estimator {reason}") from error
 
 from ...agent.invocation_context import InvocationContext, ModelUsage
 from ...middleware import InvokeModelStage, ModelStopReason, TypedEvent
@@ -44,32 +49,32 @@ _PROVIDER_IDS = {
     "google": "google",
     "mistral": "mistral",
     "openai": "openai",
-    "typesafe": "typesafe",
 }
 _GENAI_RATE_FIELDS = ("input_mtok", "output_mtok", "cache_read_mtok", "cache_write_mtok")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ModelPrice:
     """List price of a model in USD per one million tokens.
 
     Attributes:
+        model_id: The model the price is for, compared as a whole string.
         input_per_million: Price of uncached input tokens.
         output_per_million: Price of output tokens.
         cache_read_per_million: Price of input tokens read from cache; ``None`` uses the input price.
         cache_write_per_million: Price of input tokens written to cache; ``None`` uses the input price.
-        model_id: The model the price is for, compared as a whole string. Required on a price you pass in.
-        provider_name: The provider the price is for; ``None`` matches the model id on any provider.
+        provider_name: The provider the price is for, compared as a whole string with the ``provider_name`` of
+            the usage; ``None`` matches the model id on any provider.
 
     Raises:
         ValueError: If a price is not a finite, non-negative number.
     """
 
+    model_id: str
     input_per_million: float
     output_per_million: float
     cache_read_per_million: float | None = None
     cache_write_per_million: float | None = None
-    model_id: str | None = None
     provider_name: str | None = None
 
     def __post_init__(self) -> None:
@@ -79,13 +84,13 @@ class ModelPrice:
             if value is None and name.startswith("cache_"):
                 continue
             is_number = isinstance(value, (int, float)) and not isinstance(value, bool)
-            if not (is_number and math.isfinite(value) and value >= 0):
+            if not (is_number and 0 <= value <= sys.float_info.max):
                 raise ValueError(f"{name}=<{value!r}> | a price must be a finite, non-negative number")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ModelCostEstimate:
-    """Estimated cost of one model's share of a request.
+    """Estimated cost of one model's share of a request, or of one model call.
 
     Attributes:
         provider_name: Name of the model's provider; ``None`` when not known.
@@ -105,7 +110,7 @@ class ModelCostEstimate:
     price_source: str | None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class CostEstimate:
     """Estimated cost of a request so far.
 
@@ -124,32 +129,33 @@ class CostEstimate:
 
 
 class CostEstimateEvent(TypedEvent):
-    """Stream event carrying the estimated cost of the request so far, emitted after each model call."""
+    """Stream event emitted after each model call, carrying its estimated cost and the request's so far."""
 
-    def __init__(self, cost_estimate: CostEstimate) -> None:
-        """Initialize with the estimate.
+    def __init__(self, cost_estimate: CostEstimate, model_call: ModelCostEstimate) -> None:
+        """Initialize with the estimates.
 
         Args:
-            cost_estimate: The estimate for the whole request so far, not for one model call.
+            cost_estimate: The running estimate for the whole request so far.
+            model_call: The estimate for the model call that just ended.
         """
-        super().__init__({"cost_estimate": cost_estimate})
+        super().__init__({"type": "cost_estimate", "cost_estimate": cost_estimate, "model_call": model_call})
 
 
 class GenAIPricesEstimator(Plugin):
     """Estimates the USD cost of a request from its token usage and the list prices bundled in genai-prices.
 
     Attached to an agent, it adds a ``cost_estimate`` event to the agent's stream after every model call. The
-    event carries the estimate for the whole request so far, including nested and auxiliary model calls.
-    :meth:`estimate` computes the same for a finished request and needs no agent.
+    event carries the estimate for that call and the running estimate for the whole request so far, including
+    nested and auxiliary model calls. :meth:`estimate` computes the request's estimate and needs no agent.
 
     It makes no network calls: prices are as recent as the installed genai-prices package.
 
     Args:
-        prices: Your own prices, each naming its ``model_id``. They win over genai-prices, and one with a
-            ``provider_name`` wins over one without.
+        prices: Your own prices. They win over genai-prices, and one with a ``provider_name`` wins over one
+            without.
 
     Raises:
-        ValueError: If a price has no ``model_id``, or two prices name the same provider and model.
+        ValueError: If two prices name the same provider and model.
     """
 
     name = "strands:genai-prices-estimator"
@@ -159,52 +165,71 @@ class GenAIPricesEstimator(Plugin):
         super().__init__()
         self._prices: dict[tuple[str | None, str], ModelPrice] = {}
         for price in prices:
-            if price.model_id is None:
-                raise ValueError(f"price=<{price!r}> | a price passed in prices needs a model_id")
             key = (price.provider_name, price.model_id)
             if key in self._prices:
                 raise ValueError(
                     f"provider_name=<{key[0]}>, model_id=<{key[1]}> | prices has two entries for one model"
                 )
             self._prices[key] = price
+        # Loads the bundled price data now; the first lookup takes long enough to stall a running event loop.
+        with contextlib.suppress(Exception):
+            _genai_price("openai", "gpt-4o")
 
     def init_agent(self, agent: Agent) -> None:
         """Register the middleware that adds a ``cost_estimate`` event after each model call."""
         agent.add_middleware(InvokeModelStage, self._emit_estimate)
 
-    def estimate(self, request: AgentResult | MultiAgentResult | InvocationContext) -> CostEstimate:
+    def estimate(
+        self, request: AgentResult | MultiAgentResult | InvocationContext | Iterable[ModelUsage]
+    ) -> CostEstimate:
         """Estimate the cost of a request so far, including its nested and auxiliary model calls.
 
         A request you continue by passing its ``invocation_context`` to a later call is one request: its
         estimate grows, so do not add the estimates together.
 
         Args:
-            request: An agent or multi-agent result, or an ``InvocationContext``.
+            request: An agent or multi-agent result, an ``InvocationContext``, or usage records such as a saved
+                ``usage_by_model``.
 
         Returns:
             The estimate. A model without a price has ``cost_usd=None`` and makes ``total_usd`` ``None``, as
             does a result that carries no ``invocation_context``.
+
+        Raises:
+            TypeError: If ``request`` is none of the accepted types.
         """
-        context = request if isinstance(request, InvocationContext) else request.invocation_context
-        if context is None:
-            return CostEstimate(total_usd=None, models=())
-        return self._estimate(context.usage_by_model)
+        if hasattr(request, "invocation_context"):
+            if request.invocation_context is None:
+                return CostEstimate(total_usd=None, models=())
+            request = request.invocation_context
+        if isinstance(request, InvocationContext):
+            return self._estimate(request.usage_by_model)
+        usage_by_model = list(request) if isinstance(request, Iterable) else None
+        if usage_by_model is None or not all(isinstance(model_usage, ModelUsage) for model_usage in usage_by_model):
+            raise TypeError(
+                f"request=<{type(request).__name__}> | expected an agent or multi-agent result, "
+                "an InvocationContext, or an iterable of ModelUsage"
+            )
+        return self._estimate(usage_by_model)
 
     async def _emit_estimate(
         self, context: InvokeModelContext, next_fn: MiddlewareNext[InvokeModelContext, TypedEvent]
     ) -> AsyncGenerator[TypedEvent, None]:
         async for event in next_fn(context):
             yield event
-            estimate = self._estimate_after_call(context, event) if isinstance(event, ModelStopReason) else None
-            if estimate is not None:
-                yield CostEstimateEvent(estimate)
+            estimate_event = self._event_after_call(context, event) if isinstance(event, ModelStopReason) else None
+            if estimate_event is not None:
+                yield estimate_event
 
-    def _estimate_after_call(self, context: InvokeModelContext, stop_event: ModelStopReason) -> CostEstimate | None:
-        """The request's estimate once a model call has ended, or ``None`` so a pricing error never fails the call."""
+    def _event_after_call(self, context: InvokeModelContext, stop_event: ModelStopReason) -> CostEstimateEvent | None:
+        """The event for a model call that has ended, or ``None`` so a pricing error never fails the call."""
         try:
-            if context.invocation_context is not None:
-                return self.estimate(context.invocation_context)
-            return self._estimate([ModelUsage(*_model_key(context.model), stop_event.usage)])
+            provider_name, model_id = _model_key(context.model)
+            model_call = self._estimate_model(
+                ModelUsage(provider_name=provider_name, model_id=model_id, usage=stop_event.usage)
+            )
+            # The event loop always sets the request; estimate() rejects a missing one.
+            return CostEstimateEvent(self.estimate(context.invocation_context), model_call)  # type: ignore[arg-type]
         except Exception as error:
             logger.warning("error=<%s> | cost estimate failed | no estimate emitted for this model call", error)
             return None
@@ -250,9 +275,17 @@ def _genai_price(provider_name: str | None, model_id: str) -> tuple[ModelPrice |
     input_rate, output_rate, cache_read_rate, cache_write_rate = (
         _base_rate(getattr(matched.model_price, field, None)) for field in _GENAI_RATE_FIELDS
     )
-    if input_rate is None or output_rate is None:
+    # A fee per request cannot be worked out from token counts, so an entry that has one is left unpriced.
+    if input_rate is None or output_rate is None or getattr(matched.model_price, "requests_kcount", None) is not None:
         return None, None
-    price = ModelPrice(input_rate, output_rate, cache_read_rate, cache_write_rate, model_id, provider_name)
+    price = ModelPrice(
+        model_id=model_id,
+        provider_name=provider_name,
+        input_per_million=input_rate,
+        output_per_million=output_rate,
+        cache_read_per_million=cache_read_rate,
+        cache_write_per_million=cache_write_rate,
+    )
     return price, f"genai-prices:{matched.provider.id}/{matched.model.id}"
 
 

@@ -444,8 +444,20 @@ async def test_adds_reported_usage_under_the_model_it_wraps():
     questions = {"q": {"question": "ok?", "choices": "boolean"}}
     result = await LLMDecisionModel(model=model).ask("x", questions, invocation_context=invocation_context)
 
-    assert invocation_context.usage_by_model == [ModelUsage(None, "model-a", DEFAULT_USAGE)]
+    assert invocation_context.usage_by_model == [
+        ModelUsage(provider_name=None, model_id="model-a", usage=DEFAULT_USAGE)
+    ]
     assert (result.metadata.provider_name, result.metadata.model_id) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_keeps_the_cache_tokens_of_reported_usage():
+    usage: Usage = {**DEFAULT_USAGE, "cacheReadInputTokens": 7, "cacheWriteInputTokens": 1}
+    model = RecordingModel({"q": "true"}, usage=usage)
+
+    result = await LLMDecisionModel(model=model).ask("x", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert result.usage == usage
 
 
 @pytest.mark.asyncio

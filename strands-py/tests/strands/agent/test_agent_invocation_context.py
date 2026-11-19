@@ -441,12 +441,12 @@ async def test_invoke_async_records_usage_under_the_model_of_each_call_in_the_re
     contexts["request"] = (await parent.invoke_async("start")).invocation_context
 
     assert contexts["request"].usage_by_model == [
-        ModelUsage(None, "main", _usage(300, 11)),
-        ModelUsage(None, "small", _usage(30, 3)),
-        ModelUsage(None, None, _usage(40, 4)),
+        ModelUsage(provider_name=None, model_id="main", usage=_usage(300, 11)),
+        ModelUsage(provider_name=None, model_id="small", usage=_usage(30, 3)),
+        ModelUsage(provider_name=None, model_id=None, usage=_usage(40, 4)),
     ]
-    assert contexts["limited"].usage_by_model == [ModelUsage(None, "small", _usage(20, 2))]
-    assert contexts["auxiliary"].usage_by_model == [ModelUsage(None, None, _usage(40, 4))]
+    assert contexts["limited"].usage_by_model == [ModelUsage(provider_name=None, model_id="small", usage=_usage(20, 2))]
+    assert contexts["auxiliary"].usage_by_model == [ModelUsage(provider_name=None, model_id=None, usage=_usage(40, 4))]
     for context in contexts.values():
         tru_totals = _token_totals([record.usage for record in context.usage_by_model])
         exp_totals = _token_totals([context.usage])

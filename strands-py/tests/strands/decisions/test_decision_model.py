@@ -143,7 +143,9 @@ async def test_adds_reported_usage_under_the_model_named_in_the_result_metadata(
 
     await decision.ask("ls", QUESTIONS, invocation_context=invocation_context)
 
-    assert invocation_context.usage_by_model == [ModelUsage(provider_name, model_id, DECISION_USAGE)]
+    assert invocation_context.usage_by_model == [
+        ModelUsage(provider_name=provider_name, model_id=model_id, usage=DECISION_USAGE)
+    ]
 
 
 @pytest.mark.asyncio

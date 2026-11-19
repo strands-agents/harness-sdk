@@ -38,9 +38,11 @@ def _model_key(model: Any) -> tuple[str | None, str | None]:
         provider_name = _provider_name(model)
     except Exception:
         provider_name = None
+    # A SageMaker config has no model id; the endpoint name tells its endpoints apart.
+    id_key = "endpoint_name" if provider_name == "sagemaker" else "model_id"
     try:
         config = model.get_config()
-        model_id = config.get("model_id") if isinstance(config, dict) else getattr(config, "model_id", None)
+        model_id = config.get(id_key) if isinstance(config, dict) else getattr(config, id_key, None)
     except Exception:
         model_id = None
     return provider_name, model_id if isinstance(model_id, str) else None

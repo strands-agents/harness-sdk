@@ -1170,7 +1170,7 @@ class TestClientSideSummariesUseModelSummarize:
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
         assert await strategy.apply(context) is True
 
-        assert request.usage_by_model == [ModelUsage(None, "summary-model", usage)]
+        assert request.usage_by_model == [ModelUsage(provider_name=None, model_id="summary-model", usage=usage)]
 
     @pytest.mark.asyncio
     async def test_warns_when_summarize_returns_no_text(self, mock_agent, caplog):

@@ -1338,7 +1338,9 @@ async def test_process_stream_adds_the_call_usage_under_its_model(response, canc
         )
     )
 
-    assert invocation_context.usage_by_model == [ModelUsage("bedrock", "model-a", exp_usage)]
+    assert invocation_context.usage_by_model == [
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage=exp_usage)
+    ]
 
 
 @pytest.mark.asyncio

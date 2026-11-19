@@ -2,7 +2,9 @@
 
 import logging
 import math
+import re
 import types
+import unittest.mock
 from decimal import Decimal
 
 import pytest
@@ -12,7 +14,7 @@ genai_prices = pytest.importorskip("genai_prices")
 from genai_prices.types import Tier, TieredPrices  # noqa: E402
 
 from strands import Agent, tool  # noqa: E402
-from strands.agent.invocation_context import _create_invocation_context  # noqa: E402
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context  # noqa: E402
 from strands.experimental.cost_estimator import (  # noqa: E402
     CostEstimate,
     CostEstimateEvent,
@@ -21,13 +23,21 @@ from strands.experimental.cost_estimator import (  # noqa: E402
     ModelPrice,
 )
 from strands.experimental.cost_estimator import plugin as plugin_module  # noqa: E402
-from strands.middleware import InvokeModelContext, InvokeModelStage, ModelStopReason  # noqa: E402
+from strands.middleware import InvokeModelStage, ModelStopReason  # noqa: E402
+from strands.models._provider_name import _model_key  # noqa: E402
+from strands.models.sagemaker import SageMakerAIModel  # noqa: E402
 from strands.multiagent.base import MultiAgentResult  # noqa: E402
 from strands.types.tools import ToolContext  # noqa: E402
 from tests.fixtures.mocked_model_provider import MockedModelProvider  # noqa: E402
 
-MAIN_PRICE = ModelPrice(3.0, 15.0, cache_read_per_million=0.3, cache_write_per_million=3.75, model_id="main")
-SMALL_PRICE = ModelPrice(1.0, 5.0, model_id="small")
+MAIN_PRICE = ModelPrice(
+    model_id="main",
+    input_per_million=3.0,
+    output_per_million=15.0,
+    cache_read_per_million=0.3,
+    cache_write_per_million=3.75,
+)
+SMALL_PRICE = ModelPrice(model_id="small", input_per_million=1.0, output_per_million=5.0)
 
 
 class NamedModel(MockedModelProvider):
@@ -51,6 +61,23 @@ def _usage(input_tokens, output_tokens, cache_read=0, cache_write=0, *, cache_in
     if cache_write:
         usage["cacheWriteInputTokens"] = cache_write
     return usage
+
+
+def _price(model_id, input_per_million, provider_name=None):
+    return ModelPrice(
+        model_id=model_id, provider_name=provider_name, input_per_million=input_per_million, output_per_million=1.0
+    )
+
+
+def _model_estimate(provider_name, model_id, usage, cost_usd, price):
+    return ModelCostEstimate(
+        provider_name=provider_name,
+        model_id=model_id,
+        usage=usage,
+        cost_usd=cost_usd,
+        price=price,
+        price_source=None if price is None else "user",
+    )
 
 
 def _request(*calls):
@@ -102,8 +129,16 @@ def test_estimate_charges_cached_tokens_once_under_either_input_tokens_conventio
     exp_cost = (1_000 * 3.0 + 6_000 * 0.3 + 2_000 * 3.75 + 100 * 15.0) / 1_000_000
     assert tru_estimate == CostEstimate(
         total_usd=exp_cost,
-        models=(ModelCostEstimate("bedrock", "main", usage, exp_cost, MAIN_PRICE, "user"),),
+        models=(_model_estimate("bedrock", "main", usage, exp_cost, MAIN_PRICE),),
     )
+
+
+def test_estimate_charges_no_uncached_input_when_the_cached_tokens_exceed_input_tokens():
+    usage = {"inputTokens": 100, "outputTokens": 10, "totalTokens": 110, "cacheReadInputTokens": 500}
+
+    tru_estimate = GenAIPricesEstimator(prices=[MAIN_PRICE]).estimate(_request((usage, "bedrock", "main")))
+
+    assert tru_estimate.total_usd == (500 * 0.3 + 10 * 15.0) / 1_000_000
 
 
 def test_estimate_charges_cached_tokens_at_the_input_rate_when_the_price_has_no_cache_rate():
@@ -142,21 +177,36 @@ def test_estimate_prefers_your_price_and_compares_the_model_id_as_a_whole(
     provider_name, model_id, exp_input_rate, genai_lookups
 ):
     prices = [
-        ModelPrice(5.0, 1.0, model_id="priced-model"),
-        ModelPrice(7.0, 1.0, model_id="priced-model", provider_name="bedrock"),
-        ModelPrice(9.0, 1.0, model_id="openai/priced-model"),
-        ModelPrice(11.0, 1.0, model_id="arn:aws:bedrock:us-west-2:1:application-inference-profile/abc"),
+        _price("priced-model", 5.0),
+        _price("priced-model", 7.0, provider_name="bedrock"),
+        _price("openai/priced-model", 9.0),
+        _price("arn:aws:bedrock:us-west-2:1:application-inference-profile/abc", 11.0),
     ]
+    cost = GenAIPricesEstimator(prices=prices)
+    genai_lookups.clear()
 
-    tru_estimate = GenAIPricesEstimator(prices=prices).estimate(_request((_usage(1, 1), provider_name, model_id)))
+    tru_estimate = cost.estimate(_request((_usage(1, 1), provider_name, model_id)))
 
     tru_model = tru_estimate.models[0]
     assert (tru_model.price.input_per_million, tru_model.price_source) == (exp_input_rate, "user")
     assert genai_lookups == []
 
 
+def test_estimate_prices_a_sagemaker_model_with_your_price_for_its_endpoint_name():
+    model = SageMakerAIModel(
+        endpoint_config={"endpoint_name": "endpoint-a"},
+        payload_config={"max_tokens": 1},
+        boto_session=unittest.mock.Mock(),
+    )
+    request = _request((_usage(1_000, 100), *_model_key(model)))
+
+    tru_estimate = GenAIPricesEstimator(prices=[_price("endpoint-a", 2.0)]).estimate(request)
+
+    assert tru_estimate.total_usd == (1_000 * 2.0 + 100 * 1.0) / 1_000_000
+
+
 def test_estimate_skips_your_price_for_another_provider(genai_lookups):
-    price = ModelPrice(7.0, 1.0, model_id="priced-model", provider_name="bedrock")
+    price = _price("priced-model", 7.0, provider_name="bedrock")
 
     tru_estimate = GenAIPricesEstimator(prices=[price]).estimate(_request((_usage(1, 1), "openai", "priced-model")))
 
@@ -166,15 +216,28 @@ def test_estimate_skips_your_price_for_another_provider(genai_lookups):
 @pytest.mark.parametrize(
     "prices",
     [
-        [ModelPrice(1.0, 1.0)],
-        [ModelPrice(1.0, 1.0, model_id="a"), ModelPrice(2.0, 2.0, model_id="a")],
-        [ModelPrice(1.0, 1.0, model_id="a", provider_name="p"), ModelPrice(2.0, 2.0, model_id="a", provider_name="p")],
+        [_price("a", 1.0), _price("a", 2.0)],
+        [_price("a", 1.0, provider_name="p"), _price("a", 2.0, provider_name="p")],
     ],
-    ids=["no-model-id", "same-model-id", "same-provider-and-model-id"],
+    ids=["same-model-id", "same-provider-and-model-id"],
 )
-def test_init_rejects_prices_it_cannot_tell_apart(prices):
-    with pytest.raises(ValueError, match="model_id"):
+def test_init_rejects_two_prices_for_one_model(prices):
+    with pytest.raises(ValueError, match="two entries for one model"):
         GenAIPricesEstimator(prices=prices)
+
+
+def test_init_loads_the_price_data_and_never_raises(monkeypatch):
+    lookups = []
+
+    def failing_lookup(*args, **kwargs):
+        lookups.append(args)
+        raise RuntimeError("no price data")
+
+    monkeypatch.setattr(plugin_module, "calc_price", failing_lookup)
+
+    GenAIPricesEstimator()
+
+    assert len(lookups) == 1
 
 
 @pytest.mark.parametrize(
@@ -186,12 +249,27 @@ def test_init_rejects_prices_it_cannot_tell_apart(prices):
         {"cache_write_per_million": "1"},
         {"input_per_million": True},
         {"output_per_million": None},
+        {"input_per_million": 10**400},
     ],
-    ids=["negative", "nan", "infinite", "string", "bool", "missing-output"],
+    ids=["negative", "nan", "infinite", "string", "bool", "missing-output", "larger-than-a-float"],
 )
 def test_model_price_rejects_a_rate_that_is_not_a_finite_non_negative_number(rates):
     with pytest.raises(ValueError, match="finite, non-negative number"):
-        ModelPrice(**{"input_per_million": 1.0, "output_per_million": 1.0, **rates})
+        ModelPrice(**{"model_id": "main", "input_per_million": 1.0, "output_per_million": 1.0, **rates})
+
+
+@pytest.mark.parametrize(
+    ("record_type", "args"),
+    [
+        (ModelUsage, (None, "main", {})),
+        (ModelPrice, ("main", 3.0, 15.0)),
+        (ModelCostEstimate, (None, "main", {}, None, None, None)),
+        (CostEstimate, (0.0, ())),
+    ],
+)
+def test_types_take_keyword_arguments_only(record_type, args):
+    with pytest.raises(TypeError, match="positional"):
+        record_type(*args)
 
 
 def test_estimate_leaves_the_total_empty_when_a_model_has_no_price(genai_lookups):
@@ -218,7 +296,13 @@ def test_estimate_uses_the_base_rate_of_a_tiered_genai_price(genai_lookups):
 
     tru_model = GenAIPricesEstimator().estimate(_request((usage, "openai", "priced-model"))).models[0]
 
-    exp_price = ModelPrice(2.0, 10.0, cache_read_per_million=0.2, model_id="priced-model", provider_name="openai")
+    exp_price = ModelPrice(
+        model_id="priced-model",
+        provider_name="openai",
+        input_per_million=2.0,
+        output_per_million=10.0,
+        cache_read_per_million=0.2,
+    )
     exp_cost = (300_000 * 2.0 + 100_000 * 0.2 + 50_000 * 2.0 + 1_000 * 10.0) / 1_000_000
     assert (tru_model.price, tru_model.price_source) == (exp_price, "genai-prices:openai/matched-model")
     assert tru_model.cost_usd == pytest.approx(exp_cost)
@@ -233,12 +317,14 @@ def test_estimate_uses_the_base_rate_of_a_tiered_genai_price(genai_lookups):
         ("openai", "priced-model", ("openai", "priced-model")),
         ("google", "priced-model", ("google", "priced-model")),
         ("mistral", "priced-model", ("mistral", "priced-model")),
-        ("typesafe", "priced-model", ("typesafe", "priced-model")),
         ("litellm", "groq/meta/priced-model", ("groq", "meta/priced-model")),
     ],
 )
 def test_estimate_looks_a_model_up_under_the_genai_prices_provider(provider_name, model_id, exp_lookup, genai_lookups):
-    tru_model = GenAIPricesEstimator().estimate(_request((_usage(1, 1), provider_name, model_id))).models[0]
+    cost = GenAIPricesEstimator()
+    genai_lookups.clear()
+
+    tru_model = cost.estimate(_request((_usage(1, 1), provider_name, model_id))).models[0]
 
     assert genai_lookups == [exp_lookup]
     assert tru_model.price_source == f"genai-prices:{exp_lookup[0]}/matched-model"
@@ -250,7 +336,10 @@ def test_estimate_looks_a_model_up_under_the_genai_prices_provider(provider_name
     [("ollama", "priced-model"), ("sagemaker", "priced-model"), ("litellm", "priced-model"), (None, "priced-model")],
 )
 def test_estimate_does_not_look_up_a_provider_genai_prices_does_not_list(provider_name, model_id, genai_lookups):
-    tru_estimate = GenAIPricesEstimator().estimate(_request((_usage(1, 1), provider_name, model_id)))
+    cost = GenAIPricesEstimator()
+    genai_lookups.clear()
+
+    tru_estimate = cost.estimate(_request((_usage(1, 1), provider_name, model_id)))
 
     assert genai_lookups == []
     assert tru_estimate.total_usd is None
@@ -274,6 +363,26 @@ def test_estimate_prices_a_well_known_bedrock_model_from_the_bundled_data():
     assert tru_estimate.models[0].price_source.startswith("genai-prices:aws/")
 
 
+def test_estimate_leaves_a_bundled_price_with_a_fee_per_request_unpriced():
+    usage = genai_prices.Usage(input_tokens=1_000, output_tokens=100)
+    bundled = genai_prices.calc_price(usage, "sonar", provider_id="perplexity").model_price
+    assert None not in (bundled.input_mtok, bundled.output_mtok, bundled.requests_kcount)
+
+    tru_estimate = GenAIPricesEstimator().estimate(_request((_usage(1_000, 100), "litellm", "perplexity/sonar")))
+
+    assert tru_estimate.total_usd is None
+    assert tru_estimate.unpriced == tru_estimate.models
+
+
+def test_estimate_leaves_a_model_id_the_bundled_data_does_not_match_unpriced():
+    with pytest.raises(LookupError):
+        genai_prices.calc_price(genai_prices.Usage(input_tokens=1, output_tokens=1), "no-such-model", provider_id="aws")
+
+    tru_estimate = GenAIPricesEstimator().estimate(_request((_usage(1, 1), "bedrock", "no-such-model")))
+
+    assert tru_estimate.unpriced == tru_estimate.models
+
+
 @pytest.mark.asyncio
 async def test_estimate_accepts_an_agent_result_a_multi_agent_result_and_an_invocation_context():
     cost = GenAIPricesEstimator(prices=[MAIN_PRICE])
@@ -286,6 +395,37 @@ async def test_estimate_accepts_an_agent_result_a_multi_agent_result_and_an_invo
         assert cost.estimate(request).total_usd == exp_cost
 
 
+def test_estimate_accepts_usage_records():
+    cost = GenAIPricesEstimator(prices=[MAIN_PRICE, SMALL_PRICE])
+    usage_by_model = (
+        ModelUsage(provider_name=None, model_id=model_id, usage=_usage(1_000, 100)) for model_id in ("main", "small")
+    )
+
+    tru_estimate = cost.estimate(usage_by_model)
+
+    exp_costs = [(1_000 * 3.0 + 100 * 15.0) / 1_000_000, (1_000 * 1.0 + 100 * 5.0) / 1_000_000]
+    assert [model.cost_usd for model in tru_estimate.models] == exp_costs
+    assert tru_estimate.total_usd == math.fsum(exp_costs)
+
+
+@pytest.mark.parametrize(
+    "make_request",
+    [
+        lambda: None,
+        lambda: Agent(model=NamedModel("main", [], []), callback_handler=None),
+        lambda: object(),
+        lambda: [_usage(1, 1)],
+    ],
+    ids=["none", "agent", "object", "usage-dicts"],
+)
+def test_estimate_rejects_what_is_not_a_request_or_usage_records(make_request):
+    request = make_request()
+    exp_message = f"request=<{type(request).__name__}> | expected an agent or multi-agent result"
+
+    with pytest.raises(TypeError, match=re.escape(exp_message)):
+        GenAIPricesEstimator().estimate(request)
+
+
 def test_estimate_of_a_result_without_an_invocation_context_has_no_total():
     assert GenAIPricesEstimator().estimate(MultiAgentResult()) == CostEstimate(total_usd=None, models=())
 
@@ -294,12 +434,14 @@ def test_estimate_of_a_request_without_model_calls_is_zero():
     assert GenAIPricesEstimator().estimate(_create_invocation_context()) == CostEstimate(total_usd=0.0, models=())
 
 
-def test_cost_estimate_event_is_a_dict_with_the_estimate_under_cost_estimate():
-    estimate = CostEstimate(total_usd=0.0, models=())
+def test_cost_estimate_event_is_a_typed_dict_with_the_request_and_the_model_call_estimates():
+    usage = _usage(1_000, 100)
+    model_call = _model_estimate(None, "main", usage, 0.0045, MAIN_PRICE)
+    estimate = CostEstimate(total_usd=0.0045, models=(model_call,))
 
-    tru_event = CostEstimateEvent(estimate)
+    tru_event = CostEstimateEvent(estimate, model_call)
 
-    assert tru_event.as_dict() == {"cost_estimate": estimate}
+    assert tru_event.as_dict() == {"type": "cost_estimate", "cost_estimate": estimate, "model_call": model_call}
     assert tru_event.is_callback_event
 
 
@@ -321,32 +463,50 @@ def _research_agent(plugins, callback_handler=None):
 
 
 MAIN_FIRST_CALL_COST = (2_000 * 3.0 + 18_000 * 3.75 + 300 * 15.0) / 1_000_000
+MAIN_SECOND_CALL_COST = (2_500 * 3.0 + 18_000 * 0.3 + 900 * 15.0) / 1_000_000
 MAIN_COST = (4_500 * 3.0 + 18_000 * 0.3 + 18_000 * 3.75 + 1_200 * 15.0) / 1_000_000
 SMALL_COST = (40_000 * 1.0 + 1_500 * 5.0) / 1_000_000
 
 
 @pytest.mark.asyncio
-async def test_stream_emits_the_request_estimate_after_each_model_call(alist):
+async def test_stream_emits_the_model_call_and_the_request_estimate_after_each_model_call(alist):
     cost = GenAIPricesEstimator(prices=[MAIN_PRICE, SMALL_PRICE])
-    callback_estimates = []
+    callback_events = []
     agent = _research_agent(
-        [cost],
-        lambda **kwargs: callback_estimates.append(kwargs["cost_estimate"]) if "cost_estimate" in kwargs else None,
+        [cost], lambda **kwargs: callback_events.append(kwargs) if kwargs.get("type") == "cost_estimate" else None
     )
 
     events = await alist(agent.stream_async("go"))
 
-    tru_estimates = [event["cost_estimate"] for event in events if "cost_estimate" in event]
-    assert [estimate.total_usd for estimate in tru_estimates] == [
+    tru_events = [event for event in events if event.get("type") == "cost_estimate"]
+    assert [event["model_call"] for event in tru_events] == [
+        _model_estimate(None, "main", _usage(2_000, 300, cache_write=18_000), MAIN_FIRST_CALL_COST, MAIN_PRICE),
+        _model_estimate(None, "main", _usage(2_500, 900, cache_read=18_000), MAIN_SECOND_CALL_COST, MAIN_PRICE),
+    ]
+    assert [event["cost_estimate"].total_usd for event in tru_events] == [
         pytest.approx(MAIN_FIRST_CALL_COST),
         pytest.approx(MAIN_COST + SMALL_COST),
     ]
-    assert [[model.model_id for model in estimate.models] for estimate in tru_estimates] == [
+    assert [[model.model_id for model in event["cost_estimate"].models] for event in tru_events] == [
         ["main"],
         ["main", "small"],
     ]
-    assert callback_estimates == tru_estimates
-    assert tru_estimates[-1] == cost.estimate(events[-1]["result"])
+    assert callback_events == tru_events
+    assert tru_events[-1]["cost_estimate"] == cost.estimate(events[-1]["result"])
+
+
+@pytest.mark.asyncio
+async def test_stream_reports_a_model_call_without_a_price_as_unpriced(alist):
+    agent = Agent(
+        model=NamedModel("unlisted", [_text("done")], [_usage(1_000, 100)]),
+        plugins=[GenAIPricesEstimator()],
+        callback_handler=None,
+    )
+
+    events = await alist(agent.stream_async("go"))
+
+    tru_model_calls = [event["model_call"] for event in events if "model_call" in event]
+    assert tru_model_calls == [_model_estimate(None, "unlisted", _usage(1_000, 100), None, None)]
 
 
 @pytest.mark.asyncio
@@ -369,34 +529,6 @@ async def test_stream_emits_the_estimate_right_after_the_model_stop_event(alist)
     tru_preceding = [tru_types[index - 1] for index, kind in enumerate(tru_types) if kind is CostEstimateEvent]
     assert tru_preceding == [ModelStopReason, ModelStopReason]
     assert tru_types[-1] is CostEstimateEvent
-
-
-@pytest.mark.asyncio
-async def test_middleware_estimates_the_call_itself_without_an_invocation_context(alist):
-    cost = GenAIPricesEstimator(prices=[MAIN_PRICE])
-    model = NamedModel("main", [], [])
-    context = InvokeModelContext(
-        agent=Agent(model=model, callback_handler=None),
-        messages=[],
-        system_prompt=None,
-        tool_specs=[],
-        tool_choice=None,
-        invocation_state={},
-        model=model,
-    )
-    usage = _usage(1_000, 100)
-
-    async def next_fn(context):
-        yield ModelStopReason(stop_reason="end_turn", message=_text("done"), usage=usage, metrics={"latencyMs": 1})
-
-    events = await alist(cost._emit_estimate(context, next_fn))
-
-    exp_cost = (1_000 * 3.0 + 100 * 15.0) / 1_000_000
-    assert events[1:] == [
-        CostEstimateEvent(
-            CostEstimate(exp_cost, (ModelCostEstimate(None, "main", usage, exp_cost, MAIN_PRICE, "user"),))
-        )
-    ]
 
 
 @pytest.mark.asyncio

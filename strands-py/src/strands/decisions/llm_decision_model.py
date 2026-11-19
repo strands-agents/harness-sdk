@@ -96,11 +96,7 @@ class LLMDecisionModel(DecisionModel):
                 chunk = event.get("event")
                 if isinstance(chunk, Mapping) and isinstance(metadata := chunk.get("metadata"), Mapping):
                     if isinstance(reported := metadata.get("usage"), Mapping):
-                        usage = Usage(
-                            inputTokens=reported.get("inputTokens", 0),
-                            outputTokens=reported.get("outputTokens", 0),
-                            totalTokens=reported.get("totalTokens", 0),
-                        )
+                        usage = cast(Usage, {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0, **reported})
                     if isinstance(metrics := metadata.get("metrics"), Mapping) and metrics.get("latencyMs"):
                         latency_ms = metrics["latencyMs"]
                 if "output" in event:

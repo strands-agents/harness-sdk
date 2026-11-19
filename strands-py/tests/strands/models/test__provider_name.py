@@ -13,6 +13,7 @@ from strands.models.anthropic import AnthropicModel
 from strands.models.litellm import LiteLLMModel
 from strands.models.openai import OpenAIModel
 from strands.models.openai_responses import OpenAIResponsesModel
+from strands.models.sagemaker import SageMakerAIModel
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -33,7 +34,6 @@ def openai_env(monkeypatch):
         ("strands.models.llamacpp.LlamaCppModel", "llamacpp"),
         ("strands.models.mistral.MistralModel", "mistral"),
         ("strands.models.ollama.OllamaModel", "ollama"),
-        ("strands.models.sagemaker.SageMakerAIModel", "sagemaker"),
         ("strands.models.writer.WriterModel", "writer"),
     ],
 )
@@ -141,6 +141,20 @@ def test_model_key_never_raises_on_a_config_it_cannot_read(get_config):
     model.get_config = get_config
 
     assert _model_key(model) == ("openai", None)
+
+
+def test_model_key_records_a_sagemaker_model_under_its_endpoint_name():
+    class Subclass(SageMakerAIModel):
+        pass
+
+    for model_class in (SageMakerAIModel, Subclass):
+        model = model_class(
+            endpoint_config={"endpoint_name": "endpoint-a"},
+            payload_config={"max_tokens": 1},
+            boto_session=unittest.mock.Mock(),
+        )
+
+        assert _model_key(model) == ("sagemaker", "endpoint-a")
 
 
 def test_model_key_reads_the_model_id_of_a_config_object():

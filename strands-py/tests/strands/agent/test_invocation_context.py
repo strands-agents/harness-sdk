@@ -71,10 +71,12 @@ def test_usage_by_model_keeps_one_record_per_provider_name_and_model_id():
 
     assert request.usage_by_model == [
         ModelUsage(
-            "bedrock", "model-a", {"inputTokens": 6, "outputTokens": 2, "totalTokens": 8, "cacheReadInputTokens": 2}
+            provider_name="bedrock",
+            model_id="model-a",
+            usage={"inputTokens": 6, "outputTokens": 2, "totalTokens": 8, "cacheReadInputTokens": 2},
         ),
-        ModelUsage("openai", "model-a", call),
-        ModelUsage("bedrock", "model-b", call),
+        ModelUsage(provider_name="openai", model_id="model-a", usage=call),
+        ModelUsage(provider_name="bedrock", model_id="model-b", usage=call),
     ]
 
 
@@ -87,9 +89,9 @@ def test_usage_by_model_keeps_usage_of_an_unknown_model_apart():
     request._record_usage(call, "bedrock", "model-a")
 
     assert request.usage_by_model == [
-        ModelUsage(None, None, call),
-        ModelUsage("bedrock", None, call),
-        ModelUsage("bedrock", "model-a", call),
+        ModelUsage(provider_name=None, model_id=None, usage=call),
+        ModelUsage(provider_name="bedrock", model_id=None, usage=call),
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage=call),
     ]
 
 
@@ -120,7 +122,9 @@ def test_usage_by_model_returns_a_copy():
     request._record_usage({"inputTokens": 3, "outputTokens": 1, "totalTokens": 4}, "bedrock", "model-a")
 
     assert request.usage_by_model == [
-        ModelUsage("bedrock", "model-a", {"inputTokens": 6, "outputTokens": 2, "totalTokens": 8})
+        ModelUsage(
+            provider_name="bedrock", model_id="model-a", usage={"inputTokens": 6, "outputTokens": 2, "totalTokens": 8}
+        )
     ]
     with pytest.raises(AttributeError):
         request.usage_by_model[0].model_id = "model-b"
@@ -146,8 +150,8 @@ def test_usage_by_model_records_every_update_made_from_concurrent_threads():
 
     exp_usage = {"inputTokens": 10_000, "outputTokens": 10_000, "totalTokens": 20_000}
     assert request.usage_by_model == [
-        ModelUsage("bedrock", "model-0", exp_usage),
-        ModelUsage("bedrock", "model-1", exp_usage),
+        ModelUsage(provider_name="bedrock", model_id="model-0", usage=exp_usage),
+        ModelUsage(provider_name="bedrock", model_id="model-1", usage=exp_usage),
     ]
     assert set(reads) <= {1, 2}
 
