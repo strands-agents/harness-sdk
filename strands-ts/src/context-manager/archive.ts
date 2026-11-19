@@ -15,20 +15,9 @@ import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
 import { isProtocolBlock } from './strategies/offload/target.js'
 import { isOffloaded } from './placeholder.js'
-import { parseWindowKey, windowsOf } from './query-search.js'
-import type { LineWindow } from './query-search.js'
 
 /** @internal */
 export const ARCHIVE_PREFIX = 'context'
-
-/**
- * Root of the per-reference line-window index a `query` ranks over.
- *
- * Deliberately outside the `<id>_<index>` key space: {@link parseArchiveKey} rejects these keys, so
- * they never resolve as a reference, and {@link Archive.takeSnapshot} leaves them out — they are a
- * derived index, rebuildable from the content, not archived content.
- */
-const WINDOW_INDEX_PREFIX = 'windows'
 
 function encode(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value))
@@ -96,8 +85,6 @@ export class Archive {
   private readonly _storage: Storage
   private readonly _baseStorage: Storage
   private readonly _sessionId: string
-  /** Prefix the archive root sits under on the base storage; empty when the root is caller-scoped. */
-  private readonly _rootPrefix: string
 
   /** Name of the base storage constructor, for diagnostic logging. */
   readonly storageTypeName: string
@@ -106,7 +93,6 @@ export class Archive {
     this._baseStorage = storage
     this._sessionId = sessionId
     this._storage = resolveArchiveNamespace(storage, sessionId, agentId, options?.customArchiveNamespace ?? false)
-    this._rootPrefix = this._storage === storage ? '' : `${ARCHIVE_PREFIX}/${sessionId}/scopes/agent/${agentId}/`
     this.storageTypeName = storage.constructor.name || 'unknown'
   }
 
@@ -234,91 +220,6 @@ export class Archive {
   }
 
   /**
-   * Ranks the line windows of `reference` against `query` using the configured storage's own search.
-   *
-   * Windows are written under `windows/<reference>/<start>-<end>` the first time a reference is
-   * queried and then kept, so the index costs one pass per queried reference — not one per query,
-   * and nothing at all for content that is never queried. Writing them to the caller's storage is
-   * the point: it is what lets the search strategy configured on that storage do the ranking. A
-   * strategy bound to its backend (an on-disk full-text index, a vector index) can only rank
-   * entries that live in that backend.
-   *
-   * The index spans the whole content, so one index serves every `line_range` a later query scopes
-   * to; results outside the scope are dropped rather than re-indexed.
-   *
-   * @param reference - The archive key whose content is being ranked
-   * @param lines - The reference's full text, split into lines
-   * @param query - Natural-language query
-   * @param scopeStart - First line of the scope, 0-indexed inclusive
-   * @param scopeEnd - Last line of the scope, 0-indexed inclusive
-   * @returns The scope's windows best-first, or `null` when the backend has no `search()` and the
-   *   caller should rank in memory instead
-   */
-  async rankWindows(
-    reference: string,
-    lines: string[],
-    query: string,
-    scopeStart: number,
-    scopeEnd: number
-  ): Promise<LineWindow[] | null> {
-    const index = this._windowIndex(reference)
-    if (!index.search) return null
-
-    const windows = windowsOf(lines, 0, lines.length - 1)
-    await this._ensureWindowIndex(index, lines, windows)
-
-    const results = await index.search(query)
-    return results.flatMap((result) => {
-      const window = parseWindowKey(result.key)
-      // Clipped to the scope rather than dropped unless fully inside it: the index spans the whole
-      // content, so a window straddling the scope edge is the only one covering those lines.
-      if (!window || window.end < scopeStart || window.start > scopeEnd) return []
-      return [{ start: Math.max(window.start, scopeStart), end: Math.min(window.end, scopeEnd) }]
-    })
-  }
-
-  /**
-   * The storage view holding `reference`'s window index.
-   *
-   * Scoped from the base backend rather than the archive view, and through the backend's own
-   * `namespace()` when it has one: the generic view's `search()` searches the whole underlying
-   * storage and filters the results afterwards, which would both rank these windows against every
-   * unrelated entry and hand the strategy fully-prefixed keys.
-   */
-  private _windowIndex(reference: string): Storage {
-    const prefix = `${this._rootPrefix}${WINDOW_INDEX_PREFIX}/${reference}`
-    if (this._baseStorage.namespace) return this._baseStorage.namespace(prefix)
-    return namespaceStorage(this._baseStorage, prefix)
-  }
-
-  /**
-   * Writes any window of `lines` the index does not already hold.
-   *
-   * Written one window at a time rather than as a batch so a strategy's `index()` hook sees each
-   * entry, which is how a backend-bound index gets built at write time.
-   */
-  private async _ensureWindowIndex(index: Storage, lines: string[], windows: Map<string, LineWindow>): Promise<void> {
-    const present = new Set(await index.list(''))
-    const missing = [...windows].filter(([key]) => !present.has(key))
-    if (missing.length === 0) return
-
-    const encoder = new TextEncoder()
-    await Promise.all(
-      missing.map(([key, window]) =>
-        index.write(key, encoder.encode(lines.slice(window.start, window.end + 1).join('\n')))
-      )
-    )
-    logger.debug(`windows=<${missing.length}>, total=<${windows.size}> | built query window index`)
-  }
-
-  /** Deletes `reference`'s window index. The index is derived, so dropping it only costs a rebuild. */
-  async deleteWindowIndex(reference: string): Promise<void> {
-    const index = this._windowIndex(reference)
-    const keys = await index.list('')
-    await Promise.all(keys.map((key) => index.delete(key)))
-  }
-
-  /**
    * The keys stored under `id`, in index order. A prefix list alone also returns ids that extend this one.
    */
   async keysOf(id: string): Promise<string[]> {
@@ -334,7 +235,6 @@ export class Archive {
    */
   async delete(reference: string): Promise<void> {
     await this._storage.delete(reference)
-    await this.deleteWindowIndex(reference)
     logger.debug(`reference=<${reference}> | archive entry deleted`)
   }
 
@@ -380,9 +280,7 @@ export class Archive {
    * @returns Map of reference keys to their stored JSON values
    */
   async takeSnapshot(): Promise<Record<string, JSONValue>> {
-    // Window-index entries hold raw text, not the JSON framing retrieve() decodes, and are
-    // rebuildable from the content they were derived from.
-    const keys = (await this.list()).filter((key) => !key.startsWith(`${WINDOW_INDEX_PREFIX}/`))
+    const keys = await this.list()
     const results = await Promise.all(keys.map((key) => this.retrieve(key).then((result) => [key, result] as const)))
     const entries: Record<string, JSONValue> = {}
     for (const [key, result] of results) {

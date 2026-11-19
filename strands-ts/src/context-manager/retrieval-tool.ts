@@ -136,7 +136,7 @@ async function retrieve(
   const fallback = input.query ? Math.min(DEFAULT_QUERY_TOKENS * CHARS_PER_TOKEN, maxChars) : maxChars
   const budget = input.max_tokens ? Math.min(input.max_tokens * CHARS_PER_TOKEN, maxChars) : fallback
   if (!input.query && !input.pattern && !input.line_range) return fullContent(entries, budget)
-  return searchEntries(archive, reference, entries, input, budget)
+  return searchEntries(entries, input, budget)
 }
 
 /**
@@ -189,8 +189,6 @@ function clipText(blocks: ToolResultContent[], maxChars: number): ToolResultCont
 
 /** The lines of the entries' text that answer `query`, match `pattern`, or fall in `line_range`. */
 function searchEntries(
-  archive: Archive,
-  reference: string,
   entries: ArchiveEntry[],
   input: z.infer<typeof retrievalInputSchema>,
   maxChars: number
@@ -198,13 +196,7 @@ function searchEntries(
   const text = joinText(entries.map(entryText))
   // Actionable rather than terminal: the content is there, the search arguments are what cannot apply.
   if (!text) throw new Error('cannot search non-text content. Omit query/pattern/line_range to retrieve full content.')
-  if (input.query) {
-    // Ranks on the archive's own storage, so the strategy configured on it does the ranking. Returns
-    // null on a backend without search(), and the query then ranks in an ephemeral store instead.
-    return searchByQuery(text, input.query, input.line_range, maxChars, (lines, query, scopeStart, scopeEnd) =>
-      archive.rankWindows(reference, lines, query, scopeStart, scopeEnd)
-    )
-  }
+  if (input.query) return searchByQuery(text, input.query, input.line_range, maxChars)
   return searchContent(
     text,
     { pattern: input.pattern, line_range: input.line_range, context_lines: input.context_lines ?? 5 },

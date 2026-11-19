@@ -369,58 +369,19 @@ describe('retrieval tool', () => {
       expect(result).toMatch(/^\[showing \d+ of \d+ relevant sections? for/)
     })
 
-    it('ranks with the search strategy configured on the storage', async () => {
-      const ranked: string[] = []
-      const strategy = {
-        async search(storage: InMemoryStorage): Promise<Array<{ key: string; score: number }>> {
-          const keys = await storage.list('')
-          ranked.push(...keys)
-          // Ranks the content's first window top whatever the query, so only this strategy explains the result.
-          return [{ key: '0-11', score: 1 }]
-        },
-      }
-      const archive = new Archive(new InMemoryStorage({ searchStrategy: strategy }), 'test-session', 'test-agent')
-      const lines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: nothing of note`)
-      lines[61] = 'line 62: the payment database connection pool was exhausted at peak traffic'
-      const ref = await archive.store('tool-1', 0, encodeJSON({ text: lines.join('\n') }))
-
-      const result = (await invoke(createRetrievalTool(archive), {
-        reference: ref,
-        query: 'database connection pool exhausted',
-      })) as string
-
-      expect(ranked).toContain('0-11')
-      expect(result).toContain('line 1: nothing of note')
-      expect(result).not.toContain('connection pool was exhausted')
-    })
-
-    it('reuses the window index across queries rather than rebuilding it', async () => {
+    it('writes nothing to the storage to answer a query', async () => {
       const storage = new InMemoryStorage()
       const archive = new Archive(storage, 'test-session', 'test-agent')
       const ref = await archive.store('tool-1', 0, encodeJSON({ text: buriedAnswerLines().join('\n') }))
-      const retrievalTool = createRetrievalTool(archive)
-      const indexKeys = async (): Promise<string[]> =>
-        (await storage.list('')).filter((key) => key.includes('/windows/'))
-
-      expect(await indexKeys()).toHaveLength(0)
-      await invoke(retrievalTool, { reference: ref, query: 'connection pool exhausted' })
-      const built = await indexKeys()
-      await invoke(retrievalTool, { reference: ref, query: 'peak traffic' })
-
-      expect(built.length).toBeGreaterThan(0)
-      expect(await indexKeys()).toEqual(built)
-    })
-
-    it('leaves the window index out of a snapshot, since it is derived', async () => {
-      const { archive, refPromise } = makeArchiveWithBuriedAnswer()
-      const ref = await refPromise
+      const stored = await storage.list('')
 
       await invoke(createRetrievalTool(archive), { reference: ref, query: 'connection pool exhausted' })
 
+      expect(await storage.list('')).toEqual(stored)
       expect(Object.keys(await archive.takeSnapshot())).toEqual([ref])
     })
 
-    it('ranks in memory when the storage has no search of its own', async () => {
+    it('ranks on a storage with no search of its own', async () => {
       const backing = new InMemoryStorage()
       // A minimal custom backend: the Storage contract without the optional search().
       const archive = new Archive(
@@ -441,7 +402,6 @@ describe('retrieval tool', () => {
       })) as string
 
       expect(result).toContain('connection pool was exhausted')
-      // Only the archived content; a backend that cannot search is never given an index to maintain.
       expect(await backing.list('')).toEqual([`context/test-session/scopes/agent/test-agent/${ref}`])
     })
 

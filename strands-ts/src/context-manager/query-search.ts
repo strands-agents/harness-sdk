@@ -17,71 +17,14 @@ import { InMemoryStorage } from '../storage/in-memory-storage.js'
  * The size is the knee of a cost/quality curve: coarser windows rank the answer higher but each one
  * returned costs the caller more of the result budget, and past ~100 lines a single window exceeds
  * the whole budget.
- *
- * @internal
  */
-export const WINDOW_LINES = 12
-/** @internal */
-export const WINDOW_STRIDE = 6
+const WINDOW_LINES = 12
+const WINDOW_STRIDE = 6
 
-/**
- * A line window of the content. Bounds are 0-indexed and inclusive.
- *
- * @internal
- */
-export interface LineWindow {
+/** A line window of the content. Bounds are 0-indexed and inclusive. */
+interface LineWindow {
   start: number
   end: number
-}
-
-/**
- * Ranks the line windows of `lines` within `[scopeStart, scopeEnd]` against a query, best-first.
- *
- * Returning `null` means this ranker cannot serve the request, and the caller falls back to
- * {@link rankWindowsInMemory}.
- *
- * @internal
- */
-export type WindowRanker = (
-  lines: string[],
-  query: string,
-  scopeStart: number,
-  scopeEnd: number
-) => Promise<LineWindow[] | null>
-
-/**
- * The windows of `[scopeStart, scopeEnd]`, as the keys a ranker indexes them under.
- *
- * Keys are the window bounds, so a ranker that stores them recovers the bounds from the key alone
- * and never has to keep a side table.
- *
- * @internal
- */
-export function windowsOf(lines: string[], scopeStart: number, scopeEnd: number): Map<string, LineWindow> {
-  const windows = new Map<string, LineWindow>()
-  for (let start = scopeStart; start <= scopeEnd; start += WINDOW_STRIDE) {
-    const end = Math.min(start + WINDOW_LINES - 1, scopeEnd)
-    windows.set(formatWindowKey({ start, end }), { start, end })
-    if (start + WINDOW_LINES > scopeEnd) break
-  }
-  return windows
-}
-
-/** @internal */
-export function formatWindowKey(window: LineWindow): string {
-  return `${window.start}-${window.end}`
-}
-
-/**
- * Parses a window key written by {@link formatWindowKey}.
- *
- * @returns The bounds, or `null` when the key was not written by this module
- * @internal
- */
-export function parseWindowKey(key: string): LineWindow | null {
-  const match = /^(\d+)-(\d+)$/.exec(key)
-  if (!match) return null
-  return { start: Number(match[1]), end: Number(match[2]) }
 }
 
 /**
@@ -94,7 +37,6 @@ export function parseWindowKey(key: string): LineWindow | null {
  * @param query - Natural-language query
  * @param lineRange - Span to rank within, 1-indexed and inclusive; omit to rank the whole content
  * @param maxChars - Maximum output size in characters
- * @param rank - Ranker to use in place of {@link rankWindowsInMemory}, when it can serve the request
  * @returns The ranked sections with line numbers, or a message saying nothing was relevant
  * @throws If `lineRange` is inverted or starts past the end of the content. Mirrors `searchContent`'s
  *   contract, which the pattern path still resolves for itself. The caller is a tool, and the tool
@@ -106,8 +48,7 @@ export async function searchByQuery(
   text: string,
   query: string,
   lineRange: { start: number; end: number } | undefined,
-  maxChars: number,
-  rank?: WindowRanker
+  maxChars: number
 ): Promise<string> {
   const lines = text.split('\n')
   if (lines.length === 0 || (lines.length === 1 && lines[0] === '')) return 'Content is empty (0 lines).'
@@ -116,9 +57,7 @@ export async function searchByQuery(
   const scopeLabel = lineRange ? ` in lines ${lineRange.start}-${scope.end + 1}` : ''
   const label = query.replace(/[\n\r/\]]/g, ' ').slice(0, 50)
 
-  const ranked =
-    (await rank?.(lines, query, scope.start, scope.end)) ??
-    (await rankWindowsInMemory(lines, query, scope.start, scope.end))
+  const ranked = await rankWindows(lines, query, scope.start, scope.end)
   if (ranked.length === 0) return `No relevant content found for query '${label}'${scopeLabel}.`
 
   const header = (shown: number): string => {
@@ -143,14 +82,12 @@ export async function searchByQuery(
 /**
  * Ranks the scope's line windows in an ephemeral store, discarded when the query returns.
  *
- * The fallback ranker: it needs nothing of the caller's storage, so it serves backends that do not
- * implement `search()`. Costs no durable writes, and reaches only {@link InMemoryStorage}'s built-in
- * keyword strategy — a strategy configured on the caller's own storage cannot apply to a store it
- * was not written for.
- *
- * @internal
+ * The store is scratch space rather than the caller's storage: ranking needs each candidate span to
+ * be a separately addressable entry, and building that out of the caller's storage would mean
+ * writing derived data into it to answer a read. The cost is that a search strategy configured on
+ * the caller's storage does not apply here, since it was never written for this store.
  */
-export async function rankWindowsInMemory(
+async function rankWindows(
   lines: string[],
   query: string,
   scopeStart: number,
@@ -158,7 +95,7 @@ export async function rankWindowsInMemory(
 ): Promise<LineWindow[]> {
   const storage = new InMemoryStorage()
   const encoder = new TextEncoder()
-  const windows = windowsOf(lines, scopeStart, scopeEnd)
+  const windows = windowsOf(scopeStart, scopeEnd)
 
   await Promise.all(
     [...windows].map(([key, window]) =>
@@ -171,6 +108,17 @@ export async function rankWindowsInMemory(
     const window = windows.get(result.key)
     return window ? [window] : []
   })
+}
+
+/** The windows of `[scopeStart, scopeEnd]`, keyed by their bounds. */
+function windowsOf(scopeStart: number, scopeEnd: number): Map<string, LineWindow> {
+  const windows = new Map<string, LineWindow>()
+  for (let start = scopeStart; start <= scopeEnd; start += WINDOW_STRIDE) {
+    const end = Math.min(start + WINDOW_LINES - 1, scopeEnd)
+    windows.set(`${start}-${end}`, { start, end })
+    if (start + WINDOW_LINES > scopeEnd) break
+  }
+  return windows
 }
 
 /** The 0-indexed inclusive bounds a query ranks within. */
