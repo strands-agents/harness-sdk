@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
 import litellm
-from litellm.exceptions import ContextWindowExceededError
+from litellm.exceptions import BadRequestError, ContextWindowExceededError
 from litellm.utils import supports_response_schema
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
@@ -21,11 +21,15 @@ from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec, ToolUse
+from ._model_info import lookup_model_info
 from ._validation import validate_config_keys
 from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
 
 logger = logging.getLogger(__name__)
+
+# LiteLLM backends that translate an OpenAI-format ``cache_control`` part into their own cache points.
+_CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "bedrock", "vertex_ai"})
 
 # Separator used by LiteLLM to embed thought signatures inside tool call IDs.
 # See: https://ai.google.dev/gemini-api/docs/thought-signatures
@@ -48,7 +52,9 @@ class LiteLLMModel(OpenAIModel):
                 https://docs.litellm.ai/docs/completion/input#input-params-1.
             stream: Whether to use streaming. Defaults to True.
             cache_config: Prompt-caching configuration. Consumed by LiteLLM's OpenAI-compatible
-                request path exactly as by ``OpenAIModel``.
+                request path as by ``OpenAIModel``. On Anthropic, Bedrock and Vertex AI backends whose
+                model takes cache points, it also marks the system prompt and the latest message with
+                ``cache_control``; ``strategy="anthropic"`` marks them for any backend, such as a proxy alias.
         """
 
         model_id: str
@@ -91,6 +97,62 @@ class LiteLLMModel(OpenAIModel):
             The LiteLLM model configuration.
         """
         return cast(LiteLLMModel.LiteLLMConfig, self.config)
+
+    @override
+    def format_request(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        tool_choice: ToolChoice | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        agent_metadata: AgentMetadata | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Format a LiteLLM chat request, adding cache points for backends that need them.
+
+        Args:
+            messages: List of message objects to be processed by the model.
+            tool_specs: List of tool specifications to make available to the model.
+            system_prompt: System prompt to provide context to the model.
+            tool_choice: Selection strategy for tool invocation.
+            system_prompt_content: System prompt content blocks to provide context to the model.
+            agent_metadata: Invoking agent's metadata.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            A LiteLLM chat request.
+        """
+        request = super().format_request(
+            messages,
+            tool_specs,
+            system_prompt,
+            tool_choice,
+            system_prompt_content=system_prompt_content,
+            agent_metadata=agent_metadata,
+            **kwargs,
+        )
+        cache_config = self.get_config().get("cache_config")
+        if cache_config is not None and self._places_cache_points(cache_config):
+            _add_cache_points(request["messages"], cache_config)
+        return request
+
+    def _places_cache_points(self, cache_config: CacheConfig) -> bool:
+        """Whether the backend caches only where the request marks it, so Strands must place the points.
+
+        OpenAI-family backends cache automatically and take no marker, so ``"auto"`` leaves them alone.
+        """
+        if cache_config.strategy == "anthropic":
+            return True
+        try:
+            model_id, provider, _, _ = litellm.get_llm_provider(self.get_config()["model_id"])
+        except BadRequestError:
+            return False
+        return (
+            provider in _CACHE_CONTROL_PROVIDERS
+            and lookup_model_info(model_id).capabilities.prompt_caching == "cache_points"
+        )
 
     @override
     @classmethod
@@ -631,3 +693,28 @@ class LiteLLMModel(OpenAIModel):
             model_id = self.get_config()["model_id"]
             if not model_id.startswith("litellm_proxy/"):
                 self.config["model_id"] = f"litellm_proxy/{model_id}"
+
+
+def _add_cache_points(messages: list[dict[str, Any]], cache_config: CacheConfig) -> None:
+    """Mark the system prompt and the latest message with ``cache_control``, keeping any point already placed.
+
+    The latest message may be a tool result: in a tool loop it is the one whose prefix grows each call.
+    """
+    if not messages:
+        return
+    system = messages[0] if messages[0]["role"] == "system" else None
+    latest = messages[-1] if messages[-1]["role"] != "system" else None
+    if system is not None and cache_config.system_prompt_ttl is not False:
+        _mark_last_part(system)
+    if latest is not None and cache_config.messages_ttl is not False:
+        _mark_last_part(latest)
+
+
+def _mark_last_part(message: dict[str, Any]) -> None:
+    """Put ``cache_control`` on the message's last content part, unless one of its parts already has it."""
+    content = message.get("content")
+    if isinstance(content, str) and content:
+        content = message["content"] = [{"type": "text", "text": content}]
+    if not isinstance(content, list) or not content or any("cache_control" in part for part in content):
+        return
+    content[-1]["cache_control"] = {"type": "ephemeral"}

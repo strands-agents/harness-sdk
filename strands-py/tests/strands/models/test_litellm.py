@@ -81,6 +81,72 @@ def test_cache_key_derived_from_agent_metadata_session(litellm_acompletion, mode
     assert request["prompt_cache_key"] == "strands-s1"
 
 
+@pytest.fixture
+def tool_loop_messages():
+    return [
+        {"role": "user", "content": [{"text": "read section 1"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "read", "input": {"n": 1}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "s1"}]}}],
+        },
+    ]
+
+
+def _cache_control_roles(request):
+    return [
+        message["role"]
+        for message in request["messages"]
+        if isinstance(message.get("content"), list) and any("cache_control" in part for part in message["content"])
+    ]
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "anthropic/claude-haiku-4-5",
+        "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "vertex_ai/claude-sonnet-4-6",
+    ],
+)
+def test_format_request_marks_system_and_latest_message_for_cache_point_backends(model_id, tool_loop_messages):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model.format_request(tool_loop_messages, system_prompt="s1")
+
+    assert _cache_control_roles(request) == ["system", "tool"]
+    assert request["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+@pytest.mark.parametrize("model_id", ["openai/gpt-6-luna", "gemini/gemini-3.5-flash", "m1"])
+def test_format_request_adds_no_cache_points_for_other_backends(model_id, tool_loop_messages):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig())
+
+    assert _cache_control_roles(model.format_request(tool_loop_messages, system_prompt="s1")) == []
+
+
+def test_format_request_adds_no_cache_points_without_cache_config(tool_loop_messages):
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5")
+
+    assert _cache_control_roles(model.format_request(tool_loop_messages, system_prompt="s1")) == []
+
+
+def test_format_request_anthropic_strategy_marks_any_backend(tool_loop_messages):
+    model = LiteLLMModel(model_id="litellm_proxy/claude-alias", cache_config=CacheConfig(strategy="anthropic"))
+
+    assert _cache_control_roles(model.format_request(tool_loop_messages, system_prompt="s1")) == ["system", "tool"]
+
+
+def test_format_request_keeps_hand_placed_system_cache_point(tool_loop_messages):
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig(messages_ttl=False))
+    system_prompt_content = [{"text": "a"}, {"cachePoint": {"type": "default"}}, {"text": "b"}]
+
+    request = model.format_request(tool_loop_messages, system_prompt_content=system_prompt_content)
+
+    assert [("cache_control" in part) for part in request["messages"][0]["content"]] == [True, False]
+    assert _cache_control_roles(request) == ["system"]
+
+
 @pytest.mark.asyncio
 async def test_stream_derives_prompt_cache_key_from_agent_session(litellm_acompletion, model_id, agenerator, alist):
     """stream threads agent_metadata so the outbound request carries the derived routing key."""
