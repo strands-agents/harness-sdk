@@ -217,6 +217,7 @@ describe('AnthropicModel', () => {
     it.each([
       ['claude-opus-5-5', true],
       ['claude-opus-5-5-20260401', true],
+      ['claude-haiku-5-5', false], // the API takes them, the model rarely uses their text (#6227)
       ['claude-sonnet-5', false],
       ['claude-sonnet-4-6', false],
     ])('reports temporary messages from the shared model info for %s: %s', (modelId, expected) => {
@@ -392,10 +393,14 @@ describe('AnthropicModel', () => {
       expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'toolUse' })
     })
 
-    it('maps anthropic stop reason "refusal" to "refusal"', async () => {
+    it.each([
+      ['refusal', 'refusal'],
+      ['max_tokens', 'maxTokens'],
+      ['stop_sequence', 'stopSequence'],
+    ])('maps anthropic stop reason "%s" to "%s"', async (anthropicReason, expectedReason) => {
       const mockClient = createMockClient(async function* () {
         yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 1 } } }
-        yield { type: 'message_delta', delta: { stop_reason: 'refusal' }, usage: { output_tokens: 1 } }
+        yield { type: 'message_delta', delta: { stop_reason: anthropicReason }, usage: { output_tokens: 1 } }
         yield { type: 'message_stop' }
       })
 
@@ -404,7 +409,7 @@ describe('AnthropicModel', () => {
 
       const events = await collectIterator(provider.stream(messages))
 
-      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'refusal' })
+      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: expectedReason })
     })
 
     it('handles thinking/reasoning events', async () => {

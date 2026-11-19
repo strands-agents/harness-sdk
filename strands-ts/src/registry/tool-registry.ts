@@ -1,4 +1,5 @@
 import type { Tool } from '../tools/tool.js'
+import type { ToolSpec } from '../tools/types.js'
 import { ToolValidationError, ToolNotFoundError } from '../errors.js'
 
 /** @internal Maximum tool-name length accepted by the registry. */
@@ -10,12 +11,18 @@ export const MAX_TOOL_NAME_LENGTH = 64
 export class ToolRegistry {
   private _tools: Map<string, Tool> = new Map()
 
+  /** Whether {@link toolSpecs} returns specs sorted by name. */
+  sortToolSpecs: boolean
+
   /**
    * Creates a new ToolRegistry, optionally pre-populated with tools.
    *
    * @param tools - Optional initial tools to register
+   * @param options - Registry options. `sortToolSpecs` makes {@link toolSpecs} return specs sorted by name;
+   *   defaults to false, which keeps registration order.
    */
-  constructor(tools?: Tool[]) {
+  constructor(tools?: Tool[], options?: { sortToolSpecs?: boolean }) {
+    this.sortToolSpecs = options?.sortToolSpecs ?? false
     if (tools) {
       this.add(tools)
     }
@@ -152,6 +159,17 @@ export class ToolRegistry {
    */
   list(): Tool[] {
     return Array.from(this._tools.values())
+  }
+
+  /**
+   * Returns the specs of all registered tools, sorted by name when {@link sortToolSpecs} is set.
+   *
+   * @returns Array of tool specs, sorted by name or in registration order
+   */
+  toolSpecs(): ToolSpec[] {
+    const specs = this.list().map((tool) => tool.toolSpec)
+    if (!this.sortToolSpecs) return specs
+    return specs.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
   }
 
   private _validateProperties(tool: Tool): void {

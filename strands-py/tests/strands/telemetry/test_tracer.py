@@ -12,6 +12,7 @@ from opentelemetry.trace import (
     StatusCode,  # type: ignore
 )
 
+from strands._context_manager.placeholder import offload_placeholder
 from strands.memory.types import MemoryEntry
 from strands.telemetry.tracer import JSONEncoder, Tracer, get_tracer, serialize
 from strands.types.content import ContentBlock
@@ -261,6 +262,57 @@ def test_start_model_invoke_span_maps_injected_blocks_to_text_parts_in_latest_co
         assert parsed[0]["parts"] == [{"type": "text", "content": "Hi"}, {"type": "text", "content": "cwd: /repo"}]
 
 
+def test_start_model_invoke_span_records_an_offloaded_block_as_text(mock_tracer, monkeypatch):
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+        placeholder = offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)
+
+        tracer.start_model_invoke_span(messages=[{"role": "user", "content": [placeholder]}])
+
+        detail_calls = [
+            call for call in mock_span.add_event.call_args_list if "gen_ai.input.messages" in call[1]["attributes"]
+        ]
+        parsed = json.loads(detail_calls[0][1]["attributes"]["gen_ai.input.messages"])
+        assert parsed == [
+            {"role": "user", "parts": [{"type": "text", "content": "[Dropped: ~1,200 tokens] [ref: tu-1]"}]}
+        ]
+
+
+def test_start_model_invoke_span_records_what_a_tool_results_placeholder_stands_for(mock_tracer, monkeypatch):
+    """A placeholder inside a tool result keeps its bookkeeping in the span, so a trace shows what was offloaded."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+        placeholder = offload_placeholder("truncate", "[Truncated: 1 block, ~900 tokens]", "tu-1", 900)
+        tool_result = {"toolUseId": "tu-1", "status": "success", "content": [placeholder]}
+
+        tracer.start_model_invoke_span(messages=[{"role": "user", "content": [{"toolResult": tool_result}]}])
+
+        detail_calls = [
+            call for call in mock_span.add_event.call_args_list if "gen_ai.input.messages" in call[1]["attributes"]
+        ]
+        parsed = json.loads(detail_calls[0][1]["attributes"]["gen_ai.input.messages"])
+        assert parsed[0]["parts"] == [
+            {
+                "type": "tool_call_response",
+                "id": "tu-1",
+                "response": [
+                    {
+                        "text": "[Truncated: 1 block, ~900 tokens] [ref: tu-1]",
+                        "offloaded": {"method": "truncate", "ref": "tu-1", "tokens": 900},
+                    }
+                ],
+            }
+        ]
+
+
 def test_start_model_invoke_span_latest_conventions(mock_tracer, monkeypatch):
     """Test starting a model invoke span with the latest semantic conventions."""
     with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
@@ -451,6 +503,50 @@ def test_end_model_invoke_span_latest_conventions(mock_span, monkeypatch):
         )
         mock_span.set_status.assert_called_once_with(StatusCode.OK)
         mock_span.end.assert_called_once()
+
+
+def test_end_model_invoke_span_latest_conventions_maps_reasoning_text_to_reasoning_part(mock_span, monkeypatch):
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    tracer = Tracer()
+    message = {
+        "role": "assistant",
+        "content": [
+            {"reasoningContent": {"reasoningText": {"text": "Multiply 17 by 23.", "signature": "sig-secret"}}},
+            {"text": "391"},
+        ],
+    }
+
+    usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
+    tracer.end_model_invoke_span(mock_span, message, usage, Metrics(latencyMs=20), "end_turn")
+
+    output_messages = mock_span.add_event.call_args.kwargs["attributes"]["gen_ai.output.messages"]
+    assert json.loads(output_messages) == [
+        {
+            "role": "assistant",
+            "parts": [
+                {"type": "reasoning", "content": "Multiply 17 by 23."},
+                {"type": "text", "content": "391"},
+            ],
+            "finish_reason": "end_turn",
+        }
+    ]
+    assert "sig-secret" not in output_messages
+
+
+@pytest.mark.parametrize("reasoning_content", [{"redactedContent": b"\x01\x02\x03"}, {"reasoningText": None}])
+def test_end_model_invoke_span_latest_conventions_does_not_export_redacted_reasoning(
+    mock_span, monkeypatch, reasoning_content
+):
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    tracer = Tracer()
+    message = {"role": "assistant", "content": [{"reasoningContent": reasoning_content}, {"text": "done"}]}
+
+    usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
+    tracer.end_model_invoke_span(mock_span, message, usage, Metrics(latencyMs=20), "end_turn")
+
+    output_messages = mock_span.add_event.call_args.kwargs["attributes"]["gen_ai.output.messages"]
+    parts = json.loads(output_messages)[0]["parts"]
+    assert parts == [{"type": "reasoningContent"}, {"type": "text", "content": "done"}]
 
 
 def test_start_tool_call_span(mock_tracer):

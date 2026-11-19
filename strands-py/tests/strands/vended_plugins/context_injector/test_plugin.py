@@ -215,7 +215,7 @@ def test_keeps_injected_blocks_out_of_context_offloading():
     agent, requests = setup(
         model,
         lambda context: text,
-        context_manager={"strategies": [Offload.summarize("*").when(threshold=20)]},
+        context_manager={"strategies": [Offload.summarize("user_text").when(block_threshold=20)]},
     )
 
     agent("first")

@@ -5,15 +5,16 @@ import unittest.mock
 import pytest
 
 from strands._context_manager.context_manager import ContextManager
+from strands._context_manager.placeholder import offload_placeholder
 from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
+from strands._context_manager.strategies.offload.base import EmergencyTruncateStrategy
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
-from strands.types.tools import ToolResult, ToolUse
+from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 
 @pytest.fixture
@@ -46,7 +47,7 @@ class TestContextManagerInit:
         assert isinstance(cm._strategies[2], EmergencyTruncateStrategy)
 
     def test_custom_strategies(self):
-        custom = [Offload.drop("*").when(threshold=500)]
+        custom = [Offload.drop("*").when(block_threshold=500)]
         cm = ContextManager(strategies=custom)
         assert len(cm._strategies) == 2
         assert cm._strategies[0].name == "offload:drop"
@@ -233,6 +234,103 @@ class TestContextManagerRunStrategies:
         assert call_args.utilization == 0.4
 
 
+class TestTokenCounting:
+    """Tests for the inputs the utilization gates count."""
+
+    @staticmethod
+    def _capture_count_kwargs(agent):
+        """Record the keyword arguments of every count_tokens call on the agent's model."""
+        captured = []
+
+        async def count_tokens(messages, **kwargs):
+            captured.append(kwargs)
+            return 100
+
+        agent.model.count_tokens = count_tokens
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_counts_system_prompt_and_tool_specs_alongside_messages(self, mock_agent):
+        tool_spec = ToolSpec(name="lookup", description="stub lookup", inputSchema={"json": {"type": "object"}})
+        mock_agent.system_prompt = "be helpful"
+        mock_agent.system_prompt_content = [{"text": "be helpful"}]
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[tool_spec])
+        captured = self._capture_count_kwargs(mock_agent)
+
+        applied = False
+
+        async def apply(_context):
+            nonlocal applied
+            if applied:
+                return False
+            applied = True
+            return True
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "acts-once"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = apply
+        cm = ContextManager(strategies=[strategy], stash=False)
+        cm.init_agent(mock_agent)
+
+        # No projected_input_tokens, so the initial gate counts too — both counts must see the same inputs.
+        await mock_agent.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=mock_agent))
+
+        expected = {
+            "tool_specs": [tool_spec],
+            "system_prompt": "be helpful",
+            "system_prompt_content": [{"text": "be helpful"}],
+        }
+        assert captured == [expected, expected]
+
+    @pytest.mark.asyncio
+    async def test_passes_no_system_prompt_when_the_agent_has_none(self, mock_agent):
+        mock_agent.system_prompt = None
+        mock_agent.system_prompt_content = None
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[])
+        captured = self._capture_count_kwargs(mock_agent)
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "noop"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=False)
+        cm = ContextManager(strategies=[strategy], stash=False)
+        cm.init_agent(mock_agent)
+
+        await mock_agent.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=mock_agent))
+
+        assert captured == [{"tool_specs": [], "system_prompt": None, "system_prompt_content": None}]
+
+    @pytest.mark.asyncio
+    async def test_emergency_truncate_leaves_messages_that_fit_the_window(self, mock_agent):
+        """The gate measures the messages it would drop, not the whole request the other gates are measured on."""
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[])
+        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(side_effect=lambda tokens: tokens / 10_000)
+        # The request is over the window, the messages are a tenth of it: dropping them cannot be what helps.
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=1_000)
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="a")]),
+            Message(role="assistant", content=[ContentBlock(text="b")]),
+            Message(role="user", content=[ContentBlock(text="c")]),
+            Message(role="assistant", content=[ContentBlock(text="d")]),
+        ]
+
+        # Only the emergency truncate appended by the constructor can act.
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "noop"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=False)
+        cm = ContextManager(strategies=[strategy], stash=False)
+        cm.init_agent(mock_agent)
+
+        await mock_agent.hooks.invoke_callbacks_async(
+            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=20_000)
+        )
+
+        assert len(mock_agent.messages) == 4
+        mock_agent.model.count_tokens.assert_awaited_once_with(mock_agent.messages)
+
+
 class TestFromStrategy:
     """Tests for ContextManager.from_strategy() factory."""
 
@@ -255,7 +353,7 @@ class TestFromStrategy:
         assert ContextManager.from_strategy(cm) is cm
 
     def test_dict_config_returns_context_manager(self):
-        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(threshold=500)]})
+        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(block_threshold=500)]})
         assert isinstance(result, ContextManager)
 
     def test_unknown_string_raises(self):
@@ -328,20 +426,24 @@ class TestContextManagerStashHook:
         assert result["text"] == "data"
 
     @pytest.mark.asyncio
-    async def test_stash_hook_tracks_retrieval_tool_use_ids(self, mock_agent):
+    async def test_stash_hook_leaves_out_a_result_of_the_retrieval_tool(self, mock_agent):
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
         cm = ContextManager(stash=True)
         cm.init_agent(mock_agent)
 
-        message = Message(
+        call = Message(
             role="assistant",
             content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-ret", name="retrieve_context", input={}))],
         )
-        event = MessageAddedEvent(agent=mock_agent, message=message)
-        await mock_agent.hooks.invoke_callbacks_async(event)
+        result = ToolResult(toolUseId="tu-ret", status="success", content=[{"text": "retrieved"}])
+        answer = Message(role="user", content=[ContentBlock(toolResult=result)])
+        mock_agent.messages = [call, answer]
 
-        assert "tu-ret" in cm._retrieval_tool_use_ids
+        for message in mock_agent.messages:
+            await mock_agent.hooks.invoke_callbacks_async(MessageAddedEvent(agent=mock_agent, message=message))
+
+        assert await cm._stash.keys_of("tu-ret") == []
 
 
 class TestStashBackfill:
@@ -414,8 +516,9 @@ class TestStashBackfill:
         assert await cm.stash.retrieve("seed_0") == {"text": "seed message"}
 
     @pytest.mark.asyncio
-    async def test_backfill_does_not_stash_previews_over_missing_originals(self, mock_agent):
-        """Restored previews are never stashed under their originals' keys (#5620)."""
+    async def test_backfill_does_not_stash_placeholders_over_missing_originals(self, mock_agent):
+        """Restored placeholders are never stashed under their originals' keys (#5620)."""
+        placeholder = offload_placeholder("truncate", "[Truncated: 1 block, ~7,500 tokens] preview", "pre-tu-1")
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
         mock_agent.messages = [
@@ -423,15 +526,7 @@ class TestStashBackfill:
             Message(
                 role="user",
                 content=[
-                    ContentBlock(
-                        toolResult=ToolResult(
-                            toolUseId="pre-tu-1",
-                            status="success",
-                            content=[
-                                {"text": "[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: pre-tu-1_0]"}
-                            ],
-                        )
-                    )
+                    ContentBlock(toolResult=ToolResult(toolUseId="pre-tu-1", status="success", content=[placeholder]))
                 ],
             ),
         ]

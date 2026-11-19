@@ -169,16 +169,34 @@ function convertExternalDocsItem(productId: string, ctx: ConvertContext): Starli
   if (!navigation) return null
 
   const groups = navigation.groups
-    .map((group) => ({
-      label: group.label,
-      items: group.items
-        .filter((item) => contentExists(item.slug, ctx.contentDir))
-        .map((item) => ({ label: item.label, slug: item.slug })),
-    }))
+    .map((group) => {
+      const items = group.items
+        .map((item) => convertExternalDocsNavItem(item, ctx))
+        .filter((item): item is StarlightSidebarItem => item !== null)
+      return { label: group.label, items }
+    })
     .filter((group) => group.items.length > 0)
 
   if (groups.length === 0) return null
   return { label: navigation.label, items: groups }
+}
+
+function convertExternalDocsNavItem(
+  item: { label: string; slug?: string; items?: unknown },
+  ctx: ConvertContext
+): StarlightSidebarItem | null {
+  if ('slug' in item && typeof item.slug === 'string') {
+    if (!contentExists(item.slug, ctx.contentDir)) return null
+    return { label: item.label, slug: item.slug }
+  }
+  if (Array.isArray(item.items)) {
+    const children = item.items
+      .map((child) => convertExternalDocsNavItem(child as { label: string; slug?: string; items?: unknown }, ctx))
+      .filter((child): child is StarlightSidebarItem => child !== null)
+    if (children.length === 0) return null
+    return { label: item.label, items: children }
+  }
+  return null
 }
 
 /**
