@@ -10,6 +10,7 @@ from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....event_loop.streaming import _record_usage
+from ....models._provider_name import _model_key
 from ....types.content import ContentBlock, Message, Messages, split_system_prompt
 from ....types.tools import ToolResultContent
 from ...content_rendering import format_tool_result_label, tool_result_to_content_blocks
@@ -197,7 +198,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         except Exception as error:
             logger.warning("messages=<%d>, error=<%s> | summarization failed", replaced, error, exc_info=True)
             return False
-        _record_summary_usage(context.invocation_context, result)
+        _record_summary_usage(context.invocation_context, result, model)
         # Only a summary the provider wrote can be replayed by the agent's model.
         summary = _first_summary(result)
         if summary is None or not summary["summary"].get("provider"):
@@ -286,7 +287,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """
         try:
             result = await model.summarize(request, **self._summarize_kwargs(agent, replay=replay))
-            _record_summary_usage(invocation_context, result)
+            _record_summary_usage(invocation_context, result, model)
             text = _summary_text(result)
         except Exception as error:
             logger.warning("%s, error=<%s> | summarization failed", log_fields, error)
@@ -316,9 +317,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return self._config.get("model") or agent.aux_model
 
 
-def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult) -> None:
+def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult, model: Model) -> None:
     if result.usage is not None:
-        _record_usage(invocation_context, result.usage)
+        _record_usage(invocation_context, result.usage, _model_key(model))
 
 
 def _can_replay_server_side(model: Model, agent_model: Model) -> bool:

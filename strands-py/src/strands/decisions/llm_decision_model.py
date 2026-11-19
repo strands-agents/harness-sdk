@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from ..models._model_proxy import ModelProxy
+from ..models._provider_name import _model_key
 from ..models.bedrock import BedrockModel
 from ..models.model import Model
 from ..types.content import ContentBlock, Message, Messages
@@ -74,6 +75,9 @@ class LLMDecisionModel(DecisionModel):
             raise TypeError("model must be a Model")
         self._model = resolved_model
         self._system_prompt = system_prompt
+
+    def _usage_model_key(self, result: DecisionResult) -> tuple[str | None, str | None]:
+        return _model_key(self._model)
 
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
         answer_model = _build_answer_model(questions)

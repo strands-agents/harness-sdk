@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.decisions import (
     DecisionInput,
     DecisionMetadata,
@@ -432,6 +433,19 @@ async def test_rejects_duplicate_option_values():
     with pytest.raises(ValueError, match="unique"):
         await decision.ask("x", {"q": {"question": "pick", "choices": ["a", "a"]}})
     assert model.calls == []
+
+
+@pytest.mark.asyncio
+async def test_adds_reported_usage_under_the_model_it_wraps():
+    model = RecordingModel({"q": "true"})
+    model.get_config = lambda: {"model_id": "model-a"}
+    invocation_context = _create_invocation_context()
+
+    questions = {"q": {"question": "ok?", "choices": "boolean"}}
+    result = await LLMDecisionModel(model=model).ask("x", questions, invocation_context=invocation_context)
+
+    assert invocation_context.usage_by_model == [ModelUsage(None, "model-a", DEFAULT_USAGE)]
+    assert (result.metadata.provider_name, result.metadata.model_id) == (None, None)
 
 
 @pytest.mark.asyncio
