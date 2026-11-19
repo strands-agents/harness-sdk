@@ -756,23 +756,24 @@ describe('GeminiDecisionModel', () => {
   })
 
   it('accepts Choice probabilities rounded by Gemini but rejects a malformed distribution', async () => {
-    const choiceAnswer = (probabilities: Record<string, number>): typeof globalThis.fetch =>
-      fakeFetch({ answers: { q: { type: 'choice', choice: 'billing', probabilities, confidence: 0.99 } } })
-    const question = {
-      q: { question: 'Which team?', choices: ['billing', 'shipping', 'other', 'technical'] },
-    } as const
+    const askChoice = (probabilities: Record<string, number>): Promise<unknown> => {
+      const choices = Object.keys(probabilities)
+      const confidence = Math.max(...Object.values(probabilities))
+      const fetch = fakeFetch({
+        answers: { q: { type: 'choice', choice: choices[0], probabilities, confidence } },
+      })
+      return new GeminiDecisionModel({ apiKey: 'test-key', fetch })
+        .ask('state', { q: { question: 'Which?', choices } })
+        .then((result) => result.answers.q)
+    }
 
-    const rounded = new GeminiDecisionModel({
-      apiKey: 'test-key',
-      fetch: choiceAnswer({ billing: 0.99, shipping: 0.004, other: 0.003, technical: 0.002 }),
-    })
-    const malformed = new GeminiDecisionModel({
-      apiKey: 'test-key',
-      fetch: choiceAnswer({ billing: 0.9, shipping: 0.004, other: 0.003, technical: 0.002 }),
-    })
-
-    expect((await rounded.ask('I was charged twice.', question)).answers.q).toBe('billing')
-    await expect(malformed.ask('I was charged twice.', question)).rejects.toThrow(/must sum to 1/)
+    expect(await askChoice({ billing: 0.99, shipping: 0.004, other: 0.003, technical: 0.002 })).toBe('billing')
+    // Near-uniform answers round furthest from 1 and come back Uncertain rather than throwing.
+    expect(await askChoice({ a: 0.33, b: 0.33, c: 0.33 })).toEqual(new Uncertain())
+    expect(await askChoice({ a: 0.17, b: 0.17, c: 0.17, d: 0.17, e: 0.17, f: 0.17 })).toEqual(new Uncertain())
+    await expect(askChoice({ billing: 0.9, shipping: 0.004, other: 0.003, technical: 0.002 })).rejects.toThrow(
+      /must sum to 1/
+    )
   })
 
   it('reports a prompt blocked through prompt_feedback with its reason', async () => {
