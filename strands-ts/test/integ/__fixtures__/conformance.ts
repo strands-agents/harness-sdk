@@ -24,7 +24,9 @@ export interface ConformanceTarget {
 
 export interface KnownFailure extends ConformanceTarget {
   case: string
-  issue: number
+  reason: string
+  issue?: number
+  link?: string
   error?: string
   intermittent?: boolean
 }
@@ -65,12 +67,22 @@ export const cachePrompt = [
  *
  * @param target - The provider and model
  * @param caseId - The case id
- * @returns The entry, which names the issue that tracks the failure
+ * @returns The entry, which says why the pair fails and where that is explained
  */
 export function knownFailure(target: ConformanceTarget, caseId: string): KnownFailure | undefined {
   return knownFailures.find(
     (known) => known.provider === target.provider && known.model === target.model && known.case === caseId
   )
+}
+
+/**
+ * Where a known failure is explained: its issue, or its link when it has no issue.
+ *
+ * @param known - The known failure entry
+ * @returns The issue reference or the URL
+ */
+export function knownReference(known: KnownFailure): string {
+  return known.issue === undefined ? `${known.link}` : `#${known.issue}`
 }
 
 /**
@@ -228,7 +240,8 @@ export async function recordResult(
   caseId: string,
   status: ConformanceStatus,
   reason?: string,
-  attempts = 1
+  attempts = 1,
+  known?: KnownFailure
 ): Promise<void> {
   const file = process.env.STRANDS_CONFORMANCE_RESULTS
   if (!file) return
@@ -239,6 +252,13 @@ export async function recordResult(
     case: caseId,
     status,
     ...(reason && { reason }),
+    ...(known && {
+      known: {
+        reason: known.reason,
+        ...(known.issue !== undefined && { issue: known.issue }),
+        ...(known.link && { link: known.link }),
+      },
+    }),
     ...(attempts > 1 && { attempts }),
   }
   await appendFile(file, `${JSON.stringify(record)}\n`)

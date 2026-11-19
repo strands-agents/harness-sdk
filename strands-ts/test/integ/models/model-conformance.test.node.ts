@@ -13,6 +13,7 @@ import {
   isTrackedFailure,
   knownFailure,
   knownFailures,
+  knownReference,
   notApplicableReason,
   omittedCases,
   omittedProviders,
@@ -206,6 +207,12 @@ describe('Model conformance coverage', () => {
       knownFailures.filter((known) => !live.has(`${known.provider} ${known.model}`) || !(known.case in cases))
     ).toStrictEqual([])
   })
+
+  it('says why and where it is explained in every known failure', () => {
+    expect(knownFailures.filter((known) => !known.reason || (known.issue === undefined && !known.link))).toStrictEqual(
+      []
+    )
+  })
 })
 
 // The cases call every listed model, so they only run when asked: 'core' runs the targets marked core and any
@@ -227,7 +234,9 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
   for (const caseId of Object.keys(cases)) {
     const known = knownFailure(target, caseId)
     const stale = (problem: string): Error =>
-      new Error(`known failure #${known?.issue} ${problem}; remove it from knownFailures in shared/conformance.json`)
+      new Error(
+        `known failure ${known && knownReference(known)} ${problem}; remove it from knownFailures in shared/conformance.json`
+      )
 
     // A provider can be unavailable for a short while, so an error that may clear gets three attempts half a
     // minute apart. One that will not clear is not retried, and a failed assertion, the case's verdict, is retried
@@ -243,7 +252,8 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
       let status: ConformanceStatus = 'failed'
       let reason: string | undefined
       let attempt = 0
-      ctx.onTestFinished(() => recordResult(target, caseId, status, reason, attempt))
+      let trackedFailure: typeof known
+      ctx.onTestFinished(() => recordResult(target, caseId, status, reason, attempt, trackedFailure))
 
       const skip = (skipStatus: ConformanceStatus, skipReason: string | undefined): void => {
         status = skipStatus
@@ -270,7 +280,11 @@ describe.skipIf(!mode).each(targets)('Model conformance: $provider $model', (tar
           reason = providerErrorReason(error)
           status = reason ? 'error' : 'failed'
           // Only the tracked failure is expected. Any other error on a known failure still fails the run.
-          if (known && isTrackedFailure(known, error)) return
+          if (known && isTrackedFailure(known, error)) {
+            trackedFailure = known
+            await ctx.annotate(`known failure: ${known.reason} See ${knownReference(known)}`)
+            return
+          }
           if (attempt === 3 || !mayPassOnRetry(error)) throw error
           await new Promise((resolve) => setTimeout(resolve, 30_000))
         }
