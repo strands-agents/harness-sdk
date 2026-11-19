@@ -19,8 +19,8 @@ export interface SystemOneRequestConfig {
   modelId?: string
   defaultMinConfidence: number
   maxQuestions?: number
-  /** Builds the request body for APIs that differ from the System One `{ state, model, questions }` shape. */
-  buildRequestBody?: (state: DecisionInput, questions: Record<string, Question>) => unknown
+  /** Builds the request body. {@link systemOneRequestBody} builds the System One `{ state, model, questions }` shape. */
+  buildRequestBody: RequestBodyBuilder
   /**
    * How far a Choice answer's probabilities may sum from `1`, for APIs that round more coarsely than the
    * default check allows. Defaults to the 4-decimal rounding tolerance.
@@ -37,6 +37,39 @@ export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   /** Header that carries the API key as is. Defaults to `Authorization: Bearer <apiKey>`. */
   apiKeyHeader?: string
 }
+
+/**
+ * A decision API's JSON request body. Every System One API takes `questions`; the rest of the body varies.
+ *
+ * @internal
+ */
+export interface WireRequestBody {
+  model?: string
+  questions: Record<string, WireQuestion>
+  [field: string]: unknown
+}
+
+/**
+ * Builds a request body from the decision state, questions, and configured model id.
+ *
+ * @internal
+ */
+export type RequestBodyBuilder = (
+  state: DecisionInput,
+  questions: Record<string, Question>,
+  modelId: string | undefined
+) => WireRequestBody
+
+/**
+ * Builds the System One `{ state, model, questions }` request body; `model` is omitted when undefined.
+ *
+ * @internal
+ */
+export const systemOneRequestBody: RequestBodyBuilder = (state, questions, modelId) => ({
+  state: toWireState(state),
+  ...(modelId !== undefined && { model: modelId }),
+  questions: toWireQuestions(questions),
+})
 
 /**
  * Sends a serialized System One request and resolves to the parsed JSON response payload.
@@ -66,6 +99,8 @@ export function resolveSystemOneProviderConfig(
     apiKeyEnvironmentVariable: string
     modelId: string
     className: string
+    /** Defaults to {@link systemOneRequestBody}. */
+    buildRequestBody?: RequestBodyBuilder
   }
 ): SystemOneProviderConfig {
   if (typeof window !== 'undefined') {
@@ -96,6 +131,7 @@ export function resolveSystemOneProviderConfig(
     apiKey,
     modelId,
     defaultMinConfidence,
+    buildRequestBody: defaults.buildRequestBody ?? systemOneRequestBody,
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
     ...(defaults.apiKeyHeader !== undefined && { apiKeyHeader: defaults.apiKeyHeader }),
@@ -116,7 +152,8 @@ interface WireChoiceQuestion {
   criteria: Record<string, null | ''>
 }
 
-type WireQuestion = WireNoulQuestion | WireChoiceQuestion
+/** @internal */
+export type WireQuestion = WireNoulQuestion | WireChoiceQuestion
 
 interface ParsedAnswer {
   answer: boolean | string
@@ -153,13 +190,7 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
     throw new Error(`${config.providerName} accepts at most ${config.maxQuestions} questions per request`)
   }
 
-  const body = JSON.stringify(
-    config.buildRequestBody?.(state, questions) ?? {
-      state: toWireState(state),
-      ...(config.modelId !== undefined && { model: config.modelId }),
-      questions: toWireQuestions(questions),
-    }
-  )
+  const body = JSON.stringify(config.buildRequestBody(state, questions, config.modelId))
 
   const startedAt = globalThis.performance.now()
   const payload = await transport(body, cancelSignal)

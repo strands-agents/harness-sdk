@@ -7,6 +7,7 @@ import {
   resolveSystemOneProviderConfig,
   toWireQuestions,
   toWireStateText,
+  type RequestBodyBuilder,
   type SystemOneProviderConfig,
 } from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
@@ -61,7 +62,7 @@ export class GeminiDecisionModel extends DecisionModel {
    */
   constructor(options: GeminiDecisionModelOptions = {}) {
     super()
-    const providerConfig = resolveSystemOneProviderConfig(options, {
+    this._providerConfig = resolveSystemOneProviderConfig(options, {
       className: 'GeminiDecisionModel',
       providerName: 'gemini',
       endpoint: GEMINI_ENDPOINT,
@@ -71,15 +72,8 @@ export class GeminiDecisionModel extends DecisionModel {
       defaultMinConfidence: GEMINI_DEFAULT_MIN_CONFIDENCE,
       maxQuestions: GEMINI_MAX_QUESTIONS,
       probabilitySumTolerance: GEMINI_PROBABILITY_SUM_TOLERANCE,
+      buildRequestBody: geminiRequestBody,
     })
-    this._providerConfig = {
-      ...providerConfig,
-      buildRequestBody: (state, questions): Record<string, unknown> => ({
-        model: providerConfig.modelId,
-        input: toWireStateText(state),
-        questions: toWireQuestions(questions, ''),
-      }),
-    }
   }
 
   protected _ask<const Q extends Record<string, Question>>(
@@ -98,6 +92,12 @@ export class GeminiDecisionModel extends DecisionModel {
     )
   }
 }
+
+const geminiRequestBody: RequestBodyBuilder = (state, questions, modelId) => ({
+  ...(modelId !== undefined && { model: modelId }),
+  input: toWireStateText(state),
+  questions: toWireQuestions(questions, ''),
+})
 
 /**
  * Maps a Gemini response to the System One shape: Gemini does not echo the model and reports usage as
