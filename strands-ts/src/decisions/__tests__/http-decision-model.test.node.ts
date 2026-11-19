@@ -167,24 +167,26 @@ describe('HttpDecisionModel', () => {
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
         auth,
-        fetch: fakeFetch({ message: 'Forbidden' }, { status: 403 }),
+        // What a Lambda Function URL answers. The shared transport reads only a lowercase `message`, so the
+        // server text is not shown and the hint is what tells the user what to check.
+        fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }),
       })
 
       await expectModelError(
         decision.ask('state', QUESTIONS),
-        `http decision request failed with HTTP 403: Forbidden | ${hint}, and for sigv4 the IAM permission, region and service`
+        `http decision request failed with HTTP 403 | ${hint}, and for sigv4 the IAM permission, region and service`
       )
     })
 
     it('adds no hint without auth, or for other statuses', async () => {
-      const unauthenticated = create({ fetch: fakeFetch({ message: 'Forbidden' }, { status: 403 }) })
+      const unauthenticated = create({ fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }) })
       const serverError = create({
         endpoint: LAMBDA_ENDPOINT,
         auth: { type: 'bearer', token: 't' },
         fetch: fakeFetch({ message: 'boom' }, { status: 500 }),
       })
 
-      await expect(unauthenticated.ask('state', QUESTIONS)).rejects.toThrow(/HTTP 403: Forbidden$/)
+      await expectModelError(unauthenticated.ask('state', QUESTIONS), 'http decision request failed with HTTP 403')
       await expect(serverError.ask('state', QUESTIONS)).rejects.toThrow(/HTTP 500: boom$/)
     })
 
@@ -195,6 +197,13 @@ describe('HttpDecisionModel', () => {
       await expect(throttled.ask('state', QUESTIONS)).rejects.toBeInstanceOf(ModelThrottledError)
       await expect(forbidden.ask('state', QUESTIONS)).rejects.toThrow('http decision request failed with HTTP 403')
       await expect(forbidden.ask('state', QUESTIONS)).rejects.toBeInstanceOf(ModelError)
+    })
+
+    it.each([204, 205])('reports an empty HTTP %s answer as an invalid response', async (status) => {
+      const fetch = vi.fn(async () => new Response(null, { status })) as unknown as typeof globalThis.fetch
+      const decision = create({ fetch })
+
+      await expectModelError(decision.ask('state', QUESTIONS), 'decision provider response must be an object')
     })
 
     it('reports a connection that drops mid-body as a model error', async () => {

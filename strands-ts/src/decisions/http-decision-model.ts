@@ -173,8 +173,13 @@ export class HttpDecisionModel extends DecisionModel {
       }
       // Read the body here, under the timeout, so a slow or dropped body fails as a request error. The shared
       // transport reads the returned copy.
+      // A response may have no body, and a 204 or 205 cannot be rebuilt with one, even an empty one.
       const text = await response.text()
-      return new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers })
+      return new Response(text === '' ? null : text, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      })
     }
 
     this._providerConfig = {
