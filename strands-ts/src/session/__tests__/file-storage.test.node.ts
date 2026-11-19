@@ -1,7 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { fileURLToPath } from 'url'
+import { promisify } from 'util'
+import ts from 'typescript'
 import { FileStorage } from '../file-storage.js'
 import { SessionError } from '../../errors.js'
 import {
@@ -168,6 +172,45 @@ describe('FileStorage', () => {
       )
 
       expect(await storage.loadSnapshot({ location })).toEqual(snapshots[1])
+    })
+
+    // Vitest caches imported modules, so a loader hook only delays `import()` in compiled code run by Node.
+    it('keeps call order when a module loader hook delays imports', { timeout: 60_000 }, async () => {
+      const source = fileURLToPath(new URL('../..', import.meta.url))
+      ts.createProgram([join(source, 'session', 'file-storage.ts')], {
+        module: ts.ModuleKind.NodeNext,
+        target: ts.ScriptTarget.ES2022,
+        rootDir: source,
+        outDir: testDir,
+        noLib: true,
+        types: [],
+      }).emit()
+      await fs.writeFile(join(testDir, 'package.json'), '{ "type": "module" }')
+      const hook = `export async function resolve(specifier, context, next) {
+        await new Promise((done) => setTimeout(done, Math.random() * 3))
+        return next(specifier, context)
+      }`
+      await fs.writeFile(
+        join(testDir, 'overlapping-saves.js'),
+        `import { register } from 'node:module'
+        import { FileStorage } from './session/file-storage.js'
+
+        register('data:text/javascript,' + encodeURIComponent(${JSON.stringify(hook)}))
+        const location = { sessionId: 'test-session', scope: 'agent', scopeId: 'test-agent' }
+        let stale = 0
+        for (let round = 0; round < 50; round++) {
+          const storage = new FileStorage('round-' + round)
+          await Promise.all(
+            [1, 2, 3].map((call) => storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: { call } }))
+          )
+          if ((await storage.loadSnapshot({ location })).call !== 3) stale++
+        }
+        console.log(stale)`
+      )
+
+      const { stdout } = await promisify(execFile)(process.execPath, ['overlapping-saves.js'], { cwd: testDir })
+
+      expect(stdout.trim()).toBe('0')
     })
 
     it('persists complete JSON for many overlapping saves on the real filesystem', async () => {

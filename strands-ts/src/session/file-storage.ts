@@ -11,6 +11,11 @@ const SNAPSHOT_REGEX = /snapshot_([\w-]+)\.json$/
 const SCHEMA_VERSION = '1.0'
 // Windows may reject simultaneous replacements of the same destination.
 const PENDING_RENAMES = new Map<string, Promise<void>>()
+// Saves share these: under a module loader hook each `import()` settles after a varying number of
+// ticks, which would let overlapping saves reach the rename queue out of call order.
+let fsModule: Promise<typeof import('fs')> | undefined
+let pathModule: Promise<typeof import('path')> | undefined
+let cryptoModule: Promise<typeof import('crypto')> | undefined
 
 /**
  * File-based implementation of SnapshotStorage.
@@ -43,7 +48,7 @@ export class FileStorage implements SnapshotStorage {
    * Validates sessionId, scope, and scopeId before constructing the path.
    */
   private async _getPath(location: SnapshotLocation, filename: string): Promise<string> {
-    const { join } = await import('path')
+    const { join } = await (pathModule ??= import('path'))
     validateIdentifier(location.sessionId)
     validateScope(location.scope)
     validateIdentifier(location.scopeId)
@@ -172,13 +177,13 @@ export class FileStorage implements SnapshotStorage {
   private async _writeJSON(path: string, data: unknown): Promise<void> {
     let tmpPath: string | undefined
     try {
-      const { promises: fs } = await import('fs')
-      const { dirname, resolve } = await import('path')
-      const { randomUUID } = await import('crypto')
+      const { promises: fs } = await (fsModule ??= import('fs'))
+      const { dirname, resolve } = await (pathModule ??= import('path'))
+      const { randomUUID } = await (cryptoModule ??= import('crypto'))
       const uniquePath = `${path}.${randomUUID()}.tmp`
       tmpPath = uniquePath
       const target = resolve(path)
-      // Only the imports above are awaited before this save takes its place in the queue, which keeps call order.
+      // Only the shared imports are awaited before this save takes its place in the queue, which keeps call order.
       const written = fs
         .mkdir(dirname(path), { recursive: true })
         .then(() => fs.writeFile(uniquePath, JSON.stringify(data, null, 2), 'utf8'))
