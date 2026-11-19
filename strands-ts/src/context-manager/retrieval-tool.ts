@@ -50,7 +50,7 @@ const CHARS_PER_TOKEN = 4
  */
 const DEFAULT_QUERY_TOKENS = 2_400
 
-/** Lines of context kept on either side of a match, so `query` and `pattern` return the same shape. */
+/** Default lines of context kept on either side of a match, shared by `query` and `pattern`. */
 const CONTEXT_LINES = 5
 
 const retrievalInputSchema = z.object({
@@ -201,7 +201,9 @@ function searchEntries(entries: ArchiveEntry[], input: z.infer<typeof retrievalI
   const text = joinText(entries.map(entryText))
   // Actionable rather than terminal: the content is there, the search arguments are what cannot apply.
   if (!text) throw new Error('cannot search non-text content. Omit query/pattern/line_range to retrieve full content.')
-  if (input.query) return searchByQuery(text, input.query, input.line_range, maxChars)
+  if (input.query) {
+    return searchByQuery(text, input.query, input.line_range, input.context_lines ?? CONTEXT_LINES, maxChars)
+  }
   return searchContent(
     text,
     { pattern: input.pattern, line_range: input.line_range, context_lines: input.context_lines ?? CONTEXT_LINES },
@@ -228,6 +230,7 @@ function searchByQuery(
   text: string,
   query: string,
   lineRange: { start: number; end: number } | undefined,
+  contextLines: number,
   maxChars: number
 ): string {
   const lines = text.split('\n')
@@ -237,7 +240,7 @@ function searchByQuery(
   const scopeLabel = lineRange ? ` in lines ${lineRange.start}-${scope.end + 1}` : ''
   const label = query.replace(/[\n\r/\]]/g, ' ').slice(0, 50)
 
-  const ranked = rankSections(lines, query, scope.start, scope.end)
+  const ranked = rankSections(lines, query, scope, contextLines)
   if (ranked.length === 0) return `No relevant content found for query '${label}'${scopeLabel}.`
 
   const header = (shown: number): string => {
@@ -280,14 +283,14 @@ function resolveScope(
  * Only the scope is this module's: the lines outside it are not handed over, so a section can
  * neither be found in nor reach past them.
  */
-function rankSections(lines: string[], query: string, scopeStart: number, scopeEnd: number): LineWindow[] {
+function rankSections(lines: string[], query: string, scope: LineWindow, contextLines: number): LineWindow[] {
   const queryTokens = queryTokensOf(query)
   const sections = matchingSections(
-    lines.slice(scopeStart, scopeEnd + 1),
+    lines.slice(scope.start, scope.end + 1),
     (text) => tokenOverlapScore(queryTokens, text),
-    CONTEXT_LINES
+    contextLines
   )
-  return sections.map((section) => ({ start: scopeStart + section.start, end: scopeStart + section.end }))
+  return sections.map((section) => ({ start: scope.start + section.start, end: scope.start + section.end }))
 }
 
 /**
