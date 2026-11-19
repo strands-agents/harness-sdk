@@ -100,6 +100,9 @@ export class BackgroundTasks implements Plugin {
   }
 
   initAgent(agent: LocalAgent): void {
+    if (agent.toolRegistry.get(this._manageTool.name)) {
+      throw new Error(`manageToolName=<${this._manageTool.name}> | tool already registered`)
+    }
     this._agent = agent as Agent
     for (const tool of agent.toolRegistry.list()) {
       const policy = this._policyFor(tool)

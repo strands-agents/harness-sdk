@@ -259,6 +259,21 @@ describe('BackgroundTasks', () => {
     }
   })
 
+  it.each([
+    { backgroundTasks: true, toolName: 'strands_manage_background_task' },
+    { backgroundTasks: { manageToolName: 'lookup' }, toolName: 'lookup' },
+  ])('rejects the management tool name $toolName when another tool has it', async ({ backgroundTasks, toolName }) => {
+    const existing = tool({
+      name: toolName,
+      description: 'Already registered.',
+      inputSchema: z.object({}),
+      callback: () => 'original',
+    })
+    const agent = new Agent({ model: new MockMessageModel(), tools: [existing], backgroundTasks, printer: false })
+
+    await expect(agent.initialize()).rejects.toThrow(`manageToolName=<${toolName}> | tool already registered`)
+  })
+
   it('rejects conflicting tool policies', () => {
     const work = tool({
       name: 'work',
