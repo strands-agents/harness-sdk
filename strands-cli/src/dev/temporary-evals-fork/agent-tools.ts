@@ -28,7 +28,7 @@ import { temporaryCreateExperimentSkill } from './create-experiment-skill.js'
 import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
 import { TEMPORARY_KNOB_NAMES } from './knobs.js'
-import { checkTemporaryObjective, temporaryObjectiveFromRequest } from './objective.js'
+import { checkTemporaryObjective, TEMPORARY_USAGE_METRICS, temporaryObjectiveFromRequest } from './objective.js'
 import {
   TEMPORARY_DECISION_CHOICES,
   TEMPORARY_ITERATION_CHOICES,
@@ -652,13 +652,30 @@ const planTool = (sessions: Sessions): DevChatTool => ({
       defined({
         experiment: { name: plan.experiment.name, cases: plan.experiment.caseCount },
         knobs: plan.knobs.map(({ key, label, detail, unavailable, enabled }) =>
-          defined({ key, label, detail, unavailable, onByDefault: enabled === true ? true : undefined })
+          defined({
+            key,
+            label,
+            detail: detail || undefined,
+            unavailable: unavailable || undefined,
+            onByDefault: enabled === true ? true : undefined,
+          })
         ),
         metrics: plan.metrics,
         objective: defined({
-          current: plan.objective.expression || 'the mean of every evaluator',
+          current: plan.objective.expression || undefined,
           constraints: plan.objective.constraints || undefined,
-          presets: plan.objectivePresets.map(({ label }) => label),
+          presets: plan.objectivePresets.map(({ label, objective }) =>
+            defined({
+              label,
+              objective: objective.expression || undefined,
+              constraints: objective.constraints || undefined,
+            })
+          ),
+          usageMetrics: TEMPORARY_USAGE_METRICS,
+          notation:
+            'Maximize(X), Minimize(X), WeightedSum(Maximize(X), Minimize(Y, scale=1000)), or ' +
+            'Pareto(Maximize(X), Minimize(Y, scale=1000)). X is an evaluator of the experiment or a usage metric. ' +
+            'An empty objective maximizes the mean of every evaluator.',
         }),
         cases: { split: plan.split, choices: plan.splitChoices, testShare: plan.testShare },
         budget: {

@@ -92,7 +92,17 @@ const plan = (): OptimizePlan => ({
   experiment: REFUNDS,
   knobs: KNOBS,
   objective: { expression: '', constraints: '' },
-  objectivePresets: [{ label: 'the mean of every evaluator', objective: { expression: '', constraints: '' } }],
+  objectivePresets: [
+    { label: 'the mean of every evaluator', objective: { expression: '', constraints: '' } },
+    {
+      label: 'fewer tokens, each evaluator at least 0.8',
+      objective: { expression: 'Minimize(tokens)', constraints: 'OutputEvaluator >= 0.8' },
+    },
+    {
+      label: 'the best trade-offs of the evaluators and tokens',
+      objective: { expression: 'Pareto(Maximize(OutputEvaluator), Minimize(tokens, scale=1000))', constraints: '' },
+    },
+  ],
   metrics: ['OutputEvaluator', 'tokens'],
   split: { train: 1, validation: 1, test: 0 },
   splitChoices: [{ train: 1, validation: 1, test: 0 }],
@@ -706,6 +716,44 @@ describe('TEMPORARY dev chat part', () => {
       'There is no experiment named billing. Saved experiments: refunds.'
     )
     expect(sessions.test.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldReportTheKnobsChoicesAndObjectivePresetsWhenItPlans', async () => {
+    const { tool } = setup()
+
+    const planned = JSON.parse(await tool('strands_dev_optimization_plan').run({ experiment: 'refunds' }))
+
+    expect(planned.knobs).toEqual([
+      { key: 'instructions', label: 'instructions', onByDefault: true },
+      { key: 'effort', label: 'effort' },
+      { key: 'tools', label: 'tool descriptions', unavailable: 'not yet' },
+    ])
+    expect(planned.objective.presets).toEqual([
+      { label: 'the mean of every evaluator' },
+      {
+        label: 'fewer tokens, each evaluator at least 0.8',
+        objective: 'Minimize(tokens)',
+        constraints: 'OutputEvaluator >= 0.8',
+      },
+      {
+        label: 'the best trade-offs of the evaluators and tokens',
+        objective: 'Pareto(Maximize(OutputEvaluator), Minimize(tokens, scale=1000))',
+      },
+    ])
+    expect(planned.objective.usageMetrics).toContain('tokens')
+    expect(planned.objective.notation).toContain('Pareto(Maximize(X), Minimize(Y, scale=1000))')
+    expect(planned.budget.iterations.value).toBe(4)
+    expect(planned.budget.iterations.choices.length).toBeGreaterThan(1)
+    expect(planned.estimate.rollouts).toBeDefined()
+  })
+
+  it('shouldRefuseToPlanWhileAnOptimizationIsRunning', async () => {
+    const { tool, optimize } = setup()
+    optimize.set({ step: 'running', run: 'run-1', experiment: 'refunds', progress: { run: 'run-1' } } as never)
+
+    await expect(tool('strands_dev_optimization_plan').run({ experiment: 'refunds' })).rejects.toThrow(
+      'is still running'
+    )
   })
 
   it('shouldWaitForItsOwnRunWhenTheDeveloperGoesBackToTheOptimizeList', async () => {

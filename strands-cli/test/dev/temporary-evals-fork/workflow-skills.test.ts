@@ -207,6 +207,20 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain("put the plan's onByDefault knobs in selected")
   })
 
+  it('shouldAlwaysAskWhatTheRunOptimizes', () => {
+    expect(instructions).toContain('Ask what the run optimizes, every time')
+    expect(instructions).toContain('ask selectOne, key "objective"')
+    expect(instructions).toContain('maximizes, minimizes, weights a sum, or takes the Pareto trade-offs')
+    expect(instructions).toContain('Add one last option, "something else"')
+    expect(instructions).toContain('The knobs and the objective are never among the ones you skip')
+  })
+
+  it('shouldAskForConstraintsWhenTheGoalMinimizesUsage', () => {
+    expect(instructions).toContain('Ask the constraints when the chosen objective minimizes a usage metric')
+    expect(instructions).toContain('a cheaper agent that answers worse is not an improvement')
+    expect(instructions).toContain('Correctness >= 0.8')
+  })
+
   it('shouldStopAskingOnceNothingIsOpen', () => {
     expect(instructions).toContain('stop asking once nothing is open')
     expect(instructions).toContain('they are not the paid-run approval')
