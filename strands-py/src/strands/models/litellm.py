@@ -369,6 +369,8 @@ class LiteLLMModel(OpenAIModel):
         # LiteLLM versions that do not know the parameter forward it without validation.
         if "prompt_cache_key" not in litellm.OPENAI_CHAT_COMPLETION_PARAMS:
             return True
+        if "prompt_cache_key" in (self.client_args.get("allowed_openai_params") or []):
+            return True
 
         supported_params = litellm.get_supported_openai_params(
             model=self.get_config()["model_id"],
