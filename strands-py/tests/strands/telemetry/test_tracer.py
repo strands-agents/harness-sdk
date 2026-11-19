@@ -533,13 +533,13 @@ def test_end_model_invoke_span_latest_conventions_maps_reasoning_text_to_reasoni
     assert "sig-secret" not in output_messages
 
 
-def test_end_model_invoke_span_latest_conventions_does_not_export_redacted_reasoning(mock_span, monkeypatch):
+@pytest.mark.parametrize("reasoning_content", [{"redactedContent": b"\x01\x02\x03"}, {"reasoningText": None}])
+def test_end_model_invoke_span_latest_conventions_does_not_export_redacted_reasoning(
+    mock_span, monkeypatch, reasoning_content
+):
     monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
     tracer = Tracer()
-    message = {
-        "role": "assistant",
-        "content": [{"reasoningContent": {"redactedContent": b"\x01\x02\x03"}}, {"text": "done"}],
-    }
+    message = {"role": "assistant", "content": [{"reasoningContent": reasoning_content}, {"text": "done"}]}
 
     usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
     tracer.end_model_invoke_span(mock_span, message, usage, Metrics(latencyMs=20), "end_turn")
