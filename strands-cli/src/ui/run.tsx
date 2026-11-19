@@ -30,15 +30,9 @@ export interface StartupScreen {
   chooseModelProvider?(): Promise<boolean>
 }
 
-export interface WorkspaceChange {
-  apply(): Promise<void>
-  rollback(): Promise<void>
-  finish(): Promise<void>
-}
-
 interface RunInkChatOptions {
   exitAfterInitialization?: boolean
-  onWorkspaceAction?: (action: WorkspaceAction, screen: StartupScreen) => Promise<WorkspaceChange | undefined>
+  onWorkspaceAction?: (action: WorkspaceAction, screen: StartupScreen) => Promise<void>
   prepare?: (screen: StartupScreen) => Promise<boolean>
   recoverStartup?: (error: unknown, screen: StartupScreen) => Promise<'retry' | 'back' | 'exit'>
   firstRequest?: string
@@ -178,16 +172,12 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   const changeWorkspace = async (action: WorkspaceAction): Promise<void> => {
     const previous = controller
     if (!previous || !options.onWorkspaceAction) return
-    let disposed = false
-    let change: WorkspaceChange | undefined
-    let conversations: ChatConversations | undefined
-    let pendingController: ChatControllerApi | undefined
     const resumeVoice = previous.pauseVoiceInput?.()
     controller = undefined
     stopWatchingTitle()
     renderChat()
     try {
-      change = await options.onWorkspaceAction(action, {
+      await options.onWorkspaceAction(action, {
         signal: startupAbort.signal,
         show: (content, status): void => {
           startupContent = content
@@ -207,55 +197,16 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
           }
         },
       })
-      if (!change || startupAbort.signal.aborted) {
-        if (change) await change.rollback()
-        controller = previous
-        return
-      }
-      conversations = await previous.captureConversations?.()
-      await previous.dispose()
-      disposed = true
-      controller = undefined
-      await change.apply()
-      const replacement = await initializeController()
-      pendingController = replacement
-      startupAbort.signal.throwIfAborted()
-      controller = replacement
-      try {
-        await change.finish()
-      } catch (error) {
-        replacement.showError?.('Workspace backup retained', error instanceof Error ? error.message : String(error))
-      }
-      startTasks.push(replacement.start())
-      pendingController = undefined
     } catch (error) {
-      if (pendingController) await pendingController.dispose()
-      let message = error instanceof Error ? error.message : String(error)
-      if (change && disposed) {
-        try {
-          await change.rollback()
-          if (!startupAbort.signal.aborted) {
-            controller = await initializeController(undefined, conversations)
-            startTasks.push(controller.start())
-          }
-        } catch (restoreError) {
-          message += `\nRestore failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`
-        }
-      } else {
-        controller = previous
-      }
-      controller?.showError?.('Workspace unchanged', message)
-      if (!controller && !startupAbort.signal.aborted) {
-        inkOutputs.stderr.write(`error: ${message}\n`)
-        closeForExit(1)
-      }
+      previous.showError?.('Workspace unchanged', error instanceof Error ? error.message : String(error))
     } finally {
+      controller = previous
       startupContent = undefined
       startupStatus = undefined
       replacementTask = undefined
-      if (!disposed) resumeVoice?.()
-      if (controller && !cleanedUp) {
-        watchTerminalTitle(controller)
+      resumeVoice?.()
+      if (!cleanedUp) {
+        watchTerminalTitle(previous)
         renderChat()
       }
     }

@@ -26,7 +26,7 @@ import { createDiffPreview } from './file-changes.js'
 import { EXA_WEB_SEARCH_WARNING, builtinToolChoices, withBuiltinToolChoice } from './tools.js'
 import { type ChatBuiltinToolsRuntime, type ChatDiffPreview } from './types.js'
 
-export type WorkspaceAction = 'edit' | 'import'
+export type WorkspaceAction = 'edit'
 
 export type SetupChange = {
   reloadedFiles?: readonly string[]

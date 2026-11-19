@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { runInkChat } from '../../src/ui/run.js'
-import { ChatController, type ChatControllerApi } from '../../src/ui/chat/controller.js'
+import { ChatController } from '../../src/ui/chat/controller.js'
 import type { RequestSetup } from '../../src/agent/configuration.js'
-import type { ChatConversations } from '../../src/agent/types.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
 type RenderApp = NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['renderApp']>
+type WorkspaceActionHandler = NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['onWorkspaceAction']>
 
 const createController = (name: string): ChatController =>
   new ChatController(idleBackend({ name }), {
@@ -21,118 +21,69 @@ const createController = (name: string): ChatController =>
     },
   })
 
-describe('workspace replacement lifecycle', () => {
-  it('shouldStopTheOldAgentBeforeApplyingAndStartAFreshAgentAfterSuccess', async () => {
-    const input = ttyInput()
-    const output = ttyOutput(120, 35)
-    const previous = createController('Old agent')
-    const replacement = createController('New agent')
-    const dispose = vi.spyOn(previous, 'dispose')
-    const finish = vi.fn(async () => undefined)
-    const rollback = vi.fn(async () => undefined)
-    const apply = vi.fn(async () => {
-      expect(dispose).toHaveBeenCalledOnce()
-    })
-    let request: RequestSetup | undefined
-    const factory = vi.fn(
-      async (
-        _signal: AbortSignal,
-        next: RequestSetup,
-        conversations?: ChatConversations
-      ): Promise<ChatControllerApi> => {
-        request = next
-        expect(conversations).toBeUndefined()
-        return factory.mock.calls.length === 1 ? previous : replacement
-      }
-    )
-    const running = runInkChat(factory, {
-      input,
-      output,
-      errorOutput: output,
-      intro: false,
-      config: CliConfigStore.memory(),
-      renderApp: render as RenderApp,
-      onWorkspaceAction: async () => ({ apply, rollback, finish }),
-    })
-    try {
+const runWithWorkspaceAction = (controller: ChatController, action: WorkspaceActionHandler) => {
+  const input = ttyInput()
+  const output = ttyOutput(120, 35)
+  let request: RequestSetup | undefined
+  const factory = vi.fn(async (_signal: AbortSignal, next: RequestSetup) => {
+    request = next
+    return controller
+  })
+  const running = runInkChat(factory, {
+    input,
+    output,
+    errorOutput: output,
+    intro: false,
+    config: CliConfigStore.memory(),
+    renderApp: render as RenderApp,
+    onWorkspaceAction: action,
+  })
+  return {
+    factory,
+    requested: async (): Promise<RequestSetup> => {
       await vi.waitFor(() => expect(request).toBeDefined())
-      request!({ workspaceAction: 'import' })
-      await vi.waitFor(() => expect(finish).toHaveBeenCalledOnce())
-      expect(factory).toHaveBeenCalledTimes(2)
-      expect(rollback).not.toHaveBeenCalled()
-    } finally {
+      return request!
+    },
+    stop: async (): Promise<void> => {
       input.write('\u0003')
       await running
-    }
-  })
+    },
+  }
+}
 
-  it('shouldKeepTheWorkingSessionWhenTheUserCancels', async () => {
-    const input = ttyInput()
-    const output = ttyOutput(120, 35)
-    const previous = createController('Old agent')
-    const dispose = vi.spyOn(previous, 'dispose')
-    let request: RequestSetup | undefined
-    const action = vi.fn(async () => undefined)
-    const factory = vi.fn(async (_signal: AbortSignal, next: RequestSetup) => {
-      request = next
-      return previous
-    })
-    const running = runInkChat(factory, {
-      input,
-      output,
-      errorOutput: output,
-      intro: false,
-      config: CliConfigStore.memory(),
-      renderApp: render as RenderApp,
-      onWorkspaceAction: action,
-    })
+describe('workspace actions', () => {
+  it('shouldKeepTheWorkingSessionWhenTheWorkspaceActionEnds', async () => {
+    const working = createController('Working agent')
+    const dispose = vi.spyOn(working, 'dispose')
+    const action = vi.fn<WorkspaceActionHandler>(async () => undefined)
+    const run = runWithWorkspaceAction(working, action)
     try {
-      await vi.waitFor(() => expect(request).toBeDefined())
-      request!({ workspaceAction: 'import' })
+      ;(await run.requested())({ workspaceAction: 'edit' })
+
       await vi.waitFor(() => expect(action).toHaveBeenCalledOnce())
+      expect(action.mock.calls[0]![0]).toBe('edit')
       expect(dispose).not.toHaveBeenCalled()
-      expect(factory).toHaveBeenCalledOnce()
+      expect(run.factory).toHaveBeenCalledOnce()
     } finally {
-      input.write('\u0003')
-      await running
+      await run.stop()
     }
   })
 
-  it('shouldRestoreTheOldWorkspaceWhenReplacementStartupFails', async () => {
-    const input = ttyInput()
-    const output = ttyOutput(120, 35)
-    const previous = createController('Old agent')
-    const restored = createController('Restored agent')
-    const show = vi.spyOn(restored, 'showError')
-    const finish = vi.fn(async () => undefined)
-    const rollback = vi.fn(async () => undefined)
-    let request: RequestSetup | undefined
-    let attempt = 0
-    const factory = vi.fn(async (_signal: AbortSignal, next: RequestSetup) => {
-      request = next
-      attempt++
-      if (attempt === 2) throw new Error('Replacement could not load')
-      return attempt === 1 ? previous : restored
-    })
-    const running = runInkChat(factory, {
-      input,
-      output,
-      errorOutput: output,
-      intro: false,
-      config: CliConfigStore.memory(),
-      renderApp: render as RenderApp,
-      onWorkspaceAction: async () => ({ apply: async () => undefined, rollback, finish }),
+  it('shouldShowTheErrorInTheWorkingSessionWhenTheWorkspaceActionFails', async () => {
+    const working = createController('Working agent')
+    const show = vi.spyOn(working, 'showError')
+    const run = runWithWorkspaceAction(working, async () => {
+      throw new Error('Workspace editing is unavailable in this terminal.')
     })
     try {
-      await vi.waitFor(() => expect(request).toBeDefined())
-      request!({ workspaceAction: 'import' })
-      await vi.waitFor(() => expect(show).toHaveBeenCalledWith('Workspace unchanged', 'Replacement could not load'))
-      expect(rollback).toHaveBeenCalledOnce()
-      expect(finish).not.toHaveBeenCalled()
-      expect(factory).toHaveBeenCalledTimes(3)
+      ;(await run.requested())({ workspaceAction: 'edit' })
+
+      await vi.waitFor(() =>
+        expect(show).toHaveBeenCalledWith('Workspace unchanged', 'Workspace editing is unavailable in this terminal.')
+      )
+      expect(run.factory).toHaveBeenCalledOnce()
     } finally {
-      input.write('\u0003')
-      await running
+      await run.stop()
     }
   })
 })

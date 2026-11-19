@@ -42,11 +42,6 @@ export interface PreparedDevRun {
   keep(): Promise<void>
 }
 
-export interface LeavingWorkspace {
-  workspace: DevWorkspace & { directory: string }
-  entrypoints: readonly string[]
-}
-
 type Holds = (workspace: DevWorkspace, choice: HarnessChoice) => boolean
 
 interface CreationRequest {
@@ -88,7 +83,6 @@ const createRequested = async ({
     deferDependencies,
     replace: false,
     holds: holdsChoiceFor(base),
-    open: undefined,
   }
   const directory = destination ?? base?.workspace
   if (!directory) return createInLaunchFolder(choice, placement)
@@ -103,19 +97,14 @@ interface FolderDefaults {
 
 const folderDefaults = async (
   cliFolder: string,
-  {
-    cwd,
-    destination,
-    holds,
-    open,
-  }: { cwd: string; destination: string | undefined; holds: Holds; open: string | undefined }
+  { cwd, destination, holds }: { cwd: string; destination: string | undefined; holds: Holds }
 ): Promise<FolderDefaults> => {
   if (destination)
     return {
-      folderFor: await folderSuggestion(destination, holds, open),
+      folderFor: await folderSuggestion(destination, holds),
       suggestFor: async (): Promise<void> => {},
     }
-  const cli = await folderSuggestion(cliFolder, holds, open)
+  const cli = await folderSuggestion(cliFolder, holds)
   const found = new Map<string, FolderSuggestion>()
   return {
     folderFor: (choice) =>
@@ -130,7 +119,7 @@ const folderDefaults = async (
     newProject: projectFolder(cwd),
     suggestFor: async (harness): Promise<void> => {
       const choice = { kind: 'discovered', harness } as const
-      const suggestion = await folderSuggestion(join(dirname(harness.entrypoint), WORKSPACE_FOLDER), holds, open)
+      const suggestion = await folderSuggestion(join(dirname(harness.entrypoint), WORKSPACE_FOLDER), holds)
       found.set(harness.entrypoint, suggestion(choice))
     },
   }
@@ -143,11 +132,7 @@ interface WorkspaceSelection {
   reselecting: boolean
   warning: string | undefined
   deferDependencies: boolean
-  leaving: LeavingWorkspace | undefined
 }
-
-const offersBaseCli = (base: BaseHarnessSelection, leaving: LeavingWorkspace | undefined): boolean =>
-  !leaving || (!base.holds(leaving.workspace) && !leaving.entrypoints.some(base.runs))
 
 const workspaceSettings = (directory: string): ConfigLayer => ({
   source: join(directory, '.config'),
@@ -169,7 +154,7 @@ const pickerUnavailable = (init: boolean): DevFailure =>
 
 const selectWorkspace = async (
   args: ParsedArgs,
-  { snapshot, claims, screen, reselecting, warning, deferDependencies, leaving }: WorkspaceSelection
+  { snapshot, claims, screen, reselecting, warning, deferDependencies }: WorkspaceSelection
 ): Promise<DevWorkspace | undefined> => {
   const dev = args.dev!
   const cwd = process.cwd()
@@ -184,15 +169,11 @@ const selectWorkspace = async (
   if (destination && !dev.init && !reselecting)
     throw new Error(`No dev workspace at ${destination}. Run strands dev init --workspace <path> --create cli.`)
   if (!screen) throw pickerUnavailable(dev.init)
-  const base = await baseHarnessSelection(snapshot, cwd, destination).catch((error: unknown) => {
-    if (leaving) return undefined
-    throw error
-  })
+  const base = await baseHarnessSelection(snapshot, cwd, destination)
   const holds = holdsChoiceFor(base)
-  const open = leaving?.workspace.directory
-  const cliFolder = base?.workspace ?? strandsUserPath(WORKSPACE_FOLDER)
-  const { suggestFor, ...folders } = await folderDefaults(cliFolder, { cwd, destination, holds, open })
-  const excluded = [...(base?.excludedEntrypoints ?? []), ...(leaving?.entrypoints ?? [])]
+  const cliFolder = base.workspace ?? strandsUserPath(WORKSPACE_FOLDER)
+  const { suggestFor, ...folders } = await folderDefaults(cliFolder, { cwd, destination, holds })
+  const excluded = base.excludedEntrypoints
   const notice = [
     warning,
     launch &&
@@ -204,7 +185,7 @@ const selectWorkspace = async (
   const { chooseHarness } = await import('./picker.js')
   return chooseHarness(
     {
-      ...(base && offersBaseCli(base, leaving) ? { cli: { name: base.name, path: base.source } } : {}),
+      cli: { name: base.name, path: base.source },
       harnesses: [],
       ...(notice ? { warning: notice } : {}),
       modelNotice: (language) => newProjectModelNotice(snapshot, language),
@@ -222,7 +203,7 @@ const selectWorkspace = async (
     async (choice, signal, chosen, replace = false): Promise<DevWorkspace> =>
       undoOnFailure(claims, async () => {
         signal.throwIfAborted()
-        const placement = { cwd, snapshot, claims, signal, deferDependencies, replace, holds, open }
+        const placement = { cwd, snapshot, claims, signal, deferDependencies, replace, holds }
         const folder = chosen ?? folders.folderFor(choice)?.path
         if (folder === undefined) return createInLaunchFolder(choice, placement)
         const directory = await workspaceFolder(resolve(cwd, expandHome(folder)))
@@ -241,7 +222,6 @@ interface HarnessPlacement {
   deferDependencies: boolean
   replace: boolean
   holds: Holds
-  open: string | undefined
 }
 
 const folderUnavailable = (directory: string, reason: string): DevFailure =>
@@ -302,21 +282,12 @@ const folderHolder = async (folder: string): Promise<FolderHolder | undefined> =
 const launchHolder = async (cwd: string, destination: string | undefined): Promise<FolderHolder | undefined> =>
   destination ? folderHolder(destination) : ((await folderHolder(cwd)) ?? folderHolder(join(cwd, WORKSPACE_FOLDER)))
 
-const holdsOpenWorkspace = (folder: string, open: string | undefined): boolean =>
-  open !== undefined && containsPath(folder, open)
-
-const folderSuggestion = async (
-  path: string,
-  holds: Holds,
-  open: string | undefined
-): Promise<(choice: HarnessChoice) => FolderSuggestion> => {
+const folderSuggestion = async (path: string, holds: Holds): Promise<(choice: HarnessChoice) => FolderSuggestion> => {
   const holder = await folderHolder(path).catch(() => undefined)
   return (choice) => {
     if (!holder) return { path, detected: false }
     if ('workspace' in holder && holds(holder.workspace, choice)) return { path, detected: true }
-    return holdsOpenWorkspace(path, open)
-      ? { path, detected: false, open: true }
-      : { path, detected: false, occupiedBy: holder.name }
+    return { path, detected: false, occupiedBy: holder.name }
   }
 }
 
@@ -357,13 +328,8 @@ const folderState = async (directory: string, choice: HarnessChoice, holds: Hold
 const freeOccupiedFolder = async (
   directory: string,
   holder: string,
-  { claims, replace, open, project }: Pick<HarnessPlacement, 'claims' | 'replace' | 'open'> & { project?: string }
+  { claims, replace, project }: Pick<HarnessPlacement, 'claims' | 'replace'> & { project?: string }
 ): Promise<void> => {
-  if (holdsOpenWorkspace(directory, open))
-    throw folderUnavailable(
-      directory,
-      'It holds the open workspace. To replace it, restart strands dev and select the agent there.'
-    )
   if (!replace) throw new WorkspaceFolderInUse(directory, holder)
   await claims.replace(directory, project && containsPath(project, directory) ? dirname(project) : undefined)
 }
@@ -445,7 +411,6 @@ const placeHarness = async (choice: HarnessChoice, placement: HarnessPlacement):
       claims,
       folder: directory,
       replace: placement.replace,
-      open: placement.open,
     })
   return createInFolder(choice, placement)
 }
@@ -462,12 +427,7 @@ const withEntrypoint = (existing: DevWorkspace, project: ImportedAgentProject): 
 
 const openExplicitHarness = async (
   path: string,
-  {
-    claims,
-    folder,
-    replace = false,
-    open,
-  }: { claims: FolderClaims; folder?: string | undefined; replace?: boolean; open?: string | undefined }
+  { claims, folder, replace = false }: { claims: FolderClaims; folder?: string | undefined; replace?: boolean }
 ): Promise<DevWorkspace> => {
   const details = await lstat(path)
   if (details.isSymbolicLink()) throw new Error('Select a real harness path, not a symbolic link.')
@@ -476,7 +436,7 @@ const openExplicitHarness = async (
   const holder = await folderHolder(directory)
   if (holder && 'failure' in holder) throw holder.failure
   if (holder?.workspace.root === project.root) return withEntrypoint(holder.workspace, project)
-  if (holder) await freeOccupiedFolder(directory, holder.name, { claims, replace, open, project: project.root })
+  if (holder) await freeOccupiedFolder(directory, holder.name, { claims, replace, project: project.root })
   else if ((await folderEntries(directory)).length)
     throw folderUnavailable(directory, 'The folder already contains files.')
   await claims.claim(directory)
@@ -521,10 +481,9 @@ export const prepareDevRun = async (
     screen?: StartupScreen
     deferPreparation?: boolean
     rejected?: PreparedDevRun
-    leaving?: LeavingWorkspace
   } = {}
 ): Promise<PreparedDevRun | undefined> => {
-  const { screen, rejected, leaving } = options
+  const { screen, rejected } = options
   const config = options.config ?? (await CliConfigStore.load(undefined, { persist: false }))
   config.useEnvironmentFiles(args.envFiles)
   screen?.signal.throwIfAborted()
@@ -536,10 +495,9 @@ export const prepareDevRun = async (
       snapshot: options.savedConfig ?? config.snapshot(),
       claims,
       screen,
-      reselecting: rejected !== undefined || leaving !== undefined,
+      reselecting: rejected !== undefined,
       warning,
       deferDependencies: options.deferPreparation ?? false,
-      leaving,
     })
     screen?.signal.throwIfAborted()
     if (!selected) return undefined

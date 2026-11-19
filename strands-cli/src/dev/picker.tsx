@@ -27,7 +27,6 @@ export interface FolderSuggestion {
   path: string
   detected: boolean
   occupiedBy?: string
-  open?: true
 }
 
 export interface BaseCliOption {
@@ -76,8 +75,6 @@ const opensAtOnce = (
 const createdNote = (name: string, place: 'in' | 'at'): string =>
   `A ${name} folder will be created ${place} this path for .config, tmp/, reports, and state.`
 const folderNote = (typed: string, suggested: FolderSuggestion): string => {
-  if (typed === prefilledFolder(suggested) && suggested.open)
-    return `${basename(suggested.path)} in this path is the open workspace. Choose another folder, or restart strands dev to replace it.`
   if (typed === prefilledFolder(suggested) && suggested.occupiedBy)
     return `${basename(suggested.path)} in this path holds the workspace of ${sanitizeTerminalText(suggested.occupiedBy)}. Enter asks you to confirm before it is replaced.`
   if (typed === prefilledFolder(suggested)) return createdNote(basename(suggested.path), 'in')

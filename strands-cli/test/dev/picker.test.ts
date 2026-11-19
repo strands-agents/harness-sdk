@@ -457,32 +457,6 @@ describe('HarnessPicker', () => {
     expect(text()).toContain('Enter asks you to confirm before it is replaced.')
   })
 
-  it('shouldSayTheOpenWorkspaceCannotBeReplacedFromTheFolderStep', async () => {
-    const input = ttyInput()
-    const output = ttyOutput(100, 40)
-    const frame = captureFrame(output)
-    render(
-      createElement(HarnessPicker, {
-        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
-        harnesses: [],
-        folderFor: () => ({ path: '/home/test/.strands/strands-dev', detected: false, open: true as const }),
-        onSelect: vi.fn(),
-      }),
-      { stdin: input, stdout: output }
-    )
-    const text = (): string => frame().join('\n').replace(/\s+/gu, ' ')
-    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
-
-    input.write('\r')
-
-    await vi.waitFor(() =>
-      expect(text()).toContain(
-        'strands-dev in this path is the open workspace. Choose another folder, or restart strands dev to replace it.'
-      )
-    )
-    expect(text()).not.toContain('Enter asks you to confirm')
-  })
-
   it('shouldReplaceTheFolderOnlyAfterTheUserTypesDelete', async () => {
     const selected = vi.fn().mockRejectedValueOnce(inUse()).mockResolvedValueOnce(undefined)
     const { input, text } = withOccupiedFolder(selected)

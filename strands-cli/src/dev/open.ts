@@ -1,7 +1,7 @@
 import type { ParsedArgs } from '../cli/arguments.js'
 import type { CliConfigSnapshot, CliConfigStore } from '../config/store.js'
 import type { StartupScreen } from '../ui/run.js'
-import { prepareDevRun, type LeavingWorkspace, type PreparedDevRun } from './prepare.js'
+import { prepareDevRun, type PreparedDevRun } from './prepare.js'
 import type { ProjectSetupSession } from './project-setup.js'
 
 export interface DevRunRequest {
@@ -12,30 +12,24 @@ export interface DevRunRequest {
   setup: ProjectSetupSession
   config?: CliConfigStore
   rejected?: PreparedDevRun
-  leaving?: LeavingWorkspace
 }
 
-const pickerArgs = (args: ParsedArgs, keepWorkspace: boolean): ParsedArgs => {
+const pickerArgs = (args: ParsedArgs): ParsedArgs => {
   const { init, searchRoots, workspace } = args.dev!
-  return {
-    ...args,
-    agent: undefined,
-    dev: { init, searchRoots, ...(keepWorkspace && workspace ? { workspace } : {}) },
-  }
+  return { ...args, agent: undefined, dev: { init, searchRoots, ...(workspace ? { workspace } : {}) } }
 }
 
 export const openDevRun = async (request: DevRunRequest): Promise<PreparedDevRun | undefined> => {
-  const { args, savedConfig, launchDirectory, screen, setup, config, leaving } = request
+  const { args, savedConfig, launchDirectory, screen, setup, config } = request
   let rejected = request.rejected
   for (;;) {
     process.chdir(launchDirectory)
-    const prepared = await prepareDevRun(rejected || leaving ? pickerArgs(args, !leaving) : args, {
+    const prepared = await prepareDevRun(rejected ? pickerArgs(args) : args, {
       ...(config ? { config } : {}),
       savedConfig,
       screen,
       deferPreparation: true,
       ...(rejected ? { rejected } : {}),
-      ...(leaving ? { leaving } : {}),
     })
     if (!prepared) return undefined
     if (screen.signal.aborted) {

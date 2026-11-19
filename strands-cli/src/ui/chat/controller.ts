@@ -1255,8 +1255,7 @@ export class ChatController implements ChatControllerApi {
       case 'settings':
         if (row.value.startsWith('workspace:')) {
           const action = row.value.slice('workspace:'.length)
-          if (!this._workspaceAction || !this._runtime.devWorkspace || (action !== 'edit' && action !== 'import'))
-            return false
+          if (!this._workspaceAction || !this._runtime.devWorkspace || action !== 'edit') return false
           if (this.busy || this._hasUnresolvedBackgroundTasks()) {
             this._openError('Workspace busy', '', 'Finish or cancel running work before changing this workspace.')
             return false
@@ -2710,11 +2709,6 @@ export class ChatController implements ChatControllerApi {
               label: 'Edit workspace configuration',
               description: 'Open .config; changes apply on next launch',
               value: 'workspace:edit',
-            },
-            {
-              label: 'Import a different agent',
-              description: 'Select or create another agent, then its workspace folder. This workspace stays.',
-              value: 'workspace:import',
             },
           ]
         : settingsRows(this._settings, category.id, this._requestSetup !== undefined)
