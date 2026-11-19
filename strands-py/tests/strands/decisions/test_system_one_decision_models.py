@@ -327,9 +327,40 @@ class TestAsk:
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
         # The body is sent without a client-side size check; only the server's 413 maps it.
-        with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large"):
+        with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large") as caught:
             await decision.ask("x" * (64 * 1024), {"q": {"question": "ok?", "choices": "boolean"}})
         assert len(captured) == 1
+        assert isinstance(caught.value.__cause__, httpx.HTTPStatusError)
+        assert caught.value.__cause__.response.status_code == 413
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "error_type", "exp_error_by_provider"),
+        [
+            (
+                400,
+                "max_tokens_exceeded",
+                {"typesafe": ContextWindowOverflowException, "decisions_api": httpx.HTTPStatusError},
+            ),
+            (400, "invalid_request", {"typesafe": httpx.HTTPStatusError, "decisions_api": httpx.HTTPStatusError}),
+            (500, "max_tokens_exceeded", {"typesafe": httpx.HTTPStatusError, "decisions_api": httpx.HTTPStatusError}),
+        ],
+    )
+    async def test_maps_only_typesafe_context_overflow(
+        self, provider: _ProviderCase, status: int, error_type: str, exp_error_by_provider: dict[str, type[Exception]]
+    ):
+        body = {"detail": {"error_type": error_type}}
+        client = _fake_client(body, status=status)
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+        exp_error = exp_error_by_provider[provider.provider_name]
+
+        with pytest.raises(exp_error, match=f"HTTP {status}: {error_type}") as caught:
+            await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+        cause = caught.value if exp_error is httpx.HTTPStatusError else caught.value.__cause__
+        assert isinstance(cause, httpx.HTTPStatusError)
+        assert cause.response.status_code == status
+        assert cause.response.json() == body
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

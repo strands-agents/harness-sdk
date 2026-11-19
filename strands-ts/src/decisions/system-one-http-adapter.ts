@@ -111,7 +111,12 @@ interface ParsedAnswer {
   confidence: number
 }
 
-class SystemOneHttpError extends Error {
+/**
+ * Cause attached to errors for non-2xx System One responses, carrying the status and parsed body.
+ *
+ * @internal
+ */
+export class SystemOneHttpError extends Error {
   constructor(
     readonly status: number,
     readonly body: unknown,
@@ -251,7 +256,7 @@ function translateHttpError(providerName: string, status: number, body: unknown)
   const message = `${providerName} decision request failed with HTTP ${status}${detail ? `: ${detail}` : ''}`
   const cause = new SystemOneHttpError(status, body, message)
   if (status === 429 || status === 503 || status === 529) return new ModelThrottledError(message, { cause })
-  if (status === 413) return new ContextWindowOverflowError(message)
+  if (status === 413) return new ContextWindowOverflowError(message, { cause })
   return new ModelError(message, { cause })
 }
 
@@ -261,7 +266,10 @@ function errorDetail(body: unknown): string | undefined {
   for (const field of ['error', 'message', 'detail']) {
     const value = body[field]
     if (typeof value === 'string') return value
-    if (isRecord(value) && typeof value['message'] === 'string') return value['message']
+    if (isRecord(value)) {
+      const nested = value['message'] || value['error_type']
+      if (typeof nested === 'string') return nested
+    }
   }
   return undefined
 }
