@@ -202,18 +202,25 @@ export function lookupChatCompletionsTools(modelId: string): ChatCompletionsTool
 }
 
 /**
- * Whether OpenAI's Responses API never caches the `instructions` field for a model. The data carries this as
- * `capabilities.responsesInstructions`, which `ModelCapabilities` does not carry.
+ * The values of `capabilities.systemPromptPlacement` in the data.
+ *
+ * @internal
+ */
+export type SystemPromptPlacement = 'message'
+
+/**
+ * Where a model's system prompt goes, when not in the provider's system prompt field. The data carries this as
+ * `capabilities.systemPromptPlacement`, which `ModelCapabilities` does not carry.
  *
  * @internal
  * @param modelId - The model id to look up
- * @returns True when the data says so, false when it does not say
+ * @returns `'message'` when it goes at the start of the messages, undefined when the data does not say
  */
-export function lookupResponsesInstructionsUncached(modelId: string): boolean {
+export function lookupSystemPromptPlacement(modelId: string): SystemPromptPlacement | undefined {
   const key = lookupKey(modelId)
-  if (key === undefined) return false
-  const capabilities = data.models[key]?.capabilities as { responsesInstructions?: string } | undefined
-  return capabilities?.responsesInstructions === 'uncached'
+  if (key === undefined) return undefined
+  return (data.models[key]?.capabilities as { systemPromptPlacement?: SystemPromptPlacement } | undefined)
+    ?.systemPromptPlacement
 }
 
 /**

@@ -67,7 +67,7 @@ from ._model_info import (  # noqa: E402
     SERVER_SIDE_SUMMARY_OFF,
     ModelCapabilities,
     ModelInfo,
-    lookup_responses_instructions_uncached,
+    lookup_system_prompt_placement,
 )
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import CACHE_LIFETIMES, apply_cache_config  # noqa: E402
@@ -702,7 +702,7 @@ class OpenAIResponsesModel(Model):
         if (
             self.stateful
             or "input" in cast(dict[str, Any], self.config.get("params", {}))
-            or not lookup_responses_instructions_uncached(request["model"])
+            or lookup_system_prompt_placement(request["model"]) != "message"
         ):
             return {"instructions": system_prompt}
         developer = {"role": "developer", "content": [{"type": "input_text", "text": system_prompt}]}

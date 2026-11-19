@@ -23,7 +23,7 @@ from strands.models._model_info import (
     lookup_chat_completions_tools,
     lookup_model,
     lookup_model_info,
-    lookup_responses_instructions_uncached,
+    lookup_system_prompt_placement,
 )
 
 BASE = ModelInfo(
@@ -212,18 +212,16 @@ def test_lookup_chat_completions_tools_reads_the_fact_from_the_entry_the_id_reso
 
 
 @pytest.mark.parametrize(
-    ("model_id", "exp_uncached"),
+    ("model_id", "exp_placement"),
     [
-        ("gpt-6.2-sol", True),
-        ("openai.gpt-6.2-astra", True),
-        ("gpt-6.1-sol", False),
-        ("unknown-model", False),
+        ("gpt-6.2-sol", "message"),
+        ("openai.gpt-6.2-astra", "message"),
+        ("gpt-6.1-sol", None),
+        ("unknown-model", None),
     ],
 )
-def test_lookup_responses_instructions_uncached_reads_the_fact_from_the_entry_the_id_resolves_to(
-    model_id, exp_uncached
-):
-    assert lookup_responses_instructions_uncached(model_id) is exp_uncached
+def test_lookup_system_prompt_placement_reads_the_fact_from_the_entry_the_id_resolves_to(model_id, exp_placement):
+    assert lookup_system_prompt_placement(model_id) == exp_placement
 
 
 def test_load_data_says_how_to_restore_the_package_copy_when_it_is_missing():
@@ -282,9 +280,9 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
             elif key == "chatCompletionsTools":
                 # Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
                 assert value in ("reasoningOff", "unsupported"), f"{model_id}.{key}"
-            elif key == "responsesInstructions":
+            elif key == "systemPromptPlacement":
                 # Read by the OpenAI Responses provider, not part of ModelCapabilities.
-                assert value == "uncached", f"{model_id}.{key}"
+                assert value == "message", f"{model_id}.{key}"
             elif key == "toolUse":
                 # A record that the model cannot call tools, not part of ModelCapabilities.
                 assert value is False, f"{model_id}.{key}"

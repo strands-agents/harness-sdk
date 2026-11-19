@@ -3,7 +3,7 @@ import {
   DEFAULT_CONTEXT_WINDOW_LIMIT,
   lookupChatCompletionsTools,
   lookupModelInfo,
-  lookupResponsesInstructionsUncached,
+  lookupSystemPromptPlacement,
   getContextWindowLimit,
   lookupModel,
 } from '../model-info.js'
@@ -91,12 +91,12 @@ describe('shared model info data', () => {
   })
 
   it.each([
-    ['gpt-6.2-sol', true],
-    ['openai.gpt-6.2-astra', true],
-    ['gpt-6.1-sol', false],
-    ['unknown-model', false],
-  ])('reads the responsesInstructions fact for %s from the entry the id resolves to', (modelId, uncached) => {
-    expect(lookupResponsesInstructionsUncached(modelId)).toBe(uncached)
+    ['gpt-6.2-sol', 'message'],
+    ['openai.gpt-6.2-astra', 'message'],
+    ['gpt-6.1-sol', undefined],
+    ['unknown-model', undefined],
+  ])('reads the systemPromptPlacement fact for %s from the entry the id resolves to', (modelId, placement) => {
+    expect(lookupSystemPromptPlacement(modelId)).toBe(placement)
   })
 
   it('keeps getContextWindowLimit working for ids the Python table already knew', () => {
@@ -131,7 +131,7 @@ describe('shared model info data', () => {
         else if (key === 'chatCompletionsTools')
           expect(['reasoningOff', 'unsupported'], `${id}.${key}`).toContain(value)
         // Read by the OpenAI Responses provider, not part of ModelCapabilities.
-        else if (key === 'responsesInstructions') expect(value, `${id}.${key}`).toBe('uncached')
+        else if (key === 'systemPromptPlacement') expect(value, `${id}.${key}`).toBe('message')
         // A record that the model cannot call tools, not part of ModelCapabilities.
         else if (key === 'toolUse') expect(value, `${id}.${key}`).toBe(false)
         // Read by another consumer (the harness), not typed by the SDK.

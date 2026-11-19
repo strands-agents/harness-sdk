@@ -34,7 +34,7 @@ import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
-import { lookupResponsesInstructionsUncached } from '../model-info.js'
+import { lookupSystemPromptPlacement } from '../model-info.js'
 import type { ModelInfo } from '../model-info.js'
 
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
@@ -97,7 +97,7 @@ export function formatResponsesRequest(
   const systemPrompt = systemPromptText(options?.systemPrompt)
   // Some models append instructions after the input, where they never cache; a leading developer message
   // does. A stored conversation would keep every resent copy.
-  if (systemPrompt && !stateful && lookupResponsesInstructionsUncached(modelId)) {
+  if (systemPrompt && !stateful && lookupSystemPromptPlacement(modelId) === 'message') {
     request.input = [{ role: 'developer', content: [{ type: 'input_text', text: systemPrompt }] }, ...input]
   } else if (systemPrompt !== undefined) {
     request.instructions = systemPrompt

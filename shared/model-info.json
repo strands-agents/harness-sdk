@@ -385,7 +385,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
-        "responsesInstructions": "uncached",
+        "systemPromptPlacement": "message",
         "defaultEffort": "low"
       }
     },
@@ -397,7 +397,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
-        "responsesInstructions": "uncached",
+        "systemPromptPlacement": "message",
         "defaultEffort": "low"
       }
     },
