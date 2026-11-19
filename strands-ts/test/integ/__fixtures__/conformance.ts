@@ -164,7 +164,7 @@ const modelEntries: Record<string, { limits?: object; capabilities?: Record<stri
 
 /** Model info entries no target resolves to. */
 export const untargetedEntries: string[] = Object.keys(modelEntries).filter(
-  (key) => !targets.some((target) => lookupKey(target.model) === key)
+  (key) => !listedTargets.some((target) => lookupKey(target.model) === key)
 )
 
 /** The model info entries the shared file says are left out, with the reason. */
