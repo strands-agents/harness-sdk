@@ -318,7 +318,6 @@ def test_estimate_uses_the_base_rate_of_a_tiered_genai_price(genai_lookups):
     ("provider_name", "model_id", "exp_lookup"),
     [
         ("bedrock", "priced-model", ("aws", "priced-model")),
-        ("bedrock-mantle", "openai.priced-model", ("aws", "openai.priced-model")),
         ("anthropic", "priced-model", ("anthropic", "priced-model")),
         ("openai", "priced-model", ("openai", "priced-model")),
         ("google", "priced-model", ("google", "priced-model")),
@@ -339,7 +338,7 @@ def test_estimate_looks_a_model_up_under_the_genai_prices_provider(provider_name
 
 @pytest.mark.parametrize(
     ("provider_name", "model_id"),
-    [("ollama", "priced-model"), ("sagemaker", "priced-model"), ("litellm", "priced-model"), (None, "priced-model")],
+    [("ollama", "priced-model"), ("sagemaker", "priced-model"), (None, "priced-model")],
 )
 def test_estimate_does_not_look_up_a_provider_genai_prices_does_not_list(provider_name, model_id, genai_lookups):
     cost = GenAIPricesEstimator()
@@ -367,6 +366,12 @@ def test_estimate_prices_a_well_known_bedrock_model_from_the_bundled_data():
 
     assert tru_estimate.total_usd > 0
     assert tru_estimate.models[0].price_source.startswith("genai-prices:aws/")
+
+
+def test_estimate_prices_a_litellm_model_id_without_a_provider_prefix_from_the_bundled_data():
+    tru_estimate = GenAIPricesEstimator().estimate(_request((_usage(1_000, 100), "litellm", "gpt-4o")))
+
+    assert tru_estimate.models[0].price_source == "genai-prices:openai/gpt-4o"
 
 
 def test_estimate_leaves_a_bundled_price_with_a_fee_per_request_unpriced():
@@ -568,7 +573,7 @@ async def test_stream_finishes_without_an_estimate_when_pricing_raises(monkeypat
 
     assert events[-1]["result"].stop_reason == "end_turn"
     assert [event for event in events if "cost_estimate" in event] == []
+    tru_messages = [record.getMessage() for record in caplog.records if record.name == plugin_module.__name__]
     assert (
-        caplog.messages
-        == ["error=<pricing failed> | cost estimate failed | no estimate emitted for this model call"] * 2
+        tru_messages == ["error=<pricing failed> | cost estimate failed | no estimate emitted for this model call"] * 2
     )

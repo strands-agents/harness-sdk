@@ -25,7 +25,7 @@ _PROVIDER_NAMES = {
 _ANTHROPIC_CLIENTS = {
     "AsyncAnthropic": "anthropic",
     "AsyncAnthropicBedrock": "bedrock",
-    "AsyncAnthropicBedrockMantle": "bedrock-mantle",
+    "AsyncAnthropicBedrockMantle": "bedrock",
 }
 
 
@@ -63,7 +63,7 @@ def _provider_name(model: Any) -> str | None:
 def _openai_provider_name(model: Any) -> str | None:
     """Name an OpenAI-class model by its endpoint; any base URL other than OpenAI's or Bedrock's may be any vendor."""
     if model._bedrock_mantle_config is not None:
-        return "bedrock-mantle"
+        return "bedrock"
     if model._custom_client is not None:
         base_url = model._custom_client.base_url
     else:

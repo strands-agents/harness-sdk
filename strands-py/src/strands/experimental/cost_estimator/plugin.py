@@ -45,7 +45,6 @@ logger = logging.getLogger(__name__)
 _PROVIDER_IDS = {
     "anthropic": "anthropic",
     "bedrock": "aws",
-    "bedrock-mantle": "aws",
     "google": "google",
     "mistral": "mistral",
     "openai": "openai",
@@ -268,12 +267,11 @@ class GenAIPricesEstimator(Plugin):
 
 def _genai_price(provider_name: str | None, model_id: str) -> tuple[ModelPrice | None, str | None]:
     """Look a model up in genai-prices, returning its base rates and the entry that matched, or ``None`` twice."""
-    if provider_name is None:
-        return None, None
-    provider_id, priced_model_id = _PROVIDER_IDS.get(provider_name), model_id
+    provider_id, priced_model_id = _PROVIDER_IDS.get(provider_name or ""), model_id
     if provider_name == "litellm" and "/" in model_id:
         provider_id, priced_model_id = model_id.split("/", 1)
-    if provider_id is None:
+    # A bare LiteLLM id has no provider; genai-prices then infers one from the model name, as LiteLLM does.
+    if provider_id is None and provider_name != "litellm":
         return None, None
     try:
         matched = calc_price(_PricedUsage(input_tokens=0, output_tokens=0), priced_model_id, provider_id=provider_id)

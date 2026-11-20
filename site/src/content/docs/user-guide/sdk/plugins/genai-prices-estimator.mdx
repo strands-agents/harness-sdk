@@ -150,10 +150,11 @@ plugin. `result.invocation_context.usage_by_model` is a list of `ModelUsage` rec
 per model, each with a `provider_name`, a `model_id`, and the model's summed `usage`. You
 can save the records and pass them to `estimate()` later.
 
-For the SDK's model classes, `provider_name` is one of `anthropic`, `bedrock`,
-`bedrock-mantle`, `google`, `litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`,
-`openai`, `sagemaker`, or `writer`. A decision model reports the provider name from its
-own metadata. The name is `None` when the SDK cannot tell, as for a custom model or an
+For the SDK's model classes, `provider_name` is one of `anthropic`, `bedrock`, `google`,
+`litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`, `openai`, `sagemaker`, or `writer`.
+A model that reaches Bedrock through another class, such as `OpenAIModel` with
+`bedrock_mantle_config`, is `bedrock` too. A decision model reports the provider name from
+its own metadata. The name is `None` when the SDK cannot tell, as for a custom model or an
 OpenAI-compatible endpoint with its own base URL. A SageMaker model's `model_id` is its
 endpoint name.
 
@@ -205,10 +206,10 @@ if estimate.total_usd is None:
 ```
 
 The plugin looks a model up in genai-prices only when its provider name is `anthropic`,
-`bedrock`, `bedrock-mantle`, `google`, `mistral`, or `openai`. For a LiteLLM model, the
-provider is the part of the model ID before the first `/`. Every other model, such as a
-custom model, a SageMaker endpoint, or a local model, is priced only by the prices you
-pass.
+`bedrock`, `google`, `mistral`, `openai`, or `litellm`. For a LiteLLM model, the provider
+is the part of the model ID before the first `/`; for an ID without one, such as `gpt-4o`,
+genai-prices infers the provider from the model name. Every other model, such as a custom
+model, a SageMaker endpoint, or a local model, is priced only by the prices you pass.
 
 genai-prices matches model IDs by rule, so an ID it does not list exactly can match a
 neighbouring entry. For example, `claude-sonnet-4-5-custom` gets the price of

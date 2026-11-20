@@ -33,12 +33,11 @@ class ModelUsage:
 
     Attributes:
         provider_name: Name of the model's provider. For the SDK's own model classes it is one of
-            ``anthropic``, ``bedrock``, ``bedrock-mantle``, ``google``, ``litellm``, ``llamaapi``,
-            ``llamacpp``, ``mistral``, ``ollama``, ``openai``, ``sagemaker``, or ``writer``. A decision model
-            reports the provider name from its own metadata, or its wrapped model's name when it has one.
-            ``None`` when the SDK cannot tell. Existing names
-            do not change, more may be added, and a ``None`` may later get a name. It is not the OpenTelemetry
-            provider value.
+            ``anthropic``, ``bedrock``, ``google``, ``litellm``, ``llamaapi``, ``llamacpp``, ``mistral``,
+            ``ollama``, ``openai``, ``sagemaker``, or ``writer``. A decision model reports the provider name
+            from its own metadata, or its wrapped model's name when it has one. ``None`` when the SDK cannot
+            tell. Existing names do not change, more may be added, and a ``None`` may later get a name. It is
+            not the OpenTelemetry provider value.
         model_id: The model id the calls were made with, or the endpoint name for a SageMaker model; ``None``
             when not known.
         usage: The summed usage of every call to this model.
@@ -99,9 +98,9 @@ class InvocationContext:
     def usage_by_model(self) -> list[ModelUsage]:
         """The token usage in :attr:`usage`, split by the model that produced it.
 
-        There is one record per model today, each a copy taken at the time of the call. Their token counts
-        add up to :attr:`usage`. Usage whose model is not known is under a record whose ``provider_name`` and
-        ``model_id`` are ``None``.
+        One record per distinct ``(provider_name, model_id)``, in the order they first recorded usage. Each is
+        a snapshot taken when this property is read. Their token counts add up to :attr:`usage`. Usage whose
+        model is not known is under a record whose ``provider_name`` and ``model_id`` are ``None``.
         """
         with _usage_lock:
             return [

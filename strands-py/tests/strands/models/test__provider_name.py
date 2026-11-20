@@ -70,11 +70,13 @@ def test_model_key_names_the_provider_of_each_vended_class_and_of_its_subclasses
         (lambda: OpenAIModel(client=object(), model_id="m"), (None, "m")),
         (
             lambda: OpenAIResponsesModel(model_id="openai.gpt-a", bedrock_mantle_config={"region": "us-east-1"}),
-            ("bedrock-mantle", "openai.gpt-a"),
+            ("bedrock", "openai.gpt-a"),
         ),
         (
-            lambda: OpenAIModel(model_id="openai.gpt-a", bedrock_mantle_config={"region": "us-east-1"}),
-            ("bedrock-mantle", "openai.gpt-a"),
+            lambda: OpenAIModel(
+                model_id="openai.gpt-a", bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "us-east-1"}
+            ),
+            ("bedrock", "openai.gpt-a"),
         ),
         (lambda: LiteLLMModel(client_args={"base_url": "https://llm.example.com"}, model_id="a/b"), ("litellm", "a/b")),
         (
@@ -103,7 +105,7 @@ def test_model_key_names_the_provider_of_each_vended_class_and_of_its_subclasses
         "openai-client-with-custom-base-url",
         "openai-client-without-base-url",
         "openai-responses-on-mantle",
-        "openai-on-mantle",
+        "openai-on-bedrock-runtime",
         "litellm-is-not-openai",
         "anthropic",
         "anthropic-on-bedrock-client",
