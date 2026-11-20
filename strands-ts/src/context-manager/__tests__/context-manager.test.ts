@@ -11,6 +11,7 @@ import { ToolRegistry } from '../../registry/tool-registry.js'
 import { ToolStreamEvent } from '../../tools/tool.js'
 import type { CountTokensOptions } from '../../models/model.js'
 import type { Tool, ToolStreamGenerator } from '../../tools/tool.js'
+import type { ContextState } from '../types.js'
 
 function makeMockAgent(overrides?: {
   id?: string
@@ -125,6 +126,29 @@ describe('ContextManager', () => {
       // archive on fork without throwing.
       expect(cm.stash).toBe(cm.archive)
       expect(cm.stashIsDurable).toBe(cm.archiveIsDurable)
+    })
+
+    it('sets stash alongside archive on the state a strategy receives', async () => {
+      let received: ContextState | undefined
+      const cm = new ContextManager({
+        strategies: [
+          {
+            name: 'test',
+            apply: async (context) => {
+              received = context
+              return false
+            },
+          },
+        ],
+      })
+      const agent = makeMockAgent()
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 100))
+
+      // A strategy reading `context.stash?.…` goes silently no-op without this, the same way the
+      // published CLI's fork did.
+      expect(received?.stash).toBe(cm.archive)
     })
   })
 

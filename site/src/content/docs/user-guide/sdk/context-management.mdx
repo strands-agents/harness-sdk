@@ -148,8 +148,9 @@ The TypeScript API moved out of `@strands-agents/sdk/experimental`, and the stas
 | `{ stash: … }` | `{ archive: … }` |
 | `contextManager.stash` | `contextManager.archive` |
 | `contextManager.stashIsDurable` | `contextManager.archiveIsDurable` |
+| `ContextState.stash` | `ContextState.archive` |
 
-The old names still work this release, deprecated, and are removed in the next minor. `contextManager: "auto"` and `contextManager: "agentic"` are unchanged.
+The old names still work this release, deprecated, and are removed in the next minor. Root-package imports are the exception — they are gone now, so move those first. `contextManager: "auto"` and `contextManager: "agentic"` are unchanged.
 
 Sessions saved before the rename still resume, but the compatibility read goes away with the deprecated names — resume each one once on this release to migrate it forward.
 

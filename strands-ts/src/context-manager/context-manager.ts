@@ -266,7 +266,7 @@ export class ContextManager implements Plugin {
       agent,
       utilization: agent.model.estimateUtilization(inputTokens),
       ...(overflow ? { overflow: true } : {}),
-      ...(this._archive ? { archive: this._archive } : {}),
+      ...(this._archive ? { archive: this._archive, stash: this._archive } : {}),
       ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
     }
 

@@ -64,6 +64,11 @@ export interface ContextState {
    */
   archive?: Archive
 
+  /**
+   * @deprecated Renamed to `archive`. Set to the same value. Removed in the next minor.
+   */
+  stash?: Archive
+
   /** The request this reduction runs for, if any; a nested call that joins it adds to the request's usage, but the request's limits don't apply. */
   readonly invocationContext?: InvocationContext
 }
