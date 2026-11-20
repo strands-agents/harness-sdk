@@ -483,20 +483,30 @@ function cap(raw: string, limit = MAX_OUTPUT_CHARS): string {
   return `${raw.slice(0, limit).trim()}\n[output truncated at ${limit} characters]`
 }
 
+/** Why {@link withDeadline} stopped waiting for a run that has not ended. */
+class RunAbandoned extends Error {
+  constructor(readonly reason: 'cancel' | 'timeout') {
+    super(reason)
+  }
+}
+
 /**
- * Await `run` until it settles, `timeout` elapses, or `cancelSignal` fires. Rejects with `'timeout'`
- * or `'cancel'` on the latter two; the caller then abandons the run.
+ * Await `run` until it settles, `timeout` elapses, or `cancelSignal` fires. Rejects with
+ * {@link RunAbandoned} on the latter two; the caller then abandons the run.
  */
 function withDeadline<T>(run: Promise<T>, timeout: number, cancelSignal: AbortSignal | undefined): Promise<T> {
   const cleanup = new globalThis.AbortController()
   return new Promise<T>((resolve, reject) => {
     if (cancelSignal?.aborted) {
-      reject(new Error('cancel'))
+      reject(new RunAbandoned('cancel'))
       return
     }
-    cancelSignal?.addEventListener('abort', () => reject(new Error('cancel')), { once: true, signal: cleanup.signal })
+    cancelSignal?.addEventListener('abort', () => reject(new RunAbandoned('cancel')), {
+      once: true,
+      signal: cleanup.signal,
+    })
     if (timeout !== Infinity) {
-      const timer = globalThis.setTimeout(() => reject(new Error('timeout')), timeout)
+      const timer = globalThis.setTimeout(() => reject(new RunAbandoned('timeout')), timeout)
       cleanup.signal.addEventListener('abort', () => globalThis.clearTimeout(timer), { once: true })
     }
     run.then(resolve, reject)
@@ -530,6 +540,79 @@ export async function* streamPrints(
   }
 }
 
+/** The error the tool reports for a failed run: what the code printed, then what went wrong. */
+function describeRunError(error: unknown, monty: MontyModule, output: Output, timeout: number): unknown {
+  if (error instanceof RunAbandoned) {
+    const reason =
+      error.reason === 'cancel' ? 'Execution cancelled.' : `Execution error: timed out after ${timeout / 1000} seconds.`
+    return new Error(output.withError(reason), { cause: error })
+  }
+  if (error instanceof monty.MontySyntaxError) {
+    return new Error(cap(`Syntax error:\n${error.display('traceback')}`), { cause: error })
+  }
+  if (error instanceof monty.MontyRuntimeError) {
+    return new Error(output.withError(`Execution error:\n${error.display('traceback')}`), { cause: error })
+  }
+  if (error instanceof monty.MontyError) {
+    return new Error(output.withError(`Execution error: ${error.message}`), { cause: error })
+  }
+  return error
+}
+
+/** Run the code until it ends, times out, or `controller` aborts; resolves with the printed output. */
+async function runCode(
+  code: string,
+  context: ToolContext,
+  output: Output,
+  controller: AbortController,
+  options: { allowedTools: string[] | undefined; timeout: number; toolTimeout: number }
+): Promise<string> {
+  const available = resolveAvailableTools(context.agent, options.allowedTools)
+  const externalLookup = buildExternalLookup(available, context.agent, context, controller.signal, options.toolTimeout)
+
+  if (controller.signal.aborted) {
+    throw new Error('Execution cancelled.')
+  }
+  const monty = await loadMonty()
+  const pool = await monty.Monty.create()
+  let session: Awaited<ReturnType<typeof pool.checkout>>
+  try {
+    session = await pool.checkout({ scriptName: USER_CODE_FILENAME, limits: LIMITS })
+  } catch (error) {
+    await pool.close()
+    throw error
+  }
+  let abandoned = false
+  try {
+    if (controller.signal.aborted) {
+      throw new RunAbandoned('cancel')
+    }
+    const run = session.feedRun(code, {
+      externalLookup,
+      printCallback: (stream, text) => output.write(stream, text),
+    })
+    // On timeout/cancel the run is abandoned; swallow the late rejection.
+    run.catch(() => {})
+    await withDeadline(run, options.timeout, controller.signal)
+  } catch (error) {
+    abandoned = error instanceof RunAbandoned
+    throw describeRunError(error, monty, output, options.timeout)
+  } finally {
+    // Calls still queued or in flight must not outlive the run.
+    controller.abort()
+    // A session closes only once its feed ends, and code that is computing cannot be interrupted, so an
+    // abandoned run is closed in the background: the VM duration limit ends it.
+    const closed = session.close().finally(() => pool.close())
+    if (abandoned) {
+      closed.catch(() => {})
+    } else {
+      await closed
+    }
+  }
+
+  return output.text() || '(no output)'
+}
+
 /**
  * Create a programmatic-tool-caller tool. The returned tool executes agent-authored Python in a Monty
  * sandbox in which the agent's other tools are exposed as `async` functions. Only `print()` output is
@@ -554,78 +637,6 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
     }
   }
 
-  /** Run the code until it ends, times out, or `controller` aborts; resolves with the printed output. */
-  const runCode = async (
-    code: string,
-    agent: LocalAgent,
-    context: ToolContext,
-    output: Output,
-    controller: AbortController
-  ): Promise<string> => {
-    const available = resolveAvailableTools(agent, allowedTools)
-    const externalLookup = buildExternalLookup(available, agent, context, controller.signal, toolTimeout)
-
-    if (controller.signal.aborted) {
-      throw new Error('Execution cancelled.')
-    }
-    const { Monty, MontyError, MontyRuntimeError, MontySyntaxError } = await loadMonty()
-    const pool = await Monty.create()
-    let session: Awaited<ReturnType<typeof pool.checkout>>
-    try {
-      session = await pool.checkout({ scriptName: USER_CODE_FILENAME, limits: LIMITS })
-    } catch (error) {
-      await pool.close()
-      throw error
-    }
-    let abandoned = false
-    try {
-      if (controller.signal.aborted) {
-        throw new Error('cancel')
-      }
-      const run = session.feedRun(code, {
-        externalLookup,
-        printCallback: (stream, text) => output.write(stream, text),
-      })
-      // On timeout/cancel the run is abandoned; swallow the late rejection.
-      run.catch(() => {})
-      await withDeadline(run, timeout, controller.signal)
-    } catch (error) {
-      if (error instanceof Error && error.message === 'cancel') {
-        abandoned = true
-        throw new Error(output.withError('Execution cancelled.'), { cause: error })
-      }
-      if (error instanceof Error && error.message === 'timeout') {
-        abandoned = true
-        throw new Error(output.withError(`Execution error: timed out after ${timeout / 1000} seconds.`), {
-          cause: error,
-        })
-      }
-      if (error instanceof MontySyntaxError) {
-        throw new Error(cap(`Syntax error:\n${error.display('traceback')}`), { cause: error })
-      }
-      if (error instanceof MontyRuntimeError) {
-        throw new Error(output.withError(`Execution error:\n${error.display('traceback')}`), { cause: error })
-      }
-      if (error instanceof MontyError) {
-        throw new Error(output.withError(`Execution error: ${error.message}`), { cause: error })
-      }
-      throw error
-    } finally {
-      // Calls still queued or in flight must not outlive the run.
-      controller.abort()
-      // A session closes only once its feed ends, and code that is computing cannot be interrupted, so an
-      // abandoned run is closed in the background: the VM duration limit ends it.
-      const closed = session.close().finally(() => pool.close())
-      if (abandoned) {
-        closed.catch(() => {})
-      } else {
-        await closed
-      }
-    }
-
-    return output.text() || '(no output)'
-  }
-
   const caller = tool({
     name,
     description,
@@ -646,7 +657,7 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
         context.cancelSignal?.addEventListener('abort', forwardCancel, { once: true })
       }
       const output = new Output()
-      const run = runCode(input.code, context.agent, context, output, controller)
+      const run = runCode(input.code, context, output, controller, { allowedTools, timeout, toolTimeout })
       // Awaited below unless the stream is closed first; keep that case from going unhandled.
       run.catch(() => {})
       try {
