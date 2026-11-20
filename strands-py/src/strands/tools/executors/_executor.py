@@ -632,12 +632,8 @@ def _start_tool_telemetry(
 ) -> tuple[Any, Trace]:
     """Open the tool span and metrics trace for the tool the chain settled on."""
     tool_use = ctx.tool_use
-    agent = cast("Agent", ctx.agent)
     span = tracer.start_tool_call_span(
-        tool_use,
-        cycle_span,
-        custom_trace_attributes=agent.trace_attributes,
-        gen_ai_provider_name=getattr(agent.model, "gen_ai_provider_name", None),
+        tool_use, cycle_span, custom_trace_attributes=cast("Agent", ctx.agent).trace_attributes
     )
     if ctx.tool is not None:
         tool_spec = ctx.tool.tool_spec

@@ -315,7 +315,9 @@ def test_start_model_invoke_span_records_what_a_tool_results_placeholder_stands_
 
 
 @pytest.mark.parametrize("opt_in", ["", "gen_ai_latest_experimental"])
-def test_start_model_invoke_span_without_provider_name(mock_tracer, monkeypatch, opt_in):
+@pytest.mark.parametrize("provider_kwargs", [{}, {"gen_ai_provider_name": ""}])
+def test_start_model_invoke_span_without_provider_name(mock_tracer, monkeypatch, opt_in, provider_kwargs):
+    """A model invoke span without a provider name omits both provider keys."""
     monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", opt_in)
     with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
         tracer = Tracer()
@@ -323,7 +325,7 @@ def test_start_model_invoke_span_without_provider_name(mock_tracer, monkeypatch,
         mock_span = mock.MagicMock()
         mock_tracer.start_span.return_value = mock_span
 
-        tracer.start_model_invoke_span(messages=[{"role": "user", "content": [{"text": "Hello"}]}])
+        tracer.start_model_invoke_span(messages=[{"role": "user", "content": [{"text": "Hello"}]}], **provider_kwargs)
 
         tru_attributes = mock_span.set_attributes.call_args[0][0]
         exp_attributes = {"gen_ai.operation.name": "chat"}
@@ -582,9 +584,7 @@ def test_start_tool_call_span(mock_tracer):
         tool = {"name": "test-tool", "toolUseId": "123", "input": {"param": "value"}}
         custom_attrs = {"session_id": "abc123", "environment": "production"}
 
-        span = tracer.start_tool_call_span(
-            tool, custom_trace_attributes=custom_attrs, gen_ai_provider_name="aws.bedrock"
-        )
+        span = tracer.start_tool_call_span(tool, custom_trace_attributes=custom_attrs)
 
         mock_tracer.start_span.assert_called_once()
         assert mock_tracer.start_span.call_args[1]["name"] == "execute_tool test-tool"
@@ -592,7 +592,6 @@ def test_start_tool_call_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.tool.name": "test-tool",
-                "gen_ai.system": "aws.bedrock",
                 "gen_ai.operation.name": "execute_tool",
                 "gen_ai.tool.call.id": "123",
                 "session_id": "abc123",
@@ -617,7 +616,7 @@ def test_start_tool_call_span_latest_conventions(mock_tracer, monkeypatch):
 
         tool = {"name": "test-tool", "toolUseId": "123", "input": {"param": "value"}}
 
-        span = tracer.start_tool_call_span(tool, gen_ai_provider_name="aws.bedrock")
+        span = tracer.start_tool_call_span(tool)
 
         mock_tracer.start_span.assert_called_once()
         assert mock_tracer.start_span.call_args[1]["name"] == "execute_tool test-tool"
@@ -625,7 +624,6 @@ def test_start_tool_call_span_latest_conventions(mock_tracer, monkeypatch):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.tool.name": "test-tool",
-                "gen_ai.provider.name": "aws.bedrock",
                 "gen_ai.operation.name": "execute_tool",
                 "gen_ai.tool.call.id": "123",
             }
@@ -942,10 +940,7 @@ def test_start_event_loop_cycle_span(mock_tracer):
         custom_attrs = {"request_id": "req-456", "trace_level": "debug"}
 
         span = tracer.start_event_loop_cycle_span(
-            event_loop_kwargs,
-            messages=messages,
-            custom_trace_attributes=custom_attrs,
-            gen_ai_provider_name="aws.bedrock",
+            event_loop_kwargs, messages=messages, custom_trace_attributes=custom_attrs
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -954,7 +949,6 @@ def test_start_event_loop_cycle_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "execute_event_loop_cycle",
-                "gen_ai.system": "aws.bedrock",
                 "event_loop.cycle_id": "cycle-123",
                 "request_id": "req-456",
                 "trace_level": "debug",
@@ -979,9 +973,7 @@ def test_start_event_loop_cycle_span_latest_conventions(mock_tracer, monkeypatch
         event_loop_kwargs = {"event_loop_cycle_id": "cycle-123"}
         messages = [{"role": "user", "content": [{"text": "Hello"}]}]
 
-        span = tracer.start_event_loop_cycle_span(
-            event_loop_kwargs, messages=messages, gen_ai_provider_name="aws.bedrock"
-        )
+        span = tracer.start_event_loop_cycle_span(event_loop_kwargs, messages=messages)
 
         mock_tracer.start_span.assert_called_once()
         assert mock_tracer.start_span.call_args[1]["name"] == "execute_event_loop_cycle"
@@ -989,7 +981,6 @@ def test_start_event_loop_cycle_span_latest_conventions(mock_tracer, monkeypatch
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "execute_event_loop_cycle",
-                "gen_ai.provider.name": "aws.bedrock",
                 "event_loop.cycle_id": "cycle-123",
             }
         )
@@ -1085,7 +1076,6 @@ def test_start_agent_span(mock_tracer):
             model_id=model_id,
             tools=tools,
             system_prompt=system_prompt,
-            gen_ai_provider_name="aws.bedrock",
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -1095,7 +1085,6 @@ def test_start_agent_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "invoke_agent",
-                "gen_ai.system": "aws.bedrock",
                 "gen_ai.agent.name": "WeatherAgent",
                 "gen_ai.request.model": model_id,
                 "gen_ai.agent.tools": json.dumps(tools),
@@ -1132,7 +1121,6 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
             model_id=model_id,
             tools=tools,
             system_prompt=system_prompt,
-            gen_ai_provider_name="aws.bedrock",
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -1141,7 +1129,6 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "invoke_agent",
-                "gen_ai.provider.name": "aws.bedrock",
                 "gen_ai.agent.name": "WeatherAgent",
                 "gen_ai.request.model": model_id,
                 "gen_ai.agent.tools": json.dumps(tools),

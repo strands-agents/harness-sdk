@@ -101,9 +101,10 @@ than of the response that requested the tool.
 
 ## Captured attributes
 
-Every span carries `gen_ai.event.start_time`, `gen_ai.event.end_time`, and
-`gen_ai.system` set to the model provider (for example `aws.bedrock`) when the model
-reports one, matching the non-streaming agent. Under the latest semantic conventions,
+Every span carries `gen_ai.event.start_time` and `gen_ai.event.end_time`. Response
+spans, which each cover one model generation, also carry `gen_ai.system` set to the model
+provider (for example `aws.bedrock`) when the model reports one, as model invoke spans do
+for the non-streaming agent. Under the latest semantic conventions,
 `gen_ai.provider.name` replaces `gen_ai.system`.
 
 | Span | Attribute | Description |
@@ -121,6 +122,7 @@ reports one, matching the non-streaming agent. Under the latest semantic convent
 | Connection | `gen_ai.request.model` | Model ID, when the provider exposes one |
 | Response | `gen_ai.operation.name` | `bidi_response` |
 | Response | `gen_ai.response.id` | Provider-assigned response identifier |
+| Response | `gen_ai.system` | Model provider, for example `aws.bedrock` (`gen_ai.provider.name` with `gen_ai_latest_experimental`); omitted when unknown |
 | Response | `gen_ai.server.time_to_first_audio` | Milliseconds from response start to first audio chunk |
 | Restart | `gen_ai.operation.name` | `bidi_connection_restart` |
 | Restart | `gen_ai.bidi.restart_reason` | `timeout` on the reactive path, `scheduled` on the proactive path |
@@ -190,7 +192,6 @@ The console exporter is the fastest way to confirm spans are being produced. A s
     "attributes": {
         "gen_ai.event.start_time": "2026-08-10T13:27:25.500001+00:00",
         "gen_ai.operation.name": "bidi_session",
-        "gen_ai.system": "aws.bedrock",
         "gen_ai.agent.name": "Voice Assistant",
         "gen_ai.request.model": "amazon.nova-2-5-sonic",
         "gen_ai.agent.tools": "[\"get_weather\", \"calculator\"]",

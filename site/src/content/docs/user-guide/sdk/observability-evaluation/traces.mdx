@@ -21,7 +21,6 @@ Each trace consists of multiple spans that represent different operations in you
 ```
 +-------------------------------------------------------------------------------------+
 | Strands Agent                                                                       |
-| - gen_ai.system: <system name>                                                      |
 | - gen_ai.agent.name: <agent name>                                                   |
 | - gen_ai.operation.name: <operation>                                                |
 | - gen_ai.request.model: <model identifier>                                          |
@@ -49,7 +48,7 @@ Each trace consists of multiple spans that represent different operations in you
 |  |                                                                               |  |
 |  |  +-----------------------------------------------------------------------+    |  |
 |  |  | Model invoke                                                          |    |  |
-|  |  | - gen_ai.system: <system name>                                        |    |  |
+|  |  | - gen_ai.system: <model provider>                                     |    |  |
 |  |  | - gen_ai.operation.name: <operation>                                  |    |  |
 |  |  | - gen_ai.user.message: <formatted prompt>                             |    |  |
 |  |  | - gen_ai.assistant.message: <formatted prompt>                        |    |  |
@@ -233,7 +232,6 @@ emits only the semantic-convention names.
 
 | Attribute | Description |
 |-----------|-------------|
-| `gen_ai.system` | The model provider, for example `aws.bedrock` (`gen_ai.provider.name` with `gen_ai_latest_experimental`); omitted when unknown |
 | `gen_ai.agent.name` | Name of the agent |
 | `gen_ai.user.message` | The user's initial prompt |
 | `gen_ai.choice` | The agent's final response |

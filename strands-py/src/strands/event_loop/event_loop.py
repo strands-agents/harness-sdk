@@ -253,7 +253,6 @@ async def event_loop_cycle(
         messages=agent.messages,
         parent_span=agent.trace_span,
         custom_trace_attributes=agent.trace_attributes,
-        gen_ai_provider_name=getattr(agent.model, "gen_ai_provider_name", None),
     )
     invocation_state["event_loop_cycle_span"] = cycle_span
 

@@ -241,7 +241,6 @@ async def test_executor_stream_with_trace(
     executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist
 ):
     tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
-    agent.model.gen_ai_provider_name = "aws.bedrock"
     stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
 
     tru_events = await alist(stream)
@@ -255,10 +254,7 @@ async def test_executor_stream_with_trace(
     assert tru_results == exp_results
 
     tracer.start_tool_call_span.assert_called_once_with(
-        tool_use,
-        cycle_span,
-        custom_trace_attributes=agent.trace_attributes,
-        gen_ai_provider_name="aws.bedrock",
+        tool_use, cycle_span, custom_trace_attributes=agent.trace_attributes
     )
     tracer.end_tool_call_span.assert_called_once_with(
         tracer.start_tool_call_span.return_value,
@@ -319,16 +315,12 @@ async def test_executor_stream_with_trace_span_records_post_middleware_tool_use(
     agent._middleware_registry.add_middleware(
         ExecuteToolStage.Input, lambda context: context.replace(tool_use=rewritten)
     )
-    agent.model.gen_ai_provider_name = "aws.bedrock"
     stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
 
     await alist(stream)
 
     tracer.start_tool_call_span.assert_called_once_with(
-        rewritten,
-        cycle_span,
-        custom_trace_attributes=agent.trace_attributes,
-        gen_ai_provider_name="aws.bedrock",
+        rewritten, cycle_span, custom_trace_attributes=agent.trace_attributes
     )
     tru_metrics_tool_use = agent.event_loop_metrics.add_tool_usage.call_args.args[0]
     assert tru_metrics_tool_use == rewritten

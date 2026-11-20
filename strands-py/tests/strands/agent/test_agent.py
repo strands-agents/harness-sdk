@@ -73,7 +73,6 @@ def mock_model(request):
     mock.configure_mock(mock_stream=unittest.mock.MagicMock())
     mock.stream.side_effect = stream
     mock.stateful = False
-    mock.gen_ai_provider_name = None
 
     return mock
 
@@ -1248,11 +1247,7 @@ def test_agent_callback_handler_custom_handler_used():
     assert agent.callback_handler is custom_handler
 
 
-@pytest.mark.parametrize(
-    ("gen_ai_provider_name", "exp_provider_attributes"),
-    [("aws.bedrock", {"gen_ai.system": "aws.bedrock"}), (None, {})],
-)
-def test_agent_structured_output(agent, system_prompt, user, agenerator, gen_ai_provider_name, exp_provider_attributes):
+def test_agent_structured_output(agent, system_prompt, user, agenerator):
     # Setup mock tracer and span
     mock_strands_tracer = unittest.mock.MagicMock()
     mock_otel_tracer = unittest.mock.MagicMock()
@@ -1262,7 +1257,7 @@ def test_agent_structured_output(agent, system_prompt, user, agenerator, gen_ai_
     agent.tracer = mock_strands_tracer
 
     agent.model.structured_output = unittest.mock.Mock(return_value=agenerator([{"output": user}]))
-    agent.model.gen_ai_provider_name = gen_ai_provider_name
+    agent.model.gen_ai_provider_name = "aws.bedrock"
 
     prompt = "Jane Doe is 30 years old and her email is jane@doe.com"
 
@@ -1283,7 +1278,6 @@ def test_agent_structured_output(agent, system_prompt, user, agenerator, gen_ai_
 
     mock_span.set_attributes.assert_called_once_with(
         {
-            **exp_provider_attributes,
             "gen_ai.agent.name": "Strands Agents",
             "gen_ai.agent.id": "default",
             "gen_ai.operation.name": "execute_structured_output",
@@ -1738,7 +1732,6 @@ def test_agent_trace_passes_structured_system_prompt(mock_get_tracer, mock_model
         system_prompt_content=system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
-        gen_ai_provider_name=None,
     )
 
 
@@ -1761,8 +1754,6 @@ def test_agent_call_creates_and_ends_span_on_success(mock_get_tracer, mock_model
         ),
     ]
 
-    mock_model.gen_ai_provider_name = "aws.bedrock"
-
     # Create agent and make a call
     agent = Agent(model=mock_model)
     result = agent("test prompt")
@@ -1777,7 +1768,6 @@ def test_agent_call_creates_and_ends_span_on_success(mock_get_tracer, mock_model
         system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
-        gen_ai_provider_name="aws.bedrock",
     )
 
     # Verify span was ended with the result
@@ -1816,7 +1806,6 @@ async def test_agent_stream_async_creates_and_ends_span_on_success(
         system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
-        gen_ai_provider_name=None,
     )
 
     expected_response = AgentResult(
@@ -1857,7 +1846,6 @@ def test_agent_call_creates_and_ends_span_on_exception(mock_get_tracer, mock_mod
         system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
-        gen_ai_provider_name=None,
     )
 
     # Verify span was ended with the exception
@@ -1896,7 +1884,6 @@ async def test_agent_stream_async_creates_and_ends_span_on_exception(mock_get_tr
         system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
-        gen_ai_provider_name=None,
     )
 
     # Verify span was ended with the exception
@@ -4387,7 +4374,7 @@ def test_agent_sends_an_injected_block_to_the_model_as_text_and_keeps_it_in_agen
 
 
 def test_agent_call_with_a_model_not_subclassing_model_omits_the_provider():
-    """A duck-typed model without gen_ai_provider_name still runs, and its spans omit the provider."""
+    """A duck-typed model without gen_ai_provider_name still runs, and its chat span omits the provider."""
 
     class DuckModel:
         stateful = False
@@ -4414,10 +4401,5 @@ def test_agent_call_with_a_model_not_subclassing_model_omits_the_provider():
         result = Agent(model=DuckModel(), callback_handler=None)("hello")
 
     assert str(result).strip() == "hi"
-    tru_provider_names = [
-        mock_tracer.start_agent_span.call_args.kwargs["gen_ai_provider_name"],
-        mock_tracer.start_event_loop_cycle_span.call_args.kwargs["gen_ai_provider_name"],
-        mock_tracer.start_model_invoke_span.call_args.kwargs["gen_ai_provider_name"],
-    ]
-    exp_provider_names = [None, None, None]
-    assert tru_provider_names == exp_provider_names
+    tru_provider_name = mock_tracer.start_model_invoke_span.call_args.kwargs["gen_ai_provider_name"]
+    assert tru_provider_name is None

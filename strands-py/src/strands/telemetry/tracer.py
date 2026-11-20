@@ -516,7 +516,6 @@ class Tracer:
         tool: ToolUse,
         parent_span: Span | None = None,
         custom_trace_attributes: Mapping[str, AttributeValue] | None = None,
-        gen_ai_provider_name: str | None = None,
         **kwargs: Any,
     ) -> Span:
         """Start a new span for a tool call.
@@ -525,16 +524,12 @@ class Tracer:
             tool: The tool being used.
             parent_span: Optional parent span to link this span to.
             custom_trace_attributes: Optional mapping of custom trace attributes to include in the span.
-            gen_ai_provider_name: Optional GenAI provider of the model, recorded as ``gen_ai.provider.name``
-                (or ``gen_ai.system``); omitted when None.
             **kwargs: Additional attributes to add to the span.
 
         Returns:
             The created span, or None if tracing is not enabled.
         """
-        attributes: dict[str, AttributeValue] = self._get_common_attributes(
-            operation_name="execute_tool", gen_ai_provider_name=gen_ai_provider_name
-        )
+        attributes: dict[str, AttributeValue] = self._get_common_attributes(operation_name="execute_tool")
         attributes.update(
             {
                 "gen_ai.tool.name": tool["name"],
@@ -658,7 +653,6 @@ class Tracer:
         messages: Messages,
         parent_span: Span | None = None,
         custom_trace_attributes: Mapping[str, AttributeValue] | None = None,
-        gen_ai_provider_name: str | None = None,
         **kwargs: Any,
     ) -> Span:
         """Start a new span for an event loop cycle.
@@ -668,8 +662,6 @@ class Tracer:
             parent_span: Optional parent span to link this span to.
             messages:  Messages being processed in this cycle.
             custom_trace_attributes: Optional mapping of custom trace attributes to include in the span.
-            gen_ai_provider_name: Optional GenAI provider of the model, recorded as ``gen_ai.provider.name``
-                (or ``gen_ai.system``); omitted when None.
             **kwargs: Additional attributes to add to the span.
 
         Returns:
@@ -678,9 +670,7 @@ class Tracer:
         event_loop_cycle_id = str(invocation_state.get("event_loop_cycle_id"))
         parent_span = parent_span if parent_span else invocation_state.get("event_loop_parent_span")
 
-        attributes: dict[str, AttributeValue] = self._get_common_attributes(
-            operation_name="execute_event_loop_cycle", gen_ai_provider_name=gen_ai_provider_name
-        )
+        attributes: dict[str, AttributeValue] = self._get_common_attributes(operation_name="execute_event_loop_cycle")
         attributes["event_loop.cycle_id"] = event_loop_cycle_id
 
         if custom_trace_attributes:
@@ -755,7 +745,6 @@ class Tracer:
         tools_config: dict | None = None,
         system_prompt: str | None = None,
         system_prompt_content: list | None = None,
-        gen_ai_provider_name: str | None = None,
         **kwargs: Any,
     ) -> Span:
         """Start a new span for an agent invocation.
@@ -769,16 +758,12 @@ class Tracer:
             tools_config: Optional dictionary of tool configurations.
             system_prompt: Optional system prompt string.
             system_prompt_content: Optional list of system prompt content blocks.
-            gen_ai_provider_name: Optional GenAI provider of the model, recorded as ``gen_ai.provider.name``
-                (or ``gen_ai.system``); omitted when None.
             **kwargs: Additional attributes to add to the span.
 
         Returns:
             The created span, or None if tracing is not enabled.
         """
-        attributes: dict[str, AttributeValue] = self._get_common_attributes(
-            operation_name="invoke_agent", gen_ai_provider_name=gen_ai_provider_name
-        )
+        attributes: dict[str, AttributeValue] = self._get_common_attributes(operation_name="invoke_agent")
         attributes.update(
             {
                 "gen_ai.agent.name": agent_name,
@@ -1298,13 +1283,13 @@ class Tracer:
         Args:
             operation_name: The name of the operation.
             gen_ai_provider_name: GenAI provider recorded as ``gen_ai.provider.name`` (or ``gen_ai.system``);
-                omitted when None.
+                omitted when None or empty.
 
         Returns:
             A dictionary of attributes following the appropriate GenAI conventions.
         """
         attributes: dict[str, AttributeValue] = {"gen_ai.operation.name": operation_name}
-        if gen_ai_provider_name is not None:
+        if gen_ai_provider_name:
             key = "gen_ai.provider.name" if self.use_latest_genai_conventions else "gen_ai.system"
             attributes[key] = gen_ai_provider_name
         return attributes
