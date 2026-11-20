@@ -1,0 +1,85 @@
+{
+  "source": "strands-ts/src/vended-tools/index.ts",
+  "cases": [
+    {
+      "name": "shell",
+      "json": "{\"name\":\"shell\",\"description\":\"Executes shell commands and returns output (stdout), error (stderr), and exit_code (non-zero means the command failed). Each call runs in a fresh shell; state such as variables and the working directory does not persist across calls.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell command to execute.\"},\"timeout\":{\"default\":120,\"description\":\"Optional per-execution timeout in seconds.\",\"type\":\"number\",\"exclusiveMinimum\":0}},\"required\":[\"command\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "shell_default_timeout_300",
+      "json": "{\"name\":\"shell\",\"description\":\"Executes shell commands and returns output (stdout), error (stderr), and exit_code (non-zero means the command failed). Each call runs in a fresh shell; state such as variables and the working directory does not persist across calls.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell command to execute.\"},\"timeout\":{\"default\":300,\"description\":\"Optional per-execution timeout in seconds.\",\"type\":\"number\",\"exclusiveMinimum\":0}},\"required\":[\"command\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "read",
+      "json": "{\"name\":\"read\",\"description\":\"Read a file. Text returns `cat -n` style numbered lines so you can cite `path:line`. Files must use absolute paths. Images (png/jpg/jpeg/gif/webp) and binary documents (pdf/doc/docx/xls/xlsx) return media you can view directly.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"Absolute path to the file.\"},\"offset\":{\"description\":\"1-indexed line to start from. Defaults to the first line. Text files only.\",\"type\":\"integer\",\"minimum\":1,\"maximum\":9007199254740991},\"limit\":{\"description\":\"Maximum number of lines to return. Defaults to 2000. Text files only.\",\"type\":\"integer\",\"minimum\":1,\"maximum\":9007199254740991}},\"required\":[\"path\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "read_media_off",
+      "json": "{\"name\":\"read\",\"description\":\"Read a file. Text returns `cat -n` style numbered lines so you can cite `path:line`. Files must use absolute paths.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"Absolute path to the file.\"},\"offset\":{\"description\":\"1-indexed line to start from. Defaults to the first line. Text files only.\",\"type\":\"integer\",\"minimum\":1,\"maximum\":9007199254740991},\"limit\":{\"description\":\"Maximum number of lines to return. Defaults to 2000. Text files only.\",\"type\":\"integer\",\"minimum\":1,\"maximum\":9007199254740991}},\"required\":[\"path\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "write",
+      "json": "{\"name\":\"write\",\"description\":\"Create or overwrite a text file with the full provided content. Files must use absolute paths.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"Absolute path to the file.\"},\"content\":{\"type\":\"string\",\"description\":\"The full file content to write.\"}},\"required\":[\"path\",\"content\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "edit",
+      "json": "{\"name\":\"edit\",\"description\":\"Replace an exact string in a text file. `old_str` must appear in the file exactly once. Files must use absolute paths.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"Absolute path to the file.\"},\"old_str\":{\"type\":\"string\",\"description\":\"Exact text to find. Must be unique within the file.\"},\"new_str\":{\"type\":\"string\",\"description\":\"Replacement text.\"}},\"required\":[\"path\",\"old_str\",\"new_str\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "file_editor",
+      "json": "{\"name\":\"fileEditor\",\"description\":\"Filesystem editor tool for viewing, creating, and editing files. Supports view (with line ranges), create, str_replace, and insert operations. Files must use absolute paths.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"enum\":[\"view\",\"create\",\"str_replace\",\"insert\"],\"description\":\"The operation to perform: `view`, `create`, `str_replace`, `insert`.\"},\"path\":{\"type\":\"string\",\"description\":\"Absolute path to the file or directory.\"},\"file_text\":{\"description\":\"Content for new file (required for create command).\",\"type\":\"string\"},\"view_range\":{\"description\":\"Line range to view [start, end]. 1-indexed. End can be -1 for end of file.\",\"type\":\"array\",\"prefixItems\":[{\"type\":\"number\"},{\"type\":\"number\"}],\"items\":false,\"minItems\":2,\"maxItems\":2},\"old_str\":{\"description\":\"Exact string to find and replace (required for str_replace command).\",\"type\":\"string\"},\"new_str\":{\"description\":\"Replacement string (for str_replace and insert commands).\",\"type\":\"string\"},\"insert_line\":{\"description\":\"Line number where text should be inserted (0-indexed, required for insert command).\",\"type\":\"number\"}},\"required\":[\"command\",\"path\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "bash",
+      "json": "{\"name\":\"bash\",\"description\":\"Executes bash shell commands in a persistent session. Supports execute and restart modes. Commands persist state (variables, directory) within the session. Node.js only.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"mode\":{\"type\":\"string\",\"enum\":[\"execute\",\"restart\"],\"description\":\"Operation mode: \\\"execute\\\" to run a command, \\\"restart\\\" to restart the session\"},\"command\":{\"description\":\"The bash command to execute (required when mode is \\\"execute\\\")\",\"type\":\"string\"},\"timeout\":{\"description\":\"Timeout in seconds (default: 120, applies only to execute mode)\",\"type\":\"number\",\"exclusiveMinimum\":0}},\"required\":[\"mode\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "python_repl",
+      "json": "{\"name\":\"python_repl\",\"description\":\"Executes Python code and returns output (stdout), error (stderr), and exit_code (non-zero means the code failed). Each call runs in a fresh interpreter; variables, imports, and definitions do not persist across calls. Files written to the working directory persist while the sandbox is alive, so save intermediate results to files when later calls need them. stdin is not available (input() fails). Use print() to surface values.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Python source to execute.\"},\"timeout\":{\"description\":\"Timeout in seconds (default: 120). Must be positive.\",\"type\":\"number\",\"exclusiveMinimum\":0}},\"required\":[\"code\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "notebook",
+      "json": "{\"name\":\"notebook\",\"description\":\"Manages text notebooks for note-taking and documentation. Supports create, list, read, write (append, replace, or insert), and clear operations. In write mode: newStr alone appends to the end; newStr with oldStr replaces matching text; newStr with insertLine inserts at a position. A write only succeeds on a notebook that already exists: use list to check, or create to start a new one (create replaces any existing content). Notebooks persist within the agent invocation.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"mode\":{\"type\":\"string\",\"enum\":[\"create\",\"list\",\"read\",\"write\",\"clear\"],\"description\":\"The operation to perform: `create`, `list`, `read`, `write`, `clear`.\"},\"name\":{\"description\":\"Name of the notebook to operate on. Defaults to \\\"default\\\".\",\"type\":\"string\"},\"newStr\":{\"description\":\"Text to append, or the new string for replacement and insertion operations.\",\"type\":\"string\"},\"readRange\":{\"description\":\"Optional parameter of `read` command. Line range to show [start, end]. Supports negative indices.\",\"type\":\"array\",\"items\":{\"type\":\"number\"}},\"oldStr\":{\"description\":\"String to replace in write mode when doing text replacement.\",\"type\":\"string\"},\"insertLine\":{\"description\":\"Line number (int) or search text (str) for insertion point in write mode.\\nSupports negative indices.\",\"type\":[\"string\",\"number\"]}},\"required\":[\"mode\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "http_request",
+      "json": "{\"name\":\"http_request\",\"description\":\"Makes HTTP requests to external APIs. Supports GET, POST, PUT, DELETE, PATCH, HEAD, and OPTIONS methods. Returns response with status, headers, and body.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"method\":{\"type\":\"string\",\"enum\":[\"GET\",\"POST\",\"PUT\",\"DELETE\",\"PATCH\",\"HEAD\",\"OPTIONS\"],\"description\":\"HTTP method to use for the request\"},\"url\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"URL to send the request to\"},\"headers\":{\"description\":\"Optional HTTP headers as key-value pairs\",\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"string\"}},\"body\":{\"description\":\"Optional request body as a string\",\"type\":\"string\"},\"timeout\":{\"description\":\"Optional timeout in seconds (default: 30)\",\"type\":\"number\",\"exclusiveMinimum\":0}},\"required\":[\"method\",\"url\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "sleep",
+      "json": "{\"name\":\"sleep\",\"description\":\"Pauses execution for a specified number of seconds (max 60). Cooperative and cancellable: the sleep aborts immediately when the agent invocation is cancelled. Rejects negative, NaN, infinite, or non-numeric durations, and durations above 60.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"duration\":{\"type\":\"number\",\"minimum\":0,\"maximum\":60,\"description\":\"Seconds to pause. Must be finite, non-negative, and no larger than 60.\"}},\"required\":[\"duration\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "sleep_max_duration_2_5",
+      "json": "{\"name\":\"sleep\",\"description\":\"Pauses execution for a specified number of seconds (max 2.5). Cooperative and cancellable: the sleep aborts immediately when the agent invocation is cancelled. Rejects negative, NaN, infinite, or non-numeric durations, and durations above 2.5.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"duration\":{\"type\":\"number\",\"minimum\":0,\"maximum\":2.5,\"description\":\"Seconds to pause. Must be finite, non-negative, and no larger than 2.5.\"}},\"required\":[\"duration\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "stop",
+      "json": "{\"name\":\"stop\",\"description\":\"Gracefully ends the agent loop when the task is complete. Call this tool once with an optional final message when no further work is needed. This is a cooperative stop, not an abort: any tools already requested in this turn still run.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"message\":{\"description\":\"Optional final message summarizing why the loop is ending. Appears as the loop's last assistant turn.\",\"anyOf\":[{\"type\":\"string\",\"maxLength\":4096},{\"type\":\"null\"}]}},\"additionalProperties\":false}}"
+    },
+    {
+      "name": "stop_max_message_length_100",
+      "json": "{\"name\":\"stop\",\"description\":\"Gracefully ends the agent loop when the task is complete. Call this tool once with an optional final message when no further work is needed. This is a cooperative stop, not an abort: any tools already requested in this turn still run.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"message\":{\"description\":\"Optional final message summarizing why the loop is ending. Appears as the loop's last assistant turn.\",\"anyOf\":[{\"type\":\"string\",\"maxLength\":100},{\"type\":\"null\"}]}},\"additionalProperties\":false}}"
+    },
+    {
+      "name": "handoff_to_user",
+      "json": "{\"name\":\"handoff_to_user\",\"description\":\"Ask the user a question and wait for their answer. Use it only when you cannot proceed without confirmation, approval, or information that only the user has. Do not call it to deliver a final answer or to report progress. The user's reply is returned as the tool result.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\",\"description\":\"The message to surface to the user.\"}},\"required\":[\"message\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "web_fetch",
+      "json": "{\"name\":\"web_fetch\",\"description\":\"Fetches an HTTP(S) URL and answers a prompt about its content. The analyst processes the page directly so the full content never enters the main agent's context. The prompt parameter is required.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"url\":{\"type\":\"string\",\"description\":\"URL to fetch. Must be http:// or https://.\"},\"prompt\":{\"type\":\"string\",\"description\":\"Question or instruction about the page content.\"}},\"required\":[\"url\",\"prompt\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "web_fetch_markdown",
+      "json": "{\"name\":\"web_fetch\",\"description\":\"Fetches an HTTP(S) URL and returns its content as clean markdown. HTML pages are converted to markdown with scripts, styles, and noise stripped; other content types are returned as-is.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"url\":{\"type\":\"string\",\"description\":\"URL to fetch. Must be http:// or https://.\"}},\"required\":[\"url\"],\"additionalProperties\":false}}"
+    },
+    {
+      "name": "subagent",
+      "json": "{\"name\":\"subagent\",\"description\":\"Delegate a self-contained task to a subagent that runs in its own context and returns a final report. Reach for this when a subtask would otherwise flood your context with intermediate work and you only need its conclusion.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"task\":{\"type\":\"string\",\"description\":\"The self-contained task, including all context the subagent needs. It cannot ask follow-up questions.\"},\"agent_type\":{\"type\":\"string\",\"enum\":[\"generalist\"],\"description\":\"Role to assign this agent. Omit to use the default ('generalist').\\nOptions:\\n- generalist: a general-purpose agent for a focused subtask that runs in its own context (sets instructions)\"},\"instructions\":{\"type\":\"string\",\"description\":\"A system prompt defining this agent's role.\"}},\"required\":[\"task\"]}}"
+    },
+    {
+      "name": "subagent_choice_axes",
+      "json": "{\"name\":\"subagent\",\"description\":\"Delegate a self-contained task to a subagent that runs in its own context and returns a final report. Reach for this when a subtask would otherwise flood your context with intermediate work and you only need its conclusion.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"task\":{\"type\":\"string\",\"description\":\"The self-contained task, including all context the subagent needs. It cannot ask follow-up questions.\"},\"agent_type\":{\"type\":\"string\",\"enum\":[\"generalist\",\"reviewer\"],\"description\":\"Role to assign this agent. Omit to use the default ('generalist').\\nOptions:\\n- generalist: a general-purpose agent for a focused subtask that runs in its own context (sets instructions)\\n- reviewer: reviews diffs (sets instructions; tools: read; model: small)\"},\"tools\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"readonly\",\"shell\"]},\"description\":\"Subset of tools to grant this agent. Fewer is safer; it cannot exceed your own. Omit to grant all inherited tools.\\nOptions:\\n- readonly: read files\"},\"model\":{\"type\":\"string\",\"enum\":[\"fast\",\"deep\"],\"description\":\"Which model this agent runs on. Omit to inherit the parent's model.\"},\"context\":{\"type\":\"string\",\"enum\":[\"none\",\"all\",\"no_tools\"],\"description\":\"How much of this conversation the subagent sees: 'none' (fresh start), 'all' (full history including tool calls and their results — can be large), 'no_tools' (text turns only — tool calls and their results removed). More context costs more tokens.\\nOptions:\\n- none: fresh\"},\"last_messages\":{\"type\":\"integer\",\"description\":\"Optional: limit the shared context to the last N messages. Omit to share all of the selected context.\"}},\"required\":[\"task\"]}}"
+    }
+  ]
+}

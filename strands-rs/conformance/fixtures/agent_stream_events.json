@@ -1,0 +1,117 @@
+{
+  "source": "strands-ts/src/types/agent.ts",
+  "cases": [
+    {
+      "name": "before_invocation_event",
+      "json": "{\"type\":\"beforeInvocationEvent\"}"
+    },
+    {
+      "name": "message_added_event",
+      "json": "{\"type\":\"messageAddedEvent\",\"message\":{\"role\":\"user\",\"content\":[{\"text\":\"What is the weather in Seattle?\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000005\"}}"
+    },
+    {
+      "name": "before_model_call_event",
+      "json": "{\"type\":\"beforeModelCallEvent\",\"projectedInputTokens\":94}"
+    },
+    {
+      "name": "model_stream_update_event_model_message_start_event",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelMessageStartEvent\",\"role\":\"assistant\"}}"
+    },
+    {
+      "name": "model_stream_update_event_model_content_block_start_event",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelContentBlockStartEvent\"}}"
+    },
+    {
+      "name": "model_stream_update_event_model_content_block_delta_event_text_delta",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelContentBlockDeltaEvent\",\"delta\":{\"type\":\"textDelta\",\"text\":\"Let me check.\"}}}"
+    },
+    {
+      "name": "model_stream_update_event_model_content_block_stop_event",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelContentBlockStopEvent\"}}"
+    },
+    {
+      "name": "content_block_event",
+      "json": "{\"type\":\"contentBlockEvent\",\"contentBlock\":{\"text\":\"Let me check.\"}}"
+    },
+    {
+      "name": "model_stream_update_event_model_content_block_start_event_tool_use_start",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelContentBlockStartEvent\",\"start\":{\"type\":\"toolUseStart\",\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\"}}}"
+    },
+    {
+      "name": "model_stream_update_event_model_content_block_delta_event_tool_use_input_delta",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelContentBlockDeltaEvent\",\"delta\":{\"type\":\"toolUseInputDelta\",\"input\":\"{\\\"city\\\":\\\"Seattle\\\"}\"}}}"
+    },
+    {
+      "name": "model_stream_update_event_model_message_stop_event",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"toolUse\"}}"
+    },
+    {
+      "name": "model_stream_update_event_model_metadata_event",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelMetadataEvent\",\"usage\":{\"inputTokens\":20,\"outputTokens\":10,\"totalTokens\":30}}}"
+    },
+    {
+      "name": "model_message_event",
+      "json": "{\"type\":\"modelMessageEvent\",\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"Let me check.\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}],\"trackingId\":\"00000000-0000-4000-8000-000000000009\",\"metadata\":{\"usage\":{\"inputTokens\":20,\"outputTokens\":10,\"totalTokens\":30}}},\"stopReason\":\"toolUse\"}"
+    },
+    {
+      "name": "after_model_call_event",
+      "json": "{\"type\":\"afterModelCallEvent\",\"attemptCount\":1,\"stopData\":{\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"Let me check.\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}],\"trackingId\":\"00000000-0000-4000-8000-000000000009\",\"metadata\":{\"usage\":{\"inputTokens\":20,\"outputTokens\":10,\"totalTokens\":30}}},\"stopReason\":\"toolUse\"}}"
+    },
+    {
+      "name": "before_tools_event",
+      "json": "{\"type\":\"beforeToolsEvent\",\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"Let me check.\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}],\"trackingId\":\"00000000-0000-4000-8000-000000000009\",\"metadata\":{\"usage\":{\"inputTokens\":20,\"outputTokens\":10,\"totalTokens\":30}}}}"
+    },
+    {
+      "name": "before_tool_call_event",
+      "json": "{\"type\":\"beforeToolCallEvent\",\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}"
+    },
+    {
+      "name": "tool_stream_update_event_tool_stream_event",
+      "json": "{\"type\":\"toolStreamUpdateEvent\",\"event\":{\"type\":\"toolStreamEvent\",\"data\":{\"progress\":\"looking up\"}}}"
+    },
+    {
+      "name": "after_tool_call_event",
+      "json": "{\"type\":\"afterToolCallEvent\",\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}},\"result\":{\"toolResult\":{\"toolUseId\":\"tooluse-weather-1\",\"status\":\"success\",\"content\":[{\"json\":{\"city\":\"Seattle\",\"forecast\":\"sunny\",\"high\":22}}]}}}"
+    },
+    {
+      "name": "tool_result_event",
+      "json": "{\"type\":\"toolResultEvent\",\"result\":{\"toolResult\":{\"toolUseId\":\"tooluse-weather-1\",\"status\":\"success\",\"content\":[{\"json\":{\"city\":\"Seattle\",\"forecast\":\"sunny\",\"high\":22}}]}}}"
+    },
+    {
+      "name": "after_tools_event",
+      "json": "{\"type\":\"afterToolsEvent\",\"message\":{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"tooluse-weather-1\",\"status\":\"success\",\"content\":[{\"json\":{\"city\":\"Seattle\",\"forecast\":\"sunny\",\"high\":22}}]}}],\"trackingId\":\"00000000-0000-4000-8000-00000000000b\"}}"
+    },
+    {
+      "name": "after_invocation_event",
+      "json": "{\"type\":\"afterInvocationEvent\"}"
+    },
+    {
+      "name": "agent_result_event",
+      "json": "{\"type\":\"agentResultEvent\",\"result\":{\"type\":\"agentResult\",\"stopReason\":\"endTurn\",\"lastMessage\":{\"role\":\"assistant\",\"content\":[{\"text\":\"It is sunny in Seattle.\"}],\"trackingId\":\"00000000-0000-4000-8000-00000000000f\",\"metadata\":{\"usage\":{\"inputTokens\":40,\"outputTokens\":8,\"totalTokens\":48}}}}}"
+    },
+    {
+      "name": "interrupt_event",
+      "json": "{\"type\":\"interruptEvent\",\"interrupt\":{\"id\":\"tool:tooluse-delete-1:confirm_delete\",\"name\":\"confirm_delete\",\"reason\":{\"message\":\"Delete these files?\",\"path\":\"/tmp/x\"},\"source\":\"tool\"}}"
+    },
+    {
+      "name": "after_tool_call_event_error",
+      "json": "{\"type\":\"afterToolCallEvent\",\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-err\",\"input\":{\"city\":\"Nowhere\"}},\"result\":{\"toolResult\":{\"toolUseId\":\"tooluse-err\",\"status\":\"error\",\"content\":[{\"text\":\"Error: city not found\"}]}},\"error\":{\"message\":\"city not found\"}}"
+    },
+    {
+      "name": "after_model_call_event_error",
+      "json": "{\"type\":\"afterModelCallEvent\",\"attemptCount\":2,\"error\":{\"message\":\"model unavailable\"}}"
+    },
+    {
+      "name": "after_model_call_event_redaction",
+      "json": "{\"type\":\"afterModelCallEvent\",\"attemptCount\":1,\"stopData\":{\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"[redacted]\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000017\"},\"stopReason\":\"guardrailIntervened\",\"redaction\":{\"userMessage\":\"[user input redacted]\"}}}"
+    },
+    {
+      "name": "before_model_call_event_projected_input_tokens",
+      "json": "{\"type\":\"beforeModelCallEvent\",\"projectedInputTokens\":1234}"
+    },
+    {
+      "name": "tool_stream_update_event_no_data",
+      "json": "{\"type\":\"toolStreamUpdateEvent\",\"event\":{\"type\":\"toolStreamEvent\"}}"
+    }
+  ]
+}

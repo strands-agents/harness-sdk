@@ -1,0 +1,17 @@
+{
+  "source": "strands-ts/src/telemetry/meter.ts",
+  "cases": [
+    {
+      "name": "metric_instruments",
+      "json": "[{\"kind\":\"counter\",\"name\":\"gen_ai.agent.cycle.count\",\"description\":\"Number of agent loop cycles executed\"},{\"kind\":\"counter\",\"name\":\"gen_ai.agent.invocation.count\",\"description\":\"Number of agent invocations\"},{\"kind\":\"histogram\",\"name\":\"gen_ai.agent.cycle.duration\",\"description\":\"Duration of agent loop cycles in milliseconds\",\"unit\":\"ms\"},{\"kind\":\"counter\",\"name\":\"gen_ai.agent.tool.call.count\",\"description\":\"Number of tool calls\"},{\"kind\":\"counter\",\"name\":\"gen_ai.agent.tool.error.count\",\"description\":\"Number of failed tool calls\"},{\"kind\":\"histogram\",\"name\":\"gen_ai.agent.tool.duration\",\"description\":\"Duration of tool calls in milliseconds\",\"unit\":\"ms\"},{\"kind\":\"counter\",\"name\":\"gen_ai.agent.tokens.input\",\"description\":\"Input tokens consumed\"},{\"kind\":\"counter\",\"name\":\"gen_ai.agent.tokens.output\",\"description\":\"Output tokens consumed\"},{\"kind\":\"histogram\",\"name\":\"gen_ai.agent.model.latency\",\"description\":\"Model invocation latency in milliseconds\",\"unit\":\"ms\"},{\"kind\":\"histogram\",\"name\":\"gen_ai.server.time_to_first_token\",\"description\":\"Time to generate first token for successful responses\",\"unit\":\"s\"}]"
+    },
+    {
+      "name": "metric_names",
+      "json": "[\"gen_ai.agent.cycle.count\",\"gen_ai.agent.invocation.count\",\"gen_ai.agent.cycle.duration\",\"gen_ai.agent.tool.call.count\",\"gen_ai.agent.tool.error.count\",\"gen_ai.agent.tool.duration\",\"gen_ai.agent.tokens.input\",\"gen_ai.agent.tokens.output\",\"gen_ai.agent.model.latency\",\"gen_ai.server.time_to_first_token\"]"
+    },
+    {
+      "name": "span_names",
+      "json": "[\"invoke_agent conformance_agent\",\"execute_agent_loop_cycle\",\"chat\",\"execute_tool get_weather\"]"
+    }
+  ]
+}
