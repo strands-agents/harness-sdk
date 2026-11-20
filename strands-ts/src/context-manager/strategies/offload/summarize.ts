@@ -22,6 +22,7 @@ import type { ContextState } from '../../types.js'
 import { formatToolResultLabel, toolResultToContentBlocks } from '../../content-rendering.js'
 import { formatOffloaded, formatSummarized, REMOVED_MESSAGES } from '../../placeholder.js'
 import {
+  holdsRun,
   placeholderFor,
   removedTokens,
   removeMessages,
@@ -162,7 +163,10 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    * placeholder the messages it stands for are retrievable under. A summary without a `provider`, which a capable
    * model returns when its own summary request failed, is placed as a client-side marker instead.
    *
-   * @returns False when the summary failed or held no text, leaving the history unchanged
+   * The messages the summary covers are held by identity across the model call, so a summary whose messages left the
+   * history is dropped rather than placed over whatever took their place.
+   *
+   * @returns False when the summary failed, held no text, or no longer covers the history's start
    */
   private async _summarizeServerSide(
     context: ContextState,
@@ -171,7 +175,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     end: number
   ): Promise<boolean> {
     const { messages } = context
-    const replaced = end - 1
+    const covered = messages.slice(0, end)
+    const replaced = covered.length - 1
     if (replaced > removable.length) {
       logger.warn(
         `covered=<${replaced}>, eligible=<${removable.length}> | a server-side summary covers the conversation's start` +
@@ -180,18 +185,25 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     }
     let result: SummarizeResult
     try {
-      result = await model.summarize(messages.slice(0, end), this._summarizeOptions(context.agent, true))
+      result = await model.summarize(covered, this._summarizeOptions(context.agent, true))
     } catch (error) {
       logger.warn(`messages=<${replaced}>, error=<${normalizeError(error).message}> | summarization failed`, error)
       return false
     }
     recordSummaryUsage(context.invocationContext, result)
     const summary = providerSummary(result)
-    if (summary === undefined) return this._placeTextSummary(context, model, end, summaryText(result))
+    if (summary === undefined) return this._placeTextSummary(context, model, covered, summaryText(result))
 
     // Message 0 stays in the array, but a provider sending the summary as a compaction block stops sending anything
     // before it, so the summary stands for message 0 too and a retrieval has to be able to return it.
-    const reference = await this._removedReference(messages.slice(0, end), model)
+    const reference = await this._removedReference(covered, model)
+    if (!holdsRun(messages, 0, covered)) {
+      logger.warn(
+        `summarized=<${replaced}> | the summarized messages are no longer the history's start` +
+          ' | leaving the summary unplaced'
+      )
+      return false
+    }
     messages.splice(1, replaced, summaryMessage(summary, reference))
     logger.debug(`summarized=<${replaced}> | summarized opening messages server-side`)
     return true
@@ -217,7 +229,12 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    *
    * @returns False when the summary held no text, leaving the history unchanged
    */
-  private async _placeTextSummary(context: ContextState, model: Model, end: number, summary: string): Promise<boolean> {
+  private async _placeTextSummary(
+    context: ContextState,
+    model: Model,
+    covered: Message[],
+    summary: string
+  ): Promise<boolean> {
     if (!summary) {
       logger.warn(`model=<${model.constructor.name}> | summary held no text | leaving the content unsummarized`)
       return false
@@ -227,7 +244,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
         ' so thinking blocks kept after it will be dropped'
     )
     const textFor = placeholderFor(model, (tokens) => formatSummarized(REMOVED_MESSAGES, tokens, summary))
-    return removeMessages(context.messages, context.messages.slice(1, end), textFor, 'summarize', this._archive)
+    return removeMessages(context.messages, covered.slice(1), textFor, 'summarize', this._archive)
   }
 
   protected async _replaceBlock(

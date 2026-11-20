@@ -179,11 +179,36 @@ async function removeRun(
   const placeholder = await textFor(run)
   if (placeholder === null) return false
 
-  const start = messages.indexOf(run[0]!)
-  messages.splice(start, run.length)
   const archiveRef = await archiveRemoved(archive, run, method)
+  const start = runStart(messages, run)
+  if (start === undefined) return false
+  // Archived before the splice and the marker inserted without an await between: a cancellation here would
+  // otherwise leave the run neither in the history nor retrievable.
+  messages.splice(start, run.length)
   insertMarker(messages, start, offloadPlaceholder(method, placeholder.text, archiveRef, placeholder.tokens))
   return true
+}
+
+/**
+ * The index `run` starts at, or undefined once `messages` no longer holds it as a contiguous run.
+ *
+ * A pass awaits between selecting a run and removing it, so the run can be displaced or broken up before the
+ * removal reaches it. Removing `run.length` messages from a stale start takes messages nobody selected, and those
+ * are not in the archive entry the run was written to.
+ */
+function runStart(messages: Message[], run: Message[]): number | undefined {
+  const start = messages.indexOf(run[0]!)
+  if (start === -1 || !holdsRun(messages, start, run)) return undefined
+  return start
+}
+
+/**
+ * Whether `messages` still holds `run` as a contiguous run beginning at `start`, by identity.
+ *
+ * @internal
+ */
+export function holdsRun(messages: Message[], start: number, run: Message[]): boolean {
+  return run.every((message, offset) => messages[start + offset] === message)
 }
 
 /**

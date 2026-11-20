@@ -505,6 +505,50 @@ def test_end_model_invoke_span_latest_conventions(mock_span, monkeypatch):
         mock_span.end.assert_called_once()
 
 
+def test_end_model_invoke_span_latest_conventions_maps_reasoning_text_to_reasoning_part(mock_span, monkeypatch):
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    tracer = Tracer()
+    message = {
+        "role": "assistant",
+        "content": [
+            {"reasoningContent": {"reasoningText": {"text": "Multiply 17 by 23.", "signature": "sig-secret"}}},
+            {"text": "391"},
+        ],
+    }
+
+    usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
+    tracer.end_model_invoke_span(mock_span, message, usage, Metrics(latencyMs=20), "end_turn")
+
+    output_messages = mock_span.add_event.call_args.kwargs["attributes"]["gen_ai.output.messages"]
+    assert json.loads(output_messages) == [
+        {
+            "role": "assistant",
+            "parts": [
+                {"type": "reasoning", "content": "Multiply 17 by 23."},
+                {"type": "text", "content": "391"},
+            ],
+            "finish_reason": "end_turn",
+        }
+    ]
+    assert "sig-secret" not in output_messages
+
+
+@pytest.mark.parametrize("reasoning_content", [{"redactedContent": b"\x01\x02\x03"}, {"reasoningText": None}])
+def test_end_model_invoke_span_latest_conventions_does_not_export_redacted_reasoning(
+    mock_span, monkeypatch, reasoning_content
+):
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    tracer = Tracer()
+    message = {"role": "assistant", "content": [{"reasoningContent": reasoning_content}, {"text": "done"}]}
+
+    usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
+    tracer.end_model_invoke_span(mock_span, message, usage, Metrics(latencyMs=20), "end_turn")
+
+    output_messages = mock_span.add_event.call_args.kwargs["attributes"]["gen_ai.output.messages"]
+    parts = json.loads(output_messages)[0]["parts"]
+    assert parts == [{"type": "reasoningContent"}, {"type": "text", "content": "done"}]
+
+
 def test_start_tool_call_span(mock_tracer):
     """Test starting a tool call span."""
     with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):

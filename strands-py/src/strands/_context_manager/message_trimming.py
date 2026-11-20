@@ -40,6 +40,25 @@ def _index_of(messages: Messages, message: Message) -> int | None:
     return next((index for index, candidate in enumerate(messages) if candidate is message), None)
 
 
+def _run_start(messages: Messages, run: Messages) -> int | None:
+    """The index ``run`` starts at, or None once ``messages`` no longer holds it as a contiguous run.
+
+    A pass awaits between selecting a run and removing it, so the run can be displaced or broken up before the
+    removal reaches it. Removing ``len(run)`` messages from a stale start takes messages nobody selected, and those
+    are not in the stash entry the run was written to.
+    """
+    start = _index_of(messages, run[0])
+    if start is None:
+        return None
+    return start if _holds_run(messages, start, run) else None
+
+
+def _holds_run(messages: Messages, start: int, run: Messages) -> bool:
+    """Whether ``messages`` still holds ``run`` as a contiguous run beginning at ``start``, by identity."""
+    held = messages[start : start + len(run)]
+    return len(held) == len(run) and all(kept is member for kept, member in zip(held, run, strict=True))
+
+
 def collect_removable_with_pair(messages: Messages, index: int) -> list[Message]:
     """Collect a message and its paired partner (if any) for safe removal.
 
@@ -173,7 +192,7 @@ async def _replace_run(
     for.
     """
     stash_ref = await stash_removed(stash, run, method)
-    start = _index_of(messages, run[0])
+    start = _run_start(messages, run)
     if start is None:
         return False
     # Stashed before the splice and the marker inserted without an await between: a cancellation here would

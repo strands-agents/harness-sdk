@@ -35,10 +35,9 @@ function toolUseModel(
   input: Record<string, string | { answer: string; reason?: string }>,
   options: { usage?: Usage | null; latencyMs?: number | null } = {}
 ): RecordingModel {
-  const normalized: Record<string, { answer: string; reason?: string }> = {}
-  for (const [id, value] of Object.entries(input)) {
-    normalized[id] = typeof value === 'string' ? { answer: value } : value
-  }
+  const normalized = Object.fromEntries(
+    Object.entries(input).map(([id, value]) => [id, typeof value === 'string' ? { answer: value } : value])
+  )
   const usage = options.usage === undefined ? DEFAULT_USAGE : options.usage
   const latencyMs = options.latencyMs === undefined ? 42 : options.latencyMs
 
@@ -342,6 +341,32 @@ describe('LLMDecisionModel', () => {
       expect(result.answers.q).toBe(true)
       expect(result.usage).toBeUndefined()
       expect(result.metadata.latencyMs).toBeGreaterThanOrEqual(0)
+    })
+
+    it('preserves prototype-named question ids', async () => {
+      const ids = ['__proto__', 'constructor', 'toString']
+      const model = toolUseModel(Object.fromEntries(ids.map((id) => [id, 'true'])))
+      const decision = new LLMDecisionModel({ model })
+      const questions = Object.fromEntries(
+        ids.map((id) => [id, { question: 'ok?', choices: 'boolean' } satisfies Question])
+      )
+
+      const result = await decision.ask('x', questions)
+
+      expect(result.answers).toEqual(Object.fromEntries(ids.map((id) => [id, true])))
+      expect(Object.keys(result.answers)).toEqual(ids)
+      expect(Object.getPrototypeOf(result.answers)).toBe(Object.prototype)
+      const inputSchema = model.options[0]?.toolSpecs?.[0]?.inputSchema as { properties: object; required: string[] }
+      expect(Object.keys(inputSchema.properties)).toEqual(ids)
+      expect(inputSchema.required).toEqual(ids)
+    })
+
+    it.each(['__proto__', 'constructor', 'toString'])('rejects a missing own answer for %s', async (id) => {
+      const model = toolUseModel({ other: 'true' })
+      const decision = new LLMDecisionModel({ model })
+      const questions = Object.fromEntries([[id, { question: 'ok?', choices: 'boolean' } satisfies Question]])
+
+      await expect(decision.ask('x', questions)).rejects.toThrow(`omitted answer for question id=<${id}>`)
     })
 
     it('throws when the model returns an unknown option', async () => {

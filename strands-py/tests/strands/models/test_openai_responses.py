@@ -2838,6 +2838,35 @@ def test_message_cache_dynamic_tail_skips_unsupported_blocks(caplog):
     assert "reasoningContent is not yet supported" in caplog.text
 
 
+_DEVELOPER_PROMPT = {"role": "developer", "content": [{"type": "input_text", "text": "Be precise."}]}
+
+
+_INSTRUCTIONS = {"instructions": "Be precise."}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "config", "exp_leading_input", "exp_fields"),
+    [
+        ("gpt-6.2-sol", {}, [_DEVELOPER_PROMPT], {}),
+        ("openai.gpt-6.2-astra", {"cache_config": CacheConfig()}, [_DEVELOPER_PROMPT], {}),
+        ("gpt-6.1-sol", {"cache_config": CacheConfig()}, [], _INSTRUCTIONS),
+        ("gpt-6.2-sol", {"stateful": True}, [], _INSTRUCTIONS),
+        ("gpt-6.2-sol", {"params": {"input": [{"role": "user", "content": "native input"}]}}, [], _INSTRUCTIONS),
+    ],
+)
+def test_format_request_sends_system_prompt_as_developer_message_where_instructions_never_cache(
+    model_id, config, exp_leading_input, exp_fields
+):
+    """Guards against https://github.com/strands-agents/harness-sdk/issues/6367: GPT-6.2 never caches instructions."""
+    model = OpenAIResponsesModel(model_id=model_id, **config)
+    messages = [{"role": "user", "content": [{"text": "hello"}]}]
+    base_request = model._format_request(messages)
+
+    tru_request = model._format_request(messages, system_prompt="Be precise.")
+    exp_request = {**base_request, **exp_fields, "input": [*exp_leading_input, *base_request["input"]]}
+    assert tru_request == exp_request
+
+
 def test_message_cache_leaves_native_input_override_under_caller_control():
     params = {"input": [{"role": "user", "content": "native input"}]}
     model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)
