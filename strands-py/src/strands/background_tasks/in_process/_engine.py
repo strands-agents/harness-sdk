@@ -161,7 +161,10 @@ class InProcessTaskEngine:
         task_id: str,
         update: Callable[[InterruptStateData], tuple[InterruptStateData, bool]],
     ) -> InProcessTaskRecord:
-        """Apply input to a task that requires it."""
+        """Apply input to a task that requires it; a task that is already terminal is returned unchanged."""
+        current = self._require_task(task_id)
+        if is_task_status_terminal(current["status"]):
+            return copy.deepcopy(current)
 
         def resume_task(record: InProcessTaskRecord) -> bool:
             if record["status"] != "input_required":

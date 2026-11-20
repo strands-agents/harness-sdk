@@ -1097,9 +1097,10 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Cancels the current agent invocation cooperatively. Idempotent; no-op when
-   * the agent is not invoking. The pending `invoke`/`stream` resolves with
-   * `stopReason: 'cancelled'`.
+   * Cancels the current agent invocation cooperatively. Idempotent; no-op for the
+   * invocation when the agent is not invoking (`cancelBackgroundTasks` still applies).
+   * The pending `invoke`/`stream` resolves with `stopReason: 'cancelled'`, or with its natural
+   * `stopReason` if it had already finished its turn and was only waiting for background tasks.
    *
    * The agent stops at the next cancellation-safe point (model streaming, before
    * tools, between sequential tool calls, or the top of a loop cycle). A tool
@@ -1109,7 +1110,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * For cancellation driven from outside the agent, prefer the `cancelSignal`
    * option on `invoke` / `stream`.
    *
-   * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
+   * @param options - See {@link CancelOptions} for `message`, `afterCurrentTools`, and `cancelBackgroundTasks`.
    *
    * @example
    * ```typescript
@@ -1125,6 +1126,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   public cancel(options?: CancelOptions): void {
+    if (options?.cancelBackgroundTasks && this._initialized) {
+      this._backgroundTasks?.cancelAll()
+    }
     if (!this._isInvoking) {
       return
     }
@@ -1147,6 +1151,15 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private get isAborted(): boolean {
     return this._abortSignal.aborted
+  }
+
+  /**
+   * Whether cancellation has been requested in any form, including a deferred cancel.
+   *
+   * @internal
+   */
+  get _cancelRequested(): boolean {
+    return this._deferredCancel || this.isAborted
   }
 
   /**

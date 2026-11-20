@@ -1,5 +1,5 @@
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
-import { Message, type ContentBlock } from '../types/messages.js'
+import { Message, type ContentBlock, type ToolResultContent } from '../types/messages.js'
 import { Uncertain, type AnswerOf, type DecisionInput, type DecisionResult, type Question } from './types.js'
 
 const MAX_CHOICE_COUNT = 255
@@ -180,15 +180,24 @@ function toWireState(state: DecisionInput): unknown {
 }
 
 function toWireContentBlock(block: ContentBlock): unknown {
+  rejectBinaryContent(block)
+  return block.toJSON()
+}
+
+function rejectBinaryContent(block: ContentBlock | ToolResultContent): void {
+  if (block.type === 'toolResultBlock') {
+    block.content.forEach(rejectBinaryContent)
+    return
+  }
   const hasBinarySource =
     (block.type === 'audioBlock' && block.source.type === 'audioSourceBytes') ||
     (block.type === 'imageBlock' && block.source.type === 'imageSourceBytes') ||
     (block.type === 'videoBlock' && block.source.type === 'videoSourceBytes') ||
-    (block.type === 'documentBlock' && block.source.type === 'documentSourceBytes')
+    (block.type === 'documentBlock' && block.source.type === 'documentSourceBytes') ||
+    (block.type === 'guardContentBlock' && block.image !== undefined)
   if (hasBinarySource) {
     throw new Error('System One decision providers do not support binary ContentBlock state')
   }
-  return block.toJSON()
 }
 
 function toWireQuestions(questions: Record<string, Question>): Record<string, WireQuestion> {
@@ -288,26 +297,29 @@ function parseResult<const Q extends Record<string, Question>>(
   const response = requireRecord(payload, 'decision provider response')
   const modelId = requireNonEmptyString(response['model'], 'decision provider model')
   const rawAnswers = requireRecord(response['answers'], 'decision provider answers')
-  const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
-  const probabilities = {} as { [K in keyof Q]: Readonly<Record<string, number>> }
-  const confidence = {} as { [K in keyof Q]: number }
-
-  for (const id of Object.keys(questions) as (keyof Q)[]) {
+  const parsedAnswers = Object.keys(questions).map((id) => {
     const question = questions[id]!
-    const rawAnswer = rawAnswers[String(id)]
-    if (rawAnswer === undefined)
-      throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
-    const parsed = parseAnswer(rawAnswer, question, String(id))
+    if (!Object.hasOwn(rawAnswers, id)) throw new ModelError(`decision provider omitted answer for question id=<${id}>`)
+    const parsed = parseAnswer(rawAnswers[id], question, id)
     const minConfidence = resolveMinConfidence(question, defaultMinConfidence)
-    answers[id] = (
-      minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
-    ) as AnswerOf<Q[typeof id]>
-    probabilities[id] = parsed.probabilities
-    confidence[id] = parsed.confidence
-  }
+    const answer = minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
+    return { id, answer, probabilities: parsed.probabilities, confidence: parsed.confidence }
+  })
 
   const usage = parseUsage(response['usage'])
-  return { modelId, answers, probabilities, confidence, ...(usage !== undefined && { usage }) }
+  return {
+    modelId,
+    answers: Object.fromEntries(parsedAnswers.map(({ id, answer }) => [id, answer])) as {
+      [K in keyof Q]: AnswerOf<Q[K]>
+    },
+    probabilities: Object.fromEntries(parsedAnswers.map(({ id, probabilities }) => [id, probabilities])) as {
+      [K in keyof Q]: Readonly<Record<string, number>>
+    },
+    confidence: Object.fromEntries(parsedAnswers.map(({ id, confidence }) => [id, confidence])) as {
+      [K in keyof Q]: number
+    },
+    ...(usage !== undefined && { usage }),
+  }
 }
 
 function parseAnswer(rawAnswer: unknown, question: Question, id: string): ParsedAnswer {

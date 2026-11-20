@@ -9,6 +9,7 @@ from . import doc_fetcher
 
 IntegrationType = Literal[
     "model-provider",
+    "decision-model",
     "tool",
     "session-manager",
     "memory-store",
