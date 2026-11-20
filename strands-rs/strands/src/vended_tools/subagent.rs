@@ -100,7 +100,9 @@ fn framing_end() -> String {
 pub struct MakeSubagentOptions {
     /// Turns a resolved spec into the child agent; called again with the same spec when an
     /// interrupted child resumes. When absent the child is built from the calling agent: its
-    /// model, tools and sandbox.
+    /// model, tools and sandbox. The parent's hooks and plugins are not passed to the child; tools
+    /// a plugin added to the parent are inherited like any other tool but run without the plugin's
+    /// hooks. Pass a builder for a child that needs them.
     #[builder(into)]
     pub builder: Option<ChildAgentBuilder>,
     /// Named roles the model selects with `agent_type`, in the order the schema lists them; a
@@ -619,7 +621,7 @@ impl Inner {
 /// The child the default builder makes: the parent's model, sandbox, printer
 /// setting, trace attributes, intervention handlers and tools (all, or those `spec.tools` names
 /// that the parent has, never its context manager's), named after the spec, with an `auto`
-/// context manager unless its model is stateful.
+/// context manager unless its model is stateful. The parent's hooks and plugins stay behind.
 fn default_builder(spec: &AgentSpec, parent: &ToolAgent) -> Result<Agent> {
     let inheritance = parent.inheritance();
     let managed: Vec<String> = inheritance

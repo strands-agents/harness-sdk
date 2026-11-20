@@ -3,19 +3,21 @@
 use std::sync::Mutex;
 
 use super::*;
+use crate::agent::LocalAgent;
 use crate::agent::{InvocationContext, InvocationState, InvokeLimits};
 use crate::cancel::{CancelHandle, CancelOptions};
 use crate::experimental::context_manager::ContextManagerStrategy;
-use crate::hooks::BeforeInvocationEvent;
+use crate::hooks::{BeforeInvocationEvent, BeforeToolCallEvent};
 use crate::interrupt::{Interrupt, InterruptState};
 use crate::models::streaming::Usage;
 use crate::multiagent::{Choice, ChoiceOption};
+use crate::plugins::Plugin;
 use crate::session::SessionManager;
 use crate::state_store::StateStore;
 use crate::storage::{InMemoryStorage, Storage};
 use crate::test_support::capture_logs;
 use crate::testing::{MockModel, MockTurn};
-use crate::tools::FunctionTool;
+use crate::tools::{FunctionTool, ToolSource};
 use crate::types::{
     InjectedBlock, InterruptParams, InterruptResponse, InterruptResponseContent, ReasoningBlock, StopReason, TextBlock,
     ToolResultStatus, ToolUse, ToolUseBlock,
@@ -1350,4 +1352,84 @@ mod default_builder_cases {
                 .is_some()
         );
     }
+}
+
+/// Adds a tool and a `BeforeToolCallEvent` hook that records which agent the call ran on.
+struct AuditPlugin {
+    events: Arc<Mutex<Vec<String>>>,
+    tool: FunctionTool,
+}
+
+#[async_trait::async_trait]
+impl Plugin for AuditPlugin {
+    fn name(&self) -> &str {
+        "audit"
+    }
+
+    async fn init_agent(&self, agent: &mut LocalAgent) -> Result<()> {
+        let events = self.events.clone();
+        agent.add_hook(move |event: &mut BeforeToolCallEvent| {
+            events
+                .lock()
+                .unwrap()
+                .push(format!("plugin hook {}", event.agent().id()));
+        });
+        Ok(())
+    }
+
+    fn get_tools(&self) -> Vec<ToolSource> {
+        vec![self.tool.clone().into()]
+    }
+}
+
+#[tokio::test]
+async fn gives_the_child_a_tool_the_parents_plugin_added_without_the_parents_hooks_or_the_plugins() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let ran = events.clone();
+    let plugin_tool = FunctionTool::builder("pluginTool", "a plugin's tool").callback(move |_, _| {
+        let ran = ran.clone();
+        async move {
+            ran.lock().unwrap().push("tool ran".to_owned());
+            Ok(json!("done"))
+        }
+    });
+    let calls_plugin_tool = || {
+        MockModel::new()
+            .with_turn(tool_use_turn("pluginTool", "t1", json!({})))
+            .with_turn("finished")
+    };
+    let mut parent = Agent::builder()
+        .id("parent")
+        .model(calls_plugin_tool())
+        .plugins([AuditPlugin {
+            events: events.clone(),
+            tool: plugin_tool,
+        }])
+        .printer(false)
+        .build()
+        .unwrap();
+    let hooked = events.clone();
+    parent.add_hook(move |event: &mut BeforeToolCallEvent| {
+        hooked
+            .lock()
+            .unwrap()
+            .push(format!("parent hook {}", event.agent().id()));
+    });
+    parent.initialize().await.unwrap();
+    let spec = AgentSpec {
+        name: Some("child".to_owned()),
+        model: Some(SpecValue::Model(Arc::new(calls_plugin_tool()))),
+        ..AgentSpec::default()
+    };
+
+    let mut child = default_builder(&spec, &parent.local.tool_agent()).unwrap();
+
+    parent.invoke("run pluginTool").await.unwrap();
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["parent hook parent", "plugin hook parent", "tool ran"]
+    );
+    events.lock().unwrap().clear();
+    child.invoke("run pluginTool").await.unwrap();
+    assert_eq!(*events.lock().unwrap(), ["tool ran"]);
 }
