@@ -1,0 +1,154 @@
+[package]
+name = "strands"
+description = "Strands Agents SDK for Rust: a model-driven approach to building AI agents"
+readme = "README.md"
+build = "build.rs"
+include = ["/build.rs", "/README.md", "/model-info.json", "/src/**", "/tests/**", "/examples/**"]
+keywords = ["agents", "ai", "llm", "strands", "mcp"]
+categories = ["api-bindings", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[features]
+default = ["bedrock"]
+bedrock = ["dep:aws-config", "dep:aws-sdk-bedrockruntime", "dep:aws-smithy-types", "dep:aws-credential-types", "dep:aws-sigv4", "dep:aws-smithy-runtime-api"]
+anthropic = ["dep:eventsource-stream"]
+openai = ["dep:eventsource-stream"]
+mantle = ["openai", "dep:aws-config", "dep:aws-credential-types", "dep:aws-sigv4"]
+mcp = ["dep:rmcp", "rmcp/client", "rmcp/transport-child-process", "rmcp/transport-streamable-http-client-reqwest", "rmcp/reqwest", "rmcp/auth", "dep:eventsource-stream", "dep:sse-stream"]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-stdout", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
+cedar = ["dep:cedar-policy", "dep:cedar-policy-mcp-schema-generator", "dep:mcp-tools-sdk"]
+
+[dependencies]
+strands-macros.workspace = true
+
+async-stream.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "fs", "io-util", "process"] }
+tokio-util.workspace = true
+
+base64.workspace = true
+http.workspace = true
+indexmap.workspace = true
+jiff.workspace = true
+jsonschema.workspace = true
+rand.workspace = true
+regex.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+yaml-rust2.workspace = true
+
+bon.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+cedar-policy = { workspace = true, optional = true }
+cedar-policy-mcp-schema-generator = { workspace = true, optional = true }
+mcp-tools-sdk = { workspace = true, optional = true }
+
+aws-config = { workspace = true, optional = true }
+aws-credential-types = { workspace = true, optional = true }
+aws-sdk-bedrockruntime = { workspace = true, optional = true }
+aws-sigv4 = { workspace = true, optional = true }
+aws-smithy-runtime-api = { workspace = true, optional = true }
+aws-smithy-types = { workspace = true, optional = true }
+
+rmcp = { workspace = true, optional = true }
+sse-stream = { workspace = true, optional = true }
+
+eventsource-stream = { workspace = true, optional = true }
+htmd.workspace = true
+reqwest.workspace = true
+
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-stdout = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
+[dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util", "net"] }
+trybuild.workspace = true
+rmcp = { workspace = true, features = ["server", "elicitation", "transport-io", "transport-streamable-http-server"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio", "service", "server"] }
+http-body-util.workspace = true
+bytes.workspace = true
+
+[[example]]
+name = "basic"
+required-features = ["bedrock"]
+
+[[example]]
+name = "tools"
+required-features = ["bedrock"]
+
+[[example]]
+name = "streaming"
+required-features = ["bedrock"]
+
+[[example]]
+name = "hooks"
+required-features = ["bedrock"]
+
+[[example]]
+name = "structured_output"
+required-features = ["bedrock"]
+
+[[example]]
+name = "mcp"
+required-features = ["mcp"]
+
+[[example]]
+name = "sessions"
+required-features = ["bedrock"]
+
+[[example]]
+name = "bedrock"
+required-features = ["bedrock"]
+
+[[example]]
+name = "anthropic"
+required-features = ["anthropic"]
+
+[[example]]
+name = "openai"
+required-features = ["openai"]
+
+[[example]]
+name = "bedrock_mantle"
+required-features = ["mantle"]
+
+[[example]]
+name = "interventions"
+required-features = ["bedrock"]
+
+[[example]]
+name = "telemetry"
+required-features = ["otel", "bedrock"]
+
+[[example]]
+name = "mcp_test_server"
+required-features = ["mcp"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

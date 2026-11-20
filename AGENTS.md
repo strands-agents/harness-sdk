@@ -11,9 +11,11 @@ This file is shared by agents with different goals — writing code, opening PRs
 ```
 strands-agents/
 ├── harness-py/         # Python Strands harness (hatch) — see harness-py/AGENTS.md
+├── harness-rs/         # Rust Strands harness (cargo) — see harness-rs/AGENTS.md
 ├── harness-ts/         # TypeScript Strands harness (npm) — see harness-ts/AGENTS.md
 ├── strands-cli/        # strands CLI (npm) — see strands-cli/AGENTS.md
 ├── strands-py/         # Python SDK (hatch) — see strands-py/AGENTS.md
+├── strands-rs/         # Rust SDK (cargo) — see strands-rs/AGENTS.md
 ├── strands-ts/         # TypeScript SDK (npm workspace) — see strands-ts/AGENTS.md
 ├── strands-mcp/        # MCP server with Strands docs for coding agents (hatch)
 ├── site/               # Documentation site (Astro) — see site/AGENTS.md
@@ -21,6 +23,7 @@ strands-agents/
 ├── test-infra/         # CDK stack for integ tests that require provisioned AWS infra
 ├── .agents/            # Agent skills and references
 ├── package.json        # npm workspace root
+├── Cargo.toml          # cargo virtual workspace root (strands-rs, harness-rs)
 └── .github/workflows/  # CI (ci.yml is the merge gate)
 ```
 
@@ -37,7 +40,7 @@ Before designing a feature or changing an API, read the relevant context in `tea
 
 ## Writing Code
 
-- **Code conventions**: Follow the conventions in the sub-project's own `AGENTS.md` (`strands-py/AGENTS.md`, `strands-ts/AGENTS.md`, `site/AGENTS.md`) — they define the style, patterns, and directory layout for that toolchain.
+- **Code conventions**: Follow the conventions in the sub-project's own `AGENTS.md` (`strands-py/AGENTS.md`, `strands-ts/AGENTS.md`, `strands-rs/AGENTS.md`, `site/AGENTS.md`) — they define the style, patterns, and directory layout for that toolchain.
 - **Write for low complexity**: every PR is labeled with the [cognitive complexity](https://www.sonarsource.com/docs/CognitiveComplexity.pdf) of the most complex function it touches, and nesting drives the score. Write flat control flow (guard clauses, extracted helpers, lookup tables over branch ladders) and keep refactors in their own PR. Why we measure and how the score works: [team/COMPLEXITY.md](./team/COMPLEXITY.md). Check before pushing with `npm run complexity` (or `hatch run complexity` from `strands-py/`).
 - **Branching**: `git checkout -b agent-tasks/{ISSUE_NUMBER}`
 - **Commits**: Use [conventional commits](https://www.conventionalcommits.org/) — `feat:`, `fix:`, `refactor:`, `docs:`, etc.
@@ -66,7 +69,7 @@ These rules apply to **both** SDKs. Each sub-guide (`strands-py/AGENTS.md`, `str
 
 ### Testing
 
-When writing tests, follow the sub-project's testing guidance — `strands-py/docs/TESTING.md` for the Python SDK, `strands-ts/docs/TESTING.md` for the TypeScript SDK.
+When writing tests, follow the sub-project's testing guidance — `strands-py/docs/TESTING.md` for the Python SDK, `strands-ts/docs/TESTING.md` for the TypeScript SDK, `strands-rs/docs/TESTING.md` for the Rust SDK.
 
 **`test-infra/` guardrails.** The `test-infra/` CDK stack deploys real AWS resources (Bedrock KBs, EC2 instances) that a small subset of integration tests depend on. Most tests do not need it — they run without provisioned infrastructure.
 

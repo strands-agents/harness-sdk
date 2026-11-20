@@ -12,6 +12,8 @@ dist/
 build/
 *.tsbuildinfo
 target/
+# Copied from shared/model-info.json before the strands crate is packaged (see strands-rs/AGENTS.md)
+strands-rs/strands/model-info.json
 
 # Python
 __pycache__/

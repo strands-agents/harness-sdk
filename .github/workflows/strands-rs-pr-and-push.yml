@@ -1,0 +1,41 @@
+name: "Rust: Pull Request and Push"
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'strands-rs/**'
+      - 'harness-rs/**'
+      - 'strands-ts/src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/strands-rs-*'
+      - '.github/workflows/harness-rs-*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-test-lint:
+    uses: ./.github/workflows/strands-rs-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  call-harness-test-lint:
+    uses: ./.github/workflows/harness-rs-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  call-security-audit:
+    uses: ./.github/workflows/rust-security-audit.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}

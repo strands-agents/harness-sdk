@@ -1,0 +1,131 @@
+name: "Rust: Test and Lint"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test-lint:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: strands-agents_ubuntu-latest_4-core, name: Test and Lint }
+          - { os: strands-agents_windows-latest_4-core, name: Test and Lint (Windows) }
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Examples
+        run: cargo build --workspace --examples --all-features
+
+      - name: Test (all features)
+        run: cargo test --workspace --all-features
+
+      - name: Test (no default features)
+        run: cargo test --workspace --no-default-features
+
+      - name: Docs
+        shell: bash
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --workspace --all-features --no-deps
+          cargo doc -p strands --no-deps
+          cargo doc -p strands --no-deps --no-default-features
+
+  msrv:
+    name: MSRV
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal
+
+      - name: Check
+        run: cargo +1.96.0 check --workspace --all-features --locked
+
+  deny:
+    name: Dependency policy
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+
+      - name: Check licenses, bans and sources
+        run: cargo deny check licenses bans sources
+
+  conformance:
+    name: Conformance fixtures
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build strands-ts
+        run: npm run build -w strands-ts
+
+      - name: Regenerate fixtures
+        run: npx tsx strands-rs/conformance/generate.ts
+
+      - name: Fixtures are up to date
+        run: git diff --exit-code -- strands-rs/conformance/fixtures
