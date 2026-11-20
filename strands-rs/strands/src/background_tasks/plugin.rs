@@ -33,8 +33,7 @@ pub(crate) const BACKGROUND_PROPERTY: &str = "_background_execution";
 pub(crate) const MANAGE_TOOL_NAME: &str = "strands_manage_background_task";
 const PLUGIN_NAME: &str = "strands:background-tasks";
 const COMPOSITE_SCHEMA_KEYS: [&str; 8] = ["$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"];
-const FOREGROUND_TOOL_NAMES: [&str; 5] = [
-    MANAGE_TOOL_NAME,
+const FOREGROUND_TOOL_NAMES: [&str; 4] = [
     STRUCTURED_OUTPUT_TOOL_NAME,
     "summarize_context",
     "truncate_context",
@@ -75,6 +74,8 @@ pub(crate) enum Route {
 
 #[derive(Default)]
 struct Shared {
+    /// The name the management tool is registered and delivered under.
+    manage_tool_name: String,
     tasks: Mutex<IndexMap<String, BackgroundTask>>,
     manager: OnceLock<Manager>,
     app_state: OnceLock<StateStore>,
@@ -158,9 +159,11 @@ fn resolve_policy(config: &BackgroundTasksConfig) -> Result<HashMap<String, Mode
     Ok(policy)
 }
 
-fn can_execute_in_background(tool: Option<&Arc<dyn Tool>>) -> bool {
+fn can_execute_in_background(tool: Option<&Arc<dyn Tool>>, manage_tool_name: &str) -> bool {
     tool.is_some_and(|tool| {
-        !FOREGROUND_TOOL_NAMES.contains(&tool.name()) && !tool.is_delegation_tool(DelegationToken(()))
+        tool.name() != manage_tool_name
+            && !FOREGROUND_TOOL_NAMES.contains(&tool.name())
+            && !tool.is_delegation_tool(DelegationToken(()))
     })
 }
 
@@ -244,10 +247,17 @@ impl BackgroundTasks {
     ///
     /// A tool configured for two modes.
     pub(crate) fn new(config: BackgroundTasksConfig) -> Result<Self> {
+        let manage_tool_name = config
+            .manage_tool_name
+            .clone()
+            .unwrap_or_else(|| MANAGE_TOOL_NAME.to_owned());
         Ok(Self {
             policy: resolve_policy(&config)?,
             config,
-            shared: Arc::default(),
+            shared: Arc::new(Shared {
+                manage_tool_name,
+                ..Shared::default()
+            }),
         })
     }
 
@@ -301,7 +311,7 @@ impl BackgroundTasks {
         let Some(policy) = self.policy_for(effective).filter(|policy| policy.mode != Mode::Never) else {
             return Route::Foreground;
         };
-        if !can_execute_in_background(effective) {
+        if !can_execute_in_background(effective, &self.shared.manage_tool_name) {
             return self.reject(policy, tool_use, "cannot run in the background");
         }
         if policy.mode == Mode::Agentic && !effective.is_some_and(can_select_background) {
@@ -361,8 +371,8 @@ impl BackgroundTasks {
 
     /// Fails a background run whose tool middleware swapped for one that cannot run detached.
     pub(crate) fn assert_tool_can_run(&self, tool: Option<&Arc<dyn Tool>>) -> Result<()> {
-        let allowed =
-            can_execute_in_background(tool) && self.policy_for(tool).is_some_and(|policy| policy.mode != Mode::Never);
+        let allowed = can_execute_in_background(tool, &self.shared.manage_tool_name)
+            && self.policy_for(tool).is_some_and(|policy| policy.mode != Mode::Never);
         if allowed {
             Ok(())
         } else {
@@ -394,7 +404,7 @@ impl BackgroundTasks {
             if !policy.exact || policy.mode == Mode::Never {
                 continue;
             }
-            if !can_execute_in_background(Some(&tool)) {
+            if !can_execute_in_background(Some(&tool), &self.shared.manage_tool_name) {
                 return Err(Error::other(format!(
                     "Tool '{}' cannot run in the background",
                     tool.name()
@@ -423,7 +433,7 @@ impl BackgroundTasks {
                     return Ok(spec);
                 };
                 let rejected = || Error::other(format!("Tool '{}' cannot use agentic background selection", spec.name));
-                if !can_execute_in_background(tool.as_ref()) {
+                if !can_execute_in_background(tool.as_ref(), &self.shared.manage_tool_name) {
                     return if policy.exact { Err(rejected()) } else { Ok(spec) };
                 }
                 match add_background_selection(&spec) {
@@ -481,7 +491,7 @@ fn delivery(shared: &Arc<Shared>, tasks: &[BackgroundTask]) -> Option<Continuati
         .iter()
         .flat_map(|task| {
             let tool_use = ToolUseBlock::new(
-                MANAGE_TOOL_NAME,
+                shared.manage_tool_name.clone(),
                 task.task_id.clone(),
                 json!({"mode": "get", "taskId": task.task_id}),
             );
@@ -686,13 +696,14 @@ impl Plugin for BackgroundTasksPlugin {
 /// The plugin form of [`BackgroundTasks`]; the agent keeps the `Arc` to route tool calls.
 pub(crate) struct BackgroundTasksPlugin(pub(crate) Arc<BackgroundTasks>);
 
-/// `strands_manage_background_task`: lists, inspects or cancels tasks.
+/// The management tool (`strands_manage_background_task` unless renamed): lists, inspects or
+/// cancels tasks.
 struct ManageTool {
     shared: Arc<Shared>,
 }
 
-fn manage_spec() -> ToolSpec {
-    ToolSpec::new(MANAGE_TOOL_NAME, MANAGE_TOOL_DESCRIPTION).with_input_schema(json!({
+fn manage_spec(name: &str) -> ToolSpec {
+    ToolSpec::new(name, MANAGE_TOOL_DESCRIPTION).with_input_schema(json!({
         "type": "object",
         "properties": {
             "mode": {
@@ -758,7 +769,7 @@ impl ManageTool {
 
 impl Tool for ManageTool {
     fn name(&self) -> &str {
-        MANAGE_TOOL_NAME
+        &self.shared.manage_tool_name
     }
 
     fn description(&self) -> &str {
@@ -766,7 +777,7 @@ impl Tool for ManageTool {
     }
 
     fn tool_spec(&self) -> ToolSpec {
-        manage_spec()
+        manage_spec(&self.shared.manage_tool_name)
     }
 
     fn stream(&self, context: ToolContext) -> ToolStream {

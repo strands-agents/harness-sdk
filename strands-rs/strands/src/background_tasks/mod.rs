@@ -54,6 +54,12 @@ pub struct BackgroundTasksConfig {
     pub max_concurrency: Option<usize>,
     /// The timeout of one execution, in whole milliseconds. Defaults to none.
     pub timeout: Option<Duration>,
+    /// Name of the tool the model calls to list, get or cancel background tasks
+    /// (`manageToolName`). Must not match another tool on the agent. The name is written into
+    /// conversation history, so keep it stable across a saved session. Defaults to
+    /// `strands_manage_background_task`.
+    #[builder(into)]
+    pub manage_tool_name: Option<String>,
 }
 
 crate::types::toggle_from_config!(BackgroundTasksConfig);

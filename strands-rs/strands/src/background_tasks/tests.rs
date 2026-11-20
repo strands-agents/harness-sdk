@@ -834,12 +834,16 @@ async fn fails_tasks_interrupted_outside_their_tool_context() {
 // --- plugin -------------------------------------------------------------------------------------
 
 fn deliveries(agent: &Agent) -> Vec<ToolUseBlock> {
+    deliveries_named(agent, MANAGE_TOOL_NAME)
+}
+
+fn deliveries_named(agent: &Agent, tool_name: &str) -> Vec<ToolUseBlock> {
     agent
         .messages()
         .iter()
         .flat_map(|message| &message.content)
         .filter_map(|block| match block {
-            ContentBlock::ToolUse(tool_use) if tool_use.name == MANAGE_TOOL_NAME => Some(tool_use.clone()),
+            ContentBlock::ToolUse(tool_use) if tool_use.name == tool_name => Some(tool_use.clone()),
             _ => None,
         })
         .collect()
@@ -929,7 +933,34 @@ fn result_json(result: &ToolResultBlock) -> Value {
 }
 
 #[tokio::test]
+async fn registers_the_custom_management_tool_name_and_runs_its_calls_in_the_foreground() {
+    let tool_name = "manage_background_task";
+    let model = MockModel::from_turns([
+        uses(&[(tool_name, "management-use", json!({"mode": "list"}))]),
+        MockTurn::text("Listed."),
+    ]);
+    let mut agent = background_agent(
+        model,
+        Vec::new(),
+        BackgroundTasksConfig {
+            manage_tool_name: Some(tool_name.to_owned()),
+            always: Some(vec!["*".into()]),
+            ..Default::default()
+        },
+    );
+
+    agent.invoke("List tasks.").await.unwrap();
+
+    let names: Vec<String> = agent.tools().iter().map(|tool| tool.name().to_owned()).collect();
+    assert_eq!(names, [tool_name]);
+    let result = tool_result_of(&agent, "management-use");
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result_json(&result), json!([{"json": {"tasks": []}}]));
+}
+
+#[tokio::test]
 async fn dispatches_selected_calls_through_the_normal_tool_pipeline_and_delivers_their_results() {
+    let tool_name = "task_admin";
     let work = FunctionTool::builder("work", "Perform work.")
         .input_schema(json!({"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]}))
         .callback(|input, _| async move { Ok(json!(format!("done:{}", input["value"].as_str().unwrap()))) });
@@ -946,6 +977,7 @@ async fn dispatches_selected_calls_through_the_normal_tool_pipeline_and_delivers
         model,
         vec![work.into()],
         BackgroundTasksConfig {
+            manage_tool_name: Some(tool_name.to_owned()),
             agentic: Some(vec!["work".into()]),
             ..Default::default()
         },
@@ -982,9 +1014,9 @@ async fn dispatches_selected_calls_through_the_normal_tool_pipeline_and_delivers
             .get("_background_execution")
             .is_some()
     );
-    let delivery = deliveries(&agent).remove(0);
+    let delivery = deliveries_named(&agent, tool_name).remove(0);
     assert_eq!(delivery.input, json!({"mode": "get", "taskId": delivery.tool_use_id}));
-    assert!(specs.iter().any(|spec| spec.name == MANAGE_TOOL_NAME));
+    assert!(specs.iter().any(|spec| spec.name == tool_name));
     let delivered = tool_result_of(&agent, &delivery.tool_use_id);
     assert_eq!(delivered.status, ToolResultStatus::Success);
     assert_eq!(
