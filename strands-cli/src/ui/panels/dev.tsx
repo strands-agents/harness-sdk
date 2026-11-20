@@ -52,6 +52,7 @@ export const DevPanelFrame = ({
   width,
   height,
   active = true,
+  blur,
   onElement,
   clicks,
 }: {
@@ -59,6 +60,7 @@ export const DevPanelFrame = ({
   width: number
   height: number
   active?: boolean
+  blur?: () => void
   onElement?: (element: DOMElement | null) => void
   clicks?: DevPanelClicks
 }): ReactElement => {
@@ -83,6 +85,7 @@ export const DevPanelFrame = ({
           close={close}
           openCommand={openCommand}
           active={active}
+          {...(blur ? { blur } : {})}
         />
       </DevPanelClickContext>
     </Box>

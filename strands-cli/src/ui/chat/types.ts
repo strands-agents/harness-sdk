@@ -79,6 +79,8 @@ export interface DevChatPanelProps {
   readonly openCommand: (name: string) => boolean
   /** False while the chat input holds the keyboard, so a sticky panel stays visible but idle. */
   readonly active?: boolean
+  /** Hands the keyboard to the chat input without closing this panel. */
+  readonly blur?: () => void
 }
 
 export type DevChatPanelView = ComponentType<DevChatPanelProps>

@@ -18,6 +18,7 @@ export interface WizardRequestPanelProps {
   readonly height: number
   readonly close: () => void
   readonly active?: boolean
+  readonly blur?: () => void
   /** Reports the autofill state under the chat input, so the component stays about the question. */
   readonly onAutofill?: (on: boolean) => void
 }
@@ -135,6 +136,7 @@ const RequestView = ({
   autofill,
   onAutofill,
   active,
+  blur,
   width,
   height,
 }: {
@@ -143,6 +145,7 @@ const RequestView = ({
   autofill: boolean
   onAutofill?: (on: boolean) => void
   active: boolean
+  blur?: () => void
   width: number
   height: number
 }): ReactElement => {
@@ -162,6 +165,7 @@ const RequestView = ({
       width={width}
       height={height}
       active={active}
+      {...(blur ? { onLeave: blur } : {})}
       finishHint={(blocking) => (blocking ? 'fix the problem to finish' : 'Enter finish')}
       onFinish={() => broker.respond(request.id, { ...answers.current() })}
       onCancel={() => broker.respond(request.id, undefined)}
@@ -183,6 +187,7 @@ export const WizardRequestPanel = ({
   height,
   close,
   active = true,
+  blur,
   onAutofill,
 }: WizardRequestPanelProps): ReactElement => {
   const [request, setRequest] = useState(() => broker.pending())
@@ -214,6 +219,7 @@ export const WizardRequestPanel = ({
       autofill={autofill}
       {...(onAutofill ? { onAutofill } : {})}
       active={active}
+      {...(blur ? { blur } : {})}
       width={width}
       height={height}
     />

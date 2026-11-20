@@ -144,6 +144,7 @@ function ChatViewContent({
   onDevJobsElement,
   devPanelClicks,
   panelKeyboard = true,
+  onPanelBlur,
   onMetadataElement,
   onPanelElement,
   onDockElement,
@@ -221,6 +222,7 @@ function ChatViewContent({
   onDevJobsElement?: (element: DOMElement | null) => void
   devPanelClicks?: DevPanelClicks
   panelKeyboard?: boolean
+  onPanelBlur?: () => void
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
   onDockElement?: (element: DOMElement | null) => void
@@ -578,6 +580,7 @@ function ChatViewContent({
                 height={devPanelRows}
                 {...(onPanelElement ? { onElement: onPanelElement } : {})}
                 active={panelKeyboard}
+                {...(onPanelBlur ? { blur: onPanelBlur } : {})}
                 {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
               />
             ) : null}

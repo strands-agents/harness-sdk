@@ -106,6 +106,8 @@ export interface WizardProps {
   readonly position?: WizardPosition
   /** Shown on every component so the developer can hand the next question to the agent. */
   readonly autofill?: { readonly on: boolean; readonly set: (on: boolean) => void }
+  /** Hands the keyboard to the chat input, for a question the developer wants to leave open. */
+  readonly onLeave?: () => void
 }
 
 const LABEL_WIDTH = 12
@@ -337,6 +339,8 @@ const buttonHint = (
   return button === 'back' ? 'Enter back' : 'Enter cancel'
 }
 
+const LEAVE_HINT = 'Tab chat'
+
 const oneQuestionActions = (field: WizardField | undefined): string[] => {
   if (field?.kind === 'text') return ['Enter type']
   if (field?.kind === 'choice') return [field.hint, 'Enter done']
@@ -350,12 +354,14 @@ const rowHints = (
   finishHint: (blocking: WizardNotice | undefined) => string,
   blocking: WizardNotice | undefined,
   walked: boolean,
-  autofill: boolean
+  autofill: boolean,
+  leave: boolean
 ): string[] => {
   const tab = walked ? ['Tab next tab'] : []
   const fill = autofill ? ['ctrl+a autofill'] : []
   const hints = (...actions: string[]): string[] => [...tab, '↑↓', ...actions, ...fill, 'Esc cancel']
-  if (!walked) return hints(...oneQuestionActions(row?.kind === 'field' ? row.field : undefined))
+  if (!walked)
+    return hints(...oneQuestionActions(row?.kind === 'field' ? row.field : undefined), ...(leave ? [LEAVE_HINT] : []))
   if (row?.kind === 'button') return hints(buttonHint(row.button, finishHint, blocking))
   if (row?.kind !== 'field') return [...tab, ...fill, 'Esc cancel']
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
@@ -379,6 +385,7 @@ export const Wizard = ({
   blocked,
   position,
   autofill,
+  onLeave,
 }: WizardProps): ReactElement => {
   const own = useWizardPosition()
   const at = position?.step ?? own.step
@@ -454,8 +461,10 @@ export const Wizard = ({
       const row = rows[cursor.current()]
       if (key.ctrl && input === 'a') autofill?.set(!autofill.on)
       else if (key.escape) onCancel()
-      else if (key.tab) stepTo(key.shift ? -1 : 1, [])
-      else if (key.upArrow) cursor.move(-1)
+      else if (key.tab) {
+        if (walked) stepTo(key.shift ? -1 : 1, [])
+        else onLeave?.()
+      } else if (key.upArrow) cursor.move(-1)
       else if (key.downArrow) cursor.move(1)
       else if (key.leftArrow || key.rightArrow) {
         if (row?.kind === 'field' && row.field.kind === 'choice') row.field.move(key.rightArrow ? 1 : -1)
@@ -588,7 +597,7 @@ export const Wizard = ({
         hints={
           editor
             ? ['Enter save', 'Esc cancel']
-            : rowHints(focused, finishHint, blocking, walked, autofill !== undefined)
+            : rowHints(focused, finishHint, blocking, walked, autofill !== undefined, onLeave !== undefined)
         }
       />
     </>

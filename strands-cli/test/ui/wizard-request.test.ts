@@ -458,6 +458,28 @@ describe('WizardRequestPanel', () => {
     void asked
   })
 
+  it('shouldHandTheKeyboardToTheChatOnTabWithoutAnsweringOrClosing', async () => {
+    const broker = new WizardBroker()
+    const left: number[] = []
+    const asked = broker.ask({ name: 'optimize', question: 'Which knobs?', steps: [steps[0]!] })
+    const { text, press } = await show(
+      createElement(WizardRequestPanel, {
+        broker,
+        width: 96,
+        height: 18,
+        close: vi.fn(),
+        blur: () => left.push(1),
+      })
+    )
+    expect(text()).toContain('Tab chat')
+
+    await press('\t')
+
+    expect(left).toEqual([1])
+    expect(broker.pending()).toBeDefined()
+    void asked
+  })
+
   it('shouldSayWhenNoQuestionIsWaiting', async () => {
     const { text } = await panel(new WizardBroker())
 

@@ -1410,7 +1410,12 @@ export function ChatApp({
         return
       }
       if (snapshot.panel?.kind === 'dev') {
-        return
+        // A sticky panel can hand the keyboard to the input; Tab takes it back.
+        if (panelKeyboard || !snapshot.panel.sticky) return
+        if (key.tab) {
+          setPanelKeyboard(true)
+          return
+        }
       }
       if (frog && key.escape) {
         setFrog(undefined)
@@ -2157,6 +2162,7 @@ export function ChatApp({
       handleMouse,
       openConfigurationProject,
       hoveredPanelRow,
+      panelKeyboard,
       rememberDetailParent,
       resetHover,
       resetPanelPosition,
@@ -2292,6 +2298,7 @@ export function ChatApp({
       onDevJobsElement={registerDevJobsElement}
       devPanelClicks={devPanelClicks}
       panelKeyboard={panelKeyboard}
+      onPanelBlur={() => setPanelKeyboard(false)}
       onStatusElement={registerStatusElement}
       onFrogElement={registerFrogElement}
       onJumpToBottomElement={registerJumpToBottomElement}
