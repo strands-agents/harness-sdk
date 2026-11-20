@@ -6,14 +6,15 @@ history is turned into what the provider receives in one place.
 A ``summary`` block reaches a model whose ``model_info.capabilities.server_side_summary`` is True as it is stored;
 every other model gets its text. An ``injected`` block reaches a model whose ``temporary_messages`` is True as it is
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
-ones included, gets the latest user message's injected blocks as text and none of the earlier ones.
+ones included, gets the latest user message's injected blocks as text and none of the earlier ones. An offload
+placeholder's ``offloaded`` bookkeeping reaches no model.
 """
 
 import logging
 import threading
 import time
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pydantic import BaseModel
 
@@ -22,6 +23,7 @@ from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.tools import ToolSpec
 
 if TYPE_CHECKING:
+    from ..agent.agent import Agent
     from ..agent.agent_metadata import AgentMetadata
     from ..agent.invocation_context import InvocationContext
     from ..types._events import TypedEvent
@@ -132,6 +134,7 @@ class ModelProxy:
 
     def _prepare(self, messages: Messages) -> tuple[Messages, int]:
         """Return the messages the model accepts, and the trailing blocks the cache point must stay ahead of."""
+        messages = _without_offload_marks(messages)
         has_summary = any(_has_block(message, "summary") for message in messages)
         has_injected = any(_has_block(message, "injected") for message in messages)
         if not has_summary and not has_injected:
@@ -144,6 +147,63 @@ class ModelProxy:
         if not has_injected or capabilities.temporary_messages is True:
             return messages, 0
         return _render_injected_blocks(messages)
+
+
+async def _count_request_tokens(agent: "Agent", messages: Messages) -> int:
+    """Count what the next request carries: the messages, plus the system prompt and tool specs.
+
+    The system prompt and tool specs occupy the same context window as the messages, so a utilization
+    gate that leaves them out reads low. These are the same inputs behind
+    ``BeforeModelCallEvent.projected_input_tokens``.
+
+    Counts that measure a single block or a subset rather than a whole request call ``count_tokens``
+    directly — including the system prompt there would inflate every block against its threshold.
+
+    Args:
+        agent: The agent whose system prompt and tool specs the request carries.
+        messages: The messages the request would send.
+
+    Returns:
+        Total input token count for the request.
+    """
+    return await ModelProxy(agent.model).count_tokens(
+        messages,
+        tool_specs=agent.tool_registry.get_all_tool_specs(),
+        system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
+    )
+
+
+def _without_offload_marks(messages: Messages) -> Messages:
+    """The messages with the ``offloaded`` bookkeeping dropped from every placeholder.
+
+    To a provider a placeholder is an ordinary text block; the key records what it stood for, for retrieval and token
+    accounting. A provider that passes a tool result's items through as they are would otherwise send it.
+    """
+    if not any(_marks_offload(block) for message in messages for block in message["content"]):
+        return messages
+    return [
+        {**message, "content": [_without_offload_mark(block) for block in message["content"]]} for message in messages
+    ]
+
+
+def _marks_offload(block: ContentBlock) -> bool:
+    """Whether a block, or an item of a tool result, carries the ``offloaded`` key."""
+    if "offloaded" in block:
+        return True
+    # A tool result's content is optional on the wire, so None stands in for no items.
+    return any("offloaded" in item for item in block.get("toolResult", {}).get("content") or [])
+
+
+def _without_offload_mark(block: ContentBlock) -> ContentBlock:
+    """``block`` without the ``offloaded`` key, in the block itself and in its tool result's items."""
+    stripped: dict[str, Any] = {key: value for key, value in block.items() if key != "offloaded"}
+    tool_result = stripped.get("toolResult")
+    # A result without items is passed through as it is, so an absent ``content`` is not turned into an empty list.
+    if tool_result is not None and tool_result.get("content"):
+        items = [{key: value for key, value in item.items() if key != "offloaded"} for item in tool_result["content"]]
+        stripped["toolResult"] = {**tool_result, "content": items}
+    return cast("ContentBlock", stripped)
 
 
 def _render_injected_blocks(messages: Messages) -> tuple[Messages, int]:

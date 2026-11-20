@@ -16,6 +16,7 @@ from typing_extensions import NotRequired, TypedDict, TypeVar
 
 from .interrupt import _Interruptible
 from .media import DocumentContent, ImageContent
+from .offload import OffloadedBlock
 
 if TYPE_CHECKING:
     from ..agent.invocation_context import InvocationContext
@@ -93,12 +94,14 @@ class ToolResultContent(TypedDict, total=False):
         document: Document content returned by the tool.
         image: Image content returned by the tool.
         json: JSON-serializable data returned by the tool.
+        offloaded: Where a placeholder's text came from, when a context manager's strategy offloaded the content.
         text: Text content returned by the tool.
     """
 
     document: DocumentContent
     image: ImageContent
     json: Any
+    offloaded: OffloadedBlock
     text: str
 
 

@@ -366,7 +366,9 @@ export interface BedrockModelConfig extends BaseModelConfig {
    * them when it validates its input. Bedrock rejects other features outside its strict subset
    * (recursive or external `$ref`, `additionalProperties` other than `false`) with a 400 at
    * request time, and compiles each new schema on first use, which can take minutes.
-   * Incompatible with citations for Anthropic models.
+   * Incompatible with citations for Anthropic models. Turns deferred tool loading off, so `Offload.defer` and the
+   * `deferredToolLoading` preset send every full spec: strict mode needs each tool's full input schema. A `modelInfo`
+   * override of `deferredToolLoading` still wins.
    *
    * @see https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolSpecification.html
@@ -446,31 +448,42 @@ function stepBackToText(content: BedrockContentBlock[], idx: number): number {
   return 0
 }
 
+/** Converse rejects a request with more cache points than this. */
+const MAX_CACHE_POINTS = 4
+
+/** With one point on the system prompt, that is the four Converse accepts. */
+const NOVA_CONVERSATION_CACHE_POINTS = 3
+
 /**
- * Where a Nova conversation cache point goes: directly after the last text block of the last user message that has
- * one, ahead of the final message's per-call blocks. Nova takes a cache point only directly after text and reads an
- * entry only when a point repeats the previous call's position, so in a tool loop, whose user messages hold tool
- * results, the point stays on the prompt that started the loop.
+ * Where the Nova conversation cache points go, newest first: directly after the last text block of each of the last
+ * `count` user messages that have one, ahead of the final message's per-call blocks. Nova takes a cache point only
+ * directly after text and reads an entry only at a position an earlier call marked too, so the points on earlier
+ * turns are what let a new turn read. More than one of them helps on a cross-region inference profile, where a call
+ * only finds entries written in the region that serves it. In a tool loop, whose user messages hold tool results,
+ * the points stay where they are.
  *
  * @param messages - Formatted messages
  * @param lastUserIdx - Index of the last user message
  * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message, kept out of the prefix
- * @returns The message and block index to insert the point at, or undefined when no user message has text
+ * @param count - The most positions to return
+ * @returns The message and block index to insert each point at, empty when no user message has text
  */
-function novaCachePointPosition(
+function novaCachePointPositions(
   messages: BedrockMessage[],
   lastUserIdx: number,
-  dynamicTrailingBlocks: number
-): { msgIdx: number; blockIdx: number } | undefined {
-  for (let msgIdx = lastUserIdx; msgIdx >= 0; msgIdx--) {
+  dynamicTrailingBlocks: number,
+  count: number
+): { msgIdx: number; blockIdx: number }[] {
+  const positions: { msgIdx: number; blockIdx: number }[] = []
+  for (let msgIdx = lastUserIdx; msgIdx >= 0 && positions.length < count; msgIdx--) {
     const message = messages[msgIdx]
     if (message?.role !== 'user') continue
     const content = message.content ?? []
     const end = msgIdx === lastUserIdx ? Math.max(0, content.length - dynamicTrailingBlocks) : content.length
     const blockIdx = stepBackToText(content, end)
-    if (blockIdx > 0) return { msgIdx, blockIdx }
+    if (blockIdx > 0) positions.push({ msgIdx, blockIdx })
   }
-  return undefined
+  return positions
 }
 
 /**
@@ -596,14 +609,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Turns `serverSideSummary` off, and reports how Converse caches the model where that differs from the shared
-   * model info; a `modelInfo` override still wins over both.
+   * Turns `serverSideSummary` off, reports how Converse caches the model where that differs from the shared model
+   * info, and turns deferred tool loading off under `strictTools`; a `modelInfo` override still wins over all three.
+   * Strict mode needs each tool's full input schema, so it can't take a deferred tool as a stub.
    */
   override get modelInfo(): ModelInfo {
     return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
       bedrockCacheModelInfo(this.modelId ?? ''),
+      this._config.strictTools === true ? { capabilities: { deferredToolLoading: 'unsupported' } } : undefined,
       this._config.modelInfo
     )
   }
@@ -1089,10 +1104,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns Formatted Bedrock request
    */
   private _formatRequest(messages: Message[], options?: StreamOptions): ConverseStreamCommandInput {
-    const request: ConverseStreamCommandInput = {
-      modelId: this._config.modelId,
-      messages: this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0),
-    }
+    const request: ConverseStreamCommandInput = { modelId: this._config.modelId }
 
     // Add system prompt
     if (options?.systemPrompt !== undefined) {
@@ -1106,6 +1118,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (this._shouldCacheSystem(request.system)) {
       request.system!.push({ cachePoint: { type: 'default' } })
     }
+
+    const systemCachePoints = (request.system ?? []).filter((block) => 'cachePoint' in block).length
+    request.messages = this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0, systemCachePoints)
 
     // Add tool configuration
     // Bedrock requires toolConfig when messages contain tool use/result blocks.
@@ -1233,9 +1248,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Formats messages for Bedrock API.
    *
    * @param messages - SDK messages
+   * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param systemCachePoints - How many cache points the system prompt carries
    * @returns Bedrock-formatted messages
    */
-  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0): BedrockMessage[] {
+  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0, systemCachePoints = 0): BedrockMessage[] {
     // Pre-compute the index of the last user message containing text/image content
     // This ensures guardContent wrapping is maintained across tool execution cycles
     const lastUserTextIdx = this._config.guardrailConfig?.guardLatestUserMessage
@@ -1275,7 +1292,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       ? this._cacheSection(this._config.cacheConfig?.messagesTTL)
       : { enabled: false }
     if (messagesCache.enabled) {
-      this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks)
+      this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks, systemCachePoints)
     }
 
     return formattedMessages
@@ -1382,7 +1399,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Ensure the last user message carries exactly one cache point.
+   * Place the conversation cache points: one in the last user message, several across recent ones on Nova.
    *
    * A cache point already present in the last user message is honored where it sits rather than
    * replaced: a caller places one to mark where its reusable prefix ends, ahead of content that is
@@ -1390,13 +1407,21 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * the cached prefix, so every request would write a new entry and none would ever read one.
    *
    * Cache points in earlier messages are still removed, so they cannot accumulate one per turn
-   * against the provider's cache-point budget. Nova is the exception: its point may land on an earlier
-   * user message (see `novaCachePointPosition`).
+   * against the provider's cache-point budget. Nova is the exception: it gets a point on each of its last
+   * few user messages with text (see `novaCachePointPositions`).
    *
    * @param messages - List of messages to inject cache point into (modified in place)
    * @param ttl - TTL for the injected cache point. Falsy leaves the Bedrock default.
+   * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param systemCachePoints - How many cache points the system prompt carries. Nova gets fewer conversation
+   * points when the full set would take the request past the cache points Converse accepts.
    */
-  private _injectCachePoint(messages: BedrockMessage[], ttl?: CacheTTL, dynamicTrailingBlocks = 0): void {
+  private _injectCachePoint(
+    messages: BedrockMessage[],
+    ttl?: CacheTTL,
+    dynamicTrailingBlocks = 0,
+    systemCachePoints = 0
+  ): void {
     if (messages.length === 0) {
       return
     }
@@ -1444,6 +1469,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
         // Blocks after the caller's boundary are per-call content, so a fallback point never lands among them.
         let trailingBlocks = dynamicTrailingBlocks
+        const novaPoints = Math.min(NOVA_CONVERSATION_CACHE_POINTS, MAX_CACHE_POINTS - systemCachePoints)
         if (placedIdxs.length > 0) {
           // One boundary per message, so this message contributes a single cache point to the budget.
           // Extras are not worthless - a second point ahead of the per-call tail doubles the cached
@@ -1459,7 +1485,18 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             )
           }
           const placedIdx = placedIdxs[0] as number
+          if (this._limitsCachePoints() && novaPoints <= 0) {
+            content.splice(placedIdx, 1)
+            logger.warn(
+              `msg_idx=<${lastUserIdx}>, block_idx=<${placedIdx}> | no cache point left after the system prompt | dropped caller-placed cache point`
+            )
+            return
+          }
           if (this._honorPlacedCachePoint(content, placedIdx, lastUserIdx, ttl)) {
+            if (this._limitsCachePoints()) {
+              // The caller's point is the newest one, so the rest go on the user messages before it.
+              this._injectNovaCachePoints(messages, lastUserIdx - 1, 0, novaPoints - 1)
+            }
             return
           }
           trailingBlocks = Math.max(trailingBlocks, content.length - placedIdx)
@@ -1473,7 +1510,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (this._limitsCachePoints()) {
-          this._injectNovaCachePoint(messages, lastUserIdx, trailingBlocks)
+          this._injectNovaCachePoints(messages, lastUserIdx, trailingBlocks, novaPoints)
           return
         }
 
@@ -1527,20 +1564,27 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Places the Nova conversation cache point, which takes no TTL, at `novaCachePointPosition`.
+   * Places the Nova conversation cache points, which take no TTL, at `novaCachePointPositions`.
    *
    * @param messages - Formatted messages (modified in place)
    * @param lastUserIdx - Index of the last user message
    * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param count - The most points to place
    */
-  private _injectNovaCachePoint(messages: BedrockMessage[], lastUserIdx: number, dynamicTrailingBlocks: number): void {
-    const position = novaCachePointPosition(messages, lastUserIdx, dynamicTrailingBlocks)
-    if (!position) {
-      logger.debug('no user message has text to follow, skipped conversation cache point')
-      return
+  private _injectNovaCachePoints(
+    messages: BedrockMessage[],
+    lastUserIdx: number,
+    dynamicTrailingBlocks: number,
+    count: number
+  ): void {
+    const positions = novaCachePointPositions(messages, lastUserIdx, dynamicTrailingBlocks, count)
+    if (positions.length === 0) {
+      logger.debug('no user text to follow or no cache point left, skipped conversation cache point')
     }
-    messages[position.msgIdx]?.content?.splice(position.blockIdx, 0, { cachePoint: { type: 'default' } })
-    logger.debug(`msg_idx=<${position.msgIdx}>, block_idx=<${position.blockIdx}> | added cache point after text`)
+    for (const { msgIdx, blockIdx } of positions) {
+      messages[msgIdx]?.content?.splice(blockIdx, 0, { cachePoint: { type: 'default' } })
+      logger.debug(`msg_idx=<${msgIdx}>, block_idx=<${blockIdx}> | added cache point after text`)
+    }
   }
 
   /**
@@ -1683,6 +1727,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           switch (content.type) {
             case 'unknownBlock':
               return []
+            // ModelProxy sends references as text unless a modelInfo override reports native deferral, which Converse
+            // lacks. Converse then gets every full spec, so the tool only needs naming.
+            case 'toolReferenceBlock':
+              return [{ text: `Loaded ${content.name}.` }]
             case 'textBlock':
               return [{ text: content.text }]
             case 'jsonBlock':

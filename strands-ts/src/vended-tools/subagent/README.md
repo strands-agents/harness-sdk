@@ -58,7 +58,7 @@ The default tool, produced by `makeSubagent()`: the `generalist` preset, free-fo
 
 Throws if `name` or `description` is empty, `maxDepth` is not a positive integer, `defaultPreset` is not one of `presets`, a `context` mode is not `'none'`, `'all'`, or `'no_tools'`, or a `Choice` axis has no options, or a `tools` `Choice` is not `multiple`.
 
-The default builder gives each child the parent's model and tools (narrowed by the resolved spec), sandbox, interventions, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the child's model is stateful. The parent's context-manager tools (such as `retrieve_context`) are not inherited; the child's own context manager provides them.
+The default builder gives each child the parent's model and tools (narrowed by the resolved spec), sandbox, interventions, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the child's model is stateful. The parent's context-manager tools (such as `retrieve_context`) are not inherited; the child's own context manager provides them. The parent's hooks and plugins are not passed to the child either. Tools a plugin added to the parent are inherited like any other tool, but run without the plugin's hooks. Pass a custom `builder` for a child that needs them.
 
 ### Input
 

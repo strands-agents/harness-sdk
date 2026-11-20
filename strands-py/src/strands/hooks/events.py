@@ -286,11 +286,11 @@ class AfterToolCallEvent(HookEvent[_LocalAgentT]):
         invocation_state: Keyword arguments that were passed to the tool
         result: The result of the tool invocation. Either a ToolResult on success
             or an Exception if the tool execution failed.
-        cancel_message: The cancellation message if the user cancelled the tool call.
+        cancel_message: The cancellation message if the tool call was cancelled before execution,
+            by a BeforeToolCallEvent hook or by an agent cancellation that landed while those hooks ran.
         duration: Elapsed time in seconds spent executing the tool. Starts after
             BeforeToolCallEvent returns and stops before AfterToolCallEvent is constructed.
-            None when the tool call was cancelled by a BeforeToolCallEvent hook
-            before execution.
+            None when the tool call was cancelled before execution.
         retry: Whether to retry the tool invocation. Can be set by hook callbacks
             to trigger a retry. When True, the current result is discarded and the
             tool is called again. Defaults to False.

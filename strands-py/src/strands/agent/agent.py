@@ -250,6 +250,7 @@ class Agent(AgentBase, LocalAgent):
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
         baggage_attributes: Mapping[str, str] | None = None,
+        sort_tools: bool = False,
         aux_model: Model | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
@@ -303,6 +304,10 @@ class Agent(AgentBase, LocalAgent):
             system_prompt: System prompt to guide model behavior.
                 Can be a string or a list of SystemContentBlock objects for advanced features like caching.
                 If None, the model will behave according to its default settings.
+            sort_tools: Send tool specifications to the model sorted by name, on every request (model calls,
+                context summaries, token counts), to keep prompt-cache prefixes stable when the same tools are
+                registered in a different order, e.g. from MCP servers. Sorting happens before middleware, which
+                can still reorder them. Defaults to False, which keeps registration order.
             structured_output_model: Pydantic model type(s) for structured output.
                 When specified, all agent calls will attempt to return structured output of this type.
                 This can be overridden on the agent invocation.
@@ -493,8 +498,9 @@ class Agent(AgentBase, LocalAgent):
         # Deferred cancellation requested via cancel(after_current_tools=True); read after the tool batch.
         self._deferred_cancel = False
         self._cancel_message: str | None = None
+        self._invoking_depth = 0
 
-        self.tool_registry = ToolRegistry()
+        self.tool_registry = ToolRegistry(sort_tool_specs=sort_tools)
 
         # Process tool list if provided
         if tools is not None:
@@ -678,7 +684,9 @@ class Agent(AgentBase, LocalAgent):
             return MemoryManager(**memory_manager)
         raise ValueError("memory_manager must be a MemoryManager or MemoryManagerConfig")
 
-    def cancel(self, *, message: str | None = None, after_current_tools: bool = False) -> None:
+    def cancel(
+        self, *, message: str | None = None, after_current_tools: bool = False, cancel_background_tasks: bool = False
+    ) -> None:
         """Cancel the currently running agent invocation.
 
         This method is thread-safe and can be called from any context
@@ -706,9 +714,22 @@ class Agent(AgentBase, LocalAgent):
         lifecycle, a timeout), pass a ``cancel_signal`` into the invocation instead. The agent
         observes both, so either cancels independently.
 
+        Background tasks keep running unless ``cancel_background_tasks=True``, which also cancels
+        every queued, working, or input-required background task of this agent immediately, even with
+        ``after_current_tools=True``. Their cancelled results are delivered like a cancel requested by the
+        model, and ``cancel()`` may block briefly (at most a few seconds) until the cancel has landed. If the
+        invocation was only waiting for its background tasks, it returns its natural ``stop_reason`` and the
+        results are delivered on the next invocation. On an
+        idle agent, ``cancel(cancel_background_tasks=True)`` cancels only the background tasks and leaves the
+        next invocation alone, while plain ``cancel()`` cancels the next invocation. An invocation scheduled with
+        ``asyncio.create_task`` counts as idle until it starts running, so in the example below the flagged call
+        would not cancel it; pass a ``cancel_signal`` into the invocation instead. A ``cancel_signal`` passed
+        into an invocation never cancels background tasks.
+
         Args:
             message: Text of the final assistant message the invocation ends with.
             after_current_tools: Let the current tool batch finish before stopping.
+            cancel_background_tasks: Also cancel this agent's outstanding background tasks.
 
         Example:
             ```python
@@ -727,12 +748,15 @@ class Agent(AgentBase, LocalAgent):
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        if message is not None:
-            self._cancel_message = message
-        if after_current_tools:
-            self._deferred_cancel = True
-        else:
-            self._cancel_signal.set()
+        if not cancel_background_tasks or self._invoking_depth > 0:
+            if message is not None:
+                self._cancel_message = message
+            if after_current_tools:
+                self._deferred_cancel = True
+            else:
+                self._cancel_signal.set()
+        if cancel_background_tasks and self._background_tasks is not None:
+            self._background_tasks.cancel_all()
 
     @property
     def cancel_signal(self) -> threading.Event:
@@ -1558,6 +1582,7 @@ class Agent(AgentBase, LocalAgent):
         cancel_watcher: asyncio.Task[None] | None = None
 
         try:
+            self._invoking_depth += 1
             # Clear cancel state that bypassed stream_async's finally (e.g.
             # agent.tool.stop(...) called directly). Keep _cancel_message when the signal is
             # set so a pre-invocation agent.cancel(message=...) still carries its text.
@@ -1663,6 +1688,7 @@ class Agent(AgentBase, LocalAgent):
                 cancel_watcher.cancel()
             self._external_cancel_signal = None
 
+            self._invoking_depth -= 1
             # Clear cancel state to allow agent reuse after cancellation
             self._cancel_signal.clear()
             self._deferred_cancel = False
@@ -1967,12 +1993,7 @@ class Agent(AgentBase, LocalAgent):
                     and event.chunk.get("redactContent")
                     and event.chunk["redactContent"].get("redactUserContentMessage")
                 ):
-                    self.messages[-1]["content"] = self._redact_user_content(
-                        self.messages[-1]["content"],
-                        str(event.chunk["redactContent"]["redactUserContentMessage"]),
-                    )
-                    if self._session_manager:
-                        self._session_manager.redact_latest_message(self.messages[-1], self)
+                    self._redact_last_user_message(str(event.chunk["redactContent"]["redactUserContentMessage"]))
                 yield event
 
         return terminal
@@ -2323,6 +2344,22 @@ class Agent(AgentBase, LocalAgent):
             self._model_state = copy.deepcopy(data["model_state"])
         if self._background_tasks is not None and "state" in data:
             self._background_tasks.load_state()
+
+    def _redact_last_user_message(self, redact_message: str) -> None:
+        """Redact the last user message in history and in the session.
+
+        Args:
+            redact_message: redact message to be replaced
+        """
+        # Session managers and hooks may append other messages after the user turn.
+        last_user_message = next((message for message in reversed(self.messages) if message["role"] == "user"), None)
+        if last_user_message is None:
+            logger.warning("no user message found to redact | guardrail redaction skipped")
+            return
+
+        last_user_message["content"] = self._redact_user_content(last_user_message["content"], redact_message)
+        if self._session_manager:
+            self._session_manager.redact_latest_message(last_user_message, self)
 
     def _redact_user_content(self, content: list[ContentBlock], redact_message: str) -> list[ContentBlock]:
         """Redact user content preserving toolResult blocks.

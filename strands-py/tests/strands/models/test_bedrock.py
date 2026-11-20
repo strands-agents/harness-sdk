@@ -3,11 +3,13 @@ import copy
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
 import traceback
 import unittest.mock
+import warnings
 from unittest.mock import ANY
 
 import boto3
@@ -21,12 +23,15 @@ from botocore.session import Session as BotocoreSession
 
 import strands
 from strands import _exception_notes
+from strands._context_manager.placeholder import offload_placeholder
 from strands.models import BedrockModel, CacheConfig, CacheToolsConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.bedrock import (
     DEFAULT_BEDROCK_MODEL_ID,
     DEFAULT_BEDROCK_REGION,
     DEFAULT_READ_TIMEOUT,
     _clear_skip_count_tokens_cache,
+    _converse_cache_model_info,
+    _converse_limits_cache_points,
     _next_stream_event,
     _suppress_task_exception,
 )
@@ -360,6 +365,21 @@ def test__init__model_config(bedrock_client):
     assert tru_max_tokens == exp_max_tokens
 
 
+@pytest.mark.parametrize(
+    "guardrail_config",
+    [
+        {"guardrail_id": "g1"},
+        {"guardrail_version": "v1"},
+        {"guardrail_id": "", "guardrail_version": "v1"},
+        {"guardrail_id": "g1", "guardrail_version": ""},
+    ],
+)
+def test__init__partial_guardrail_config_raises_value_error(bedrock_client, guardrail_config):
+    """Reject partial guardrail configuration (#4204)."""
+    with pytest.raises(ValueError, match="guardrail_id and guardrail_version must be set together"):
+        BedrockModel(model_id="m1", **guardrail_config)
+
+
 def test__init__context_window_limit(bedrock_client):
     _ = bedrock_client
 
@@ -427,6 +447,21 @@ def test_update_config(model, model_id):
     exp_model_id = model_id
 
     assert tru_model_id == exp_model_id
+
+
+@pytest.mark.parametrize(
+    "guardrail_config",
+    [
+        {"guardrail_id": "g1"},
+        {"guardrail_version": "v1"},
+        {"guardrail_id": "", "guardrail_version": "v1"},
+        {"guardrail_id": "g1", "guardrail_version": ""},
+    ],
+)
+def test_update_config_partial_guardrail_config_raises_value_error(model, guardrail_config):
+    """Reject updating only one guardrail setting (#4204)."""
+    with pytest.raises(ValueError, match="guardrail_id and guardrail_version must be set together"):
+        model.update_config(**guardrail_config)
 
 
 def test_cache_key_round_trips_through_config(model):
@@ -566,9 +601,12 @@ def test_format_request_defaults_max_tokens_to_the_model_info_output_limit(bedro
     assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
 
 
-def test_format_request_defaults_max_tokens_for_a_cross_region_model_id(bedrock_client, messages):
+@pytest.mark.parametrize(
+    "model_id", ["us.anthropic.claude-sonnet-4-6", "us.openai.gpt-6.2-astra", "global.openai.gpt-6.2-sol"]
+)
+def test_format_request_defaults_max_tokens_for_a_cross_region_model_id(bedrock_client, messages, model_id):
     _ = bedrock_client
-    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-6")
+    model = BedrockModel(model_id=model_id)
 
     assert model.format_request(messages)["inferenceConfig"] == {"maxTokens": 128_000}
 
@@ -2601,7 +2639,13 @@ def stream_structured_output(model, test_output_model_cls, alist):
     return stream_structured_output
 
 
-@pytest.mark.parametrize("model_id", ["us.anthropic.claude-opus-5-5", "global.anthropic.claude-haiku-5-5"])
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "us.anthropic.claude-opus-5-5",
+        "global.anthropic.claude-haiku-5-5",  # accepts forcing; False on purpose so the retry keeps thinking (#6236)
+    ],
+)
 @pytest.mark.asyncio
 async def test_stream_structured_output_starts_at_native_when_the_model_info_forbids_forcing(
     native_output_client, test_output_model_cls, messages, alist, model_id
@@ -3094,6 +3138,27 @@ def test_format_request_message_content_preserves_nonempty_tool_result_content(m
 
     tool_result = formatted_request["messages"][2]["content"][0]["toolResult"]
     assert tool_result["content"] == [{"text": "some result"}]
+
+
+def test_format_request_message_content_sends_an_offloaded_block_as_text(model, model_id):
+    """Bedrock rejects unknown content block fields, so a placeholder reaches it as the text the model receives."""
+    placeholder = offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                placeholder,
+                {"toolResult": {"toolUseId": "tu-1", "status": "success", "content": [placeholder]}},
+            ],
+        }
+    ]
+
+    formatted_messages = model._format_bedrock_messages(messages)
+
+    assert formatted_messages[0]["content"] == [
+        {"text": "[Dropped: ~1,200 tokens] [ref: tu-1]"},
+        {"toolResult": {"toolUseId": "tu-1", "content": [{"text": "[Dropped: ~1,200 tokens] [ref: tu-1]"}]}},
+    ]
 
 
 def test_format_request_message_content_guard_content_without_qualifiers(model, model_id):
@@ -4449,7 +4514,7 @@ def test_cache_strategy_auto_maps_claude_to_anthropic(bedrock_client):
 
 def test_cache_strategy_auto_is_none_for_non_claude(bedrock_client):
     """Under strategy="auto", a model without automatic caching support resolves to None."""
-    model = BedrockModel(model_id="amazon.nova-pro-v1:0", cache_config=CacheConfig(strategy="auto"))
+    model = BedrockModel(model_id="meta.llama4-maverick-17b-instruct-v1:0", cache_config=CacheConfig(strategy="auto"))
     assert model._cache_strategy is None
 
 
@@ -4464,7 +4529,7 @@ def test_model_info_reads_cache_points_for_claude_from_the_shared_model_info(bed
 def test_model_info_leaves_caching_unknown_for_other_model_ids(bedrock_client):
     _ = bedrock_client
 
-    model = BedrockModel(model_id="amazon.nova-pro-v1:0")
+    model = BedrockModel(model_id="meta.llama4-maverick-17b-instruct-v1:0")
 
     assert model.model_info.capabilities.prompt_caching is None
 
@@ -4513,8 +4578,10 @@ def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedro
     assert model._cache_strategy is None
 
 
-@pytest.mark.parametrize("model_id", ["us.openai.gpt-6-luna", "openai.gpt-6.1-sol", "openai.gpt-5.6-sol"])
-def test_model_info_reports_openai_models_as_implicitly_cached(bedrock_client, model_id):
+@pytest.mark.parametrize(
+    "model_id", ["us.openai.gpt-6-luna", "openai.gpt-6.1-sol", "openai.gpt-5.6-sol", "us.xai.grok-4.7"]
+)
+def test_model_info_reports_openai_gpt_and_xai_models_as_implicitly_cached(bedrock_client, model_id, caplog):
     """The listed cache points are for Bedrock's OpenAI-compatible APIs; Converse takes none for these models."""
     _ = bedrock_client
 
@@ -4522,8 +4589,529 @@ def test_model_info_reports_openai_models_as_implicitly_cached(bedrock_client, m
 
     assert model.model_info.capabilities.prompt_caching == "auto"
     assert model._cache_strategy is None
-    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}], system_prompt="sys")
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        request = model.format_request(
+            [{"role": "user", "content": [{"text": "hi"}]}], system_prompt_content=[{"text": "sys"}]
+        )
     assert "cachePoint" not in str(request)
+    assert "does not support automatic caching" not in caplog.text
+
+
+@pytest.mark.parametrize("model_id", ["openai.gpt-oss-120b-1:0", "us.openai.gpt-oss-20b-1:0"])
+def test_gpt_oss_has_no_automatic_caching_and_warns(bedrock_client, model_id, caplog):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
+
+    assert model.model_info.capabilities.prompt_caching is None
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        request = model.format_request(
+            [{"role": "user", "content": [{"text": "hi"}]}], system_prompt_content=[{"text": "sys"}]
+        )
+    assert "cachePoint" not in str(request)
+    assert f"model_id=<{model_id}> | cache_config is enabled but this model does not support automatic caching" in (
+        caplog.text
+    )
+
+
+def test_anthropic_strategy_places_cache_points_on_an_implicitly_cached_openai_model(bedrock_client):
+    _ = bedrock_client
+
+    model = BedrockModel(model_id="us.openai.gpt-6-luna", cache_config=CacheConfig(strategy="anthropic"))
+
+    request = model.format_request(
+        [{"role": "user", "content": [{"text": "hi"}]}], system_prompt_content=[{"text": "sys"}]
+    )
+
+    assert request["system"] == [{"text": "sys"}, {"cachePoint": {"type": "default"}}]
+
+
+@pytest.mark.parametrize(
+    ("model_id", "prompt_caching"),
+    [
+        ("us.openai.gpt-5.6-luna", "auto"),
+        ("us.openai.gpt-6-luna", "auto"),
+        ("openai.gpt-6.1-sol", "auto"),
+        ("us.openai.gpt-5.4", "auto"),
+        ("us.xai.grok-4.7", "auto"),
+        ("amazon.nova-pro-v1:0", "cache_points"),
+        ("us.amazon.nova-lite-v1:0", "cache_points"),
+        ("us.amazon.nova-micro-v1:0", "cache_points"),
+        ("us.amazon.nova-2-lite-v1:0", "cache_points"),
+        ("openai.gpt-oss-120b-1:0", None),
+        ("us.openai.gpt-oss-20b-1:0", None),
+        ("us.amazon.nova-premier-v1:0", None),
+        ("us.amazon.nova-2-pro-preview-20251202-v1:0", None),
+        ("global.anthropic.claude-sonnet-4-6", None),
+        ("meta.llama4-maverick-17b-instruct-v1:0", None),
+    ],
+)
+def test_converse_cache_model_info(model_id, prompt_caching):
+    info = _converse_cache_model_info(model_id)
+
+    assert (info.capabilities.prompt_caching if info else None) == prompt_caching
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        ("amazon.nova-pro-v1:0", True),
+        ("us.amazon.nova-pro-v1:0", True),
+        ("us.amazon.nova-lite-v1:0", True),
+        ("us.amazon.nova-micro-v1:0", True),
+        ("us.amazon.nova-2-lite-v1:0", True),
+        ("arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.amazon.nova-pro-v1:0", True),
+        ("us.amazon.nova-premier-v1:0", False),
+        ("global.anthropic.claude-sonnet-4-6", False),
+        ("us.openai.gpt-6-luna", False),
+    ],
+)
+def test_converse_limits_cache_points(model_id, expected):
+    assert _converse_limits_cache_points(model_id) is expected
+
+
+NOVA = "us.amazon.nova-pro-v1:0"
+NOVA_TTL_WARNING = f"model_id=<{NOVA}> | ttl is not supported by this model, using the default cache duration"
+NOVA_TOOL_SPEC: ToolSpec = {"name": "calculator", "description": "Calculate", "inputSchema": {"json": {}}}
+NOVA_TOOL_RESULT = {"toolResult": {"toolUseId": "id-1", "status": "success", "content": [{"text": "42"}]}}
+NOVA_CACHE_POINT = {"cachePoint": {"type": "default"}}
+
+
+def _nova_tool_turn():
+    return [
+        {"role": "user", "content": [{"text": "What is 6 x 7?"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "id-1", "name": "calculator", "input": {}}}]},
+    ]
+
+
+def _all_cache_points(request):
+    blocks = [
+        *request.get("toolConfig", {}).get("tools", []),
+        *request.get("system", []),
+        *(block for message in request["messages"] for block in message["content"]),
+    ]
+    return [block["cachePoint"] for block in blocks if "cachePoint" in block]
+
+
+def test_nova_caches_system_and_conversation_but_not_tools_without_a_warning(bedrock_client, caplog):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        request = model.format_request(
+            [{"role": "user", "content": [{"text": "Hello"}]}],
+            tool_specs=[NOVA_TOOL_SPEC],
+            system_prompt_content=[{"text": "Be helpful"}],
+        )
+
+    assert request["system"] == [{"text": "Be helpful"}, NOVA_CACHE_POINT]
+    assert not any("cachePoint" in tool for tool in request["toolConfig"]["tools"])
+    assert request["messages"][-1]["content"] == [{"text": "Hello"}, NOVA_CACHE_POINT]
+    assert "does not support automatic caching" not in caplog.text
+
+
+def test_nova_drops_a_configured_ttl_from_every_cache_point_and_warns(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto", ttl="1h"))
+
+    with pytest.warns(UserWarning, match=re.escape(NOVA_TTL_WARNING)):
+        request = model.format_request(
+            [{"role": "user", "content": [{"text": "Hello"}]}],
+            tool_specs=[NOVA_TOOL_SPEC],
+            system_prompt_content=[{"text": "Be helpful"}],
+        )
+
+    assert _all_cache_points(request) == [{"type": "default"}, {"type": "default"}]
+
+
+def test_nova_drops_a_system_prompt_ttl_and_warns(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(system_prompt_ttl="1h"))
+
+    with pytest.warns(UserWarning, match=re.escape(NOVA_TTL_WARNING)):
+        request = model.format_request(
+            [{"role": "user", "content": [{"text": "Hello"}]}], system_prompt_content=[{"text": "Be helpful"}]
+        )
+
+    assert request["system"] == [{"text": "Be helpful"}, NOVA_CACHE_POINT]
+
+
+def test_nova_drops_the_ttl_of_a_caller_placed_system_cache_point_and_warns(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig())
+
+    with pytest.warns(UserWarning, match=re.escape(NOVA_TTL_WARNING)):
+        request = model.format_request(
+            [{"role": "user", "content": [{"text": "Hello"}]}],
+            system_prompt_content=[{"text": "Be helpful"}, {"cachePoint": {"type": "default", "ttl": "5m"}}],
+        )
+
+    assert request["system"] == [{"text": "Be helpful"}, NOVA_CACHE_POINT]
+
+
+def test_nova_warns_that_an_explicit_tools_ttl_has_no_effect(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(tools_ttl="1h"))
+
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            f"model_id=<{NOVA}>, tools_ttl=<1h> | this model accepts no tool-level cache point, tool definitions are"
+            " cached only as part of the system prompt prefix"
+        ),
+    ):
+        request = model.format_request([{"role": "user", "content": [{"text": "Hello"}]}], tool_specs=[NOVA_TOOL_SPEC])
+
+    assert not any("cachePoint" in tool for tool in request["toolConfig"]["tools"])
+
+
+def test_nova_drops_the_deprecated_cache_tools_point_and_warns(bedrock_client):
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(), cache_tools="default")
+
+    with pytest.warns(UserWarning, match="this model accepts no tool-level cache point"):
+        request = model.format_request([{"role": "user", "content": [{"text": "Hello"}]}], tool_specs=[NOVA_TOOL_SPEC])
+
+    assert not any("cachePoint" in tool for tool in request["toolConfig"]["tools"])
+
+
+def test_nova_rules_apply_under_the_anthropic_strategy(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="anthropic", ttl="1h"))
+    messages = [*_nova_tool_turn(), {"role": "user", "content": [NOVA_TOOL_RESULT]}]
+
+    with pytest.warns(UserWarning, match=re.escape(NOVA_TTL_WARNING)):
+        request = model.format_request(
+            messages, tool_specs=[NOVA_TOOL_SPEC], system_prompt_content=[{"text": "Be helpful"}]
+        )
+
+    assert not any("cachePoint" in tool for tool in request["toolConfig"]["tools"])
+    assert request["system"] == [{"text": "Be helpful"}, NOVA_CACHE_POINT]
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
+    assert "cachePoint" not in str(request["messages"][-1])
+    assert _all_cache_points(request) == [{"type": "default"}, {"type": "default"}]
+
+
+def test_nova_keeps_the_conversation_cache_point_on_the_prompt_that_started_a_tool_loop(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    messages = [
+        *_nova_tool_turn(),
+        {"role": "user", "content": [NOVA_TOOL_RESULT]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "id-2", "name": "calculator", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "id-2", "status": "success", "content": [{"text": "84"}]}}],
+        },
+    ]
+
+    request = model.format_request(messages, tool_specs=[NOVA_TOOL_SPEC])
+
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
+    assert _all_cache_points(request) == [{"type": "default"}]
+
+
+def test_nova_keeps_the_conversation_cache_point_on_the_prompt_when_a_per_call_tail_follows_a_tool_result(
+    bedrock_client,
+):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    messages = [*_nova_tool_turn(), {"role": "user", "content": [NOVA_TOOL_RESULT, {"text": "per-call"}]}]
+
+    request = model.format_request(messages, tool_specs=[NOVA_TOOL_SPEC], dynamic_trailing_blocks=1)
+
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
+    assert request["messages"][-1]["content"][-1] == {"text": "per-call"}
+    assert _all_cache_points(request) == [{"type": "default"}]
+
+
+def test_nova_moves_a_caller_placed_cache_point_with_no_text_ahead_of_it_to_the_prompt_and_warns(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig())
+    image = {"image": {"format": "png", "source": {"bytes": b"1"}}}
+    messages = [*_nova_tool_turn(), {"role": "user", "content": [NOVA_TOOL_RESULT, image, NOVA_CACHE_POINT]}]
+
+    with pytest.warns(UserWarning, match="dropped a caller-placed cache point with no text ahead of it"):
+        request = model.format_request(messages, tool_specs=[NOVA_TOOL_SPEC])
+
+    assert [next(iter(block)) for block in request["messages"][-1]["content"]] == ["toolResult", "image"]
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
+    assert _all_cache_points(request) == [{"type": "default"}]
+
+
+@pytest.mark.parametrize(
+    "media",
+    [
+        [{"image": {"format": "png", "source": {"bytes": b"1"}}}],
+        [{"document": {"name": "order", "format": "pdf", "source": {"bytes": b"1"}}}],
+        [
+            {"image": {"format": "png", "source": {"bytes": b"1"}}},
+            {"document": {"name": "notes", "format": "txt", "source": {"bytes": b"1"}}},
+        ],
+        [{"video": {"format": "mp4", "source": {"bytes": b"1"}}}],
+    ],
+    ids=["image", "pdf", "image-then-txt", "video"],
+)
+def test_nova_places_the_cache_point_directly_after_the_text_ahead_of_media(bedrock_client, media):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+
+    request = model.format_request([{"role": "user", "content": [{"text": "Describe"}, *media]}])
+
+    content = request["messages"][-1]["content"]
+    assert content[:2] == [{"text": "Describe"}, NOVA_CACHE_POINT]
+    assert len(content) == 2 + len(media)
+    assert _all_cache_points(request) == [{"type": "default"}]
+
+
+def test_nova_moves_a_caller_placed_cache_point_after_an_image_back_to_the_text(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    image = {"image": {"format": "png", "source": {"bytes": b"1"}}}
+
+    request = model.format_request([{"role": "user", "content": [{"text": "Describe"}, image, NOVA_CACHE_POINT]}])
+
+    content = request["messages"][-1]["content"]
+    assert content[:2] == [{"text": "Describe"}, NOVA_CACHE_POINT]
+    assert "image" in content[2]
+    assert len(content) == 3
+
+
+def test_claude_keeps_the_cache_point_after_an_image(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    image = {"image": {"format": "png", "source": {"bytes": b"1"}}}
+
+    request = model.format_request([{"role": "user", "content": [{"text": "Describe"}, image]}])
+
+    assert request["messages"][-1]["content"][-1] == NOVA_CACHE_POINT
+
+
+def test_nova_places_no_conversation_cache_point_when_the_only_user_text_is_guarded(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id=NOVA,
+        cache_config=CacheConfig(strategy="auto"),
+        guardrail_id="g",
+        guardrail_version="1",
+        guardrail_latest_message=True,
+    )
+
+    request = model.format_request(
+        [{"role": "user", "content": [{"text": "Hello"}]}], system_prompt_content=[{"text": "Be helpful"}]
+    )
+
+    assert request["messages"][-1]["content"] == [{"guardContent": {"text": {"text": "Hello"}}}]
+    assert _all_cache_points(request) == [{"type": "default"}]
+
+
+def test_nova_moves_a_caller_placed_cache_point_off_a_tool_result_back_to_the_prompt(bedrock_client):
+    """The point only moves back: content after the caller's boundary never joins the cached prefix."""
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    messages = [
+        *_nova_tool_turn(),
+        {"role": "user", "content": [NOVA_TOOL_RESULT, NOVA_CACHE_POINT, {"text": "next"}]},
+    ]
+
+    with pytest.warns(UserWarning, match="dropped a caller-placed cache point with no text ahead of it"):
+        request = model.format_request(messages, tool_specs=[NOVA_TOOL_SPEC])
+
+    assert [next(iter(block)) for block in request["messages"][-1]["content"]] == ["toolResult", "text"]
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
+    assert _all_cache_points(request) == [{"type": "default"}]
+
+
+def _nova_chat(*prompts):
+    messages = []
+    for prompt in prompts:
+        messages += [
+            {"role": "assistant", "content": [{"text": "Ok"}]},
+            {"role": "user", "content": [{"text": prompt}]},
+        ]
+    return messages[1:]
+
+
+def _user_content(request):
+    return [message["content"] for message in request["messages"] if message["role"] == "user"]
+
+
+def test_nova_keeps_the_earlier_prompts_cache_point_when_a_plain_text_user_message_follows_tool_calls(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    messages = [
+        *_nova_tool_turn(),
+        {"role": "user", "content": [NOVA_TOOL_RESULT]},
+        {"role": "assistant", "content": [{"text": "42"}]},
+        {"role": "user", "content": [{"text": "Thanks"}]},
+    ]
+
+    request = model.format_request(messages, tool_specs=[NOVA_TOOL_SPEC])
+
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
+    assert request["messages"][-1]["content"] == [{"text": "Thanks"}, NOVA_CACHE_POINT]
+    assert _all_cache_points(request) == [{"type": "default"}] * 2
+
+
+def test_nova_keeps_cache_points_on_the_last_three_user_messages_with_text(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+
+    request = model.format_request(_nova_chat("One", "Two", "Three", "Four"))
+
+    tru_content = _user_content(request)
+    exp_content = [
+        [{"text": "One"}],
+        [{"text": "Two"}, NOVA_CACHE_POINT],
+        [{"text": "Three"}, NOVA_CACHE_POINT],
+        [{"text": "Four"}, NOVA_CACHE_POINT],
+    ]
+    assert tru_content == exp_content
+
+
+def test_nova_keeps_its_cache_points_in_place_through_a_tool_loop(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    messages = [
+        *_nova_chat("One", "Two"),
+        {"role": "assistant", "content": [{"text": "Ok"}]},
+        *_nova_tool_turn(),
+        {"role": "user", "content": [NOVA_TOOL_RESULT]},
+    ]
+
+    request = model.format_request(messages, tool_specs=[NOVA_TOOL_SPEC])
+
+    tru_content = _user_content(request)
+    exp_content = [
+        [{"text": "One"}, NOVA_CACHE_POINT],
+        [{"text": "Two"}, NOVA_CACHE_POINT],
+        [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT],
+        [NOVA_TOOL_RESULT],
+    ]
+    assert tru_content == exp_content
+
+
+@pytest.mark.parametrize(
+    ("system_points", "exp_content"),
+    [
+        (
+            1,
+            [
+                [{"text": "One"}, NOVA_CACHE_POINT],
+                [{"text": "Two"}, NOVA_CACHE_POINT],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+            ],
+        ),
+        (2, [[{"text": "One"}], [{"text": "Two"}, NOVA_CACHE_POINT], [{"text": "Three"}, NOVA_CACHE_POINT]]),
+        (3, [[{"text": "One"}], [{"text": "Two"}], [{"text": "Three"}, NOVA_CACHE_POINT]]),
+        (4, [[{"text": "One"}], [{"text": "Two"}], [{"text": "Three"}]]),
+    ],
+)
+def test_nova_fits_its_conversation_cache_points_in_the_four_converse_accepts(
+    bedrock_client, system_points, exp_content
+):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    system = [{"text": "Be helpful"}, NOVA_CACHE_POINT] * system_points
+
+    request = model.format_request(_nova_chat("One", "Two", "Three"), system_prompt_content=system)
+
+    tru_content = _user_content(request)
+    assert tru_content == exp_content
+    assert len(_all_cache_points(request)) <= 4
+
+
+def test_nova_counts_the_deprecated_cache_prompt_point_against_the_four_converse_accepts(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_prompt="default", cache_config=CacheConfig(strategy="auto"))
+    system = [{"text": "Be helpful"}, NOVA_CACHE_POINT]
+
+    with pytest.warns(UserWarning, match="cache_prompt is deprecated"):
+        request = model.format_request(_nova_chat("One", "Two", "Three"), system_prompt_content=system)
+
+    tru_content = _user_content(request)
+    exp_content = [[{"text": "One"}], [{"text": "Two"}, NOVA_CACHE_POINT], [{"text": "Three"}, NOVA_CACHE_POINT]]
+    assert tru_content == exp_content
+
+
+@pytest.mark.parametrize(
+    ("system_points", "exp_content"),
+    [
+        (
+            0,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}, NOVA_CACHE_POINT],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            1,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}, NOVA_CACHE_POINT],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            2,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            3,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}],
+                [{"text": "Three"}],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (4, [[{"text": "One"}], [{"text": "Two"}], [{"text": "Three"}], [{"text": "Four"}, {"text": "per-call"}]]),
+    ],
+)
+def test_nova_keeps_cache_points_on_earlier_user_messages_behind_a_caller_placed_one(
+    bedrock_client, system_points, exp_content
+):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    system = [{"text": "Be helpful"}, NOVA_CACHE_POINT] * system_points
+    messages = _nova_chat("One", "Two", "Three", "Four")
+    messages[-1]["content"] = [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}]
+
+    request = model.format_request(messages, system_prompt_content=system)
+
+    tru_content = _user_content(request)
+    assert tru_content == exp_content
+    assert len(_all_cache_points(request)) <= 4
+
+
+def test_claude_keeps_the_tools_cache_point_and_ttl(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="global.anthropic.claude-sonnet-4-6",
+        cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=True),
+    )
+    messages = [*_nova_tool_turn(), {"role": "user", "content": [NOVA_TOOL_RESULT]}]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        request = model.format_request(
+            messages, tool_specs=[NOVA_TOOL_SPEC], system_prompt_content=[{"text": "Be helpful"}]
+        )
+
+    one_hour = {"cachePoint": {"type": "default", "ttl": "1h"}}
+    assert request["toolConfig"]["tools"][-1] == one_hour
+    assert request["system"] == [{"text": "Be helpful"}, one_hour]
+    assert request["messages"][-1]["content"][-1] == one_hour
+    assert not any("ttl is not supported" in str(warning.message) for warning in caught)
 
 
 def test_model_info_override_wins_over_openai_implicit_caching(bedrock_client):
@@ -4541,7 +5129,7 @@ def test_cache_strategy_auto_maps_to_anthropic_when_the_model_info_override_says
     _ = bedrock_client
 
     model = BedrockModel(
-        model_id="amazon.nova-pro-v1:0",
+        model_id="meta.llama4-maverick-17b-instruct-v1:0",
         cache_config=CacheConfig(strategy="auto"),
         model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
     )
@@ -5026,7 +5614,7 @@ def test_inject_cache_point_with_tool_result_last_user(bedrock_client):
 
 def test_inject_cache_point_skipped_for_non_claude(bedrock_client):
     """Test that cache point injection is skipped for non-Claude models."""
-    model = BedrockModel(model_id="amazon.nova-pro-v1:0", cache_config=CacheConfig(strategy="auto"))
+    model = BedrockModel(model_id="meta.llama4-maverick-17b-instruct-v1:0", cache_config=CacheConfig(strategy="auto"))
 
     messages = [
         {"role": "user", "content": [{"text": "Hello"}]},
@@ -6069,7 +6657,7 @@ def test_format_request_tools_ttl_is_off_for_a_model_without_caching(bedrock_cli
     """tools_ttl only reaches the wire under an active anthropic strategy, matching the tools point rule."""
     _ = bedrock_client
     model = BedrockModel(
-        model_id="amazon.nova-pro-v1:0",
+        model_id="meta.llama4-maverick-17b-instruct-v1:0",
         cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=True),
     )
 
@@ -6116,7 +6704,7 @@ def test_format_request_auto_skips_tools_cache_point_for_a_model_without_caching
     _ = bedrock_client
     with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
         model = BedrockModel(
-            model_id="amazon.nova-pro-v1:0",
+            model_id="meta.llama4-maverick-17b-instruct-v1:0",
             cache_config=CacheConfig(strategy="auto"),
             cache_tools=CacheToolsConfig(ttl="1h"),
         )
@@ -6500,7 +7088,7 @@ def test_format_request_auto_skips_system_cache_point_when_empty(bedrock_client,
 def test_format_request_auto_skips_system_cache_point_for_non_claude(bedrock_client, messages):
     """Auto mode does not inject a system cache point when the model has no auto strategy."""
     model = BedrockModel(
-        model_id="amazon.nova-pro-v1:0",
+        model_id="meta.llama4-maverick-17b-instruct-v1:0",
         cache_config=CacheConfig(strategy="auto"),
     )
 

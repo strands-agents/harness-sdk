@@ -1,10 +1,13 @@
 """Tests for FileSessionManager symlink attack protection."""
 
+import errno
 import json
 import os
 import platform
+import re
 import stat
 import tempfile
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,6 +59,28 @@ class TestDefaultStorageDir:
         mode = stat.S_IMODE(os.stat(storage).st_mode)
         assert mode == 0o700, f"Expected 0o700, got {oct(mode)}"
 
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    @pytest.mark.parametrize("mode", [0o755, 0o740, 0o720, 0o710, 0o704, 0o702, 0o701])
+    def test_existing_wide_storage_dir_warns_and_keeps_mode(self, mode, temp_dir):
+        """An existing storage directory open to group or others is reported, not modified."""
+        os.chmod(temp_dir, mode)
+
+        expected = f"Session storage directory {temp_dir} is accessible by group or others (mode {mode:o})"
+        with pytest.warns(UserWarning, match=re.escape(expected)) as record:
+            FileSessionManager(session_id="test", storage_dir=temp_dir)
+
+        assert record[0].filename == __file__
+        assert stat.S_IMODE(os.stat(temp_dir).st_mode) == mode
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-only test")
+    def test_existing_private_storage_dir_does_not_warn(self, temp_dir):
+        """An existing storage directory with mode 0o700 emits no warning."""
+        os.chmod(temp_dir, 0o700)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            FileSessionManager(session_id="test", storage_dir=temp_dir)
+
 
 class TestSymlinkProtection:
     """Tests for symlink attack prevention."""
@@ -92,6 +117,40 @@ class TestSymlinkProtection:
 
         with pytest.raises(SessionException, match="symlink"):
             file_manager._read_file(symlink_path)
+
+    @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="Platform lacks O_NOFOLLOW")
+    def test_read_refuses_symlink_swapped_in_after_check(self, file_manager, temp_dir):
+        """_read_file should not follow a symlink that replaces the file after the islink check."""
+        real_file = os.path.join(temp_dir, "real.json")
+        with open(real_file, "w") as f:
+            json.dump({"secret": "***"}, f)
+
+        session_file = os.path.join(temp_dir, "session.json")
+        with open(session_file, "w") as f:
+            json.dump({"session_id": "test"}, f)
+
+        def swap_after_check(path):
+            os.remove(path)
+            os.symlink(real_file, path)
+            return False
+
+        with patch("strands.session.file_session_manager.os.path.islink", side_effect=swap_after_check):
+            with pytest.raises(SessionException, match="symlink"):
+                file_manager._read_file(session_file)
+
+    def test_read_maps_freebsd_symlink_errno(self, file_manager, temp_dir):
+        """_read_file should report EMLINK (FreeBSD's O_NOFOLLOW error) as a symlink refusal."""
+        session_file = os.path.join(temp_dir, "session.json")
+        open_error = OSError(errno.EMLINK, "Too many links")
+
+        with patch("strands.session.file_session_manager.os.open", side_effect=open_error):
+            with pytest.raises(SessionException, match="symlink"):
+                file_manager._read_file(session_file)
+
+    def test_read_missing_file_raises_file_not_found(self, file_manager, temp_dir):
+        """_read_file should leave errors unrelated to symlinks unchanged."""
+        with pytest.raises(FileNotFoundError):
+            file_manager._read_file(os.path.join(temp_dir, "missing.json"))
 
     @pytest.mark.skipif(platform.system() == "Windows", reason="Symlinks need Unix")
     def test_write_uses_unpredictable_temp(self, file_manager, temp_dir):

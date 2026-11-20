@@ -838,6 +838,50 @@ async def test_stream_no_usage(mistral_client, model, agenerator, alist):
 
 
 @pytest.mark.asyncio
+async def test_stream_with_tool_calls(mistral_client, model, agenerator, alist):
+    from mistralai.client.models import FunctionCall, ToolCall
+
+    def event(tool_calls, finish_reason=None):
+        return unittest.mock.Mock(
+            data=unittest.mock.Mock(
+                choices=[
+                    unittest.mock.Mock(
+                        delta=unittest.mock.Mock(content=None, tool_calls=tool_calls), finish_reason=finish_reason
+                    )
+                ],
+                usage=None,
+            ),
+        )
+
+    events = [
+        event([ToolCall(id="calc_1", function=FunctionCall(name="calculator", arguments='{"expression": '))]),
+        event(
+            [
+                ToolCall(id="calc_1", function=FunctionCall(name="calculator", arguments='"2+2"}')),
+                ToolCall(id="time_1", function=FunctionCall(name="current_time", arguments="{}")),
+            ],
+            finish_reason="tool_calls",
+        ),
+    ]
+    mistral_client.chat.stream_async = unittest.mock.AsyncMock(return_value=agenerator(events))
+
+    tru_chunks = await alist(model.stream([{"role": "user", "content": [{"text": "Calculate 2+2"}]}]))
+
+    exp_chunks = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"name": "calculator", "toolUseId": "calc_1"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"expression": '}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '"2+2"}'}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {"toolUse": {"name": "current_time", "toolUseId": "time_1"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+    assert tru_chunks == exp_chunks
+
+
+@pytest.mark.asyncio
 async def test_tool_choice_not_supported_warns(mistral_client, model, agenerator, alist, captured_warnings):
     tool_choice = {"auto": {}}
 

@@ -52,6 +52,11 @@ describe('sandbox errors', () => {
       const error = new SandboxAbortError()
       expect(error).toBeInstanceOf(Error)
     })
+
+    it('carries the output captured before the abort, empty by default', () => {
+      expect(new SandboxAbortError()).toMatchObject({ stdout: '', stderr: '' })
+      expect(new SandboxAbortError('out', 'err')).toMatchObject({ stdout: 'out', stderr: 'err' })
+    })
   })
 
   describe.each([

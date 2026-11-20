@@ -409,7 +409,7 @@ async def test_rejects_an_empty_choice_list():
     model = RecordingModel({})
     decision = LLMDecisionModel(model=model)
 
-    with pytest.raises(ValueError, match="choices must be a non-empty list of strings"):
+    with pytest.raises(ValueError, match="choices must be 'boolean' or a non-empty list of strings"):
         await decision.ask("x", {"q": {"question": "pick", "choices": []}})
     assert model.calls == []
 
