@@ -1,0 +1,18 @@
+---
+title: Uncertain
+description: Represent a decision model that abstains instead of choosing an answer.
+languages: [typescript]
+sourceLinks:
+  - path: strands-ts/src/decisions/types.ts
+---
+
+Handle `Uncertain` when a decision model cannot support one of the allowed
+answers. The sentinel may carry a free-form `reason` supplied by the
+implementation.
+
+`toString()` returns `Uncertain` or `Uncertain(reason)`. `toJSON()` returns an
+object with `uncertain: true` and includes `reason` when one is present.
+
+Question answer types include `Uncertain` so callers can handle abstention. See
+[Question](question/) for the uncertainty setting and
+[AnswerOf](answer-of/) for the resulting type.
