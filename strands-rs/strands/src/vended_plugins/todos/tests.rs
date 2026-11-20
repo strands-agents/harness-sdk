@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use serde_json::json;
 
 use super::*;
@@ -93,6 +95,7 @@ fn renders_the_current_list_as_a_reminder() {
 fn renders_no_reminder_when_the_list_is_empty() {
     let context = injection_context(Vec::new());
     assert!(Todos::render_reminder("todos", &context).is_none());
+    assert!(!Todos::default().reminder_due(&context));
 }
 
 #[test]
@@ -150,7 +153,7 @@ async fn validates_its_input_against_the_model_facing_schema() {
 fn has_the_todo_write_spec() {
     assert_eq!(
         serde_json::to_string(&Todos::default().todo_write_tool().tool_spec()).unwrap(),
-        r#"{"name":"todo_write","description":"Create and maintain a structured task list for the current session. Use proactively for multi-step work (roughly 3+ distinct steps). Keep exactly one item in_progress at a time, and update status as you go rather than batching. The current list is re-surfaced to you before each step, so you do not need to restate it. Pass an empty list to clear it when the work is done.","inputSchema":{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"The task, imperative: \"Run tests\"."},"activeForm":{"type":"string","description":"Present continuous, shown while in progress: \"Running tests\"."},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["content","activeForm","status"],"additionalProperties":false},"description":"The full updated list."}},"required":["todos"],"additionalProperties":false}}"#
+        r#"{"name":"todo_write","description":"Create and maintain a structured task list for the current session. Use proactively for multi-step work (roughly 3+ distinct steps). Keep exactly one item in_progress at a time, and update status as you go rather than batching. The current list is re-surfaced to you periodically, so you do not need to restate it. Pass an empty list to clear it when the work is done.","inputSchema":{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string","description":"The task, imperative: \"Run tests\"."},"activeForm":{"type":"string","description":"Present continuous, shown while in progress: \"Running tests\"."},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["content","activeForm","status"],"additionalProperties":false},"description":"The full updated list."}},"required":["todos"],"additionalProperties":false}}"#
     );
 }
 
@@ -232,26 +235,48 @@ async fn rejects_a_second_instance_even_under_a_different_plugin_name() {
     assert!(error.to_string().contains("todo_write"), "{error}");
 }
 
-#[tokio::test]
-async fn re_surfaces_the_list_on_the_next_model_call_in_the_same_invocation() {
+/// Which model calls carry the reminder, over one invocation per entry of `invocations`, each
+/// calling the listed tools in turn before answering.
+async fn reminded_calls(config: TodosConfig, invocations: &[&[&str]], preset: bool) -> Vec<bool> {
     let todos = json!({"todos": [{"content": "Run tests", "activeForm": "Running tests", "status": "in_progress"}]});
-    let model = MockModel::new()
-        .with_turn(MockTurn::content([ContentBlock::from(ToolUseBlock::new(
-            "todo_write",
-            "t1",
-            todos,
-        ))]))
-        .with_turn("Done");
+    let model = MockModel::new();
+    let mut tool_uses = 0;
+    for tools in invocations {
+        for name in *tools {
+            let input = if *name == "todo_write" {
+                todos.clone()
+            } else {
+                json!({})
+            };
+            model.add_turn(MockTurn::content([ContentBlock::from(ToolUseBlock::new(
+                *name,
+                format!("t{tool_uses}"),
+                input,
+            ))]));
+            tool_uses += 1;
+        }
+        model.add_turn("Done");
+    }
+    let work = crate::test_support::MockTool::new("work").with_result(|context| {
+        crate::tools::ToolOutcome::Result(crate::types::ToolResultBlock::success(
+            context.tool_use().tool_use_id.clone(),
+            vec![ToolResultContent::text("ok")],
+        ))
+    });
     let mut agent = Agent::builder()
         .model(model.clone())
-        .plugins([Todos::default()])
+        .tools([work])
+        .plugins([Todos::new(config)])
         .printer(false)
         .build()
         .unwrap();
-
-    agent.invoke("go").await.unwrap();
-
-    let reminded: Vec<bool> = model
+    if preset {
+        agent.app_state().set("todos", sample_todos()).unwrap();
+    }
+    for _ in 0..invocations.len() {
+        agent.invoke("go").await.unwrap();
+    }
+    model
         .requests()
         .iter()
         .map(|request| {
@@ -260,6 +285,67 @@ async fn re_surfaces_the_list_on_the_next_model_call_in_the_same_invocation() {
                 .iter()
                 .any(|message| message.text().contains("Your current todo list"))
         })
+        .collect()
+}
+
+/// One pacing row: its name, the config, the tools each invocation calls, and which model calls
+/// carry the reminder.
+type PacingCase<'a> = (&'a str, TodosConfig, Vec<&'a [&'a str]>, Vec<bool>);
+
+fn interval(calls: usize) -> TodosConfig {
+    TodosConfig::builder()
+        .reminder_interval(NonZeroUsize::new(calls).unwrap())
+        .build()
+}
+
+#[tokio::test]
+async fn waits_reminder_interval_model_calls_after_the_list_was_last_shown() {
+    let eleven_work: Vec<&str> = std::iter::once("todo_write")
+        .chain(std::iter::repeat_n("work", 11))
         .collect();
-    assert_eq!(reminded, [false, true]);
+    let mut default_expected = vec![false; 11];
+    default_expected.extend([true, false]);
+    let cases: Vec<PacingCase<'_>> = vec![
+        (
+            "an interval of 1 skips only the call that carries the todo_write result",
+            interval(1),
+            vec![&["todo_write", "work", "work"]],
+            vec![false, false, true, true],
+        ),
+        (
+            "a todo_write result and a reminder both restart the count",
+            interval(2),
+            vec![&[
+                "todo_write",
+                "work",
+                "work",
+                "work",
+                "work",
+                "todo_write",
+                "work",
+                "work",
+            ]],
+            vec![false, false, false, true, false, true, false, false, true],
+        ),
+        (
+            "the default interval is 10",
+            TodosConfig::default(),
+            vec![&eleven_work],
+            default_expected,
+        ),
+        (
+            "a user turn neither brings the reminder forward nor restarts the count",
+            interval(3),
+            vec![&["todo_write", "work"], &[], &[], &["work"]],
+            vec![false, false, false, false, true, false, false],
+        ),
+    ];
+    for (name, config, invocations, expected) in cases {
+        assert_eq!(reminded_calls(config, &invocations, false).await, expected, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn reminds_at_once_when_the_conversation_does_not_show_the_list() {
+    assert_eq!(reminded_calls(TodosConfig::default(), &[&[]], true).await, [true]);
 }
