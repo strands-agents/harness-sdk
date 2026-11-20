@@ -1,0 +1,9 @@
+name: rizamo
+description: 'Publish, schedule and measure social posts on Instagram, Facebook, TikTok, Threads, LinkedIn and YouTube, and answer comments and messages, through Rizamo''s hosted MCP server.'
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/rizamohq/rizamo-mcp
+docsUrl: https://docs.rizamo.com/frameworks/strands
+maintainedBy: partner
+addedDate: 2026-11-20
