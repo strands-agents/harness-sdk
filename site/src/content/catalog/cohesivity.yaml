@@ -1,0 +1,8 @@
+name: Cohesivity
+description: Hosted MCP server that provisions hosting, Postgres, Redis, object storage, vector databases, and auth for Strands agents.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/cohesivity-org/cohesivity-mcp
+docsUrl: https://github.com/cohesivity-org/cohesivity-mcp#strands-agents
+addedDate: 2026-10-15
