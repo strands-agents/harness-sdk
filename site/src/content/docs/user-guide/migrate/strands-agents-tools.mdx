@@ -376,8 +376,9 @@ There is no `breakout_of_loop`: every call pauses the agent. See
 reading a page goes to `web_fetch`. Authentication and endpoint scoping move into
 an `httpx.AsyncClient` you pass to `make_http_request(client=...)`. By default,
 `web_fetch` hands the page to an auxiliary analyst that answers the model's
-`prompt`, so the full page never enters the main context. For the full page
-as markdown (the old `convert_to_markdown=True`), build it with
+`prompt`, keeping the page out of the main context; when the model leaves
+`prompt` empty it gets the page as markdown instead. For the full page as
+markdown on every call (the old `convert_to_markdown=True`), build it with
 `make_web_fetch(mode="markdown")`. `web_fetch` needs the `web-fetch` extra:
 `pip install 'strands-agents[web-fetch]'`.
 

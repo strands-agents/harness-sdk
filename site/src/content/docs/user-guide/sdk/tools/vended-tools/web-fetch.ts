@@ -1,5 +1,6 @@
 import { Agent } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
 import { webFetch, makeWebFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
 
 // Web fetch example
@@ -30,5 +31,16 @@ async function webFetchCustomExample() {
   })
   const agent = new Agent({ tools: [webFetch] })
   // --8<-- [end:web_fetch_custom_example]
+  void agent
+}
+
+// Web fetch through the sandbox example
+async function webFetchSandboxExample() {
+  // --8<-- [start:web_fetch_sandbox_example]
+  const agent = new Agent({
+    sandbox: new DockerSandbox({ container: 'my-container-id' }),
+    tools: [makeWebFetch({ sandbox: true })],
+  })
+  // --8<-- [end:web_fetch_sandbox_example]
   void agent
 }
