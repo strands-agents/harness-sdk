@@ -83,11 +83,11 @@ describe('ContextManager', () => {
     })
 
     it.each([
-      ['the preset and Offload.defer', ['dynamicToolLoading' as const, Offload.defer(['!shell'])]],
+      ['the preset and Offload.defer', ['deferredToolLoading' as const, Offload.defer(['!shell'])]],
       ['two Offload.defer strategies', [Offload.defer('toolSpecs'), Offload.defer(['shell'])]],
     ])('rejects %s, which would share one tools list', (_name, strategies) => {
       expect(() => new ContextManager({ strategies })).toThrow(
-        "contextManager takes one Offload.defer strategy, and the 'dynamicToolLoading' preset is one; " +
+        "contextManager takes one Offload.defer strategy, and the 'deferredToolLoading' preset is one; " +
           'to change what the preset defers or when, use Offload.defer(target).when(conditions) in its place'
       )
     })

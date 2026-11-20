@@ -222,7 +222,7 @@ describe('AnthropicModel', () => {
       ['claude-3-5-haiku-20241022', 'stubs'],
     ])('reports deferred tools from the shared model info for %s: %s', (modelId, expected) => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
-      expect(model.modelInfo.capabilities?.dynamicToolLoading).toBe(expected)
+      expect(model.modelInfo.capabilities?.deferredToolLoading).toBe(expected)
     })
 
     it.each([
@@ -2083,7 +2083,7 @@ describe('AnthropicModel', () => {
       const { captured, mockClient } = setupCapture()
       for (const config of [
         { modelId: 'claude-opus-4-1' },
-        { modelId: 'claude-opus-5-5', modelInfo: { capabilities: { dynamicToolLoading: 'unsupported' as const } } },
+        { modelId: 'claude-opus-5-5', modelInfo: { capabilities: { deferredToolLoading: 'unsupported' as const } } },
       ]) {
         await collectIterator(
           new AnthropicModel({ client: mockClient, ...config }).stream([userMessage('Hi')], {

@@ -505,7 +505,7 @@ export interface ToolReferenceBlockData {
  * tool can return them too, such as a custom loader that searches the tool catalog.
  *
  * It reaches the model as a reference only when the model defers tools natively
- * (`modelInfo.capabilities.dynamicToolLoading` is `'native'`), the request defers this tool, and the tool result holds
+ * (`modelInfo.capabilities.deferredToolLoading` is `'native'`), the request defers this tool, and the tool result holds
  * only such references; the provider then sends a reference the API expands into the tool's definition. Otherwise the
  * model gets the parameters of the request's tool with this name as text, so a tool that changed is shown as it is now.
  *

@@ -209,7 +209,7 @@ describe('Agent middleware integration — InvokeModelStage', () => {
     it('passes the deferred tools to the model and records the tools it received', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       // A model that takes stubs would get the deferred spec as a stub.
-      model.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading: 'native' } } })
+      model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'native' } } })
       const agent = new Agent({ model, printer: false })
       const shell = { name: 'shell', description: 'Run a command', inputSchema: { type: 'object' as const } }
       const grep = { name: 'grep', description: 'Search files', inputSchema: { type: 'object' as const } }

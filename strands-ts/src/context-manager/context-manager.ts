@@ -19,7 +19,7 @@ import { logger } from '../logging/logger.js'
 import { countRequestTokens } from '../models/model-proxy.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
-import { DynamicToolLoadingStrategy } from './strategies/dynamic-tool-loading.js'
+import { DeferredToolLoadingStrategy } from './strategies/deferred-tool-loading.js'
 import { resolveStrategies } from './presets.js'
 import { Stash } from './stash.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
@@ -96,7 +96,7 @@ export class ContextManager implements Plugin {
 
   /**
    * @param config - The strategies and stash to use; the default pipeline when omitted
-   * @throws Error when the strategies hold more than one `Offload.defer` strategy, the `dynamicToolLoading` preset
+   * @throws Error when the strategies hold more than one `Offload.defer` strategy, the `deferredToolLoading` preset
    *   included
    */
   constructor(config?: ContextManagerConfig) {
@@ -275,29 +275,29 @@ export class ContextManager implements Plugin {
  *
  * @throws Error when the agent already has a tool with the loader's name
  */
-function loadToolsFor(strategy: DynamicToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
+function loadToolsFor(strategy: DeferredToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
   if (!strategy) return []
   if (agent.toolRegistry.get(LOAD_TOOLS_TOOL_NAME)) {
     throw new Error(
       `contextManager adds a tool named '${LOAD_TOOLS_TOOL_NAME}' for Offload.defer and the ` +
-        "'dynamicToolLoading' preset, and the agent already has one; rename the agent's tool"
+        "'deferredToolLoading' preset, and the agent already has one; rename the agent's tool"
     )
   }
   return [createLoadTools((callingAgent) => strategy.deferredTools(callingAgent))]
 }
 
 /** The `Offload.defer` strategy among these, if there is one. */
-function toolLoadingStrategy(strategies: ContextStrategy[]): DynamicToolLoadingStrategy | undefined {
+function toolLoadingStrategy(strategies: ContextStrategy[]): DeferredToolLoadingStrategy | undefined {
   return strategies.find(
-    (strategy): strategy is DynamicToolLoadingStrategy => strategy instanceof DynamicToolLoadingStrategy
+    (strategy): strategy is DeferredToolLoadingStrategy => strategy instanceof DeferredToolLoadingStrategy
   )
 }
 
 /** Two `Offload.defer` strategies can't share an agent's tools list, which holds one `load_tools`. */
 function checkOneToolLoadingStrategy(strategies: ContextStrategy[]): void {
-  if (strategies.filter((strategy) => strategy instanceof DynamicToolLoadingStrategy).length < 2) return
+  if (strategies.filter((strategy) => strategy instanceof DeferredToolLoadingStrategy).length < 2) return
   throw new Error(
-    "contextManager takes one Offload.defer strategy, and the 'dynamicToolLoading' preset is one; " +
+    "contextManager takes one Offload.defer strategy, and the 'deferredToolLoading' preset is one; " +
       'to change what the preset defers or when, use Offload.defer(target).when(conditions) in its place'
   )
 }

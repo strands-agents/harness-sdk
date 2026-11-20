@@ -1,5 +1,5 @@
 /**
- * Dynamic tool loading — keeps tools' input schemas out of the model's context until the model loads them. Users
+ * Deferred tool loading — keeps tools' input schemas out of the model's context until the model loads them. Users
  * build it with `Offload.defer`.
  */
 
@@ -95,14 +95,14 @@ export interface DeferStrategy extends ContextStrategy {
 /**
  * The strategy behind `Offload.defer`. On every model call it picks the tools to defer from that call's tools and
  * passes their names on the call as its `deferredTools`. The call's model decides how a deferred tool reaches it
- * (`modelInfo.capabilities.dynamicToolLoading`); a model that can't defer tools gets every spec. The model loads a
+ * (`modelInfo.capabilities.deferredToolLoading`); a model that can't defer tools gets every spec. The model loads a
  * schema with `load_tools`, which the context manager registers, and a call to a deferred tool before its load gets
  * the schema back instead of running. SDK tools such as `load_tools` and `retrieve_context` are never deferred, nor
  * is a tool that takes no parameters, since its stub would leave nothing out.
  *
  * @internal
  */
-export class DynamicToolLoadingStrategy implements DeferStrategy {
+export class DeferredToolLoadingStrategy implements DeferStrategy {
   readonly name = 'offload:defer'
 
   private readonly _target: DeferTarget
@@ -129,7 +129,7 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
   }
 
   when(conditions?: DeferConditions): DeferStrategy {
-    return new DynamicToolLoadingStrategy(this._target, conditions)
+    return new DeferredToolLoadingStrategy(this._target, conditions)
   }
 
   init(agent: LocalAgent): void {
@@ -200,7 +200,7 @@ export class DynamicToolLoadingStrategy implements DeferStrategy {
       warnOnce(
         logger,
         `model_id=<${context.model.modelId}> | model is not in the shared model info | sending deferred tools as ` +
-          'stubs, set modelInfo.capabilities.dynamicToolLoading to unsupported if it calls them badly'
+          'stubs, set modelInfo.capabilities.deferredToolLoading to unsupported if it calls them badly'
       )
     }
     return { ...context, ...tools }
@@ -345,13 +345,13 @@ function takesParameters(spec: ToolSpec): boolean {
 /** Whether the model gets stubs only because nothing says otherwise: not the shared model info, not its config. */
 function takesStubsByDefault(model: Model): boolean {
   return (
-    model.modelInfo.capabilities?.dynamicToolLoading === 'stubs' &&
-    model.getConfig().modelInfo?.capabilities?.dynamicToolLoading === undefined &&
+    model.modelInfo.capabilities?.deferredToolLoading === 'stubs' &&
+    model.getConfig().modelInfo?.capabilities?.deferredToolLoading === undefined &&
     lookupModel(model.modelId ?? '') === undefined
   )
 }
 
 /** Whether the model defers tools, which only a model that sends every full spec doesn't. */
 function defersTools(model: Model): boolean {
-  return (model.modelInfo.capabilities?.dynamicToolLoading ?? 'unsupported') !== 'unsupported'
+  return (model.modelInfo.capabilities?.deferredToolLoading ?? 'unsupported') !== 'unsupported'
 }

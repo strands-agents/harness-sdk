@@ -6,7 +6,7 @@ import { BeforeToolCallEvent } from '../../../hooks/events.js'
 import { logger } from '../../../logging/logger.js'
 import { heuristicJson } from '../../../models/model.js'
 import { countRequestTokens } from '../../../models/model-proxy.js'
-import type { DynamicToolLoading } from '../../../models/model-info.js'
+import type { DeferredToolLoading } from '../../../models/model-info.js'
 import { tool } from '../../../tools/tool-factory.js'
 import type { Tool } from '../../../tools/tool.js'
 import { InterruptResponseContent } from '../../../types/interrupt.js'
@@ -41,15 +41,15 @@ interface AgentOptions {
   backgroundTasks?: BackgroundTasksConfig
   plugins?: Plugin[]
   /** Puts the model behind a router whose default model has this capability and that sends every call to it. */
-  routerDefault?: DynamicToolLoading
+  routerDefault?: DeferredToolLoading
 }
 
 function makeAgent(
-  dynamicToolLoading?: DynamicToolLoading,
+  deferredToolLoading?: DeferredToolLoading,
   options: AgentOptions = {}
 ): { agent: Agent; model: MockMessageModel } {
   const model = new MockMessageModel()
-  model.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading } } })
+  model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading } } })
   const agent = new Agent({
     model: options.routerDefault ? routeTo(model, options.routerDefault) : model,
     tools: options.tools ?? [shell, read, write],
@@ -74,9 +74,9 @@ function deferredNames(model: MockMessageModel, call = 0): string[] {
 }
 
 /** A router whose default model has this capability, and that sends every call to `model`. */
-function routeTo(model: MockMessageModel, defaultCapability: DynamicToolLoading): ModelRouter {
+function routeTo(model: MockMessageModel, defaultCapability: DeferredToolLoading): ModelRouter {
   const defaultModel = new MockMessageModel()
-  defaultModel.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading: defaultCapability } } })
+  defaultModel.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: defaultCapability } } })
   return new ModelRouter([defaultModel, model], { strategy: { select: async (context) => context.candidates[1] } })
 }
 
@@ -89,14 +89,14 @@ function routeTo(model: MockMessageModel, defaultCapability: DynamicToolLoading)
 async function resumeCall(
   calls: { name: string; input: JSONValue }[],
   options: AgentOptions = {},
-  dynamicToolLoading: DynamicToolLoading = 'native'
+  deferredToolLoading: DeferredToolLoading = 'native'
 ): Promise<{ result: ToolResultBlock; model: MockMessageModel }> {
   const interrupted = calls.at(-1)!
   const approve = (event: BeforeToolCallEvent): void => {
     if (event.toolUse.name !== interrupted.name) return
     if (event.interrupt<string>({ name: 'approve', reason: 'Run this tool?' }) !== 'yes') event.cancel = 'not approved'
   }
-  const { agent, model } = makeAgent(dynamicToolLoading, options)
+  const { agent, model } = makeAgent(deferredToolLoading, options)
   agent.addHook(BeforeToolCallEvent, approve)
   calls.forEach(({ name, input }, index) =>
     model.addTurn({ type: 'toolUseBlock', name, toolUseId: `call-${index}`, input })
@@ -105,7 +105,7 @@ async function resumeCall(
   expect(first.stopReason).toBe('interrupt')
   const snapshot = JSON.parse(JSON.stringify(agent.takeSnapshot({ preset: 'session' }))) as Snapshot
 
-  const { agent: restored, model: restoredModel } = makeAgent(dynamicToolLoading, options)
+  const { agent: restored, model: restoredModel } = makeAgent(deferredToolLoading, options)
   restored.addHook(BeforeToolCallEvent, approve)
   restoredModel.addTurn({ type: 'textBlock', text: 'done' })
   restored.loadSnapshot(snapshot)
@@ -118,7 +118,7 @@ async function resumeCall(
   return { result, model: restoredModel }
 }
 
-describe('DynamicToolLoadingStrategy', () => {
+describe('DeferredToolLoadingStrategy', () => {
   it('defers every tool spec but the sdk ones on a native model, keeps the tools list fixed, and loads through load_tools', async () => {
     const { agent, model } = makeAgent('native')
     model
@@ -303,7 +303,7 @@ describe('DynamicToolLoadingStrategy', () => {
     model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
 
     await agent.invoke('First.')
-    model.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading: 'stubs' } } })
+    model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'stubs' } } })
     await agent.invoke('Second.')
 
     const [first, second] = sentToolSpecs(model)
@@ -397,8 +397,8 @@ describe('DynamicToolLoadingStrategy', () => {
 
   it.each(['native', 'stubs'] as const)(
     'answers a call to an unloaded deferred tool when the interrupted call resumes on a restored agent, on a %s model',
-    async (dynamicToolLoading) => {
-      const { result } = await resumeCall([{ name: 'shell', input: { value: 'ls' } }], {}, dynamicToolLoading)
+    async (deferredToolLoading) => {
+      const { result } = await resumeCall([{ name: 'shell', input: { value: 'ls' } }], {}, deferredToolLoading)
 
       expect(result).toEqual(
         new ToolResultBlock({
@@ -416,13 +416,13 @@ describe('DynamicToolLoadingStrategy', () => {
   )
 
   it.each([
-    ['its tools are below the conditions', { strategy: 'dynamicToolLoading' }, 'native'],
+    ['its tools are below the conditions', { strategy: 'deferredToolLoading' }, 'native'],
     ['its model can not defer tools', {}, 'unsupported'],
-  ] as [string, AgentOptions, DynamicToolLoading][])(
+  ] as [string, AgentOptions, DeferredToolLoading][])(
     'runs an approved call that resumes on a restored agent when %s, so nothing was deferred',
-    async (_name, options, dynamicToolLoading) => {
+    async (_name, options, deferredToolLoading) => {
       using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-      const { result } = await resumeCall([{ name: 'shell', input: { value: 'ls' } }], options, dynamicToolLoading)
+      const { result } = await resumeCall([{ name: 'shell', input: { value: 'ls' } }], options, deferredToolLoading)
 
       expect(result).toMatchObject({ toolUseId: 'call-0', status: 'success' })
     }
@@ -473,8 +473,8 @@ describe('DynamicToolLoadingStrategy', () => {
     ],
   ])(
     '%s when the context manager measures the next request',
-    async (_name, dynamicToolLoading, sent, deferred, hint) => {
-      const { agent, model } = makeAgent(dynamicToolLoading)
+    async (_name, deferredToolLoading, sent, deferred, hint) => {
+      const { agent, model } = makeAgent(deferredToolLoading)
       await agent.initialize()
       const countSpy = vi.spyOn(model, 'countTokens')
 
@@ -494,7 +494,7 @@ describe('DynamicToolLoadingStrategy', () => {
 
   it('keeps the order sortTools gives, in the model call and when the context manager measures the next request', async () => {
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
-    model.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading: 'stubs' } } })
+    model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'stubs' } } })
     const agent = new Agent({
       model,
       tools: [write, shell, read],
@@ -550,20 +550,20 @@ describe('DynamicToolLoadingStrategy', () => {
     ['warns once when it sends stubs to a model the shared model info does not list', undefined, 'unlisted-a', 1],
     ['does not warn when the model config chose stubs', 'stubs' as const, 'unlisted-b', 0],
     ['does not warn when the shared model info lists the model', undefined, 'gpt-5.4', 0],
-  ])('%s', async (_name, dynamicToolLoading, modelId, warnings) => {
+  ])('%s', async (_name, deferredToolLoading, modelId, warnings) => {
     using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const { agent, model } = makeAgent(dynamicToolLoading)
+    const { agent, model } = makeAgent(deferredToolLoading)
     model.updateConfig({ modelId })
     model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
 
     await agent.invoke('First.')
     await agent.invoke('Second.')
 
-    expect(model.modelInfo.capabilities?.dynamicToolLoading).toBe('stubs')
+    expect(model.modelInfo.capabilities?.deferredToolLoading).toBe('stubs')
     expect(warnSpy.mock.calls.filter(([message]) => String(message).includes('not in the shared model info'))).toEqual(
       Array(warnings).fill([
         `model_id=<${modelId}> | model is not in the shared model info | sending deferred tools as stubs, set ` +
-          'modelInfo.capabilities.dynamicToolLoading to unsupported if it calls them badly',
+          'modelInfo.capabilities.deferredToolLoading to unsupported if it calls them badly',
       ])
     )
   })
@@ -573,7 +573,7 @@ describe('DynamicToolLoadingStrategy', () => {
     model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
 
     await agent.invoke('First.')
-    model.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading: 'unsupported' } } })
+    model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'unsupported' } } })
     await agent.invoke('Second.')
 
     const [, second] = sentToolSpecs(model)
@@ -587,7 +587,7 @@ describe('DynamicToolLoadingStrategy', () => {
     model.addTurn({ type: 'textBlock', text: 'one' }).addTurn({ type: 'textBlock', text: 'two' })
 
     await agent.invoke('First.')
-    model.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading: 'native' } } })
+    model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'native' } } })
     await agent.invoke('Second.')
 
     const [, second] = sentToolSpecs(model)
@@ -754,7 +754,7 @@ describe('DynamicToolLoadingStrategy', () => {
         strategy: Offload.defer('toolSpecs').when({ schemaTokens: share }),
       })
       model.updateConfig({
-        modelInfo: { capabilities: { dynamicToolLoading: 'native' }, limits: { contextWindow: 100 * schemaTokens } },
+        modelInfo: { capabilities: { deferredToolLoading: 'native' }, limits: { contextWindow: 100 * schemaTokens } },
       })
       model.addTurn({ type: 'textBlock', text: 'ok' })
 
@@ -783,13 +783,13 @@ describe('DynamicToolLoadingStrategy', () => {
     ['can not defer tools', 'unsupported' as const, ['shell', 'read', 'write', 'retrieve_context'], undefined],
   ])(
     'replays the tools of the first model call in a summary before and after it when the model %s',
-    async (_name, dynamicToolLoading, toolNames, deferred) => {
+    async (_name, deferredToolLoading, toolNames, deferred) => {
       using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       const model = new MockMessageModel()
         .addTurn({ type: 'textBlock', text: 'a summary' })
         .addTurn({ type: 'textBlock', text: 'ok' })
         .addTurn({ type: 'textBlock', text: 'another summary' })
-      model.updateConfig({ modelInfo: { capabilities: { dynamicToolLoading } } })
+      model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading } } })
       const summarize = Offload.summarize('*').when({ contextUtilization: '80%', preserveRecent: 1 })
       const agent = new Agent({
         model,
@@ -823,10 +823,10 @@ describe('DynamicToolLoadingStrategy', () => {
     [17, 0],
     [18, 18],
   ])(
-    'the dynamicToolLoading preset, counting load_tools and retrieve_context, with %i tools defers %i',
+    'the deferredToolLoading preset, counting load_tools and retrieve_context, with %i tools defers %i',
     async (count, expected) => {
       const tools = Array.from({ length: count }, (_, index) => makeTool(`tool_${index}`))
-      const { agent, model } = makeAgent('native', { strategy: 'dynamicToolLoading', tools })
+      const { agent, model } = makeAgent('native', { strategy: 'deferredToolLoading', tools })
       model.addTurn({ type: 'textBlock', text: 'ok' })
 
       await agent.invoke('Hi.')

@@ -416,10 +416,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   /** Turns temporary messages and native deferred tools back on for the models the shared model info lists. */
   override get modelInfo(): ModelInfo {
-    const { temporaryMessages, dynamicToolLoading } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    const { temporaryMessages, deferredToolLoading } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
     return ModelInfo.merge(
       super.modelInfo,
-      { capabilities: { temporaryMessages, dynamicToolLoading } },
+      { capabilities: { temporaryMessages, deferredToolLoading } },
       this._config.modelInfo
     )
   }
@@ -1024,7 +1024,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
     if (this._serverSideSummary()) messages = fromLastCompaction(messages)
-    const defersTools = this.modelInfo.capabilities?.dynamicToolLoading === 'native'
+    const defersTools = this.modelInfo.capabilities?.deferredToolLoading === 'native'
     const deferredTools: ReadonlySet<string> = (defersTools && options?.deferredTools) || new Set()
     const toolSpecs = options?.toolSpecs ?? []
     // Requests that skip ModelProxy, such as server-side summaries and native token counts, can carry references too.

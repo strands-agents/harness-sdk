@@ -967,7 +967,7 @@ describe('BedrockModel', () => {
     })
 
     it('names the tool for a tool reference a modelInfo override lets through', async () => {
-      const provider = new BedrockModel({ modelInfo: { capabilities: { dynamicToolLoading: 'native' } } })
+      const provider = new BedrockModel({ modelInfo: { capabilities: { deferredToolLoading: 'native' } } })
       const messages = [
         new Message({
           role: 'user',
@@ -1052,8 +1052,8 @@ describe('BedrockModel', () => {
         ['another model', { modelId: 'qwen.qwen3-235b-a22b-2507-v1:0' }, 'stubs'],
         ['a model with strictTools', { modelId: 'us.anthropic.claude-opus-5-5', strictTools: true }, 'unsupported'],
         ['a model that can not take stubs', { modelId: 'us.amazon.nova-pro-v1:0' }, 'unsupported'],
-      ])('reports dynamicToolLoading for %s', (_name, config, expected) => {
-        expect(new BedrockModel(config).modelInfo.capabilities?.dynamicToolLoading).toBe(expected)
+      ])('reports deferredToolLoading for %s', (_name, config, expected) => {
+        expect(new BedrockModel(config).modelInfo.capabilities?.deferredToolLoading).toBe(expected)
       })
 
       it('sends a deferred tool as a full spec when called directly, since ModelProxy makes the stubs', async () => {

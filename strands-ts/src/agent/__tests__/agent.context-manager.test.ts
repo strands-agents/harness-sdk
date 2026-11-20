@@ -151,11 +151,11 @@ describe('Agent contextManager', () => {
       const agent = new Agent({
         model: new MockMessageModel(),
         tools: [loadTools],
-        contextManager: { strategies: ['dynamicToolLoading'] },
+        contextManager: { strategies: ['deferredToolLoading'] },
       })
 
       await expect(agent.initialize()).rejects.toThrow(
-        "contextManager adds a tool named 'load_tools' for Offload.defer and the 'dynamicToolLoading' preset, and " +
+        "contextManager adds a tool named 'load_tools' for Offload.defer and the 'deferredToolLoading' preset, and " +
           "the agent already has one; rename the agent's tool"
       )
     })

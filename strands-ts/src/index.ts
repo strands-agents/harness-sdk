@@ -216,7 +216,7 @@ export type {
   CacheConfig,
 } from './models/model.js'
 export type { SummarizeResult } from './models/summarize.js'
-export type { ModelCapabilities, ModelLimits, PromptCaching, DynamicToolLoading } from './models/model-info.js'
+export type { ModelCapabilities, ModelLimits, PromptCaching, DeferredToolLoading } from './models/model-info.js'
 export { ModelInfo } from './models/model-info.js'
 
 export { Model } from './models/model.js'

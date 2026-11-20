@@ -11,13 +11,13 @@ import type { OffloadTarget } from './target.js'
 import { DropStrategy } from './drop.js'
 import { TruncateStrategy } from './truncate.js'
 import { SummarizeStrategy } from './summarize.js'
-import { DynamicToolLoadingStrategy, type DeferStrategy, type DeferTarget } from '../dynamic-tool-loading.js'
+import { DeferredToolLoadingStrategy, type DeferStrategy, type DeferTarget } from '../deferred-tool-loading.js'
 
 export { EmergencyTruncateStrategy } from './base.js'
 export type { OffloadStrategy } from './base.js'
 export type { OffloadConditions } from './conditions.js'
 export type { OffloadTarget } from './target.js'
-export type { DeferConditions, DeferStrategy, DeferTarget } from '../dynamic-tool-loading.js'
+export type { DeferConditions, DeferStrategy, DeferTarget } from '../deferred-tool-loading.js'
 
 /**
  * Offload strategy namespace. Each method returns a strategy; call `.when()` on it to set when and on what it acts.
@@ -39,7 +39,7 @@ interface OffloadNamespace {
   /**
    * Keep tools' input schemas out of the context until the model loads them with `load_tools`. The model still
    * sees each deferred tool's name and description. Without `.when()` conditions, defers at any tool count. One per
-   * agent, the `dynamicToolLoading` preset included.
+   * agent, the `deferredToolLoading` preset included.
    */
   defer(target: DeferTarget): DeferStrategy
 }
@@ -92,6 +92,6 @@ export const Offload: OffloadNamespace = {
     return new SummarizeStrategy(target, config)
   },
   defer(target: DeferTarget): DeferStrategy {
-    return new DynamicToolLoadingStrategy(target)
+    return new DeferredToolLoadingStrategy(target)
   },
 }

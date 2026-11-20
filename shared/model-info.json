@@ -14,7 +14,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-sonnet-4-20250514": {
@@ -35,7 +35,7 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
         "nativeStructuredOutput": true,
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-6": {
@@ -46,7 +46,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-7": {
@@ -57,7 +57,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "xhigh",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-8": {
@@ -71,7 +71,7 @@
         "nativeStructuredOutput": false,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-5": {
@@ -85,7 +85,7 @@
         "nativeStructuredOutput": true,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-5-5": {
@@ -100,7 +100,7 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "medium",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-fable-5": {
@@ -112,7 +112,7 @@
         "promptCaching": "cachePoints",
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-fable-5-1": {
@@ -126,7 +126,7 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-fable-5-2": {
@@ -141,7 +141,7 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-sonnet-5": {
@@ -154,7 +154,7 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-sonnet-5-5": {
@@ -169,7 +169,7 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "medium",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-haiku-5-5": {
@@ -184,7 +184,7 @@
         "serverSideSummary": true,
         "temporaryMessages": false,
         "defaultEffort": "medium",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-5": {
@@ -194,7 +194,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-20250514": {
@@ -222,7 +222,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-3-7-sonnet-20250219": {
@@ -308,7 +308,7 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "dynamicToolLoading": "native"
+        "deferredToolLoading": "native"
       }
     },
     "claude-mythos-preview": {
@@ -326,7 +326,7 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-lite-v1:0": {
@@ -336,7 +336,7 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-micro-v1:0": {
@@ -346,7 +346,7 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-premier-v1:0": {
@@ -356,7 +356,7 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-2-lite-v1:0": {
@@ -366,7 +366,7 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-2-pro-preview-20251202-v1:0": {
@@ -376,7 +376,7 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "zai.glm-4.7": {
@@ -875,7 +875,7 @@
         "contextWindow": 32000
       },
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "google.gemma-4-31b": {
@@ -898,7 +898,7 @@
         "contextWindow": 524288
       },
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "xai.grok-4.6": {
@@ -906,7 +906,7 @@
         "contextWindow": 500000
       },
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "xai.grok-4.3": {
@@ -914,67 +914,67 @@
         "contextWindow": 1000000
       },
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama3-1-8b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama3-1-70b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama3-1-405b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama3-2-1b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama3-2-3b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama3-2-11b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama3-2-90b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama3-3-70b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama4-scout-17b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "meta.llama4-maverick-17b-instruct": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "deepseek.v3": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "qwen.qwen3-coder-480b-a35b": {
       "capabilities": {
-        "dynamicToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported"
       }
     },
     "chat-latest": {

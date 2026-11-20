@@ -105,7 +105,7 @@ export interface InvokeModelContext {
   readonly structuredOutputSchema?: z.ZodSchema
 
   /**
-   * Names of the tools this call defers, set by dynamic tool loading and passed to the provider in
+   * Names of the tools this call defers, set by deferred tool loading and passed to the provider in
    * `StreamOptions.deferredTools`.
    *
    * @internal

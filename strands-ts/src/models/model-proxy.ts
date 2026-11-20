@@ -22,7 +22,7 @@ import { wellFormedRequest } from './well-formed-request.js'
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
  * of the earlier ones.
  *
- * Deferred tools take one of two paths, by the model's `modelInfo.capabilities.dynamicToolLoading`. With `'native'`,
+ * Deferred tools take one of two paths, by the model's `modelInfo.capabilities.deferredToolLoading`. With `'native'`,
  * the call's `deferredTools` and every `ToolReferenceBlock` reach the provider as they are, and the provider sends them
  * its API's way. With `'stubs'`, each deferred spec becomes a stub: its name, its description with a pointer to
  * `load_tools`, and an open schema, so the model can call the tool before it loads the schema. Every model but
@@ -91,7 +91,7 @@ export class ModelProxy {
   private _withStubs(options: StreamOptions | undefined): StreamOptions | undefined {
     const deferred = options?.deferredTools
     if (!deferred?.size || !options?.toolSpecs) return options
-    if (this._model.modelInfo.capabilities?.dynamicToolLoading !== 'stubs') return options
+    if (this._model.modelInfo.capabilities?.deferredToolLoading !== 'stubs') return options
     return { ...options, toolSpecs: options.toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec) : spec)) }
   }
 
@@ -129,7 +129,7 @@ export class ModelProxy {
 
   /** Sends tool references as text to a model that doesn't defer tools natively; a native provider sends them. */
   private _withToolReferenceText(messages: Message[], toolSpecs: ToolSpec[]): Message[] {
-    if (!hasToolReferences(messages) || this._model.modelInfo.capabilities?.dynamicToolLoading === 'native')
+    if (!hasToolReferences(messages) || this._model.modelInfo.capabilities?.deferredToolLoading === 'native')
       return messages
     return withToolReferenceText(messages, toolSpecs)
   }
@@ -196,7 +196,7 @@ function stub(spec: ToolSpec): ToolSpec {
 
 /** A deferred tool's spec as the model sees it before loading it: a stub, or its name and description. */
 function unloadedSpec(spec: ToolSpec, model: Model): ToolSpec {
-  if (model.modelInfo.capabilities?.dynamicToolLoading === 'stubs') return stub(spec)
+  if (model.modelInfo.capabilities?.deferredToolLoading === 'stubs') return stub(spec)
   return { name: spec.name, description: spec.description, inputSchema: { type: 'object' } }
 }
 

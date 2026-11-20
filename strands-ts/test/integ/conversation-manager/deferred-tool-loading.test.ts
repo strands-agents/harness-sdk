@@ -54,7 +54,7 @@ describe.each([
     createModel: (): Model => vercelBedrock.createModel(),
     delivery: 'stubs',
   },
-])('dynamic tool loading on $name', ({ provider, createModel, delivery }) => {
+])('deferred tool loading on $name', ({ provider, createModel, delivery }) => {
   it.skipIf(provider.skip)(
     'calls the weather tool with valid input, loading it first when deferred, and sends one tools list',
     async () => {
@@ -81,7 +81,7 @@ describe.each([
       const agent = new Agent({
         model,
         tools: [getWeather, ...others],
-        contextManager: { strategies: ['dynamicToolLoading'] },
+        contextManager: { strategies: ['deferredToolLoading'] },
         printer: false,
       })
       // The provider's input, after ModelProxy builds any stubs.
@@ -89,7 +89,7 @@ describe.each([
 
       const result = await agent.invoke('What is the weather in Paris, in celsius? Use the tools.')
 
-      expect(model.modelInfo.capabilities?.dynamicToolLoading).toBe(delivery)
+      expect(model.modelInfo.capabilities?.deferredToolLoading).toBe(delivery)
       expect(result.stopReason).toBe('endTurn')
       expect(weatherCalls).toEqual([{ city: 'Paris', unit: 'celsius' }])
       const sent = streamSpy.mock.calls.map(([, options]) => options)

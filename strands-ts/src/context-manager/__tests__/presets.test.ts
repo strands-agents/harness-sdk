@@ -39,8 +39,8 @@ describe('presets', () => {
       expect(strategies[0]!.name).toBe('offload:drop')
     })
 
-    it('dynamicToolLoading resolves to a dynamic tool loading strategy', () => {
-      const strategies = resolvePreset('dynamicToolLoading')
+    it('deferredToolLoading resolves to a deferred tool loading strategy', () => {
+      const strategies = resolvePreset('deferredToolLoading')
       expect(strategies).toHaveLength(1)
       expect(strategies[0]!.name).toBe('offload:defer')
     })

@@ -1555,7 +1555,7 @@ describe('info', () => {
   it('knows only that temporary messages are off and deferred tools go as stubs for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
     expect(provider.modelInfo).toEqual({
-      capabilities: { temporaryMessages: false, dynamicToolLoading: 'stubs' },
+      capabilities: { temporaryMessages: false, deferredToolLoading: 'stubs' },
     })
     expect(provider.stateful).toBe(false)
   })
@@ -1564,10 +1564,10 @@ describe('info', () => {
     ['a model whose own API defers natively', 'us.anthropic.claude-sonnet-4-6', 'stubs'],
     ['a model the shared data does not list', 'some-gateway-model', 'stubs'],
     ['a model the shared data says can not take stubs', 'us.amazon.nova-pro-v1:0', 'unsupported'],
-  ])('reports dynamic tool loading for %s', (_name, modelId, expected) => {
+  ])('reports deferred tool loading for %s', (_name, modelId, expected) => {
     const provider = new TestModelProvider()
     provider.updateConfig({ modelId })
-    expect(provider.modelInfo.capabilities?.dynamicToolLoading).toBe(expected)
+    expect(provider.modelInfo.capabilities?.deferredToolLoading).toBe(expected)
   })
 
   it('resolves facts from the shared model info for any provider by modelId', () => {

@@ -22,7 +22,7 @@ export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
  * API's own deferral flag, `'stubs'` sends each as its name and description with an open schema, and `'unsupported'`
  * sends every schema.
  */
-export type DynamicToolLoading = 'unsupported' | 'native' | 'stubs'
+export type DeferredToolLoading = 'unsupported' | 'native' | 'stubs'
 
 /**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
@@ -56,7 +56,7 @@ export interface ModelCapabilities {
    */
   readonly temporaryMessages?: boolean | undefined
   /**
-   * How the model and provider defer tool schemas; see {@link DynamicToolLoading}. In the shared data, `'native'` is
+   * How the model and provider defer tool schemas; see {@link DeferredToolLoading}. In the shared data, `'native'` is
    * the path on the model vendor's own API and `'unsupported'` marks a model that can't fill in a stub's parameters,
    * such as one that constrains its tool calls to the stub's open schema. `Model.modelInfo` reports `'stubs'` for every
    * other model, `'native'` only where the provider sends the deferral flag (`AnthropicModel`), and `'unsupported'`
@@ -65,7 +65,7 @@ export interface ModelCapabilities {
    * flag, an override that sets `'native'` sends every full spec and only changes the `load_tools` result:
    * `BedrockModel` names each loaded tool and other providers leave it out.
    */
-  readonly dynamicToolLoading?: DynamicToolLoading | undefined
+  readonly deferredToolLoading?: DeferredToolLoading | undefined
 }
 
 /** Size limits of the model. */
@@ -144,7 +144,7 @@ const CAPABILITY_FIELDS = Object.keys({
   nativeStructuredOutput: true,
   serverSideSummary: true,
   temporaryMessages: true,
-  dynamicToolLoading: true,
+  deferredToolLoading: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,
