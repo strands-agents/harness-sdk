@@ -278,24 +278,28 @@ from a local product checkout instead of the lock, set its source environment va
 EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 ```
 
-### 8. Wide Blocks (`src/plugins/remark-wide-blocks.ts`)
+### 8. Docs Layout (`src/styles/custom.css`)
+
+**What it does:** Sets the docs text column to `--sl-content-width: 55rem` and, at 72rem and up on every page with both sidebars, gives the TOC a fixed column of `--sl-sidebar-width` (300px), matching the left sidebar, with the text centred between the two (`.right-sidebar-container` and `.main-pane` rules).
+
+**Why:** Starlight gives the TOC a column of the TOC width plus half the spare width and pushes the text against it, so on wide screens the text sits off centre with the spare space on its left. Centring the text balances the page, and gives `:::wide` blocks equal room on both sides.
+
+**What readers see:** Below about 1480px there is no spare width, so the layout looks the same as Starlight's. Above that, the TOC stays pinned to the window's right edge, so it sits further from the text as the screen grows: about 220px away at 1920px and about 540px at 2560px, where Starlight keeps it 24px away.
+
+### 9. Wide Blocks (`src/plugins/remark-wide-blocks.ts`)
 
 **What it does:** Renders a `:::wide` container directive as `<div class="wide-block">`. CSS in `src/styles/custom.css` lets that block grow past the text column into spare room on large screens, up to `--wide-block-max` (72rem). Authoring rules are in [mdx-authoring.md](../.agents/references/mdx-authoring.md#wide-blocks).
 
 **Why:** A few tables and screenshots need more width than the column, and a page-wide content width would make every paragraph harder to read. A per-block marker keeps prose at the column width. A directive, rather than a component, works in plain `.md` files, so imported product docs can use it too.
 
-**How the width is worked out:** The CSS repeats Starlight's own layout maths (`TwoColumnContent.astro`, `ContentPanel.astro`) with `100vw`, since the block can't measure its container. Only pages with the left sidebar get wider blocks, and only at 72rem and up, where Starlight shows the table of contents:
+**How the width is worked out:** A wide block stays centred on the text column and grows by the same amount on each side, up to `--wide-block-max` in total. The CSS repeats the layout maths with `100vw`, since the block can't measure its container. Only pages with the left sidebar get wider blocks, and only at 72rem and up:
 
-A wide block stays centred on the text column and grows by the same amount on each side, up to `--wide-block-max` in total.
-
-**Docs layout:** Starlight gives the TOC a column of the TOC width plus half the spare width and pushes the text against it, which leaves the text off centre. On every page with both sidebars, at 72rem and up, the site gives the TOC a fixed column of `--sl-sidebar-width`, matching the left sidebar, and centres the text between the two (`.right-sidebar-container` and `.main-pane` in `custom.css`). Below about 1480px there is no spare width, so this looks the same as Starlight's layout.
-
-- **With a TOC**, the text is centred between the left sidebar and the TOC (see the docs layout rules just above the wide-block rules in `custom.css`), so each side has `(100vw - sidebar - TOC - column) / 2 - panel padding` of room, and the block grows into it on both sides. With a 55rem column there is no room up to about 1536px screens; the block grows 100px each side at 1728px and reaches the 136px-per-side cap at about 1850px.
+- **With a TOC**, the text is centred between the sidebar and the TOC (see [Docs Layout](#8-docs-layout-srcstylescustomcss)), so each side has `(100vw - sidebar - TOC - column) / 2 - panel padding` of room. With a 55rem column there is no room up to about 1536px screens; the block grows 100px each side at 1728px and reaches the 136px-per-side cap at about 1850px.
 - **Without a TOC**, the column is centred, and the block grows by `(100vw - sidebar - 2 × panel padding - column) / 2` on each side, up to the same cap.
 
 The block stops one 1.5rem panel padding short of the TOC, the sidebar or the window edge, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`. Tables and code blocks keep their own horizontal scroll inside the block.
 
-### 9. Image Zoom (`starlight-image-zoom`)
+### 10. Image Zoom (`starlight-image-zoom`)
 
 **What it does:** The [starlight-image-zoom](https://github.com/HiDeoo/starlight-image-zoom) Starlight plugin wraps every Markdown image in a zoom control, so readers can click a shrunk screenshot to see it at full size. Add `data-zoom-off` to an `<img>` to opt out; images inside links are never zoomable.
 
