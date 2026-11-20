@@ -27,7 +27,7 @@ import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
 import type { McpTool } from '../tools/mcp-tool.js'
-import { isValidToolName, type Tool } from '../tools/tool.js'
+import { isValidToolName, type Tool, type ToolContext } from '../tools/tool.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
@@ -80,6 +80,7 @@ import {
   AfterToolsEvent,
   BeforeInvocationEvent,
   BeforeModelCallEvent,
+  BeforeToolCallEvent,
   BeforeToolsEvent,
   HookableEvent,
   MessageAddedEvent,
@@ -87,9 +88,11 @@ import {
   ContentBlockEvent,
   ModelMessageEvent,
   ToolResultEvent,
+  ToolStreamUpdateEvent,
   AgentResultEvent,
   InterruptEvent,
   type ModelStopData,
+  type ToolUseData,
 } from '../hooks/events.js'
 import { StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { ConcurrentToolExecutor } from '../tools/executors/concurrent.js'
@@ -114,6 +117,7 @@ import { DefaultModelRetryStrategy } from '../retry/default-model-retry-strategy
 import type { RetryStrategy } from '../retry/retry-strategy.js'
 import { warnOnDuplicateRetryStrategyTypes } from '../retry/retry-strategy.js'
 import { InterruptError, InterruptState } from '../interrupt.js'
+import { discardInterruptedTurn } from '../multiagent/agent-tool-streamer.js'
 import { Checkpoint, type CheckpointPosition, type CheckpointResumeContent } from '../experimental/checkpoint.js'
 import { isInterruptResponseContent, type InterruptResponseContent } from '../types/interrupt.js'
 import { takeSnapshot as takeSnapshotInternal, loadSnapshot as loadSnapshotInternal } from './snapshot.js'
@@ -565,6 +569,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _structuredOutputSchema?: z.ZodSchema | undefined
   /** Tracer instance for creating and managing OpenTelemetry spans. */
   private _tracer: Tracer
+  private readonly _traceAttributes: Record<string, AttributeValue> | undefined
   /** Meter instance for accumulating loop metrics during invocation. */
   private _meter: Meter
   /** Interrupt state for human-in-the-loop workflows. */
@@ -726,6 +731,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     // Initialize tracer - OTEL returns no-op tracer if not configured
     this._tracer = new Tracer(config?.traceAttributes)
+    this._traceAttributes = config?.traceAttributes
 
     // Initialize meter for local metrics accumulation
     this._meter = new Meter()
@@ -1671,6 +1677,90 @@ export class Agent implements LocalAgent, InvokableAgent {
     if (this._initialized) this._backgroundTasks?.assertCanLoadSnapshot()
     loadSnapshotInternal(this, snapshot)
     if (this._initialized && 'state' in snapshot.data) this._backgroundTasks?._loadAppState()
+  }
+
+  /**
+   * Runs one tool call outside a model turn the way the executor runs a model-issued one: hooks,
+   * middleware, the tool, and retry. Such a call cannot pause for a response, so `context.interrupt`
+   * answers every interrupt it raises (hook, middleware, or tool): it returns the response, or throws to
+   * refuse the call with the error's message.
+   *
+   * @param toolUse - Tool call to execute
+   * @param context - Invocation state, cancel signal, request, and interrupt handler for the call
+   * @returns The tool result
+   * @throws The error of a hook or middleware that fails, which includes an interrupt that middleware
+   *   raises and `context.interrupt` refuses
+   * @throws InterruptError if the tool registers an interrupt on the agent itself, as a child agent that
+   *   pauses does; the interrupt and the child's stored turn are removed from the agent first
+   * @internal
+   */
+  async _executeToolCall(
+    toolUse: ToolUseData,
+    context: Pick<ToolContext, 'invocationState' | 'cancelSignal' | 'invocationContext' | 'interrupt'>
+  ): Promise<ToolResultBlock> {
+    // What `context.interrupt` last threw, so a refusal that a hook swallows still cancels the call.
+    const refused: { error?: unknown } = {}
+    const interrupt: ToolContext['interrupt'] = (params) => {
+      try {
+        return context.interrupt(params)
+      } catch (error) {
+        refused.error = error
+        throw error
+      }
+    }
+    try {
+      return await this._toolExecutor.executeDirect(
+        {
+          agent: this,
+          middlewareRegistry: this._middlewareRegistry,
+          // As for background tasks: keep local trace state apart from the tool call this one runs inside.
+          tracer: new Tracer(this._traceAttributes),
+          meter: this._meter,
+          cancelSignal: context.cancelSignal,
+          hookInterrupt: interrupt,
+          toolInterrupt: interrupt,
+          middlewareInterrupt: (params) => ({ response: interrupt(params) }),
+          invocationContext: context.invocationContext,
+        },
+        toolUse,
+        context.invocationState,
+        (event) => this._invokeDirectCallHooks(event, refused)
+      )
+    } catch (error) {
+      // A tool can register interrupts on the agent itself, as a child agent that pauses does; nothing
+      // resumes them from here.
+      if (error instanceof InterruptError) {
+        for (const pending of error.interrupts) {
+          delete this._interruptState.interrupts[pending.id]
+        }
+        discardInterruptedTurn(this._interruptState, toolUse.toolUseId)
+      }
+      throw error
+    }
+  }
+
+  /** Invokes the hooks of one event of a direct tool call; a refused interrupt cancels the call. */
+  private async _invokeDirectCallHooks(event: AgentStreamEvent, refused: { error?: unknown }): Promise<void> {
+    // The tool's own stream events stay inside the call, so hooks do not see them either.
+    if (!(event instanceof HookableEvent) || event instanceof ToolStreamUpdateEvent) {
+      return
+    }
+    if (!(event instanceof BeforeToolCallEvent)) {
+      await this._hooksRegistry.invokeCallbacks(event)
+      return
+    }
+    refused.error = undefined
+    try {
+      await this._hooksRegistry.invokeCallbacks(event)
+    } catch (error) {
+      if (refused.error === undefined || error !== refused.error) {
+        throw error
+      }
+    }
+    // Applied here rather than by the throw alone, which a hook's error handling may swallow.
+    if (refused.error !== undefined) {
+      event.cancel = normalizeError(refused.error).message
+    }
   }
 
   /**

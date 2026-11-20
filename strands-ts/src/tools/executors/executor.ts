@@ -4,7 +4,7 @@ import { InterruptError, interruptFromAgent } from '../../interrupt.js'
 import { createMiddlewareInterrupt } from '../../middleware/interrupt.js'
 import { ExecuteToolStage } from '../../middleware/index.js'
 import { deepCopy } from '../../types/json.js'
-import { TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 
 import type { Agent } from '../../agent/agent.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
@@ -16,7 +16,7 @@ import type { Tracer } from '../../telemetry/tracer.js'
 import type { AgentStreamEvent, InvocationState } from '../../types/agent.js'
 import type { InterruptParams } from '../../types/interrupt.js'
 import type { JSONValue } from '../../types/json.js'
-import type { Message, ToolResultBlockData, ToolUseBlock } from '../../types/messages.js'
+import type { Message, ToolResultBlockData } from '../../types/messages.js'
 import type { Tool, ToolContext } from '../tool.js'
 
 /**
@@ -37,6 +37,8 @@ export interface ToolExecutorOptions {
   readonly cancelSignal: AbortSignal
   /** The request, set on each {@link ToolContext} so nested and auxiliary calls a tool makes join it. */
   readonly invocationContext?: InvocationContext | undefined
+  /** Answers an interrupt a `BeforeToolCallEvent` hook raises, instead of pausing the agent. */
+  readonly hookInterrupt?: ToolContext['interrupt']
   readonly toolInterrupt?: ToolContext['interrupt']
   readonly middlewareInterrupt?: ExecuteToolContext['interrupt']
   readonly toolGuard?: (tool: Tool | undefined) => void
@@ -105,6 +107,36 @@ export abstract class ToolExecutor {
     }
   }
 
+  /**
+   * Executes one tool call outside a model turn, with the hooks, middleware and retry of a model-issued call.
+   *
+   * @param options - Agent dependencies used to execute the tool
+   * @param toolUse - Tool call to execute
+   * @param invocationState - State the call runs with
+   * @param onEvent - Receives each lifecycle event before execution continues
+   * @returns The tool result
+   * @throws The error `onEvent` or tool middleware throws, and any `InterruptError` the tool raises
+   * @internal
+   */
+  async executeDirect(
+    options: ToolExecutorOptions,
+    toolUse: ToolUseData,
+    invocationState: InvocationState,
+    onEvent: (event: AgentStreamEvent) => Promise<unknown>
+  ): Promise<ToolResultBlock> {
+    const generator = this.executeTool(options, new ToolUseBlock(toolUse), invocationState)
+    try {
+      let next = await generator.next()
+      while (!next.done) {
+        await onEvent(next.value)
+        next = await generator.next()
+      }
+      return next.value
+    } finally {
+      await generator.return(undefined as never)
+    }
+  }
+
   // Tool lookup and tool-body failures become ToolResultBlocks so the model can
   // respond to them; lifecycle and middleware failures may still propagate.
   protected async *executeTool(
@@ -128,6 +160,7 @@ export abstract class ToolExecutor {
         toolUse,
         tool: registryTool,
         invocationState,
+        interrupt: options.hookInterrupt,
       })
       yield beforeToolCallEvent
 

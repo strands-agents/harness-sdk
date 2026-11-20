@@ -1,0 +1,10 @@
+name: Programmatic Tool Caller
+description: Let the model orchestrate its other tools with Python code that runs in a Monty sandbox, returning only what the code prints.
+integrationType: tool
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/programmatic_tool_caller
+docsPage: docs/user-guide/sdk/tools/vended-tools/programmatic-tool-caller
+addedDate: 2026-11-18
