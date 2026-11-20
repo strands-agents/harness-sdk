@@ -1,6 +1,6 @@
 ---
 title: Custom Strategies
-description: "Build custom context management strategies with the Offload builder API, conditions, targets, and stash configuration."
+description: "Build custom context management strategies with the Offload builder API, conditions, targets, and storage of offloaded content."
 experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
@@ -70,7 +70,7 @@ The `Offload` namespace exposes three methods. Each returns a strategy builder t
 
 ### Truncate
 
-Replaces oversized content with a head/tail preview. The original content is stored in the stash for later retrieval.
+Replaces oversized content with a head/tail preview. The original content is stored in the <Syntax py="stash" ts="archive" /> for later retrieval.
 
 <Tabs>
 <Tab label="Python">
@@ -174,7 +174,7 @@ A batched summary resends the conversation with the agent's system prompt and to
 
 ### Drop
 
-Removes matching content entirely. No preview, no stash entry.
+Removes matching content entirely. No preview, no <Syntax py="stash" ts="archive" /> entry.
 
 <Tabs>
 <Tab label="Python">
@@ -345,15 +345,15 @@ Targets specify which content a strategy applies to.
 
 Tool name lists use the `tool::` prefix. Prefix a name with `!` to exclude it (apply to all tools *except* the listed ones).
 
-## Stash
+## Storing originals
 
-The stash stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
+The <Syntax py="stash" ts="archive" /> stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
 
-Stash uses in-memory storage by default. Configure it through the <Syntax py="stash" ts="archive" /> key:
+The <Syntax py="stash" ts="archive" /> uses in-memory storage by default. Configure it through the <Syntax py="stash" ts="archive" /> key:
 
 - Omit or pass `true` for defaults (in-memory storage)
 - Pass a config with a custom storage backend
-- Pass `false` to disable stash entirely
+- Pass `false` to disable the <Syntax py="stash" ts="archive" /> entirely
 
 <Tabs>
 <Tab label="Python">
@@ -372,9 +372,9 @@ agent = Agent(
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/sdk/context-management/custom-strategies_imports.ts:stash_imports"
+--8<-- "user-guide/sdk/context-management/custom-strategies_imports.ts:archive_imports"
 
---8<-- "user-guide/sdk/context-management/custom-strategies.ts:stash_disabled"
+--8<-- "user-guide/sdk/context-management/custom-strategies.ts:archive_disabled"
 ```
 </Tab>
 </Tabs>

@@ -67,11 +67,11 @@ async function conditions() {
 }
 
 async function archive() {
-  // --8<-- [start:stash_disabled]
+  // --8<-- [start:archive_disabled]
   const agent = new Agent({
     contextManager: {
       archive: false,
     },
   })
-  // --8<-- [end:stash_disabled]
+  // --8<-- [end:archive_disabled]
 }

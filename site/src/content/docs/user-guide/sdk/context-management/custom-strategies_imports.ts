@@ -21,6 +21,6 @@ import { Offload } from '@strands-agents/sdk/context-manager'
 import { Offload } from '@strands-agents/sdk/context-manager'
 // --8<-- [end:conditions_imports]
 
-// --8<-- [start:stash_imports]
+// --8<-- [start:archive_imports]
 import { Agent } from '@strands-agents/sdk'
-// --8<-- [end:stash_imports]
+// --8<-- [end:archive_imports]
