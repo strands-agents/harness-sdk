@@ -1523,8 +1523,25 @@ def test_format_request_places_cache_points_for_a_proxy_alias_declared_through_m
         ("azure/gpt-4o", []),
         ("groq/llama-3.3-70b-versatile", []),
         ("openrouter/openai/gpt-4o", []),
+        ("vertex_ai/gemini-2.5-flash", []),
+        ("bedrock/us.amazon.nova-pro-v1:0", []),
+        ("bedrock/openai.gpt-oss-120b-1:0", []),
+        ("vertex_ai/claude-sonnet-4@20250514", [("system", "s1"), ("tool", "s1")]),
     ],
-    ids=["proxy_alias", "gateway", "gemini", "openai", "openai_unlisted", "azure", "groq", "gateway_naming_openai"],
+    ids=[
+        "proxy_alias",
+        "gateway",
+        "gemini",
+        "openai",
+        "openai_unlisted",
+        "azure",
+        "groq",
+        "gateway_naming_openai",
+        "vertex_gemini",
+        "bedrock_nova",
+        "bedrock_gpt_oss",
+        "vertex_claude",
+    ],
 )
 def test_format_request_anthropic_strategy_places_points_except_on_backends_that_take_none(
     model_id, exp_marked, injected_loop_messages

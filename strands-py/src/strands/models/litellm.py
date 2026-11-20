@@ -475,8 +475,8 @@ class LiteLLMModel(OpenAIModel):
         """Whether requests carry cache points: the model takes them, or ``strategy="anthropic"`` asks for them.
 
         ``strategy="anthropic"`` places them without the model info's say-so, as ``AnthropicModel`` and
-        ``BedrockModel`` do, but only where the backend can be a Claude-style one: an Anthropic, Bedrock or Vertex AI
-        provider, a Claude id, or a gateway whose id names none of its backend. Elsewhere it would cost an OpenAI
+        ``BedrockModel`` do, but only where the backend can be a Claude-style one: a Claude model, the ``anthropic``
+        provider, or a gateway whose id names none of its backend. Elsewhere it would cost an OpenAI
         backend its routing key, and on Gemini LiteLLM turns a cache point into a billed cached-content resource.
         """
         prompt_caching = self.model_info.capabilities.prompt_caching
@@ -887,12 +887,17 @@ def _resolve_backend(model_id: str, custom_llm_provider: str | None) -> tuple[st
 def _may_take_cache_points(backend: tuple[str, str] | None) -> bool:
     """Whether a backend can be one that takes cache points, for ``strategy="anthropic"`` to place them on.
 
-    An unknown backend or a bare gateway alias can; a gateway id naming its backend can only when that is Anthropic.
+    A Claude model can, on any provider, and so can anything on ``anthropic/``. Bedrock and Vertex AI also host models
+    that can't (Gemini, Nova), so there the model must be Claude. An unknown backend or a bare gateway alias can; a
+    gateway id naming its backend can only when that is Anthropic. Gemini never can.
     """
     if backend is None:
         return True
     backend_id, provider = backend
-    if "claude" in backend_id.lower() or provider in _CACHE_CONTROL_PROVIDERS:
+    model = backend_id.lower()
+    if "gemini" in model:
+        return False
+    if "claude" in model or provider == "anthropic":
         return True
     if provider not in _GATEWAY_PROVIDERS:
         return False

@@ -142,7 +142,7 @@ model = LiteLLMModel(
 )
 ```
 
-`CacheConfig(strategy="anthropic")` also places cache points without checking the model, but only where the backend can take them: Claude ids, `anthropic/`, `bedrock/` and `vertex_ai/`, and gateway ids that don't name their backend. OpenAI and Gemini backends behave as under `"auto"`, so one cache config can be shared across providers. Declaring the backend this way also stops Strands sending the session-derived `prompt_cache_key`, which non-OpenAI backends behind a proxy reject.
+`CacheConfig(strategy="anthropic")` also places cache points without checking the model, but only where the backend can take them: Claude models on any provider (including `bedrock/` and `vertex_ai/`), `anthropic/`, and gateway ids that don't name their backend. Other backends behave as under `"auto"`, including OpenAI, Gemini on any provider, and non-Claude Bedrock models such as Nova, so one cache config can be shared across providers. Declaring the backend this way also stops Strands sending the session-derived `prompt_cache_key`, which non-OpenAI backends behind a proxy reject.
 
 #### Hand-placed cache points
 

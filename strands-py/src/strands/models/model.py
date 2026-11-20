@@ -166,8 +166,8 @@ class CacheConfig:
         strategy: Caching strategy to use.
             - "auto": Automatically detect model support and inject cachePoint to maximize cache coverage
             - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check.
-              ``LiteLLMModel`` places them only where the backend can be Claude-style: an Anthropic, Bedrock or
-              Vertex AI provider, a Claude id, or a gateway id that doesn't name its backend.
+              ``LiteLLMModel`` places them only where the backend can be Claude-style: a Claude model on any
+              provider, ``anthropic/``, or a gateway id that doesn't name its backend.
         ttl: Optional TTL duration for cache entries (e.g. "5m", "1h").
             When specified, auto-injected cache points will include this TTL value. Bedrock requires
             checkpoint TTLs to be non-increasing across toolConfig, system and messages, and rejects a
