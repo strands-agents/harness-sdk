@@ -6,6 +6,7 @@ import { validateIdentifier } from './validation.js'
 import type { SnapshotTriggerCallback } from './types.js'
 import type { Snapshot } from '../types/snapshot.js'
 import type { JSONValue } from '../types/json.js'
+import { deepCopyWithValidation } from '../types/json.js'
 import type { Plugin } from '../plugins/plugin.js'
 import type { LocalAgent } from '../types/agent.js'
 import { Stash } from '../context-manager/stash.js'
@@ -59,6 +60,18 @@ export type SaveLatestStrategy = 'message' | 'invocation' | 'trigger'
  */
 export type MultiAgentSaveLatestStrategy = 'node' | 'invocation'
 
+/** Target and session being captured by a snapshot app-data provider. */
+export type SnapshotAppDataContext =
+  | { scope: 'agent'; target: LocalAgent; sessionId: string }
+  | { scope: 'multiAgent'; target: Graph | Swarm; sessionId: string }
+
+/**
+ * Synchronously reads the complete application-owned metadata for one snapshot capture.
+ * Must not mutate the target, start another save, or return a Promise.
+ * Called once per capture, which may occur several times during one invocation.
+ */
+export type SnapshotAppDataProvider = (context: SnapshotAppDataContext) => Record<string, JSONValue>
+
 export interface SessionManagerConfig {
   /**
    * Storage backend for snapshot persistence.
@@ -77,6 +90,8 @@ export interface SessionManagerConfig {
   saveLatestOn?: SaveLatestStrategy
   /** Callback invoked after each invocation to decide whether to create an immutable snapshot. */
   snapshotTrigger?: SnapshotTriggerCallback
+  /** Supplies application metadata for each capture; otherwise preserves the target's snapshot data. See {@link SnapshotAppDataProvider}. */
+  snapshotAppData?: SnapshotAppDataProvider
   /**
    * When to save snapshot_latest for multi-agent orchestrators.
    * Default: `'node'` (after each node invocation completes).
@@ -103,6 +118,9 @@ interface ExternalStashSnapshot extends Record<string, JSONValue> {
 }
 type StashSnapshotData = InlineStashSnapshot | ExternalStashSnapshot
 
+type SnapshotCapture =
+  { snapshot: Snapshot; appDataValid: true } | { snapshot: Snapshot; appDataValid: false; error: unknown }
+
 /**
  * Manages session persistence for agents, enabling conversation state
  * to be saved and restored across invocations using pluggable storage backends.
@@ -128,6 +146,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   private _agentStash: Stash | undefined
   private readonly _saveLatestOn: SaveLatestStrategy
   private readonly _snapshotTrigger?: SnapshotTriggerCallback | undefined
+  private readonly _snapshotAppData: SnapshotAppDataProvider | undefined
   private readonly _multiAgentSaveLatestOn: MultiAgentSaveLatestStrategy
   private _multiAgentRestoredIds = new Set<string>()
 
@@ -154,6 +173,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
     this._saveLatestOn = config.saveLatestOn ?? 'invocation'
     this._multiAgentSaveLatestOn = config.multiAgentSaveLatestOn ?? 'node'
     this._snapshotTrigger = config.snapshotTrigger
+    this._snapshotAppData = config.snapshotAppData
   }
 
   private get _snapshotStorage(): SnapshotStorage {
@@ -208,7 +228,11 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
     return { sessionId: this._sessionId, scope: 'agent', scopeId: agent.id }
   }
 
-  /** Saves a snapshot of the target's current state. */
+  /**
+   * Saves a snapshot of the target's current state and application metadata.
+   * @param params - Target, optional orchestrator state, and whether to overwrite the latest snapshot.
+   * @throws Error - If snapshot capture, app-data validation, or persistence fails.
+   */
   async saveSnapshot(params: { target: LocalAgent; isLatest: boolean }): Promise<void>
   async saveSnapshot(params: { target: Graph | Swarm; state?: MultiAgentState; isLatest: boolean }): Promise<void>
   async saveSnapshot(params: {
@@ -217,9 +241,9 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
     isLatest: boolean
   }): Promise<void> {
     const isAgent = 'messages' in params.target
-    const snapshot = isAgent
-      ? (params.target as LocalAgent).takeSnapshot({ preset: 'session' })
-      : takeMultiAgentSnapshot(params.target as Graph | Swarm, params.state)
+    const capture = this._captureSnapshot(params.target, params.state)
+    if (!capture.appDataValid) throw capture.error
+    const { snapshot } = capture
     if (isAgent) {
       await this._includeStashData(params.target as LocalAgent, snapshot)
     }
@@ -323,13 +347,25 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   private async _onAfterModelCall(event: AfterModelCallEvent): Promise<void> {
     // Only save if there was a redaction
     if (event.stopData?.redaction) {
-      await this.saveSnapshot({ target: event.agent, isLatest: true })
+      const capture = this._captureSnapshot(event.agent)
+      await this._includeStashData(event.agent, capture.snapshot)
+      // App metadata must not prevent an already-enabled redaction flush. Save the
+      // captured SDK state with empty appData, then surface the original metadata error.
+      await this._snapshotStorage.saveSnapshot({
+        location: this._location(event.agent),
+        snapshotId: 'latest',
+        isLatest: true,
+        snapshot: capture.snapshot,
+      })
+      if (!capture.appDataValid) throw capture.error
     }
   }
 
   /** Captures one snapshot and writes it to both immutable history and snapshot_latest. */
   private async _saveImmutableAndLatest(agent: LocalAgent): Promise<void> {
-    const snapshot = agent.takeSnapshot({ preset: 'session' })
+    const capture = this._captureSnapshot(agent)
+    if (!capture.appDataValid) throw capture.error
+    const { snapshot } = capture
     await this._includeStashData(agent, snapshot)
     const snapshotId = uuidV7()
     await Promise.all([
@@ -341,6 +377,43 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
         snapshot,
       }),
     ])
+  }
+
+  private _captureSnapshot(target: LocalAgent | Graph | Swarm, state?: MultiAgentState): SnapshotCapture {
+    const context: SnapshotAppDataContext =
+      'messages' in target
+        ? { scope: 'agent', target: target as LocalAgent, sessionId: this._sessionId }
+        : { scope: 'multiAgent', target: target as Graph | Swarm, sessionId: this._sessionId }
+    const snapshot =
+      context.scope === 'agent'
+        ? context.target.takeSnapshot({ preset: 'session' })
+        : takeMultiAgentSnapshot(context.target, state)
+    if (!this._snapshotAppData) return { snapshot, appDataValid: true }
+    // Capture and detach app data before any asynchronous stash or storage operation.
+    // Framework capture failures propagate directly; only app-data failures are recoverable
+    // for a redaction flush.
+    try {
+      const appData = this._snapshotAppData(context)
+      this._validateAppData(appData)
+      const copied = deepCopyWithValidation(appData, 'snapshotAppData')
+      this._validateAppData(copied)
+      snapshot.appData = copied
+      return { snapshot, appDataValid: true }
+    } catch (error) {
+      snapshot.appData = {}
+      return { snapshot, appDataValid: false, error }
+    }
+  }
+
+  private _validateAppData(value: unknown): asserts value is Record<string, JSONValue> {
+    if (
+      value === null ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      ('then' in value && typeof value.then === 'function')
+    ) {
+      throw new TypeError('snapshotAppData must synchronously return a JSON object')
+    }
   }
 
   // ---------------------------------------------------------------------------
