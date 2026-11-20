@@ -980,16 +980,16 @@ describe('resolveWebFetchModel', () => {
     expect(model.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
   })
 
-  it('reuses the main model and warns for an unidentifiable bedrock family', async () => {
+  it('reuses the main model and warns for a bedrock family with no mapped summarizer', async () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
     const model = await resolveWebFetchModel('bedrock/amazon.nova-pro-v1:0', undefined)
     expect(model).toBeInstanceOf(BedrockModel)
     expect(model.getConfig().modelId).toBe('amazon.nova-pro-v1:0')
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not identify the Bedrock model family'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no small web_fetch summarizer is mapped'))
   })
 
-  it('does not warn for an unidentifiable bedrock family with an explicit override', async () => {
+  it('does not warn for a bedrock family with no mapped summarizer when given an explicit override', async () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
     const override = new BedrockModel({ modelId: 'explicit' })

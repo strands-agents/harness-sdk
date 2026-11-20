@@ -609,8 +609,8 @@ def resolve_model(
 
 
 def _bedrock_web_fetch_model(name: str) -> str | None:
-    """Small Bedrock summarizer id for a Bedrock main model ``name``, or ``None`` if the family is
-    unidentifiable.
+    """Small Bedrock summarizer id for a Bedrock main model ``name``, or ``None`` if its family has no
+    mapped small model.
 
     Bedrock hosts models from several providers, so the summarizer follows the main model's family.
     An Anthropic-on-Bedrock model (an ``anthropic.`` prefix, after any cross-region prefix like
@@ -669,9 +669,8 @@ def resolve_web_fetch_model(
         small = _bedrock_web_fetch_model(name)
         if small is None:
             logger.warning(
-                f"model=<{main}> | could not identify the Bedrock model family for the web_fetch "
-                "summarizer; reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a "
-                "smaller one."
+                f"model=<{main}> | no small web_fetch summarizer is mapped for this Bedrock model family; "
+                "reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a smaller one."
             )
             return _concrete_model(resolve_model(main, main, effort="off"))
     elif (base_url_var := _CUSTOM_ENDPOINT_VARS.get(provider_name)) and os.environ.get(base_url_var):
