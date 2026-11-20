@@ -13,6 +13,13 @@ import { TextBlock, ToolResultBlock } from '../../types/messages.js'
 
 const toolUse = { name: 'echo', toolUseId: 'direct-1', input: { text: 'hi' } }
 
+const echoed = new ToolResultBlock({ toolUseId: 'direct-1', status: 'success', content: [new TextBlock('echoed')] })
+const refusedApproval = new ToolResultBlock({
+  toolUseId: 'direct-1',
+  status: 'error',
+  content: [new TextBlock('refused: approve')],
+})
+
 function refuse(params: InterruptParams): never {
   throw new Error(`refused: ${params.name}`)
 }
@@ -43,9 +50,7 @@ describe('Agent._executeToolCall', () => {
 
     const result = await agent._executeToolCall(toolUse, callContext())
 
-    expect(result).toEqual(
-      new ToolResultBlock({ toolUseId: 'direct-1', status: 'success', content: [new TextBlock('echoed')] })
-    )
+    expect(result).toEqual(echoed)
     expect(order).toEqual(['before:alice', 'middleware', 'after:success'])
   })
 
@@ -56,9 +61,7 @@ describe('Agent._executeToolCall', () => {
 
     const result = await agent._executeToolCall(toolUse, callContext())
 
-    expect(result).toEqual(
-      new ToolResultBlock({ toolUseId: 'direct-1', status: 'error', content: [new TextBlock('refused: approve')] })
-    )
+    expect(result).toEqual(refusedApproval)
     expect(calls).toEqual([])
     expect(agent._interruptState.interrupts).toEqual({})
   })
@@ -76,7 +79,7 @@ describe('Agent._executeToolCall', () => {
 
     const result = await agent._executeToolCall(toolUse, callContext())
 
-    expect(result.status).toBe('error')
+    expect(result).toEqual(refusedApproval)
     expect(calls).toEqual([])
   })
 
@@ -91,7 +94,7 @@ describe('Agent._executeToolCall', () => {
       callContext(<T>(): T => 'yes' as T)
     )
 
-    expect(result.status).toBe('success')
+    expect(result).toEqual(echoed)
     expect(answers).toEqual(['yes'])
     expect(calls).toEqual([{ text: 'hi' }])
   })
@@ -115,7 +118,7 @@ describe('Agent._executeToolCall', () => {
 
     const result = await agent._executeToolCall(toolUse, callContext())
 
-    expect(result.status).toBe('success')
+    expect(result).toEqual(echoed)
     expect(attempts).toBe(2)
   })
 
@@ -186,7 +189,7 @@ describe('Agent._executeToolCall', () => {
 
     const result = await agent._executeToolCall(toolUse, callContext())
 
-    expect(result.status).toBe('success')
+    expect(result).toEqual(echoed)
     expect(seen).toEqual(['after'])
   })
 
