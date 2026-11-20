@@ -1,6 +1,7 @@
 import type { ReasoningProviderData, Role, StopReason } from '../types/messages.js'
-import type { JSONValue } from '../types/json.js'
+import type { JSONSerializable, JSONValue, Serialized } from '../types/json.js'
 import type { Citation, CitationGeneratedContent } from '../types/citations.js'
+import { encodeBase64 } from '../types/media.js'
 
 /**
  * ModelStreamEvent types for Model interactions.
@@ -135,7 +136,9 @@ export interface ModelContentBlockDeltaEventData {
 /**
  * Event emitted when there is new content in a content block.
  */
-export class ModelContentBlockDeltaEvent implements ModelContentBlockDeltaEventData {
+export class ModelContentBlockDeltaEvent
+  implements ModelContentBlockDeltaEventData, JSONSerializable<Serialized<ModelContentBlockDeltaEventData>>
+{
   /**
    * Discriminator for content block delta events.
    */
@@ -154,6 +157,60 @@ export class ModelContentBlockDeltaEvent implements ModelContentBlockDeltaEventD
   constructor(data: ModelContentBlockDeltaEventData) {
     this.delta = data.delta
   }
+
+  /**
+   * Serializes the event to a JSON-compatible object, encoding any binary
+   * `redactedContent` in `reasoningContentDelta` as a base64 string without
+   * mutating the original delta.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): Serialized<ModelContentBlockDeltaEventData> {
+    return {
+      type: this.type,
+      ...(this.contentBlockIndex !== undefined && { contentBlockIndex: this.contentBlockIndex }),
+      delta: serializeContentBlockDelta(this.delta),
+    }
+  }
+}
+
+/**
+ * Serializes a {@link ContentBlockDelta} for JSON transport, encoding binary
+ * `redactedContent` as base64 without mutating the original delta.
+ */
+function serializeContentBlockDelta(delta: ContentBlockDelta): Serialized<ContentBlockDelta> {
+  if (delta.type === 'reasoningContentDelta' && delta.redactedContent instanceof Uint8Array) {
+    return {
+      ...delta,
+      redactedContent: encodeBase64(delta.redactedContent),
+    }
+  }
+  return delta as Serialized<ContentBlockDelta>
+}
+
+/**
+ * Serializes a {@link ModelStreamEvent} for JSON transport, encoding binary
+ * fields (such as `reasoningContentDelta.redactedContent`) as base64 strings
+ * without mutating the original event.
+ *
+ * @param event - The model stream event to serialize
+ * @returns A JSON-compatible representation of the stream event
+ * @internal
+ */
+export function serializeModelStreamEvent(event: ModelStreamEvent): Serialized<ModelStreamEvent> {
+  if (event instanceof ModelContentBlockDeltaEvent) {
+    return event.toJSON()
+  }
+  if (
+    event.type === 'modelContentBlockDeltaEvent' &&
+    event.delta.type === 'reasoningContentDelta' &&
+    event.delta.redactedContent instanceof Uint8Array
+  ) {
+    return {
+      ...event,
+      delta: serializeContentBlockDelta(event.delta),
+    }
+  }
+  return event as Serialized<ModelStreamEvent>
 }
 
 /**

@@ -1,8 +1,8 @@
 import type { LocalAgent, AgentResult, InvocationState, InvokeArgs } from '../types/agent.js'
 import type { ContentBlock, Message, StopReason, ToolResultBlock } from '../types/messages.js'
 import { type Tool, ToolStreamEvent } from '../tools/tool.js'
-import type { JSONValue } from '../types/json.js'
-import type { ModelStreamEvent } from '../models/streaming.js'
+import type { JSONValue, Serialized } from '../types/json.js'
+import { type ModelStreamEvent, serializeModelStreamEvent } from '../models/streaming.js'
 import type { Model } from '../models/model.js'
 import { interruptFromAgent, type Interrupt, type Interruptible } from '../interrupt.js'
 import type { InterruptParams } from '../types/interrupt.js'
@@ -589,10 +589,12 @@ export class ModelStreamUpdateEvent extends HookableEvent {
 
   /**
    * Serializes for wire transport, excluding the agent reference and invocationState.
+   * Binary fields in the wrapped stream event (such as `reasoningContentDelta.redactedContent`)
+   * are encoded as base64 strings without mutating the original event.
    * Called automatically by JSON.stringify().
    */
-  toJSON(): Pick<ModelStreamUpdateEvent, 'type' | 'event'> {
-    return { type: this.type, event: this.event }
+  toJSON(): Pick<ModelStreamUpdateEvent, 'type'> & { event: Serialized<ModelStreamEvent> } {
+    return { type: this.type, event: serializeModelStreamEvent(this.event) }
   }
 }
 

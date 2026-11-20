@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { totalPromptTokens, isModelStreamEvent } from '../streaming.js'
+import { totalPromptTokens, isModelStreamEvent, ModelContentBlockDeltaEvent } from '../streaming.js'
 import type { ModelStreamEvent } from '../streaming.js'
 
 describe('isModelStreamEvent', () => {
@@ -92,5 +92,47 @@ describe('totalPromptTokens', () => {
 
   it('collapses to inputTokens when there are no cache tokens', () => {
     expect(totalPromptTokens({ inputTokens: 100, outputTokens: 50, totalTokens: 150 })).toBe(100)
+  })
+})
+
+describe('ModelContentBlockDeltaEvent.toJSON', () => {
+  it('encodes Uint8Array redactedContent as base64 without mutating the delta', () => {
+    const bytes = new Uint8Array([1, 2, 3])
+    const event = new ModelContentBlockDeltaEvent({
+      type: 'modelContentBlockDeltaEvent',
+      delta: {
+        type: 'reasoningContentDelta',
+        text: 'thinking',
+        signature: 'sig',
+        redactedContent: bytes,
+      },
+    })
+
+    expect(event.toJSON()).toStrictEqual({
+      type: 'modelContentBlockDeltaEvent',
+      delta: {
+        type: 'reasoningContentDelta',
+        text: 'thinking',
+        signature: 'sig',
+        redactedContent: 'AQID',
+      },
+    })
+    expect(JSON.parse(JSON.stringify(event))).toStrictEqual(event.toJSON())
+    expect(event.delta.type === 'reasoningContentDelta' && event.delta.redactedContent).toBe(bytes)
+    expect(event.delta.type === 'reasoningContentDelta' && event.delta.redactedContent).toStrictEqual(
+      new Uint8Array([1, 2, 3])
+    )
+  })
+
+  it('preserves non-binary deltas unchanged', () => {
+    const event = new ModelContentBlockDeltaEvent({
+      type: 'modelContentBlockDeltaEvent',
+      delta: { type: 'textDelta', text: 'hello' },
+    })
+
+    expect(event.toJSON()).toStrictEqual({
+      type: 'modelContentBlockDeltaEvent',
+      delta: { type: 'textDelta', text: 'hello' },
+    })
   })
 })
