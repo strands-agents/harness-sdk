@@ -25,12 +25,12 @@ def test_html_to_text_strips_tags_and_scripts():
 
 
 class _Sandbox:
-    """Fake sandbox: curl "writes" ``body`` to the requested file and reports ``content_type``/``url``."""
+    """Fake sandbox: curl "writes" ``body`` to the requested file and reports ``content_type``/``redirect``."""
 
-    def __init__(self, body=b"", content_type="text/html", url="https://example.com/final", stderr="", exit_code=0):
+    def __init__(self, body=b"", content_type="text/html", redirect="", stderr="", exit_code=0):
         self.body = body
         self.content_type = content_type
-        self.url = url
+        self.redirect = redirect
         self.stderr = stderr
         self.exit_code = exit_code
         self.commands = []
@@ -44,7 +44,8 @@ class _Sandbox:
         # What the shell pipeline prints: the two trailer lines, then base64(1) output (wrapped at 76 columns).
         encoded = base64.b64encode(self.body).decode()
         wrapped = "\n".join(encoded[i : i + 76] for i in range(0, len(encoded), 76))
-        return ExecutionResult(exit_code=0, stdout=f"{self.content_type}\n{self.url}\n{wrapped}\n", stderr=self.stderr)
+        stdout = f"{self.content_type}\n{self.redirect}\n{wrapped}\n"
+        return ExecutionResult(exit_code=0, stdout=stdout, stderr=self.stderr)
 
     @property
     def curl(self):
@@ -61,7 +62,8 @@ class _PowerShellSandbox(_Sandbox):
         if self.exit_code != 0:
             return ExecutionResult(exit_code=self.exit_code, stdout="", stderr=self.stderr)
         encoded = base64.b64encode(self.body).decode()
-        return ExecutionResult(exit_code=0, stdout=f"{self.content_type}\r\n{self.url}\r\n{encoded}\r\n", stderr="")
+        stdout = f"{self.content_type}\r\n{self.redirect}\r\n{encoded}\r\n"
+        return ExecutionResult(exit_code=0, stdout=stdout, stderr="")
 
     @property
     def curl(self):
@@ -100,6 +102,13 @@ async def test_fetch_text_rejects_malformed_urls_before_touching_the_sandbox(url
     assert sandbox.commands == []
 
 
+def _redirect_notice(url, target):
+    return (
+        f"Failed to fetch {url}: it redirects to {target}, and web_fetch does not follow redirects. "
+        "Call web_fetch with that URL to read it."
+    )
+
+
 def test_validate_url_accepts_rfc3986_urls_and_strips_whitespace():
     assert web_fetch_module._validate_url(" https://e.com/a?b=c&d=%20#f ") == "https://e.com/a?b=c&d=%20#f"
     assert web_fetch_module._validate_url("http://[::1]:8080/x") == "http://[::1]:8080/x"
@@ -116,9 +125,6 @@ async def test_fetch_text_direct_transport_skips_the_sandbox(monkeypatch):
             chunk, self.body = self.body[:n], self.body[n:]
             return chunk
 
-        def geturl(self):
-            return "https://example.com/final"
-
         def __enter__(self):
             return self
 
@@ -132,22 +138,14 @@ async def test_fetch_text_direct_transport_skips_the_sandbox(monkeypatch):
 
     monkeypatch.setattr(web_fetch_module, "build_opener", lambda *handlers: Opener())
     sandbox = _Sandbox()
-    assert await web_fetch_module._fetch_text(sandbox, "https://example.com", "direct") == (
-        "https://example.com/final",
-        "Hi there",
-    )
+    assert await web_fetch_module._fetch_text(sandbox, "https://example.com", "direct") == "Hi there"
     assert sandbox.commands == []
     assert calls == [("https://example.com", web_fetch_module._USER_AGENT, web_fetch_module._TIMEOUT)]
 
 
-async def test_fetch_text_direct_transport_pins_redirects_to_http_and_bounds_the_download(monkeypatch):
+async def test_fetch_text_direct_transport_bounds_the_download(monkeypatch):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == "/ftp":
-                self.send_response(302)
-                self.send_header("Location", "ftp://127.0.0.1:2121/x")
-                self.end_headers()
-                return
             if self.path == "/drip":
                 self.send_response(200)
                 self.send_header("Content-Length", "100")
@@ -172,10 +170,7 @@ async def test_fetch_text_direct_transport_pins_redirects_to_http_and_bounds_the
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        assert await web_fetch_module._fetch_text(_Sandbox(), f"{base}/page", "direct") == (f"{base}/page", "page")
-        # urllib's default handler would follow this hop to ftp://; every hop is held to the URL rules.
-        with pytest.raises(ValueError, match="only supports http"):
-            await web_fetch_module._fetch_text(_Sandbox(), f"{base}/ftp", "direct")
+        assert await web_fetch_module._fetch_text(_Sandbox(), f"{base}/page", "direct") == "page"
         # The per-read socket timeout would let a slow drip run for minutes; the deadline is wall-clock.
         monkeypatch.setattr(web_fetch_module, "_TIMEOUT", 1)
         started = time.monotonic()
@@ -191,22 +186,21 @@ def test_make_web_fetch_rejects_an_unknown_transport():
         make_web_fetch(model=object(), transport="wget")
 
 
-async def test_fetch_text_runs_curl_in_the_sandbox_and_reads_the_final_hop():
+async def test_fetch_text_runs_curl_in_the_sandbox():
     sandbox = _Sandbox(body=b"<p>Hi <b>there</b></p>")
-    resolved, text = await web_fetch_module._fetch_text(sandbox, "https://example.com/a'b$(id);c", "curl")
-    assert (resolved, text) == ("https://example.com/final", "Hi there")
+    assert await web_fetch_module._fetch_text(sandbox, "https://example.com/a'b$(id);c", "curl") == "Hi there"
     command = sandbox.curl
     # Legal URL characters that mean something to a shell arrive single-quoted.
     assert "'https://example.com/a'\"'\"'b$(id);c'" in command
     for flag in (
         "-g",
         "--fail",
+        "--no-location",
         "--proto '=http,https'",
-        "--proto-redir '=http,https'",
         "--max-time",
         "-o ",
         "%{content_type}",
-        "%{url_effective}",
+        "%{redirect_url}",
         " -- '",
     ):
         assert flag in command
@@ -218,10 +212,9 @@ async def test_fetch_text_runs_curl_in_the_sandbox_and_reads_the_final_hop():
 
 
 async def test_fetch_text_handles_a_missing_content_type():
-    # curl prints an empty content-type line; the URL must not slide into its slot.
-    sandbox = _Sandbox(body=b"a < b <i>", content_type="", url="https://example.com/report.html")
-    resolved, text = await web_fetch_module._fetch_text(sandbox, "https://example.com", "curl")
-    assert (resolved, text) == ("https://example.com/report.html", "a < b <i>")
+    # curl prints an empty content-type line; the body must not slide into its slot.
+    sandbox = _Sandbox(body=b"a < b <i>", content_type="")
+    assert await web_fetch_module._fetch_text(sandbox, "https://example.com", "curl") == "a < b <i>"
 
 
 async def test_fetch_text_truncates_the_body_in_the_sandbox():
@@ -232,19 +225,19 @@ async def test_fetch_text_truncates_the_body_in_the_sandbox():
 
 async def test_fetch_text_keeps_non_html_verbatim():
     sandbox = _Sandbox(body=b"raw <b>text</b>", content_type="text/plain")
-    _, text = await web_fetch_module._fetch_text(sandbox, "https://example.com", "curl")
+    text = await web_fetch_module._fetch_text(sandbox, "https://example.com", "curl")
     assert text == "raw <b>text</b>"
 
 
 async def test_fetch_text_honours_the_response_charset():
     sandbox = _Sandbox(body="日本語".encode("shift_jis"), content_type="text/plain; charset='Shift_JIS'")
-    _, text = await web_fetch_module._fetch_text(sandbox, "https://example.com", "curl")
+    text = await web_fetch_module._fetch_text(sandbox, "https://example.com", "curl")
     assert text == "日本語"
 
 
 async def test_fetch_text_falls_back_to_utf8_for_an_unknown_charset():
     sandbox = _Sandbox(body="é".encode(), content_type="text/plain; charset=not-a-codec")
-    _, text = await web_fetch_module._fetch_text(sandbox, "https://example.com", "curl")
+    text = await web_fetch_module._fetch_text(sandbox, "https://example.com", "curl")
     assert text == "é"
 
 
@@ -266,10 +259,9 @@ async def test_fetch_text_probes_the_shell_once_per_sandbox():
 
 async def test_fetch_text_runs_curl_exe_through_powershell_and_reads_crlf_output():
     sandbox = _PowerShellSandbox(body="Hello wörld".encode(), content_type="text/plain; charset=utf-8")
-    resolved, text = await web_fetch_module._fetch_text(sandbox, "https://example.com/it's", "curl")
-    assert (resolved, text) == ("https://example.com/final", "Hello wörld")
+    assert await web_fetch_module._fetch_text(sandbox, "https://example.com/it's", "curl") == "Hello wörld"
     command = sandbox.curl
-    assert "\n  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time " in command
+    assert "\n  curl.exe -sS -g --fail --no-location --proto '=http,https' --max-time " in command
     # The URL is a single-quoted PowerShell literal (no expansion), with its own quotes doubled.
     assert command.count("'https://example.com/it''s'") == 1
     assert "$([guid]::NewGuid())" in command and "strands-web-fetch-" in command
@@ -294,11 +286,6 @@ async def test_fetch_text_surfaces_powershell_curl_errors():
 async def test_fetch_text_end_to_end_through_the_local_environment():
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path == "/redirect":
-                self.send_response(302)
-                self.send_header("Location", "/page")
-                self.end_headers()
-                return
             if self.path == "/huge":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
@@ -332,15 +319,12 @@ async def test_fetch_text_end_to_end_through_the_local_environment():
     base = f"http://127.0.0.1:{server.server_address[1]}"
     sandbox = NotASandboxLocalEnvironment()
     try:
-        assert await web_fetch_module._fetch_text(sandbox, f"{base}/redirect", "curl") == (
-            f"{base}/page",
-            "Hello wörld",
-        )
-        _, big = await web_fetch_module._fetch_text(sandbox, f"{base}/big", "curl")
+        assert await web_fetch_module._fetch_text(sandbox, f"{base}/page", "curl") == "Hello wörld"
+        big = await web_fetch_module._fetch_text(sandbox, f"{base}/big", "curl")
         assert big == "日" * web_fetch_module._MAX_CHARS
-        _, huge = await web_fetch_module._fetch_text(sandbox, f"{base}/huge", "curl")
+        huge = await web_fetch_module._fetch_text(sandbox, f"{base}/huge", "curl")
         assert huge == "x" * web_fetch_module._MAX_CHARS
-        assert await web_fetch_module._fetch_text(sandbox, f"{base}/notype", "curl") == (f"{base}/notype", "a < b")
+        assert await web_fetch_module._fetch_text(sandbox, f"{base}/notype", "curl") == "a < b"
         # Same scratch directory the tool derives, asked in the shell the local environment actually runs.
         leftovers = (
             "(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'strands-web-fetch*' | Measure-Object).Count"
@@ -356,7 +340,7 @@ async def test_fetch_text_end_to_end_through_the_local_environment():
 
 async def test_web_fetch_returns_summarizer_answer(monkeypatch):
     async def fake_fetch(sandbox, url, transport):
-        return url, "The sky is blue because of Rayleigh scattering."
+        return "The sky is blue because of Rayleigh scattering."
 
     monkeypatch.setattr(web_fetch_module, "_fetch_text", fake_fetch)
 
@@ -393,7 +377,7 @@ async def test_web_fetch_uses_the_agents_sandbox():
 
 async def test_web_fetch_returns_raw_content_without_prompt(monkeypatch):
     async def fake_fetch(sandbox, url, transport):
-        return url, "The whole page content."
+        return "The whole page content."
 
     monkeypatch.setattr(web_fetch_module, "_fetch_text", fake_fetch)
 
@@ -432,7 +416,7 @@ async def test_web_fetch_caches_within_ttl(monkeypatch):
 
     async def counting_fetch(sandbox, url, transport):
         calls["n"] += 1
-        return url, "content"
+        return "content"
 
     monkeypatch.setattr(web_fetch_module, "_fetch_text", counting_fetch)
 
@@ -450,6 +434,84 @@ async def test_web_fetch_caches_within_ttl(monkeypatch):
     await tool._tool_func(url="https://example.com", prompt="first", tool_context=context)
     await tool._tool_func(url="https://example.com", prompt="second", tool_context=context)
     assert calls["n"] == 1
+
+
+async def test_web_fetch_reports_a_redirect_from_either_shell_without_summarizing_or_caching_it(monkeypatch):
+    def fail_agent(**kwargs):
+        raise AssertionError("summarizer should not run for a redirect")
+
+    monkeypatch.setattr(web_fetch_module, "Agent", fail_agent)
+    notice = _redirect_notice("https://example.com/docs", "https://other.example/landing")
+    for sandbox in (_Sandbox, _PowerShellSandbox):
+        sandbox = sandbox(body=b"redirect body", redirect="https://other.example/landing")
+        tool = make_web_fetch(model=object())
+        context = _context(sandbox)
+        assert await tool._tool_func(url="https://example.com/docs", prompt="anything", tool_context=context) == notice
+        assert await tool._tool_func(url="https://example.com/docs", tool_context=context) == notice
+        assert len(sandbox.commands) == 3
+
+
+@pytest.mark.parametrize(
+    "redirect", ["ftp://example.com/file", "javascript:alert(1)", f"https://example.com/{'a' * 8192}"]
+)
+async def test_web_fetch_does_not_name_a_redirect_target_it_would_not_fetch(redirect):
+    tool = make_web_fetch(model=object())
+    answer = await tool._tool_func(url="https://example.com/docs", tool_context=_context(_Sandbox(redirect=redirect)))
+    assert answer == "Failed to fetch https://example.com/docs: it redirects to a location web_fetch cannot fetch."
+
+
+@pytest.mark.parametrize(
+    "transport",
+    [
+        pytest.param("curl", marks=pytest.mark.skipif(shutil.which("curl") is None, reason="curl not installed")),
+        "direct",
+    ],
+)
+async def test_web_fetch_stops_at_a_same_host_or_cross_host_redirect(transport, tmp_path, monkeypatch):
+    requests = []
+
+    def serve(name, location):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(f"{name}{self.path}")
+                redirect = {
+                    "/docs/moved": (302, "/private"),
+                    "/docs/away": (308, location),
+                    # Raw UTF-8 bytes and a space, as servers send them.
+                    "/docs/odd": (301, "/a b/café?x=a|b\\c".encode().decode("latin-1")),
+                }.get(self.path)
+                self.send_response(redirect[0] if redirect else 200)
+                if redirect:
+                    self.send_header("Location", redirect[1])
+                self.end_headers()
+                self.wfile.write(b"secret")
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+    other_server, other = serve("other", "")
+    server, base = serve("base", f"{other}/landing?q=1")
+    tool = make_web_fetch(model=object(), transport=transport)
+    context = _context(NotASandboxLocalEnvironment())
+    # A curl config file that turns redirect following on must not bring it back.
+    (tmp_path / ".curlrc").write_text("--location\n")
+    monkeypatch.setenv("CURL_HOME", str(tmp_path))
+    try:
+        moved = await tool._tool_func(url=f"{base}/docs/moved", tool_context=context)
+        assert moved == _redirect_notice(f"{base}/docs/moved", f"{base}/private")
+        away = await tool._tool_func(url=f"{base}/docs/away", tool_context=context)
+        assert away == _redirect_notice(f"{base}/docs/away", f"{other}/landing?q=1")
+        # curl percent-encodes in lower case.
+        odd = await tool._tool_func(url=f"{base}/docs/odd", tool_context=context)
+        assert odd.lower() == _redirect_notice(f"{base}/docs/odd", f"{base}/a%20b/caf%C3%A9?x=a%7Cb%5Cc").lower()
+        assert requests == ["base/docs/moved", "base/docs/away", "base/docs/odd"]
+    finally:
+        server.shutdown()
+        other_server.shutdown()
 
 
 def test_resolve_web_fetch_model_defaults_to_provider_small_model():

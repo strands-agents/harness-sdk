@@ -25,6 +25,10 @@ The tool takes a `url` and an optional `prompt`. With a prompt, the summarizer a
 the page; leave the prompt empty and it returns the page text verbatim instead. Only
 `http` and `https` URLs are allowed.
 
+`web_fetch` doesn't follow redirects. When a URL redirects, the tool reports the new
+location and the agent requests it with another call, so a hook or permission rule that
+checks the tool call sees every URL that is read.
+
 ### The summarizer model
 
 By default the summarizer runs on the small, fast model for the main agent's provider, so
