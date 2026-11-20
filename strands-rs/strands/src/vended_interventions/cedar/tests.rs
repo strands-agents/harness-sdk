@@ -453,27 +453,121 @@ fn entities_must_have_a_uid_with_type_and_id() {
     }
 }
 
+/// An agent whose model attempts `send_email` the given number of times on each successive invoke.
+struct Sender {
+    agent: Agent,
+    sent: Runs,
+}
+
+impl Sender {
+    fn new(handler: &Arc<CedarAuthorization>, attempts_per_invoke: &[usize]) -> Self {
+        let model = MockModel::new();
+        let mut tool_use = 0;
+        for attempts in attempts_per_invoke {
+            for _ in 0..*attempts {
+                model.add_turn(tool_use_turn("send_email", &format!("tool-{tool_use}"), json!({})));
+                tool_use += 1;
+            }
+            model.add_turn("Done");
+        }
+        let sent = Runs::default();
+        let counter = sent.clone();
+        let tool = MockTool::new("send_email").with_result(move |context| {
+            counter.0.fetch_add(1, Ordering::SeqCst);
+            ToolOutcome::Result(ToolResultBlock::success(context.tool_use().tool_use_id.clone(), vec![]))
+        });
+        let agent = Agent::builder()
+            .model(model)
+            .tools([tool])
+            .interventions([handler.clone()])
+            .printer(false)
+            .build()
+            .unwrap();
+        Self { agent, sent }
+    }
+
+    async fn invoke(&mut self) {
+        self.agent.invoke("Send").await.unwrap();
+    }
+
+    fn counts(&self) -> Option<JsonValue> {
+        self.agent.app_state().get_value(CEDAR_AUTHORIZATION_STATE_KEY)
+    }
+}
+
+fn rate_limit(limit: usize) -> Arc<CedarAuthorization> {
+    Arc::new(cedar(CedarAuthorizationConfig {
+        policies: format!("permit(principal, action, resource) when {{ context.session.call_count < {limit} }};"),
+        ..Default::default()
+    }))
+}
+
 #[tokio::test]
 async fn reset_call_counts_clears_counts_and_re_enables_rate_limited_tools() {
-    let handler = Arc::new(cedar(CedarAuthorizationConfig {
-        policies: "permit(principal, action, resource) when { context.session.call_count < 2 };".into(),
-        principal_resolver: user("alice"),
-        ..Default::default()
-    }));
-    let send = [("send_email", json!({}))];
-    let (runs, _) = run_calls(handler.clone(), &send, InvocationState::new()).await;
-    assert_eq!(runs.get(), 1);
-    let (runs, agent) = run_calls(handler.clone(), &send, InvocationState::new()).await;
-    assert_eq!(runs.get(), 0);
+    let handler = rate_limit(2);
+    let mut sender = Sender::new(&handler, &[2, 1]);
 
-    handler.reset_call_counts(agent.app_state());
-    assert_eq!(
-        agent.app_state().get_value(CEDAR_AUTHORIZATION_STATE_KEY),
-        Some(json!({}))
-    );
+    sender.invoke().await;
+    assert_eq!(sender.sent.get(), 1);
 
-    let (runs, _) = run_calls(handler, &send, InvocationState::new()).await;
-    assert_eq!(runs.get(), 1);
+    handler.reset_call_counts(sender.agent.app_state());
+    assert_eq!(sender.counts(), Some(json!({})));
+
+    sender.invoke().await;
+    assert_eq!(sender.sent.get(), 2);
+}
+
+#[tokio::test]
+async fn counts_calls_per_agent_when_agents_share_one_instance() {
+    let handler = rate_limit(3);
+    let mut child = Sender::new(&handler, &[3]);
+    let mut parent = Sender::new(&handler, &[1, 1]);
+
+    parent.invoke().await;
+    child.invoke().await;
+    assert_eq!(child.sent.get(), 2);
+    assert_eq!(child.counts(), Some(json!({"send_email": 2})));
+    assert_eq!(parent.counts(), Some(json!({"send_email": 1})));
+
+    parent.invoke().await;
+    assert_eq!(parent.sent.get(), 2);
+    assert_eq!(parent.counts(), Some(json!({"send_email": 2})));
+}
+
+#[tokio::test]
+async fn restores_counts_from_each_agents_own_app_state() {
+    let handler = rate_limit(3);
+    let mut child = Sender::new(&handler, &[1]);
+    let mut parent = Sender::new(&handler, &[1]);
+    child
+        .agent
+        .app_state()
+        .set(CEDAR_AUTHORIZATION_STATE_KEY, json!({"send_email": 2}))
+        .unwrap();
+
+    parent.invoke().await;
+    child.invoke().await;
+
+    assert_eq!(parent.sent.get(), 1);
+    assert_eq!(child.sent.get(), 0);
+}
+
+#[tokio::test]
+async fn reset_call_counts_clears_only_the_given_agent() {
+    let handler = rate_limit(3);
+    let mut child = Sender::new(&handler, &[2, 1]);
+    let mut parent = Sender::new(&handler, &[2, 1]);
+    child.invoke().await;
+    parent.invoke().await;
+
+    handler.reset_call_counts(child.agent.app_state());
+    child.invoke().await;
+    parent.invoke().await;
+
+    assert_eq!(child.sent.get(), 3);
+    assert_eq!(parent.sent.get(), 2);
+    assert_eq!(child.counts(), Some(json!({"send_email": 1})));
+    assert_eq!(parent.counts(), Some(json!({"send_email": 2})));
 }
 
 #[test]
