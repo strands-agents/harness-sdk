@@ -8,7 +8,8 @@ import json
 import logging
 import mimetypes
 from collections import Counter
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, TypeVar, cast
 
 import writerai
@@ -81,6 +82,22 @@ class WriterModel(Model):
 
         client_args = client_args or {}
         self.client = writerai.AsyncClient(**client_args)
+        self._client_args = client_args
+        self._client_per_request = "http_client" not in client_args
+
+    @asynccontextmanager
+    async def _get_client(self) -> AsyncIterator[writerai.AsyncClient]:
+        """Yield the client for one request.
+
+        Pooled connections are bound to the event loop that opened them, and each synchronous Agent call runs on a
+        new loop, so the client is created per request and closed after it. A client built around a caller's
+        ``http_client`` is the caller's to manage and is used as is.
+        """
+        if not self._client_per_request:
+            yield self.client
+            return
+        async with writerai.AsyncClient(**self._client_args) as client:
+            yield client
 
     @override
     def update_config(self, **model_config: Unpack[WriterConfig]) -> None:  # type: ignore[override]
@@ -431,54 +448,57 @@ class WriterModel(Model):
         logger.debug("request=<%s>", request)
 
         logger.debug("invoking model")
-        try:
-            response = await self.client.chat.chat(**request)
-        except writerai.RateLimitError as e:
-            raise ModelThrottledException(str(e)) from e
-        except writerai.BadRequestError as e:
-            if any(message in str(e).lower() for message in self.OVERFLOW_MESSAGES):
-                raise ContextWindowOverflowException(str(e)) from e
-            raise
+        async with self._get_client() as client:
+            try:
+                response = await client.chat.chat(**request)
+            except writerai.RateLimitError as e:
+                raise ModelThrottledException(str(e)) from e
+            except writerai.BadRequestError as e:
+                if any(message in str(e).lower() for message in self.OVERFLOW_MESSAGES):
+                    raise ContextWindowOverflowException(str(e)) from e
+                raise
 
-        yield self.format_chunk({"chunk_type": "message_start"})
-        yield self.format_chunk({"chunk_type": "content_block_start", "data_type": "text"})
+            yield self.format_chunk({"chunk_type": "message_start"})
+            yield self.format_chunk({"chunk_type": "content_block_start", "data_type": "text"})
 
-        tool_calls: dict[int, list[Any]] = {}
+            tool_calls: dict[int, list[Any]] = {}
 
-        async for chunk in response:
-            if not getattr(chunk, "choices", None):
-                continue
-            choice = chunk.choices[0]
+            async for chunk in response:
+                if not getattr(chunk, "choices", None):
+                    continue
+                choice = chunk.choices[0]
 
-            if choice.delta.content:
-                yield self.format_chunk(
-                    {"chunk_type": "content_block_delta", "data_type": "text", "data": choice.delta.content}
-                )
+                if choice.delta.content:
+                    yield self.format_chunk(
+                        {"chunk_type": "content_block_delta", "data_type": "text", "data": choice.delta.content}
+                    )
 
-            for tool_call in choice.delta.tool_calls or []:
-                tool_calls.setdefault(tool_call.index, []).append(tool_call)
+                for tool_call in choice.delta.tool_calls or []:
+                    tool_calls.setdefault(tool_call.index, []).append(tool_call)
 
-            if choice.finish_reason:
-                break
+                if choice.finish_reason:
+                    break
 
-        yield self.format_chunk({"chunk_type": "content_block_stop", "data_type": "text"})
+            yield self.format_chunk({"chunk_type": "content_block_stop", "data_type": "text"})
 
-        for tool_deltas in tool_calls.values():
-            tool_start, tool_deltas = tool_deltas[0], tool_deltas[1:]
-            yield self.format_chunk({"chunk_type": "content_block_start", "data_type": "tool", "data": tool_start})
+            for tool_deltas in tool_calls.values():
+                tool_start, tool_deltas = tool_deltas[0], tool_deltas[1:]
+                yield self.format_chunk({"chunk_type": "content_block_start", "data_type": "tool", "data": tool_start})
 
-            for tool_delta in tool_deltas:
-                yield self.format_chunk({"chunk_type": "content_block_delta", "data_type": "tool", "data": tool_delta})
+                for tool_delta in tool_deltas:
+                    yield self.format_chunk(
+                        {"chunk_type": "content_block_delta", "data_type": "tool", "data": tool_delta}
+                    )
 
-            yield self.format_chunk({"chunk_type": "content_block_stop", "data_type": "tool"})
+                yield self.format_chunk({"chunk_type": "content_block_stop", "data_type": "tool"})
 
-        yield self.format_chunk({"chunk_type": "message_stop", "data": choice.finish_reason})
+            yield self.format_chunk({"chunk_type": "message_stop", "data": choice.finish_reason})
 
-        # Iterating until the end to fetch metadata chunk
-        async for chunk in response:
-            _ = chunk
+            # Iterating until the end to fetch metadata chunk
+            async for chunk in response:
+                _ = chunk
 
-        yield self.format_chunk({"chunk_type": "metadata", "data": chunk.usage})
+            yield self.format_chunk({"chunk_type": "metadata", "data": chunk.usage})
 
         logger.debug("finished streaming response from model")
 
@@ -506,7 +526,8 @@ class WriterModel(Model):
         formatted_request.pop("stream_options", None)
 
         try:
-            response = await self.client.chat.chat(**formatted_request)
+            async with self._get_client() as client:
+                response = await client.chat.chat(**formatted_request)
         except writerai.BadRequestError as e:
             if any(message in str(e).lower() for message in self.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(str(e)) from e
