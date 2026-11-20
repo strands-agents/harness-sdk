@@ -165,6 +165,12 @@ pub struct AgentConfig {
     /// The agent's id. Defaults to `agent`.
     #[builder(into)]
     pub id: Option<String>,
+    /// Send tool specs to the model sorted by name on every request (model calls, context
+    /// summaries, token counts), to keep prompt-cache prefixes stable when the same tools are
+    /// registered in a different order, for example from MCP servers (`sortTools`). Sorting
+    /// happens before middleware, which can still reorder them. Defaults to `false`, which keeps
+    /// registration order.
+    pub sort_tools: Option<bool>,
     /// How the tool calls of one model turn run. Defaults to concurrent.
     #[builder(into)]
     pub tool_executor: Option<ToolExecutorStrategy>,

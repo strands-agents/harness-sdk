@@ -353,6 +353,9 @@ impl Agent {
         ));
         local.set_sandbox(config.sandbox);
         local.set_printer(config.printer.unwrap_or(true));
+        local
+            .tool_registry_mut()
+            .set_sort_tool_specs(config.sort_tools.unwrap_or(false));
         *local.messages_mut() = config.messages;
         if let Some(app_state) = config.app_state {
             local.app_state().load_json(JsonValue::Object(app_state));

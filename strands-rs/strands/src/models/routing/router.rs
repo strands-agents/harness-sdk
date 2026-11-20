@@ -688,12 +688,7 @@ impl RouterAttachment {
             let context = self.router.routing_context(
                 agent.messages().to_vec(),
                 agent.system_prompt().cloned(),
-                agent
-                    .tool_registry()
-                    .list()
-                    .iter()
-                    .map(|tool| tool.tool_spec())
-                    .collect(),
+                agent.tool_registry().tool_specs(),
                 event.invocation_state().clone(),
                 event.invocation_context(),
                 self.attempts(),

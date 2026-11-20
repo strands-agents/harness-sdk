@@ -677,6 +677,20 @@ async fn replaces_the_opening_run_with_the_server_side_summary() {
 }
 
 #[tokio::test]
+async fn sends_the_server_side_summary_the_same_sorted_tools_as_the_model_call() {
+    let (mut agent, model) = server_side_agent(result_of(vec![summary("anthropic", "compacted")]));
+    agent.tool_registry_mut().clear();
+    agent.tool_registry_mut().set_sort_tool_specs(true);
+    for name in ["zeta", "alpha", "mike"] {
+        agent.tool_registry_mut().add(MockTool::new(name)).unwrap();
+    }
+    assert!(apply(&per_message(), &mut agent, 0.9).await);
+    let (_, options) = model.summarize_calls().remove(0);
+    let names: Vec<&str> = options.tool_specs.iter().map(|spec| spec.name.as_str()).collect();
+    assert_eq!(names, ["alpha", "mike", "zeta"]);
+}
+
+#[tokio::test]
 async fn places_a_summary_without_a_provider_as_a_client_side_marker() {
     let (_logs, _guard) = record_logs();
     let (mut agent, model) = server_side_agent(summary_result("written client-side", None));
