@@ -5,6 +5,8 @@ maintainedBy: partner
 languages:
   python:
     package: ag-ui-strands
+  typescript:
+    package: "@ag-ui/aws-strands"
 github: https://github.com/ag-ui-protocol/ag-ui
 docsPage: docs/integrations/integrations/ag-ui
 addedDate: 2025-12-03
