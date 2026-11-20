@@ -158,8 +158,13 @@ async function processFile(file: FileInfo): Promise<void> {
   // For namespace members, also strip the extra ../ that points up from the category subfolder
   // For namespace index pages, rewrite category-prefixed links to absolute slug paths
   //   e.g. interfaces/TracerConfig.md -> /api/typescript/telemetry:TracerConfig
+  // Pages are emitted flat, so a link that crosses modules (../../interfaces/Plugin.md, or
+  // ../../context-manager/interfaces/ArchiveConfig.md) has to lose its module hops too.
   let linkedFixed = content
-    .replace(/\]\(\.\.\/(classes|interfaces|type-aliases|functions|variables|enumerations)\/([^)]+)\)/g, '](../$2)')
+    .replace(
+      /\]\((?:\.\.\/)+(?:[\w-]+\/)*(classes|interfaces|type-aliases|functions|variables|enumerations)\/([^)]+)\)/g,
+      '](../$2)'
+    )
     .replace(/\]\(\.\.\/([^./][^)]+\.md(?:#[^)]*)?)\)/g, ']($1)')
 
   if (file.namespace) {
