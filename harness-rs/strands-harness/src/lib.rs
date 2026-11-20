@@ -52,6 +52,11 @@
 //! | `otel` | Span export selected by `OTEL_TRACES_EXPORTER` |
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+/// Compiles the README's code blocks as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../../README.md")]
+struct ReadmeDoctests;
+
 mod agent;
 mod builtin_tools;
 mod config;
