@@ -118,6 +118,8 @@ export interface DevChatCommand {
   sticky?: boolean
   /** Called when the developer submits a chat message instead of answering. */
   dropPending?(): void
+  /** The rows this panel's content needs right now, to shrink the frame to it. */
+  contentRows?(): number | undefined
   open(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
   attach?(context: DevChatCommandContext): void
   jobs?: DevChatJobs
@@ -250,6 +252,8 @@ export type NewChatPanel =
       sticky?: boolean
       /** Resolves whatever this panel is waiting on, so a chat message can be sent instead. */
       dropPending?: () => void
+      /** The rows its content needs, when that is fewer than the panel's usual share of the screen. */
+      contentRows?: () => number | undefined
     })
 
 export type ChatPanel = NewChatPanel & { id: string }

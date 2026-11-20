@@ -326,7 +326,10 @@ function ChatViewContent({
   const restingEditorHeight = composerPanel
     ? promptEditorHeight('', 0, editorWidth, editorMaxRows, false, party, editorMaxHeight)
     : editorHeight
-  const devPanelRows = devPanel ? devPanelHeight(terminalHeight, composerStatusRows + restingEditorHeight + 2) : 0
+  const devPanelShare = devPanel ? devPanelHeight(terminalHeight, composerStatusRows + restingEditorHeight + 2) : 0
+  const devPanelWanted = devPanel?.contentRows?.()
+  const devPanelRows =
+    devPanelWanted === undefined ? devPanelShare : Math.max(1, Math.min(devPanelShare, devPanelWanted + 2))
   const commandDeckHeight = composerStatusRows + restingEditorHeight + 2 + devPanelRows
   // A composer panel opens at full size and fades in; its contents carry the only animation.
   const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2 + devPanelRows

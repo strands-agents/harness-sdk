@@ -116,6 +116,35 @@ const cleanRequest = (request: WizardRequest): WizardRequest => ({
   })),
 })
 
+const TITLE_ROWS = 1
+const QUESTION_ROWS = 1
+const GAP_ROWS = 1
+const HINT_ROWS = 1
+const LAST_ROW_PADDING = 1
+
+const fieldRows = (field: WizardFieldSpec): number => {
+  if (field.kind === 'select') return field.options.length + (field.listLabel === undefined ? 0 : 1)
+  return 1
+}
+
+/** The rows one question needs, so its panel is not half the terminal with the rest empty. */
+export const wizardRequestRows = (request: WizardRequest | undefined): number | undefined => {
+  if (!request || request.steps.length !== 1) return undefined
+  const step = request.steps[0]!
+  const fields = step.fields.reduce((rows, field) => rows + fieldRows(field), 0)
+  return (
+    TITLE_ROWS +
+    (request.question === undefined ? 0 : QUESTION_ROWS) +
+    GAP_ROWS +
+    fields +
+    (step.notice ? 1 : 0) +
+    (step.footnote === undefined ? 0 : 1) +
+    (request.footer ? 1 : 0) +
+    LAST_ROW_PADDING +
+    HINT_ROWS
+  )
+}
+
 export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string, WizardAnswer> => {
   const answers: Record<string, WizardAnswer> = {}
   for (const step of steps)

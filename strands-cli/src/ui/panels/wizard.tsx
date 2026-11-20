@@ -398,7 +398,8 @@ export const Wizard = ({
   const blocking = blockingNotice(steps)
   const ready = blocking === undefined
   const walked = steps.length > 1
-  const compact = height < FULL_ROWS
+  // One question is sized to its content, so it keeps its spacing; only a walked form has to crowd.
+  const compact = walked && height < FULL_ROWS
   const focused = rows[cursor.index]
   const editor = editing.value
   const firstButton = rows.findIndex((row) => row.kind === 'button')
