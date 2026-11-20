@@ -127,11 +127,15 @@ describe.skipIf(process.platform === 'win32')('python_repl local execution', () 
 
   it('cancellation stops the call and propagates unwrapped', async () => {
     const controller = new AbortController()
-    const pending = run({ code: 'import time; time.sleep(10)' }, toolContext(undefined, controller.signal))
-    setTimeout(() => controller.abort(), 100)
+    const code = "print('partial', flush=True)\nimport time; time.sleep(10)"
+    const pending = run({ code }, toolContext(undefined, controller.signal)).catch((e: unknown) => e)
+    setTimeout(() => controller.abort(), 500)
     const start = Date.now()
-    await expect(pending).rejects.toBeInstanceOf(SandboxAbortError)
+    const error = await pending
+    expect(error).toBeInstanceOf(SandboxAbortError)
     expect(Date.now() - start).toBeLessThan(5000)
+    const payload = JSON.parse((error as Error).message.split('\n')[1]!)
+    expect(payload).toStrictEqual({ output: 'partial\n', error: '', exit_code: 130 })
   })
 })
 

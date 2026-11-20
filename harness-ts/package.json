@@ -65,6 +65,7 @@
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^1.1.2",
+    "@aws-sdk/client-bedrock-agentcore": "^3.1165.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
@@ -83,7 +84,7 @@
     "@anthropic-ai/sdk": "^1.4.0",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@google/genai": "^2.6.0",
-    "@strands-agents/sdk": ">=1.25.0 <2.0.0",
+    "@strands-agents/sdk": ">=1.26.0 <2.0.0",
     "openai": "^6.45.0"
   },
   "peerDependenciesMeta": {

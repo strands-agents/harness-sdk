@@ -25,8 +25,6 @@ import type { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../..
  * - `string[]` — tool results from tools to include (e.g. `['bash']` or `['tool::bash']`) and, prefixed with `!`, tools
  *   to exclude. A list of only exclusions acts on every other tool.
  * - `"*"` — whole messages
- *
- * @experimental
  */
 export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | 'media' | string[]
 
@@ -150,6 +148,11 @@ export class OffloadTargetMatcher {
 
     const toolName = toolNameMap.get(block.toolUseId)
     if (!toolName) return false
+    return this.matchesTool(toolName)
+  }
+
+  /** Whether a `string[]` target covers the tool with this name; any other target covers none. */
+  matchesTool(toolName: string): boolean {
     if (this._include) return this._include.has(toolName)
     if (this._exclude) return !this._exclude.has(toolName)
     return false

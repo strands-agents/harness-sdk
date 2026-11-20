@@ -9,6 +9,7 @@ import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
 import { InvokeModelStage, type ExecuteToolContext } from '../middleware/index.js'
 import type { Plugin } from '../plugins/plugin.js'
+import { isLoadTools } from '../tools/load-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { tool } from '../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../tools/tool.js'
@@ -43,6 +44,19 @@ const FOREGROUND_TOOL_NAMES = new Set([
   'truncate_context',
   'pin_context',
 ])
+/** The manage tools {@link BackgroundTasks} created, recognized under any `manageToolName`. */
+const MANAGE_TOOLS = new WeakSet<Tool>()
+
+/**
+ * Whether a tool is the manage tool of a {@link BackgroundTasks}, under its default name or a `manageToolName`.
+ *
+ * @param tool - The tool to check
+ * @returns Whether {@link BackgroundTasks} created the tool
+ * @internal
+ */
+export function isManageTool(tool: Tool | undefined): boolean {
+  return tool !== undefined && MANAGE_TOOLS.has(tool)
+}
 
 /** @internal */
 export class BackgroundTasks implements Plugin {
@@ -58,6 +72,7 @@ export class BackgroundTasks implements Plugin {
    * invocation with `startedBy`. Recovered tasks have no entry and count as earlier.
    */
   private readonly _taskDispatchInvocation = new Map<string, InvocationContext | undefined>()
+  private _raisedInterrupt = false
   private _agent!: Agent
   private _manager!: BackgroundTaskManager
 
@@ -98,6 +113,7 @@ export class BackgroundTasks implements Plugin {
         return { taskId: cancelled.taskId, status: cancelled.status }
       },
     })
+    MANAGE_TOOLS.add(this._manageTool)
   }
 
   getTools(): Tool[] {
@@ -260,13 +276,19 @@ export class BackgroundTasks implements Plugin {
 
     const tasks = [...this._tasks.values()]
     const interrupts = tasks.flatMap((task) => (task.status === 'input_required' ? (task.interrupts ?? []) : []))
-    if (interrupts.length > 0) throw new InterruptError([...interrupts])
+    if (interrupts.length > 0) {
+      this._raisedInterrupt = true
+      throw new InterruptError([...interrupts])
+    }
     this._deliverReady(event, tasks)
   }
 
   private async _afterInvocation(event: AfterInvocationEvent): Promise<void> {
     const agent = event.agent as Agent
-    if (agent._interruptState.activated) return
+    // A cancel can drop the interrupt this invocation already returns, so the interrupt state is not enough.
+    const raisedInterrupt = this._raisedInterrupt
+    this._raisedInterrupt = false
+    if (raisedInterrupt || agent._interruptState.activated) return
     let tasks = [...this._tasks.values()]
     while (
       this._config.waitForCompletion !== false &&
@@ -285,6 +307,8 @@ export class BackgroundTasks implements Plugin {
     // A pending caller takes priority over settlement and delivery: it takes the turn,
     // and task results stay persisted to be delivered in a later invocation's passes.
     if (agent.pendingInvocations.length > 0) return
+    // Delivering would start another pass; after a cancel the results wait for the next invocation instead.
+    if (agent._cancelRequested) return
     this._deliverReady(event, tasks)
   }
 
@@ -379,11 +403,28 @@ export class BackgroundTasks implements Plugin {
       }
       this._tasks.set(task.taskId, recoverTask(task))
     }
-    for (const interruptId of recoveredInterruptIds) delete this._agent._interruptState.interrupts[interruptId]
+    this._dropInterrupts(recoveredInterruptIds)
+    this._persistTasks()
+  }
+
+  /**
+   * Cancels every non-terminal task and drops the agent interrupts they raised. The tasks are recorded as
+   * cancelled before this returns; it does not wait for their tools to stop.
+   */
+  cancelAll(): void {
+    const interruptIds = [...this._tasks.values()]
+      .filter((task) => !isTaskStatusTerminal(task.status))
+      .flatMap((task) => (task.interrupts ?? []).map((interrupt) => interrupt.id))
+    for (const task of this._manager.cancelAll()) this._tasks.set(task.taskId, task)
+    this._dropInterrupts(interruptIds)
+    this._persistTasks()
+  }
+
+  private _dropInterrupts(interruptIds: Iterable<string>): void {
+    for (const interruptId of interruptIds) delete this._agent._interruptState.interrupts[interruptId]
     if (this._agent._interruptState.activated && this._agent._interruptState.getInterruptsList().length === 0) {
       this._agent._interruptState.deactivate()
     }
-    this._persistTasks()
   }
 
   private _persistTasks(): void {
@@ -409,6 +450,7 @@ export class BackgroundTasks implements Plugin {
       tool !== undefined &&
       tool.name !== this._manageTool.name &&
       !FOREGROUND_TOOL_NAMES.has(tool.name) &&
+      !isLoadTools(tool) &&
       !(tool instanceof AgentAsTool && tool.delegate)
     )
   }

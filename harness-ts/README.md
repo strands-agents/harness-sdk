@@ -194,7 +194,7 @@ Four tools take a config object, each key an option of the tool's factory: `shel
 (`{ description }`), `web_fetch` (`{ model, transport }`, its summarizer as a `"provider/name"` string or a
 `Model`/`ModelRouter`), `programmatic_tool_caller` (`{ allowedTools, timeout }`, the tools its
 sandboxed code may call and the run's time budget in seconds; `null` lifts each bound) and
-`subagent` (`{ maxDepth }`, how deep delegation may nest). The rest are on/off only. The same shape
+`subagent` (`{ maxDepth }`, how deep delegation may nest; `0` removes the tool). The rest are on/off only. The same shape
 works in a JSON profile, so a configured `builtinTools` mapping ports between the Python and
 TypeScript libraries unchanged (JSON keys are camelCase in both; only Python keyword arguments use
 `allowed_tools` and `max_depth`):
@@ -232,7 +232,8 @@ general-purpose delegate, enabled by default (it is just a name in `builtinTools
 that inherits this agent's configuration (its model, plugins, and interventions, so the gate
 reaches the delegate too), runs it in its own context, and returns a single final report. The
 child's tools are restricted to a subset of this agent's own (it can never gain a capability the
-parent lacks), and delegation depth is bounded so a delegate cannot recurse without limit. Drop
+parent lacks), it keeps every MCP server this agent has, and delegation depth is bounded so a
+delegate cannot recurse without limit. Drop
 `subagent` from `builtinTools` to turn it off:
 
 ```typescript
@@ -241,12 +242,13 @@ await createHarness({ builtinTools: { subagent: false } }) // subagent disabled
 ```
 
 The tool's model-facing parameters are derived from configuration. For a fully configured tool
-(custom roles, model tiers, fixed prompts), build one with `makeSubagent` and pass it via `tools`
-with `subagent` dropped from `builtinTools`. You supply the `builder`, a function that turns a
-resolved `AgentSpec` into the child agent (typically calling `createHarness`); this is the seam
-that makes the child a harness member. Delegation depth is bounded at two levels by default; pass
-`maxDepth` to change it. Each axis (`instructions`, `tools`, `mcpServers`, `model`, `context`) becomes a
-parameter, or not, depending on whether it is `Fixed`, `Inherit`, `Open`, or `Choice`:
+(custom roles, model tiers, fixed prompts), build one with `makeSubagent` (the SDK's, re-exported here
+with its axis types) and pass it via `tools` with `subagent` dropped from `builtinTools`. You supply the
+`builder`, a sync or async function that turns a resolved `AgentSpec` into the child agent (typically
+calling `createHarness`); this is the seam that makes the child a harness member. Delegation depth is
+bounded at two levels by default; pass `maxDepth` (at least 1) to change it. Each axis (`instructions`,
+`tools`, `model`, `context`) becomes a parameter, or not, depending on whether it is `Fixed`, `Inherit`,
+`Open`, or `Choice`; a `Choice` entry is a bare name or `new Option(name, value, description)`:
 
 ```typescript
 import { createHarness, makeSubagent, Fixed, Inherit, Preset, type AgentSpec } from '@strands-agents/harness'
@@ -254,14 +256,21 @@ import { createHarness, makeSubagent, Fixed, Inherit, Preset, type AgentSpec } f
 const NO_SUBAGENT = { subagent: false } // the defaults minus delegation; web_search stays provider-dependent
 
 const reviewer = makeSubagent({
-  builder: (spec: AgentSpec) => createHarness({ instructions: spec.instructions ?? undefined, builtinTools: NO_SUBAGENT }),
+  builder: (spec: AgentSpec) => createHarness({ instructions: spec.instructions, builtinTools: NO_SUBAGENT }),
   presets: { reviewer: new Preset({ instructions: 'You review diffs.', description: 'reviews diffs' }) },
-  instructions: new Fixed(null), // the role owns the prompt; parameter removed
+  instructions: new Fixed(), // the role owns the prompt; parameter removed
   model: new Inherit(),
 })
 
 const agent = await createHarness({ tools: [reviewer], builtinTools: NO_SUBAGENT })
 ```
+
+> **Breaking change:** the harness used to ship its own copy of this tool. Moving to the SDK's drops the
+> `mcpServers` parameter (a delegate always keeps every MCP server), `makeSubagent`'s `inheritedTools` /
+> `inheritedMcpServers` options, and `AgentSpec.task` / `context` / `lastMessages`. `Option` is now
+> `new Option(name, value, description)` (was `new Option(name, { value, description })`), the depth budget
+> lives at `appState` key `strands.subagent_depth` (was `subagentDepth`), child interrupt ids are namespaced as
+> `subagent:<toolUseId>:<id>`, and `maxDepth: 0` removes the tool.
 
 For focused expertise, wrap your own `Agent` instances with `Agent.asTool()` and pass them in
 `tools`; each becomes a tool the main agent can call, named after the agent's `name`. Every call
@@ -323,14 +332,17 @@ await createHarness({ builtinTools: { web_fetch: { model: 'anthropic/claude-haik
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
-`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
-native search (Amazon Bedrock, other Mantle models, a `Model` instance) `web_search` is
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. Other
+Amazon Bedrock models get a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
+instead. In case of no native search (a `Model` instance from another provider) `web_search` is
 off by default. To enable web search for these providers, you can opt into Exa with
 `{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
 override a provider's native web search by adding `'exa'` explicitly to any model. If you are
 using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
-`AmazonBedrockFullAccess`) to avoid failing search.
+`AmazonBedrockFullAccess`) to avoid failing search; AgentCore web search needs
+`bedrock-agentcore:InvokeWebSearch`.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
@@ -339,7 +351,8 @@ using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
 
 ```typescript
 await createHarness({ model: 'openai/gpt-5.6-sol' }) // native search on, it's in the defaults
-await createHarness({ builtinTools: { web_search: 'exa' } }) // Bedrock: search through Exa (third party)
+await createHarness() // Bedrock: AgentCore web search, also a default
+await createHarness({ builtinTools: { web_search: 'exa' } }) // any model: search through Exa (third party)
 ```
 
 ## Caching reused context

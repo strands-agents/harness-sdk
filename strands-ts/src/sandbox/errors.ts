@@ -22,9 +22,14 @@ export class SandboxTimeoutError extends Error {
 
 /**
  * Thrown by sandbox execution when the abort signal fires.
+ *
+ * `stdout` and `stderr` hold whatever the process wrote before it was killed.
  */
 export class SandboxAbortError extends Error {
-  constructor() {
+  constructor(
+    readonly stdout = '',
+    readonly stderr = ''
+  ) {
     super('Execution aborted')
     this.name = 'SandboxAbortError'
   }

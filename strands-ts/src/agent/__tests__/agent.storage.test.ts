@@ -5,14 +5,14 @@ import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { SessionManager } from '../../session/session-manager.js'
 
 describe('Agent storage', () => {
-  describe('agent-level storage flows to ContextManager stash', () => {
+  describe('agent-level storage flows to ContextManager archive', () => {
     it('auto-created ContextManager uses agent storage when provided', async () => {
       const storage = new InMemoryStorage()
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
       const agent = new Agent({ model, contextManager: 'auto', storage })
       await agent.invoke('hi')
       expect(agent.contextManager).toBeDefined()
-      expect(agent.contextManager!.stash).toBeDefined()
+      expect(agent.contextManager!.archive).toBeDefined()
     })
 
     it('auto-created ContextManager uses InMemoryStorage when no agent storage', async () => {
@@ -20,7 +20,7 @@ describe('Agent storage', () => {
       const agent = new Agent({ model, contextManager: 'auto' })
       await agent.invoke('hi')
       expect(agent.contextManager).toBeDefined()
-      expect(agent.contextManager!.stash).toBeDefined()
+      expect(agent.contextManager!.archive).toBeDefined()
     })
   })
 

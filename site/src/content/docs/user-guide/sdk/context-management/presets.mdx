@@ -1,13 +1,18 @@
 ---
 title: Strategy Presets
 description: "Named strategy presets that expand to preconfigured Offload strategies for common context management patterns."
-experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-py/src/strands/_context_manager/presets.py
   - path: strands-ts/src/context-manager/presets.ts
 addedDate: 2026-09-14
 ---
+
+:::caution[Experimental in Python]
+In Python, the `ContextManager` strategy API is still exported from
+`strands.experimental.context_manager` and may change in future versions. The
+TypeScript API is stable.
+:::
 
 Named strategy presets are shorthand for preconfigured `Offload` strategies. Pass a preset name string in the strategies array instead of building the strategy by hand.
 

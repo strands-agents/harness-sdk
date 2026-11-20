@@ -7,6 +7,7 @@ import { NullConversationManager } from '../../conversation-manager/null-convers
 import { ContextManager } from '../../context-manager/context-manager.js'
 import { Offload } from '../../context-manager/strategies/offload/index.js'
 import { createRetrievalTool } from '../../context-manager/retrieval-tool.js'
+import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
 import { tool } from '../../tools/tool-factory.js'
 import { OffloadedBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { ConversationManager } from '../../conversation-manager/conversation-manager.js'
@@ -124,6 +125,40 @@ describe('Agent contextManager', () => {
       const plugins = internals(agent)._pluginRegistry._plugins
       expect(plugins.get('strands:context-manager')).toBeInstanceOf(ContextManager)
     })
+
+    it('registers the loader of an Offload.defer strategy as a context manager tool', async () => {
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        contextManager: { strategies: [Offload.defer('toolSpecs')] },
+      })
+
+      await agent.initialize()
+
+      const retrieval = agent.toolRegistry.get('retrieve_context')
+      const loader = agent.toolRegistry.get(LOAD_TOOLS_TOOL_NAME)
+      expect(retrieval).toBeDefined()
+      expect(loader).toBeDefined()
+      expect(agent.contextManager?.getTools()).toEqual([retrieval, loader])
+    })
+
+    it('rejects an agent tool named load_tools when it defers tools', async () => {
+      const loadTools = tool({
+        name: 'load_tools',
+        description: 'Load data.',
+        inputSchema: z.object({}),
+        callback: () => 'done',
+      })
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        tools: [loadTools],
+        contextManager: { strategies: ['deferredToolLoading'] },
+      })
+
+      await expect(agent.initialize()).rejects.toThrow(
+        "contextManager adds a tool named 'load_tools' for Offload.defer and the 'deferredToolLoading' preset, and " +
+          "the agent already has one; rename the agent's tool"
+      )
+    })
   })
 
   describe('when ContextManager instance', () => {
@@ -177,7 +212,7 @@ describe('Agent contextManager', () => {
       expect(received).toBeInstanceOf(TextBlock)
       expect((received as TextBlock).text).toBe(stored.text)
 
-      const retrieve = createRetrievalTool(agent.contextManager!.stash!) as unknown as {
+      const retrieve = createRetrievalTool(agent.contextManager!.archive!) as unknown as {
         invoke(input: unknown): Promise<unknown>
       }
       expect(await retrieve.invoke({ reference: 'tu-1', pattern: 'row-4321' })).toContain('row-4321')

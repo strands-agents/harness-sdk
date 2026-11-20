@@ -7,6 +7,8 @@ import base64
 import json
 import logging
 import mimetypes
+import re
+import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -24,7 +26,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._defaults import resolve_config_metadata
-from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ChatCompletionsTools, ModelInfo, lookup_chat_completions_tools
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args
 from ._openai_cache import apply_cache_config
 from ._openai_errors import classify_openai_error
@@ -44,6 +46,48 @@ class Client(Protocol):
     def chat(self) -> Any:
         """Chat completions interface."""
         ...
+
+
+# The OpenAI API and Bedrock Mantle, where the tool limits in the shared model info were measured.
+_TOOL_LIMITS_HOST = re.compile(r"api\.openai\.com|bedrock-mantle\.[a-z0-9-]+\.api\.aws")
+
+
+def _has_openai_tool_limits(client: Any) -> bool:
+    """Whether the client targets an endpoint the shared tool limits were measured on."""
+    host = getattr(getattr(client, "base_url", None), "host", None)
+    return isinstance(host, str) and _TOOL_LIMITS_HOST.fullmatch(host.lower()) is not None
+
+
+def _apply_chat_completions_tools(client: Any, request: dict[str, Any]) -> ChatCompletionsTools | None:
+    """Turn reasoning off in a request with tools when the model accepts them only that way and none is asked for.
+
+    Returns:
+        The limit OpenAI's Chat Completions API puts on the request's tools, None when it has none or the client
+        targets an endpoint the limits were not measured on.
+    """
+    if not request.get("tools") or not _has_openai_tool_limits(client):
+        return None
+    model_id = request["model"]
+    limit = lookup_chat_completions_tools(model_id)
+    if limit == "reasoningOff" and request.get("reasoning_effort") is None:
+        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per model id).
+        warnings.warn(
+            f"model_id=<{model_id}> | this model accepts tools on the Chat Completions API only with reasoning"
+            " off, sending reasoning_effort='none'; use OpenAIResponsesModel to keep reasoning",
+            stacklevel=1,
+        )
+        request["reasoning_effort"] = "none"
+    return limit
+
+
+def _with_responses_hint(error: openai.BadRequestError, model_id: str) -> openai.BadRequestError:
+    """Add the way out to OpenAI's rejection of tools for a model that accepts none on Chat Completions."""
+    return openai.BadRequestError(
+        f"{error.message} {model_id} does not accept tools on the Chat Completions API with any reasoning_effort."
+        " Use OpenAIResponsesModel instead.",
+        response=error.response,
+        body=error.body,
+    )
 
 
 class OpenAIModel(Model):
@@ -747,6 +791,7 @@ class OpenAIModel(Model):
         # client. The asyncio event loop does not allow connections to be shared. For more details, please refer to
         # https://github.com/encode/httpx/discussions/2959.
         async with self._get_client() as client:
+            tool_limit = _apply_chat_completions_tools(client, request)
             try:
                 response = await client.chat.completions.create(**request)
 
@@ -829,6 +874,13 @@ class OpenAIModel(Model):
                 if error_kind == "context_overflow":
                     logger.warning("OpenAI threw context window overflow error")
                     raise ContextWindowOverflowException(str(error)) from error
+                # OpenAI names this param in both of its rejections: tools with reasoning, and "none" unsupported.
+                if (
+                    tool_limit == "unsupported"
+                    and isinstance(error, openai.BadRequestError)
+                    and error.param == "reasoning_effort"
+                ):
+                    raise _with_responses_hint(error, request["model"]) from error
                 raise
         logger.debug("finished streaming response from model")
 

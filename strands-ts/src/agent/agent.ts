@@ -191,9 +191,10 @@ export type AgentConfig = {
    */
   model?: Model<BaseModelConfig> | ModelRouter | string
   /**
-   * Model for the auxiliary side calls the SDK makes outside the main agent loop: context
-   * summarization, memory extraction, the HITL risk classifier, LLM steering, the goal judge, and
-   * the `web_fetch` analyst. Defaults to `model`, so leaving it unset changes nothing; set it
+   * Model for the auxiliary side calls the SDK makes outside the main agent loop:
+   * conversation-manager summarization, memory extraction, the HITL risk classifier, LLM steering,
+   * the goal judge, and the `web_fetch` analyst. The context manager's summarize strategy does
+   * not use it; it resolves `this model > model`. Defaults to `model`, so leaving it unset changes nothing; set it
    * (typically to a smaller, cheaper model) to move every side call off the main model at once.
    * Each side call resolves its model as `component's own model > auxModel > model`.
    * Accepts a Model or a string representing a Bedrock model ID, like `model`; a ModelRouter is
@@ -208,6 +209,13 @@ export type AgentConfig = {
    * {@link Agent} instances are automatically wrapped as tools via {@link Agent.asTool}.
    */
   tools?: ToolList
+  /**
+   * Send tool specs to the model sorted by name, on every request (model calls, context summaries, token
+   * counts), to keep prompt-cache prefixes stable when the same tools are registered in a different order,
+   * e.g. from MCP servers. Sorting happens before middleware, which can still reorder them. Defaults to
+   * false, which keeps registration order.
+   */
+  sortTools?: boolean
   /**
    * A system prompt which guides model behavior.
    */
@@ -237,7 +245,7 @@ export type AgentConfig = {
    * - `"agentic"`: (Experimental) Lets the model drive context management via injected tools,
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
-   * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManagerConfig` object: Custom strategy pipeline and archive configuration.
    * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
@@ -682,7 +690,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     if (config?.contextManager === 'agentic') {
       tools.push(summarizeContextTool, truncateContextTool, pinContextTool)
     }
-    this._toolRegistry = new ToolRegistry(tools)
+    this._toolRegistry = new ToolRegistry(tools, { sortToolSpecs: config?.sortTools ?? false })
     this._mcpClients = mcpClients
 
     // Initialize hooks registry
@@ -1264,9 +1272,10 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Cancels the current agent invocation cooperatively. Idempotent; no-op when
-   * the agent is not invoking. The pending `invoke`/`stream` resolves with
-   * `stopReason: 'cancelled'`.
+   * Cancels the current agent invocation cooperatively. Idempotent; no-op for the
+   * invocation when the agent is not invoking (`cancelBackgroundTasks` still applies).
+   * The pending `invoke`/`stream` resolves with `stopReason: 'cancelled'`, or with its natural
+   * `stopReason` if it had already finished its turn and was only waiting for background tasks.
    *
    * The agent stops at the next cancellation-safe point (model streaming, before
    * tools, between sequential tool calls, or the top of a loop cycle). A tool
@@ -1276,15 +1285,13 @@ export class Agent implements LocalAgent, InvokableAgent {
    * For cancellation driven from outside the agent, prefer the `cancelSignal`
    * option on `invoke` / `stream`.
    *
-   * A cancel that arrives after the final model pass (e.g. during background-task
-   * settlement) resolves the call with that pass's result and its own `stopReason`.
    * After an immediate cancel, a hook's `AfterInvocationEvent.resume` still starts
    * another pass.
    *
    * Only the *running* invocation is cancelled; a queued invocation is removed by
    * aborting the `cancelSignal` its caller passed.
    *
-   * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
+   * @param options - See {@link CancelOptions} for `message`, `afterCurrentTools`, and `cancelBackgroundTasks`.
    *
    * @example
    * ```typescript
@@ -1300,6 +1307,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   public cancel(options?: CancelOptions): void {
+    if (options?.cancelBackgroundTasks && this._initialized) {
+      this._backgroundTasks?.cancelAll()
+    }
     if (!this._isInvoking) {
       return
     }
@@ -1324,6 +1334,15 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private get isAborted(): boolean {
     return this._abortSignal.aborted
+  }
+
+  /**
+   * Whether cancellation has been requested in any form, including a deferred cancel.
+   *
+   * @internal
+   */
+  get _cancelRequested(): boolean {
+    return this._deferredCancel || this.isAborted
   }
 
   /**
@@ -2001,6 +2020,9 @@ export class Agent implements LocalAgent, InvokableAgent {
     }
     if (agentModelId) agentSpanOptions.modelId = agentModelId
     if (this.systemPrompt !== undefined) agentSpanOptions.systemPrompt = this.systemPrompt
+    if (this.tools.length > 0) {
+      agentSpanOptions.toolsConfig = Object.fromEntries(this.tools.map((tool) => [tool.name, tool.toolSpec]))
+    }
     const agentSpan = this._tracer.startAgentSpan(agentSpanOptions)
 
     let caughtError: Error | undefined
@@ -2896,7 +2918,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       model: selectedModel,
       messages: this.messages.map((msg) => msg.clone()),
       ...(this.systemPrompt !== undefined && { systemPrompt: cloneSystemPrompt(this.systemPrompt) }),
-      toolSpecs: deepCopy(this._toolRegistry.list().map((tool) => tool.toolSpec)) as unknown as ToolSpec[],
+      toolSpecs: deepCopy(this._toolRegistry.toolSpecs()) as unknown as ToolSpec[],
       ...(toolChoice !== undefined && { toolChoice: deepCopy(toolChoice) as unknown as ToolChoice }),
       invocationState,
       ...(projectedInputTokens !== undefined && { projectedInputTokens }),
@@ -2940,6 +2962,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
             ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
+            ...(ctx.deferredTools?.size ? { deferredTools: ctx.deferredTools } : {}),
           }
           const gen = self._streamFromModel(
             ctx.model,
@@ -3014,7 +3037,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     messages = fillEmptyAssistantMessages(normalizeToolUseNames(messages))
-    const proxy = new ModelProxy(model)
+    const proxy = new ModelProxy(model, this)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
     try {
       let result = await streamGenerator.next()

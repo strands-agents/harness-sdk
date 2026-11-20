@@ -7,7 +7,6 @@
 
 import { z } from 'zod'
 
-import { normalizeError } from '../errors.js'
 import { BedrockModel } from '../models/bedrock.js'
 import { Model } from '../models/model.js'
 import { ModelProxy } from '../models/model-proxy.js'
@@ -98,8 +97,10 @@ export class LLMDecisionModel extends DecisionModel {
     questions: Q,
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
-    const schema = buildAnswerSchema(questions)
-    const tool = new StructuredOutputTool(schema)
+    const answerSchemas = buildAnswerSchemas(questions)
+    const tool = new StructuredOutputTool(
+      z.object(answerSchemas).describe('Answer for each question in the input decision set.')
+    )
     const messages = buildMessages(state)
     const systemPrompt = buildSystemPrompt(this._systemPrompt)
 
@@ -126,16 +127,7 @@ export class LLMDecisionModel extends DecisionModel {
       throw new Error('decision model returned no structured answers')
     }
 
-    let parsed: Record<string, { answer: string; reason?: string }>
-    try {
-      parsed = schema.parse(toolUse.input) as Record<string, { answer: string; reason?: string }>
-    } catch (error) {
-      throw new Error(`decision model returned an invalid answer set: ${normalizeError(error).message}`, {
-        cause: error,
-      })
-    }
-
-    const answers = convertAnswers(parsed, questions)
+    const answers = parseAnswers(toolUse.input, answerSchemas, questions)
     const latencyMs = metadata?.metrics?.latencyMs ?? Math.round(globalThis.performance.now() - startedAt)
     const usage = metadata?.usage
 
@@ -153,23 +145,25 @@ export class LLMDecisionModel extends DecisionModel {
   }
 }
 
-function buildAnswerSchema<const Q extends Record<string, Question>>(
-  questions: Q
-): z.ZodObject<Record<string, z.ZodObject>> {
-  const shape: Record<string, z.ZodObject> = {}
-  for (const [id, question] of Object.entries(questions)) {
-    const allowUncertain = uncertaintyAllowed(question)
-    const answer = z.enum(answerLiterals(question, allowUncertain) as [string, ...string[]])
-    // A reason is only ever surfaced on Uncertain, so questions that cannot be uncertain do not offer one.
-    const entry = allowUncertain
-      ? z.object({
-          answer,
-          reason: z.string().optional().describe(`Explanation when answer is '${UNCERTAIN_LITERAL}'; omit otherwise.`),
-        })
-      : z.object({ answer })
-    shape[id] = entry.describe(question.question)
-  }
-  return z.object(shape).describe('Answer for each question in the input decision set.')
+// Object.fromEntries keeps an id such as `__proto__` as an own key.
+function buildAnswerSchemas(questions: Record<string, Question>): Record<string, z.ZodObject> {
+  return Object.fromEntries(
+    Object.entries(questions).map(([id, question]) => {
+      const allowUncertain = uncertaintyAllowed(question)
+      const answer = z.enum(answerLiterals(question, allowUncertain) as [string, ...string[]])
+      // A reason is only ever surfaced on Uncertain, so questions that cannot be uncertain do not offer one.
+      const entry = allowUncertain
+        ? z.object({
+            answer,
+            reason: z
+              .string()
+              .optional()
+              .describe(`Explanation when answer is '${UNCERTAIN_LITERAL}'; omit otherwise.`),
+          })
+        : z.object({ answer })
+      return [id, entry.describe(question.question)]
+    })
+  )
 }
 
 function answerLiterals(question: Question, allowUncertain: boolean): readonly string[] {
@@ -177,18 +171,30 @@ function answerLiterals(question: Question, allowUncertain: boolean): readonly s
   return allowUncertain ? [...base, UNCERTAIN_LITERAL] : [...base]
 }
 
-function convertAnswers<const Q extends Record<string, Question>>(
-  raw: Record<string, { answer: string; reason?: string }>,
+// Each answer is validated on its own: a whole-object zod parse drops an own `__proto__` key and
+// accepts a missing one through the inherited prototype.
+function parseAnswers<const Q extends Record<string, Question>>(
+  input: unknown,
+  answerSchemas: Record<string, z.ZodObject>,
   questions: Q
 ): { [K in keyof Q]: AnswerOf<Q[K]> } {
-  const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
-  for (const id of Object.keys(questions) as (keyof Q)[]) {
-    const question = questions[id]!
-    const entry = raw[id as string]
-    if (entry === undefined) throw new Error(`decision model omitted answer for question id=<${String(id)}>`)
-    answers[id] = convertSingleAnswer(question, entry) as AnswerOf<Q[typeof id]>
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('decision model returned an invalid answer set: expected an object')
   }
-  return answers
+  const raw = input as Record<string, unknown>
+  return Object.fromEntries(
+    Object.keys(questions).map((id) => {
+      if (!Object.hasOwn(raw, id)) throw new Error(`decision model omitted answer for question id=<${id}>`)
+      const parsed = answerSchemas[id]!.safeParse(raw[id])
+      if (!parsed.success) {
+        throw new Error(
+          `decision model returned an invalid answer set: question id=<${id}> | ${parsed.error.message}`,
+          { cause: parsed.error }
+        )
+      }
+      return [id, convertSingleAnswer(questions[id]!, parsed.data as { answer: string; reason?: string })]
+    })
+  ) as { [K in keyof Q]: AnswerOf<Q[K]> }
 }
 
 function convertSingleAnswer(

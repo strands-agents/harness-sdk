@@ -19,11 +19,12 @@ import json
 import logging
 import os
 import re
+import sys
 from collections.abc import Callable
 from importlib import resources
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
-from strands.models import Model, ModelRouter
+from strands.models import BedrockModel, Model, ModelRouter
 
 from strands_harness import defaults
 from strands_harness.types.agent import Effort
@@ -88,7 +89,6 @@ _BEDROCK_GPT_PREFIXES = ("openai.gpt-5.", "openai.gpt-daybreak-", "openai.gpt-6-
 # regionally, so unlike the OpenAI-on-Bedrock case no inference-profile prefix is carried over.
 _BEDROCK_WEB_FETCH_FAMILY_MODELS = {
     "amazon.": "amazon.nova-lite-v1:0",
-    "meta.": "meta.llama3-2-3b-instruct-v1:0",
     "mistral.": "mistral.mistral-small-2402-v1:0",
 }
 
@@ -355,8 +355,9 @@ class Provider(NamedTuple):
     ``web_search`` is enabled through model config on the providers whose SDK exposes a
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
     Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
-    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock has none: Converse has no
-    mechanism, and Anthropic's web search tool isn't served on Bedrock.
+    bedrock-mantle to its GPT-5, GPT-6, and Daybreak models. Bedrock has none (Converse has no
+    mechanism, and Anthropic's web search tool isn't served on Bedrock), so every other Bedrock API
+    gets AgentCore web search as a harness tool instead (``_web_search_kind``).
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock, Anthropic direct, OpenAI, and bedrock-mantle (the harness
@@ -450,15 +451,56 @@ def _has_web_search(provider_name: str, name: str) -> bool:
     return provider_name != "bedrock-mantle" or name.startswith(_BEDROCK_GPT_PREFIXES)
 
 
-def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
-    """Whether native web search can be enabled for ``model``.
+def _anthropic_bedrock_client(model: Model) -> Any:
+    """The client of an ``AnthropicModel`` on Anthropic's Bedrock (InvokeModel) or Mantle client, else ``None``."""
+    anthropic_model = sys.modules.get("strands.models.anthropic")  # loaded whenever such an instance exists
+    if anthropic_model is None or not isinstance(model, anthropic_model.AnthropicModel):
+        return None
+    import anthropic
 
-    A ``Model`` or ``ModelRouter`` instance has an unknown provider, so this is ``False``; the
-    caller configures search on the instance directly. ``None`` resolves to the default model.
+    bedrock_clients = tuple(
+        c for c in (getattr(anthropic, n, None) for n in ("AsyncAnthropicBedrock", "AsyncAnthropicBedrockMantle")) if c
+    )
+    return model.client if isinstance(model.client, bedrock_clients) else None
+
+
+def _on_bedrock(model: Model | ModelRouter) -> bool:
+    """Whether a model instance calls Amazon Bedrock: ``BedrockModel`` (Converse), an ``AnthropicModel`` on a
+    Bedrock or Mantle client, an OpenAI model with ``bedrock_mantle_config``, or a router of only those."""
+    if isinstance(model, ModelRouter):
+        return all(_on_bedrock(c.model) for c in model.candidates)
+    return (
+        isinstance(model, BedrockModel)
+        or _anthropic_bedrock_client(model) is not None
+        or getattr(model, "_bedrock_mantle_config", None) is not None
+    )
+
+
+def _web_search_kind(model: Model | ModelRouter | str | None) -> Literal["native", "agentcore"] | None:
+    """How ``web_search`` is served for ``model`` without the Exa opt-in: the provider's native
+    search, else AgentCore web search on any Bedrock API (a harness tool), else ``None``.
+
+    Bedrock means ``bedrock/...`` and ``bedrock-mantle/...`` strings (Mantle's GPT models have native
+    search instead) and instances that call Bedrock: ``BedrockModel``, an ``AnthropicModel`` on a
+    Bedrock or Mantle client, an OpenAI model with ``bedrock_mantle_config``, or a router of only
+    those. Any other instance has an unknown provider, so it gets ``None``.
     """
     if isinstance(model, (Model, ModelRouter)):
-        return False
-    return _has_web_search(*_split_provider(model or defaults.DEFAULT_MODEL))
+        return "agentcore" if _on_bedrock(model) else None
+    provider_name, name = _split_provider(model or defaults.DEFAULT_MODEL)
+    if _has_web_search(provider_name, name):
+        return "native"
+    return "agentcore" if provider_name in ("bedrock", "bedrock-mantle") else None
+
+
+def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
+    """Whether ``web_search`` works for ``model`` without the Exa opt-in.
+
+    True where the provider has native web search, and on every Bedrock API, where AgentCore web
+    search serves it as the harness's native search. Any other instance has an unknown provider, so this is
+    ``False``. ``None`` resolves to the default model.
+    """
+    return _web_search_kind(model) is not None
 
 
 def supports_thinking(model: Model | str | None) -> bool:
@@ -515,7 +557,7 @@ def resolve_model(
     raise. For a ``provider/name`` string, ``effort`` is validated against the provider (and Bedrock
     model family); ``caching`` on a provider without it raises when explicit (``caching_explicit``)
     and otherwise warns and builds without it. ``web_search`` turns on the model's native search and
-    is only passed for models that have one (``supports_web_search``).
+    is only passed for models that have one (``_web_search_kind`` is ``"native"``).
     """
     _check_effort(effort)
     if isinstance(model, (Model, ModelRouter)):
@@ -567,15 +609,15 @@ def resolve_model(
 
 
 def _bedrock_web_fetch_model(name: str) -> str | None:
-    """Small Bedrock summarizer id for a Bedrock main model ``name``, or ``None`` if the family is
-    unidentifiable.
+    """Small Bedrock summarizer id for a Bedrock main model ``name``, or ``None`` if its family has no
+    mapped small model.
 
     Bedrock hosts models from several providers, so the summarizer follows the main model's family.
     An Anthropic-on-Bedrock model (an ``anthropic.`` prefix, after any cross-region prefix like
     ``us.``) gets Anthropic Haiku; an OpenAI-on-Bedrock model (an ``openai.`` prefix) gets the OpenAI
     small model hosted on Bedrock (``openai.`` + the OpenAI-provider summarizer), carrying the main
     model's cross-region prefix because those ids are only served through an inference profile.
-    Amazon, Meta, and Mistral families get their small regional models. The summarizer always shares
+    Amazon and Mistral families get their small regional models. The summarizer always shares
     the main model's credentials. A family with no mapped small model returns ``None`` so the caller
     can reuse the main model rather than guess.
     """
@@ -603,7 +645,7 @@ def resolve_web_fetch_model(
     reuse it as the summarizer. A router uses its concrete default model because auxiliary calls are
     outside the primary agent invocation and cannot share its routing decision. On Bedrock the
     summarizer follows the main model's family (Anthropic-on-Bedrock gets Haiku, OpenAI-on-Bedrock gets
-    the OpenAI small model, Amazon/Meta/Mistral get their small regional models); a Bedrock family
+    the OpenAI small model, Amazon/Mistral get their small regional models); a Bedrock family
     with no mapped small model reuses the main model and logs a warning
     rather than guessing. Thinking is never applied: summarizing a page is a fast task.
 
@@ -627,9 +669,8 @@ def resolve_web_fetch_model(
         small = _bedrock_web_fetch_model(name)
         if small is None:
             logger.warning(
-                f"model=<{main}> | could not identify the Bedrock model family for the web_fetch "
-                "summarizer; reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a "
-                "smaller one."
+                f"model=<{main}> | no small web_fetch summarizer is mapped for this Bedrock model family; "
+                "reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a smaller one."
             )
             return _concrete_model(resolve_model(main, main, effort="off"))
     elif (base_url_var := _CUSTOM_ENDPOINT_VARS.get(provider_name)) and os.environ.get(base_url_var):
