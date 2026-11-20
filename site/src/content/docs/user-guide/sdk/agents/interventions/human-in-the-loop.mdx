@@ -217,11 +217,18 @@ use another one, such as a local
 </Tab>
 </Tabs>
 
-A small model can rate more risky calls safe than an LLM judge, so check its answers on
-your own tool calls before relying on it, and negate tools that must always ask.
+A model-based classifier is best effort. A small model can rate more risky calls safe
+than an LLM judge, and text inside a tool argument can sway the verdict. The built-in LLM
+classifier marks the tool call as data in its prompt, which lowers that risk but does not
+remove it. A `DecisionModel` classifier, including `LLMDecisionModel`, receives the tool
+call without this marking. Check a classifier's answers on your own tool calls before
+relying on it, and negate tools that must always ask (`"!tool_name"` in
+<Syntax py="allowed_tools" ts="allowedTools" />) so the classifier never decides for them.
 
 You can customize the classifier's system prompt or model, or
-provide your own classification function:
+provide your own classification function. With a custom system prompt, the SDK still
+appends its rule that marks the tool call as data and asks for approval when text in it
+addresses the classifier:
 
 <Tabs>
 <Tab label="Python">
