@@ -13,10 +13,10 @@ Lets the agent orchestrate its other tools with Python code. The model passes a 
 
 ## Install
 
-Requires the optional `@pydantic/monty` peer dependency and Node.js:
+Requires Node.js and the `@pydantic/monty` package, version 1.6 or later, which the SDK does not install for you:
 
 ```bash
-npm install @pydantic/monty
+npm install @pydantic/monty@^1.6.0
 ```
 
 Where the native addon cannot load, for example on Alpine Linux, the tool logs a warning and runs the interpreter as WebAssembly, which is slower.
