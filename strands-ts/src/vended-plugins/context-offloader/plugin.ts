@@ -13,7 +13,6 @@ import { z } from 'zod'
 import { logger } from '../../logging/logger.js'
 import type { JSONValue } from '../../types/json.js'
 import { FileStorage, InMemoryStorage as LegacyInMemoryStorage, type Storage as OffloaderStorage } from './storage.js'
-import { RETRIEVAL_TOOL_NAME } from './constants.js'
 import { resolveNamespace, type Storage } from '../../storage/storage.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { isSearchableContent, searchContent } from './search.js'
@@ -67,6 +66,7 @@ async function retrieveContent(
 const CHARS_PER_TOKEN = 4
 const DEFAULT_MAX_RESULT_TOKENS = 2_500
 const DEFAULT_PREVIEW_TOKENS = 1_000
+const RETRIEVAL_TOOL_NAME = 'retrieve_offloaded_content'
 
 const retrievalInputSchema = z.object({
   reference: z.string().describe('The reference string from the offload placeholder (e.g. "mem_1_tool-123_0").'),

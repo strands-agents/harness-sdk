@@ -18,8 +18,6 @@ import { heuristicJson, type Model, type StreamOptions } from '../../models/mode
 import { lookupModel } from '../../models/model-info.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
-import { RETRIEVAL_TOOL_NAME as OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME } from '../../vended-plugins/context-offloader/constants.js'
-import { SKILLS_TOOL_NAME } from '../../vended-plugins/skills/constants.js'
 import { TextBlock, ToolReferenceBlock, ToolResultBlock, type Message } from '../../types/messages.js'
 import { RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { parseCondition, type ParsedCondition, type Percent } from './offload/conditions.js'
@@ -36,9 +34,10 @@ import type { ContextStrategy } from '../types.js'
 const PROTECTED_TOOL_NAMES = new Set([
   LOAD_TOOLS_TOOL_NAME,
   RETRIEVAL_TOOL_NAME,
-  OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
-  SKILLS_TOOL_NAME,
+  // ContextOffloader's and AgentSkills' tools, named here since the core doesn't import the vended plugins.
+  'retrieve_offloaded_content',
+  'skills',
 ])
 
 const CONDITION_NAMES = ['toolCount', 'schemaTokens']
