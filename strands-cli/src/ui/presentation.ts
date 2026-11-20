@@ -434,6 +434,8 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
   shell: 'Shell',
   skills: 'Skills',
   strands_config: 'Strands Config',
+  strands_dev_ask: 'Ask',
+  strands_dev_optimization_plan: 'Optimization plan',
   strands_manage_background_task: 'Background tasks',
   todo_write: 'Update tasks',
   web_fetch: 'Fetch',
@@ -484,6 +486,15 @@ export function summarizeToolInput(name: string, input: JSONValue): string {
       if (summary) {
         return summary
       }
+    }
+    if (normalizedName === 'strands_dev_ask') {
+      // The component on screen already shows the fields, so only the question is worth a line.
+      const question = typeof input.question === 'string' ? input.question : undefined
+      const steps = Array.isArray(input.steps) ? input.steps : []
+      const titles = steps
+        .map((step) => (isRecord(step) && typeof step.title === 'string' ? step.title : undefined))
+        .filter((title): title is string => title !== undefined)
+      return truncateText(question ?? (titles.length > 0 ? titles.join(' · ') : 'a setup question'), 160)
     }
     if (normalizedName === 'subagent') {
       return truncateText(typeof input.task === 'string' ? input.task : '', 160)
