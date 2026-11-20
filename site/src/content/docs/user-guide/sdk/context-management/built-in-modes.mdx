@@ -1,7 +1,6 @@
 ---
 title: Built-in Modes
 description: "Auto and agentic context management modes with tuned defaults for most agents."
-experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-ts/src/agent/agent.ts
@@ -9,10 +8,6 @@ sourceLinks:
   - path: strands-py/src/strands/_context_manager/modes/agentic/agentic_context.py
 addedDate: 2026-09-04
 ---
-
-:::caution[Experimental]
-The Context Manager strategy API is experimental and may change in future versions.
-:::
 
 The SDK ships two built-in context management modes that work out of the box. Both create a `ContextManager` with tuned `Offload` strategies internally, so you don't have to assemble strategies, thresholds, and storage by hand.
 

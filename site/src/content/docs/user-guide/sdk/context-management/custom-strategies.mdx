@@ -1,7 +1,6 @@
 ---
 title: Custom Strategies
 description: "Build custom context management strategies with the Offload builder API, conditions, targets, and storage of offloaded content."
-experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-py/src/strands/_context_manager/strategies/offload/base.py
@@ -15,10 +14,6 @@ sourceLinks:
   - path: strands-py/src/strands/models/_summarize.py
 addedDate: 2026-09-14
 ---
-
-:::caution[Experimental]
-The Context Manager strategy API is experimental and may change in future versions.
-:::
 
 When the [built-in modes](./built-in-modes) don't fit, build a custom strategy pipeline. Define which content to reduce, how to reduce it, and when each strategy fires.
 
@@ -348,6 +343,10 @@ Tool name lists use the `tool::` prefix. Prefix a name with `!` to exclude it (a
 ## Storing originals
 
 The <Syntax py="stash" ts="archive" /> stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
+
+:::note
+Configure the <Syntax py="stash" ts="archive" /> through the key below, but treat the object itself as internal. The `Offload` builders read and write it for you, and its methods are not a stable contract for code outside the SDK.
+:::
 
 The <Syntax py="stash" ts="archive" /> uses in-memory storage by default. Configure it through the <Syntax py="stash" ts="archive" /> key:
 

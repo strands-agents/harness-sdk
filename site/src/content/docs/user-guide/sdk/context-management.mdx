@@ -1,7 +1,6 @@
 ---
 title: Context management
 description: "How the ContextManager keeps your agent's context window in bounds as conversations grow and tool results accumulate."
-experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-py/src/strands/_context_manager/context_manager.py
@@ -13,7 +12,7 @@ As conversations grow, your agent's context window fills with messages, tool res
 
 The SDK ships context management that works out of the box. Pick a mode and the SDK wires up an ordered strategy pipeline with tuned defaults.
 
-You can continue using [conversation managers](./agents/conversation-management) and [ContextOffloader](./plugins/context-offloader) while evaluating the experimental `ContextManager` strategy API. See [Migrating to the strategy API](#migrating-to-the-strategy-api) for optional migration examples.
+You can continue using [conversation managers](./agents/conversation-management) and [ContextOffloader](./plugins/context-offloader) while evaluating the `ContextManager` strategy API. See [Migrating to the strategy API](#migrating-to-the-strategy-api) for optional migration examples.
 
 ## Quickstart
 
@@ -141,11 +140,13 @@ The TypeScript API moved out of `@strands-agents/sdk/experimental`, and the stas
 | `from '@strands-agents/sdk'` (`Offload`, `OffloadTarget`, …) | `from '@strands-agents/sdk/context-manager'` |
 | `StashConfig` | `ArchiveConfig` |
 | `{ stash: … }` | `{ archive: … }` |
+| `contextManager.stash` | `contextManager.archive` |
 | `contextManager.stashIsDurable` | `contextManager.archiveIsDurable` |
+| `ContextState.stash` | `ContextState.archive` |
 
 The `@strands-agents/sdk/experimental` re-exports still resolve to the same symbols, so existing imports keep working, but they are deprecated and are removed in the next minor release. `contextManager: "auto"` and `contextManager: "agentic"` are unchanged.
 
-Session snapshots record archive metadata under `data.archive` instead of `data.stash`. A snapshot written by an older version still resumes — the archive is rebuilt from the restored messages — but it carries no archive metadata.
+Session snapshots record archive content under `data.archive` instead of `data.stash`. Resuming a snapshot written before the rename still restores it — the old key is read as a fallback — and new snapshots are written only under `data.archive`. That fallback goes away with the deprecated re-exports, so resume an older session once on this release to migrate it forward.
 
 </Tab>
 </Tabs>
