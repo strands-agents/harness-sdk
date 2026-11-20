@@ -3,6 +3,7 @@ import { z } from 'zod'
 
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../agent/agent.js'
+import { ToolValidationError } from '../../errors.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
 import { AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
 import { Interrupt } from '../../interrupt.js'
@@ -257,6 +258,23 @@ describe('BackgroundTasks', () => {
         '_background_execution'
       )
     }
+  })
+
+  it.each([
+    { backgroundTasks: true, toolName: 'strands_manage_background_task' },
+    { backgroundTasks: { manageToolName: 'lookup' }, toolName: 'lookup' },
+  ])('rejects the management tool name $toolName when another tool has it', async ({ backgroundTasks, toolName }) => {
+    const existing = tool({
+      name: toolName,
+      description: 'Already registered.',
+      inputSchema: z.object({}),
+      callback: () => 'original',
+    })
+    const agent = new Agent({ model: new MockMessageModel(), tools: [existing], backgroundTasks, printer: false })
+
+    await expect(agent.initialize()).rejects.toThrow(
+      new ToolValidationError(`manageToolName=<${toolName}> | tool already registered`)
+    )
   })
 
   it('rejects conflicting tool policies', () => {
