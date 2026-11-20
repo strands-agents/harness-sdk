@@ -582,7 +582,7 @@ class MistralModel(Model):
                 yield self.format_chunk({"chunk_type": "message_start"})
 
                 data_type: str | None = None
-                tool_calls: dict[str, list[Any]] = {}
+                tool_calls: dict[int, list[Any]] = {}
 
                 async for chunk in stream_response:
                     if hasattr(chunk, "data") and hasattr(chunk.data, "choices") and chunk.data.choices:
@@ -597,8 +597,7 @@ class MistralModel(Model):
 
                             if hasattr(delta, "tool_calls") and delta.tool_calls:
                                 for tool_call in delta.tool_calls:
-                                    tool_id = tool_call.id
-                                    tool_calls.setdefault(tool_id, []).append(tool_call)
+                                    tool_calls.setdefault(tool_call.index, []).append(tool_call)
 
                         if hasattr(choice, "finish_reason") and choice.finish_reason:
                             if data_type is not None:
