@@ -2763,6 +2763,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
             ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
+            ...(ctx.deferredTools?.size ? { deferredTools: ctx.deferredTools } : {}),
           }
           const gen = self._streamFromModel(
             ctx.model,
@@ -2837,7 +2838,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     messages = fillEmptyAssistantMessages(normalizeToolUseNames(messages))
-    const proxy = new ModelProxy(model)
+    const proxy = new ModelProxy(model, this)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
     try {
       let result = await streamGenerator.next()
