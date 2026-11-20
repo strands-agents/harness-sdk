@@ -163,88 +163,34 @@ describe('run-evaluations guidance', () => {
 describe('optimize-harness guidance', () => {
   const instructions = instructionsFor('optimize-harness')
 
+  it('shouldMakeTheEvalsOptimizeSkillTheLogic', () => {
+    expect(instructions).toContain('The optimize skill of strands-evals is the logic')
+    expect(instructions).toContain('it owns how an optimization works')
+    expect(instructions).toContain('Do not re-derive any of that here, and do not contradict it')
+    expect(instructions).toContain('This skill holds only what strands dev does differently')
+  })
+
+  it('shouldSayWhereStrandsDevKeepsExperimentsAndRuns', () => {
+    expect(instructions).toContain('strands-dev/experiments/<name>/<name>.json')
+    expect(instructions).toContain('strands-dev/experiments/<name>/optimizations/<stamp>/')
+    expect(instructions).toContain('That is the folder the optimize skill expects')
+    expect(instructions).toContain('Find them with strands_dev_status')
+  })
+
+  it('shouldKeepAskingOnScreenAndStartingThroughTheTool', () => {
+    expect(instructions).toContain('Ask the questions on screen with strands_dev_ask')
+    expect(instructions).toContain('instead of the numbered lists in chat')
+    expect(instructions).toContain('Keep its order, its defaults, and its wording')
+    expect(instructions).toContain('Read strands_dev_optimization_plan first')
+    expect(instructions).toContain('Start the run with strands_dev_optimize, not by running')
+  })
+
   it('shouldCheckFinalAnswerEvaluatorCompatibilityWithoutSilentlyRewritingExperiments', () => {
-    expect(instructions).toContain('strands_dev_read_experiment')
     expect(instructions).toContain('optimization of a TypeScript agent scores the final answer only')
     expect(instructions).toContain('OutputEvaluator, Contains, Equals, and StartsWith')
     expect(instructions).toContain('Optimization of a Python agent also scores trajectory and tool-use evaluators')
     expect(instructions).toContain('do not silently remove evaluators or rewrite the experiment')
-    expect(instructions).toContain('do not require or start a separate paid baseline evaluation')
-  })
-
-  it('shouldReadTheKnobsFromThePlanAndExplainCostsWithoutPromisingImprovement', () => {
-    expect(instructions).toContain(
-      'strands_dev_optimize with {experiment, tune?, iterations?, objective?, constraints?}'
-    )
-    expect(instructions).toContain('call strands_dev_optimization_plan to read its knobs')
-    expect(instructions).toContain('never name a knob from memory')
-    expect(instructions).toContain('default tune of instructions and default iteration count')
-    expect(instructions).toContain('iteration budget, repeated model calls and scoring costs')
     expect(instructions).toContain('Do not promise an improvement')
-  })
-
-  it('shouldAskOneQuestionAtATimeFromThePlan', () => {
-    expect(instructions).toContain('Ask the settings on screen, one question at a time')
-    expect(instructions).toContain('Call strands_dev_optimization_plan with {experiment}')
-    expect(instructions).toContain('Each strands_dev_ask call puts one component on screen')
-    expect(instructions).toContain('Never send the steps form for an optimization setup')
-    expect(instructions).toContain('Three short questions beat one form with every setting on it')
-    expect(instructions).toContain('A cancelled question is a no')
-  })
-
-  it('shouldRefuseToSetUpARunInChatProseInsteadOfAsking', () => {
-    expect(instructions).toContain('never through chat prose')
-    expect(instructions).toContain(
-      'Calling strands_dev_optimize without strands_dev_ask in the same turn skips the developer'
-    )
-    expect(instructions).toContain('does not replace asking on screen')
-  })
-
-  it('shouldNameTheComponentForTheKnobsAndTheBudget', () => {
-    expect(instructions).toContain('ask selectMany, key "tune"')
-    expect(instructions).toContain('ask selectOne, key "iterations"')
-    expect(instructions).toContain('Never drop a knob because it looks irrelevant')
-    expect(instructions).toContain("put the plan's onByDefault knobs in selected")
-  })
-
-  it('shouldExplainWhatARunIsBeforeAskingForOne', () => {
-    expect(instructions).toContain('Say what a run is before you ask for one')
-    expect(instructions).toContain('uses its cases as the test')
-    expect(instructions).toContain('It changes no file')
-    expect(instructions).toContain('many paid model calls and can take a long time')
-    expect(instructions).toContain('Explain this once per chat')
-  })
-
-  it('shouldAskWhichExperimentAndLetEscDecline', () => {
-    expect(instructions).toContain('call strands_dev_status for the saved experiments')
-    expect(instructions).toContain('ask selectOne, key "experiment"')
-    expect(instructions).toContain('Do not add a decline option')
-    expect(instructions).toContain('Stop without planning anything when they cancel')
-  })
-
-  it('shouldAlwaysAskWhatTheRunOptimizes', () => {
-    expect(instructions).toContain('Ask what the run optimizes, every time')
-    expect(instructions).toContain('ask selectOne, key "objective"')
-    expect(instructions).toContain('maximizes, minimizes, weights a sum, or takes the Pareto trade-offs')
-    expect(instructions).toContain('Add one last option, "something else"')
-    expect(instructions).toContain('The knobs and the objective are never among the ones you skip')
-  })
-
-  it('shouldAskForConstraintsWhenTheGoalMinimizesUsage', () => {
-    expect(instructions).toContain('Ask the constraints when the chosen objective minimizes a usage metric')
-    expect(instructions).toContain('a cheaper agent that answers worse is not an improvement')
-    expect(instructions).toContain('Correctness >= 0.8')
-  })
-
-  it('shouldStopAskingOnceNothingIsOpen', () => {
-    expect(instructions).toContain('stop asking once nothing is open')
-    expect(instructions).toContain('they are not the paid-run approval')
-  })
-
-  it('shouldMaximizeTheMeanOfEveryEvaluatorUnlessTheDeveloperNamesOne', () => {
-    expect(instructions).toContain('maximizes the mean of every evaluator score by default')
-    expect(instructions).toContain('pass objective in the notation of the optimization API')
-    expect(instructions).toContain('so that a cheaper agent cannot get worse')
   })
 
   it('shouldPreservePendingReviewsAndOnlyStopOrDiscardOnExplicitIntent', () => {

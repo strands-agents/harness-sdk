@@ -40,50 +40,32 @@ const OPTIMIZE_HARNESS = `# Optimize the harness in dev chat
 
 ${DEV_ONLY}
 
-Help with requests such as "improve this agent on refunds" or "tune its effort". Use strands_dev_status to inspect experiments and any running optimization or pending review, and strands_dev_read_experiment to inspect the chosen cases and evaluators. Use prior evaluation evidence when available; do not require or start a separate paid baseline evaluation just to begin this conversation.
+Help with requests such as "improve this agent on refunds" or "tune its effort".
 
-For now, optimization of a TypeScript agent scores the final answer only, so it supports evaluators that read the answer, such as OutputEvaluator, Contains, Equals, and StartsWith. Optimization of a Python agent also scores trajectory and tool-use evaluators. Check the saved evaluators, explain an incompatible experiment, and help the developer choose a compatible one; do not silently remove evaluators or rewrite the experiment to make it compatible.
+## The optimize skill of strands-evals is the logic
 
-Call strands_dev_optimize with {experiment, tune?, iterations?, objective?, constraints?}. What this agent can tune is not fixed: call strands_dev_optimization_plan to read its knobs, and never name a knob from memory. A knob that cannot be tuned carries the reason; give that reason and offer the ones that work. Keep the default tune of instructions and default iteration count unless the developer requests otherwise.
+strands-evals ships an \`optimize\` skill, and it owns how an optimization works: how to read the request, which questions to ask and in what order, the objective notation and its metrics, the constraints, the budget, the review summary it confirms before the run, how the run executes, and how to read the report it writes. Follow it. Do not re-derive any of that here, and do not contradict it.
 
-## Ask the settings on screen, one question at a time
+This skill holds only what strands dev does differently, and the rules below that the chat itself needs.
 
-Every optimization run is set up on screen, never through chat prose. A request to optimize, tune, or improve this agent asks you to put the questions up. Calling strands_dev_optimize without strands_dev_ask in the same turn skips the developer's own choices, however obvious the defaults look to you, and even when the request named the experiment and nothing else is in question. Describing the settings in a message and asking "start this run?" does not replace asking on screen.
+## What strands dev does differently
 
-Ask one question at a time. Each strands_dev_ask call puts one component on screen, you read the answer, and then you ask the next thing. Never send the steps form for an optimization setup: a five-tab form is the old panel, and it asks everything at once whether or not it matters.
+- Experiments live in this workspace, at \`strands-dev/experiments/<name>/<name>.json\`. Find them with strands_dev_status rather than by reading the folder, because a panel or a finished run can change them between turns. With none saved, say so and offer to create one with the create-experiment skill instead of pointing at a folder.
+- Runs are saved in this workspace too, at \`strands-dev/experiments/<name>/optimizations/<stamp>/\`. That is the folder the optimize skill expects, and it is already out of git.
+- Ask the questions on screen with strands_dev_ask, one component per question, instead of the numbered lists in chat that the optimize skill describes. Keep its order, its defaults, and its wording; only the way the question is put changes. Read strands_dev_optimization_plan first, so the knobs and the choices you offer are this agent's own.
+- Start the run with strands_dev_optimize, not by running \`strands-evals optimize\` yourself. It uses this CLI's evals bridge, which is what the optimize skill says to use, and it reports progress below the chat input.
 
-### Say what a run is before you ask for one
+## Rules the chat adds
 
-A developer who has not optimized before cannot judge the questions that follow, so explain the flow first, in four or five plain lines and no jargon:
-- A run takes one of your saved experiments and uses its cases as the test.
-- It tries variations of your agent's settings, scores each one with that experiment's evaluators, and keeps what scores best.
-- It divides the cases: some guide the search, one set picks the winner, and the rest check that winner at the end.
-- It changes no file. It ends with proposed edits that you accept or reject.
-- It makes many paid model calls and can take a long time.
+Runs go in parallel, so a run that is already going is not a reason to refuse a new one: name what is running, and start the new one when the developer wants it. Do not start a second run of the same experiment and the same scope unless they asked for it, and say that each run makes its own paid model calls.
 
-Then ask which experiment to use: call strands_dev_status for the saved experiments, then strands_dev_ask with ask selectOne, key "experiment", question "Which experiment should the run use?", and one option per saved experiment with its case count as the detail. Do not add a decline option: Esc already declines, and a cancelled question is a no. Stop without planning anything when they cancel.
+Preserve an unaccepted optimization review. Before starting a new optimization that would overwrite it, ask whether the developer wants to keep reviewing it or explicitly discard it. Only call strands_dev_reject_optimization with {} on explicit intent to discard the pending review. Call strands_dev_cancel_optimization with {} only when the developer explicitly asks to stop the optimization. Cancelling the chat turn may leave the optimization running; never equate the two.
 
-Explain this once per chat. Skip it when the developer has already set up a run in this chat, or when they named the experiment and the scope themselves and clearly know the flow; ask the experiment question anyway unless they named the experiment.
+Optimization returns proposed edits; it does not apply them or change the agent source. Report actual baseline and candidate scores, available evaluation evidence, proposed edits, and limitations without fabricating measurements or claiming general improvement from one experiment. Keep failed execution distinct from a candidate that scored worse. Do not promise an improvement.
 
-### Then the settings
+Ask which proposed edits the developer accepts. Call strands_dev_apply_optimization with {edits: number[]} only after explicit acceptance, using the exact returned edit indices for the accepted subset. Approval to optimize is not approval to apply. Do not use file tools to bypass the review. If no edits are accepted, leave the source unchanged; discard the review only on explicit request. Report application success or errors as returned, without claiming an edit was saved when it was not. Any follow-up paid validation run needs its own scoped approval.
 
-1. Call strands_dev_optimization_plan with {experiment}. It returns this agent's knobs, the choices of every setting, and the estimate. Asking without it invents knobs and choices that this agent does not have.
-2. Ask the knobs: strands_dev_ask with ask selectMany, key "tune", question "What should the run tune?", listLabel "knobs", and one option per knob the plan returned. Carry the detail and the unavailable text through unchanged, and put the plan's onByDefault knobs in selected. Never drop a knob because it looks irrelevant.
-3. Ask what the run optimizes, every time. Never settle this one silently: it decides what the optimizer calls an improvement, and the default maximizes the mean of every evaluator, which is rarely what someone tuning for cost or latency wants. Use ask selectOne, key "objective", question "What should the run improve?", with one option per preset the plan returned, the plan's current objective selected, and that preset's own objective expression as the option's detail so the developer sees whether it maximizes, minimizes, weights a sum, or takes the Pareto trade-offs. The presets already cover the whole range: the mean of every evaluator, one named evaluator, fewer tokens, less time, the evaluators weighted against tokens or time, and the best Pareto trade-offs. Add one last option, "something else", and when they pick it ask text, key "objective", with the plan's notation in the placeholder, then pass what they typed as objective.
-4. Ask the constraints when the chosen objective minimizes a usage metric and the preset carries none, because a cheaper agent that answers worse is not an improvement. Use ask text, key "constraints", question "What must stay true?", placeholder "Correctness >= 0.8". Pass the preset's own constraints through when it has them, and do not ask again.
-5. Ask the budget: ask selectOne, key "iterations", question "How many optimizer steps?", with the plan's iteration choices as options and its current one selected. Say the rollouts and the token estimate of each choice in that option's detail, so the cost is on the row the developer picks.
-6. Ask only the rest that this request puts in question, one call each, and leave everything else at the plan's defaults. Use ask selectOne for a case split or a candidate count the developer raised, and stop asking once nothing is open.
-7. Call strands_dev_optimize with the answers, passing objective and constraints exactly as the chosen preset or the typed text gives them. A cancelled question is a no: do not ask again with the same question, and do not start the run anyway.
-
-Keep each question about one decision, in plain words, and skip anything the developer already settled in chat. Three short questions beat one form with every setting on it. The knobs and the objective are never among the ones you skip: they decide what changes and what counts as better.
-
-The questions collect settings; they are not the paid-run approval. After the last one, explain the scope and the cost in a message, and get that approval, before you start the run. The run maximizes the mean of every evaluator score by default. When the developer wants to optimize something else, such as one evaluator, fewer tokens, less time, or a trade-off, pass objective in the notation of the optimization API, such as Minimize(tokens) or WeightedSum(Maximize(Correctness), Minimize(tokens, scale=1000)). With a usage goal, also pass constraints such as "Correctness >= 0.8" so that a cheaper agent cannot get worse. Name the objective and the constraints in the scope you explain. Explain the experiment, tuning scope, iteration budget, repeated model calls and scoring costs, and potentially long runtime, then obtain approval for that specific run. Do not promise an improvement.
-
-Preserve an unaccepted optimization review. Before starting a new optimization that would overwrite it, ask whether the developer wants to keep reviewing it or explicitly discard it. Only call strands_dev_reject_optimization with {} on explicit intent to discard the pending review. Runs go in parallel, so a run that is already going is not a reason to refuse a new one: name what is running, and start the new one when the developer wants it. Do not start a second run of the same experiment and the same scope unless they asked for it, and say that each run makes its own paid model calls. Call strands_dev_cancel_optimization with {} only when the developer explicitly asks to stop the optimization. Cancelling the chat turn may leave the optimization running; never equate the two.
-
-Optimization returns proposed edits; it does not apply them or change the agent source. Report actual baseline and candidate scores, available evaluation evidence, proposed edits, and limitations without fabricating measurements or claiming general improvement from one experiment. Keep failed execution distinct from a candidate that scored worse.
-
-Ask which proposed edits the developer accepts. Call strands_dev_apply_optimization with {edits: number[]} only after explicit acceptance, using the exact returned edit indices for the accepted subset. Approval to optimize is not approval to apply. Do not use file tools to bypass the review. If no edits are accepted, leave the source unchanged; discard the review only on explicit request. Report application success or errors as returned, without claiming an edit was saved when it was not. Any follow-up paid validation run needs its own scoped approval.`
+For now, optimization of a TypeScript agent scores the final answer only, so it supports evaluators that read the answer, such as OutputEvaluator, Contains, Equals, and StartsWith. Optimization of a Python agent also scores trajectory and tool-use evaluators. Check the saved evaluators, explain an incompatible experiment, and help the developer choose a compatible one; do not silently remove evaluators or rewrite the experiment to make it compatible.`
 
 /** Runtime-only guidance, separate from the existing create-experiment skill. */
 export const temporaryWorkflowSkills = (): AgentExtensionSkill[] => [
