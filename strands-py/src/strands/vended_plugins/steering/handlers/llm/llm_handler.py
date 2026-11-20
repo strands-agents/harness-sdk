@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import BaseModel, Field
 
 from .....agent.invocation_context import InvocationContext, _create_auxiliary_invocation_context
+from .....middleware.stages import InvokeModelContext, InvokeModelStage
 from .....models import Model
 from .....types.tools import ToolUse
 from ...context_providers.ledger_provider import LedgerProvider
@@ -29,6 +30,15 @@ class _LLMSteering(BaseModel):
         description="Steering decision: 'proceed' to continue, 'guide' to provide feedback, 'interrupt' for human input"
     )
     reason: str = Field(description="Clear explanation of the steering decision and any guidance provided")
+
+
+def _cache_ahead_of_last_block(context: InvokeModelContext) -> InvokeModelContext:
+    """Mark the prompt's last block as rebuilt on every call, so a model that caches puts its cache point before it.
+
+    The model, not the prompt, decides whether to place one: a hand-placed ``cachePoint`` block would also reach
+    models that take none.
+    """
+    return context.replace(dynamic_trailing_blocks=1)
 
 
 class LLMSteeringHandler(SteeringHandler):
@@ -93,6 +103,8 @@ class LLMSteeringHandler(SteeringHandler):
         steering_agent = Agent(
             system_prompt=self.system_prompt, model=self.model or agent.aux_model, callback_handler=None
         )
+        if isinstance(prompt, list):
+            steering_agent.add_middleware(InvokeModelStage.Input, _cache_ahead_of_last_block)
 
         # Get LLM decision
         llm_result: _LLMSteering = cast(
