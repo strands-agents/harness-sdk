@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import rehypeStringify from 'rehype-stringify'
 import remarkDirective from 'remark-directive'
 import remarkGfm from 'remark-gfm'
@@ -11,6 +11,7 @@ import type { Root } from 'mdast'
 
 /** Renders Markdown to HTML the way the site does, so the tests check what readers get. */
 async function render(markdown: string) {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
   const file = await unified()
     .use(remarkParse)
     .use(remarkGfm)
@@ -18,9 +19,13 @@ async function render(markdown: string) {
     .use(remarkWideBlocks)
     .use(remarkRehype)
     .use(rehypeStringify)
-    .process(markdown)
-  return { html: String(file), warnings: file.messages.map((m) => m.reason) }
+    .process({ path: 'docs/page.md', value: markdown })
+  return { html: String(file), warnings: warn.mock.calls.map((args) => args.join(' ')) }
 }
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 /** MDX components can't be stringified to HTML, so this one checks the transformed tree. */
 async function transformMdx(markdown: string) {
@@ -55,7 +60,7 @@ describe('remarkWideBlocks', () => {
     const { html, warnings } = await render(':::wide[Caption]\nText\n:::')
 
     expect(html).toBe('<div class="wide-block"><p>Text</p></div>')
-    expect(warnings).toEqual(['`:::wide` takes no label; the label was dropped'])
+    expect(warnings).toEqual(['[remark-wide-blocks] docs/page.md:1: `:::wide` takes no label; the label was dropped'])
   })
 
   it('wraps JSX in MDX', async () => {

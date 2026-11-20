@@ -36,7 +36,11 @@ export default function remarkWideBlocks(): Transformer<Root> {
       const label = node.children[0]
       if (label?.type === 'paragraph' && label.data?.directiveLabel) {
         node.children.shift()
-        file?.message('`:::wide` takes no label; the label was dropped', label.position)
+        // Astro never reads vfile messages, so log directly, like remark-mkdocs-snippets does.
+        const line = label.position ? `:${label.position.start.line}` : ''
+        console.warn(
+          `[remark-wide-blocks] ${file?.path ?? '<unknown file>'}${line}: \`:::wide\` takes no label; the label was dropped`
+        )
       }
 
       const { class: extraClasses, ...attributes } = node.attributes ?? {}
