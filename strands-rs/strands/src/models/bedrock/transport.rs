@@ -190,7 +190,7 @@ fn inactivity_error(timeout: Duration) -> BedrockError {
 /// option), then the region (option, shared config, `us-west-2`), endpoint, credentials, the
 /// request timeout as each attempt's timeout, stall detection off unless configured, app name and
 /// API key.
-pub(super) async fn build_client(options: &ClientOptions) -> Client {
+pub(crate) async fn build_client(options: &ClientOptions) -> Client {
     let sdk_config = match &options.sdk_config {
         Some(config) => config.clone(),
         None => {

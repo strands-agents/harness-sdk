@@ -20,6 +20,8 @@ pub(crate) mod strict_schema;
 mod summarize;
 pub(crate) mod thinking_binding;
 
+#[cfg(all(feature = "anthropic", feature = "bedrock"))]
+pub use anthropic::AnthropicBedrockConfig;
 #[cfg(feature = "anthropic")]
 pub use anthropic::{AnthropicClientConfig, AnthropicModel, AnthropicModelConfig, AnthropicModelOptions};
 #[cfg(feature = "bedrock")]

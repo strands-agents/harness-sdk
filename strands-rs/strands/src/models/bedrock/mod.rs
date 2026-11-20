@@ -24,7 +24,7 @@
 
 mod format;
 mod parse;
-mod transport;
+pub(crate) mod transport;
 mod wire;
 
 #[cfg(test)]
