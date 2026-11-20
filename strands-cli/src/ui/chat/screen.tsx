@@ -171,6 +171,10 @@ export function ChatApp({
   const [panelKeyboard, setPanelKeyboard] = useState(true)
   const panelId = snapshot.panel?.id
   useEffect(() => setPanelKeyboard(true), [panelId])
+  // Counts renders, so a drag knows whether the screen moved under its captured lines.
+  useEffect(() => {
+    renderRevisionRef.current += 1
+  })
   const [panelQuery, setPanelQuery] = useState('')
   const [agentNameEditor, setAgentNameEditor] = useState<EditorState>(emptyEditor)
   const [panelFilter, setPanelFilter] = useState('all')
@@ -229,9 +233,10 @@ export function ChatApp({
   const nextFrogBrandAnimationId = useRef(0)
   const previousFrogVariant = useRef<FrogVariant | undefined>(undefined)
   const leftMouseDownRef = useRef(false)
-  const selectionDragRef = useRef<{ anchor: Pick<MouseInput, 'column' | 'row'>; lines: readonly string[] } | undefined>(
-    undefined
-  )
+  const renderRevisionRef = useRef(0)
+  const selectionDragRef = useRef<
+    { anchor: Pick<MouseInput, 'column' | 'row'>; lines: readonly string[]; revision: number } | undefined
+  >(undefined)
   const panelSliderDraggingRef = useRef(false)
   const panelSliderValueRef = useRef<string | undefined>(undefined)
   const mouseMoveStateRef = useRef<MouseMoveState>({
@@ -911,6 +916,18 @@ export function ChatApp({
       const { snapshot, terminalWidth, terminalHeight, suggestions, panelRows, composerHeight, party, dockLanguage } =
         viewPropsRef.current
       const currentEditor = editorRef.current
+      // The selection overlay paints these lines back on screen, so they must match what is there now.
+      const screenLines = (): readonly string[] =>
+        sanitizeTerminalText(
+          renderToString(
+            createElement(ChatView, {
+              ...viewPropsRef.current,
+              input: currentEditor.input,
+              cursor: currentEditor.cursor,
+            }),
+            { columns: terminalWidth }
+          )
+        ).split('\n')
       const button = mouse.button & 3
       const scroll = mouseScrollDirection(mouse)
       if (scroll !== undefined) {
@@ -1083,7 +1100,6 @@ export function ChatApp({
       const devJobsHit =
         snapshot.devJobs?.length && devJobsElement.current ? elementContainsMouse(devJobsElement.current, mouse) : false
       const devPanelClick = snapshot.panel?.kind === 'dev' ? devPanelClicks.at(mouse) : undefined
-      if (devPanelClick) setPanelKeyboard(true)
       const sliderElement =
         snapshot.panel?.kind === 'effort' || snapshot.panel?.kind === 'permissions' || snapshot.panel?.kind === 'voice'
           ? panelSliderElement.current
@@ -1130,19 +1146,7 @@ export function ChatApp({
           devJobsHit ||
           jumpToBottomHit
             ? undefined
-            : {
-                anchor: mouse,
-                lines: sanitizeTerminalText(
-                  renderToString(
-                    createElement(ChatView, {
-                      ...viewPropsRef.current,
-                      input: currentEditor.input,
-                      cursor: currentEditor.cursor,
-                    }),
-                    { columns: terminalWidth }
-                  )
-                ).split('\n'),
-              }
+            : { anchor: mouse, lines: screenLines(), revision: renderRevisionRef.current }
         setPressedMetadata(metadataTarget)
         setPressedPanelFilter(panelFilterId)
         setPressedPanelRow(panelRowIndex)
@@ -1247,9 +1251,13 @@ export function ChatApp({
         return
       }
       if (mouse.action === 'move') {
-        const selection = selectionDragRef.current
-          ? selectScreenText(selectionDragRef.current.lines, selectionDragRef.current.anchor, mouse)
-          : undefined
+        const drag = selectionDragRef.current
+        if (!drag) return
+        // The overlay paints these lines back on screen, so a re-render since the press makes them stale.
+        const stale = drag.revision !== renderRevisionRef.current
+        const lines = stale ? screenLines() : drag.lines
+        if (stale) selectionDragRef.current = { anchor: drag.anchor, lines, revision: renderRevisionRef.current }
+        const selection = selectScreenText(lines, drag.anchor, mouse)
         if (selection) {
           resetPressed()
           setScreenSelection(selection.segments)
@@ -1265,6 +1273,7 @@ export function ChatApp({
         const shown = viewPropsRef.current.focusedDevJob ?? (first && { command: first.command, id: first.job.id })
         if (shown) openStatus(controller, { kind: 'dev', job: shown })
       } else if (devPanelClick) {
+        setPanelKeyboard(true)
         devPanelClick()
       } else if (jumpToBottomHit) {
         setTranscriptScroll(0)

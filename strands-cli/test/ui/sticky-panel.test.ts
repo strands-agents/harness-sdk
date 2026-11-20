@@ -173,6 +173,29 @@ describe('a sticky question panel', () => {
     expect(dropped).toEqual([])
   })
 
+  it('shouldNotTakeTheKeyboardBackWhileTheDeveloperDragsToSelectText', async () => {
+    const { press, screen } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+    await press('\u001b[B')
+    const row = screen()
+      .split('\n')
+      .findIndex((line) => line.includes('question keys:'))
+    expect(row).toBeGreaterThanOrEqual(0)
+    const composer = (): string =>
+      screen()
+        .split('\n')
+        .filter((line) => line.includes('Viewing /ask') || line.includes('Enter drops the question'))
+        .join()
+    const before = composer()
+
+    await press(`\u001b[<0;6;${row + 1}M`)
+    await press(`\u001b[<32;12;${row + 1}M`)
+    await press(`\u001b[<32;20;${row + 1}M`)
+
+    expect(composer()).toBe(before)
+  })
+
   it('shouldSendKeysToTheQuestionBeforeLeavingIt', async () => {
     const { press, screen } = await mount(askCommand())
     await press('/ask')
