@@ -592,7 +592,7 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
     } catch (error) {
       if (error instanceof Error && error.message === 'cancel') {
         abandoned = true
-        throw new Error('Execution cancelled.', { cause: error })
+        throw new Error(output.withError('Execution cancelled.'), { cause: error })
       }
       if (error instanceof Error && error.message === 'timeout') {
         abandoned = true
