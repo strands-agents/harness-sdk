@@ -116,6 +116,8 @@ export interface DevChatCommand {
   spec: LocalCommandSpec
   /** Left out of the slash list and /help: it exists for its jobs line and for openCommand. */
   hidden?: boolean
+  /** Typing the command runs this instead of opening the panel; the panel stays for its jobs line. */
+  run?(context: DevChatCommandContext): void
   /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
   sticky?: boolean
   /** Renders beside the transcript at the dock's width, when its content needs that width right now. */

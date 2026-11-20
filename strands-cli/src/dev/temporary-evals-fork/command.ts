@@ -170,8 +170,9 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
 
 /** Hidden: it exists for the progress line under the chat input, and as that line's landing view. */
 const optimizeRunsCommand = (sessions: Sessions): DevChatCommand => ({
-  hidden: true,
-  spec: { name: 'optimize', usage: '/optimize', description: 'Optimization runs in progress, driven from the chat' },
+  spec: { name: 'optimize', usage: '/optimize', description: 'Set up an optimization run of this agent' },
+  // Typing it starts the skill in the chat; the panel stays as the jobs line's landing view.
+  run: (context): void => context.submit('optimize'),
   jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
   contentRows: (): number => {
     const runs = temporaryOptimizeJobs(sessions().optimize.snapshot()).length

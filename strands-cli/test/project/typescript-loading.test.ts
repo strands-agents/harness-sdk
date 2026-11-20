@@ -729,7 +729,7 @@ const timer = setInterval(() => {
       expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
       expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'evaluate', 'ask']))
       expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
-      expect(listed('/')).not.toContain('optimize')
+      expect(listed('/')).toContain('optimize')
       expect(chat.actionableCommandToken('/optimize-harness')).toBeUndefined()
     } finally {
       await chat.dispose()

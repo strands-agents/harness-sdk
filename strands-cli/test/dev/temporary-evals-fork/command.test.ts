@@ -39,13 +39,14 @@ describe('TEMPORARY dev commands', () => {
     const commands = temporaryDevCommands(workspace, project)
 
     expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/evaluate', '/ask', '/optimize'])
-    expect(commands.map(({ hidden }) => hidden === true)).toEqual([false, false, false, true])
+    expect(commands.map(({ hidden }) => hidden === true)).toEqual([false, false, false, false])
+    expect(commands.map(({ run }) => run !== undefined)).toEqual([false, false, false, true])
     expect(commands.every(({ spec }) => spec.replacement === undefined)).toBe(true)
     expect(commands.map(({ spec }) => spec.description)).toEqual([
       'Generate test cases for this agent with strands-evals, and review them',
       'Run this agent on an experiment and show what failed',
       'Answer the setup question that the agent is asking',
-      'Optimization runs in progress, driven from the chat',
+      'Set up an optimization run of this agent',
     ])
   })
 

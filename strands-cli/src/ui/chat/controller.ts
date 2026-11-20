@@ -1590,7 +1590,8 @@ export class ChatController implements ChatControllerApi {
       default: {
         const devCommand = this._devCommand(command)
         if (devCommand) {
-          this._openDevPanel(devCommand)
+          if (devCommand.run) devCommand.run(this._devCommandContext())
+          else this._openDevPanel(devCommand)
           break
         }
         const turn = this._isSkillCommand(command) ? await this._activateSkillAndRun(command, prompt) : null

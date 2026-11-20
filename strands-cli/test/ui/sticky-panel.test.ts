@@ -74,6 +74,23 @@ const mount = async (command: DevChatCommand, rows = 40) => {
   return { controller, press, screen: (): string => frame }
 }
 
+describe('a dev command that runs instead of opening', () => {
+  it('shouldSubmitItsPromptAndOpenNoPanel', async () => {
+    const command: DevChatCommand = {
+      spec: { name: 'go', usage: '/go', description: 'Go' },
+      run: (context) => context.submit('optimize'),
+      open: () => () => null,
+    }
+    const { controller, press, screen } = await mount(command)
+
+    await press('/go')
+    await press('\r')
+
+    await vi.waitFor(() => expect(screen()).toContain('optimize'))
+    expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+})
+
 describe('a sticky question panel', () => {
   it('shouldTypeIntoTheChatInputAfterLeavingWhileTheQuestionStaysOnScreen', async () => {
     const { controller, press, screen } = await mount(askCommand())
