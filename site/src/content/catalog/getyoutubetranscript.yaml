@@ -1,0 +1,8 @@
+name: GetYouTubeTranscript
+description: YouTube transcripts in any caption language a video has, YouTube search, and channel and playlist data for Strands agents through GetYouTubeTranscript's hosted MCP server.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/tubeagentkit/youtube-mcp
+docsUrl: https://github.com/tubeagentkit/youtube-mcp/blob/main/integrations/strands/README.md
+addedDate: 2026-11-20
