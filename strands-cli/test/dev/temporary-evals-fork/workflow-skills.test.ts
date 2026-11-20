@@ -192,6 +192,14 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('never add a decline option of your own')
   })
 
+  it('shouldRefuseAListWithNothingToPickAndKeepTextFieldsEmpty', () => {
+    expect(instructions).toContain('selectOne takes two options or more')
+    expect(instructions).toContain('say the value instead of asking, or use confirm')
+    expect(instructions).toContain('A text question starts empty')
+    expect(instructions).toContain('Never prefill the field with a summary of the defaults')
+    expect(instructions).toContain('the skill takes all five settings in one reply')
+  })
+
   it('shouldStartRunsThroughTheToolAndAllowThemInParallel', () => {
     expect(instructions).toContain('start the run with strands_dev_optimize once the review is confirmed')
     expect(instructions).toContain('a run already going is not a reason to refuse a new one')

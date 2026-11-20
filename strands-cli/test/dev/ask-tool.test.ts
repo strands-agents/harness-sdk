@@ -137,10 +137,29 @@ describe('one question', () => {
       ask: 'selectOne',
       key: 'iterations',
       question: 'How many steps?',
-      options: [{ value: '4', label: '4' }],
+      options: [
+        { value: '4', label: '4' },
+        { value: '8', label: '8' },
+      ],
     }).steps[0]?.fields[0]
 
     expect(field).toMatchObject({ kind: 'select', multiple: false })
+  })
+
+  it('shouldRefuseASelectOneWithNothingToChoose', () => {
+    expect(() =>
+      askRequestFrom({ ask: 'selectOne', question: 'which?', options: [{ value: 'a', label: 'A' }] })
+    ).toThrow('selectOne needs at least two options')
+  })
+
+  it('shouldAllowASelectManyWithOneOption', () => {
+    const field = askRequestFrom({
+      ask: 'selectMany',
+      question: 'tune?',
+      options: [{ value: 'a', label: 'A' }],
+    }).steps[0]?.fields[0]
+
+    expect(field).toMatchObject({ kind: 'select', multiple: true })
   })
 
   it('shouldTurnAConfirmIntoAYesOrNoPick', () => {

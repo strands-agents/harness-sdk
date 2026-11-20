@@ -201,7 +201,10 @@ const oneQuestion = (input: Input): WizardRequestSpec => {
     }
     if (kind === 'confirm') return { kind: 'select', key, options: CONFIRM_OPTIONS, multiple: false, selected: ['yes'] }
     // ask names the component, so it decides how many answers the list takes.
-    return selectAt({ ...input, multiple: kind === 'selectMany' }, 'this question', key)
+    const list = selectAt({ ...input, multiple: kind === 'selectMany' }, 'this question', key)
+    if (kind === 'selectOne' && list.kind === 'select' && list.options.length < 2)
+      throw new Error('selectOne needs at least two options: with one there is nothing to choose.')
+    return list
   })()
   const status = optionalString(input.status, 'status')
   const footer = optionalString(input.footer, 'footer')
