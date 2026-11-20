@@ -20,6 +20,8 @@ harness-py/
 │   ├── tools/         # harness-authored built-in tools: file_tools.py (read/write/edit), web_fetch.py
 │   └── plugins/       # built-in feature plugins: todos.py, environment.py
 ├── tests/             # pytest suite (mirrors the module layout)
+│   └── scenarios/     # offline scenario tests, plus the recorder and scripted model both modes share
+├── tests_integ/       # live-model tests (need AWS credentials); scenarios/ holds the live scenario tests
 └── pyproject.toml     # build config, dependencies, package-local tool settings
 ```
 
@@ -42,6 +44,7 @@ Run the checks before opening a pull request:
 ruff format .        # format
 ruff check .         # lint
 pytest               # run the test suite
+pytest tests_integ   # live-model tests; STRANDS_INTEG_MODEL and STRANDS_INTEG_SWITCH_MODEL pick the models
 ```
 
 ## Conventions
