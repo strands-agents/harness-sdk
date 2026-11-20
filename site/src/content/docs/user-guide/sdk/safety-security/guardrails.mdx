@@ -21,7 +21,9 @@ Strands Agents SDK allows integration with different model providers, which impl
 
 ### Amazon Bedrock
 
-Amazon Bedrock provides a [built-in guardrails framework](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html) that integrates directly with Strands. When a guardrail triggers, Strands overwrites the offending user input in the conversation history so a follow-up turn is not blocked by the same content. Control this with the `guardrail_redact_input` boolean, and set the replacement text with `guardrail_redact_input_message`. The same redaction is available for model output, disabled by default: enable it with `guardrail_redact_output` and set its message with `guardrail_redact_output_message`. Below is an example of how to use Bedrock guardrails in your code:
+Amazon Bedrock provides a [built-in guardrails framework](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html) that integrates directly with Strands. When a guardrail blocks content, on either the input or the output, Strands overwrites the latest message in the conversation history so a follow-up turn is not blocked by the same content. After a turn that called tools, the latest message is the tool result, so only the tool result's content is replaced. Control this with the `guardrail_redact_input` boolean, and set the replacement text with `guardrail_redact_input_message`. The same redaction is available for model output, disabled by default: enable it with `guardrail_redact_output` and set its message with `guardrail_redact_output_message`.
+
+By default the whole conversation is sent to the guardrail as input on every call. If an earlier turn placed content in history that the guardrail now blocks (for example, a tool result that reached history because output wasn't checked), every later turn in that session can be blocked by it. Set `guardrail_latest_message=True` to send only the latest user text message to the guardrail. Below is an example of how to use Bedrock guardrails in your code:
 
 ```python
 import json
@@ -33,6 +35,7 @@ bedrock_model = BedrockModel(
     guardrail_id="your-guardrail-id",         # Your Bedrock guardrail ID
     guardrail_version="1",                    # Guardrail version
     guardrail_trace="enabled",                # Enable trace info for debugging
+    guardrail_latest_message=True,            # Send only the latest user text message to the guardrail
 )
 
 # Create agent with the guardrail-protected model
