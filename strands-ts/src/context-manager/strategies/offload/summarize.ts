@@ -52,7 +52,7 @@ export const BLOCK_SUMMARY_INSTRUCTIONS = [
  * Configuration for the summarize strategy.
  */
 export interface SummarizeConfig {
-  /** Model used for summarization. Resolution order: `this model > agent.auxModel > agent.model`. */
+  /** Model used for summarization. Resolution order: `this model > agent.model`. */
   model?: Model
 
   /** Summarization instructions closing each summary request, replacing the default ones. */
@@ -341,7 +341,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   private _resolveModel(agent: LocalAgent): Model | undefined {
-    return this._config.model ?? agent.auxModel
+    return this._config.model ?? agent.model
   }
 }
 
