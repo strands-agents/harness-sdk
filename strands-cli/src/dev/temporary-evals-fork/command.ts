@@ -20,6 +20,7 @@ import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
 import { temporarySessionHistory } from './session-converter.js'
+import { reviewOptimizeRun } from './review-run.js'
 import {
   temporaryDevSessions,
   temporaryOptimizeJobs,
@@ -142,9 +143,9 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
     description: 'Answer the setup question that the agent is asking',
     details: ASK_DETAILS,
   },
-  open:
-    (context): DevChatPanelView =>
-    (props) =>
+  open: (context, opening): DevChatPanelView => {
+    if (opening?.job) void reviewOptimizeRun(sessions(context), opening.job)
+    return (props) =>
       createElement(WizardRequestPanel, {
         ...props,
         broker: sessions(context).ask,
@@ -155,7 +156,8 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
               ? 'Autofill on · the agent answers its own questions with their defaults'
               : 'Autofill off · the agent asks, and you answer on screen'
           ),
-      }),
+      })
+  },
   attach: (context): void => {
     const opened = sessions(context)
     opened.ask.attachOpener(() => context.openPanel('ask'))

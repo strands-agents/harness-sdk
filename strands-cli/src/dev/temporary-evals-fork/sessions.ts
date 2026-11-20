@@ -798,6 +798,20 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     return this.resumed
   }
 
+  /** Starts a run that stopped when strands dev closed. It makes paid model calls, so it is never automatic. */
+  async resumeRun(id: string): Promise<void> {
+    const entry = this.entries.get(id)
+    if (!entry?.record || entry.state.step !== 'cancelled') return
+    const saved = (await readTemporaryOptimizeRecords(this.workspaceDirectory())).find(
+      ({ record }) => record === entry.record
+    )
+    if (!saved) return
+    const plan = await this.recordedPlan(saved)
+    const knobs = await this.recordedKnobs(saved)
+    this.updateRun(entry, { step: 'running', progress: startingProgress(plan, saved.startedAt) })
+    await this.run(entry, plan, knobs, [], saved)
+  }
+
   appliedChanges(): readonly TemporaryAppliedChange[] {
     return [...this.changes]
   }
@@ -1089,12 +1103,13 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         await this.finish(entry, saved.record, plan, knobs, false)
         return await dropTemporaryOptimizeRecord(saved)
       }
+      // Restarting makes paid model calls, so a stopped run waits for an explicit resume.
+      this.updateRun(entry, { step: 'cancelled', experiment: plan.experiment.name })
       announce(
         this.host(),
         'success',
-        `optimize · ${plan.experiment.name} · resumed the run that stopped when strands dev closed`
+        `optimize · ${plan.experiment.name} · the run stopped when strands dev closed · ask to resume it`
       )
-      await this.run(entry, plan, knobs, [], saved)
     } catch (error) {
       const failed: OptimizeRunState = { step: 'failed', message: errorMessage(error), record: saved.record }
       entry ??= this.addRun(basename(saved.experiment, '.json'), saved.startedAt, failed)

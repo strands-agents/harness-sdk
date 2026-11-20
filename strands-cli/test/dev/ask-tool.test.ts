@@ -222,6 +222,46 @@ describe('one question', () => {
 
     expect(JSON.parse(await answered)).toEqual({ status: 'answered', answer: false })
   })
+
+  it('shouldAnswerASelectOneWithOneOptionWithoutShowingIt', async () => {
+    const broker = new WizardBroker()
+    const answered = await askTool(() => broker).run({
+      ask: 'selectOne',
+      question: 'Which case?',
+      options: [{ value: 'refunds', label: 'refunds' }],
+    })
+
+    expect(broker.pending()).toBeUndefined()
+    expect(JSON.parse(answered).answer).toBe('refunds')
+  })
+
+  it('shouldShowASelectOneWhoseOnlyOptionCannotBePicked', async () => {
+    const broker = new WizardBroker()
+    const answered = askTool(() => broker).run({
+      ask: 'selectOne',
+      question: 'Which case?',
+      options: [{ value: 'refunds', label: 'refunds', unavailable: 'no rollouts left' }],
+    })
+
+    await vi.waitFor(() => expect(broker.pending()).toBeDefined())
+    broker.respond(broker.pending()!.id, undefined)
+
+    expect(JSON.parse(await answered).status).toBe('cancelled')
+  })
+
+  it('shouldStillShowASelectManyWithOneOption', async () => {
+    const broker = new WizardBroker()
+    const answered = askTool(() => broker).run({
+      ask: 'selectMany',
+      question: 'Which knobs?',
+      options: [{ value: 'instructions', label: 'instructions' }],
+    })
+
+    await vi.waitFor(() => expect(broker.pending()).toBeDefined())
+    broker.respond(broker.pending()!.id, { answer: [] })
+
+    expect(JSON.parse(await answered)).toEqual({ status: 'answered', answer: [] })
+  })
 })
 
 describe('askTool', () => {

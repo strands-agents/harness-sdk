@@ -1,5 +1,5 @@
 /**
- * The optimize skill of strands-evals, vendored from strands-agents/evals#641 (liramon2/evals acadbbab).
+ * The optimize skill of strands-evals, vendored from strands-agents/evals#645 (workstream/optimizer-workflow 94a6940).
  * It is the workflow for an optimization; strands dev only replaces the parts in workflow-skills.ts.
  * Replace this with a read of the installed strands-evals once the skill lands on its mainline.
  */

@@ -702,10 +702,38 @@ describe('TEMPORARY dev sessions', () => {
     expect(existsSync(resumeRecordOf(record))).toBe(false)
   })
 
+  it('shouldLeaveAStoppedRunAloneUntilItIsAskedToStartItBecauseItMakesPaidModelCalls', async () => {
+    const continuing = vi.fn(async () => exit)
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const { record, space, resume } = optimizationFiles(workspace)
+    await writeFileAt(
+      space,
+      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
+    )
+    await writeFileAt(
+      resume,
+      JSON.stringify({
+        version: 1,
+        experiment: experiment.path,
+        record,
+        space,
+        iterations: 4,
+        startedAt: 1,
+        pid: 999999,
+      })
+    )
+
+    await sessions.optimize.resume()
+
+    expect(continuing).not.toHaveBeenCalled()
+    expect(sessions.optimize.snapshot().runs?.[0]?.state.step).toBe('cancelled')
+  })
+
   it.each([
-    ['lists the review of a run that finished while strands dev was closed', true],
-    ['continues a run that stopped when strands dev closed', false],
-  ])('shouldResumeOnStartWhenItSees a record and %s', async (_, finished) => {
+    ['listsTheReviewOfARunThatFinishedWhileStrandsDevWasClosed', true],
+    ['startsAStoppedRunOnlyWhenItIsAskedTo', false],
+  ])('shouldReadTheRecordOnStartAndThen%s', async (_, finished) => {
     const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
       await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')], {
         baseline_id: 'base',
@@ -739,6 +767,7 @@ describe('TEMPORARY dev sessions', () => {
     )
 
     await sessions.optimize.resume()
+    await sessions.optimize.resumeRun('run-1')
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().runs?.[0]?.state.step).toBe('review'))
     expect(sessions.optimize.snapshot()).toMatchObject({
@@ -795,6 +824,7 @@ describe('TEMPORARY dev sessions', () => {
     )
 
     await sessions.optimize.resume()
+    await sessions.optimize.resumeRun('run-1')
 
     await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
     const args = continuing.mock.calls[0]![0].args
@@ -832,6 +862,7 @@ describe('TEMPORARY dev sessions', () => {
     )
 
     await sessions.optimize.resume()
+    await sessions.optimize.resumeRun('run-1')
 
     await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
     const { args } = continuing.mock.calls[0]![0]
@@ -1170,6 +1201,7 @@ describe('TEMPORARY dev sessions', () => {
     )
 
     await sessions.optimize.resume()
+    await sessions.optimize.resumeRun('run-1')
 
     await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
     expect(objectiveFlags(continuing.mock.calls[0]![0].args)).toEqual(flags)
@@ -1202,6 +1234,7 @@ describe('TEMPORARY dev sessions', () => {
     )
 
     await sessions.optimize.resume()
+    await sessions.optimize.resumeRun('run-1')
 
     await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
     const { args } = continuing.mock.calls[0]![0]

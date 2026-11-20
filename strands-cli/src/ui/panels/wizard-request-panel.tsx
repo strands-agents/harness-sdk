@@ -1,11 +1,13 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { createElement, useEffect, useState, type ReactElement } from 'react'
 
+import { diffRows } from '../diff-rows.js'
 import { Line, PanelTitle, useSyncedState } from './kit.js'
 import { useWizardPosition, Wizard, type WizardField, type WizardStep } from './wizard.js'
 import {
   defaultAnswers,
   type WizardAnswer,
   type WizardBroker,
+  type WizardDiffSpec,
   type WizardFieldSpec,
   type WizardRequest,
   type WizardSelectSpec,
@@ -115,6 +117,30 @@ const selectLabel = (spec: WizardStepSpec): string | undefined =>
   spec.listLabel ??
   spec.fields.flatMap((field) => (field.kind === 'select' && field.listLabel ? [field.listLabel] : []))[0]
 
+const diffOf = (spec: WizardStepSpec): WizardDiffSpec | undefined =>
+  spec.fields.flatMap((field) => (field.kind === 'diff' ? [field] : []))[0]
+
+const DIFF_HEADER_ROWS = 2
+
+/** Shows as many diff rows as the room allows, and says how many it held back. */
+const DiffBody = ({ spec, room }: { spec: WizardDiffSpec; room: number }): ReactElement => {
+  const rows = diffRows(spec.diff)
+  const capacity = Math.max(1, room - DIFF_HEADER_ROWS)
+  const shown = rows.slice(0, capacity)
+  const hidden = rows.length - shown.length
+  return (
+    <>
+      <Line tone="muted">{`  ${spec.path}`}</Line>
+      {shown.map((row, index) => (
+        <Line key={`${row.label}-${index}`} {...(row.tone ? { tone: row.tone } : {})}>
+          {`  ${row.label.padEnd(2)}${row.text}`}
+        </Line>
+      ))}
+      {hidden > 0 ? <Line tone="muted">{`  ${hidden} more lines`}</Line> : null}
+    </>
+  )
+}
+
 const toStep = (
   spec: WizardStepSpec,
   answers: Answers,
@@ -123,9 +149,13 @@ const toStep = (
 ): WizardStep => ({
   key: spec.key,
   title: spec.title,
-  fields: spec.fields.flatMap((field) =>
-    field.kind === 'select' ? selectFields(field, answers, live, update) : [toField(field, answers, live, update)]
-  ),
+  fields: spec.fields.flatMap((field) => {
+    if (field.kind === 'diff') return []
+    return field.kind === 'select'
+      ? selectFields(field, answers, live, update)
+      : [toField(field, answers, live, update)]
+  }),
+  ...(diffOf(spec) ? { body: (room: number) => createElement(DiffBody, { spec: diffOf(spec)!, room }) } : {}),
   ...(spec.notice ? { notice: spec.notice } : {}),
   ...(selectLabel(spec) === undefined ? {} : { listLabel: selectLabel(spec)! }),
   ...(spec.footnote === undefined ? {} : { footnote: spec.footnote }),
