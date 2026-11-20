@@ -78,7 +78,7 @@ async function streamingExample() {
 
   // Non-streaming model
   const nonStreamingModel = new BedrockModel({
-    modelId: 'global.anthropic.claude-sonnet-5-5',
+    modelId: 'us.meta.llama3-2-90b-instruct-v1:0',
     stream: false, // Disable streaming
   })
   // --8<-- [end:streaming]
