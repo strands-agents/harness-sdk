@@ -36,6 +36,7 @@ pub(super) struct Sent {
 pub(super) struct MockClient {
     script: Script,
     requests: Mutex<Vec<Sent>>,
+    base_url: Option<String>,
 }
 
 impl MockClient {
@@ -44,6 +45,25 @@ impl MockClient {
         Arc::new(Self {
             script: Box::new(script),
             requests: Mutex::new(Vec::new()),
+            base_url: None,
+        })
+    }
+
+    /// Answers every call with `events`, then `error` when given, reporting `base_url` as its base
+    /// URL.
+    pub(super) fn at(
+        base_url: Option<&str>,
+        events: Vec<JsonValue>,
+        error: Option<Box<dyn Fn() -> HttpError + Send + Sync>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            script: Box::new(move |_| {
+                let mut answer: Events = events.iter().cloned().map(Ok).collect();
+                answer.extend(error.as_ref().map(|error| Err(error())));
+                answer
+            }),
+            requests: Mutex::new(Vec::new()),
+            base_url: base_url.map(str::to_owned),
         })
     }
 
@@ -73,6 +93,10 @@ impl OpenAIClient for MockClient {
         let index = requests.len();
         requests.push(Sent { path, body });
         Box::pin(futures::stream::iter((self.script)(index)))
+    }
+
+    fn base_url(&self) -> Option<&str> {
+        self.base_url.as_deref()
     }
 }
 

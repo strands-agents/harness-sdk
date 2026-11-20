@@ -30,6 +30,11 @@ pub(super) type EventStream = BoxStream<'static, Result<JsonValue, HttpError>>;
 pub(super) trait OpenAIClient: Send + Sync {
     /// POSTs a streaming request body to `path` and yields each event's data.
     fn stream(&self, path: &'static str, body: JsonValue) -> EventStream;
+
+    /// The base URL requests go to; `None` when the client does not say.
+    fn base_url(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Reads environment variables; tests substitute a map.
@@ -129,6 +134,10 @@ async fn authorization(setter: Option<&ApiKeySetter>) -> Result<HeaderMap, HttpE
 }
 
 impl OpenAIClient for HttpOpenAIClient {
+    fn base_url(&self) -> Option<&str> {
+        Some(self.transport.base_url())
+    }
+
     fn stream(&self, path: &'static str, body: JsonValue) -> EventStream {
         let transport = self.transport.clone();
         let setter = self.setter.clone();

@@ -67,7 +67,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures::future::BoxFuture;
 
-use self::chat::{ChatStreamState, format_chat_request, map_chat_chunk, warn_chat_managed_params};
+use self::chat::{
+    ChatStreamState, apply_chat_completions_tools, format_chat_request, map_chat_chunk, responses_hint,
+    warn_chat_managed_params,
+};
 use self::client::{CHAT_COMPLETIONS_PATH, Env, EventStream, HttpOpenAIClient, OpenAIClient, RESPONSES_PATH};
 use self::errors::{OpenAIErrorKind, classify_openai_error};
 use self::formatting::{positive_count, token_count};
@@ -79,7 +82,7 @@ use self::responses::{
 };
 use super::defaults::{MODEL_DEFAULTS, default_model_warning_message};
 use super::http::{HttpError, RedactedHeaders, read_env};
-use super::model_info::server_side_summary_off;
+use super::model_info::{ChatCompletionsTools, server_side_summary_off};
 use super::streaming::{ModelMetadataEvent, ModelStreamEvent, Usage};
 use super::{
     BaseModelConfig, BoxStream, CacheConfig, Model, ModelCapabilities, ModelInfo, ModelRequest, base_model_info,
@@ -704,6 +707,36 @@ fn translate_error(failure: StreamFailure) -> Error {
     }
 }
 
+/// [`translate_error`] for a Chat Completions request, pointing to the Responses API when OpenAI
+/// rejects tools for a model that accepts none there.
+fn translate_chat_error(error: HttpError, tool_limit: Option<ChatCompletionsTools>, model_id: &str) -> Error {
+    if tool_limit != Some(ChatCompletionsTools::Unsupported) || !rejects_reasoning_effort(&error) {
+        return translate_error(StreamFailure::Http(error));
+    }
+    let code = error
+        .body()
+        .and_then(|body| body.get("error"))
+        .and_then(|error| error.get("code"));
+    if classify_openai_error(error.message(), error.status_code(), code).is_some() {
+        return translate_error(StreamFailure::Http(error));
+    }
+    ModelError::new(responses_hint(error.message(), model_id))
+        .with_source(error)
+        .into()
+}
+
+/// Whether OpenAI rejected the request over `reasoning_effort`, which it names in both of its
+/// rejections: tools with reasoning, and `none` unsupported.
+fn rejects_reasoning_effort(error: &HttpError) -> bool {
+    error.status_code() == Some(400)
+        && error
+            .body()
+            .and_then(|body| body.get("error"))
+            .and_then(|error| error.get("param"))
+            .and_then(JsonValue::as_str)
+            == Some("reasoning_effort")
+}
+
 /// The next event, or `None` once `cancel` fires, which drops the in-flight request.
 async fn next_event(
     events: &mut EventStream,
@@ -769,15 +802,18 @@ impl Inner {
     fn stream_chat(self: Arc<Self>, request: ModelRequest) -> BoxStream<'static, Result<ModelStreamEvent>> {
         Box::pin(async_stream::stream! {
             let config = self.config();
-            let body = match format_chat_request(&config, &request) {
+            let mut body = match format_chat_request(&config, &request) {
                 Ok(body) => body,
                 Err(error) => {
                     yield Err(error);
                     return;
                 }
             };
+            let client = self.client();
+            let tool_limit = apply_chat_completions_tools(&mut body, client.base_url());
+            let model_id = body.get("model").and_then(JsonValue::as_str).unwrap_or_default().to_owned();
             let cancel = request.cancel_signal.as_ref();
-            let mut events = self.client().stream(CHAT_COMPLETIONS_PATH, JsonValue::Object(body));
+            let mut events = client.stream(CHAT_COMPLETIONS_PATH, JsonValue::Object(body));
             let mut state = ChatStreamState::default();
             let mut buffered_usage: Option<Usage> = None;
             loop {
@@ -794,7 +830,7 @@ impl Inner {
                     Ok(chunk) => chunk,
                     Err(error) => {
                         drop(events);
-                        yield Err(translate_error(StreamFailure::Http(error)));
+                        yield Err(translate_chat_error(error, tool_limit, &model_id));
                         return;
                     }
                 };

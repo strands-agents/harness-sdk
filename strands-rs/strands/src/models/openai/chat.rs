@@ -9,8 +9,10 @@ use super::formatting::{
     warn_managed_params, wire_name,
 };
 use crate::error::{Error, Result};
+use crate::logging::warn_once;
 use crate::models::ModelRequest;
 use crate::models::defaults::MODEL_DEFAULTS;
+use crate::models::model_info::{ChatCompletionsTools, lookup_chat_completions_tools};
 use crate::models::streaming::{
     ModelContentBlockDeltaEvent, ModelContentBlockStartEvent, ModelContentBlockStopEvent, ModelMessageStartEvent,
     ModelMessageStopEvent, ModelStreamEvent, TextDelta, ToolUseInputDelta, ToolUseStart,
@@ -103,6 +105,63 @@ pub(super) fn format_chat_request(config: &OpenAIModelConfig, request: &ModelReq
         return Err(Error::other("Streaming with n > 1 is not supported"));
     }
     Ok(body)
+}
+
+/// Whether `base_url` is the OpenAI API or Bedrock Mantle, where the tool limits in the shared
+/// model info were measured.
+fn has_openai_tool_limits(base_url: Option<&str>) -> bool {
+    let Some(url) = base_url.and_then(|url| reqwest::Url::parse(url).ok()) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if host == "api.openai.com" {
+        return true;
+    }
+    host.strip_prefix("bedrock-mantle.")
+        .and_then(|rest| rest.strip_suffix(".api.aws"))
+        .is_some_and(|region| {
+            !region.is_empty()
+                && region
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        })
+}
+
+/// Turns reasoning off in a request with tools when OpenAI's Chat Completions API accepts them for
+/// the model only that way and `reasoning_effort` is unset. Leaves requests to other endpoints as
+/// they are, and returns the limit the API puts on the request's tools.
+pub(super) fn apply_chat_completions_tools(
+    body: &mut JsonObject,
+    base_url: Option<&str>,
+) -> Option<ChatCompletionsTools> {
+    let has_tools = body
+        .get("tools")
+        .and_then(JsonValue::as_array)
+        .is_some_and(|tools| !tools.is_empty());
+    if !has_tools || !has_openai_tool_limits(base_url) {
+        return None;
+    }
+    let model_id = body.get("model").and_then(JsonValue::as_str)?.to_owned();
+    let limit = lookup_chat_completions_tools(&model_id);
+    let effort_unset = body.get("reasoning_effort").is_none_or(JsonValue::is_null);
+    if limit == Some(ChatCompletionsTools::ReasoningOff) && effort_unset {
+        warn_once(&format!(
+            "model_id=<{model_id}> | this model accepts tools on the Chat Completions API only with reasoning off, sending reasoning_effort='none'; use api: OpenAIApi::Responses to keep reasoning"
+        ));
+        body.insert("reasoning_effort".to_owned(), "none".into());
+    }
+    limit
+}
+
+/// The hint added to OpenAI's rejection of tools for a model that accepts none on Chat
+/// Completions, whose own message suggests `reasoning_effort: "none"`, which such a model rejects
+/// too.
+pub(super) fn responses_hint(message: &str, model_id: &str) -> String {
+    format!(
+        "{message} {model_id} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: OpenAIApi::Responses instead."
+    )
 }
 
 fn format_tool_choice(choice: &ToolChoice) -> JsonValue {
