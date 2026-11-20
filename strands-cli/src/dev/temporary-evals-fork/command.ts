@@ -173,6 +173,10 @@ const optimizeRunsCommand = (sessions: Sessions): DevChatCommand => ({
   hidden: true,
   spec: { name: 'optimize', usage: '/optimize', description: 'Optimization runs in progress, driven from the chat' },
   jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
+  contentRows: (): number => {
+    const runs = temporaryOptimizeJobs(sessions().optimize.snapshot()).length
+    return 4 + (runs === 0 ? 1 : runs * 2)
+  },
   open:
     (context): DevChatPanelView =>
     (props) =>

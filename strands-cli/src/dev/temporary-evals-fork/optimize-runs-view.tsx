@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
+import { useInput } from 'ink'
 
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
 import { Fill, KeyHints, Line, PanelTitle, plural } from '../../ui/panels/kit.js'
@@ -17,8 +18,16 @@ export const OptimizeRunsView = ({
   session,
   browser,
   height,
+  close,
+  active = true,
 }: DevChatPanelProps & { session: TemporaryStore<OptimizeState>; browser: EvalsBrowser }): ReactElement => {
   const [state, setState] = useState(session.snapshot())
+  useInput(
+    (_input, key) => {
+      if (key.escape) close()
+    },
+    { isActive: active }
+  )
   const [links, setLinks] = useState<Readonly<Record<string, string>>>({})
   useEffect(() => session.subscribe(() => setState(session.snapshot())), [session])
   const jobs = temporaryOptimizeJobs(state)
