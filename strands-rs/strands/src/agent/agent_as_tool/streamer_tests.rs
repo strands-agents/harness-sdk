@@ -184,3 +184,45 @@ async fn sets_an_error_when_the_stored_turn_is_missing_or_unreadable() {
         assert_eq!(tool.error.as_deref(), Some("unavailable"), "{case}");
     }
 }
+
+async fn error_for(turn: MockTurn) -> Option<String> {
+    let state = InterruptState::new();
+    let mut tool = streamer(&state);
+    run(&mut tool, &mut child(MockModel::new().with_turn(turn))).await;
+    tool.error.clone()
+}
+
+#[tokio::test]
+async fn reports_content_filtered_and_refusal_with_the_partial_output() {
+    for stop_reason in [StopReason::ContentFiltered, StopReason::Refusal] {
+        let turn = MockTurn::text("partial answer\n\n").with_stop_reason(stop_reason.clone());
+
+        assert_eq!(
+            error_for(turn).await,
+            Some(format!(
+                "Child stopped before finishing (stopReason={stop_reason}).\n\nPartial output:\npartial answer"
+            ))
+        );
+    }
+}
+
+#[tokio::test]
+async fn reports_content_filtered_and_refusal_without_partial_output() {
+    for stop_reason in [StopReason::ContentFiltered, StopReason::Refusal] {
+        let turn = MockTurn::content(Vec::<ContentBlock>::new()).with_stop_reason(stop_reason.clone());
+
+        assert_eq!(
+            error_for(turn).await,
+            Some(format!("Child stopped before finishing (stopReason={stop_reason})."))
+        );
+    }
+}
+
+#[tokio::test]
+async fn treats_end_turn_and_guardrail_intervened_as_success() {
+    for stop_reason in [StopReason::EndTurn, StopReason::GuardrailIntervened] {
+        let turn = MockTurn::text("answer").with_stop_reason(stop_reason);
+
+        assert_eq!(error_for(turn).await, None);
+    }
+}

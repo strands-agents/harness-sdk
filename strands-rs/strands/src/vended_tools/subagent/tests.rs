@@ -42,7 +42,7 @@ impl Capturing {
         tools: impl Fn() -> Vec<FunctionTool> + Send + Sync + 'static,
     ) -> ChildAgentBuilder {
         let this = self.clone();
-        ChildAgentBuilder::new(move |spec: &AgentSpec| {
+        ChildAgentBuilder::sync(move |spec: &AgentSpec| {
             this.specs.lock().unwrap().push(spec.clone());
             let model = model();
             this.models.lock().unwrap().push(model.clone());
@@ -295,6 +295,32 @@ fn rejects_invalid_options() {
 }
 
 #[tokio::test]
+async fn awaits_an_async_builder() {
+    let model = MockModel::new().with_turn("the answer");
+    let child_model = model.clone();
+    let builder = ChildAgentBuilder::new(move |_spec: AgentSpec| {
+        let model = child_model.clone();
+        async move {
+            tokio::task::yield_now().await;
+            Agent::builder().model(model).printer(false).build()
+        }
+    });
+
+    let result = run(&tool(with_builder(builder)), json!({"task": "do it"}), &agent()).await;
+
+    assert_eq!(
+        result,
+        ToolResultBlock::success("t1", vec![ToolResultContent::text("the answer")])
+    );
+    let prompts: Vec<String> = model
+        .requests()
+        .iter()
+        .map(|request| request.messages[0].text())
+        .collect();
+    assert_eq!(prompts, ["do it"]);
+}
+
+#[tokio::test]
 async fn builds_a_child_from_the_default_preset_and_returns_its_output() {
     let capturing = Capturing::default();
     let tool = tool(with_builder(capturing.builder("the answer")));
@@ -324,7 +350,7 @@ struct Scratch(u32);
 async fn passes_a_copy_of_the_invocation_state_to_the_child() {
     let seen = Arc::new(Mutex::new(None));
     let recorded = seen.clone();
-    let builder: ChildAgentBuilder = ChildAgentBuilder::new(move |_spec: &AgentSpec| {
+    let builder: ChildAgentBuilder = ChildAgentBuilder::sync(move |_spec: &AgentSpec| {
         let child = Agent::builder()
             .model(MockModel::new().with_turn("done"))
             .printer(false)
@@ -625,7 +651,7 @@ async fn renders_text_turns_for_no_tools() {
 
 #[test]
 fn turns_a_builder_exception_into_an_error_result_and_logs_it() {
-    let builder: ChildAgentBuilder = ChildAgentBuilder::new(|_spec: &AgentSpec| Err(Error::other("boom")));
+    let builder: ChildAgentBuilder = ChildAgentBuilder::sync(|_spec: &AgentSpec| Err(Error::other("boom")));
     let tool = tool(with_builder(builder));
     let (result, logs) = capture_logs(|| {
         tokio::runtime::Builder::new_current_thread()
@@ -667,6 +693,36 @@ async fn turns_a_child_stopped_by_a_limit_into_an_error_result() {
             StopReason::LimitTurns
         )
     );
+}
+
+#[tokio::test]
+async fn turns_a_content_filtered_or_refusing_child_into_an_error_result() {
+    let cases = [
+        (
+            StopReason::ContentFiltered,
+            "partial",
+            "Subagent stopped before finishing (stopReason=contentFiltered).\n\nPartial output:\npartial",
+        ),
+        (
+            StopReason::Refusal,
+            "",
+            "Subagent stopped before finishing (stopReason=refusal).",
+        ),
+    ];
+    for (stop_reason, reply, message) in cases {
+        let capturing = Capturing::default();
+        let builder = capturing.builder_with(
+            move || MockModel::new().with_turn(MockTurn::text(reply).with_stop_reason(stop_reason.clone())),
+            Vec::new,
+        );
+
+        let result = run(&tool(with_builder(builder)), json!({"task": "x"}), &agent()).await;
+
+        assert_eq!(
+            result,
+            ToolResultBlock::error("t1", vec![ToolResultContent::text(message)])
+        );
+    }
 }
 
 #[tokio::test]
@@ -764,7 +820,7 @@ async fn raises_the_interrupt_again_and_keeps_the_turn_when_the_child_cannot_be_
         .with_turn("child done");
     let fail_next = Arc::new(Mutex::new(false));
     let fail = fail_next.clone();
-    let builder: ChildAgentBuilder = ChildAgentBuilder::new(move |_spec: &AgentSpec| {
+    let builder: ChildAgentBuilder = ChildAgentBuilder::sync(move |_spec: &AgentSpec| {
         if std::mem::take(&mut *fail.lock().unwrap()) {
             return Err(Error::other("mcp down"));
         }
@@ -806,7 +862,11 @@ async fn raises_the_interrupt_again_and_keeps_the_turn_when_the_child_cannot_be_
 
 /// A parent that delegates a confirm-guarded action to a subagent, persisting to `storage`; a
 /// `rebuilt` parent starts from the turns that follow the interrupted tool call.
-fn confirming_parent(storage: &Arc<InMemoryStorage>, rebuilt: bool) -> (Agent, Arc<Mutex<Vec<String>>>) {
+fn confirming_parent(
+    storage: &Arc<InMemoryStorage>,
+    rebuilt: bool,
+    async_builder: bool,
+) -> (Agent, Arc<Mutex<Vec<String>>>) {
     let executions = Arc::new(Mutex::new(Vec::new()));
     let recorded = executions.clone();
     let dangerous_action =
@@ -827,13 +887,21 @@ fn confirming_parent(storage: &Arc<InMemoryStorage>, rebuilt: bool) -> (Agent, A
         child_model = child_model.with_turn(tool_use_turn("dangerousAction", "c1", json!({"target": "prod"})));
     }
     let child_model = child_model.with_turn("child done");
-    let builder: ChildAgentBuilder = ChildAgentBuilder::new(move |_spec: &AgentSpec| {
+    let build = move || {
         Agent::builder()
             .model(child_model.clone())
             .tools([dangerous_action.clone()])
             .printer(false)
             .build()
-    });
+    };
+    let builder = if async_builder {
+        ChildAgentBuilder::new(move |_spec: AgentSpec| {
+            let child = build();
+            async move { child }
+        })
+    } else {
+        ChildAgentBuilder::sync(move |_spec: &AgentSpec| build())
+    };
     let mut parent_model = MockModel::new();
     if !rebuilt {
         parent_model = parent_model.with_turn(tool_use_turn("subagent", "t1", json!({"task": "do it"})));
@@ -854,9 +922,15 @@ fn confirming_parent(storage: &Arc<InMemoryStorage>, rebuilt: bool) -> (Agent, A
 }
 
 #[tokio::test]
-async fn resumes_the_stored_child_turn_after_the_parent_is_rebuilt() {
+async fn resumes_the_stored_child_turn_after_the_parent_is_rebuilt_with_a_sync_or_an_async_builder() {
+    for async_builder in [false, true] {
+        resumes_the_stored_child_turn_after_the_parent_is_rebuilt(async_builder).await;
+    }
+}
+
+async fn resumes_the_stored_child_turn_after_the_parent_is_rebuilt(async_builder: bool) {
     let storage = Arc::new(InMemoryStorage::new());
-    let (mut first, _) = confirming_parent(&storage, false);
+    let (mut first, _) = confirming_parent(&storage, false, async_builder);
     let interrupted = first.invoke("go").await.unwrap();
     let interrupt_id = interrupted.interrupts()[0].id.clone();
     assert_eq!(interrupt_id, "subagent:t1:tool:c1:confirm");
@@ -870,7 +944,7 @@ async fn resumes_the_stored_child_turn_after_the_parent_is_rebuilt() {
     );
     drop(first);
 
-    let (mut second, executions) = confirming_parent(&storage, true);
+    let (mut second, executions) = confirming_parent(&storage, true, async_builder);
     let result = second
         .invoke(vec![InterruptResponse::new(interrupt_id, "APPROVE")])
         .await

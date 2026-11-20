@@ -9,8 +9,10 @@
 //! - [`Choice`]: a pick from a developer-supplied set.
 
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 
+use futures::future::BoxFuture;
 use indexmap::IndexMap;
 use serde_json::json;
 
@@ -345,9 +347,54 @@ pub struct AgentSpec {
     pub model: Option<SpecValue>,
 }
 
-crate::callback::callback! {
-    /// Turns a resolved spec into a child agent.
-    pub struct ChildAgentBuilder(Fn(&AgentSpec) -> Result<Agent>);
+/// Turns a resolved spec into a child agent, built the way the parent was (`AgentBuilder`). The
+/// builder may be async: the child is awaited before it runs.
+///
+/// ```
+/// use strands::Agent;
+/// use strands::multiagent::{AgentSpec, ChildAgentBuilder};
+/// use strands::testing::MockModel;
+///
+/// let from_async = ChildAgentBuilder::new(|spec: AgentSpec| async move {
+///     let _ = spec;
+///     Agent::builder().model(MockModel::new()).printer(false).build()
+/// });
+/// let from_sync = ChildAgentBuilder::sync(|_spec: &AgentSpec| {
+///     Agent::builder().model(MockModel::new()).printer(false).build()
+/// });
+/// # let _ = (from_async, from_sync);
+/// ```
+#[derive(Clone)]
+pub struct ChildAgentBuilder(Arc<dyn Fn(AgentSpec) -> BoxFuture<'static, Result<Agent>> + Send + Sync>);
+
+impl ChildAgentBuilder {
+    /// A builder from an async closure.
+    pub fn new<F, Fut>(build: F) -> Self
+    where
+        F: Fn(AgentSpec) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Agent>> + Send + 'static,
+    {
+        Self(Arc::new(move |spec| Box::pin(build(spec))))
+    }
+
+    /// A builder from a synchronous closure.
+    pub fn sync(build: impl Fn(&AgentSpec) -> Result<Agent> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(move |spec| {
+            let child = build(&spec);
+            Box::pin(async move { child })
+        }))
+    }
+
+    /// Builds the child for `spec`.
+    pub fn build(&self, spec: AgentSpec) -> BoxFuture<'static, Result<Agent>> {
+        (self.0)(spec)
+    }
+}
+
+impl fmt::Debug for ChildAgentBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ChildAgentBuilder(..)")
+    }
 }
 
 /// Describes a preset by its description plus the fields it sets.
