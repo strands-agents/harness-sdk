@@ -35,6 +35,7 @@ import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
+from ...multiagent._agent_tool_streamer import _discard_interrupted_turn
 from ...tools.decorator import tool
 from ...tools.executors._executor import ToolExecutor
 from ...types._events import ToolInterruptEvent
@@ -206,7 +207,11 @@ async def _execute_tool(tool_context: ToolContext, tool_name: str, tool_input: d
             agent, tool_use, tool_results, invocation_state, invocation_context=tool_context.invocation_context
         ):
             if isinstance(event, ToolInterruptEvent):
-                agent._interrupt_state.deactivate()
+                # Only what this call registered: the agent is mid-cycle, and sibling tool calls may
+                # hold interrupts and resume state of their own.
+                for interrupt in event.interrupts:
+                    agent._interrupt_state.interrupts.pop(interrupt.id, None)
+                _discard_interrupted_turn(agent._interrupt_state, tool_use["toolUseId"])
                 raise RuntimeError(
                     f"Tool '{tool_name}' needs approval, which programmatic_tool_caller cannot prompt for; "
                     "call it as a normal tool call instead."
@@ -391,7 +396,7 @@ async def _run_code(
     try:
         await _await_bounded(_run_sandboxed(code, external_lookup, output), timeout, tool_context.cancel_signal)
     except _Cancelled:
-        return _error_result("Execution cancelled.")
+        return _error_result(output.with_error("Execution cancelled."))
     except asyncio.TimeoutError:
         return _error_result(output.with_error(f"Execution error: timed out after {timeout:g} seconds."))
     except MontySyntaxError as error:
