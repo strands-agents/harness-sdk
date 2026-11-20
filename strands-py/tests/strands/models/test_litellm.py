@@ -149,10 +149,34 @@ def test_format_request_keeps_cache_key_litellm_version_does_not_validate(litell
     _ = litellm_supported_params
     model = LiteLLMModel(model_id="openai/gpt-4o", cache_config=CacheConfig(cache_key="tenant-42"))
 
-    with unittest.mock.patch.object(strands.models.litellm.litellm, "OPENAI_CHAT_COMPLETION_PARAMS", []):
+    with (
+        unittest.mock.patch.object(strands.models.litellm.litellm, "OPENAI_CHAT_COMPLETION_PARAMS", []),
+        unittest.mock.patch.object(
+            strands.models.litellm.litellm.constants, "DEFAULT_CHAT_COMPLETION_PARAM_VALUES", {}
+        ),
+    ):
         request = model.format_request(messages)
 
     assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_format_request_drops_cache_key_on_litellm_that_validates_it_before_listing_it(
+    litellm_supported_params, messages
+):
+    _ = litellm_supported_params
+    model = LiteLLMModel(model_id="gemini/gemini-3.5-flash", cache_config=CacheConfig())
+
+    with (
+        unittest.mock.patch.object(strands.models.litellm.litellm, "OPENAI_CHAT_COMPLETION_PARAMS", []),
+        unittest.mock.patch.object(
+            strands.models.litellm.litellm.constants,
+            "DEFAULT_CHAT_COMPLETION_PARAM_VALUES",
+            {"prompt_cache_key": None},
+        ),
+    ):
+        request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
 
 
 def test_format_request_keeps_prompt_cache_key_set_in_params(litellm_supported_params, messages):
@@ -1426,7 +1450,10 @@ def test_format_request_keeps_the_callers_cache_points_and_applies_ttls(injected
 
     request = model.format_request(injected_loop_messages, system_prompt_content=system_prompt_content)
 
-    assert [part.get("cache_control") for part in request["messages"][0]["content"]] == [{"type": "ephemeral"}, None]
+    assert [part.get("cache_control") for part in request["messages"][0]["content"]] == [
+        {"type": "ephemeral", "ttl": "1h"},
+        None,
+    ]
     assert request["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
 
@@ -1447,3 +1474,87 @@ async def test_stream_passes_dynamic_trailing_blocks_to_format_request(messages)
         await anext(model.stream(messages, dynamic_trailing_blocks=2))
 
     assert model.format_request.call_args.kwargs["dynamic_trailing_blocks"] == 2
+
+
+def test_format_request_steps_the_bedrock_point_back_over_a_trailing_non_pdf_document():
+    model = LiteLLMModel(model_id="bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0", cache_config=CacheConfig())
+    document = {"document": {"format": "txt", "name": "notes", "source": {"bytes": b"hello"}}}
+
+    request = model.format_request([{"role": "user", "content": [{"text": "read this"}, document]}])
+
+    assert ["cache_control" in part for part in request["messages"][-1]["content"]] == [True, False]
+
+
+def test_format_request_keeps_the_anthropic_point_after_a_trailing_document():
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig())
+    document = {"document": {"format": "txt", "name": "notes", "source": {"bytes": b"hello"}}}
+
+    request = model.format_request([{"role": "user", "content": [{"text": "read this"}, document]}])
+
+    assert ["cache_control" in part for part in request["messages"][-1]["content"]] == [False, True]
+
+
+def test_format_request_fills_the_ttl_into_the_callers_message_cache_points():
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig(ttl="1h"))
+    messages = [
+        {"role": "user", "content": [{"text": "a"}, {"cachePoint": {"type": "default"}}]},
+        {"role": "assistant", "content": [{"text": "b"}]},
+        {"role": "user", "content": [{"text": "c"}]},
+    ]
+
+    request = model.format_request(messages, system_prompt="s1")
+
+    ttls = [part["cache_control"].get("ttl") for part in _request_parts_of(request) if "cache_control" in part]
+    assert ttls == ["1h", "1h", "1h"]
+
+
+def _request_parts_of(request):
+    return [part for m in request["messages"] if isinstance(m.get("content"), list) for part in m["content"]]
+
+
+@pytest.mark.parametrize(
+    ("model_id", "client_args", "prompt_caching"),
+    [
+        ("claude-sonnet-4-5", {"custom_llm_provider": "openai", "api_base": "http://gateway"}, "auto"),
+        ("anthropic/claude-haiku-4-5", {"use_litellm_proxy": True}, "cache_points"),
+    ],
+    ids=["openai_compatible_gateway", "use_litellm_proxy"],
+)
+def test_model_info_resolves_the_backend_from_the_client_args(model_id, client_args, prompt_caching):
+    model = LiteLLMModel(model_id=model_id, client_args=client_args)
+
+    assert model.model_info.capabilities.prompt_caching == prompt_caching
+
+
+def test_format_request_logs_message_cache_points_it_drops(caplog):
+    model = LiteLLMModel(model_id="openai/gpt-6-luna", cache_config=CacheConfig())
+
+    with caplog.at_level("WARNING", logger="strands.models.litellm"):
+        model.format_request([{"role": "user", "content": [{"text": "q"}, {"cachePoint": {"type": "default"}}]}])
+
+    assert "cachePoint content block is not supported by this backend" in caplog.text
+
+
+def test_format_request_marks_the_message_before_an_empty_tool_result():
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig(system_prompt_ttl=False))
+    messages = [
+        {"role": "user", "content": [{"text": "read"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "read", "input": {}}}]},
+        {"role": "user", "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": []}}]},
+    ]
+
+    request = model.format_request(messages)
+
+    assert [m["role"] for m in request["messages"] if any("cache_control" in p for p in m.get("content") or [])]
+
+
+def test_format_request_does_not_mark_the_callers_tool_dicts(read_tool_spec):
+    tool = {"type": "function", "function": {"name": "read", "parameters": {"type": "object"}}}
+    model = LiteLLMModel(
+        model_id="anthropic/claude-haiku-4-5", params={"tools": [tool]}, cache_config=CacheConfig(tools_ttl=True)
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert "cache_control" in request["tools"][-1]
+    assert "cache_control" not in tool

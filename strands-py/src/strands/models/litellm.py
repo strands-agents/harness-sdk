@@ -3,11 +3,13 @@
 - Docs: https://docs.litellm.ai/
 """
 
+import functools
 import json
 import logging
 import uuid
 import warnings
-from collections.abc import AsyncGenerator
+from collections import Counter
+from collections.abc import AsyncGenerator, Callable
 from typing import Any, TypeVar, cast
 
 import litellm
@@ -23,7 +25,7 @@ from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec, ToolUse
 from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
-from ._validation import validate_config_keys
+from ._validation import _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
 
@@ -31,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 # LiteLLM backends that turn an OpenAI-format ``cache_control`` part into their own cache points.
 _CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "bedrock", "vertex_ai"})
+
+_LITELLM_PROVIDERS = frozenset(str(getattr(provider, "value", provider)) for provider in litellm.provider_list)
 
 # Cache points Anthropic, Bedrock and Vertex AI accept per request, across tools, system and messages.
 _CACHE_POINT_LIMIT = 4
@@ -104,6 +108,10 @@ class LiteLLMModel(OpenAIModel):
         """
         return cast(LiteLLMModel.LiteLLMConfig, self.config)
 
+    def _backend(self) -> tuple[str, str] | None:
+        """The backend model id and LiteLLM provider the configured model id routes to."""
+        return _resolve_backend(self.get_config().get("model_id") or "", self.client_args.get("custom_llm_provider"))
+
     @property
     @override
     def model_info(self) -> ModelInfo:
@@ -115,7 +123,7 @@ class LiteLLMModel(OpenAIModel):
         """
         return ModelInfo.merge(
             super().model_info,
-            _backend_model_info(self.get_config().get("model_id")),
+            _backend_model_info(self._backend()),
             self.get_config().get("model_info"),
         )
 
@@ -311,8 +319,8 @@ class LiteLLMModel(OpenAIModel):
             formatted.extend(cls._format_regular_messages([message]))
             return
         durable = cls._format_regular_messages([{"role": message["role"], "content": content[:index]}])
-        _mark_last_part(durable, content[index]["cachePoint"])
         formatted.extend(durable)
+        _mark_last_part(formatted, content[index]["cachePoint"])
         tail = [block for block in content[index + 1 :] if "cachePoint" not in block]
         if tail:
             _append_tail(formatted, cls._format_regular_messages([{"role": message["role"], "content": tail}]))
@@ -398,8 +406,14 @@ class LiteLLMModel(OpenAIModel):
         if not takes_cache_points:
             messages = _without_message_cache_points(messages)
         elif cache_config is not None:
+            backend = self._backend()
             system_prompt_content, messages = _with_cache_points(
-                cache_config, system_prompt, system_prompt_content, messages, dynamic_trailing_blocks
+                cache_config,
+                system_prompt,
+                system_prompt_content,
+                messages,
+                dynamic_trailing_blocks,
+                after_documents=backend is None or backend[1] != "bedrock",
             )
         request = super().format_request(
             messages,
@@ -451,7 +465,7 @@ class LiteLLMModel(OpenAIModel):
         if self.model_info.capabilities.prompt_caching == "cache_points":
             return False
         # LiteLLM versions that do not know the parameter forward it without validation.
-        if "prompt_cache_key" not in litellm.OPENAI_CHAT_COMPLETION_PARAMS:
+        if not _litellm_validates_prompt_cache_key():
             return True
 
         supported_params = litellm.get_supported_openai_params(
@@ -793,16 +807,41 @@ class LiteLLMModel(OpenAIModel):
                 self.config["model_id"] = f"litellm_proxy/{model_id}"
 
 
-def _backend_model_info(model_id: str | None) -> ModelInfo | None:
-    """How the backend model a LiteLLM id names caches prompts, or None when LiteLLM cannot map the id.
+@functools.lru_cache(maxsize=256)
+def _resolve_backend(model_id: str, custom_llm_provider: str | None) -> tuple[str, str] | None:
+    """The backend model id and LiteLLM provider for a LiteLLM model id, or None when LiteLLM cannot map it.
+
+    Cached because LiteLLM prints a notice each time it fails to map an id. A ``litellm_proxy/`` id that still names
+    its backend, as ``use_litellm_proxy`` produces, resolves to that backend.
+    """
+    try:
+        backend_id, provider, _, _ = litellm.get_llm_provider(model_id, custom_llm_provider=custom_llm_provider)
+    except BadRequestError:
+        return None
+    if provider == "litellm_proxy" and backend_id.split("/", 1)[0] in _LITELLM_PROVIDERS:
+        return _resolve_backend(backend_id, None) or (backend_id, provider)
+    return backend_id, provider
+
+
+def _litellm_validates_prompt_cache_key() -> bool:
+    """Whether this LiteLLM version knows ``prompt_cache_key``, and so rejects it for providers that do not list it.
+
+    Some versions validate it before listing it in ``OPENAI_CHAT_COMPLETION_PARAMS``; their default parameter values
+    already carry it.
+    """
+    defaults = getattr(getattr(litellm, "constants", None), "DEFAULT_CHAT_COMPLETION_PARAM_VALUES", {})
+    return "prompt_cache_key" in litellm.OPENAI_CHAT_COMPLETION_PARAMS or "prompt_cache_key" in defaults
+
+
+def _backend_model_info(backend: tuple[str, str] | None) -> ModelInfo | None:
+    """How the backend model caches prompts, or None when the backend is unknown.
 
     Only ``prompt_caching`` is taken from the backend's shared model info; the other capabilities are what the
     OpenAI-compatible request path can send, which ``OpenAIModel`` already reports.
     """
-    try:
-        backend_id, provider, _, _ = litellm.get_llm_provider(model_id or "")
-    except BadRequestError:
+    if backend is None:
         return None
+    backend_id, provider = backend
     prompt_caching = lookup_model_info(backend_id).capabilities.prompt_caching
     if prompt_caching == "cache_points" and provider not in _CACHE_CONTROL_PROVIDERS:
         prompt_caching = "auto"
@@ -810,7 +849,10 @@ def _backend_model_info(model_id: str | None) -> ModelInfo | None:
 
 
 def _mark_last_part(formatted: list[dict[str, Any]], cache_point: CachePoint) -> None:
-    """Put ``cache_control`` on the last content part of the last formatted message that has content."""
+    """Put ``cache_control`` on the last content part of the last formatted message that has content.
+
+    An empty tool result has no part to carry it, so the point moves back to the message before it.
+    """
     message = next((message for message in reversed(formatted) if message.get("content")), None)
     if message is None:
         return
@@ -832,9 +874,13 @@ def _append_tail(formatted: list[dict[str, Any]], tail: list[dict[str, Any]]) ->
 
 
 def _without_message_cache_points(messages: Messages) -> Messages:
-    """The messages without their cache point blocks."""
-    if not any("cachePoint" in block for message in messages for block in message["content"]):
+    """The messages without their cache point blocks, which only backends that take cache points accept."""
+    count = sum("cachePoint" in block for message in messages for block in message["content"])
+    if not count:
         return messages
+    _log_skipped_blocks(
+        logger, Counter({"cachePoint content block is not supported by this backend | skipping": count})
+    )
     return [{**message, "content": [b for b in message["content"] if "cachePoint" not in b]} for message in messages]
 
 
@@ -843,7 +889,8 @@ def _add_tools_cache_point(request: dict[str, Any], cache_config: CacheConfig | 
     if cache_config is None or cache_config.tools_ttl in (None, False) or not request.get("tools"):
         return
     ttl = cache_config.tools_ttl if isinstance(cache_config.tools_ttl, str) else cache_config.ttl
-    request["tools"][-1]["cache_control"] = {"type": "ephemeral", **({"ttl": ttl} if ttl else {})}
+    marked = {**request["tools"][-1], "cache_control": {"type": "ephemeral", **({"ttl": ttl} if ttl else {})}}
+    request["tools"] = [*request["tools"][:-1], marked]
 
 
 def _limit_cache_points(request: dict[str, Any]) -> None:
@@ -878,11 +925,14 @@ def _with_cache_points(
     system_prompt_content: list[SystemContentBlock] | None,
     messages: Messages,
     dynamic_trailing_blocks: int,
+    *,
+    after_documents: bool,
 ) -> tuple[list[SystemContentBlock] | None, Messages]:
     """Add the automatic cache points: one at the end of the system prompt and one in the latest user message.
 
     The conversation point goes ahead of the latest user message's rebuilt trailing blocks. A section where the
-    caller already placed a cache point keeps it, and neither input is changed.
+    caller already placed a cache point keeps it, filled with the section's TTL when it carries none, so every point
+    shares one lifetime unless configured otherwise. Neither input is changed.
 
     Args:
         cache_config: The provider's cache settings.
@@ -890,17 +940,42 @@ def _with_cache_points(
         system_prompt_content: The system prompt content blocks.
         messages: The messages to send.
         dynamic_trailing_blocks: How many trailing blocks of the latest user message are rebuilt on every call.
+        after_documents: Whether a point may directly follow a non-PDF document. Bedrock rejects that, so its point
+            steps back over them.
 
     Returns:
         The system prompt content and the messages to send.
     """
+    system_point = _cache_point(cache_config.system_prompt_ttl, cache_config.ttl)
+    messages_point = _cache_point(cache_config.messages_ttl, cache_config.ttl)
+    system_prompt_content = _with_point_ttls(system_prompt_content, system_point)
+    messages = [{**message, "content": _with_point_ttls(message["content"], messages_point)} for message in messages]
     if cache_config.system_prompt_ttl is not False:
-        point = _cache_point(cache_config.system_prompt_ttl, cache_config.ttl)
-        system_prompt_content = _system_with_cache_point(system_prompt, system_prompt_content, point)
+        system_prompt_content = _system_with_cache_point(system_prompt, system_prompt_content, system_point)
     if cache_config.messages_ttl is not False:
-        point = _cache_point(cache_config.messages_ttl, cache_config.ttl)
-        messages = _messages_with_cache_point(messages, dynamic_trailing_blocks, point)
+        boundary_rule = None if after_documents else _step_back_over_documents
+        messages = _messages_with_cache_point(messages, dynamic_trailing_blocks, messages_point, boundary_rule)
     return system_prompt_content, messages
+
+
+def _with_point_ttls(blocks: Any, point: CachePoint) -> Any:
+    """The blocks with each cache point that carries no TTL given ``point``'s TTL; a caller's own TTL is kept."""
+    ttl = point.get("ttl")
+    if not ttl or blocks is None or not any("cachePoint" in b and not b["cachePoint"].get("ttl") for b in blocks):
+        return blocks
+    return [
+        {**b, "cachePoint": {**b["cachePoint"], "ttl": ttl}}
+        if "cachePoint" in b and not b["cachePoint"].get("ttl")
+        else b
+        for b in blocks
+    ]
+
+
+def _step_back_over_documents(content: list[ContentBlock], index: int) -> int:
+    """Step a cache point index back over the run of non-PDF documents directly ahead of it."""
+    while index > 0 and "document" in content[index - 1] and content[index - 1]["document"].get("format") != "pdf":
+        index -= 1
+    return index
 
 
 def _cache_point(section_ttl: bool | str | None, ttl: str | None) -> CachePoint:
@@ -921,16 +996,24 @@ def _system_with_cache_point(
     return [*content, SystemContentBlock(cachePoint=point)]
 
 
-def _messages_with_cache_point(messages: Messages, dynamic_trailing_blocks: int, point: CachePoint) -> Messages:
+def _messages_with_cache_point(
+    messages: Messages,
+    dynamic_trailing_blocks: int,
+    point: CachePoint,
+    boundary_rule: Callable[[list[ContentBlock], int], int] | None = None,
+) -> Messages:
     """The messages with ``point`` in the latest user message ahead of its rebuilt trailing blocks.
 
-    The latest user message is unchanged when it already has a cache point or holds only rebuilt blocks.
+    ``boundary_rule`` moves the point earlier where the backend rejects it. The latest user message is unchanged
+    when it already has a cache point or the point would come first.
     """
     latest_user = _latest_user_index(messages)
     if latest_user == -1:
         return messages
     content = messages[latest_user]["content"]
     boundary = len(content) - dynamic_trailing_blocks
+    if boundary_rule is not None:
+        boundary = boundary_rule(content, boundary)
     if boundary <= 0 or any("cachePoint" in block for block in content):
         return messages
     marked: Message = {
