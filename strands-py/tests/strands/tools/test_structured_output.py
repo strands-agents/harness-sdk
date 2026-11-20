@@ -426,6 +426,30 @@ def test_convert_pydantic_with_refs():
     assert tool_spec == expected_spec
 
 
+def test_convert_pydantic_required_nested_model_whose_last_field_is_optional():
+    """A required nested-model field must stay in the top-level ``required`` list.
+
+    Regression test: when an expanded nested model's *last* property is optional, the
+    outer property's required status must not be overwritten by that nested property's
+    status. Here ``inner`` is a required nested model, so it must appear in ``required``.
+    """
+
+    class Inner(BaseModel):
+        a: str  # required
+        b: str = ""  # optional, and declared last
+
+    class Outer(BaseModel):
+        inner: Inner  # required nested model
+        name: str  # required
+
+    tool_spec = convert_pydantic_to_tool_spec(Outer)
+
+    json_schema = tool_spec["inputSchema"]["json"]
+    assert set(json_schema["required"]) == {"inner", "name"}
+    # The nested model itself keeps its own required/optional split.
+    assert json_schema["properties"]["inner"]["required"] == ["a"]
+
+
 def test_convert_pydantic_with_nullable_enum():
     """Test that nullable Literal/enum fields preserve anyOf instead of creating invalid type/enum combo."""
 
