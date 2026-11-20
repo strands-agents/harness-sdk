@@ -87,6 +87,11 @@ export function isConfigurationTool(name: string): boolean {
   return name.replaceAll('-', '_').toLowerCase() === 'strands_config'
 }
 
+/** Its question is already a panel on screen, so the transcript does not preview it while it waits. */
+export function isOnScreenQuestionTool(name: string): boolean {
+  return name.replaceAll('-', '_').toLowerCase() === 'strands_dev_ask'
+}
+
 export function readConversationValue(value: string | undefined): string | undefined {
   if (!value?.startsWith('conversation:')) {
     return undefined

@@ -15,6 +15,7 @@ import {
   toolAction,
 } from '../presentation.js'
 import { expandTabs } from '../../terminal/text.js'
+import { isOnScreenQuestionTool } from './state.js'
 import { useSpinner } from '../animation.js'
 import { Text, useTheme } from '../theme.js'
 
@@ -25,12 +26,14 @@ export const PAUSED_MARKER = '◆'
 
 /** What the active turn is doing, shown on the line under its transcript. */
 export type TurnActivity =
-  'working' | 'awaitingApproval' | 'waitingForResponse' | 'reviewingBackground' | 'respondingToPeer'
+  'working' | 'awaitingApproval' | 'awaitingAnswer' | 'waitingForResponse' | 'reviewingBackground' | 'respondingToPeer'
 
 export const TURN_ACTIVITY: Record<TurnActivity, { label: string; animated: boolean; interruptible: boolean }> = {
   working: { label: 'Working', animated: true, interruptible: true },
   // The approval prompt owns Esc, so the turn line does not advertise interrupting.
   awaitingApproval: { label: 'Waiting for approval', animated: false, interruptible: false },
+  // The question on screen owns Esc too, and nothing runs until it is answered.
+  awaitingAnswer: { label: 'Waiting for your answer', animated: false, interruptible: false },
   waitingForResponse: { label: 'Waiting for model response', animated: true, interruptible: true },
   reviewingBackground: { label: 'Reviewing background result', animated: true, interruptible: true },
   respondingToPeer: { label: 'Responding to', animated: true, interruptible: true },
@@ -57,8 +60,12 @@ const TOOL_ACTIVITY_BY_STATUS: Record<ToolStatus, ToolActivity> = {
   cancelled: 'cancelled',
 }
 
+const askingOnScreen = ({ entries }: ChatTurn): boolean =>
+  entries.some((entry) => entry.type === 'tool' && entry.status === 'running' && isOnScreenQuestionTool(entry.name))
+
 export function turnActivity(turn: ChatTurn, awaitingApproval: boolean): TurnActivity {
   if (awaitingApproval) return 'awaitingApproval'
+  if (askingOnScreen(turn)) return 'awaitingAnswer'
   if (turn.responseDelayed) return 'waitingForResponse'
   if (turn.source === 'background') return 'reviewingBackground'
   return turn.source === 'peer' ? 'respondingToPeer' : 'working'
@@ -262,6 +269,7 @@ function ToolActivityGroup({
   const theme = useTheme()
   const id = entries[0]!.id
   const running = entries.filter((entry) => entry.status === 'running')
+  const previewed = running.filter((entry) => !isOnScreenQuestionTool(entry.name))
   const paused = approvalToolName !== undefined && running.some((entry) => entry.name === approvalToolName)
   const failed = entries.filter((entry) => entry.status === 'error').length
   const cancelled = entries.filter((entry) => entry.status === 'cancelled').length
@@ -293,7 +301,7 @@ function ToolActivityGroup({
           <Text dimColor> · {details.join(' · ')}</Text>
         </Text>
       </Box>
-      {(expanded ? entries : running.slice(-1)).map((entry) => (
+      {(expanded ? entries : previewed.slice(-1)).map((entry) => (
         <Box key={entry.id} paddingLeft={2} flexDirection="column">
           <EntryView
             entry={entry}
