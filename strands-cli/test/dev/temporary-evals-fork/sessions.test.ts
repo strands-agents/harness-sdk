@@ -1505,6 +1505,24 @@ describe('TEMPORARY dev sessions', () => {
     expect(temporaryOptimizeJobs(both).map(({ id }) => id)).toEqual([second, first])
   })
 
+  it('shouldDropTheJobLineOnceEveryEditOfARunWasAnsweredOnScreen', () => {
+    const review = { run: 'r1', record: 'r1', baseline: 0.1, best: 0.9, measuredOn: 'validation cases', edits: [] }
+    const state = (reviewed: boolean) => ({
+      step: 'pick' as const,
+      runs: [
+        {
+          id: 'run-1',
+          experiment: 'capital',
+          startedAt: 0,
+          state: { step: 'review' as const, review: { ...review, ...(reviewed ? { reviewed } : {}) } },
+        },
+      ],
+    })
+
+    expect(temporaryOptimizeJobs(state(false) as never)).toHaveLength(1)
+    expect(temporaryOptimizeJobs(state(true) as never)).toEqual([])
+  })
+
   it('shouldShowTheTestCheckWithItsConfidenceRangeWhenTheRunReportsOne', async () => {
     const tested = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
       await writeOptimizerRun(recordOf(args), [

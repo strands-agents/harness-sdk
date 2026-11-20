@@ -74,4 +74,5 @@ const walkRun = async ({ optimize, ask }: TemporaryDevSessions, runId: string): 
     if (verdict) accepted += 1
   }
   if (accepted > 0) optimize.apply()
+  optimize.finishReview(runId)
 }

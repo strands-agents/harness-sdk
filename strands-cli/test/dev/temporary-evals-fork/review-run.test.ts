@@ -33,6 +33,7 @@ const sessions = (
     snapshot: () => ({ runs: [{ id: 'run-1', state: { step: 'review', review: { run: 'r1', edits } } }] }),
     accept,
     apply,
+    finishReview: vi.fn(),
   }
   const ask = {
     ask: (spec: WizardRequestSpec): Promise<WizardOutcome> => {

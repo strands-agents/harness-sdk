@@ -407,6 +407,8 @@ export interface OptimizeReview {
   readonly testCheck?: TestCheck
   readonly applied?: readonly string[]
   readonly applyError?: string
+  /** Every edit was answered on screen, so nothing is waiting on the developer. */
+  readonly reviewed?: boolean
 }
 
 export interface PastRun {
@@ -467,6 +469,7 @@ export interface OptimizeSession {
   stop(id?: string): void
   accept(index: number, accepted: boolean): void
   apply(): void
+  finishReview(id: string): void
   reset(): void
   agent?(): RunAgent
 }

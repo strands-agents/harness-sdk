@@ -176,7 +176,11 @@ const optimizeRunsCommand = (sessions: Sessions): DevChatCommand => ({
   open:
     (context): DevChatPanelView =>
     (props) =>
-      createElement(OptimizeRunsView, { ...props, session: sessions(context).optimize }),
+      createElement(OptimizeRunsView, {
+        ...props,
+        session: sessions(context).optimize,
+        browser: sessions(context).ui,
+      }),
 })
 
 const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject): DevWorkspace => ({
