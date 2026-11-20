@@ -113,43 +113,48 @@ a[aria-current="page"]:hover {
 }
 
 /* Wide blocks (`:::wide`, rendered by src/plugins/remark-wide-blocks.ts): one figure, table,
-   or code block that keeps its left edge on the text column and grows to the right into spare
-   room, never under the TOC, up to --wide-block-max. Below 72rem there is no spare room, so it
-   stays column width. Terms follow Starlight's TwoColumnContent and ContentPanel:
+   or code block that stays centred on the text column and grows by the same amount on both
+   sides into spare room, up to --wide-block-max in total. Below 72rem there is no spare room, so
+   it stays column width. Terms follow Starlight's TwoColumnContent and ContentPanel:
    R = 100vw - left sidebar, W the column, S the TOC (--sl-sidebar-width), P the panel padding.
-   100vw counts a classic scrollbar, which overstates the room by half its width; the P gutter
-   kept before the TOC absorbs that. Tables and code keep their own horizontal scroll inside.
+   100vw counts a classic scrollbar, which overstates the room by half its width; the P gutters
+   absorb that. Tables and code keep their own horizontal scroll inside the block.
    Only top-level blocks widen: inside an aside or a <TabItem> the block would leave the aside's
    border or its tab bar behind, so a nested `:::wide` stays column width. */
 @media (min-width: 72rem) {
-	/* Starlight sizes the TOC container to S plus the spare width, (R - W - S) / 2, and draws the
-	   TOC at its left edge, right next to the text. Move the TOC right by as much of that spare
-	   width as a wide block can use (up to --wide-block-max - W), so a gap opens between the text
-	   and the TOC for wide blocks, and the TOC never drifts further than the widest block needs.
-	   When there is no spare width the container is exactly S wide, so nothing moves. */
-	:root[data-has-sidebar][data-has-toc] {
+	/* With a TOC, Starlight sizes the TOC container to S plus the spare width,
+	   (R - W - S) / 2, and draws the TOC at its left edge, next to the text, so the text has
+	   spare - 2P of room on its left and none on its right. On a page that has a wide block,
+	   the block grows by G = min(spare - 2P, (max - W) / 2) on each side, and the TOC moves right
+	   by G to make room. Pages without a wide block keep Starlight's layout. */
+	:root[data-has-sidebar][data-has-toc]:has(.sl-markdown-content > .wide-block) {
 		--toc-spare: max(
 			0px,
 			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width) - var(--sl-sidebar-width)) / 2
 		);
-		--toc-shift: min(var(--toc-spare), var(--wide-block-max) - var(--sl-content-width));
+		--wide-grow: max(
+			0px,
+			min(
+				var(--toc-spare) - 2 * var(--sl-content-pad-x),
+				(var(--wide-block-max) - var(--sl-content-width)) / 2
+			)
+		);
 	}
-	:root[data-has-sidebar][data-has-toc] .right-sidebar {
+	:root[data-has-sidebar][data-has-toc]:has(.sl-markdown-content > .wide-block) .right-sidebar {
 		inset-inline-start: auto;
-		inset-inline-end: calc(var(--toc-spare) - var(--toc-shift));
+		inset-inline-end: calc(var(--toc-spare) - var(--wide-grow));
 		width: var(--sl-sidebar-width);
 	}
 	:root[data-has-sidebar][data-has-toc] .sl-markdown-content > .wide-block {
-		margin-inline-end: calc(-1 * var(--toc-shift));
+		margin-inline: calc(-1 * var(--wide-grow));
 	}
-	/* Without a TOC the column is centred; the block still grows only to the right, keeping a
-	   P gutter from the window edge. */
+	/* Without a TOC the column is centred, so the block grows equally on both sides. */
 	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content > .wide-block {
 		--wide-room: max(
 			0px,
-			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width)) / 2 - var(--sl-content-pad-x)
+			(100vw - var(--sl-content-inline-start, 0px) - 2 * var(--sl-content-pad-x) - var(--sl-content-width)) / 2
 		);
-		margin-inline-end: calc(-1 * min(var(--wide-room), var(--wide-block-max) - var(--sl-content-width)));
+		margin-inline: calc(-1 * min(var(--wide-room), (var(--wide-block-max) - var(--sl-content-width)) / 2));
 	}
 }
 

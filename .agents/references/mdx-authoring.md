@@ -130,8 +130,8 @@ This will break existing code.
 ## Wide Blocks
 
 Wrap one table, screenshot, or code block in `:::wide` when it doesn't fit the text
-column. On large screens it keeps its left edge on the text and grows to the right, toward
-the table of contents, up to 72rem; on
+column. On large screens it stays centred on the text and grows equally on both sides, up to
+72rem, and the table of contents moves right to make room; on
 laptops and phones it stays column width. It works in `.md` and `.mdx`, including imported
 Box docs.
 

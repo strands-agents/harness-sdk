@@ -286,12 +286,12 @@ EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 
 **How the width is worked out:** The CSS repeats Starlight's own layout maths (`TwoColumnContent.astro`, `ContentPanel.astro`) with `100vw`, since the block can't measure its container. Only pages with the left sidebar get wider blocks, and only at 72rem and up, where Starlight shows the table of contents:
 
-A wide block always keeps its left edge on the text column and grows only to the right.
+A wide block stays centred on the text column and grows by the same amount on each side, up to `--wide-block-max` in total.
 
-- **With a TOC**, Starlight sizes the TOC container to the TOC width plus half the spare width, and draws the TOC at that container's left edge, next to the text. The site moves the TOC right (`.right-sidebar` in `custom.css`) by as much of the spare width, `(100vw - sidebar - column - TOC) / 2`, as a wide block can use, at most `--wide-block-max` minus the column. That opens a gap between the text and the TOC, and the block grows into it. When there is no spare width (screens up to about 1536px with a 55rem column), the container is exactly the TOC's width and nothing moves. On very wide screens the TOC sits further from the text on every page.
-- **Without a TOC**, the column is centred, and the block grows right by `(100vw - sidebar - column) / 2 - panel padding`.
+- **With a TOC**, Starlight sizes the TOC container to the TOC width plus the spare width, `(100vw - sidebar - column - TOC) / 2`, and draws the TOC at that container's left edge, next to the text. So the text has the spare width minus two panel paddings free on its left and nothing on its right. On a page that contains a wide block (selected with `:has(.sl-markdown-content > .wide-block)` on `:root`), the block grows by `G = min(spare - 2 × panel padding, (--wide-block-max - column) / 2)` on each side, and the TOC moves right by `G` (`.right-sidebar` in `custom.css`). Pages without a wide block keep Starlight's layout. With a 55rem column, `G` is 0 up to about 1576px screens, 76px at 1728px, and reaches the 136px cap at about 1850px.
+- **Without a TOC**, the column is centred, and the block grows by `(100vw - sidebar - 2 × panel padding - column) / 2` on each side, up to the same cap.
 
-The block stops one 1.5rem panel padding short of the TOC or window edge, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`. Tables and code blocks keep their own horizontal scroll inside the block.
+The block stops one 1.5rem panel padding short of the TOC, the sidebar or the window edge, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`. Tables and code blocks keep their own horizontal scroll inside the block.
 
 ### 9. Image Zoom (`starlight-image-zoom`)
 
