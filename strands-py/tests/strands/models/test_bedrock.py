@@ -4736,6 +4736,17 @@ def test_nova_drops_a_system_prompt_ttl_and_warns(bedrock_client):
     assert request["system"] == [{"text": "Be helpful"}, NOVA_CACHE_POINT]
 
 
+def test_nova_does_not_warn_about_a_system_prompt_ttl_without_a_system_prompt(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(system_prompt_ttl="1h"))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        request = model.format_request([{"role": "user", "content": [{"text": "Hello"}]}])
+
+    assert request["system"] == []
+
+
 def test_nova_drops_the_ttl_of_a_caller_placed_system_cache_point_and_warns(bedrock_client):
     _ = bedrock_client
     model = BedrockModel(model_id=NOVA, cache_config=CacheConfig())
