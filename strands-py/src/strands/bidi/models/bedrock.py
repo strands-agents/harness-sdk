@@ -291,6 +291,12 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         logger.debug("model_id=<%s> | nova sonic model initialized", self._config["model_id"])
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies Amazon Bedrock in GenAI telemetry."""
+        return "aws.bedrock"
+
     @override
     def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.

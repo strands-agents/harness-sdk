@@ -2685,3 +2685,22 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     assert len(messages_logged) == 2
     assert "count=<3> | Location sources are not supported by OpenAI" in messages_logged[0]
     assert "count=<3> | cachePoint content block is not supported by OpenAI" in messages_logged[1]
+
+
+@pytest.mark.parametrize(
+    ("client_kwargs", "exp_name"),
+    [
+        ({}, "openai"),
+        ({"bedrock_mantle_config": {"region": "us-east-1"}}, "aws.bedrock"),
+    ],
+)
+def test_gen_ai_provider_name(openai_client, client_kwargs, exp_name):
+    _ = openai_client
+    tru_name = OpenAIModel(model_id="openai.gpt-oss-120b", **client_kwargs).gen_ai_provider_name
+    assert tru_name == exp_name
+
+
+def test_gen_ai_provider_name_without_init():
+    tru_name = OpenAIModel.__new__(OpenAIModel).gen_ai_provider_name
+    exp_name = "openai"
+    assert tru_name == exp_name

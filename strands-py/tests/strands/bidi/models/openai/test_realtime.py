@@ -2194,3 +2194,9 @@ async def test_receive_defers_response_during_speech(model, mock_websocket, bloc
     finally:
         await reader.aclose()
         await model.stop()
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "openai"
+    assert tru_name == exp_name

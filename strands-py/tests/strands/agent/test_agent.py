@@ -1257,6 +1257,7 @@ def test_agent_structured_output(agent, system_prompt, user, agenerator):
     agent.tracer = mock_strands_tracer
 
     agent.model.structured_output = unittest.mock.Mock(return_value=agenerator([{"output": user}]))
+    agent.model.gen_ai_provider_name = "aws.bedrock"
 
     prompt = "Jane Doe is 30 years old and her email is jane@doe.com"
 
@@ -1277,7 +1278,6 @@ def test_agent_structured_output(agent, system_prompt, user, agenerator):
 
     mock_span.set_attributes.assert_called_once_with(
         {
-            "gen_ai.system": "strands-agents",
             "gen_ai.agent.name": "Strands Agents",
             "gen_ai.agent.id": "default",
             "gen_ai.operation.name": "execute_structured_output",
@@ -4371,3 +4371,35 @@ def test_agent_sends_an_injected_block_to_the_model_as_text_and_keeps_it_in_agen
         {"text": "Refactor the tokenizer."},
         {"injected": {"text": "reminder", "source": "test"}},
     ]
+
+
+def test_agent_call_with_a_model_not_subclassing_model_omits_the_provider():
+    """A duck-typed model without gen_ai_provider_name still runs, and its chat span omits the provider."""
+
+    class DuckModel:
+        stateful = False
+
+        def __init__(self):
+            self.config = {"model_id": "duck"}
+
+        def update_config(self, **model_config):
+            pass
+
+        def get_config(self):
+            return self.config
+
+        async def stream(self, *args, **kwargs):
+            yield {"contentBlockDelta": {"delta": {"text": "hi"}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+
+    mock_tracer = unittest.mock.MagicMock()
+    with (
+        unittest.mock.patch("strands.agent.agent.get_tracer", return_value=mock_tracer),
+        unittest.mock.patch("strands.event_loop.event_loop.get_tracer", return_value=mock_tracer),
+    ):
+        result = Agent(model=DuckModel(), callback_handler=None)("hello")
+
+    assert str(result).strip() == "hi"
+    tru_provider_name = mock_tracer.start_model_invoke_span.call_args.kwargs["gen_ai_provider_name"]
+    assert tru_provider_name is None

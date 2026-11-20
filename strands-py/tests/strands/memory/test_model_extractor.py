@@ -177,7 +177,13 @@ async def test_raises_when_no_model_is_configured_and_no_default_is_provided():
 @pytest.mark.asyncio
 async def test_wraps_the_model_call_in_a_model_invoke_span():
     """The extraction model call is wrapped in start/end model-invoke spans with usage/metrics."""
-    model = MockedModelProvider([_assistant_text('[{"content": "fact"}]')])
+
+    class _BedrockModel(MockedModelProvider):
+        @property
+        def gen_ai_provider_name(self) -> str:
+            return "aws.bedrock"
+
+    model = _BedrockModel([_assistant_text('[{"content": "fact"}]')])
     extractor = ModelExtractor(model=model)
 
     tracer = MagicMock()
@@ -186,6 +192,9 @@ async def test_wraps_the_model_call_in_a_model_invoke_span():
 
     assert entries == [ExtractionResult(content="fact")]
     tracer.start_model_invoke_span.assert_called_once()
+    tru_provider_name = tracer.start_model_invoke_span.call_args.kwargs["gen_ai_provider_name"]
+    exp_provider_name = "aws.bedrock"
+    assert tru_provider_name == exp_provider_name
     # The terminal stop tuple's usage/metrics/stop_reason are passed through on end.
     end_call = tracer.end_model_invoke_span.call_args
     span, message, usage, metrics, stop_reason = end_call.args

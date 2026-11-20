@@ -614,7 +614,10 @@ class _AgentLoop:
                             time_to_first_audio_ms=time_to_first_audio_ms,
                         )
                     response_span = _telemetry.start_response_span(
-                        self._tracer, event.response_id, parent_span=self._session_span
+                        self._tracer,
+                        event.response_id,
+                        parent_span=self._session_span,
+                        gen_ai_provider_name=getattr(self._agent.model, "gen_ai_provider_name", None),
                     )
                     response_start_time = time.perf_counter()
                     time_to_first_audio_ms = None

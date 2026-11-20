@@ -352,6 +352,12 @@ class AnthropicModel(Model):
             self.get_config().get("model_info"),
         )
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies Anthropic in GenAI telemetry."""
+        return "anthropic"
+
     @override
     def get_config(self) -> AnthropicConfig:
         """Get the Anthropic model configuration, with ``max_tokens`` resolved when it was not set.

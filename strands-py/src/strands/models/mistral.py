@@ -162,6 +162,12 @@ class MistralModel(Model):
         """
         return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies Mistral AI in GenAI telemetry."""
+        return "mistral_ai"
+
     @override
     def get_config(self) -> MistralConfig:
         """Get the Mistral model configuration.

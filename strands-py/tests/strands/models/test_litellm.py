@@ -1115,3 +1115,9 @@ async def test_stream_generates_tool_call_id_when_null(litellm_acompletion, mode
     start = next(e for e in events if "contentBlockStart" in e and "toolUse" in e["contentBlockStart"]["start"])
     tool_id = start["contentBlockStart"]["start"]["toolUse"]["toolUseId"]
     assert tool_id and tool_id.startswith("call_")
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "litellm"
+    assert tru_name == exp_name

@@ -3019,3 +3019,16 @@ async def test_injected_client_is_reused_and_not_closed(model_id, test_output_mo
     assert events[-1] == {"output": test_output_model_cls(name="John", age=30)}
     client.close.assert_not_called()
     client.__aexit__.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("client_kwargs", "exp_name"),
+    [
+        ({}, "openai"),
+        ({"bedrock_mantle_config": {"region": "us-east-1"}}, "aws.bedrock"),
+    ],
+)
+def test_gen_ai_provider_name(openai_client, client_kwargs, exp_name):
+    _ = openai_client
+    tru_name = OpenAIResponsesModel(model_id="openai.gpt-oss-120b", **client_kwargs).gen_ai_provider_name
+    assert tru_name == exp_name

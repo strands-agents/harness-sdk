@@ -913,6 +913,7 @@ def _make_invoke_model_terminal(
             custom_trace_attributes=agent.trace_attributes,
             system_prompt=system_prompt_str,
             system_prompt_content=system_prompt_content,
+            gen_ai_provider_name=getattr(ctx.model, "gen_ai_provider_name", None),
         )
         with trace_api.use_span(model_invoke_span, end_on_exit=False):
             try:

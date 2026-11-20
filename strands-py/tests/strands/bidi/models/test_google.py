@@ -2054,3 +2054,9 @@ async def test_send_tool_results_preserves_group(model, mock_genai_client, resta
     )
     assert model._turn_state.tool_names == {}
     await model.stop()
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "gcp.gen_ai"
+    assert tru_name == exp_name

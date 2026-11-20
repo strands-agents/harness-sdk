@@ -262,6 +262,12 @@ class OpenAIResponsesModel(Model):
             cast(ModelInfo | None, self.config.get("model_info")),
         )
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies OpenAI, or Amazon Bedrock when a Bedrock Mantle config is set, in GenAI telemetry."""
+        return "openai" if getattr(self, "_bedrock_mantle_config", None) is None else "aws.bedrock"
+
     @override
     def update_config(self, **model_config: Unpack[OpenAIResponsesConfig]) -> None:  # type: ignore[override]
         """Update the OpenAI Responses API model configuration with the provided arguments.

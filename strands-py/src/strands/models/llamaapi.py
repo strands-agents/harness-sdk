@@ -117,6 +117,12 @@ class LlamaAPIModel(Model):
         """
         return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies the Llama API in GenAI telemetry."""
+        return "llama_api"
+
     @override
     def get_config(self) -> LlamaConfig:
         """Get the Llama API model configuration.

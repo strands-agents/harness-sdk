@@ -261,6 +261,12 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
         logger.debug("model=<%s> | openai realtime model initialized", self._config["model_id"])
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies OpenAI in GenAI telemetry."""
+        return "openai"
+
     @override
     def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.

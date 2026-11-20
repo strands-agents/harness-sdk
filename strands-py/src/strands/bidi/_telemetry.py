@@ -79,18 +79,23 @@ def end_session_span(
     tracer._end_span(span, attributes=attributes, error=error)
 
 
-def start_response_span(tracer: Tracer, response_id: str, parent_span: Span | None = None) -> Span:
+def start_response_span(
+    tracer: Tracer, response_id: str, parent_span: Span | None = None, gen_ai_provider_name: str | None = None
+) -> Span:
     """Start a span for a model response.
 
     Args:
         tracer: Tracer instance.
         response_id: Unique identifier for the response.
         parent_span: Parent session span.
+        gen_ai_provider_name: GenAI provider of the bidi model; omitted when None.
 
     Returns:
         The response span.
     """
-    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(operation_name="bidi_response")
+    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(
+        operation_name="bidi_response", gen_ai_provider_name=gen_ai_provider_name
+    )
     attributes["gen_ai.response.id"] = response_id
 
     # Static span name (response_id is recorded as an attribute) to avoid high-cardinality names.

@@ -845,3 +845,9 @@ def test__to_strands_response_events_rejects_invalid_tool_arguments(model):
 
     with pytest.raises(json.JSONDecodeError):
         list(model._to_strands_events(event))
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "openai"
+    assert tru_name == exp_name

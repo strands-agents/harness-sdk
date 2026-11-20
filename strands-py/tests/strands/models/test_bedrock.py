@@ -7524,3 +7524,9 @@ async def test_stream_cancel_signal_consumes_detached_task_exception(bedrock_cli
     # The detached worker now fails; its exception must be consumed, not reported to the loop.
     await asyncio.sleep(0.2)
     assert not captured, f"detached task exception was not consumed: {captured}"
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "aws.bedrock"
+    assert tru_name == exp_name

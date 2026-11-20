@@ -162,6 +162,12 @@ class GeminiModel(Model):
         """
         return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies Google Gemini in GenAI telemetry."""
+        return "gcp.gen_ai"
+
     @override
     def get_config(self) -> GeminiConfig:
         """Get the Gemini model configuration.

@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import types
+import unittest.mock
 
 import pytest
 
@@ -21,6 +22,7 @@ from strands.models.routing import (
 from strands.models.routing.router import _candidate_label, _RoutingState
 from strands.multiagent import GraphBuilder
 from strands.session.repository_session_manager import RepositorySessionManager
+from strands.telemetry.tracer import Tracer
 from strands.types.exceptions import ModelThrottledException
 from tests.fixtures.mock_session_repository import MockedSessionRepository
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -34,6 +36,16 @@ class StatefulModel(MockedModelProvider):
 
 def _model(text="hi"):
     return MockedModelProvider([{"role": "assistant", "content": [{"text": text}]}])
+
+
+class _ProviderModel(MockedModelProvider):
+    def __init__(self, gen_ai_provider_name, text):
+        super().__init__([{"role": "assistant", "content": [{"text": text}]}])
+        self._gen_ai_provider_name = gen_ai_provider_name
+
+    @property
+    def gen_ai_provider_name(self):
+        return self._gen_ai_provider_name
 
 
 class _PreferByName:
@@ -617,8 +629,8 @@ def test_router_via_plugins_is_rejected():
 
 
 def test_agent_routes_to_strategy_selected_candidate():
-    fast = _model("fast-says")
-    smart = _model("smart-says")
+    fast = _ProviderModel("aws.bedrock", "fast-says")
+    smart = _ProviderModel("openai", "smart-says")
     router = ModelRouter(
         models=[RoutingCandidate(fast, name="fast"), RoutingCandidate(smart, name="smart")],
         strategy=_PreferByName("smart"),
@@ -627,9 +639,15 @@ def test_agent_routes_to_strategy_selected_candidate():
 
     assert agent.model is fast  # default is still the first candidate
 
-    result = agent("hello")
+    with unittest.mock.patch.object(
+        Tracer, "start_model_invoke_span", autospec=True, side_effect=Tracer.start_model_invoke_span
+    ) as start_model_invoke_span:
+        result = agent("hello")
 
     assert result.message["content"][0]["text"] == "smart-says"  # strategy overrode the per-call model
+    tru_provider_names = [call.kwargs["gen_ai_provider_name"] for call in start_model_invoke_span.call_args_list]
+    exp_provider_names = ["openai"]
+    assert tru_provider_names == exp_provider_names
 
 
 def test_one_agent_routes_each_invocation_on_its_own_request():

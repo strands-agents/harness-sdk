@@ -826,6 +826,7 @@ async def test_event_loop_cycle_creates_spans(
     mock_tracer.start_event_loop_cycle_span.return_value = cycle_span
     model_span = MagicMock()
     mock_tracer.start_model_invoke_span.return_value = model_span
+    model.gen_ai_provider_name = "aws.bedrock"
 
     model.stream.return_value = agenerator(
         [
@@ -848,6 +849,7 @@ async def test_event_loop_cycle_creates_spans(
     call_kwargs = mock_tracer.start_model_invoke_span.call_args[1]
     assert call_kwargs["system_prompt"] == agent.system_prompt
     assert call_kwargs["system_prompt_content"] == [{"text": agent.system_prompt}]
+    assert call_kwargs["gen_ai_provider_name"] == "aws.bedrock"
     mock_tracer.end_model_invoke_span.assert_called_once()
     mock_tracer.end_event_loop_cycle_span.assert_called_once()
 

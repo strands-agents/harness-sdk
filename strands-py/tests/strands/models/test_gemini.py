@@ -2205,3 +2205,9 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     assert len(messages_logged) == 2
     assert "count=<3> | Location sources are not supported by Gemini" in messages_logged[0]
     assert "count=<3> | cachePoint content block is not supported by Gemini" in messages_logged[1]
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "gcp.gen_ai"
+    assert tru_name == exp_name

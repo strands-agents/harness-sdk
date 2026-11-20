@@ -1213,7 +1213,6 @@ class Agent(AgentBase, LocalAgent):
 
                 structured_output_span.set_attributes(
                     {
-                        "gen_ai.system": "strands-agents",
                         "gen_ai.agent.name": self.name,
                         "gen_ai.agent.id": self.agent_id,
                         "gen_ai.operation.name": "execute_structured_output",

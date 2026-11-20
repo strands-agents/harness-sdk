@@ -215,6 +215,12 @@ class OpenAIModel(Model):
         """
         return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies OpenAI, or Amazon Bedrock when a Bedrock Mantle config is set, in GenAI telemetry."""
+        return "openai" if getattr(self, "_bedrock_mantle_config", None) is None else "aws.bedrock"
+
     @classmethod
     def format_request_message_content(cls, content: ContentBlock, **kwargs: Any) -> dict[str, Any]:
         """Format an OpenAI compatible content block.

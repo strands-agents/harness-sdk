@@ -216,6 +216,7 @@ def test_start_model_invoke_span(mock_tracer):
             model_id=model_id,
             custom_trace_attributes=custom_attrs,
             system_prompt=system_prompt,
+            gen_ai_provider_name="aws.bedrock",
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -224,7 +225,7 @@ def test_start_model_invoke_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "chat",
-                "gen_ai.system": "strands-agents",
+                "gen_ai.system": "aws.bedrock",
                 "custom_key": "custom_value",
                 "user_id": "12345",
                 "gen_ai.request.model": model_id,
@@ -313,6 +314,24 @@ def test_start_model_invoke_span_records_what_a_tool_results_placeholder_stands_
         ]
 
 
+@pytest.mark.parametrize("opt_in", ["", "gen_ai_latest_experimental"])
+@pytest.mark.parametrize("provider_kwargs", [{}, {"gen_ai_provider_name": ""}])
+def test_start_model_invoke_span_without_provider_name(mock_tracer, monkeypatch, opt_in, provider_kwargs):
+    """A model invoke span without a provider name omits both provider keys."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", opt_in)
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+
+        tracer.start_model_invoke_span(messages=[{"role": "user", "content": [{"text": "Hello"}]}], **provider_kwargs)
+
+        tru_attributes = mock_span.set_attributes.call_args[0][0]
+        exp_attributes = {"gen_ai.operation.name": "chat"}
+        assert tru_attributes == exp_attributes
+
+
 def test_start_model_invoke_span_latest_conventions(mock_tracer, monkeypatch):
     """Test starting a model invoke span with the latest semantic conventions."""
     with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
@@ -336,7 +355,11 @@ def test_start_model_invoke_span_latest_conventions(mock_tracer, monkeypatch):
         system_prompt = "You are a calculator assistant"
 
         span = tracer.start_model_invoke_span(
-            messages=messages, agent_name="TestAgent", model_id=model_id, system_prompt=system_prompt
+            messages=messages,
+            agent_name="TestAgent",
+            model_id=model_id,
+            system_prompt=system_prompt,
+            gen_ai_provider_name="aws.bedrock",
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -346,7 +369,7 @@ def test_start_model_invoke_span_latest_conventions(mock_tracer, monkeypatch):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "chat",
-                "gen_ai.provider.name": "strands-agents",
+                "gen_ai.provider.name": "aws.bedrock",
                 "gen_ai.request.model": model_id,
                 "agent_name": "TestAgent",
             }
@@ -569,7 +592,6 @@ def test_start_tool_call_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.tool.name": "test-tool",
-                "gen_ai.system": "strands-agents",
                 "gen_ai.operation.name": "execute_tool",
                 "gen_ai.tool.call.id": "123",
                 "session_id": "abc123",
@@ -602,7 +624,6 @@ def test_start_tool_call_span_latest_conventions(mock_tracer, monkeypatch):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.tool.name": "test-tool",
-                "gen_ai.provider.name": "strands-agents",
                 "gen_ai.operation.name": "execute_tool",
                 "gen_ai.tool.call.id": "123",
             }
@@ -651,7 +672,6 @@ def test_start_swarm_call_span_with_string_task(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "invoke_swarm",
-                "gen_ai.system": "strands-agents",
                 "workflow_id": "wf-789",
                 "priority": "high",
             }
@@ -679,7 +699,6 @@ def test_start_swarm_span_with_contentblock_task(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "invoke_swarm",
-                "gen_ai.system": "strands-agents",
             }
         )
         mock_span.add_event.assert_any_call(
@@ -736,7 +755,6 @@ def test_start_swarm_span_with_contentblock_task_latest_conventions(mock_tracer,
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "invoke_swarm",
-                "gen_ai.provider.name": "strands-agents",
             }
         )
         mock_span.add_event.assert_any_call(
@@ -805,7 +823,6 @@ def test_start_graph_call_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "execute_tool",
-                "gen_ai.system": "strands-agents",
                 "gen_ai.tool.name": "test-tool",
                 "gen_ai.tool.call.id": "123",
             }
@@ -932,7 +949,6 @@ def test_start_event_loop_cycle_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "execute_event_loop_cycle",
-                "gen_ai.system": "strands-agents",
                 "event_loop.cycle_id": "cycle-123",
                 "request_id": "req-456",
                 "trace_level": "debug",
@@ -965,7 +981,6 @@ def test_start_event_loop_cycle_span_latest_conventions(mock_tracer, monkeypatch
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "execute_event_loop_cycle",
-                "gen_ai.provider.name": "strands-agents",
                 "event_loop.cycle_id": "cycle-123",
             }
         )
@@ -1070,7 +1085,6 @@ def test_start_agent_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "invoke_agent",
-                "gen_ai.system": "strands-agents",
                 "gen_ai.agent.name": "WeatherAgent",
                 "gen_ai.request.model": model_id,
                 "gen_ai.agent.tools": json.dumps(tools),
@@ -1115,7 +1129,6 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "invoke_agent",
-                "gen_ai.provider.name": "strands-agents",
                 "gen_ai.agent.name": "WeatherAgent",
                 "gen_ai.request.model": model_id,
                 "gen_ai.agent.tools": json.dumps(tools),
@@ -2132,7 +2145,6 @@ def test_start_memory_search_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "memory.search",
-                "gen_ai.system": "strands-agents",
                 "memory.store.names": serialize(["personal", "team"]),
                 "memory.store.count": 2,
                 "memory.max_search_results": 5,
@@ -2212,7 +2224,6 @@ def test_start_memory_add_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "memory.add",
-                "gen_ai.system": "strands-agents",
                 "memory.store.names": serialize(["personal"]),
                 "memory.store.count": 1,
             }
@@ -2263,7 +2274,6 @@ def test_memory_inject_span(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "memory.inject",
-                "gen_ai.system": "strands-agents",
                 "memory.max_entries": 5,
             }
         )
@@ -2288,7 +2298,6 @@ def test_start_memory_inject_span_without_max_entries(mock_tracer):
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "memory.inject",
-                "gen_ai.system": "strands-agents",
             }
         )
 
@@ -2327,7 +2336,6 @@ def test_start_memory_extract_span_is_root(mock_tracer):
         mock_tracer.start_span.return_value.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "memory.extract",
-                "gen_ai.system": "strands-agents",
                 "memory.store.name": "personal",
                 "memory.message.count": 2,
                 "memory.message.filtered_count": 1,

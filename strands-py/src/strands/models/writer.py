@@ -101,6 +101,12 @@ class WriterModel(Model):
         """
         return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies Writer in GenAI telemetry."""
+        return "writer"
+
     @override
     def get_config(self) -> WriterConfig:
         """Get the Writer model configuration.

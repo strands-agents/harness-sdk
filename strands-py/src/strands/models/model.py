@@ -288,6 +288,18 @@ class Model(abc.ABC):
         )
 
     @property
+    def gen_ai_provider_name(self) -> str | None:
+        """The OpenTelemetry ``gen_ai.provider.name`` value for the GenAI provider this model calls.
+
+        For example ``"aws.bedrock"``. Spans omit the attribute when this is None; a custom provider
+        overrides this property, using a semantic-convention well-known value when one applies.
+
+        Returns:
+            The provider identifier, or None when unknown.
+        """
+        return None
+
+    @property
     def context_window_limit(self) -> int | None:
         """Maximum context window size in tokens, or None if not known."""
         return self.model_info.limits.context_window
