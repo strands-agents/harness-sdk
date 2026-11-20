@@ -588,6 +588,13 @@ describe('TEMPORARY dev sessions', () => {
     return state.step === 'review' ? state.review.edits[0] : undefined
   }
 
+  it('shouldPutNothingOnScreenWhenAFinishedRunHasNoEditThatCanBeApplied', async () => {
+    const { sessions } = await reviewWithMovedInstructions()
+
+    expect(firstEdit(sessions)?.unavailable).toBeDefined()
+    expect(sessions.ask.pending()).toBeUndefined()
+  })
+
   it('shouldAcceptAnEditThatCouldNotBeAppliedWhenTheFileIsFixedAndTheUserPressesA', async () => {
     const { workspace, sessions } = await reviewWithMovedInstructions()
     expect(firstEdit(sessions)).toMatchObject({

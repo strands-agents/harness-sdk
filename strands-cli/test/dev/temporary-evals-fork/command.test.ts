@@ -67,7 +67,7 @@ describe('TEMPORARY dev commands', () => {
 
     const commands = temporaryDevCommands(workspace, project)
 
-    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], []])
+    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], undefined])
   })
 
   it('shouldShowATestThatFinishedWhileStrandsDevWasClosedWhenTheChatAttaches', async () => {

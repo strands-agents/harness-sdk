@@ -1361,8 +1361,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       entry.changes = changes
       this.updateRun(entry, { step: 'review', review })
       this.watchSources(entry)
-      announce(this.host(), 'success', `optimize · run ${review.run} finished · showing its edits`)
-      this.onReview?.(entry.id)
+      // Only a run that produced an edit worth applying opens the review; the rest just say they finished.
+      const ready = review.edits.filter(({ unavailable }) => unavailable === undefined).length
+      const ending = ready === 0 ? 'no edits to apply' : `showing ${plural(ready, 'edit')}`
+      announce(this.host(), 'success', `optimize · run ${review.run} finished · ${ending}`)
+      if (ready > 0) this.onReview?.(entry.id)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
