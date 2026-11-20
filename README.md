@@ -234,8 +234,8 @@ npm test          # run unit tests
 **Rust SDK and harness** (`strands-rs/`, `harness-rs/`):
 ```bash
 cargo test --workspace --all-features    # run unit tests from the repo root
-cargo fmt --all                          # format
-cargo clippy --workspace --all-targets --all-features -- -D warnings   # lint
+cargo +1.100.0 fmt --all                 # format
+cargo +1.100.0 clippy --workspace --all-targets --all-features -- -D warnings   # lint
 ```
 
 **Documentation site** (`site/`):

@@ -181,12 +181,13 @@ integration suite runs automatically.
 ### Rust SDK and harness
 
 The Rust SDK (`strands-rs/`) and harness (`harness-rs/`) are crates in one cargo workspace rooted at the repository
-root. They need Rust 1.96 or later (the MSRV); install a toolchain with [rustup](https://rustup.rs/). Run the checks
+root. They need Rust 1.96 or later (the MSRV); install a toolchain with [rustup](https://rustup.rs/). Formatting and
+lints run on the toolchain CI pins (`rustup toolchain install 1.100.0 --component rustfmt,clippy`). Run the checks
 from the repository root:
 
 ```bash
-cargo fmt --all --check                                              # formatting
-cargo clippy --workspace --all-targets --all-features -- -D warnings # lints
+cargo +1.100.0 fmt --all --check                                     # formatting (pinned lint toolchain)
+cargo +1.100.0 clippy --workspace --all-targets --all-features -- -D warnings # lints (pinned lint toolchain)
 cargo test --workspace --all-features                                # unit tests, doctests and README examples
 cargo test --workspace --no-default-features                         # the build without optional providers
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
