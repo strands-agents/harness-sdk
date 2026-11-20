@@ -117,6 +117,7 @@ import { DefaultModelRetryStrategy } from '../retry/default-model-retry-strategy
 import type { RetryStrategy } from '../retry/retry-strategy.js'
 import { warnOnDuplicateRetryStrategyTypes } from '../retry/retry-strategy.js'
 import { InterruptError, InterruptState } from '../interrupt.js'
+import { discardInterruptedTurn } from '../multiagent/agent-tool-streamer.js'
 import { Checkpoint, type CheckpointPosition, type CheckpointResumeContent } from '../experimental/checkpoint.js'
 import { isInterruptResponseContent, type InterruptResponseContent } from '../types/interrupt.js'
 import { takeSnapshot as takeSnapshotInternal, loadSnapshot as loadSnapshotInternal } from './snapshot.js'
@@ -1690,7 +1691,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @throws The error of a hook or middleware that fails, which includes an interrupt that middleware
    *   raises and `context.interrupt` refuses
    * @throws InterruptError if the tool registers an interrupt on the agent itself, as a child agent that
-   *   pauses does; the interrupt is removed from the agent first
+   *   pauses does; the interrupt and the child's stored turn are removed from the agent first
    * @internal
    */
   async _executeToolCall(
@@ -1746,11 +1747,13 @@ export class Agent implements LocalAgent, InvokableAgent {
         }
       )
     } catch (error) {
-      // A tool can register interrupts on the agent itself; nothing resumes them from here.
+      // A tool can register interrupts on the agent itself, as a child agent that pauses does; nothing
+      // resumes them from here.
       if (error instanceof InterruptError) {
         for (const pending of error.interrupts) {
           delete this._interruptState.interrupts[pending.id]
         }
+        discardInterruptedTurn(this._interruptState, toolUse.toolUseId)
       }
       throw error
     }
