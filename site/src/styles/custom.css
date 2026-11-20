@@ -108,6 +108,36 @@ a[aria-current="page"]:hover {
    Wider buys little for code and makes prose lines long. */
 :root {
 	--sl-content-width: 55rem;
+	/* Widest a `:::wide` block grows (see below). */
+	--wide-block-max: 72rem;
+}
+
+/* Wide blocks (`:::wide`, rendered by src/plugins/remark-wide-blocks.ts): one figure, table,
+   or code block that grows into spare room beside the text column, never under the TOC or the
+   sidebar, up to --wide-block-max. Below 72rem there is no spare room, so it stays column width.
+   The maths mirrors Starlight's TwoColumnContent and ContentPanel: R = 100vw - left sidebar is
+   the width beside the sidebar, W the column, S the TOC, P the content-panel padding.
+   100vw counts a classic scrollbar, which overstates the room by half its width; the P gutter
+   absorbs that. Tables and code keep their own horizontal scroll inside the block. */
+@media (min-width: 72rem) {
+	/* With a TOC, the column sits against the TOC, so all spare room is on the left:
+	   main pane = W + (R - W - S) / 2, minus 2P of padding, minus the column. */
+	:root[data-has-sidebar][data-has-toc] .sl-markdown-content .wide-block {
+		--wide-room: max(
+			0px,
+			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width) - var(--sl-sidebar-width)) / 2 -
+				2 * var(--sl-content-pad-x)
+		);
+		margin-inline-start: calc(-1 * min(var(--wide-room), var(--wide-block-max) - var(--sl-content-width)));
+	}
+	/* Without a TOC, the column is centred, so the block grows equally on both sides. */
+	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content .wide-block {
+		--wide-room: max(
+			0px,
+			(100vw - var(--sl-content-inline-start, 0px) - 2 * var(--sl-content-pad-x) - var(--sl-content-width)) / 2
+		);
+		margin-inline: calc(-1 * min(var(--wide-room), (var(--wide-block-max) - var(--sl-content-width)) / 2));
+	}
 }
 
 /* Scroll shadows on wide tables, code, and tab lists: the surface-colored

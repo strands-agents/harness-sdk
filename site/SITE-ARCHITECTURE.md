@@ -278,6 +278,27 @@ from a local product checkout instead of the lock, set its source environment va
 EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 ```
 
+### 8. Wide Blocks (`src/plugins/remark-wide-blocks.ts`)
+
+**What it does:** Renders a `:::wide` container directive as `<div class="wide-block">`. CSS in `src/styles/custom.css` lets that block grow past the text column into spare room on large screens, up to `--wide-block-max` (72rem). Authoring rules are in [mdx-authoring.md](../.agents/references/mdx-authoring.md#wide-blocks).
+
+**Why:** A few tables and screenshots need more width than the column, and a page-wide content width would make every paragraph harder to read. A per-block marker keeps prose at the column width. A directive, rather than a component, works in plain `.md` files, so imported product docs can use it too.
+
+**How the width is worked out:** The CSS repeats Starlight's own layout maths (`TwoColumnContent.astro`, `ContentPanel.astro`) with `100vw`, since the block can't measure its container. Only pages with the left sidebar get wider blocks, and only at 72rem and up, where Starlight shows the table of contents:
+
+- **With a TOC**, the column sits against the TOC, so all spare room is on the left: `(100vw - sidebar - column - TOC) / 2 - 2 × panel padding`. The block grows only to the left.
+- **Without a TOC**, the column is centred, and the block grows by `(100vw - sidebar - 2 × panel padding - column) / 2` on each side.
+
+The block keeps the 1.5rem panel padding as a gutter, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`. Tables and code blocks keep their own horizontal scroll inside the block.
+
+### 9. Image Zoom (`starlight-image-zoom`)
+
+**What it does:** The [starlight-image-zoom](https://github.com/HiDeoo/starlight-image-zoom) Starlight plugin wraps every Markdown image in a zoom control, so readers can click a shrunk screenshot to see it at full size. Add `data-zoom-off` to an `<img>` to opt out; images inside links are never zoomable.
+
+**Site wiring:** The plugin normally installs its own `MarkdownContent` override, but it skips that when one already exists. Our `src/components/overrides/MarkdownContent.astro` therefore renders the plugin's `<ImageZoom />` element itself. The plugin also adds `rehype-raw` to the Markdown pipeline so it can see images written as raw HTML.
+
+**Limits:** It only wraps `<img>` and `<picture>` in Markdown. `<Diagram>` SVGs are inlined by a component and aren't zoomable.
+
 ## Configuration (`astro.config.mjs`)
 
 The main config ties everything together:
