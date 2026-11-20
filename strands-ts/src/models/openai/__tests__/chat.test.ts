@@ -432,6 +432,26 @@ describe('OpenAIModel', () => {
         { role: 'tool', tool_call_id: 'tu-1', content: '[Dropped] [ref: tu-1]' },
       ])
     })
+
+    it('joins the text blocks of a tool result with a newline', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+      await collectIterator(
+        provider.stream([
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 'tu-1',
+                status: 'success',
+                content: [new TextBlock('first'), new TextBlock('second')],
+              }),
+            ],
+          }),
+        ])
+      )
+      expect(captured.request.messages).toEqual([{ role: 'tool', tool_call_id: 'tu-1', content: 'first\nsecond' }])
+    })
   })
 
   describe('params', () => {

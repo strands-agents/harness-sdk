@@ -13,16 +13,18 @@ return the final :class:`ExecutionResult`.
 Idiomatic divergences from the TypeScript oracle (see PR description):
 
 - TS's ``ExecuteOptions`` *options object* (``timeout``, ``cwd``, ``signal``,
-  ``env``) becomes Python keyword arguments (``timeout``, ``cwd``, ``env``),
-  matching how the rest of ``strands-py`` models call options.
-- TS's ``AbortSignal`` cancellation maps to asyncio task cancellation — the
-  Pythonic way to cancel an in-flight coroutine/generator — rather than an
-  explicit signal parameter.
+  ``env``) becomes Python keyword arguments (``timeout``, ``cwd``,
+  ``cancel_signal``, ``env``), matching how the rest of ``strands-py`` models
+  call options.
+- TS's ``AbortSignal`` becomes ``cancel_signal``, a :class:`threading.Event`
+  like ``ToolContext.cancel_signal``. Cancelling the consuming task also stops
+  the built-in sandboxes.
 - TS's discriminated union (``type: 'streamChunk' | 'executionResult'``) is
   discriminated in Python with ``isinstance`` checks on the dataclasses.
 """
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -74,6 +76,7 @@ class Sandbox(ABC):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute a shell command, streaming output.
@@ -91,6 +94,10 @@ class Sandbox(ABC):
                 sandboxes always apply these, though the mechanism differs;
                 custom implementations must handle ``env`` explicitly or it has
                 no effect.
+            cancel_signal: Aborts the execution when set, raising
+                :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that
+                is already set aborts before the command starts. Custom
+                implementations must handle it explicitly or it has no effect.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -111,6 +118,7 @@ class Sandbox(ABC):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute source code via a language interpreter, streaming output.
@@ -122,6 +130,10 @@ class Sandbox(ABC):
             cwd: Working directory for execution. ``None`` means use the sandbox
                 default.
             env: Environment variables to set for this execution.
+            cancel_signal: Aborts the execution when set, raising
+                :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that
+                is already set aborts before the command starts. Custom
+                implementations must handle it explicitly or it has no effect.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -226,6 +238,7 @@ class Sandbox(ABC):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> ExecutionResult:
         """Execute a shell command and return the result.
@@ -240,6 +253,10 @@ class Sandbox(ABC):
             cwd: Working directory for execution. ``None`` means use the sandbox
                 default.
             env: Environment variables to set for this command.
+            cancel_signal: Aborts the execution when set, raising
+                :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that
+                is already set aborts before the command starts. Custom
+                implementations must handle it explicitly or it has no effect.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Returns:
@@ -249,6 +266,9 @@ class Sandbox(ABC):
             RuntimeError: If ``execute_streaming`` did not yield an
                 :class:`ExecutionResult`.
         """
+        # Forwarded only when given, so an override without ``**kwargs`` still serves callers that never cancel.
+        if cancel_signal is not None:
+            kwargs["cancel_signal"] = cancel_signal
         async for chunk in self.execute_streaming(command, timeout=timeout, cwd=cwd, env=env, **kwargs):
             if isinstance(chunk, ExecutionResult):
                 return chunk
@@ -262,6 +282,7 @@ class Sandbox(ABC):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> ExecutionResult:
         """Execute source code and return the result.
@@ -277,6 +298,10 @@ class Sandbox(ABC):
             cwd: Working directory for execution. ``None`` means use the sandbox
                 default.
             env: Environment variables to set for this execution.
+            cancel_signal: Aborts the execution when set, raising
+                :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that
+                is already set aborts before the command starts. Custom
+                implementations must handle it explicitly or it has no effect.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Returns:
@@ -286,6 +311,8 @@ class Sandbox(ABC):
             RuntimeError: If ``execute_code_streaming`` did not yield an
                 :class:`ExecutionResult`.
         """
+        if cancel_signal is not None:
+            kwargs["cancel_signal"] = cancel_signal
         async for chunk in self.execute_code_streaming(code, language, timeout=timeout, cwd=cwd, env=env, **kwargs):
             if isinstance(chunk, ExecutionResult):
                 return chunk

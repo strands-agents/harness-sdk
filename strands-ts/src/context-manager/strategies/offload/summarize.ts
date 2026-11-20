@@ -17,6 +17,7 @@ import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
 import type { Model, SummarizeOptions } from '../../../models/model.js'
 import type { SummarizeResult } from '../../../models/summarize.js'
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
+import { latestCallTools } from '../../../models/model-proxy.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import { formatToolResultLabel, toolResultToContentBlocks } from '../../content-rendering.js'
@@ -27,7 +28,7 @@ import {
   removedTokens,
   removeMessages,
   repairAlternation,
-  stashRemoved,
+  archiveRemoved,
 } from '../../message-trimming.js'
 import { BaseOffloadStrategy } from './base.js'
 import type { OffloadConditions } from './conditions.js'
@@ -49,8 +50,6 @@ export const BLOCK_SUMMARY_INSTRUCTIONS = [
 
 /**
  * Configuration for the summarize strategy.
- *
- * @experimental
  */
 export interface SummarizeConfig {
   /** Model used for summarization. Resolution order: `this model > agent.auxModel > agent.model`. */
@@ -99,7 +98,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     const summarize = (run: Message[]): Promise<{ text: string; tokens: number } | null> =>
       this._summarizeRun(context, model, run)
-    return removeMessages(context.messages, removable, summarize, 'summarize', this._stash)
+    return removeMessages(context.messages, removable, summarize, 'summarize', this._archive)
   }
 
   /** The summary marker for a run and the tokens it stands for; a failure is logged and keeps the run. */
@@ -213,16 +212,16 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
   /**
    * The placeholder the messages a server-side summary stands for are retrievable under, or nothing when they were
-   * not stashed — the summary then stands alone rather than carrying a reference that resolves to nothing.
+   * not archived — the summary then stands alone rather than carrying a reference that resolves to nothing.
    *
    * The tokens it reports cover every message the summary stands for, so a provider that keeps sending message 0 as
    * text is over-reported by that message rather than under-reported by it.
    */
   private async _removedReference(removed: Message[], model: Model): Promise<OffloadedBlock | undefined> {
-    const stashRef = await stashRemoved(this._stash, removed, this._method)
-    if (stashRef === undefined) return undefined
+    const archiveRef = await archiveRemoved(this._archive, removed, this._method)
+    if (archiveRef === undefined) return undefined
     const tokens = await removedTokens(removed, model)
-    return this._placeholder(formatSummarized(REMOVED_MESSAGES, tokens), stashRef, tokens)
+    return this._placeholder(formatSummarized(REMOVED_MESSAGES, tokens), archiveRef, tokens)
   }
 
   /**
@@ -246,7 +245,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
         ' so thinking blocks kept after it will be dropped'
     )
     const textFor = placeholderFor(model, (tokens) => formatSummarized(REMOVED_MESSAGES, tokens, summary))
-    return removeMessages(context.messages, covered.slice(1), textFor, 'summarize', this._stash)
+    return removeMessages(context.messages, covered.slice(1), textFor, 'summarize', this._archive)
   }
 
   protected async _replaceBlock(
@@ -254,7 +253,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRef: string | undefined,
+    archiveRef: string | undefined,
     toolName: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null> {
@@ -268,14 +267,14 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const summary = request ? await this._trySummarize(request.messages, model, context, logFields, false) : ''
     if (request && summary) {
       logger.debug(`${logFields}, tokens=<${tokens}> | summarized ${request.description}`)
-      const placeholder = this._placeholder(formatSummarized(request.description, tokens, summary), stashRef, tokens)
+      const placeholder = this._placeholder(formatSummarized(request.description, tokens, summary), archiveRef, tokens)
       return block instanceof ToolResultBlock ? block.with({ content: [placeholder] }) : placeholder
     }
     // A tool result or text the summarizer failed on is kept for a later pass; media is offloaded instead.
     if (block instanceof ToolResultBlock || block instanceof TextBlock) return null
 
     logger.debug(`${logFields}, tokens=<${tokens}> | offloaded media block`)
-    return this._placeholder(formatOffloaded(tokens, mediaKind(block)), stashRef, tokens)
+    return this._placeholder(formatOffloaded(tokens, mediaKind(block)), archiveRef, tokens)
   }
 
   /** Summarizes `request`, or logs the failure and returns '' so the pass continues and keeps the content. */
@@ -324,10 +323,21 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       cancelSignal: agent.cancelSignal,
       ...(agent.agentMetadata && { agentMetadata: agent.agentMetadata }),
       ...(replay && {
-        toolSpecs: agent.toolRegistry.toolSpecs(),
+        ...this._replayedTools(agent),
         ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
       }),
     }
+  }
+
+  /**
+   * The tools a replay sends: those of the agent's latest model call, since the replay shares that call's prompt cache
+   * only with the same tools. Before the first call, the ones it would send with the registry's tools.
+   */
+  private _replayedTools(agent: LocalAgent): Pick<SummarizeOptions, 'toolSpecs' | 'deferredTools'> {
+    const recorded = latestCallTools(agent)
+    if (recorded) return recorded
+    const toolSpecs = agent.toolRegistry.toolSpecs()
+    return agent.contextManager?.callTools(agent, toolSpecs, agent.model) ?? { toolSpecs }
   }
 
   private _resolveModel(agent: LocalAgent): Model | undefined {

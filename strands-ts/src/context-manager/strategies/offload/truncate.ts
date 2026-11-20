@@ -16,7 +16,7 @@ import {
   truncateTextBlock,
   type TruncateConfig,
 } from '../../methods/truncate.js'
-import type { Stash } from '../../stash.js'
+import type { Archive } from '../../archive.js'
 import { placeholderFor, removeMessages, withPairs } from '../../message-trimming.js'
 import { formatElided, formatOffloaded, isOffloaded } from '../../placeholder.js'
 import { BaseOffloadStrategy } from './base.js'
@@ -51,16 +51,16 @@ export class TruncateStrategy extends BaseOffloadStrategy {
    * Checks a percent blockThreshold against `previewTokens`, then initializes the strategy.
    *
    * @param agent - The agent this strategy is attached to
-   * @param stash - The stash offloaded content is stored in
+   * @param archive - The archive offloaded content is stored in
    * @throws Error when a percent `blockThreshold` of the context window is no larger than `previewTokens`, or the
    *   base strategy's conditions can't run on this agent
    */
-  override init(agent: LocalAgent, stash?: Stash): void {
+  override init(agent: LocalAgent, archive?: Archive): void {
     if (this._conditions.blockThreshold?.isShare) {
       const tokens = this._conditions.thresholdTokens(agent)!
       this._checkThresholdExceedsPreview(tokens, `${tokens} tokens of the context window`)
     }
-    super.init(agent, stash)
+    super.init(agent, archive)
   }
 
   private _checkThresholdExceedsPreview(tokens: number, shown: string): void {
@@ -76,7 +76,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     const middle = withPairs(messages, await this._selectMiddle(await this._removableMessages(context), agent))
     // A middle of only placeholders has nothing new to elide.
     if (middle.every((message) => message.content.every(isOffloaded))) return false
-    return removeMessages(messages, middle, placeholderFor(agent.model, formatElided), 'truncate', this._stash)
+    return removeMessages(messages, middle, placeholderFor(agent.model, formatElided), 'truncate', this._archive)
   }
 
   protected async _replaceBlock(
@@ -84,22 +84,22 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     tokens: number,
     message: Message,
     _agent: LocalAgent,
-    stashRef: string | undefined
+    archiveRef: string | undefined
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
       const truncated = truncateToolResultBlock(block, this._truncateConfig)
       if (!truncated) return null
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
-      return block.with({ content: [this._placeholder(truncated.preview, stashRef, tokens), ...truncated.kept] })
+      return block.with({ content: [this._placeholder(truncated.preview, archiveRef, tokens), ...truncated.kept] })
     }
     if (block instanceof TextBlock) {
       const truncated = truncateTextBlock(block, this._truncateConfig)
       if (truncated === block) return null
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
-      return this._placeholder(truncated.text, stashRef, tokens)
+      return this._placeholder(truncated.text, archiveRef, tokens)
     }
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return this._placeholder(formatOffloaded(tokens, mediaKind(block)), stashRef, tokens)
+    return this._placeholder(formatOffloaded(tokens, mediaKind(block)), archiveRef, tokens)
   }
 
   /** The eligible messages between the head and tail kept within the preview token budget. */
