@@ -212,8 +212,11 @@ describe('SageMakerDecisionModel', () => {
       )
     })
 
-    it('rejects an empty response body as a non-object response', async () => {
-      mockSend.mockResolvedValue({ Body: new Uint8Array() })
+    it.each([
+      ['an empty', new Uint8Array()],
+      ['a null', null],
+    ])('rejects %s response body as a non-object response', async (_, body) => {
+      mockSend.mockResolvedValue({ Body: body })
 
       const decision = new SageMakerDecisionModel({ endpointName: ENDPOINT_NAME })
 
