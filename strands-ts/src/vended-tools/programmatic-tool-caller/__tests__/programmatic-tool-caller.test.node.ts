@@ -452,7 +452,7 @@ describe('programmatic_tool_caller', () => {
       controller.abort()
       const last = await generator.next()
       expect(Date.now() - cancelled).toBeLessThan(1500)
-      expect(text(last.value as ToolResultBlock)).toContain('Execution cancelled.')
+      expect(text(last.value as ToolResultBlock)).toBe('Error: start\n\nExecution cancelled.')
     } finally {
       LIMITS.maxFeedDurationSecs = previous
     }
