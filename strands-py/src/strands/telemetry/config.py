@@ -27,6 +27,36 @@ BaggageKeyPredicates = BaggageKeyPredicate | Sequence[BaggageKeyPredicate]
 
 logger = logging.getLogger(__name__)
 
+_HTTP_PROTOCOL = "http/protobuf"
+_GRPC_PROTOCOL = "grpc"
+_VALID_OTLP_PROTOCOLS = (_HTTP_PROTOCOL, _GRPC_PROTOCOL)
+
+
+def _resolve_otlp_protocol(protocol: str | None) -> str:
+    """Resolve the OTLP transport protocol.
+
+    Resolution order: explicit argument > OTEL_EXPORTER_OTLP_PROTOCOL env var
+    > http/protobuf default.
+
+    Args:
+        protocol: Explicit protocol selection, or None to fall back to env/default.
+
+    Returns:
+        Either "http/protobuf" or "grpc".
+
+    Raises:
+        ValueError: If the resolved value is not a supported OTLP protocol.
+    """
+    resolved = protocol if protocol is not None else os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", _HTTP_PROTOCOL)
+    if resolved not in _VALID_OTLP_PROTOCOLS:
+        raise ValueError(f"protocol=<{resolved}> | unsupported OTLP protocol, must be one of {_VALID_OTLP_PROTOCOLS}")
+    return resolved
+
+
+def _missing_otlp_extra_msg(extra: str) -> str:
+    """Build a consistent ImportError message for missing OTLP extras."""
+    return f"OTLP exporter requires the '{extra}' extra. Install with: pip install 'strands-agents[{extra}]'"
+
 
 def get_otel_resource() -> Resource:
     """Create a standard OpenTelemetry resource with service information.
@@ -63,6 +93,7 @@ class StrandsTelemetry:
         Environment variables are handled by the underlying OpenTelemetry SDK:
         - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP endpoint URL
         - OTEL_EXPORTER_OTLP_HEADERS: Headers for OTLP requests
+        - OTEL_EXPORTER_OTLP_PROTOCOL: OTLP transport protocol ("http/protobuf" or "grpc")
         - OTEL_SERVICE_NAME: Overrides resource service name
 
     Examples:
@@ -149,27 +180,47 @@ class StrandsTelemetry:
             logger.exception("error=<%s> | Failed to configure console exporter", e)
         return self
 
-    def setup_otlp_exporter(self, **kwargs: Any) -> "StrandsTelemetry":
+    def setup_otlp_exporter(self, protocol: str | None = None, **kwargs: Any) -> "StrandsTelemetry":
         """Set up OTLP exporter for the tracer provider.
 
         Args:
+            protocol: OTLP transport. Either "http/protobuf" (default) or "grpc".
+                If not provided, OTEL_EXPORTER_OTLP_PROTOCOL is consulted; if
+                that is also unset, the default is "http/protobuf".
             **kwargs: Optional keyword arguments passed directly to
                 OpenTelemetry's OTLPSpanExporter initializer.
 
         Returns:
             self: Enables method chaining.
 
+        Raises:
+            ValueError: When protocol is not a supported OTLP protocol.
+            ImportError: When the optional extra for the resolved protocol is
+                not installed (`otel` for http/protobuf, `otel-grpc` for grpc).
+
         This method configures a BatchSpanProcessor with an OTLPSpanExporter,
         allowing trace data to be exported to an OTLP endpoint. Any additional
         keyword arguments provided will be forwarded to the OTLPSpanExporter.
         """
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        resolved = _resolve_otlp_protocol(protocol)
+        if resolved == _GRPC_PROTOCOL:
+            try:
+                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            except ImportError as e:
+                raise ImportError(_missing_otlp_extra_msg("otel-grpc")) from e
+        else:
+            try:
+                from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[assignment]
+                    OTLPSpanExporter,
+                )
+            except ImportError as e:
+                raise ImportError(_missing_otlp_extra_msg("otel")) from e
 
         try:
             otlp_exporter = OTLPSpanExporter(**kwargs)
             batch_processor = BatchSpanProcessor(otlp_exporter)
             self.tracer_provider.add_span_processor(batch_processor)
-            logger.info("OTLP exporter configured")
+            logger.info("protocol=<%s> | OTLP exporter configured", resolved)
         except Exception as e:
             logger.exception("error=<%s> | Failed to configure OTLP exporter", e)
         return self
@@ -198,26 +249,75 @@ class StrandsTelemetry:
         return self
 
     def setup_meter(
-        self, enable_console_exporter: bool = False, enable_otlp_exporter: bool = False
+        self,
+        enable_console_exporter: bool = False,
+        enable_otlp_exporter: bool = False,
+        otlp_protocol: str | None = None,
+        **provider_kwargs: Any,
     ) -> "StrandsTelemetry":
-        """Initialize the OpenTelemetry Meter."""
+        """Initialize the OpenTelemetry Meter.
+
+        Args:
+            enable_console_exporter: When True, attach a console metrics exporter.
+            enable_otlp_exporter: When True, attach an OTLP metrics exporter.
+            otlp_protocol: OTLP transport when enable_otlp_exporter=True. Either
+                "http/protobuf" (default) or "grpc". If not provided,
+                OTEL_EXPORTER_OTLP_PROTOCOL is consulted; if that is also unset,
+                the default is "http/protobuf". Ignored when enable_otlp_exporter=False.
+            **provider_kwargs: Optional keyword arguments passed directly to
+                OpenTelemetry's MeterProvider initializer (e.g., views,
+                shutdown_on_exit). Passing resource or metric_readers raises
+                TypeError because this method supplies them.
+
+        Returns:
+            self: Enables method chaining.
+
+        Raises:
+            TypeError: If resource or metric_readers is passed in provider_kwargs.
+            ValueError: When otlp_protocol is not a supported OTLP protocol.
+            ImportError: When enable_otlp_exporter=True and the optional extra
+                for the resolved protocol is not installed (`otel` for
+                http/protobuf, `otel-grpc` for grpc).
+        """
         logger.info("Initializing meter")
+
+        # Resolve & import OTLP exporter up front so configuration errors fail fast.
+        otlp_metric_exporter_cls: type | None = None
+        resolved_protocol: str | None = None
+        if enable_otlp_exporter:
+            resolved_protocol = _resolve_otlp_protocol(otlp_protocol)
+            if resolved_protocol == _GRPC_PROTOCOL:
+                try:
+                    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+                except ImportError as e:
+                    raise ImportError(_missing_otlp_extra_msg("otel-grpc")) from e
+            else:
+                try:
+                    from opentelemetry.exporter.otlp.proto.http.metric_exporter import (  # type: ignore[assignment]
+                        OTLPMetricExporter,
+                    )
+                except ImportError as e:
+                    raise ImportError(_missing_otlp_extra_msg("otel")) from e
+            otlp_metric_exporter_cls = OTLPMetricExporter
+
         metrics_readers = []
         try:
             if enable_console_exporter:
                 logger.info("Enabling console metrics exporter")
                 console_reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
                 metrics_readers.append(console_reader)
-            if enable_otlp_exporter:
-                logger.info("Enabling OTLP metrics exporter")
-                from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-
-                otlp_reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+            if otlp_metric_exporter_cls is not None:
+                logger.info("protocol=<%s> | enabling OTLP metrics exporter", resolved_protocol)
+                otlp_reader = PeriodicExportingMetricReader(otlp_metric_exporter_cls())
                 metrics_readers.append(otlp_reader)
         except Exception as e:
             logger.exception("error=<%s> | Failed to configure OTLP metrics exporter", e)
 
-        self.meter_provider = metrics_sdk.MeterProvider(resource=self.resource, metric_readers=metrics_readers)
+        self.meter_provider = metrics_sdk.MeterProvider(
+            resource=self.resource,
+            metric_readers=metrics_readers,
+            **provider_kwargs,
+        )
 
         # Set as global tracer provider
         metrics_api.set_meter_provider(self.meter_provider)

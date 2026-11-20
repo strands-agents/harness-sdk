@@ -62,6 +62,7 @@ sagemaker = [
     "boto3-stubs[sagemaker-runtime]>=1.26.0,<2.0.0",
     "openai>=1.68.0,<4.0.0",  # SageMaker uses OpenAI-compatible interface
 ]
+otel-grpc = ["opentelemetry-exporter-otlp-proto-grpc>=1.30.0,<2.0.0"]
 otel = [
     "opentelemetry-exporter-otlp-proto-http>=1.30.0,<2.0.0",
     "opentelemetry-processor-baggage>=0.51b0,<1.00b0",
@@ -98,10 +99,10 @@ bidi-openai-live = ["openai[realtime]>=3.35.1,<4.0.0"]
 bidi-aec = ["pywebrtc-audio>=0.2.0,<0.3.0", "numpy>=2.0.0,<3.0.0"]
 # Excluded from aggregate extras because PyAudio requires PortAudio as a system level install.
 bidi-pyaudio = ["pyaudio>=0.2.0,<0.3.0"]
-bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-google,bidi-io,bidi-openai,docs,otel]"]
+bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-google,bidi-io,bidi-openai,docs,otel,otel-grpc]"]
 
 all = [
-    "strands-agents[a2a,anthropic,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
+    "strands-agents[a2a,anthropic,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,otel-grpc,web-fetch]"
 ]
 
 dev = [
