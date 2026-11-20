@@ -1,0 +1,10 @@
+name: diagrid
+description: Durable execution for Strands agents via Dapr Workflows, so an agent run resumes from where it stopped after a crash or restart.
+integrationType: integration
+maintainedBy: partner
+languages:
+  python:
+    package: diagrid[strands]
+github: https://github.com/diagridio/python-ai
+docsUrl: https://docs.diagrid.io/develop/agents/strands/
+addedDate: 2026-11-16
