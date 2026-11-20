@@ -1,0 +1,50 @@
+name: "Harness Rust: Test and Lint"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test-lint:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: strands-agents_ubuntu-latest_4-core, name: Test and Lint }
+          - { os: strands-agents_windows-latest_4-core, name: Test and Lint (Windows) }
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+
+      - name: Clippy
+        run: cargo clippy -p strands-harness --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test -p strands-harness --all-features
+
+      - name: Docs
+        shell: bash
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc -p strands-harness --all-features --no-deps
