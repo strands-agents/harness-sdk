@@ -980,7 +980,7 @@ impl Agent {
                     self.emit(run, record, false).await;
                     if let Some(redaction) = &result.redaction {
                         let user_message = redaction.user_message.clone();
-                        self.redact_last_message(&user_message);
+                        self.redact_last_user_message(&user_message);
                     }
                     let mut stop_data = ModelStopResponse::new(result.message.clone(), result.stop_reason.clone());
                     stop_data.redaction.clone_from(&result.redaction);
@@ -1194,18 +1194,19 @@ impl Agent {
     /// Replaces the last user message after a guardrail redacted the input:
     /// tool results keep their structure with the redaction text, other
     /// content becomes the redaction text.
-    pub(crate) fn redact_last_message(&mut self, redact_message: &str) {
-        let Some(last) = self.local.messages_mut().last_mut() else {
+    pub(crate) fn redact_last_user_message(&mut self, redact_message: &str) {
+        // Session managers and hooks may append non-user messages after the user turn.
+        let Some(last_user) = self
+            .local
+            .messages_mut()
+            .iter_mut()
+            .rev()
+            .find(|message| message.role == Role::User)
+        else {
+            tracing::warn!("received input redaction but no user message found | redaction skipped");
             return;
         };
-        if last.role != Role::User {
-            tracing::warn!(
-                "role=<{:?}> | received input redaction but last message is not from user | redaction skipped",
-                last.role
-            );
-            return;
-        }
-        let mut redacted: Vec<ContentBlock> = last
+        let mut redacted: Vec<ContentBlock> = last_user
             .content
             .iter()
             .filter_map(|block| match block {
@@ -1220,7 +1221,7 @@ impl Agent {
         if redacted.is_empty() {
             redacted.push(ContentBlock::text(redact_message));
         }
-        last.content = redacted;
+        last_user.content = redacted;
     }
 
     /// Fires `BeforeToolsEvent`, runs the batch and fires `AfterToolsEvent`.
