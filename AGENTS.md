@@ -34,6 +34,7 @@ Before designing a feature or changing an API, read the relevant context in `tea
 - **`team/DECISIONS.md`** — lightweight architecture decision records for smaller calls.
 - **`team/TENETS.md`** — the principles a contribution should align with.
 - **`team/API_BAR_RAISING.md`** and **`team/FEATURE_LIFECYCLE.md`** — the bar and process for API changes and feature deprecation.
+- **`team/DEFAULTS.md`** — read this before turning anything on by default, adding to a default tool or plugin set, or changing a documented default value. It defines the benchmark evidence required and which release the change ships in.
 
 ## Writing Code
 
