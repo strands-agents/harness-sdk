@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
+import {
+  TEMPORARY_OPTIMIZE_SKILL,
+  TEMPORARY_OPTIMIZE_SKILL_VERSION,
+} from '../../../src/dev/temporary-evals-fork/optimize-skill.js'
 import { temporaryWorkflowSkills } from '../../../src/dev/temporary-evals-fork/workflow-skills.js'
 
 const instructionsFor = (name: string): string => {
@@ -171,6 +175,12 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('### 2. Knobs: what may change')
   })
 
+  it('shouldVendorTheSkillVersionThatTunesTheAgentFileItself', () => {
+    expect(TEMPORARY_OPTIMIZE_SKILL_VERSION).toBe('0.9.0')
+    expect(TEMPORARY_OPTIMIZE_SKILL).toContain('--agent agent.py')
+    expect(TEMPORARY_OPTIMIZE_SKILL).not.toContain('prepare.mjs')
+  })
+
   it('shouldSayWhereStrandsDevKeepsExperimentsAndRuns', () => {
     expect(instructions).toContain('strands-dev/experiments/<name>/<name>.json')
     expect(instructions).toContain('strands-dev/experiments/<name>/optimizations/<stamp>/')
@@ -179,10 +189,19 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('Never name a knob or a choice from memory')
   })
 
-  it('shouldNotRunTheSkillsOwnScriptsOrCli', () => {
-    expect(instructions).toContain('Do not ask for a workspace path')
-    expect(instructions).toContain('do not run its scripts/prepare.mjs')
-    expect(instructions).toContain('strands dev does that work through its own tools')
+  it('shouldNotRunTheSkillsOwnCommandsOrReadItsRunFiles', () => {
+    expect(instructions).toContain('Do not ask for a workspace path or an agent path')
+    expect(instructions).toContain('never run a shell command the skill gives')
+    expect(instructions).toContain('not its step 1 lookups')
+    expect(instructions).toContain('no hooks.py')
+    expect(instructions).toContain('starts, resumes, and stops runs through its own tools')
+    expect(instructions).toContain('never tail or parse those files')
+  })
+
+  it('shouldSkipTheSkillsInstallChecksBecauseDevPreparesTheOptimizer', () => {
+    expect(instructions).toContain('strands dev prepares the optimizer environment itself')
+    expect(instructions).toContain("Skip the skill's Python, Node.js, and `strands-evals` checks")
+    expect(instructions).toContain('never hand the developer a pip or npm install command')
   })
 
   it('shouldPutEachQuestionOnScreenInsteadOfTheChatLists', () => {
