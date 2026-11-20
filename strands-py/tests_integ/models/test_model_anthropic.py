@@ -12,6 +12,7 @@ from strands.models import CacheConfig, CacheToolsConfig
 from strands.models.anthropic import AnthropicModel
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
+from strands.vended_plugins.context_injector import ContextInjector
 from tests_integ.models import providers
 
 # these tests only run if we have the anthropic api key
@@ -333,3 +334,46 @@ class TestCountTokens:
         without = await model.count_tokens(messages=messages)
         with_tools = await model.count_tokens(messages=messages, tool_specs=tool_specs, system_prompt="Be helpful.")
         assert with_tools > without
+
+
+def test_context_injection_keeps_preserved_thinking_valid_and_the_cache_warm_while_injected_text_changes():
+    @strands.tool
+    def lookup_inventory(item: str) -> str:
+        """Look up how many units of an item are in stock."""
+        return {"widgets": "17", "gadgets": "4"}.get(item, "0")
+
+    # Any edit to history before a replayed thinking block fails the request instead of dropping the block.
+    model = AnthropicModel(
+        client_args={
+            "api_key": os.getenv("ANTHROPIC_API_KEY"),
+            "default_headers": {"anthropic-beta": "thinking-binding-controls-2026-08-01"},
+        },
+        model_id="claude-opus-5-5",
+        max_tokens=4096,
+        params={"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
+        cache_config=CacheConfig(strategy="anthropic"),
+    )
+    calls = 0
+
+    def render(context):
+        nonlocal calls
+        calls += 1
+        return f"<call>{calls}</call>"
+
+    agent = Agent(
+        model=model,
+        tools=[lookup_inventory],
+        callback_handler=None,
+        # Long enough to pass the minimum cacheable prefix.
+        system_prompt=f"You are an inventory assistant {uuid.uuid4()}.\n"
+        + "Report stock counts exactly as the tool returns them. " * 400,
+        plugins=[ContextInjector(render, trigger="everyTurn")],
+    )
+
+    agent("Look up widgets, then gadgets, one at a time, and say which has more stock.")
+    result = agent("Look up widgets again and confirm the count.")
+
+    assert result.stop_reason == "end_turn"
+    assert calls >= 4
+    usage = [message for message in agent.messages if message["role"] == "assistant"][-1]["metadata"]["usage"]
+    assert usage.get("cacheReadInputTokens", 0) > 0

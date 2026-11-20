@@ -351,7 +351,7 @@ Passing a fully-constructed handler instance (rather than an options bag) bypass
 
 ### Streaming vs Non-Streaming Mode
 
-Some Bedrock models only support non-streaming tool use. Set the streaming configuration to false to use those models. Both modes give your agent the same event structure and behavior, since Strands converts non-streaming responses to the streaming format internally.
+Set the streaming configuration to false to get each model response in one piece instead of as a stream. Some older Bedrock models also need it for tool use, which they only support without streaming. Both modes give your agent the same event structure and behavior, since Strands converts non-streaming responses to the streaming format internally.
 
 <Tabs>
 <Tab label="Python">
@@ -365,7 +365,7 @@ streaming_model = BedrockModel(
 
 # Non-streaming model
 non_streaming_model = BedrockModel(
-    model_id="us.meta.llama3-2-90b-instruct-v1:0",
+    model_id="global.anthropic.claude-sonnet-5-5",
     streaming=False,  # Disable streaming
 )
 ```
@@ -1124,16 +1124,13 @@ thinking blocks that remain in the history no longer match it. Accounts that enf
 default for accounts created on or after August 31, 2026, reject the next request.
 
 The retry sets `prefix_mismatch_behavior` to `drop_block` in the `thinking.block_binding`
-request field and adds the
+request field, with `"type": "adaptive"` when no thinking is configured, and adds the
 `thinking-binding-controls-2026-08-01` beta to any betas already in `anthropic_beta`.
 Claude then skips the stale thinking blocks instead of rejecting the request. The stale
 blocks stay in the history, so the provider keeps sending `drop_block` for that model ID
 until the model instance is discarded. Requests before the first rejection are sent
 unchanged.
 
-- **Thinking must be configured.** The retry applies only when `thinking` is set in
-  <Syntax py="additional_request_fields" ts="additionalRequestFields" />. Other errors,
-  and this error without a thinking configuration, are raised as is.
 - **Your `block_binding` wins.** If the thinking configuration already contains
   `block_binding`, the provider sends it as written and does not retry. Set it yourself
   to choose the behavior up front or to keep the error.

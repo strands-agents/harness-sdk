@@ -32,6 +32,7 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._native_output import with_schema_instructions
 from ._validation import (
     _has_location_source,
     _log_skipped_blocks,
@@ -871,7 +872,9 @@ class LlamaCppModel(Model):
 
             # Collect the response
             response_text = ""
-            async for event in self.stream(prompt, system_prompt=system_prompt, **kwargs):
+            async for event in self.stream(
+                prompt, system_prompt=with_schema_instructions(system_prompt, schema), **kwargs
+            ):
                 if "contentBlockDelta" in event:
                     delta = event["contentBlockDelta"]["delta"]
                     if "text" in delta:

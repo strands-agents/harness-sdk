@@ -68,6 +68,7 @@ export type {
   Role,
   StopReason,
   TextBlockData,
+  OffloadedBlockData,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
@@ -80,6 +81,7 @@ export type {
   GuardImageFormat,
   GuardImageSource,
   InjectedBlockData,
+  ToolReferenceBlockData,
   ContentBlock,
   ContentBlockData,
   MessageData,
@@ -92,6 +94,7 @@ export type {
 // Message classes
 export {
   TextBlock,
+  OffloadedBlock,
   ToolUseBlock,
   ToolResultBlock,
   ReasoningBlock,
@@ -99,6 +102,7 @@ export {
   GuardContentBlock,
   InjectedBlock,
   SummaryBlock,
+  ToolReferenceBlock,
   UnknownBlock,
   Message,
   JsonBlock,
@@ -212,7 +216,8 @@ export type {
   CacheConfig,
 } from './models/model.js'
 export type { SummarizeResult } from './models/summarize.js'
-export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
+export type { ModelCapabilities, ModelLimits, PromptCaching, DeferredToolLoading } from './models/model-info.js'
+export { ModelInfo } from './models/model-info.js'
 
 export { Model } from './models/model.js'
 
@@ -328,7 +333,10 @@ export { Offload } from './context-manager/strategies/offload/index.js'
 export type {
   OffloadTarget,
   OffloadConditions,
-  OffloadStrategyBuilder,
+  OffloadStrategy,
+  DeferTarget,
+  DeferConditions,
+  DeferStrategy,
 } from './context-manager/strategies/offload/index.js'
 export type { TruncateConfig } from './context-manager/methods/truncate.js'
 export type { SummarizeConfig } from './context-manager/strategies/offload/summarize.js'

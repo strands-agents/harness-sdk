@@ -1,20 +1,48 @@
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
-import { Message, type ContentBlock } from '../types/messages.js'
+import { Message, type ContentBlock, type ToolResultContent } from '../types/messages.js'
 import { Uncertain, type AnswerOf, type DecisionInput, type DecisionResult, type Question } from './types.js'
 
 const MAX_CHOICE_COUNT = 255
 const PROBABILITY_TOLERANCE = 1e-6
+// System One servers such as strands-decider round each probability to 4 decimals,
+// so a distribution over N choices may sum to 1 within N * 5e-5.
+const PROBABILITY_ROUNDING_TOLERANCE = 5e-5
+
+/**
+ * Request mapping and limits shared by every System One transport.
+ *
+ * @internal
+ */
+export interface SystemOneRequestConfig {
+  providerName: string
+  /** Sent as the request's `model`; omitted when undefined so the server uses its own. */
+  modelId?: string
+  defaultMinConfidence: number
+  maxQuestions?: number
+}
 
 /** @internal */
-export interface SystemOneProviderConfig {
-  providerName: string
+export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   endpoint: string
   apiKey: string
   modelId: string
-  defaultMinConfidence: number
   fetch: typeof globalThis.fetch
-  maxQuestions?: number
-  maxBodyBytes: number
+}
+
+/**
+ * Sends a serialized System One request and resolves to the parsed JSON response payload.
+ * Rejects with a {@link ModelError} subclass when the request fails.
+ *
+ * @internal
+ */
+export type SystemOneTransport = (body: string, cancelSignal?: AbortSignal) => Promise<unknown>
+
+/** @internal */
+export function resolveDefaultMinConfidence(value: number, className: string): number {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${className} defaultMinConfidence must be in [0.0, 1.0]`)
+  }
+  return value
 }
 
 /** @internal */
@@ -43,10 +71,10 @@ export function resolveSystemOneProviderConfig(
   }
 
   const modelId = options.modelId?.trim() || defaults.modelId
-  const defaultMinConfidence = options.defaultMinConfidence ?? defaults.defaultMinConfidence
-  if (!Number.isFinite(defaultMinConfidence) || defaultMinConfidence < 0 || defaultMinConfidence > 1) {
-    throw new Error(`${defaults.className} defaultMinConfidence must be in [0.0, 1.0]`)
-  }
+  const defaultMinConfidence = resolveDefaultMinConfidence(
+    options.defaultMinConfidence ?? defaults.defaultMinConfidence,
+    defaults.className
+  )
 
   const fetchImplementation = options.fetch ?? globalThis.fetch
   if (typeof fetchImplementation !== 'function') {
@@ -61,7 +89,6 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence,
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
-    maxBodyBytes: defaults.maxBodyBytes,
   }
 }
 
@@ -84,7 +111,12 @@ interface ParsedAnswer {
   confidence: number
 }
 
-class SystemOneHttpError extends Error {
+/**
+ * Cause attached to errors for non-2xx System One responses, carrying the status and parsed body.
+ *
+ * @internal
+ */
+export class SystemOneHttpError extends Error {
   constructor(
     readonly status: number,
     readonly body: unknown,
@@ -95,9 +127,15 @@ class SystemOneHttpError extends Error {
   }
 }
 
-/** @internal */
+/**
+ * Maps a decision request to the System One wire format, sends it through `transport`,
+ * and maps the response back to a {@link DecisionResult}.
+ *
+ * @internal
+ */
 export async function askSystemOne<const Q extends Record<string, Question>>(
-  config: SystemOneProviderConfig,
+  config: SystemOneRequestConfig,
+  transport: SystemOneTransport,
   state: DecisionInput,
   questions: Q,
   cancelSignal?: AbortSignal
@@ -109,36 +147,12 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
 
   const body = JSON.stringify({
     state: toWireState(state),
-    model: config.modelId,
+    ...(config.modelId !== undefined && { model: config.modelId }),
     questions: toWireQuestions(questions),
   })
-  const bodyBytes = new TextEncoder().encode(body).byteLength
-  if (bodyBytes > config.maxBodyBytes) {
-    throw new ContextWindowOverflowError(
-      `${config.providerName} decision request is ${bodyBytes} bytes; the provider limit is ${config.maxBodyBytes}`
-    )
-  }
 
   const startedAt = globalThis.performance.now()
-  let response: Response
-  try {
-    response = await config.fetch(config.endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body,
-      ...(cancelSignal !== undefined && { signal: cancelSignal }),
-    })
-  } catch (error) {
-    throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
-      cause: error,
-    })
-  }
-
-  const payload = await readPayload(response)
-  if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
+  const payload = await transport(body, cancelSignal)
 
   const result = parseResult(payload, questions, config.defaultMinConfidence)
   return {
@@ -166,15 +180,24 @@ function toWireState(state: DecisionInput): unknown {
 }
 
 function toWireContentBlock(block: ContentBlock): unknown {
+  rejectBinaryContent(block)
+  return block.toJSON()
+}
+
+function rejectBinaryContent(block: ContentBlock | ToolResultContent): void {
+  if (block.type === 'toolResultBlock') {
+    block.content.forEach(rejectBinaryContent)
+    return
+  }
   const hasBinarySource =
     (block.type === 'audioBlock' && block.source.type === 'audioSourceBytes') ||
     (block.type === 'imageBlock' && block.source.type === 'imageSourceBytes') ||
     (block.type === 'videoBlock' && block.source.type === 'videoSourceBytes') ||
-    (block.type === 'documentBlock' && block.source.type === 'documentSourceBytes')
+    (block.type === 'documentBlock' && block.source.type === 'documentSourceBytes') ||
+    (block.type === 'guardContentBlock' && block.image !== undefined)
   if (hasBinarySource) {
     throw new Error('System One decision providers do not support binary ContentBlock state')
   }
-  return block.toJSON()
 }
 
 function toWireQuestions(questions: Record<string, Question>): Record<string, WireQuestion> {
@@ -190,6 +213,38 @@ function toWireQuestions(questions: Record<string, Question>): Record<string, Wi
       return [id, { type: 'choice', instructions: question.question, criteria } satisfies WireChoiceQuestion]
     })
   )
+}
+
+/**
+ * The HTTP transport for hosted System One APIs: POSTs the request with the provider's API key.
+ *
+ * @internal
+ */
+export function httpTransport(config: SystemOneProviderConfig): SystemOneTransport {
+  return (body, cancelSignal) => sendHttp(config, body, cancelSignal)
+}
+
+async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSignal?: AbortSignal): Promise<unknown> {
+  let response: Response
+  try {
+    response = await config.fetch(config.endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+      ...(cancelSignal !== undefined && { signal: cancelSignal }),
+    })
+  } catch (error) {
+    throw new ModelError(`${config.providerName} decision request failed: ${normalizeError(error).message}`, {
+      cause: error,
+    })
+  }
+
+  const payload = await readPayload(response)
+  if (!response.ok) throw translateHttpError(config.providerName, response.status, payload)
+  return payload
 }
 
 async function readPayload(response: Response): Promise<unknown> {
@@ -210,7 +265,7 @@ function translateHttpError(providerName: string, status: number, body: unknown)
   const message = `${providerName} decision request failed with HTTP ${status}${detail ? `: ${detail}` : ''}`
   const cause = new SystemOneHttpError(status, body, message)
   if (status === 429 || status === 503 || status === 529) return new ModelThrottledError(message, { cause })
-  if (status === 413) return new ContextWindowOverflowError(message)
+  if (status === 413) return new ContextWindowOverflowError(message, { cause })
   return new ModelError(message, { cause })
 }
 
@@ -220,7 +275,10 @@ function errorDetail(body: unknown): string | undefined {
   for (const field of ['error', 'message', 'detail']) {
     const value = body[field]
     if (typeof value === 'string') return value
-    if (isRecord(value) && typeof value['message'] === 'string') return value['message']
+    if (isRecord(value)) {
+      const nested = value['message'] || value['error_type']
+      if (typeof nested === 'string') return nested
+    }
   }
   return undefined
 }
@@ -239,26 +297,29 @@ function parseResult<const Q extends Record<string, Question>>(
   const response = requireRecord(payload, 'decision provider response')
   const modelId = requireNonEmptyString(response['model'], 'decision provider model')
   const rawAnswers = requireRecord(response['answers'], 'decision provider answers')
-  const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
-  const probabilities = {} as { [K in keyof Q]: Readonly<Record<string, number>> }
-  const confidence = {} as { [K in keyof Q]: number }
-
-  for (const id of Object.keys(questions) as (keyof Q)[]) {
+  const parsedAnswers = Object.keys(questions).map((id) => {
     const question = questions[id]!
-    const rawAnswer = rawAnswers[String(id)]
-    if (rawAnswer === undefined)
-      throw new ModelError(`decision provider omitted answer for question id=<${String(id)}>`)
-    const parsed = parseAnswer(rawAnswer, question, String(id))
+    if (!Object.hasOwn(rawAnswers, id)) throw new ModelError(`decision provider omitted answer for question id=<${id}>`)
+    const parsed = parseAnswer(rawAnswers[id], question, id)
     const minConfidence = resolveMinConfidence(question, defaultMinConfidence)
-    answers[id] = (
-      minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
-    ) as AnswerOf<Q[typeof id]>
-    probabilities[id] = parsed.probabilities
-    confidence[id] = parsed.confidence
-  }
+    const answer = minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
+    return { id, answer, probabilities: parsed.probabilities, confidence: parsed.confidence }
+  })
 
   const usage = parseUsage(response['usage'])
-  return { modelId, answers, probabilities, confidence, ...(usage !== undefined && { usage }) }
+  return {
+    modelId,
+    answers: Object.fromEntries(parsedAnswers.map(({ id, answer }) => [id, answer])) as {
+      [K in keyof Q]: AnswerOf<Q[K]>
+    },
+    probabilities: Object.fromEntries(parsedAnswers.map(({ id, probabilities }) => [id, probabilities])) as {
+      [K in keyof Q]: Readonly<Record<string, number>>
+    },
+    confidence: Object.fromEntries(parsedAnswers.map(({ id, confidence }) => [id, confidence])) as {
+      [K in keyof Q]: number
+    },
+    ...(usage !== undefined && { usage }),
+  }
 }
 
 function parseAnswer(rawAnswer: unknown, question: Question, id: string): ParsedAnswer {
@@ -302,7 +363,11 @@ function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly st
   )
   const probabilityValues = Object.values(probabilities)
   const sum = probabilityValues.reduce((total, probability) => total + probability, 0)
-  if (Math.abs(sum - 1) > PROBABILITY_TOLERANCE) {
+  const isRounded = probabilityValues.every((p) => Math.abs(p * 1e4 - Math.round(p * 1e4)) < 1e-6)
+  const tolerance = isRounded
+    ? choices.length * PROBABILITY_ROUNDING_TOLERANCE + PROBABILITY_TOLERANCE
+    : PROBABILITY_TOLERANCE
+  if (Math.abs(sum - 1) > tolerance) {
     throw new ModelError(`probabilities for question id=<${id}> must sum to 1`)
   }
   const selectedProbability = probabilities[selected]!
@@ -332,18 +397,22 @@ function parseUsage(value: unknown): { inputTokens: number; outputTokens: number
   const usage = requireRecord(value, 'decision provider usage')
   const inputTokens = usage['input_tokens']
   const outputTokens = usage['output_tokens']
-  if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number' || inputTokens < 0 || outputTokens < 0) {
-    return undefined
-  }
+  if (!isTokenCount(inputTokens) || !isTokenCount(outputTokens)) return undefined
   return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
 }
 
-function requireRecord(value: unknown, name: string): Record<string, unknown> {
+function isTokenCount(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+}
+
+/** @internal */
+export function requireRecord(value: unknown, name: string): Record<string, unknown> {
   if (!isRecord(value)) throw new ModelError(`${name} must be an object`)
   return value
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+/** @internal */
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 

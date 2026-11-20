@@ -181,6 +181,42 @@ async function customEvaluateExample() {
 }
 
 // =====================
+// Auto Mode
+// =====================
+
+async function autoModeExample() {
+  // --8<-- [start:auto_mode]
+  // const readFile = tool({ ... })
+  // const deleteFiles = tool({ ... })
+
+  const agent = new Agent({
+    tools: [readFile, deleteFiles],
+    interventions: [new HumanInTheLoop('auto')],
+  })
+
+  await agent.invoke('Read config.json then delete /tmp/old-logs')
+  // read_file: rated safe -> runs on its own
+  // delete_files: rated risky -> pauses for approval
+  // --8<-- [end:auto_mode]
+}
+
+async function autoModeOptionsExample() {
+  // --8<-- [start:auto_mode_options]
+  const agent = new Agent({
+    tools: [readFile, deleteFiles],
+    interventions: [
+      new HumanInTheLoop('auto', {
+        ask: 'stdio', // prompt in the terminal
+        allowedTools: ['read_file'], // skips the decision entirely
+      }),
+    ],
+  })
+
+  await agent.invoke('Read config.json then delete /tmp/old-logs')
+  // --8<-- [end:auto_mode_options]
+}
+
+// =====================
 // Classifier (LLM Risk Classification)
 // =====================
 

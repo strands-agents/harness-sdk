@@ -29,7 +29,7 @@ import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from './defaults.js'
-import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { summarizeWithStream, type SummarizeResult } from './summarize.js'
 
@@ -48,7 +48,7 @@ import { summarizeWithStream, type SummarizeResult } from './summarize.js'
  */
 export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, modelId: string): T {
   if (config.contextWindowLimit !== undefined) return config
-  const contextWindow = mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
+  const contextWindow = ModelInfo.merge(lookupModelInfo(modelId), config.modelInfo).limits?.contextWindow
   if (contextWindow === undefined) return config
   return { ...config, contextWindowLimit: contextWindow }
 }
@@ -65,7 +65,7 @@ export function resolveConfigMetadata<T extends BaseModelConfig>(config: T, mode
  */
 export function resolveMaxTokens(config: BaseModelConfig, modelId: string): number | undefined {
   if (config.maxTokens !== undefined) return config.maxTokens
-  return mergeModelInfo(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
+  return ModelInfo.merge(lookupModelInfo(modelId), config.modelInfo).limits?.maxOutputTokens
 }
 
 class CitationAccumulator {
@@ -290,6 +290,15 @@ export interface StreamOptions {
    * whose text is exactly one JSON object that validates against this schema.
    */
   structuredOutputSchema?: z.ZodSchema
+
+  /**
+   * Names of the tools in `toolSpecs` this call defers. A provider whose model defers tools natively
+   * (`modelInfo.capabilities.deferredToolLoading` is `'native'`) keeps their input schemas out of the model's context
+   * until the model loads them; every other provider ignores it.
+   *
+   * @internal
+   */
+  deferredTools?: ReadonlySet<string>
 }
 
 /**
@@ -338,6 +347,13 @@ export interface SummarizeOptions {
    * routing key, so a replay can share the agent's cache.
    */
   agentMetadata?: AgentMetadata
+
+  /**
+   * Names of the tools in `toolSpecs` the request defers, as in {@link StreamOptions.deferredTools}.
+   *
+   * @internal
+   */
+  deferredTools?: ReadonlySet<string>
 }
 
 /**
@@ -416,21 +432,25 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
-   * Everything the SDK knows about the configured model, resolved on each read. Layers, later
-   * ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that supports
-   * them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
+   * Everything the SDK knows about the configured model, resolved on each read. Layers, later ones winning: the shared
+   * model info for `modelId`, `temporaryMessages` off (a provider that sends them turns them back on),
+   * `deferredToolLoading` as `'stubs'` unless the shared info says `'unsupported'` (a provider that defers natively
+   * says `'native'`), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a
+   * new record, so do not compare reads by reference.
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
    * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
-   * `{ ...info, capabilities: { ...info.capabilities, promptCaching: 'auto', ...config.modelInfo?.capabilities } }`.
+   * `ModelInfo.merge(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this.getConfig().modelInfo)`.
    * Do not read {@link stateful} inside the override; it reads this getter.
    */
   get modelInfo(): ModelInfo {
     const config = this.getConfig()
-    return mergeModelInfo(
-      lookupModelInfo(this.modelId ?? ''),
+    const shared = lookupModelInfo(this.modelId ?? '')
+    const deferredToolLoading = shared.capabilities?.deferredToolLoading === 'unsupported' ? 'unsupported' : 'stubs'
+    return ModelInfo.merge(
+      shared,
       {
-        capabilities: { temporaryMessages: false },
+        capabilities: { temporaryMessages: false, deferredToolLoading },
         limits: { contextWindow: config.contextWindowLimit },
       },
       config.modelInfo
@@ -879,7 +899,14 @@ function heuristicText(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
-function heuristicJson(obj: unknown): number {
+/**
+ * Estimates the tokens of a JSON value the way {@link Model.countTokens} does by default.
+ *
+ * @param obj - The value to estimate
+ * @returns The estimated token count, or 0 when the value can't be serialized
+ * @internal
+ */
+export function heuristicJson(obj: unknown): number {
   try {
     return Math.ceil(JSON.stringify(obj).length / 2)
   } catch {

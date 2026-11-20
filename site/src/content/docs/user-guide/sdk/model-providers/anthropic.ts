@@ -126,8 +126,8 @@ async function serverSideSummary() {
     model,
     contextManager: {
       strategies: [
-        Offload.summarize('toolResults').when({ threshold: 2000 }),
-        Offload.summarize('*').when({ utilization: 0.85, preserveRecent: 4 }),
+        Offload.summarize('toolResults').when({ blockThreshold: 2000 }),
+        Offload.summarize('*').when({ contextUtilization: '85%', preserveRecent: 4 }),
       ],
     },
   })

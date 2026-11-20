@@ -104,6 +104,14 @@ export interface InvokeModelContext {
   /** Schema this call must produce, set on the structured output retry and passed to the provider. */
   readonly structuredOutputSchema?: z.ZodSchema
 
+  /**
+   * Names of the tools this call defers, set by deferred tool loading and passed to the provider in
+   * `StreamOptions.deferredTools`.
+   *
+   * @internal
+   */
+  readonly deferredTools?: ReadonlySet<string>
+
   /** The request this model call belongs to, if any. See {@link InvokeOptions.invocationContext}. */
   readonly invocationContext?: InvocationContext
 }

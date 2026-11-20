@@ -20,9 +20,12 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import { lookupModelInfo, mergeModelInfo, type ModelInfo } from './model-info.js'
+import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
+import type { ToolSpec } from '../tools/types.js'
+import { lookupModelInfo, ModelInfo } from './model-info.js'
+import { withToolReferenceText } from './tool-references.js'
 import { Message, SummaryBlock } from '../types/messages.js'
-import type { ContentBlock, SystemPrompt } from '../types/messages.js'
+import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../models/streaming.js'
 import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
 import type { SummarizeResult } from './summarize.js'
@@ -91,6 +94,21 @@ const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html'
 // @see https://platform.claude.com/docs/en/api/migration-2026-10-21
 const SAMPLING_PARAMS_REMOVED_VERSION = '2026-10-21'
 const REMOVED_SAMPLING_PARAMS = ['temperature', 'top_p', 'top_k']
+// InvokeModel on bedrock-runtime takes its own API version in the body, which still accepts the sampling params.
+// An `anthropic_version` set in `params` wins.
+const BEDROCK_INVOKE_MODEL_API_VERSION = 'bedrock-2023-05-31'
+const BEDROCK_THROTTLING_EVENTS = ['throttlingException', 'serviceUnavailableException']
+
+// An `AnthropicBedrock` client (bedrock-runtime InvokeModel), found without importing the optional
+// `@anthropic-ai/bedrock-sdk`: by class name, or by its bedrock-runtime base URL when a bundler renamed the class.
+// The Mantle client is a separate class on a bedrock-mantle host and takes the Anthropic API versions.
+function isBedrockRuntimeClient(client: unknown): boolean {
+  for (let proto = Object.getPrototypeOf(client); proto; proto = Object.getPrototypeOf(proto)) {
+    if ((proto as { constructor?: { name?: string } }).constructor?.name === 'AnthropicBedrock') return true
+  }
+  const baseURL = (client as { baseURL?: unknown } | null)?.baseURL
+  return typeof baseURL === 'string' && /\bbedrock-runtime\./.test(baseURL)
+}
 
 /**
  * Validates that `anthropicTools` does not contain function tool definitions.
@@ -108,6 +126,23 @@ function validateAnthropicTools(anthropicTools: Anthropic.ToolUnion[]): void {
       )
     }
   }
+}
+
+/**
+ * Formats tool specs as function tools. Each deferred tool goes with `defer_loading`, and `load_tools` lists
+ * the deferred tools, since the API hides them until they are loaded.
+ */
+function formatFunctionTools(toolSpecs: ToolSpec[], deferredTools: ReadonlySet<string>): Anthropic.Tool[] {
+  const loadable = toolSpecs
+    .filter((tool) => deferredTools.has(tool.name))
+    .map((tool) => `- ${tool.name}: ${tool.description}`)
+  const listing = loadable.length > 0 ? `\n\nTools you can load:\n${loadable.join('\n')}` : ''
+  return toolSpecs.map((tool) => ({
+    name: tool.name,
+    description: tool.name === LOAD_TOOLS_TOOL_NAME ? `${tool.description}${listing}` : tool.description,
+    input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
+    ...(deferredTools.has(tool.name) && { defer_loading: true }),
+  }))
 }
 
 /** A server tool's `name`, or its `type` for a toolset, which has none. */
@@ -153,6 +188,11 @@ function withNativeOutput(
     tool_choice: { type: 'none' },
     output_config: { ...request.output_config, format: { type: 'json_schema', schema } },
   }
+}
+
+/** Whether the request forces a tool call, which rules thinking out. */
+function isToolForced(request: Anthropic.MessageStreamParams): boolean {
+  return request.tool_choice?.type === 'any' || request.tool_choice?.type === 'tool'
 }
 
 /**
@@ -374,10 +414,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Turns temporary messages back on for the models the shared model info lists. */
+  /** Turns temporary messages and native deferred tools back on for the models the shared model info lists. */
   override get modelInfo(): ModelInfo {
-    const { temporaryMessages } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
-    return mergeModelInfo(super.modelInfo, { capabilities: { temporaryMessages } }, this._config.modelInfo)
+    const { temporaryMessages, deferredToolLoading } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    return ModelInfo.merge(
+      super.modelInfo,
+      { capabilities: { temporaryMessages, deferredToolLoading } },
+      this._config.modelInfo
+    )
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
@@ -453,6 +497,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
    */
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     let thinking: Anthropic.ThinkingConfigParam | undefined
+    let toolForced = false
     let continuations = 0
     const mechanism = this._structuredOutputMechanism(options)
     try {
@@ -462,6 +507,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         options
       )
       thinking = request.thinking
+      toolForced = isToolForced(request)
       const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages))
       const usage = createEmptyUsage()
 
@@ -641,14 +687,25 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         continuations === 0 &&
         (unknownError as { status?: number }).status === 400 &&
         isThinkingBindingError(unknownError) &&
-        thinkingWithDropBlock(thinking)
+        thinkingWithDropBlock(thinking, toolForced)
       ) {
         // Stale blocks stay in history, so drop_block stays on for every later request to this model.
         logger.warn(
           `model_id=<${this._config.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
         )
+        const previous = this._dropStaleThinkingModelId
         this._dropStaleThinkingModelId = this._config.modelId
-        yield* this.stream(messages, options)
+        let yielded = false
+        try {
+          for await (const event of this.stream(messages, options)) {
+            yielded = true
+            yield event
+          }
+        } catch (error) {
+          // A rejected retry must not leave drop_block on for later requests.
+          if (!yielded) this._dropStaleThinkingModelId = previous
+          throw error
+        }
         return
       }
 
@@ -663,7 +720,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Maps a context overflow or a 429 to the SDK's error types; any other error is normalized. */
+  /** Maps a context overflow or a throttle to the SDK's error types; any other error is normalized. */
   private _translateError(unknownError: unknown): Error {
     const error = normalizeError(unknownError)
 
@@ -672,8 +729,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       return new ContextWindowOverflowError(error.message)
     }
 
-    const err = unknownError as Error & { status?: number }
-    if (err.status === 429) {
+    const err = unknownError as Error & { status?: number; type?: string }
+    // Bedrock sends a throttle that arrives mid-stream as an exception frame, which has no status.
+    if (err.status === 429 || BEDROCK_THROTTLING_EVENTS.includes(err.type ?? '')) {
       const message = error.message ?? 'Request was throttled by the model provider'
       logger.debug(`throttled | error_message=<${message}>`)
       return new ModelThrottledError(message, { cause: err })
@@ -713,6 +771,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const request = this._formatRequest(messages, {
       ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
       ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
+      ...(options?.deferredTools !== undefined && { deferredTools: options.deferredTools }),
     })
     // The API rejects these on a compaction request.
     const {
@@ -965,6 +1024,11 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
     if (this._serverSideSummary()) messages = fromLastCompaction(messages)
+    const defersTools = this.modelInfo.capabilities?.deferredToolLoading === 'native'
+    const deferredTools: ReadonlySet<string> = (defersTools && options?.deferredTools) || new Set()
+    const toolSpecs = options?.toolSpecs ?? []
+    // Requests that skip ModelProxy, such as server-side summaries and native token counts, can carry references too.
+    messages = withToolReferenceText(messages, toolSpecs, deferredTools)
 
     const messagesCache = this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
@@ -990,11 +1054,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       if (system !== undefined) request.system = system
     }
 
-    const tools: Anthropic.ToolUnion[] = (options?.toolSpecs ?? []).map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
-    }))
+    const tools: Anthropic.ToolUnion[] = formatFunctionTools(toolSpecs, deferredTools)
     const serverTools = [
       ...(this._config.anthropicTools ?? []),
       ...((this._config.params?.tools as Anthropic.ToolUnion[] | undefined) ?? []),
@@ -1009,9 +1069,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
     }
 
-    // A cache_control on the last tool caches all of them, so one cache point suffices.
+    // A cache_control on the last tool caches all of them, so one cache point suffices. Deferred tools
+    // are left out of the cached prefix and the API rejects cache_control on them.
     const toolsCache = this._cacheSection('toolsTTL')
-    const lastTool = tools[tools.length - 1]
+    const lastTool = tools.filter((tool) => !('defer_loading' in tool && tool.defer_loading)).pop()
     if (toolsCache.enabled && lastTool) {
       lastTool.cache_control = this._formatCacheControl(toolsCache.ttl)
     }
@@ -1031,8 +1092,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.topP !== undefined) sampling.top_p = this._config.topP
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     Object.assign(request, sampling, this._config.params)
+    if (isBedrockRuntimeClient(this._client)) {
+      const body = request as unknown as Record<string, unknown>
+      body.anthropic_version ??= BEDROCK_INVOKE_MODEL_API_VERSION
+    }
     this._rejectRemovedSamplingParams(request)
-    const dropBlockThinking = this._dropsStaleThinking() ? thinkingWithDropBlock(request.thinking) : undefined
+    const dropBlockThinking = this._dropsStaleThinking()
+      ? thinkingWithDropBlock(request.thinking, isToolForced(request))
+      : undefined
     if (dropBlockThinking) request.thinking = dropBlockThinking
     // params.tools is already merged into tools above; never let it bypass the forced-turn rule.
     if (tools.length > 0) request.tools = tools
@@ -1248,17 +1315,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
       case 'toolResultBlock': {
         const innerContent = block.content
-          .map((c) => {
-            if (c.type === 'textBlock') return { type: 'text' as const, text: c.text }
-            if (c.type === 'jsonBlock') return { type: 'text' as const, text: JSON.stringify(c.json) }
-
-            // Recursively format any other content block (image, document, video, etc.)
-            const formatted = this._formatContentBlock(c as unknown as ContentBlock)
-            return formatted
-          })
+          .map((content) => this._formatToolResultContent(content))
           .filter((c): c is NonNullable<typeof c> => !!c)
 
-        let contentVal: string | Anthropic.ContentBlockParam[]
+        let contentVal: string | (Anthropic.ContentBlockParam | Anthropic.ToolReferenceBlockParam)[]
 
         const firstItem = innerContent[0]
         if (innerContent.length === 1 && firstItem && firstItem.type === 'text') {
@@ -1301,6 +1361,17 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       default:
         return undefined
     }
+  }
+
+  /** Formats one item of a tool result's content. */
+  private _formatToolResultContent(
+    content: ToolResultContent
+  ): Anthropic.ContentBlockParam | Anthropic.ToolReferenceBlockParam | undefined {
+    if (content.type === 'textBlock') return { type: 'text', text: content.text }
+    if (content.type === 'jsonBlock') return { type: 'text', text: JSON.stringify(content.json) }
+    if (content.type === 'toolReferenceBlock') return { type: 'tool_reference', tool_name: content.name }
+    // Recursively format any other content block (image, document, video, etc.)
+    return this._formatContentBlock(content as unknown as ContentBlock)
   }
 
   /**

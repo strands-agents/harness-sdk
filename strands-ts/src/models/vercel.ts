@@ -13,7 +13,6 @@ import type {
   LanguageModelV3FilePart,
   LanguageModelV3FinishReason,
   LanguageModelV3FunctionTool,
-  LanguageModelV3Message,
   LanguageModelV3Prompt,
   LanguageModelV3ReasoningPart,
   LanguageModelV3StreamPart,
@@ -37,9 +36,11 @@ import {
   type BaseModelConfig,
   type CacheConfig,
   type CacheTTL,
+  type ResolvedCacheSection,
   type StreamOptions,
 } from './model.js'
-import { mergeModelInfo, SERVER_SIDE_SUMMARY_OFF, type ModelInfo } from './model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
+import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
 import { resolveOpenAICache, warnUnsupportedRetention } from './openai/cache.js'
 import {
   ModelContentBlockDeltaEvent,
@@ -97,7 +98,9 @@ export interface VercelModelConfig extends BaseModelConfig, LanguageModelCallSet
    * field (`ttl`, `toolsTTL`, `systemPromptTTL`, `messagesTTL`); Bedrock honors `systemPromptTTL` and
    * `messagesTTL`, caches tools as part of that prefix (so `toolsTTL` is inert), and under the default
    * `'auto'` strategy caches only models known to support it; OpenAI honors `cacheKey` and a retention
-   * `ttl`; every other provider ignores it with a one-time warning.
+   * `ttl`; every other provider ignores it with a one-time warning. On Bedrock, where the conversation cache point
+   * may go follows `modelId`, so set it to the underlying model when the provider's id does not name it, like an
+   * application inference profile ARN for Nova.
    */
   cacheConfig?: CacheConfig
 }
@@ -169,17 +172,15 @@ export class VercelModel extends Model<VercelModelConfig> {
   }
 
   /**
-   * Turns `serverSideSummary` off, and reports OpenAI models on Bedrock as implicitly cached; a `modelInfo`
-   * override still wins over both. The shared model info lists cache points for their OpenAI-compatible APIs, but
-   * Converse caches them implicitly and rejects cache points.
+   * Turns `serverSideSummary` off, and on Bedrock reports how Converse caches the model where that differs from the
+   * shared model info; a `modelInfo` override still wins over both.
    */
   override get modelInfo(): ModelInfo {
     const bedrock = this._provider.provider.split('.')[0] === 'amazon-bedrock'
-    const implicitCache = bedrock && this.modelId.toLowerCase().includes('openai.')
-    return mergeModelInfo(
+    return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
-      implicitCache ? { capabilities: { promptCaching: 'auto' } } : undefined,
+      bedrock ? bedrockCacheModelInfo(this.modelId) : undefined,
       this._config.modelInfo
     )
   }
@@ -203,7 +204,14 @@ export class VercelModel extends Model<VercelModelConfig> {
       ...callSettings,
     }
 
-    applyVercelCacheConfig(callOptions, this._provider, cacheConfig, this.modelInfo, options?.dynamicTrailingBlocks)
+    applyVercelCacheConfig(
+      callOptions,
+      this._provider.provider,
+      this.modelId,
+      cacheConfig,
+      this.modelInfo,
+      options?.dynamicTrailingBlocks
+    )
 
     let result
     try {
@@ -269,6 +277,8 @@ export class VercelModel extends Model<VercelModelConfig> {
  * Applies a `CacheConfig` to a Vercel call by the underlying provider. See
  * {@link VercelModelConfig.cacheConfig} for the per-provider routing.
  *
+ * @param provider - The wrapped ai-sdk provider name, whose namespace picks the route
+ * @param modelId - The model the model info describes, which decides the per-model cache rules
  * @param modelInfo - What the SDK knows about the wrapped model; decides the default `'auto'` strategy
  * @param dynamicTrailingBlocks - Trailing content parts of the last user message a context injector
  * rebuilds every call; the conversation breakpoint stays ahead of them so the cached prefix is stable.
@@ -276,7 +286,8 @@ export class VercelModel extends Model<VercelModelConfig> {
  */
 function applyVercelCacheConfig(
   callOptions: LanguageModelV3CallOptions,
-  model: LanguageModelV3,
+  provider: string,
+  modelId: string,
   cacheConfig: CacheConfig | undefined,
   modelInfo: ModelInfo,
   dynamicTrailingBlocks = 0
@@ -284,22 +295,22 @@ function applyVercelCacheConfig(
   if (!cacheConfig) return
 
   // The segment before the first '.' is the provider namespace in the ai-sdk
-  switch (model.provider.split('.')[0]) {
+  switch (provider.split('.')[0]) {
     case 'anthropic':
-      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
+      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, modelId)) {
         applyAnthropicCache(callOptions, cacheConfig, dynamicTrailingBlocks)
       }
       break
     case 'amazon-bedrock':
-      applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, model.modelId, modelInfo)
+      applyBedrockCache(callOptions, cacheConfig, dynamicTrailingBlocks, modelId, modelInfo)
       break
     case 'openai':
-      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, model.modelId)) {
+      if (!infoForbidsAutoCaching(cacheConfig, modelInfo, modelId)) {
         applyOpenAICache(callOptions, cacheConfig)
       }
       break
     default:
-      warnOnce(logger, `provider=<${model.provider}> | cacheConfig is not supported for this vercel provider, ignoring`)
+      warnOnce(logger, `provider=<${provider}> | cacheConfig is not supported for this vercel provider, ignoring`)
   }
 }
 
@@ -370,20 +381,18 @@ function applyAnthropicCache(
 
   const messages = resolveCacheSection(cacheConfig.messagesTTL, cacheConfig.ttl)
   if (messages.enabled) {
-    // ai-sdk honors cacheControl on any user content part, so place it on the durable part directly
+    // ai-sdk honors cacheControl on any user content or tool-result part, so place it on the durable part directly
     // (message-level would land on the last part, ahead of no per-call content).
-    cacheLastUserMessage(callOptions.prompt, (userMessage) => {
-      const part = durableCachePart(userMessage.content, dynamicTrailingBlocks, () => true)
-      if (part) setAnthropicCacheControl(part, messages.ttl)
-      else logger.debug('last user message has no durable content, skipped conversation cache point')
-    })
+    const part = conversationCachePart(callOptions.prompt, dynamicTrailingBlocks, () => true)
+    if (part) setAnthropicCacheControl(part, messages.ttl)
   }
 }
 
 /**
- * Injects Bedrock `cachePoint` breakpoints on system and the last user message.
+ * Injects Bedrock `cachePoint` breakpoints on system and the conversation, the latter on the last durable part
+ * the model takes one after (see `bedrockAcceptsCachePointAfter`).
  *
- * @param modelId - The wrapped Bedrock model id, used in the skip warning
+ * @param modelId - The model the model info describes, which decides the per-model cache rules
  * @param modelInfo - What the SDK knows about the wrapped model; the default `'auto'` strategy follows its
  * `promptCaching`, falling back to the Claude name test for unlisted ids, matching `BedrockModel`
  * @internal
@@ -407,25 +416,41 @@ function applyBedrockCache(
     )
   }
 
-  const systemPrompt = resolveCacheSection(cacheConfig.systemPromptTTL, cacheConfig.ttl)
+  const systemPrompt = bedrockCacheSection(cacheConfig.systemPromptTTL, cacheConfig, modelId)
   if (systemPrompt.enabled) {
     const system = callOptions.prompt.find((message) => message.role === 'system')
     if (system) setBedrockCachePoint(system, systemPrompt.ttl)
   }
 
-  const messages = resolveCacheSection(cacheConfig.messagesTTL, cacheConfig.ttl)
+  const messages = bedrockCacheSection(cacheConfig.messagesTTL, cacheConfig, modelId)
   if (messages.enabled) {
-    cacheLastUserMessage(callOptions.prompt, (userMessage) => {
-      // Bedrock rejects a cache point directly after a non-PDF document, so scan back past those parts.
-      const part = durableCachePart(
-        userMessage.content,
-        dynamicTrailingBlocks,
-        (candidate) => !blocksCachePoint(candidate)
-      )
-      if (part) setBedrockCachePoint(part, messages.ttl)
-      else logger.debug('last user message has no durable non-document content, skipped conversation cache point')
-    })
+    const part = conversationCachePart(
+      callOptions.prompt,
+      dynamicTrailingBlocks,
+      bedrockAcceptsCachePointAfter(modelId)
+    )
+    if (part) setBedrockCachePoint(part, messages.ttl)
   }
+}
+
+/**
+ * Resolves a Bedrock cache section against `cacheConfig.ttl`, dropping the TTL with a one-time warning when the
+ * wrapped model rejects one (matching `BedrockModel`).
+ *
+ * @param section - The section's own setting
+ * @param cacheConfig - The caller's cache configuration
+ * @param modelId - The wrapped Bedrock model id
+ * @internal
+ */
+function bedrockCacheSection(
+  section: boolean | CacheTTL | undefined,
+  cacheConfig: CacheConfig,
+  modelId: string
+): ResolvedCacheSection {
+  const resolved = resolveCacheSection(section, cacheConfig.ttl)
+  if (!resolved.ttl || !bedrockLimitsCachePoints(modelId)) return resolved
+  warnOnce(logger, `model_id=<${modelId}> | ttl is not supported by this model, using the default cache duration`)
+  return { enabled: resolved.enabled }
 }
 
 /**
@@ -448,7 +473,8 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
     promptCaching === undefined
       ? modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('anthropic')
       : promptCaching === 'cachePoints'
-  if (!supported) {
+  // A model the provider caches implicitly needs no cache points, so it gets no warning.
+  if (!supported && promptCaching !== 'auto') {
     warnOnce(
       logger,
       `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
@@ -458,9 +484,22 @@ function bedrockModelSupportsCaching(cacheConfig: CacheConfig, modelId: string, 
 }
 
 /**
- * Reports whether Bedrock forbids a cache point directly after this part. The adapter turns every
- * non-image file part into a document, and Bedrock rejects a cache point after a non-PDF document (a
- * PDF document is fine).
+ * Picks which parts the wrapped Bedrock model takes a cache point directly after: text only on Nova, which keeps the
+ * point on the last text ahead of a tool loop's results. Every other model gets the Claude rule, after anything but a
+ * non-PDF document, tool results included, as `BedrockModel` does for an id it cannot place.
+ *
+ * @param modelId - The model the model info describes
+ * @internal
+ */
+function bedrockAcceptsCachePointAfter(modelId: string): (part: CacheablePart) => boolean {
+  if (bedrockLimitsCachePoints(modelId)) return (part) => part.type === 'text'
+  return (part) => part.type === 'tool-result' || !blocksCachePoint(part)
+}
+
+/**
+ * Reports whether Claude on Bedrock forbids a cache point directly after this part. The adapter turns every
+ * non-image file part into a document, and Claude rejects a cache point after a non-PDF document (a PDF
+ * document is fine). Nova follows a stricter rule, text only.
  *
  * @internal
  */
@@ -468,47 +507,38 @@ function blocksCachePoint(part: LanguageModelV3TextPart | LanguageModelV3FilePar
   return part.type === 'file' && !part.mediaType.startsWith('image/') && part.mediaType !== 'application/pdf'
 }
 
-/**
- * Finds the content part the conversation breakpoint should sit on: the last part at or before the
- * durable boundary that the provider accepts a breakpoint after.
- *
- * `dynamicTrailingBlocks` counts trailing parts a context injector rebuilds every call (e.g. a
- * per-turn timestamp); the breakpoint must stay ahead of them, or the cached prefix changes every
- * turn and is written but never read. `accepts` rejects part types the provider cannot carry a
- * breakpoint after. Returns undefined when nothing durable remains, so the caller skips the point.
- *
- * @internal
- */
-function durableCachePart(
-  content: Array<LanguageModelV3TextPart | LanguageModelV3FilePart>,
-  dynamicTrailingBlocks: number,
-  accepts: (part: LanguageModelV3TextPart | LanguageModelV3FilePart) => boolean
-): LanguageModelV3TextPart | LanguageModelV3FilePart | undefined {
-  for (let index = content.length - 1 - dynamicTrailingBlocks; index >= 0; index--) {
-    const part = content[index]
-    if (part && accepts(part)) return part
-  }
-  return undefined
-}
+/** A user-turn part a conversation cache breakpoint can sit on. */
+type CacheablePart = LanguageModelV3TextPart | LanguageModelV3FilePart | LanguageModelV3ToolResultPart
 
 /**
- * Locates the last user message and hands it to the provider-specific setter, which owns where the
- * cache breakpoint lands
+ * Finds the part the single conversation breakpoint sits on: the last user or tool-result part the provider accepts
+ * a breakpoint after. `VercelModel` sends a user message's tool results as `tool` messages ahead of its other
+ * content, so both are read in prompt order. Returns undefined when none qualifies, so the caller skips the point.
+ *
+ * `dynamicTrailingBlocks` counts the trailing parts a context injector rebuilds every call (e.g. a per-turn
+ * reminder); the breakpoint stays ahead of them, or the cached prefix changes every call and is written but never
+ * read. Anthropic looks for the previous call's entry only about 20 blocks back from the point, so a call adding
+ * more blocks than that since the last one, like a wide round of parallel tool use, writes the prefix without
+ * reading it.
  *
  * @internal
  */
-function cacheLastUserMessage(
-  prompt: LanguageModelV3CallOptions['prompt'],
-  setCachePoint: (userMessage: Extract<LanguageModelV3Message, { role: 'user' }>) => void
-): void {
-  for (let index = prompt.length - 1; index >= 0; index--) {
-    const message = prompt[index]
-    if (message?.role === 'user') {
-      setCachePoint(message)
-      return
-    }
+function conversationCachePart(
+  prompt: LanguageModelV3Prompt,
+  dynamicTrailingBlocks: number,
+  accepts: (part: CacheablePart) => boolean
+): CacheablePart | undefined {
+  const parts = prompt.flatMap((message): CacheablePart[] => {
+    if (message.role === 'user') return message.content
+    if (message.role === 'tool') return message.content.filter((part) => part.type === 'tool-result')
+    return []
+  })
+  for (let index = parts.length - 1 - dynamicTrailingBlocks; index >= 0; index--) {
+    const part = parts[index]!
+    if (accepts(part)) return part
   }
-  logger.debug('no user message to cache, skipped conversation cache point')
+  logger.debug('no durable part to cache after, skipped conversation cache point')
+  return undefined
 }
 
 /**

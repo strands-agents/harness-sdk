@@ -18,7 +18,8 @@ from typing_extensions import TypedDict
 Effort = Literal["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"]
 """Reasoning effort for the resolved model.
 
-``"auto"`` picks the provider's recommended level (``"high"`` everywhere it applies); ``"off"``
+``"auto"`` picks the model vendor's default level from the shared model info (what Claude Code,
+Codex, or Gemini CLI run the model at), else the provider's ``"high"``; ``"off"``
 disables reasoning (the provider's ``none``, or no thinking block where there is no such level).
 The other levels are validated against the resolved provider and, on Bedrock, the model family.
 """
@@ -33,7 +34,7 @@ BuiltinToolName = Literal[
     "programmatic_tool_caller",
     "subagent",
 ]
-"""Names accepted in ``builtin_tools``; ``web_search`` is the provider's native search where it has one."""
+"""Names accepted in ``builtin_tools``; ``web_search`` is the provider's native search, or AgentCore's on Bedrock."""
 
 BuiltinPluginName = Literal["todos", "environment"]
 """Names accepted in ``builtin_plugins``."""
@@ -131,10 +132,10 @@ Attributes:
     write: Write files.
     edit: Edit files in place.
     web_fetch: Fetch and summarize web pages; a :class:`WebFetchConfig` also picks the summarizer.
-    web_search: Search the web. On its own this is the provider's native search, and nothing where
-        the provider has none; ``"exa"`` serves it from Exa's hosted search on any model, replacing
-        native search where there is one (a third party that sees the queries; keyless;
-        ``EXA_API_KEY`` lifts its rate limit).
+    web_search: Search the web. On its own this is the provider's native search, AgentCore web
+        search on Bedrock, and nothing where the provider has neither; ``"exa"`` serves it from
+        Exa's hosted search on any model, replacing the default where there is one (a third party
+        that sees the queries; keyless; ``EXA_API_KEY`` lifts its rate limit).
     programmatic_tool_caller: Orchestrate tools from code; a :class:`ProgrammaticToolCallerConfig`
         also narrows the callable tools and bounds a run.
     subagent: Delegate to sub-agents; a :class:`SubagentConfig` also bounds delegation depth.

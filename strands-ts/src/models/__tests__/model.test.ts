@@ -15,7 +15,7 @@ import { CitationsBlock } from '../../types/citations.js'
 import { TestModelProvider, collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { MaxTokensError, ModelError } from '../../errors.js'
 import { Model } from '../model.js'
-import { mergeModelInfo, type ModelInfo } from '../model-info.js'
+import { ModelInfo } from '../model-info.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
 import { createEmptyUsage, isModelStreamEvent, type ModelStreamEvent, type Usage } from '../streaming.js'
 import { DEFAULT_SUMMARIZE_INSTRUCTIONS, SUMMARIZE_GUARD } from '../summarize.js'
@@ -1552,10 +1552,22 @@ describe('countTokens', () => {
 })
 
 describe('info', () => {
-  it('knows only that temporary messages are off for a provider with no model id, and unknown stateful reads as false', () => {
+  it('knows only that temporary messages are off and deferred tools go as stubs for a provider with no model id, and unknown stateful reads as false', () => {
     const provider = new TestModelProvider()
-    expect(provider.modelInfo).toEqual({ capabilities: { temporaryMessages: false } })
+    expect(provider.modelInfo).toEqual({
+      capabilities: { temporaryMessages: false, deferredToolLoading: 'stubs' },
+    })
     expect(provider.stateful).toBe(false)
+  })
+
+  it.each([
+    ['a model whose own API defers natively', 'us.anthropic.claude-sonnet-4-6', 'stubs'],
+    ['a model the shared data does not list', 'some-gateway-model', 'stubs'],
+    ['a model the shared data says can not take stubs', 'us.amazon.nova-pro-v1:0', 'unsupported'],
+  ])('reports deferred tool loading for %s', (_name, modelId, expected) => {
+    const provider = new TestModelProvider()
+    provider.updateConfig({ modelId })
+    expect(provider.modelInfo.capabilities?.deferredToolLoading).toBe(expected)
   })
 
   it('resolves facts from the shared model info for any provider by modelId', () => {
@@ -1575,7 +1587,7 @@ describe('info', () => {
   it('lets a provider put its facts over the shared model info, with the user override over both', () => {
     class GatewayProvider extends TestModelProvider {
       override get modelInfo(): ModelInfo {
-        return mergeModelInfo(
+        return ModelInfo.merge(
           super.modelInfo,
           { capabilities: { promptCaching: 'unsupported' } },
           this.getConfig().modelInfo
@@ -1619,7 +1631,7 @@ describe('info', () => {
   it('reads stateful from what a provider puts in the record', () => {
     class StatefulProvider extends TestModelProvider {
       override get modelInfo(): ModelInfo {
-        return mergeModelInfo(super.modelInfo, { capabilities: { stateful: true } }, this.getConfig().modelInfo)
+        return ModelInfo.merge(super.modelInfo, { capabilities: { stateful: true } }, this.getConfig().modelInfo)
       }
     }
     const provider = new StatefulProvider()

@@ -1,6 +1,7 @@
 """Request-usage accounting tests for ``DecisionModel.ask``."""
 
-from typing import Any
+import re
+from typing import Any, cast
 
 import pytest
 
@@ -55,6 +56,42 @@ def _tool_use_message(name: str) -> Message:
         "role": "assistant",
         "content": [{"toolUse": {"toolUseId": "tool-1", "name": name, "input": {}}}],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("choices", "exp_message"),
+    [
+        ("abc", "choices must be 'boolean' or a non-empty list of strings"),
+        (("a", "b"), "choices must be 'boolean' or a non-empty list of strings"),
+        ({"a": None}, "choices must be 'boolean' or a non-empty list of strings"),
+        (1, "choices must be 'boolean' or a non-empty list of strings"),
+        (None, "choices must be 'boolean' or a non-empty list of strings"),
+        (["a", 1], "choices must be non-empty strings"),
+        (["a", []], "choices must be non-empty strings"),
+    ],
+)
+async def test_ask_rejects_invalid_choices_before_deciding(choices, exp_message):
+    decision = StubDecisionModel(_result())
+    question = cast(Question, {"question": "Pick a choice", "choices": choices})
+
+    with pytest.raises(ValueError, match=re.escape(exp_message)):
+        await decision.ask("state", {"q": question})
+
+    assert decision.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choices", ["boolean", ["abc", "other"]])
+async def test_ask_accepts_valid_choices(choices):
+    decision = StubDecisionModel(_result())
+    question = cast(Question, {"question": "Pick a choice", "choices": choices})
+
+    tru_result = await decision.ask("state", {"q": question})
+    exp_result = _result()
+
+    assert tru_result == exp_result
+    assert decision.calls == 1
 
 
 @pytest.mark.asyncio

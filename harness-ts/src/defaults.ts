@@ -2,7 +2,7 @@
  * Default configuration for the harness.
  */
 
-export const DEFAULT_MODEL = 'bedrock/global.anthropic.claude-opus-5'
+export const DEFAULT_MODEL = 'bedrock/global.anthropic.claude-opus-5-5'
 
 export const DEFAULT_EFFORT = 'auto'
 
@@ -21,7 +21,8 @@ export const DEFAULT_BUILTIN_TOOLS = [
   'subagent',
 ] as const
 
-export const DEFAULT_BUILTIN_PLUGINS = ['todos', 'environment'] as const
+/** Built-in plugins enabled when `builtinPlugins` is omitted (`todos` is opt-in). */
+export const DEFAULT_BUILTIN_PLUGINS = ['environment'] as const
 
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2
 

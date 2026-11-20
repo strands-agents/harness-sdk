@@ -26,12 +26,13 @@ import {
 import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
+import type { McpTool } from '../tools/mcp-tool.js'
 import { isValidToolName, type Tool } from '../tools/tool.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
 import { Model } from '../models/model.js'
-import { ModelProxy } from '../models/model-proxy.js'
+import { countRequestTokens, ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
 import type { AgentMetadata } from './agent-metadata.js'
@@ -201,6 +202,13 @@ export type AgentConfig = {
    * {@link Agent} instances are automatically wrapped as tools via {@link Agent.asTool}.
    */
   tools?: ToolList
+  /**
+   * Send tool specs to the model sorted by name, on every request (model calls, context summaries, token
+   * counts), to keep prompt-cache prefixes stable when the same tools are registered in a different order,
+   * e.g. from MCP servers. Sorting happens before middleware, which can still reorder them. Defaults to
+   * false, which keeps registration order.
+   */
+  sortTools?: boolean
   /**
    * A system prompt which guides model behavior.
    */
@@ -624,7 +632,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     if (config?.contextManager === 'agentic') {
       tools.push(summarizeContextTool, truncateContextTool, pinContextTool)
     }
-    this._toolRegistry = new ToolRegistry(tools)
+    this._toolRegistry = new ToolRegistry(tools, { sortToolSpecs: config?.sortTools ?? false })
     this._mcpClients = mcpClients
 
     // Initialize hooks registry
@@ -880,11 +888,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize MCP clients and register their tools
     await Promise.all(
       this._mcpClients.map(async (client) => {
-        const tools = await client.listTools()
-        this._toolRegistry.add(tools)
-        client.onToolsChanged = (oldTools, newTools): void => {
-          oldTools.forEach((name) => this._toolRegistry.remove(name))
-          this._toolRegistry.addOrReplace(newTools)
+        let registered = await client.listTools()
+        this._toolRegistry.add(registered)
+        // The client's own list of old names includes tools this agent skipped, so track what was registered.
+        client.onToolsChanged = (_oldTools, newTools): void => {
+          registered = this._replaceMcpTools(client, registered, newTools)
         }
       })
     )
@@ -915,6 +923,27 @@ export class Agent implements LocalAgent, InvokableAgent {
     await this._hooksRegistry.invokeCallbacks(new InitializedEvent({ agent: this }))
 
     this._initialized = true
+  }
+
+  /**
+   * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
+   * name of a tool from another source such as `retrieve_context`, is skipped with a warning; the rest of the refresh
+   * applies. A skipped tool comes back only on this client's next refresh, even if the other source drops the name first.
+   *
+   * @param client - The MCP client whose tools changed
+   * @param current - The tools the client has registered
+   * @param refreshed - The client's refreshed tools
+   * @returns The tools the client has registered afterwards
+   */
+  private _replaceMcpTools(client: McpClient, current: McpTool[], refreshed: McpTool[]): McpTool[] {
+    const skipped = this._toolRegistry.swap(current, refreshed)
+    for (const { tool, error } of skipped) {
+      logger.warn(
+        `client=<${client.clientName}>, tool_name=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
+      )
+    }
+    const skippedTools = new Set(skipped.map(({ tool }) => tool))
+    return refreshed.filter((tool) => !skippedTools.has(tool))
   }
 
   /**
@@ -1063,9 +1092,10 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Cancels the current agent invocation cooperatively. Idempotent; no-op when
-   * the agent is not invoking. The pending `invoke`/`stream` resolves with
-   * `stopReason: 'cancelled'`.
+   * Cancels the current agent invocation cooperatively. Idempotent; no-op for the
+   * invocation when the agent is not invoking (`cancelBackgroundTasks` still applies).
+   * The pending `invoke`/`stream` resolves with `stopReason: 'cancelled'`, or with its natural
+   * `stopReason` if it had already finished its turn and was only waiting for background tasks.
    *
    * The agent stops at the next cancellation-safe point (model streaming, before
    * tools, between sequential tool calls, or the top of a loop cycle). A tool
@@ -1075,7 +1105,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * For cancellation driven from outside the agent, prefer the `cancelSignal`
    * option on `invoke` / `stream`.
    *
-   * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
+   * @param options - See {@link CancelOptions} for `message`, `afterCurrentTools`, and `cancelBackgroundTasks`.
    *
    * @example
    * ```typescript
@@ -1091,6 +1121,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   public cancel(options?: CancelOptions): void {
+    if (options?.cancelBackgroundTasks && this._initialized) {
+      this._backgroundTasks?.cancelAll()
+    }
     if (!this._isInvoking) {
       return
     }
@@ -1113,6 +1146,15 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private get isAborted(): boolean {
     return this._abortSignal.aborted
+  }
+
+  /**
+   * Whether cancellation has been requested in any form, including a deferred cancel.
+   *
+   * @internal
+   */
+  get _cancelRequested(): boolean {
+    return this._deferredCancel || this.isAborted
   }
 
   /**
@@ -1721,6 +1763,9 @@ export class Agent implements LocalAgent, InvokableAgent {
     }
     if (agentModelId) agentSpanOptions.modelId = agentModelId
     if (this.systemPrompt !== undefined) agentSpanOptions.systemPrompt = this.systemPrompt
+    if (this.tools.length > 0) {
+      agentSpanOptions.toolsConfig = Object.fromEntries(this.tools.map((tool) => [tool.name, tool.toolSpec]))
+    }
     const agentSpan = this._tracer.startAgentSpan(agentSpanOptions)
 
     let caughtError: Error | undefined
@@ -2394,15 +2439,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolChoice?: ToolChoice,
     structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
-    const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
-    if (this.systemPrompt !== undefined) {
-      streamOptions.systemPrompt = this.systemPrompt
-    }
-    if (toolChoice) {
-      streamOptions.toolChoice = toolChoice
-    }
-
     let attemptCount = 1
     while (true) {
       // An abort during retry backoff must stop before another model attempt begins.
@@ -2411,7 +2447,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       let projectedInputTokens: number | undefined
       try {
         // Context management continues to size against the agent's default model.
-        projectedInputTokens = await this._estimateInputTokens(streamOptions)
+        projectedInputTokens = await this._estimateInputTokens()
       } catch (error) {
         logger.debug(`error=<${error}> | token estimation failed, proceeding without estimate`)
       }
@@ -2471,7 +2507,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       if (modelContinuation !== undefined) {
         try {
-          projectedInputTokens = await this._estimateInputTokens(streamOptions)
+          projectedInputTokens = await this._estimateInputTokens()
         } catch (error) {
           projectedInputTokens = undefined
           logger.debug(
@@ -2505,7 +2541,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         })
 
         if (result.redaction?.userMessage) {
-          this._redactLastMessage(result.redaction.userMessage)
+          this._redactLastUserMessage(result.redaction.userMessage)
         }
 
         const stopData: ModelStopData = {
@@ -2597,7 +2633,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       model: selectedModel,
       messages: this.messages.map((msg) => msg.clone()),
       ...(this.systemPrompt !== undefined && { systemPrompt: cloneSystemPrompt(this.systemPrompt) }),
-      toolSpecs: deepCopy(this._toolRegistry.list().map((tool) => tool.toolSpec)) as unknown as ToolSpec[],
+      toolSpecs: deepCopy(this._toolRegistry.toolSpecs()) as unknown as ToolSpec[],
       ...(toolChoice !== undefined && { toolChoice: deepCopy(toolChoice) as unknown as ToolChoice }),
       invocationState,
       ...(projectedInputTokens !== undefined && { projectedInputTokens }),
@@ -2641,6 +2677,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
             ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
+            ...(ctx.deferredTools?.size ? { deferredTools: ctx.deferredTools } : {}),
           }
           const gen = self._streamFromModel(
             ctx.model,
@@ -2715,7 +2752,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     messages = fillEmptyAssistantMessages(normalizeToolUseNames(messages))
-    const proxy = new ModelProxy(model)
+    const proxy = new ModelProxy(model, this)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
     try {
       let result = await streamGenerator.next()
@@ -2861,7 +2898,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Redacts the last message in the conversation history.
+   * Redacts the last user message in the conversation history.
    * Called when guardrails block user input and redaction is enabled.
    *
    * Follows the redaction strategy:
@@ -2872,45 +2909,44 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * @param redactMessage - The redaction message to replace the content with
    */
-  private _redactLastMessage(redactMessage: string): void {
-    // Find and redact the last message
-    const lastIndex = this.messages.length - 1
-    if (lastIndex >= 0) {
-      const lastMessage = this.messages[lastIndex]
-      if (lastMessage && lastMessage.role === 'user') {
-        // Collect only tool result blocks with redacted content
-        const redactedContent: ContentBlock[] = []
-        for (const block of lastMessage.content) {
-          if (block.type === 'toolResultBlock') {
-            // Preserve tool result block structure, only redact its content
-            redactedContent.push(
-              new ToolResultBlock({
-                toolUseId: block.toolUseId,
-                status: block.status,
-                content: [new TextBlock(redactMessage)],
-              })
-            )
-          }
-        }
+  private _redactLastUserMessage(redactMessage: string): void {
+    // Session managers and hooks may append non-user messages after the user turn.
+    let lastUserIndex = this.messages.length - 1
+    while (lastUserIndex >= 0 && this.messages[lastUserIndex]!.role !== 'user') {
+      lastUserIndex--
+    }
+    if (lastUserIndex < 0) {
+      logger.warn('received input redaction but no user message found | redaction skipped')
+      return
+    }
+    const lastUserMessage = this.messages[lastUserIndex]!
 
-        // If no tool result blocks were found, replace entire content with redaction message
-        if (redactedContent.length === 0) {
-          redactedContent.push(new TextBlock(redactMessage))
-        }
-
-        this.messages[lastIndex] = new Message({
-          role: 'user',
-          content: redactedContent,
-          // Redaction rewrites content but it's the same logical message, so keep its tracking id.
-          trackingId: lastMessage.trackingId,
-        })
-      } else if (lastMessage) {
-        // Unexpected state: redaction requested but last message is not from user
-        logger.warn(
-          `role=<${lastMessage.role}> | received input redaction but last message is not from user | redaction skipped`
+    // Collect only tool result blocks with redacted content
+    const redactedContent: ContentBlock[] = []
+    for (const block of lastUserMessage.content) {
+      if (block.type === 'toolResultBlock') {
+        // Preserve tool result block structure, only redact its content
+        redactedContent.push(
+          new ToolResultBlock({
+            toolUseId: block.toolUseId,
+            status: block.status,
+            content: [new TextBlock(redactMessage)],
+          })
         )
       }
     }
+
+    // If no tool result blocks were found, replace entire content with redaction message
+    if (redactedContent.length === 0) {
+      redactedContent.push(new TextBlock(redactMessage))
+    }
+
+    this.messages[lastUserIndex] = new Message({
+      role: 'user',
+      content: redactedContent,
+      // Redaction rewrites content but it's the same logical message, so keep its tracking id.
+      trackingId: lastUserMessage.trackingId,
+    })
   }
 
   /**
@@ -2921,10 +2957,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * estimates only new messages added after it. Falls back to full estimation when no metadata is
    * available (cold start or first call).
    *
-   * @param streamOptions - The stream options containing system prompt and tool specs
    * @returns Estimated input token count
    */
-  private async _estimateInputTokens(streamOptions: StreamOptions): Promise<number> {
+  private async _estimateInputTokens(): Promise<number> {
     // Find the last assistant message with usage metadata
     let lastAssistantIdx = -1
     for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -2946,10 +2981,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await new ModelProxy(this.model).countTokens(this.messages, {
-        ...(streamOptions.systemPrompt !== undefined && { systemPrompt: streamOptions.systemPrompt }),
-        ...(streamOptions.toolSpecs !== undefined && { toolSpecs: streamOptions.toolSpecs }),
-      })
+      estimate = await countRequestTokens(this, this.messages)
     }
 
     return estimate

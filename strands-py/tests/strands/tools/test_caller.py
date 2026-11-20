@@ -142,6 +142,14 @@ def test_bidi_agent_tool_without_recording_succeeds_while_running(bidi_agent):
     assert bidi_agent.messages == []
 
 
+def test_agent_tool_runs_while_agent_is_cancelled(agent):
+    agent.cancel()
+
+    tru_result = agent.tool.test_tool(random_string="abcdEfghI123", record_direct_tool_call=False)
+    exp_result = {"toolUseId": unittest.mock.ANY, "status": "success", "content": [{"text": "abcdEfghI123"}]}
+    assert tru_result == exp_result
+
+
 def test_agent_tool_tool_does_not_exist(agent):
     with pytest.raises(AttributeError):
         agent.tool.does_not_exist()

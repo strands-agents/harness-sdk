@@ -1,4 +1,5 @@
 import { normalizeError } from '../../errors.js'
+import { logger } from '../../logging/logger.js'
 import { BackgroundTaskNotFoundError } from '../errors.js'
 import { assertTimerDelay } from '../timer.js'
 import type { InterruptStateData } from '../../interrupt.js'
@@ -153,9 +154,9 @@ export class InProcessTaskEngine {
    *
    * @param taskId - ID of the task requiring input.
    * @param update - Applies interrupt responses to the task state and reports when it is ready.
-   * @returns A snapshot of the updated task.
+   * @returns A snapshot of the updated task, or the unchanged task if it was already terminal.
    * @throws BackgroundTaskNotFoundError if the task does not exist.
-   * @throws Error if the task does not require input or has no state.
+   * @throws Error if the task is queued or working, or has no state.
    */
   resume(
     taskId: string,
@@ -164,6 +165,8 @@ export class InProcessTaskEngine {
       readonly ready: boolean
     }
   ): InProcessTaskRecord {
+    const current = this._requireTask(taskId)
+    if (isTaskStatusTerminal(current.status)) return globalThis.structuredClone(current)
     const task = this._updateTask(taskId, (record) => {
       if (record.status !== 'input_required') {
         throw new Error(
@@ -321,7 +324,9 @@ export class InProcessTaskEngine {
     const taskSnapshot = globalThis.structuredClone(task)
     void Promise.resolve()
       .then(() => this._options.onTaskUpdated(taskSnapshot))
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        logger.warn(`task_id=<${task.taskId}>, error=<${error}> | background task update notification failed`)
+      })
   }
 
   private _wakeIdleWaiters(): void {

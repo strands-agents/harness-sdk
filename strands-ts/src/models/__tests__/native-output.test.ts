@@ -30,7 +30,7 @@ const Roster = z
     score: z.number().min(0),
   })
   .describe('A team of people')
-const Team = Roster.extend({ color: z.enum(['red', 'blue']), kind: z.literal(['a', 'b']) })
+const Team = Roster.extend({ color: z.enum(['red', 'blue']), kind: z.literal(['a', 'b']), version: z.literal(1) })
 const WithRecord = z.object({ scores: z.record(z.string(), z.number()) })
 const WithNestedRecord = z.object({ team: Roster, extra: z.array(WithRecord) })
 const WithTuple = z.object({ point: z.tuple([z.number(), z.number()]) })
@@ -159,20 +159,22 @@ describe('native-output', () => {
       { name: 'a flat object', schema: Person },
       { name: 'nested objects, unions and formats', schema: Roster },
       { name: 'a nested record', schema: WithNestedRecord },
+      { name: 'enums and literals', schema: Team },
+      { name: 'a mixed literal', schema: WithMixedLiteral },
     ])('matches the Anthropic SDK transform for $name', ({ schema }) => {
       const jsonSchema = zodSchemaToJsonSchema(schema)
 
       expect(toNativeOutputSchema(jsonSchema)).toStrictEqual(transformJSONSchema(jsonSchema))
     })
 
-    it('keeps enums, which native output supports', () => {
-      const schema = zodSchemaToJsonSchema(z.object({ color: z.enum(['red', 'blue']) }))
+    it('keeps primitive enums and consts in place of the type, which native output supports', () => {
+      const schema = zodSchemaToJsonSchema(z.object({ color: z.enum(['red', 'blue']), version: z.literal(1) }))
 
       expect(toNativeOutputSchema(schema)).toStrictEqual({
         type: 'object',
-        properties: { color: { type: 'string', enum: ['red', 'blue'] } },
+        properties: { color: { enum: ['red', 'blue'] }, version: { const: 1 } },
         additionalProperties: false,
-        required: ['color'],
+        required: ['color', 'version'],
       })
     })
 
