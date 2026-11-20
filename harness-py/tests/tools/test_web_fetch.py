@@ -490,7 +490,7 @@ def test_resolve_web_fetch_model_reuses_main_model_for_unknown_bedrock_family(ca
 def test_resolve_web_fetch_model_no_warning_with_explicit_override_for_unknown_bedrock(caplog):
     override = BedrockModel(model_id="explicit")
     with caplog.at_level("WARNING"):
-        assert resolve_web_fetch_model("bedrock/amazon.nova-pro-v1:0", override) is override
+        assert resolve_web_fetch_model("bedrock/us.meta.llama3-3-70b-instruct-v1:0", override) is override
     assert "no small web_fetch summarizer is mapped" not in caplog.text
 
 
