@@ -20,7 +20,7 @@ import inspect
 import logging
 import time
 import warnings
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeGuard, cast
 
@@ -314,8 +314,8 @@ class GraphBuilder:
     def __init__(self) -> None:
         """Initialize GraphBuilder with empty collections."""
         self.nodes: dict[str, GraphNode] = {}
-        self.edges: set[GraphEdge] = set()
-        self.entry_points: set[GraphNode] = set()
+        self.edges: list[GraphEdge] = []
+        self.entry_points: list[GraphNode] = []
 
         # Configuration options
         self._max_node_executions: int | None = None
@@ -370,7 +370,8 @@ class GraphBuilder:
 
         # Add edge and update dependencies
         edge = GraphEdge(from_node=from_node_obj, to_node=to_node_obj, condition=condition)
-        self.edges.add(edge)
+        if edge not in self.edges:
+            self.edges.append(edge)
         to_node_obj.dependencies.add(from_node_obj)
         return edge
 
@@ -378,7 +379,9 @@ class GraphBuilder:
         """Set a node as an entry point for graph execution."""
         if node_id not in self.nodes:
             raise ValueError(f"Node '{node_id}' not found")
-        self.entry_points.add(self.nodes[node_id])
+        node = self.nodes[node_id]
+        if node not in self.entry_points:
+            self.entry_points.append(node)
         return self
 
     def reset_on_revisit(self, enabled: bool = True) -> "GraphBuilder":
@@ -464,7 +467,7 @@ class GraphBuilder:
 
         # Auto-detect entry points if none specified
         if not self.entry_points:
-            self.entry_points = {node for node_id, node in self.nodes.items() if not node.dependencies}
+            self.entry_points = [node for node in self.nodes.values() if not node.dependencies]
             logger.debug(
                 "entry_points=<%s> | auto-detected entrypoints", ", ".join(node.node_id for node in self.entry_points)
             )
@@ -509,8 +512,8 @@ class Graph(MultiAgentBase):
     def __init__(
         self,
         nodes: dict[str, GraphNode],
-        edges: set[GraphEdge],
-        entry_points: set[GraphNode],
+        edges: Iterable[GraphEdge],
+        entry_points: Iterable[GraphNode],
         max_node_executions: int | None = None,
         execution_timeout: float | None = None,
         node_timeout: float | None = None,
@@ -525,8 +528,8 @@ class Graph(MultiAgentBase):
 
         Args:
             nodes: Dictionary of node_id to GraphNode
-            edges: Set of GraphEdge objects
-            entry_points: Set of GraphNode objects that are entry points
+            edges: Ordered iterable of GraphEdge objects. Insertion order is preserved for deterministic fan-in input.
+            entry_points: Ordered iterable of GraphNode objects that are entry points
             max_node_executions: Maximum total node executions (default: None - no limit)
             execution_timeout: Total execution timeout in seconds (default: None - no limit)
             node_timeout: Individual node timeout in seconds (default: None - no limit)
@@ -543,8 +546,8 @@ class Graph(MultiAgentBase):
         self._validate_graph(nodes)
 
         self.nodes = nodes
-        self.edges = edges
-        self.entry_points = entry_points
+        self.edges = list(edges)
+        self.entry_points = list(entry_points)
         self.max_node_executions = max_node_executions
         self.execution_timeout = execution_timeout
         self.node_timeout = node_timeout
@@ -1009,8 +1012,16 @@ class Graph(MultiAgentBase):
         if not completed_batch:
             return []
 
-        # Collect unique candidate nodes reachable from the completed batch
-        candidates = {edge.to_node for edge in self.edges if edge.from_node in completed_batch}
+        # Collect unique candidate nodes reachable from the completed batch.
+        # Iterating edges (rather than a set comprehension) keeps the order in
+        # which edges were declared, so downstream scheduling is deterministic.
+        completed = set(completed_batch)
+        candidates: list[GraphNode] = []
+        seen: set[GraphNode] = set()
+        for edge in self.edges:
+            if edge.from_node in completed and edge.to_node not in seen:
+                seen.add(edge.to_node)
+                candidates.append(edge.to_node)
 
         newly_ready = []
         for node in candidates:
