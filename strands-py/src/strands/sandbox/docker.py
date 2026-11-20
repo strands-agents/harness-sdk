@@ -60,7 +60,8 @@ class DockerSandbox(PosixShellSandbox):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for this command, overriding ``working_dir``.
             env: Environment variables to set, passed as ``docker exec -e`` flags.
-            cancel_signal: Kills the process when set.
+            cancel_signal: Aborts the call when set by killing the local ``docker exec``
+                client. As with ``timeout``, the command may keep running in the container.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:

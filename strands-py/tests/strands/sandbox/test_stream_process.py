@@ -11,6 +11,7 @@ import asyncio
 import os
 import sys
 import threading
+import unittest.mock
 
 import pytest
 
@@ -138,38 +139,53 @@ async def test_cancellation_kills_the_process():
         pytest.fail("process survived cancellation")
 
 
-@pytest.mark.asyncio
-async def test_cancel_signal_kills_the_process_tree_and_raises_abort():
-    cancel_signal = threading.Event()
-    asyncio.get_event_loop().call_later(0.2, cancel_signal.set)
-    pids: list[int] = []
-
-    with pytest.raises(SandboxAbortError, match="Execution aborted"):
-        # The backgrounded sleep is a child of sh; killing only sh would leave it running.
-        async for item in _stream_process("sh", ["-c", "sleep 60 & echo $!; wait"], cancel_signal=cancel_signal):
-            if isinstance(item, StreamChunk):
-                pids.append(int(item.data.strip()))
-
+async def _assert_exits(pid: int) -> None:
     for _ in range(50):
         try:
-            os.kill(pids[0], 0)
+            os.kill(pid, 0)
         except ProcessLookupError:
-            break
+            return
         await asyncio.sleep(0.02)
-    else:
-        pytest.fail("child process survived the cancel signal")
+    pytest.fail(f"process {pid} survived")
 
 
 @pytest.mark.asyncio
-async def test_cancel_signal_already_set_does_not_spawn(tmp_path):
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sleep 60 & echo $!; wait",
+        # The shell exits at once; only the backgrounded child keeps the pipes open.
+        "sleep 60 & echo $!",
+    ],
+)
+async def test_cancel_signal_kills_the_process_tree_and_raises_abort(command):
+    cancel_signal = threading.Event()
+    pid = None
+
+    with pytest.raises(SandboxAbortError, match="Execution aborted"):
+        async for item in _stream_process("sh", ["-c", command], timeout=30, cancel_signal=cancel_signal):
+            if isinstance(item, StreamChunk):
+                pid = int(item.data.strip())
+                cancel_signal.set()
+
+    await _assert_exits(pid)
+
+
+@pytest.mark.asyncio
+async def test_timeout_fires_when_only_a_backgrounded_child_is_left():
+    with pytest.raises(SandboxTimeoutError) as exc_info:
+        await _collect(_stream_process("sh", ["-c", "sleep 60 & echo $!"], timeout=0.3))
+    await _assert_exits(int(exc_info.value.stdout.strip()))
+
+
+@pytest.mark.asyncio
+async def test_cancel_signal_already_set_does_not_spawn():
     cancel_signal = threading.Event()
     cancel_signal.set()
-    marker = tmp_path / "ran"
 
-    with pytest.raises(SandboxAbortError):
-        await _collect(_stream_process("sh", ["-c", f"touch {marker}"], cancel_signal=cancel_signal))
-
-    assert not marker.exists()
+    with unittest.mock.patch("asyncio.create_subprocess_exec", side_effect=AssertionError("spawned")):
+        with pytest.raises(SandboxAbortError):
+            await _collect(_stream_process("sh", ["-c", "echo hi"], cancel_signal=cancel_signal))
 
 
 @pytest.mark.asyncio

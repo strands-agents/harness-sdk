@@ -94,10 +94,10 @@ class Sandbox(ABC):
                 sandboxes always apply these, though the mechanism differs;
                 custom implementations must handle ``env`` explicitly or it has
                 no effect.
-            cancel_signal: Cancels the execution when set, raising
-                :class:`~strands.sandbox.errors.SandboxAbortError`. Built-in sandboxes
-                kill the process; custom implementations must handle it explicitly
-                or it has no effect.
+            cancel_signal: Aborts the execution when set, raising
+                :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that
+                is already set aborts before the command starts. Custom
+                implementations must handle it explicitly or it has no effect.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -130,10 +130,10 @@ class Sandbox(ABC):
             cwd: Working directory for execution. ``None`` means use the sandbox
                 default.
             env: Environment variables to set for this execution.
-            cancel_signal: Cancels the execution when set, raising
-                :class:`~strands.sandbox.errors.SandboxAbortError`. Built-in sandboxes
-                kill the process; custom implementations must handle it explicitly
-                or it has no effect.
+            cancel_signal: Aborts the execution when set, raising
+                :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that
+                is already set aborts before the command starts. Custom
+                implementations must handle it explicitly or it has no effect.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -253,10 +253,10 @@ class Sandbox(ABC):
             cwd: Working directory for execution. ``None`` means use the sandbox
                 default.
             env: Environment variables to set for this command.
-            cancel_signal: Cancels the execution when set, raising
-                :class:`~strands.sandbox.errors.SandboxAbortError`. Built-in sandboxes
-                kill the process; custom implementations must handle it explicitly
-                or it has no effect.
+            cancel_signal: Aborts the execution when set, raising
+                :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that
+                is already set aborts before the command starts. Custom
+                implementations must handle it explicitly or it has no effect.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Returns:
@@ -297,10 +297,10 @@ class Sandbox(ABC):
             cwd: Working directory for execution. ``None`` means use the sandbox
                 default.
             env: Environment variables to set for this execution.
-            cancel_signal: Cancels the execution when set, raising
-                :class:`~strands.sandbox.errors.SandboxAbortError`. Built-in sandboxes
-                kill the process; custom implementations must handle it explicitly
-                or it has no effect.
+            cancel_signal: Aborts the execution when set, raising
+                :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that
+                is already set aborts before the command starts. Custom
+                implementations must handle it explicitly or it has no effect.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Returns:

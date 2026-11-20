@@ -3,6 +3,8 @@
 Mirrors ``strands-ts/src/sandbox/errors.ts``. Each error subclasses its stdlib
 equivalent so existing ``except TimeoutError`` / ``except FileNotFoundError``
 handlers keep working, while giving callers a sandbox-specific type to branch on.
+:class:`SandboxAbortError` has no such equivalent: :class:`asyncio.CancelledError`
+would bypass the ``except Exception`` that turns a tool failure into a tool result.
 """
 
 
@@ -28,9 +30,13 @@ class SandboxTimeoutError(TimeoutError):
 class SandboxAbortError(Exception):
     """Raised by sandbox execution when the caller's ``cancel_signal`` is set."""
 
-    def __init__(self) -> None:
-        """Initialize the error."""
-        super().__init__("Execution aborted")
+    def __init__(self, message: str = "Execution aborted") -> None:
+        """Initialize the error.
+
+        Args:
+            message: The error message.
+        """
+        super().__init__(message)
 
 
 class SandboxPathNotFoundError(FileNotFoundError):

@@ -99,7 +99,7 @@ class NotASandboxLocalEnvironment(Sandbox):
             cwd: Working directory for this command. Defaults to the process's
                 current working directory.
             env: Environment variables to set on top of the host environment.
-            cancel_signal: Kills the process when set.
+            cancel_signal: Aborts the execution when set by killing the process.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -161,7 +161,7 @@ class NotASandboxLocalEnvironment(Sandbox):
             cwd: Working directory for execution. Defaults to the process's current
                 working directory.
             env: Environment variables to set on top of the host environment.
-            cancel_signal: Kills the process when set.
+            cancel_signal: Aborts the execution when set by killing the process.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:

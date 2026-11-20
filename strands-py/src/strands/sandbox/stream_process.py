@@ -18,6 +18,7 @@ import os
 import signal
 import threading
 from collections.abc import AsyncGenerator
+from typing import Literal
 
 from .errors import SandboxAbortError, SandboxTimeoutError
 from .types import ExecutionResult, StreamChunk, StreamType
@@ -110,8 +111,7 @@ async def _stream_process(
     queue: asyncio.Queue[StreamChunk | None] = asyncio.Queue()
     out_buf: list[str] = []
     err_buf: list[str] = []
-    timed_out = False
-    aborted = False
+    stopped_by: Literal["timeout", "cancel"] | None = None
 
     async def pump(stream: asyncio.StreamReader, stream_type: StreamType, buf: list[str]) -> None:
         while data := await stream.read(_READ_CHUNK_SIZE):
@@ -127,24 +127,26 @@ async def _stream_process(
         await proc.wait()
         await queue.put(None)
 
-    async def enforce_timeout(timeout: float) -> None:
-        nonlocal timed_out
-        await asyncio.sleep(timeout)
-        if proc.returncode is None and not aborted:
-            timed_out = True
+    reading = asyncio.ensure_future(reader())
+
+    async def stop(reason: Literal["timeout", "cancel"]) -> None:
+        nonlocal stopped_by
+        # Not ``proc.returncode``: a backgrounded child keeps the pipes open after the shell itself exits.
+        if stopped_by is None and not reading.done():
+            stopped_by = reason
             _kill_tree(proc)
             await queue.put(None)  # signal the consumer loop to stop
 
+    async def enforce_timeout(timeout: float) -> None:
+        await asyncio.sleep(timeout)
+        await stop("timeout")
+
     async def watch_cancel(cancel_signal: threading.Event) -> None:
-        nonlocal aborted
         while not cancel_signal.is_set():
             await asyncio.sleep(_CANCEL_POLL_INTERVAL)
-        if proc.returncode is None and not timed_out:
-            aborted = True
-            _kill_tree(proc)
-            await queue.put(None)
+        await stop("cancel")
 
-    tasks = [asyncio.ensure_future(reader())]
+    tasks = [reading]
     if timeout is not None:
         tasks.append(asyncio.ensure_future(enforce_timeout(timeout)))
     if cancel_signal is not None:
@@ -154,16 +156,16 @@ async def _stream_process(
         while (item := await queue.get()) is not None:
             yield item
 
-        if timed_out:
+        if stopped_by == "timeout":
             raise SandboxTimeoutError(timeout, "".join(out_buf), "".join(err_buf))
-        if aborted:
+        if stopped_by == "cancel":
             raise SandboxAbortError()
 
         returncode = proc.returncode if proc.returncode is not None else 1
         exit_code = _SIGNAL_EXIT_BASE - returncode if returncode < 0 else returncode
         yield ExecutionResult(exit_code=exit_code, stdout="".join(out_buf), stderr="".join(err_buf))
     finally:
-        if proc.returncode is None:
+        if not reading.done():
             _kill_tree(proc)
         pumps.cancel()
         for task in tasks:

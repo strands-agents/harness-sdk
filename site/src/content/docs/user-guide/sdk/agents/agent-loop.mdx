@@ -200,7 +200,7 @@ The `agent.cancel()` method provides a way to stop the loop from outside, such a
 
   #### Cancellation within tool execution
 
-  The SDK automatically checks for cancellation before and between tool calls (see checkpoints above). Once a tool is running, cancellation is **cooperative**: only the tool itself can respond mid-execution. Tools can participate by polling `tool_context.cancel_signal.is_set()` between steps, or by forwarding `tool_context.cancel_signal` to APIs that accept one (e.g. `MCPClient.call_tool_async`). If a tool does neither, it runs to completion, and the agent resumes cancellation handling after the tool returns. An agent used as a tool via `as_tool()` receives the parent's signal automatically, so cancelling the parent also cancels the delegated agent.
+  The SDK automatically checks for cancellation before and between tool calls (see checkpoints above). Once a tool is running, cancellation is **cooperative**: only the tool itself can respond mid-execution. Tools can participate by polling `tool_context.cancel_signal.is_set()` between steps, or by forwarding `tool_context.cancel_signal` to APIs that accept one (e.g. `MCPClient.call_tool_async`, `Sandbox.execute`). If a tool does neither, it runs to completion, and the agent resumes cancellation handling after the tool returns. An agent used as a tool via `as_tool()` receives the parent's signal automatically, so cancelling the parent also cancels the delegated agent.
 
   ```python
   from strands import tool

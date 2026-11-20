@@ -142,7 +142,8 @@ class SshSandbox(PosixShellSandbox):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for this command, overriding ``working_dir``.
             env: Environment variables to set, applied via a shell ``export`` prefix.
-            cancel_signal: Kills the process when set.
+            cancel_signal: Aborts the call when set by killing the local ``ssh`` client.
+                As with ``timeout``, the command may keep running on the remote host.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:

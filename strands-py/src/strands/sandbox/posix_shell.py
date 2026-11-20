@@ -131,7 +131,7 @@ class PosixShellSandbox(Sandbox, ABC):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for execution.
             env: Environment variables to set for this execution.
-            cancel_signal: Kills the process when set.
+            cancel_signal: Aborts the execution when set.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
