@@ -1,0 +1,214 @@
+{
+  "source": "strands-ts/src/types/messages.ts",
+  "cases": [
+    {
+      "name": "text_block",
+      "json": "{\"text\":\"Hello, \\\"world\\\"\\n\\ttab é ☃ \\u0001\"}"
+    },
+    {
+      "name": "text_block_empty",
+      "json": "{\"text\":\"\"}"
+    },
+    {
+      "name": "tool_use_block",
+      "json": "{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-1\",\"input\":{\"city\":\"Seattle\",\"days\":3,\"ratio\":0.25,\"negative\":-7,\"flag\":true,\"none\":null,\"list\":[1,\"two\",[3]]}}}"
+    },
+    {
+      "name": "tool_use_block_reasoning_signature",
+      "json": "{\"toolUse\":{\"name\":\"search\",\"toolUseId\":\"tooluse-2\",\"input\":{},\"reasoningSignature\":\"sig-abc\"}}"
+    },
+    {
+      "name": "tool_result_block_text",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-1\",\"status\":\"success\",\"content\":[{\"text\":\"Sunny, 22C\"}]}}"
+    },
+    {
+      "name": "tool_result_block_json",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-1\",\"status\":\"success\",\"content\":[{\"json\":{\"temperature\":22,\"unit\":\"C\",\"tags\":[\"a\",\"b\"],\"nested\":{\"ok\":true}}}]}}"
+    },
+    {
+      "name": "tool_result_block_json_scalar",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-1\",\"status\":\"success\",\"content\":[{\"json\":42}]}}"
+    },
+    {
+      "name": "tool_result_block_image",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-3\",\"status\":\"success\",\"content\":[{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}}]}}"
+    },
+    {
+      "name": "tool_result_block_video",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-3\",\"status\":\"success\",\"content\":[{\"video\":{\"format\":\"mp4\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/key.bin\"}}}}]}}"
+    },
+    {
+      "name": "tool_result_block_document",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-4\",\"status\":\"success\",\"content\":[{\"document\":{\"name\":\"report\",\"format\":\"txt\",\"source\":{\"text\":\"report body\"}}}]}}"
+    },
+    {
+      "name": "tool_result_block_error",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-5\",\"status\":\"error\",\"content\":[{\"text\":\"Error: boom\"}]}}"
+    },
+    {
+      "name": "tool_result_block_mixed",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-6\",\"status\":\"success\",\"content\":[{\"text\":\"summary\"},{\"json\":[1,2,3]},{\"image\":{\"format\":\"jpeg\",\"source\":{\"url\":\"https://example.com/a.jpg\"}}}]}}"
+    },
+    {
+      "name": "tool_result_block_empty",
+      "json": "{\"toolResult\":{\"toolUseId\":\"tooluse-7\",\"status\":\"success\",\"content\":[]}}"
+    },
+    {
+      "name": "reasoning_block_text_signature",
+      "json": "{\"reasoning\":{\"text\":\"Let me think.\",\"signature\":\"sig-123\"}}"
+    },
+    {
+      "name": "reasoning_block_text_only",
+      "json": "{\"reasoning\":{\"text\":\"Only text.\"}}"
+    },
+    {
+      "name": "reasoning_block_redacted_content",
+      "json": "{\"reasoning\":{\"redactedContent\":\"AAECA/r7/P3+/w==\"}}"
+    },
+    {
+      "name": "cache_point_block",
+      "json": "{\"cachePoint\":{\"cacheType\":\"default\"}}"
+    },
+    {
+      "name": "cache_point_block_ttl",
+      "json": "{\"cachePoint\":{\"cacheType\":\"default\",\"ttl\":\"1h\"}}"
+    },
+    {
+      "name": "guard_content_block_text",
+      "json": "{\"guardContent\":{\"text\":{\"qualifiers\":[\"grounding_source\",\"query\",\"guard_content\"],\"text\":\"check me\"}}}"
+    },
+    {
+      "name": "guard_content_block_image",
+      "json": "{\"guardContent\":{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}}}"
+    },
+    {
+      "name": "audio_block_bytes",
+      "json": "{\"audio\":{\"format\":\"mp3\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}}"
+    },
+    {
+      "name": "audio_block_s3",
+      "json": "{\"audio\":{\"format\":\"x-aac\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/owned.bin\",\"bucketOwner\":\"123456789012\"}}}}"
+    },
+    {
+      "name": "image_block_bytes",
+      "json": "{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}}"
+    },
+    {
+      "name": "image_block_s3",
+      "json": "{\"image\":{\"format\":\"webp\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/key.bin\"}}}}"
+    },
+    {
+      "name": "image_block_s3_bucket_owner",
+      "json": "{\"image\":{\"format\":\"gif\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/owned.bin\",\"bucketOwner\":\"123456789012\"}}}}"
+    },
+    {
+      "name": "image_block_url",
+      "json": "{\"image\":{\"format\":\"jpg\",\"source\":{\"url\":\"https://example.com/image.jpg\"}}}"
+    },
+    {
+      "name": "video_block_bytes",
+      "json": "{\"video\":{\"format\":\"3gp\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}}"
+    },
+    {
+      "name": "video_block_s3",
+      "json": "{\"video\":{\"format\":\"mkv\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/owned.bin\",\"bucketOwner\":\"123456789012\"}}}}"
+    },
+    {
+      "name": "document_block_bytes",
+      "json": "{\"document\":{\"name\":\"paper\",\"format\":\"pdf\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"},\"citations\":{\"enabled\":true},\"context\":\"quarterly figures\"}}"
+    },
+    {
+      "name": "document_block_text",
+      "json": "{\"document\":{\"name\":\"notes\",\"format\":\"md\",\"source\":{\"text\":\"# Notes\"}}}"
+    },
+    {
+      "name": "document_block_content",
+      "json": "{\"document\":{\"name\":\"structured\",\"format\":\"txt\",\"source\":{\"content\":[{\"text\":\"part one\"},{\"text\":\"part two\"}]},\"citations\":{\"enabled\":false}}}"
+    },
+    {
+      "name": "document_block_s3",
+      "json": "{\"document\":{\"name\":\"sheet\",\"format\":\"xlsx\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/key.bin\"}}}}"
+    },
+    {
+      "name": "citations_block",
+      "json": "{\"citations\":{\"citations\":[{\"location\":{\"type\":\"documentChar\",\"documentIndex\":0,\"start\":1,\"end\":12},\"source\":\"doc-0\",\"sourceContent\":[{\"text\":\"source text\"}],\"title\":\"Char doc\"},{\"location\":{\"type\":\"documentPage\",\"documentIndex\":1,\"start\":2,\"end\":3},\"source\":\"doc-1\",\"sourceContent\":[{\"text\":\"page text\"}],\"title\":\"Page doc\"},{\"location\":{\"type\":\"documentChunk\",\"documentIndex\":2,\"start\":0,\"end\":4},\"source\":\"doc-2\",\"sourceContent\":[],\"title\":\"Chunk doc\"},{\"location\":{\"type\":\"searchResult\",\"searchResultIndex\":3,\"start\":5,\"end\":9},\"source\":\"search-3\",\"sourceContent\":[{\"text\":\"search text\"}],\"title\":\"Search result\"},{\"location\":{\"type\":\"web\",\"url\":\"https://example.com/page\",\"domain\":\"example.com\"},\"source\":\"web-4\",\"sourceContent\":[{\"text\":\"web text\"}],\"title\":\"Web page\"},{\"location\":{\"type\":\"web\",\"url\":\"https://example.org/\"},\"source\":\"web-5\",\"sourceContent\":[],\"title\":\"Web page without domain\"}],\"content\":[{\"text\":\"generated text\"},{\"text\":\"more generated text\"}]}}"
+    },
+    {
+      "name": "injected_block",
+      "json": "{\"injected\":{\"text\":\"cwd: /repo\",\"source\":\"env\"}}"
+    },
+    {
+      "name": "summary_block",
+      "json": "{\"summary\":{\"text\":\"Earlier, the user asked about weather.\"}}"
+    },
+    {
+      "name": "summary_block_provider_signature",
+      "json": "{\"summary\":{\"provider\":\"anthropic\",\"signature\":\"sum-sig\",\"text\":\"Server-side summary.\"}}"
+    },
+    {
+      "name": "unknown_block",
+      "json": "{\"futureBlock\":{\"kind\":\"hologram\",\"depth\":3,\"layers\":[{\"z\":1},{\"z\":2}]}}"
+    },
+    {
+      "name": "message_user_text",
+      "json": "{\"role\":\"user\",\"content\":[{\"text\":\"Hi there\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000001\"}"
+    },
+    {
+      "name": "message_assistant_tool_use",
+      "json": "{\"role\":\"assistant\",\"content\":[{\"text\":\"Checking.\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-1\",\"input\":{\"city\":\"Seattle\"}}}],\"trackingId\":\"caller-supplied-id\"}"
+    },
+    {
+      "name": "message_assistant_metadata",
+      "json": "{\"role\":\"assistant\",\"content\":[{\"text\":\"Done.\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000002\",\"metadata\":{\"usage\":{\"inputTokens\":120,\"outputTokens\":30,\"totalTokens\":150,\"cacheReadInputTokens\":100,\"cacheWriteInputTokens\":20},\"metrics\":{\"latencyMs\":812,\"timeToFirstByteMs\":95},\"custom\":{\"compressed\":true,\"origin\":{\"strategy\":\"summarize\",\"count\":4}}}}"
+    },
+    {
+      "name": "message_metadata_usage_only",
+      "json": "{\"role\":\"assistant\",\"content\":[],\"trackingId\":\"00000000-0000-4000-8000-000000000003\",\"metadata\":{\"usage\":{\"inputTokens\":1,\"outputTokens\":2,\"totalTokens\":3}}}"
+    },
+    {
+      "name": "message_all_blocks",
+      "json": "{\"role\":\"user\",\"content\":[{\"text\":\"Hello, \\\"world\\\"\\n\\ttab é ☃ \\u0001\"},{\"text\":\"\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-1\",\"input\":{\"city\":\"Seattle\",\"days\":3,\"ratio\":0.25,\"negative\":-7,\"flag\":true,\"none\":null,\"list\":[1,\"two\",[3]]}}},{\"toolUse\":{\"name\":\"search\",\"toolUseId\":\"tooluse-2\",\"input\":{},\"reasoningSignature\":\"sig-abc\"}},{\"toolResult\":{\"toolUseId\":\"tooluse-1\",\"status\":\"success\",\"content\":[{\"text\":\"Sunny, 22C\"}]}},{\"toolResult\":{\"toolUseId\":\"tooluse-1\",\"status\":\"success\",\"content\":[{\"json\":{\"temperature\":22,\"unit\":\"C\",\"tags\":[\"a\",\"b\"],\"nested\":{\"ok\":true}}}]}},{\"toolResult\":{\"toolUseId\":\"tooluse-1\",\"status\":\"success\",\"content\":[{\"json\":42}]}},{\"toolResult\":{\"toolUseId\":\"tooluse-3\",\"status\":\"success\",\"content\":[{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}}]}},{\"toolResult\":{\"toolUseId\":\"tooluse-3\",\"status\":\"success\",\"content\":[{\"video\":{\"format\":\"mp4\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/key.bin\"}}}}]}},{\"toolResult\":{\"toolUseId\":\"tooluse-4\",\"status\":\"success\",\"content\":[{\"document\":{\"name\":\"report\",\"format\":\"txt\",\"source\":{\"text\":\"report body\"}}}]}},{\"toolResult\":{\"toolUseId\":\"tooluse-5\",\"status\":\"error\",\"content\":[{\"text\":\"Error: boom\"}]}},{\"toolResult\":{\"toolUseId\":\"tooluse-6\",\"status\":\"success\",\"content\":[{\"text\":\"summary\"},{\"json\":[1,2,3]},{\"image\":{\"format\":\"jpeg\",\"source\":{\"url\":\"https://example.com/a.jpg\"}}}]}},{\"toolResult\":{\"toolUseId\":\"tooluse-7\",\"status\":\"success\",\"content\":[]}},{\"reasoning\":{\"text\":\"Let me think.\",\"signature\":\"sig-123\"}},{\"reasoning\":{\"text\":\"Only text.\"}},{\"reasoning\":{\"redactedContent\":\"AAECA/r7/P3+/w==\"}},{\"cachePoint\":{\"cacheType\":\"default\"}},{\"cachePoint\":{\"cacheType\":\"default\",\"ttl\":\"1h\"}},{\"guardContent\":{\"text\":{\"qualifiers\":[\"grounding_source\",\"query\",\"guard_content\"],\"text\":\"check me\"}}},{\"guardContent\":{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}}},{\"audio\":{\"format\":\"mp3\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"x-aac\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/owned.bin\",\"bucketOwner\":\"123456789012\"}}}},{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"image\":{\"format\":\"webp\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/key.bin\"}}}},{\"image\":{\"format\":\"gif\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/owned.bin\",\"bucketOwner\":\"123456789012\"}}}},{\"image\":{\"format\":\"jpg\",\"source\":{\"url\":\"https://example.com/image.jpg\"}}},{\"video\":{\"format\":\"3gp\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"mkv\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/owned.bin\",\"bucketOwner\":\"123456789012\"}}}},{\"document\":{\"name\":\"paper\",\"format\":\"pdf\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"},\"citations\":{\"enabled\":true},\"context\":\"quarterly figures\"}},{\"document\":{\"name\":\"notes\",\"format\":\"md\",\"source\":{\"text\":\"# Notes\"}}},{\"document\":{\"name\":\"structured\",\"format\":\"txt\",\"source\":{\"content\":[{\"text\":\"part one\"},{\"text\":\"part two\"}]},\"citations\":{\"enabled\":false}}},{\"document\":{\"name\":\"sheet\",\"format\":\"xlsx\",\"source\":{\"location\":{\"type\":\"s3\",\"uri\":\"s3://bucket/key.bin\"}}}},{\"citations\":{\"citations\":[{\"location\":{\"type\":\"documentChar\",\"documentIndex\":0,\"start\":1,\"end\":12},\"source\":\"doc-0\",\"sourceContent\":[{\"text\":\"source text\"}],\"title\":\"Char doc\"},{\"location\":{\"type\":\"documentPage\",\"documentIndex\":1,\"start\":2,\"end\":3},\"source\":\"doc-1\",\"sourceContent\":[{\"text\":\"page text\"}],\"title\":\"Page doc\"},{\"location\":{\"type\":\"documentChunk\",\"documentIndex\":2,\"start\":0,\"end\":4},\"source\":\"doc-2\",\"sourceContent\":[],\"title\":\"Chunk doc\"},{\"location\":{\"type\":\"searchResult\",\"searchResultIndex\":3,\"start\":5,\"end\":9},\"source\":\"search-3\",\"sourceContent\":[{\"text\":\"search text\"}],\"title\":\"Search result\"},{\"location\":{\"type\":\"web\",\"url\":\"https://example.com/page\",\"domain\":\"example.com\"},\"source\":\"web-4\",\"sourceContent\":[{\"text\":\"web text\"}],\"title\":\"Web page\"},{\"location\":{\"type\":\"web\",\"url\":\"https://example.org/\"},\"source\":\"web-5\",\"sourceContent\":[],\"title\":\"Web page without domain\"}],\"content\":[{\"text\":\"generated text\"},{\"text\":\"more generated text\"}]}},{\"injected\":{\"text\":\"cwd: /repo\",\"source\":\"env\"}},{\"summary\":{\"text\":\"Earlier, the user asked about weather.\"}},{\"summary\":{\"provider\":\"anthropic\",\"signature\":\"sum-sig\",\"text\":\"Server-side summary.\"}},{\"futureBlock\":{\"kind\":\"hologram\",\"depth\":3,\"layers\":[{\"z\":1},{\"z\":2}]}}],\"trackingId\":\"00000000-0000-4000-8000-000000000004\"}"
+    },
+    {
+      "name": "message_from_json_unknown_blocks",
+      "json": "{\"role\":\"user\",\"content\":[{\"text\":\"known\"},{\"futureBlock\":{\"a\":1}},{\"toolResult\":{\"toolUseId\":\"tooluse-8\",\"status\":\"success\",\"content\":[{\"text\":\"ok\"},{\"futureContent\":{\"b\":[true,null]}}]}}],\"trackingId\":\"restored-id\"}"
+    },
+    {
+      "name": "message_media_formats",
+      "json": "{\"role\":\"user\",\"content\":[{\"audio\":{\"format\":\"mp3\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"opus\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"wav\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"aac\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"flac\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"mp4\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"ogg\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"mkv\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"mka\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"x-aac\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"m4a\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"mpeg\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"mpga\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"pcm\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"audio\":{\"format\":\"webm\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"image\":{\"format\":\"jpg\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"image\":{\"format\":\"jpeg\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"image\":{\"format\":\"gif\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"image\":{\"format\":\"webp\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"mkv\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"mov\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"mp4\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"webm\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"flv\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"mpeg\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"mpg\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"wmv\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"video\":{\"format\":\"3gp\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"pdf\",\"format\":\"pdf\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"csv\",\"format\":\"csv\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"doc\",\"format\":\"doc\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"docx\",\"format\":\"docx\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"xls\",\"format\":\"xls\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"xlsx\",\"format\":\"xlsx\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"html\",\"format\":\"html\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"txt\",\"format\":\"txt\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"md\",\"format\":\"md\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"json\",\"format\":\"json\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}},{\"document\":{\"name\":\"xml\",\"format\":\"xml\",\"source\":{\"bytes\":\"AAECA/r7/P3+/w==\"}}}],\"trackingId\":\"media-formats\"}"
+    },
+    {
+      "name": "tool_use_block_number_forms",
+      "json": "{\"toolUse\":{\"name\":\"numbers\",\"toolUseId\":\"tooluse-numbers\",\"input\":{\"small\":0.000001,\"tiny\":1e-7,\"big\":1e+21,\"maxSafe\":9007199254740992,\"beyondSafe\":18446744073709552000,\"sum\":0.30000000000000004,\"huge\":1.5e+300,\"negative\":-2.5}}}"
+    },
+    {
+      "name": "text_block_lone_surrogate",
+      "json": "{\"text\":\"broken \\ud83d pair\"}"
+    },
+    {
+      "name": "reasoning_block_unpadded_base64",
+      "json": "{\"reasoning\":{\"redactedContent\":\"AQI=\"}}",
+      "input": "{\"reasoning\":{\"redactedContent\":\"AQI\"}}"
+    },
+    {
+      "name": "reasoning_block_url_safe_base64",
+      "json": "{\"reasoning\":{\"redactedContent\":\"+/8=\"}}",
+      "input": "{\"reasoning\":{\"redactedContent\":\"-_8\"}}"
+    },
+    {
+      "name": "image_block_whitespace_base64",
+      "json": "{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AQIDBA==\"}}}",
+      "input": "{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AQ ID\\nBA==\"}}}"
+    },
+    {
+      "name": "tool_use_block_integer_like_keys",
+      "json": "{\"toolUse\":{\"name\":\"keys\",\"toolUseId\":\"tooluse-keys\",\"input\":{\"1\":\"one\",\"2\":\"two\",\"10\":\"ten\",\"beta\":\"b\",\"alpha\":\"a\"}}}",
+      "input": "{\"toolUse\":{\"name\":\"keys\",\"toolUseId\":\"tooluse-keys\",\"input\":{\"10\":\"ten\",\"2\":\"two\",\"beta\":\"b\",\"1\":\"one\",\"alpha\":\"a\"}}}"
+    },
+    {
+      "name": "summary_block_null_signature",
+      "json": "{\"summary\":{\"provider\":\"anthropic\",\"text\":\"summary\"}}",
+      "input": "{\"summary\":{\"provider\":\"anthropic\",\"signature\":null,\"text\":\"summary\"}}"
+    }
+  ]
+}
