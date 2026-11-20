@@ -163,63 +163,53 @@ describe('run-evaluations guidance', () => {
 describe('optimize-harness guidance', () => {
   const instructions = instructionsFor('optimize-harness')
 
-  it('shouldMakeTheEvalsOptimizeSkillTheLogic', () => {
-    expect(instructions).toContain('The optimize skill of strands-evals is the logic')
-    expect(instructions).toContain('it owns how an optimization works')
-    expect(instructions).toContain('Do not re-derive any of that here, and do not contradict it')
-    expect(instructions).toContain('This skill holds only what strands dev does differently')
+  it('shouldCarryTheEvalsOptimizeSkillAsTheWorkflow', () => {
+    expect(instructions).toContain('The optimize skill of strands-evals follows. It is the workflow')
+    expect(instructions).toContain('do not re-derive or contradict it')
+    expect(instructions).toContain('# optimize')
+    expect(instructions).toContain('strands-evals optimize run')
+    expect(instructions).toContain('### 2. Knobs: what may change')
   })
 
   it('shouldSayWhereStrandsDevKeepsExperimentsAndRuns', () => {
     expect(instructions).toContain('strands-dev/experiments/<name>/<name>.json')
     expect(instructions).toContain('strands-dev/experiments/<name>/optimizations/<stamp>/')
-    expect(instructions).toContain('That is the folder the optimize skill expects')
-    expect(instructions).toContain('Find them with strands_dev_status')
+    expect(instructions).toContain('call strands_dev_status for the saved experiments')
+    expect(instructions).toContain('strands_dev_optimization_plan for the chosen one')
+    expect(instructions).toContain('Never name a knob or a choice from memory')
   })
 
-  it('shouldKeepAskingOnScreenAndStartingThroughTheTool', () => {
-    expect(instructions).toContain('Ask the questions on screen with strands_dev_ask')
-    expect(instructions).toContain('instead of the numbered lists in chat')
-    expect(instructions).toContain('Keep its order, its defaults, and its wording')
-    expect(instructions).toContain('Read strands_dev_optimization_plan first')
-    expect(instructions).toContain('Start the run with strands_dev_optimize, not by running')
+  it('shouldNotRunTheSkillsOwnScriptsOrCli', () => {
+    expect(instructions).toContain('Do not ask for a workspace path')
+    expect(instructions).toContain('do not run its scripts/prepare.mjs')
+    expect(instructions).toContain('strands dev does that work through its own tools')
+  })
+
+  it('shouldPutEachQuestionOnScreenInsteadOfTheChatLists', () => {
+    expect(instructions).toContain('strands dev has an on-screen question UI')
+    expect(instructions).toContain('Put each question up with strands_dev_ask, one component per question')
+    expect(instructions).toContain("Keep the skill's order, defaults and wording")
+    expect(instructions).toContain('never add a decline option of your own')
+  })
+
+  it('shouldStartRunsThroughTheToolAndAllowThemInParallel', () => {
+    expect(instructions).toContain('start the run with strands_dev_optimize once the review is confirmed')
+    expect(instructions).toContain('a run already going is not a reason to refuse a new one')
+  })
+
+  it('shouldApplyOnlyNamedEditsAndPreserveAPendingReview', () => {
+    expect(instructions).toContain('Apply only the ones the developer names, with strands_dev_apply_optimization')
+    expect(instructions).toContain('never write them with file tools')
+    expect(instructions).toContain('Preserve an unaccepted review')
+    expect(instructions).toContain('strands_dev_reject_optimization only on explicit intent to discard')
+    expect(instructions).toContain('strands_dev_cancel_optimization only when the developer asks to stop a run')
   })
 
   it('shouldCheckFinalAnswerEvaluatorCompatibilityWithoutSilentlyRewritingExperiments', () => {
     expect(instructions).toContain('optimization of a TypeScript agent scores the final answer only')
     expect(instructions).toContain('OutputEvaluator, Contains, Equals, and StartsWith')
-    expect(instructions).toContain('Optimization of a Python agent also scores trajectory and tool-use evaluators')
-    expect(instructions).toContain('do not silently remove evaluators or rewrite the experiment')
+    expect(instructions).toContain('A Python agent also scores trajectory and tool-use evaluators')
+    expect(instructions).toContain('never silently remove an evaluator or rewrite the experiment')
     expect(instructions).toContain('Do not promise an improvement')
-  })
-
-  it('shouldPreservePendingReviewsAndOnlyStopOrDiscardOnExplicitIntent', () => {
-    expect(instructions).toContain('Preserve an unaccepted optimization review')
-    expect(instructions).toContain('Before starting a new optimization that would overwrite it, ask')
-    expect(instructions).toContain('strands_dev_reject_optimization with {} on explicit intent')
-    expect(instructions).toContain('Runs go in parallel, so a run that is already going is not a reason to refuse')
-    expect(instructions).toContain('Do not start a second run of the same experiment and the same scope')
-    expect(instructions).toContain('strands_dev_cancel_optimization with {} only when the developer explicitly asks')
-    expect(instructions).toContain('Cancelling the chat turn may leave the optimization running')
-  })
-
-  it('shouldRequireExplicitAcceptanceOfExactEditIndicesBeforeApplying', () => {
-    expect(instructions).toContain('returns proposed edits; it does not apply them or change the agent source')
-    expect(instructions).toContain(
-      'strands_dev_apply_optimization with {edits: number[]} only after explicit acceptance'
-    )
-    expect(instructions).toContain('exact returned edit indices for the accepted subset')
-    expect(instructions).toContain('Approval to optimize is not approval to apply')
-    expect(instructions).toContain('Do not use file tools to bypass the review')
-    expect(instructions).toContain('If no edits are accepted, leave the source unchanged')
-    expect(instructions).toContain('Report application success or errors as returned')
-    expect(instructions).toContain('follow-up paid validation run needs its own scoped approval')
-  })
-
-  it('shouldReportMeasuredScoresAndLimitationsRatherThanFabricateImprovements', () => {
-    expect(instructions).toContain('actual baseline and candidate scores')
-    expect(instructions).toContain('without fabricating measurements')
-    expect(instructions).toContain('claiming general improvement from one experiment')
-    expect(instructions).toContain('Keep failed execution distinct from a candidate that scored worse')
   })
 })

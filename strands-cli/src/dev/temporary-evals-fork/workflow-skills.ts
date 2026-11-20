@@ -1,4 +1,5 @@
 import type { AgentExtensionSkill } from '../../agent/extension.js'
+import { TEMPORARY_OPTIMIZE_SKILL } from './optimize-skill.js'
 
 const DEV_ONLY = `This is a runtime-only developer-assistance workflow for this local strands dev chat, not part of the agent's product behavior. Never copy this skill, these instructions, or strands_dev_* tools into the agent's source, saved instructions, configuration, or exports.
 
@@ -36,36 +37,30 @@ Never infer that an experiment or result is missing from earlier conversation. A
 
 Report actual evidence from the tools: status, completed case counts, pass/fail outcomes, scores and evaluator feedback when present. Distinguish queued, running, failed execution, and completed results. Do not fabricate results, infer success from a started job, or present a partial page as the complete run. Summarize representative failures with their inputs, expected outputs, actual answers, and feedback only when returned. A failing case is evidence to discuss, not permission to change source, regenerate cases, optimize, or start another paid run.`
 
-const OPTIMIZE_HARNESS = `# Optimize the harness in dev chat
+const OPTIMIZE_DEV_RULES = `# Optimize the harness in dev chat
 
 ${DEV_ONLY}
 
-Help with requests such as "improve this agent on refunds" or "tune its effort".
+The optimize skill of strands-evals follows. It is the workflow: what to ask, in what order, the objective notation, the budget, the review it confirms, the run, and the report. Follow it, and do not re-derive or contradict it.
 
-## The optimize skill of strands-evals is the logic
+These rules replace the matching parts of it, because strands dev already owns the workspace:
 
-strands-evals ships an \`optimize\` skill, and it owns how an optimization works: how to read the request, which questions to ask and in what order, the objective notation and its metrics, the constraints, the budget, the review summary it confirms before the run, how the run executes, and how to read the report it writes. Follow it. Do not re-derive any of that here, and do not contradict it.
+- Workspace: this chat is the strands-workspace the skill asks for. Do not ask for a workspace path, and do not run its scripts/prepare.mjs or \`strands-evals optimize\` yourself. strands dev does that work through its own tools.
+- Step 1, the inputs: call strands_dev_status for the saved experiments and strands_dev_optimization_plan for the chosen one, instead of the skill's inspect step. The plan returns this agent's knobs with the reason each unavailable one cannot be tuned, the choices of every setting, the objective presets with their expressions, and the rollout and token estimate. Never name a knob or a choice from memory.
+- Experiments: they live at strands-dev/experiments/<name>/<name>.json, which is where the skill expects them. With none saved, offer to create one with the create-experiment skill rather than pointing at a folder.
+- Runs: they are saved at strands-dev/experiments/<name>/optimizations/<stamp>/, the folder the skill names, and it is already out of git.
+- Questions: strands dev has an on-screen question UI, so take the skill's own advice and use it. Put each question up with strands_dev_ask, one component per question: selectMany for the knobs, selectOne for a single choice, text for an objective or a constraint. Keep the skill's order, defaults and wording, and skip its numbered chat lists. Esc declines, so never add a decline option of your own, and a cancelled question is a no.
+- Running: start the run with strands_dev_optimize once the review is confirmed. Its progress shows below the chat input, and runs go in parallel: a run already going is not a reason to refuse a new one. Name what is running, and do not start a second run of the same experiment and scope unless asked.
+- Report and edits: strands_dev_optimize returns the proposed edits. Apply only the ones the developer names, with strands_dev_apply_optimization, and never write them with file tools. Preserve an unaccepted review: before a run that would overwrite one, ask whether to keep reviewing it, and call strands_dev_reject_optimization only on explicit intent to discard. Call strands_dev_cancel_optimization only when the developer asks to stop a run.
+- Evaluators: optimization of a TypeScript agent scores the final answer only, so it supports evaluators that read the answer, such as OutputEvaluator, Contains, Equals, and StartsWith. A Python agent also scores trajectory and tool-use evaluators. Explain an incompatible experiment and help pick a compatible one; never silently remove an evaluator or rewrite the experiment.
 
-This skill holds only what strands dev does differently, and the rules below that the chat itself needs.
+Do not promise an improvement.`
 
-## What strands dev does differently
+const OPTIMIZE_HARNESS = `${OPTIMIZE_DEV_RULES}
 
-- Experiments live in this workspace, at \`strands-dev/experiments/<name>/<name>.json\`. Find them with strands_dev_status rather than by reading the folder, because a panel or a finished run can change them between turns. With none saved, say so and offer to create one with the create-experiment skill instead of pointing at a folder.
-- Runs are saved in this workspace too, at \`strands-dev/experiments/<name>/optimizations/<stamp>/\`. That is the folder the optimize skill expects, and it is already out of git.
-- Ask the questions on screen with strands_dev_ask, one component per question, instead of the numbered lists in chat that the optimize skill describes. Keep its order, its defaults, and its wording; only the way the question is put changes. Read strands_dev_optimization_plan first, so the knobs and the choices you offer are this agent's own.
-- Start the run with strands_dev_optimize, not by running \`strands-evals optimize\` yourself. It uses this CLI's evals bridge, which is what the optimize skill says to use, and it reports progress below the chat input.
+---
 
-## Rules the chat adds
-
-Runs go in parallel, so a run that is already going is not a reason to refuse a new one: name what is running, and start the new one when the developer wants it. Do not start a second run of the same experiment and the same scope unless they asked for it, and say that each run makes its own paid model calls.
-
-Preserve an unaccepted optimization review. Before starting a new optimization that would overwrite it, ask whether the developer wants to keep reviewing it or explicitly discard it. Only call strands_dev_reject_optimization with {} on explicit intent to discard the pending review. Call strands_dev_cancel_optimization with {} only when the developer explicitly asks to stop the optimization. Cancelling the chat turn may leave the optimization running; never equate the two.
-
-Optimization returns proposed edits; it does not apply them or change the agent source. Report actual baseline and candidate scores, available evaluation evidence, proposed edits, and limitations without fabricating measurements or claiming general improvement from one experiment. Keep failed execution distinct from a candidate that scored worse. Do not promise an improvement.
-
-Ask which proposed edits the developer accepts. Call strands_dev_apply_optimization with {edits: number[]} only after explicit acceptance, using the exact returned edit indices for the accepted subset. Approval to optimize is not approval to apply. Do not use file tools to bypass the review. If no edits are accepted, leave the source unchanged; discard the review only on explicit request. Report application success or errors as returned, without claiming an edit was saved when it was not. Any follow-up paid validation run needs its own scoped approval.
-
-For now, optimization of a TypeScript agent scores the final answer only, so it supports evaluators that read the answer, such as OutputEvaluator, Contains, Equals, and StartsWith. Optimization of a Python agent also scores trajectory and tool-use evaluators. Check the saved evaluators, explain an incompatible experiment, and help the developer choose a compatible one; do not silently remove evaluators or rewrite the experiment to make it compatible.`
+${TEMPORARY_OPTIMIZE_SKILL}`
 
 /** Runtime-only guidance, separate from the existing create-experiment skill. */
 export const temporaryWorkflowSkills = (): AgentExtensionSkill[] => [
