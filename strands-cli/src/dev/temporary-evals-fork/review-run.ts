@@ -45,7 +45,7 @@ const question = (edit: ProposedEdit, run: string, at: number, of: number): Wiza
  */
 export const reviewOptimizeRun = async (sessions: TemporaryDevSessions, runId: string): Promise<void> => {
   const { optimize, ask } = sessions
-  optimize.openRun(runId)
+  if (!optimize.focusRun(runId)) return
   const run = optimize.snapshot().runs?.find((candidate) => candidate.id === runId)
   if (run?.state.step !== 'review') return
   const open = run.state.review.edits.flatMap((edit, index) => (edit.unavailable ? [] : [{ edit, index }]))

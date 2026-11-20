@@ -276,19 +276,6 @@ export const askRequestFrom = (input: Input): WizardRequestSpec => {
   }
 }
 
-/**
- * One pickable row is not a choice, so the panel would take the screen to say nothing.
- * An unavailable sole row still renders: the developer needs to read why, then close it.
- */
-const foregoneAnswer = (spec: WizardRequestSpec): { key: string; value: string } | undefined => {
-  const step = spec.steps.length === 1 ? spec.steps[0] : undefined
-  const field = step?.fields.length === 1 ? step.fields[0] : undefined
-  if (field === undefined || field.kind !== 'select' || field.multiple === true) return undefined
-  const only = field.options.length === 1 ? field.options[0] : undefined
-  if (only === undefined || only.unavailable !== undefined) return undefined
-  return { key: field.key, value: only.value }
-}
-
 const FIELD_SCHEMA: JSONSchema = {
   type: 'object',
   properties: {
@@ -336,9 +323,7 @@ export const askTool = (broker: () => { ask: (spec: WizardRequestSpec) => Promis
       label: { type: 'string', description: 'With ask text: the short name beside the field. Default: the key.' },
       options: {
         type: 'array',
-        description:
-          'With ask selectMany or selectOne: the rows to choose from. A selectOne with one row is answered ' +
-          'for you without showing anything, so state the fact instead of asking.',
+        description: 'With ask selectMany or selectOne: the rows to choose from.',
         items: {
           type: 'object',
           properties: {
@@ -422,19 +407,7 @@ export const askTool = (broker: () => { ask: (spec: WizardRequestSpec) => Promis
   },
   run: async (input): Promise<string> => {
     const one = input.ask !== undefined && input.ask !== null
-    const spec = askRequestFrom(input)
-    const foregone = foregoneAnswer(spec)
-    if (foregone)
-      return JSON.stringify(
-        {
-          status: 'answered',
-          ...(one ? { answer: foregone.value } : { answers: { [foregone.key]: foregone.value } }),
-          detail: 'Only one option, so there was nothing to choose and the developer was not asked.',
-        },
-        null,
-        2
-      )
-    const outcome = await broker().ask(spec)
+    const outcome = await broker().ask(askRequestFrom(input))
     if (outcome === undefined)
       return JSON.stringify(
         {

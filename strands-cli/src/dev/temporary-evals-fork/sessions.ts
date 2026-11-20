@@ -40,6 +40,7 @@ import {
   type TestState,
 } from '../panels/model.js'
 import { locateTemporaryEdit } from './apply.js'
+import { reviewOptimizeRun } from './review-run.js'
 import {
   clearUnreadableCaseResults,
   dropTemporaryRunRecord,
@@ -798,6 +799,16 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     return this.resumed
   }
 
+  /** Called with a run that has edits to read, so a finished run shows them rather than waiting to be found. */
+  onReview: ((id: string) => void) | undefined
+
+  /** Points accept and apply at one run without moving the panel to it. */
+  focusRun(id: string): boolean {
+    if (this.entries.get(id)?.state.step !== 'review') return false
+    this.shown = id
+    return true
+  }
+
   /** Starts a run that stopped when strands dev closed. It makes paid model calls, so it is never automatic. */
   async resumeRun(id: string): Promise<void> {
     const entry = this.entries.get(id)
@@ -1350,7 +1361,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       entry.changes = changes
       this.updateRun(entry, { step: 'review', review })
       this.watchSources(entry)
-      announce(this.host(), 'success', `optimize · run ${review.run} finished · ask in the chat to review its edits`)
+      announce(this.host(), 'success', `optimize · run ${review.run} finished · showing its edits`)
+      this.onReview?.(entry.id)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
@@ -1489,6 +1501,7 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
     ui: new TemporaryEvalsUi(current, host.evalsUi),
     ask: new WizardBroker(host.autofill?.() ?? false),
   }
+  sessions.optimize.onReview = (id): void => void reviewOptimizeRun(sessions, id)
   registry.set(key, {
     use: (next) => {
       latest = { ...latest, ...next }

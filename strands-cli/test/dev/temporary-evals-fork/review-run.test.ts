@@ -29,7 +29,7 @@ const sessions = (
   const apply = vi.fn()
   const queue = [...answers]
   const optimize = {
-    openRun: vi.fn(),
+    focusRun: vi.fn(() => true),
     snapshot: () => ({ runs: [{ id: 'run-1', state: { step: 'review', review: { run: 'r1', edits } } }] }),
     accept,
     apply,
