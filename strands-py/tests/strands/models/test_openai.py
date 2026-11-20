@@ -1267,6 +1267,58 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
 
 
 @pytest.mark.asyncio
+async def test_stream_keeps_tool_calls_without_index_apart(openai_client, model, agenerator, alist):
+    # Gemini's OpenAI-compatible endpoint streams each parallel call whole, with an id and no index
+    # (recorded in pydantic-ai's cassette test_compatible_api_gemini_3_tool_call_thought_signature[True]).
+    # The OpenAI SDK builds stream chunks without validation, so the missing index arrives as None.
+    from openai.types.chat import ChatCompletionChunk
+
+    base = {"id": "3tXOasW2I-2KmtkPrtulEA", "object": "chat.completion.chunk", "created": 1791940062}
+    calls = [("call_108766", '{"city":"Taipei"}'), ("call_108772", '{"city":"Kaohsiung"}')]
+    chunks = [
+        ChatCompletionChunk.construct(
+            **base,
+            choices=[
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {"id": call_id, "type": "function", "function": {"name": "get_weather", "arguments": args}}
+                        ],
+                    },
+                }
+            ],
+        )
+        for call_id, args in calls
+    ]
+    chunks.append(
+        ChatCompletionChunk.construct(
+            **base, choices=[{"index": 0, "delta": {"role": "assistant"}, "finish_reason": "tool_calls"}]
+        )
+    )
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(return_value=agenerator(chunks))
+
+    events = await alist(model.stream([{"role": "user", "content": [{"text": "weather?"}]}]))
+
+    starts = [
+        e["contentBlockStart"]["start"]["toolUse"]
+        for e in events
+        if "toolUse" in e.get("contentBlockStart", {}).get("start", {})
+    ]
+    inputs = [
+        e["contentBlockDelta"]["delta"]["toolUse"]["input"]
+        for e in events
+        if "toolUse" in e.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert starts == [
+        {"toolUseId": "call_108766", "name": "get_weather"},
+        {"toolUseId": "call_108772", "name": "get_weather"},
+    ]
+    assert inputs == ['{"city":"Taipei"}', '{"city":"Kaohsiung"}']
+
+
+@pytest.mark.asyncio
 async def test_stream_accepts_vllm_reasoning_delta(openai_client, model, messages, agenerator, alist):
     reasoning_delta = unittest.mock.Mock(spec=["reasoning", "content", "tool_calls"])
     reasoning_delta.reasoning = "\nI'm thinking"
