@@ -1310,17 +1310,31 @@ def test_format_request_messages_keeps_tool_messages_together_around_a_cache_poi
 
     tru_messages = LiteLLMModel.format_request_messages(messages)
 
-    assert [(message["role"], message.get("tool_call_id")) for message in tru_messages] == [
-        ("tool", "a"),
-        ("tool", "b"),
-        ("user", None),
+    exp_messages = [
+        {
+            "role": "tool",
+            "tool_call_id": "a",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Tool successfully returned an image. "
+                    "The image is being provided in the following user message.",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "b", "content": "r"},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"detail": "auto", "format": "image/png", "url": "data:image/png;base64,cG5n"},
+                }
+            ],
+        },
     ]
-    assert tru_messages[0]["content"][-1]["cache_control"] == {"type": "ephemeral"}
-    assert all("cache_control" not in part for message in tru_messages[1:] for part in _parts(message))
-
-
-def _parts(message):
-    return message["content"] if isinstance(message.get("content"), list) else []
+    assert tru_messages == exp_messages
 
 
 @pytest.mark.parametrize(
@@ -1505,8 +1519,12 @@ def test_format_request_places_cache_points_for_a_proxy_alias_declared_through_m
         ("openrouter/anthropic/claude-sonnet-4.5", [("system", "s1"), ("tool", "s1")]),
         ("gemini/gemini-3.5-flash", []),
         ("openai/gpt-6-luna", []),
+        ("openai/gpt-4o", []),
+        ("azure/gpt-4o", []),
+        ("groq/llama-3.3-70b-versatile", []),
+        ("openrouter/openai/gpt-4o", []),
     ],
-    ids=["proxy_alias", "gateway", "gemini", "openai"],
+    ids=["proxy_alias", "gateway", "gemini", "openai", "openai_unlisted", "azure", "groq", "gateway_naming_openai"],
 )
 def test_format_request_anthropic_strategy_places_points_except_on_backends_that_take_none(
     model_id, exp_marked, injected_loop_messages
@@ -1713,3 +1731,33 @@ def test_format_request_drops_a_bedrock_message_point_with_only_documents_ahead_
 
     assert all("cache_control" not in part for part in tru_messages[0]["content"])
     assert "removed a cache point with no content ahead of it" in caplog.text
+
+
+@pytest.mark.parametrize("model_id", ["openai/gpt-4o", "azure/gpt-4o"])
+def test_format_request_anthropic_strategy_keeps_the_openai_routing_key(model_id, captured_warnings):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic", cache_key="k"))
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+    assert request["prompt_cache_key"] == "k"
+    assert not any("cache_key has no effect" in str(warning.message) for warning in captured_warnings)
+
+
+def test_format_request_keeps_the_callers_message_ttl_without_cache_config():
+    model = LiteLLMModel(model_id="anthropic/claude-sonnet-4-5")
+    messages = [
+        {"role": "user", "content": [{"text": "a"}, {"cachePoint": {"type": "default", "ttl": "1h"}}, {"text": "b"}]}
+    ]
+
+    tru_messages = model.format_request(messages)["messages"]
+
+    exp_messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "a", "type": "text", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+                {"text": "b", "type": "text"},
+            ],
+        }
+    ]
+    assert tru_messages == exp_messages

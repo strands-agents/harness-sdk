@@ -142,11 +142,11 @@ model = LiteLLMModel(
 )
 ```
 
-`CacheConfig(strategy="anthropic")` also places cache points without checking the model, except on OpenAI-family and Gemini backends. Declaring the backend this way also stops Strands sending the session-derived `prompt_cache_key`, which non-OpenAI backends behind a proxy reject.
+`CacheConfig(strategy="anthropic")` also places cache points without checking the model, but only where the backend can take them: Claude ids, `anthropic/`, `bedrock/` and `vertex_ai/`, and gateway ids that don't name their backend. OpenAI and Gemini backends behave as under `"auto"`, so one cache config can be shared across providers. Declaring the backend this way also stops Strands sending the session-derived `prompt_cache_key`, which non-OpenAI backends behind a proxy reject.
 
 #### Hand-placed cache points
 
-You can place cache points yourself with `SystemContentBlock(cachePoint={"type": "default"})` in the system prompt, or a `cachePoint` block in a message. Strands keeps their position, and gives message points the messages TTL, since the backends reject a longer TTL after a shorter one. On Bedrock, a point directly after a non-PDF document moves back over the document. On backends that don't take cache points, message cache points are dropped.
+You can place cache points yourself with `SystemContentBlock(cachePoint={"type": "default"})` in the system prompt, or a `cachePoint` block in a message. Strands keeps their position. With `cache_config` set, message points take the messages TTL, since the backends reject a longer TTL after a shorter one; without it, your TTL is kept. On Bedrock, a point directly after a non-PDF document moves back over the document. On backends that don't take cache points, message cache points are dropped.
 
 > **Note**: Each backend has a minimum cacheable prompt size, and a prompt shorter than that is not cached. For example, Claude Haiku 4.5 needs about 4,096 tokens.
 

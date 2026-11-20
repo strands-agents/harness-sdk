@@ -4,6 +4,7 @@ Each provider decides when to cache and translates the points to its wire format
 go, how many a request carries and which TTL it gets live here so they stay the same across providers.
 """
 
+import functools
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeVar
@@ -89,20 +90,24 @@ def messages_with_cache_point(
     return [*messages[:latest_user], marked, *messages[latest_user + 1 :]]
 
 
-def with_placed_points_normalized(messages: Messages, ttl: str | None, *, step_back: bool) -> Messages:
-    """The messages with each caller-placed cache point given ``ttl``, and moved back over documents where asked.
+def with_placed_points_normalized(messages: Messages, ttl: str | None, *, step_back: bool, align_ttl: bool) -> Messages:
+    """The messages with each caller-placed cache point moved back over documents where asked, and its TTL aligned.
 
-    The caller's position is kept but not their TTL: the providers reject a longer TTL after a shorter one, so every
-    message point takes the messages section's TTL, as the automatic point does. With ``step_back`` a point moves
-    back over the non-PDF documents directly ahead of it; one with nothing ahead of it is dropped, since there is no
-    prefix to cache. The input is never changed.
+    With ``align_ttl`` every message point takes ``ttl``, the messages section's TTL, as the automatic point does:
+    the providers reject a longer TTL after a shorter one, and the automatic points ahead of it carry the section
+    TTLs. Without it the caller's TTL is kept. With ``step_back`` a point moves back over the non-PDF documents
+    directly ahead of it; one with nothing ahead of it is dropped, since there is no prefix to cache. The input is
+    never changed.
     """
     if not any("cachePoint" in block for message in messages for block in message["content"]):
         return messages
-    return [{**message, "content": _normalized_points(message["content"], ttl, step_back)} for message in messages]
+    normalize = functools.partial(_normalized_points, ttl=ttl, step_back=step_back, align_ttl=align_ttl)
+    return [{**message, "content": normalize(message["content"])} for message in messages]
 
 
-def _normalized_points(content: list[ContentBlock], ttl: str | None, step_back: bool) -> list[ContentBlock]:
+def _normalized_points(
+    content: list[ContentBlock], *, ttl: str | None, step_back: bool, align_ttl: bool
+) -> list[ContentBlock]:
     """``content`` with its cache points normalized as :func:`with_placed_points_normalized` describes."""
     result: list[ContentBlock] = []
     for block in content:
@@ -113,8 +118,17 @@ def _normalized_points(content: list[ContentBlock], ttl: str | None, step_back: 
         if index == 0:
             logger.warning("removed a cache point with no content ahead of it")
             continue
-        result.insert(index, ContentBlock(cachePoint=cache_point(ttl)))
+        result.insert(
+            index, ContentBlock(cachePoint=_aligned(block["cachePoint"], ttl) if align_ttl else block["cachePoint"])
+        )
     return result
+
+
+def _aligned(point: CachePoint, ttl: str | None) -> CachePoint:
+    """``point`` with the TTL ``ttl``, logging when that replaces the TTL the caller wrote."""
+    if point.get("ttl") != ttl:
+        logger.debug("ttl=<%s>, placed_ttl=<%s> | replaced the cache point ttl", ttl, point.get("ttl"))
+    return cache_point(ttl)
 
 
 def _lacks_ttl(block: Mapping[str, Any]) -> bool:

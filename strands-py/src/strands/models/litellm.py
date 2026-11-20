@@ -48,6 +48,9 @@ _CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "bedrock", "vertex_ai"})
 # alias whose backend the id does not name, the point steps back over the document.
 _AFTER_DOCUMENT_PROVIDERS = frozenset({"anthropic", "vertex_ai"})
 
+# Gateways that route to any backend, so an id without a backend prefix may name a Claude-style one.
+_GATEWAY_PROVIDERS = frozenset({"litellm_proxy", "openrouter"})
+
 # Providers whose LiteLLM provider lookup fetches credentials, starting a device-code login when there are none.
 _AUTHENTICATING_PROVIDERS = frozenset({"github_copilot", "chatgpt"})
 
@@ -441,7 +444,9 @@ class LiteLLMModel(OpenAIModel):
             backend = self._backend()
             after_documents = backend is not None and backend[1] in _AFTER_DOCUMENT_PROVIDERS
             messages_ttl = section_ttl(cache_config.messages_ttl, cache_config.ttl) if cache_config else None
-            messages = with_placed_points_normalized(messages, messages_ttl, step_back=not after_documents)
+            messages = with_placed_points_normalized(
+                messages, messages_ttl, step_back=not after_documents, align_ttl=cache_config is not None
+            )
             if cache_config is not None:
                 system_prompt_content, messages = _with_cache_points(
                     cache_config,
@@ -470,8 +475,9 @@ class LiteLLMModel(OpenAIModel):
         """Whether requests carry cache points: the model takes them, or ``strategy="anthropic"`` asks for them.
 
         ``strategy="anthropic"`` places them without the model info's say-so, as ``AnthropicModel`` and
-        ``BedrockModel`` do, except on a backend known to take none: OpenAI-family backends cache by themselves, and
-        on Gemini LiteLLM turns a cache point into a billed cached-content resource.
+        ``BedrockModel`` do, but only where the backend can be a Claude-style one: an Anthropic, Bedrock or Vertex AI
+        provider, a Claude id, or a gateway whose id names none of its backend. Elsewhere it would cost an OpenAI
+        backend its routing key, and on Gemini LiteLLM turns a cache point into a billed cached-content resource.
         """
         prompt_caching = self.model_info.capabilities.prompt_caching
         if prompt_caching == "cache_points":
@@ -479,8 +485,7 @@ class LiteLLMModel(OpenAIModel):
         cache_config = self.get_config().get("cache_config")
         if cache_config is None or cache_config.strategy != "anthropic" or prompt_caching in ("auto", "unsupported"):
             return False
-        backend = self._backend()
-        return backend is None or (backend[1] != "gemini" and "gemini" not in backend[0].lower())
+        return _may_take_cache_points(self._backend())
 
     @override
     def _routing_cache_config(self) -> CacheConfig | None:
@@ -877,6 +882,22 @@ def _resolve_backend(model_id: str, custom_llm_provider: str | None) -> tuple[st
     if provider == "litellm_proxy" and backend_id.split("/", 1)[0] in _LITELLM_PROVIDERS:
         return _resolve_backend(backend_id, None) or (backend_id, provider)
     return backend_id, provider
+
+
+def _may_take_cache_points(backend: tuple[str, str] | None) -> bool:
+    """Whether a backend can be one that takes cache points, for ``strategy="anthropic"`` to place them on.
+
+    An unknown backend or a bare gateway alias can; a gateway id naming its backend can only when that is Anthropic.
+    """
+    if backend is None:
+        return True
+    backend_id, provider = backend
+    if "claude" in backend_id.lower() or provider in _CACHE_CONTROL_PROVIDERS:
+        return True
+    if provider not in _GATEWAY_PROVIDERS:
+        return False
+    named = backend_id.split("/", 1)[0] if "/" in backend_id else None
+    return named is None or named == "anthropic"
 
 
 def _litellm_validates_prompt_cache_key() -> bool:

@@ -128,7 +128,7 @@ def test_with_placed_points_normalized_sets_the_ttl_steps_back_and_drops_leading
     ]
     original = copy.deepcopy(messages)
 
-    tru_messages = with_placed_points_normalized(messages, "5m", step_back=True)
+    tru_messages = with_placed_points_normalized(messages, "5m", step_back=True, align_ttl=True)
 
     five_minutes = {"cachePoint": {"type": "default", "ttl": "5m"}}
     exp_messages = [
@@ -140,9 +140,10 @@ def test_with_placed_points_normalized_sets_the_ttl_steps_back_and_drops_leading
     assert messages == original
 
 
-def test_with_placed_points_normalized_keeps_positions_without_step_back():
-    messages = [{"role": "user", "content": [{"text": "b"}, TXT, {"cachePoint": {"type": "default", "ttl": "1h"}}]}]
+def test_with_placed_points_normalized_keeps_positions_and_ttls_without_step_back_or_alignment():
+    placed = {"cachePoint": {"type": "default", "ttl": "1h"}}
+    messages = [{"role": "user", "content": [{"text": "b"}, TXT, placed]}]
 
-    tru_messages = with_placed_points_normalized(messages, None, step_back=False)
+    tru_messages = with_placed_points_normalized(messages, None, step_back=False, align_ttl=False)
 
-    assert tru_messages == [{"role": "user", "content": [{"text": "b"}, TXT, POINT]}]
+    assert tru_messages == [{"role": "user", "content": [{"text": "b"}, TXT, placed]}]
