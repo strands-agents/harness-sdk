@@ -202,6 +202,28 @@ export function lookupChatCompletionsTools(modelId: string): ChatCompletionsTool
 }
 
 /**
+ * The values of `capabilities.systemPromptPlacement` in the data.
+ *
+ * @internal
+ */
+export type SystemPromptPlacement = 'message'
+
+/**
+ * Where a model's system prompt goes, when not in the provider's system prompt field. The data carries this as
+ * `capabilities.systemPromptPlacement`, which `ModelCapabilities` does not carry.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns `'message'` when it goes at the start of the messages, undefined when the data does not say
+ */
+export function lookupSystemPromptPlacement(modelId: string): SystemPromptPlacement | undefined {
+  const key = lookupKey(modelId)
+  if (key === undefined) return undefined
+  return (data.models[key]?.capabilities as { systemPromptPlacement?: SystemPromptPlacement } | undefined)
+    ?.systemPromptPlacement
+}
+
+/**
  * What the shared model info data knows about a model.
  *
  * @internal
