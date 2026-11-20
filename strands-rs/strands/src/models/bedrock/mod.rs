@@ -44,7 +44,7 @@ use super::bedrock_cache::bedrock_cache_model_info;
 use super::defaults::{MODEL_DEFAULTS, default_max_tokens_warning_message, default_model_warning_message};
 use super::model::{BaseModelConfig, BoxStream, CacheConfig, CacheTtl, CountTokensOptions, Model, ModelRequest};
 use super::model::{base_model_info, estimate_tokens, resolve_config_metadata, resolve_max_tokens};
-use super::model_info::{ModelInfo, merge_model_info, server_side_summary_off};
+use super::model_info::{ModelInfo, server_side_summary_off};
 use super::native_output::{StructuredOutputMechanism, handle_rejected_mechanism, structured_output_mechanisms};
 use super::streaming::ModelStreamEvent;
 use crate::error::{ContextWindowOverflowError, Error, ModelError, Result};
@@ -702,7 +702,7 @@ fn bedrock_model_info(config: &BedrockModelConfig) -> ModelInfo {
     base.model_id
         .get_or_insert_with(|| MODEL_DEFAULTS.bedrock.model_id.to_owned());
     let caching = bedrock_cache_model_info(config.model_id_or_default());
-    merge_model_info([
+    ModelInfo::merge([
         Some(&base_model_info(&base)),
         Some(&server_side_summary_off()),
         caching.as_ref(),

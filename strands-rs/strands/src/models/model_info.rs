@@ -125,38 +125,39 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
+    /// Merges partial records, later known fields winning; unknown fields inherit, and `None`
+    /// parts are skipped.
+    ///
+    /// A provider that overrides [`Model::model_info`] layers its facts over
+    /// [`base_model_info`](crate::models::base_model_info) and puts the user's `model_info`
+    /// override on top:
+    ///
+    /// ```
+    /// use strands::models::{BaseModelConfig, ModelCapabilities, ModelInfo, PromptCaching, base_model_info};
+    ///
+    /// let config = BaseModelConfig::builder().model_id("claude-sonnet-4-6").build();
+    /// let facts = ModelInfo {
+    ///     capabilities: ModelCapabilities { prompt_caching: Some(PromptCaching::Auto), ..Default::default() },
+    ///     ..Default::default()
+    /// };
+    /// let info = ModelInfo::merge([Some(&base_model_info(&config)), Some(&facts), config.model_info.as_ref()]);
+    /// assert_eq!(info.capabilities.prompt_caching, Some(PromptCaching::Auto));
+    /// ```
+    ///
+    /// [`Model::model_info`]: crate::models::Model::model_info
+    #[must_use]
+    pub fn merge<'a>(parts: impl IntoIterator<Item = Option<&'a ModelInfo>>) -> ModelInfo {
+        let mut merged = ModelInfo::default();
+        for part in parts.into_iter().flatten() {
+            merged.overlay(part);
+        }
+        merged
+    }
+
     fn overlay(&mut self, other: &Self) {
         self.capabilities.overlay(&other.capabilities);
         self.limits.overlay(&other.limits);
     }
-}
-
-/// Merges partial records, later known fields winning; unknown fields inherit.
-///
-/// A provider that overrides [`Model::model_info`] layers its facts over
-/// [`base_model_info`](crate::models::base_model_info) and puts the user's `model_info` override on
-/// top:
-///
-/// ```
-/// use strands::models::{BaseModelConfig, ModelCapabilities, ModelInfo, PromptCaching};
-/// use strands::models::{base_model_info, merge_model_info};
-///
-/// let config = BaseModelConfig::builder().model_id("claude-sonnet-4-6").build();
-/// let facts = ModelInfo {
-///     capabilities: ModelCapabilities { prompt_caching: Some(PromptCaching::Auto), ..Default::default() },
-///     ..Default::default()
-/// };
-/// let info = merge_model_info([Some(&base_model_info(&config)), Some(&facts), config.model_info.as_ref()]);
-/// assert_eq!(info.capabilities.prompt_caching, Some(PromptCaching::Auto));
-/// ```
-///
-/// [`Model::model_info`]: crate::models::Model::model_info
-pub fn merge_model_info<'a>(parts: impl IntoIterator<Item = Option<&'a ModelInfo>>) -> ModelInfo {
-    let mut merged = ModelInfo::default();
-    for part in parts.into_iter().flatten() {
-        merged.overlay(part);
-    }
-    merged
 }
 
 /// Turns `server_side_summary` off, for providers that serve a model the shared data lists it for
@@ -268,7 +269,7 @@ pub(crate) fn lookup_model(model_id: &str) -> Option<&'static ModelInfo> {
 
 /// What the shared model info data knows about a model; empty when it knows nothing.
 pub(crate) fn lookup_model_info(model_id: &str) -> ModelInfo {
-    merge_model_info([lookup_model(model_id)])
+    ModelInfo::merge([lookup_model(model_id)])
 }
 
 /// The context window limit the shared data lists for a model id.
@@ -311,12 +312,12 @@ mod tests {
 
     #[test]
     fn returns_the_base_when_nothing_else_is_given() {
-        assert_eq!(merge_model_info([Some(&base())]), base());
+        assert_eq!(ModelInfo::merge([Some(&base())]), base());
     }
 
     #[test]
     fn inherits_fields_a_later_record_leaves_out_or_sets_to_undefined() {
-        let merged = merge_model_info([
+        let merged = ModelInfo::merge([
             Some(&base()),
             Some(&limits(1_000_000)),
             Some(&ModelInfo::builder().capabilities(ModelCapabilities::default()).build()),
@@ -333,7 +334,7 @@ mod tests {
                 .build(),
             limits: ModelLimits::builder().context_window(2).build(),
         };
-        let merged = merge_model_info([Some(&base()), Some(&limits(1)), None, Some(&later)]);
+        let merged = ModelInfo::merge([Some(&base()), Some(&limits(1)), None, Some(&later)]);
         assert_eq!(
             serde_json::to_value(&merged.capabilities).unwrap(),
             json!({"stateful": false, "promptCaching": "unsupported"})
@@ -343,7 +344,7 @@ mod tests {
 
     #[test]
     fn leaves_out_sections_with_nothing_known() {
-        let merged = merge_model_info([Some(&ModelInfo::default()), None, Some(&ModelInfo::default())]);
+        let merged = ModelInfo::merge([Some(&ModelInfo::default()), None, Some(&ModelInfo::default())]);
         assert_eq!(serde_json::to_value(merged).unwrap(), json!({}));
     }
 
