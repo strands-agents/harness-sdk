@@ -270,17 +270,7 @@ export class Tracer {
    * @param options - Options for starting the agent span
    */
   startAgentSpan(options: StartAgentSpanOptions): Span | null {
-    const {
-      messages,
-      agentName,
-      agentId,
-      modelId,
-      genAIProviderName,
-      tools,
-      traceAttributes,
-      toolsConfig,
-      systemPrompt,
-    } = options
+    const { messages, agentName, agentId, modelId, tools, traceAttributes, toolsConfig, systemPrompt } = options
 
     // Reset local trace state for this invocation
     this._traceState.traces = []
@@ -290,7 +280,7 @@ export class Tracer {
 
     try {
       const spanName = `invoke_agent ${agentName}`
-      const attributes = this._getCommonAttributes('invoke_agent', genAIProviderName)
+      const attributes = this._getCommonAttributes('invoke_agent')
       attributes['gen_ai.agent.name'] = agentName
       attributes['name'] = spanName
       if (agentId) attributes['gen_ai.agent.id'] = agentId
@@ -443,7 +433,7 @@ export class Tracer {
    * @param options - Options for starting the tool call span
    */
   startToolCallSpan(options: StartToolCallSpanOptions): Span | null {
-    const { tool, genAIProviderName } = options
+    const { tool } = options
 
     // Create local tool trace as child of current cycle
     const toolTrace = new AgentTrace(
@@ -455,7 +445,7 @@ export class Tracer {
     this._traceState.currentTool = toolTrace
 
     try {
-      const attributes = this._getCommonAttributes('execute_tool', genAIProviderName)
+      const attributes = this._getCommonAttributes('execute_tool')
       attributes['gen_ai.tool.name'] = tool.name
       attributes['gen_ai.tool.call.id'] = tool.toolUseId
 
@@ -1076,14 +1066,14 @@ export class Tracer {
    * The provider attribute name changed between OTEL semconv versions:
    * - Stable: 'gen_ai.system'
    * - Latest experimental: 'gen_ai.provider.name'
-   * The provider attribute is omitted when `genAIProviderName` is undefined.
+   * The provider attribute is omitted when `genAIProviderName` is undefined or empty.
    */
   private _getCommonAttributes(operationName: string, genAIProviderName?: string): Record<string, AttributeValue> {
     const attributes: Record<string, AttributeValue> = {
       'gen_ai.operation.name': operationName,
     }
 
-    if (genAIProviderName !== undefined) {
+    if (genAIProviderName) {
       attributes[this._useLatestConventions ? 'gen_ai.provider.name' : 'gen_ai.system'] = genAIProviderName
     }
 

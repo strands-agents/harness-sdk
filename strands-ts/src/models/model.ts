@@ -417,8 +417,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
 
   /**
    * The OpenTelemetry `gen_ai.provider.name` value for the GenAI provider this model calls (for example
-   * `'aws.bedrock'`), or `undefined` when unknown. Spans omit the attribute when this is `undefined`; a
-   * custom provider overrides this getter, using a semantic-convention well-known value when one applies.
+   * `'aws.bedrock'`), or `undefined` when unknown. Model-call (`chat`) spans record it as `gen_ai.provider.name`
+   * (or `gen_ai.system`) and omit it when `undefined`; a custom provider overrides this getter, using a
+   * semantic-convention well-known value when one applies.
    */
   get genAIProviderName(): string | undefined {
     return undefined

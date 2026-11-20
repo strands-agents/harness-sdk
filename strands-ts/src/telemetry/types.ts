@@ -24,8 +24,6 @@ export interface StartAgentSpanOptions {
   agentId?: string
   /** Model identifier used by the agent. */
   modelId?: string
-  /** GenAI provider recorded as gen_ai.provider.name (or gen_ai.system); omitted when undefined. */
-  genAIProviderName?: string
   /** List of tools available to the agent. */
   tools?: { name: string }[]
   /** Custom attributes to merge onto the span. */
@@ -86,8 +84,6 @@ export interface EndModelSpanOptions {
 export interface StartToolCallSpanOptions {
   /** Tool use request containing name, id, and input arguments. */
   tool: ToolUse
-  /** GenAI provider recorded as gen_ai.provider.name (or gen_ai.system); omitted when undefined. */
-  genAIProviderName?: string
 }
 
 /**

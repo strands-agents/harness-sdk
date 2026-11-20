@@ -104,7 +104,7 @@ describe('Agent tracer integration', () => {
 
   describe('agent span lifecycle', () => {
     it('starts and ends agent span on successful invocation', async () => {
-      const model = new ProviderModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model, name: 'TestAgent', id: 'test-id' })
       const tracer = getLatestTracer()
 
@@ -116,7 +116,6 @@ describe('Agent tracer integration', () => {
           agentName: 'TestAgent',
           agentId: 'test-id',
           modelId: 'test-model',
-          genAIProviderName: 'aws.bedrock',
         })
       )
       expect(tracer.endAgentSpan).toHaveBeenCalledTimes(1)
@@ -533,7 +532,7 @@ describe('Agent tracer integration', () => {
 
   describe('tool call span lifecycle', () => {
     it('starts and ends tool span for each tool execution', async () => {
-      const model = new ProviderModel()
+      const model = new MockMessageModel()
         .addTurn({ type: 'toolUseBlock', name: 'testTool', toolUseId: 'tool-1', input: { key: 'val' } })
         .addTurn({ type: 'textBlock', text: 'Done' })
 
@@ -559,7 +558,6 @@ describe('Agent tracer integration', () => {
           toolUseId: 'tool-1',
           input: { key: 'val' },
         }),
-        genAIProviderName: 'aws.bedrock',
       })
       expect(tracer.endToolCallSpan).toHaveBeenCalledTimes(1)
       expect(tracer.endToolCallSpan).toHaveBeenCalledWith(
