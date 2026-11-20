@@ -339,7 +339,7 @@ const buttonHint = (
   return button === 'back' ? 'Enter back' : 'Enter cancel'
 }
 
-const LEAVE_HINT = 'Tab chat'
+const LEAVE_HINT = 'Tab/↓ chat'
 
 const oneQuestionActions = (field: WizardField | undefined): string[] => {
   if (field?.kind === 'text') return ['Enter type']
@@ -465,8 +465,11 @@ export const Wizard = ({
         if (walked) stepTo(key.shift ? -1 : 1, [])
         else onLeave?.()
       } else if (key.upArrow) cursor.move(-1)
-      else if (key.downArrow) cursor.move(1)
-      else if (key.leftArrow || key.rightArrow) {
+      else if (key.downArrow) {
+        // Past the last row of one question, down carries on into the chat instead of stopping.
+        if (!walked && onLeave && cursor.current() === rows.length - 1) onLeave()
+        else cursor.move(1)
+      } else if (key.leftArrow || key.rightArrow) {
         if (row?.kind === 'field' && row.field.kind === 'choice') row.field.move(key.rightArrow ? 1 : -1)
       } else if (!walked && key.return) finishOne(row)
       else if (key.return || shortcut(input, key) === ' ') activate(row)

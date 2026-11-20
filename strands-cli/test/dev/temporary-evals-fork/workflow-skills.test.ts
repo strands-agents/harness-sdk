@@ -207,6 +207,21 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain("put the plan's onByDefault knobs in selected")
   })
 
+  it('shouldExplainWhatARunIsBeforeAskingForOne', () => {
+    expect(instructions).toContain('Say what a run is before you ask for one')
+    expect(instructions).toContain('uses its cases as the test')
+    expect(instructions).toContain('It changes no file')
+    expect(instructions).toContain('many paid model calls and can take a long time')
+    expect(instructions).toContain('Explain this once per chat')
+  })
+
+  it('shouldAskWhichExperimentWithAWayToDecline', () => {
+    expect(instructions).toContain('call strands_dev_status for the saved experiments')
+    expect(instructions).toContain('ask selectOne, key "experiment"')
+    expect(instructions).toContain('labelled "not now"')
+    expect(instructions).toContain('Stop without planning anything when they pick "not now" or cancel')
+  })
+
   it('shouldAlwaysAskWhatTheRunOptimizes', () => {
     expect(instructions).toContain('Ask what the run optimizes, every time')
     expect(instructions).toContain('ask selectOne, key "objective"')

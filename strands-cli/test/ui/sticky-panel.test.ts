@@ -29,7 +29,7 @@ const askCommand = (): DevChatCommand => {
     useInput(
       (input, key) => {
         if (key.escape) close()
-        else if (key.tab) blur?.()
+        else if (key.tab || key.downArrow) blur?.()
         else setKeys((current) => current + input)
       },
       { isActive: active }
@@ -110,6 +110,23 @@ describe('a sticky question panel', () => {
     await press('\u001b[<0;10;37m')
 
     expect(controller.getSnapshot().panel?.kind).toBe('dev')
+  })
+
+  it('shouldMoveBetweenTheQuestionAndTheChatWithTheArrows', async () => {
+    const { press, screen } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+
+    await press('\u001b[B')
+    await press('h')
+    expect(screen()).toContain('question keys:[]')
+    expect(screen()).toContain('h')
+
+    await press('\u007f')
+    await press('\u001b[A')
+    await press('z')
+
+    expect(screen()).toContain('question keys:[z]')
   })
 
   it('shouldSendKeysToTheQuestionBeforeTab', async () => {

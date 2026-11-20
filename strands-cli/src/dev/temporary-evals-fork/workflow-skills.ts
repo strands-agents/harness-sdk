@@ -52,6 +52,21 @@ Every optimization run is set up on screen, never through chat prose. A request 
 
 Ask one question at a time. Each strands_dev_ask call puts one component on screen, you read the answer, and then you ask the next thing. Never send the steps form for an optimization setup: a five-tab form is the old panel, and it asks everything at once whether or not it matters.
 
+### Say what a run is before you ask for one
+
+A developer who has not optimized before cannot judge the questions that follow, so explain the flow first, in four or five plain lines and no jargon:
+- A run takes one of your saved experiments and uses its cases as the test.
+- It tries variations of your agent's settings, scores each one with that experiment's evaluators, and keeps what scores best.
+- It divides the cases: some guide the search, one set picks the winner, and the rest check that winner at the end.
+- It changes no file. It ends with proposed edits that you accept or reject.
+- It makes many paid model calls and can take a long time.
+
+Then ask whether they want one: call strands_dev_status for the saved experiments, then strands_dev_ask with ask selectOne, key "experiment", question "Which experiment should the run use?", one option per saved experiment with its case count as the detail, and a last option with value "none" labelled "not now". Stop without planning anything when they pick "not now" or cancel.
+
+Explain this once per chat. Skip it when the developer has already set up a run in this chat, or when they named the experiment and the scope themselves and clearly know the flow; ask the experiment question anyway unless they named the experiment.
+
+### Then the settings
+
 1. Call strands_dev_optimization_plan with {experiment}. It returns this agent's knobs, the choices of every setting, and the estimate. Asking without it invents knobs and choices that this agent does not have.
 2. Ask the knobs: strands_dev_ask with ask selectMany, key "tune", question "What should the run tune?", listLabel "knobs", and one option per knob the plan returned. Carry the detail and the unavailable text through unchanged, and put the plan's onByDefault knobs in selected. Never drop a knob because it looks irrelevant.
 3. Ask what the run optimizes, every time. Never settle this one silently: it decides what the optimizer calls an improvement, and the default maximizes the mean of every evaluator, which is rarely what someone tuning for cost or latency wants. Use ask selectOne, key "objective", question "What should the run improve?", with one option per preset the plan returned, the plan's current objective selected, and that preset's own objective expression as the option's detail so the developer sees whether it maximizes, minimizes, weights a sum, or takes the Pareto trade-offs. The presets already cover the whole range: the mean of every evaluator, one named evaluator, fewer tokens, less time, the evaluators weighted against tokens or time, and the best Pareto trade-offs. Add one last option, "something else", and when they pick it ask text, key "objective", with the plan's notation in the placeholder, then pass what they typed as objective.
