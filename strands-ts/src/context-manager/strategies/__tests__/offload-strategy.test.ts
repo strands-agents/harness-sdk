@@ -503,7 +503,7 @@ describe('Offload message-level with role alternation', () => {
     expect(await strategy.apply(context)).toBe(true)
 
     const marker = offloadPlaceholder('drop', formatDroppedMessages(removedTokens), undefined, removedTokens)
-    expect(messages).toEqual([q1, toolUse.with({ content: [...toolUse.content, marker] }), toolResult, a3])
+    expect(messages).toEqual([q1, toolUse.with({ content: [marker, ...toolUse.content] }), toolResult, a3])
     expect(messages[2]).toBe(toolResult)
   })
 
@@ -929,6 +929,16 @@ describe('insertMarker', () => {
     insertMarker(messages, 1, new TextBlock('marker'))
     expect(messages).toHaveLength(3)
     expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker')])
+  })
+
+  // A text block after a toolUse reads as assistant prefill to Anthropic models with thinking enabled.
+  it('places the marker before a trailing tool use block', () => {
+    const toolUse = new ToolUseBlock({ toolUseId: 'tu-1', name: 'read', input: {} })
+    const carrier = new Message({ role: 'assistant', content: [new TextBlock('a1'), toolUse] })
+    const messages = [text('user', 'task'), carrier, text('user', 'u1')]
+    insertMarker(messages, 1, new TextBlock('marker'))
+    expect(messages).toHaveLength(3)
+    expect(messages[1]!.content).toEqual([new TextBlock('a1'), new TextBlock('marker'), toolUse])
   })
 
   it.each([

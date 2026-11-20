@@ -7,7 +7,7 @@
 
 import { logger } from '../logging/logger.js'
 import { Message, ToolResultBlock, ToolUseBlock } from '../types/messages.js'
-import type { MessageMetadata, OffloadMethod, TextBlock } from '../types/messages.js'
+import type { ContentBlock, MessageMetadata, OffloadMethod, TextBlock } from '../types/messages.js'
 import { carriedTokens, offloadPlaceholder } from './placeholder.js'
 import type { Stash } from './stash.js'
 import type { Model } from '../models/model.js'
@@ -89,20 +89,33 @@ export function withPairs(messages: Message[], toRemove: Message[]): Message[] {
 /**
  * Adds a marker as assistant content at the gap left by removed messages.
  *
- * The marker is appended to an assistant message beside the gap, which keeps that message's
- * tracking id and block indices for stash refs, or becomes its own assistant message. It never
- * joins message 0, and the last message is never removed, so a new marker never ends the history.
+ * The marker joins an assistant message beside the gap, before any trailing `toolUse` blocks, which
+ * keeps that message's tracking id for stash refs; otherwise it becomes its own assistant message.
+ * It never joins message 0, and the last message is never removed, so a new marker never ends the
+ * history.
  */
 export function insertMarker(messages: Message[], index: number, marker: TextBlock): void {
   index = Math.max(1, Math.min(index, messages.length))
   for (const neighbor of [index - 1, index]) {
     const carrier = messages[neighbor]
     if (neighbor > 0 && carrier?.role === 'assistant') {
-      messages[neighbor] = carrier.with({ content: [...carrier.content, marker] })
+      messages[neighbor] = carrier.with({ content: contentWithMarker(carrier.content, marker) })
       return
     }
   }
   messages.splice(index, 0, new Message({ role: 'assistant', content: [marker] }))
+}
+
+/**
+ * The carrier's content with the marker added before any trailing `toolUse` blocks.
+ *
+ * Anthropic models with thinking enabled reject a request whose assistant message carries a text
+ * block after a `toolUse` block, as assistant prefill.
+ */
+function contentWithMarker(content: ContentBlock[], marker: TextBlock): ContentBlock[] {
+  let end = content.length
+  while (end > 0 && content[end - 1] instanceof ToolUseBlock) end--
+  return [...content.slice(0, end), marker, ...content.slice(end)]
 }
 
 /**
