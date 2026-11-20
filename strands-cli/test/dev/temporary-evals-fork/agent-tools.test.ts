@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { DevChatTool } from '../../../src/dev/chat-extension.js'
 import type {
+  EvalsBrowserPlace,
   EvalsBrowserState,
   ExperimentsState,
   ExperimentSummary,
@@ -221,7 +222,15 @@ const fakeSessions = () => {
           setTimeout(() => finishRun({ step: 'review', review: { ...current.review, applied: ['agent.py'] } }), 0)
       }),
     },
-    ui: { ...ui, open: vi.fn() },
+    ui: {
+      ...ui,
+      open: vi.fn(),
+      address: vi.fn(async (place: EvalsBrowserPlace) =>
+        ui.snapshot().status === 'ready'
+          ? ({ status: 'ready', url: `http://127.0.0.1:7777/${place.view}?t=tok` } as const)
+          : ({ status: ui.snapshot().status } as const)
+      ),
+    },
   }
   return { sessions, experiments, test, optimize, ui, finishRun }
 }
@@ -345,7 +354,6 @@ describe('TEMPORARY dev chat part', () => {
     ])
     expect(part.tools.map(({ name, readOnly }) => [name, readOnly === true])).toEqual([
       ['strands_dev_status', true],
-      ['strands_dev_evals_ui', false],
       ['strands_dev_evaluators', false],
       ['strands_dev_create_experiment', false],
       ['strands_dev_session_converter', false],
@@ -392,7 +400,12 @@ describe('TEMPORARY dev chat part', () => {
       ],
       generations: [],
       optimization: { step: 'idle' },
-      evalsUi: { status: 'ready', open: expect.stringContaining('presses o in /experiment or /evaluate') },
+      evalsUi: {
+        status: 'ready',
+        use: expect.stringContaining('Give them the one that matches what you are talking about'),
+        evaluationRuns: expect.stringContaining('http://127.0.0.1:7777/runs'),
+        optimizationRuns: expect.stringContaining('http://127.0.0.1:7777/opt-runs'),
+      },
     })
   })
 

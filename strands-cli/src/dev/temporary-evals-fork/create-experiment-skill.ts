@@ -50,7 +50,7 @@ Before generation, briefly describe what the cases will test and how many you wi
 
 After approval, call strands_dev_create_experiment with the settings. Generation uses ExperimentGenerator from strands-evals and saves experiments/<name>/<name>.json in the workspace folder. Progress appears below the chat input.
 
-When it finishes, give the name and case count, show a few representative inputs, and point to /experiment for review. Call strands_dev_evals_ui with the experiment view and give the developer its link too, for a fuller look at the cases than the chat shows. Offer to run the cases, but do not start an evaluation or an optimization without approval. If it fails, explain the actionable problem briefly and offer a targeted fix rather than restarting the interview.
+When it finishes, give the name and case count, show a few representative inputs, and point to /experiment for review. Give the developer this experiment's own page from strands_dev_status too, for a fuller look at the cases than the chat shows, and leave opening it to them. Offer to run the cases, but do not start an evaluation or an optimization without approval. If it fails, explain the actionable problem briefly and offer a targeted fix rather than restarting the interview.
 
 Tool settings reference (use silently unless asked):
 - task: required, the specific behavior being tested; context: relevant scenarios or constraints.

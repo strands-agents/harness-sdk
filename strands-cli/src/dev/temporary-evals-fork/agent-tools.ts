@@ -342,13 +342,24 @@ const pendingReview = (state: OptimizeState): ChosenReview | undefined =>
 const runState = ({ runs = [] }: OptimizeState, id: string): OptimizeRunState | undefined =>
   runs.find((run) => run.id === id)?.state
 
-const optimizationStatus = (state: OptimizeState): object =>
-  defined({
-    ...pageStatus(state),
+const optimizationStatus = async (state: OptimizeState, ui: EvalsBrowser): Promise<object> => {
+  const withPage = async (run: OptimizeState, experiment?: string): Promise<object> => {
+    const shown = pageStatus(run)
+    const record = 'run' in shown && typeof shown.run === 'string' ? shown.run : undefined
+    return defined({
+      ...(experiment === undefined ? {} : { experiment }),
+      ...shown,
+      // The page of this run, so a mention of it carries the link to it rather than to the list.
+      page: record === undefined ? undefined : await pageLink(ui, { view: 'optimization', record }),
+    })
+  }
+  return defined({
+    ...(await withPage(state)),
     runs: state.runs?.length
-      ? state.runs.map(({ experiment, state: run }) => ({ experiment, ...pageStatus(run) }))
+      ? await Promise.all(state.runs.map(({ experiment, state: run }) => withPage(run, experiment)))
       : undefined,
   })
+}
 
 const pageStatus = (state: OptimizeState): object => {
   switch (state.step) {
@@ -379,11 +390,21 @@ const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefin
   return found ? runStatus(found.run) : undefined
 }
 
-const EVALS_UI_OPENING = 'The developer presses o in /experiment or /evaluate to open the current item.'
+const EVALS_UI_USE =
+  "Each page link below opens in the developer's own browser. Give them the one that matches what you are " +
+  'talking about, as a plain link in your message, and let them decide whether to open it. Never open it for ' +
+  'them, and never write an address that is not here.'
 
-const evalsUiStatus = (ui: EvalsBrowser): object => {
+const pageLink = async (ui: EvalsBrowser, place: EvalsBrowserPlace): Promise<string | undefined> => {
+  const address = await ui.address(place).catch(() => undefined)
+  return address?.status === 'ready' ? address.url : undefined
+}
+
+const evalsUiStatus = async (ui: EvalsBrowser): Promise<object> => {
   const { status, detail } = ui.snapshot()
-  return defined({ status, detail, open: status === 'ready' ? EVALS_UI_OPENING : undefined })
+  if (status !== 'ready') return defined({ status, detail })
+  const [runs, optimizations] = await Promise.all([pageLink(ui, { view: 'runs' }), pageLink(ui, { view: 'opt-runs' })])
+  return defined({ status, detail, use: EVALS_UI_USE, evaluationRuns: runs, optimizationRuns: optimizations })
 }
 
 const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevChatTool => ({
@@ -403,12 +424,20 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
     const { runs } = test.snapshot()
     return reply({
       experimentsFolder: folder,
-      experiments: saved.map(({ name, caseCount, path }) =>
-        defined({ name, cases: caseCount, file: path, lastTest: lastRun(runs, path) })
+      experiments: await Promise.all(
+        saved.map(async ({ name, caseCount, path }) =>
+          defined({
+            name,
+            cases: caseCount,
+            file: path,
+            lastTest: lastRun(runs, path),
+            page: await pageLink(ui, { view: 'experiment', experiment: path }),
+          })
+        )
       ),
       generations: generations.map(generationStatus),
-      optimization: optimizationStatus(optimize.snapshot()),
-      evalsUi: evalsUiStatus(ui),
+      optimization: await optimizationStatus(optimize.snapshot(), ui),
+      evalsUi: await evalsUiStatus(ui),
       newExperiment: {
         ...experiments.suggested(),
         pastChats,
@@ -614,63 +643,6 @@ const objectiveFor = async (experiment: ExperimentSummary, input: Input): Promis
     throw new Error(`${problem} The evaluators of ${experiment.name}: ${loaded.evaluators.join(', ') || 'none'}.`)
   return chosen
 }
-
-const evalsUiTool = (sessions: Sessions): DevChatTool => ({
-  name: 'strands_dev_evals_ui',
-  description:
-    'Open the local evals UI at one place and get its link, for a closer look at an experiment, a report, or an ' +
-    'optimization run than the chat can give. Call it when the developer asks to see something in a browser, and ' +
-    'when you report a finished run or a saved experiment: give them the link either way, because the browser may ' +
-    'not open on its own and the link still works. view runs lists the evaluation runs, opt-runs the optimization ' +
-    'runs, experiment or report opens one experiment by name, and optimization opens one run by its record id.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      view: {
-        type: 'string',
-        enum: ['runs', 'opt-runs', 'experiment', 'report', 'optimization'],
-        description: 'Which page to open.',
-      },
-      experiment: { type: 'string', description: 'With experiment or report: the saved experiment name.' },
-      case: { type: 'string', description: 'With experiment: one case of it, by name.' },
-      record: { type: 'string', description: 'With optimization: the run record id, as the run reports it.' },
-    },
-    required: ['view'],
-    additionalProperties: false,
-  },
-  run: async (input): Promise<string> => {
-    const { ui } = sessions()
-    const view = requiredText(input, 'view')
-    const place = ((): EvalsBrowserPlace => {
-      if (view === 'runs' || view === 'opt-runs') return { view }
-      if (view === 'optimization') return { view, record: requiredText(input, 'record') }
-      if (view !== 'experiment' && view !== 'report')
-        throw new Error('view must be one of runs, opt-runs, experiment, report, optimization.')
-      const name = requiredText(input, 'experiment')
-      const chosen = text(input, 'case')
-      return { view, experiment: name, ...(chosen ? { case: chosen } : {}) }
-    })()
-    const address = await ui.address(place)
-    if (address.status !== 'ready')
-      return reply(
-        defined({
-          status: address.status,
-          detail: address.detail,
-          next: 'The evals UI is not ready. Say so, and offer to try again in a moment.',
-        })
-      )
-    const notice = await ui.open(place)
-    return reply(
-      defined({
-        status: 'ready',
-        url: address.url,
-        forward: address.forward,
-        opened: notice === undefined,
-        next: 'Give the developer the url. It is a local address, so it only opens on their own machine.',
-      })
-    )
-  },
-})
 
 const planTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_optimization_plan',
@@ -1043,7 +1015,6 @@ export const temporaryDevChatPart = ({ sessions, evaluators, history }: Temporar
   skills: [temporaryCreateExperimentSkill(), ...temporaryWorkflowSkills()],
   tools: [
     statusTool(sessions, history),
-    evalsUiTool(sessions),
     evaluatorsTool(once(evaluators)),
     createTool(sessions),
     sessionConverterTool(history),
