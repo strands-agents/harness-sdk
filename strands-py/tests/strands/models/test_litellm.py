@@ -1,4 +1,5 @@
 import copy
+import json
 import unittest.mock
 import warnings
 from types import SimpleNamespace
@@ -1778,3 +1779,28 @@ def test_format_request_keeps_the_callers_message_ttl_without_cache_config():
         }
     ]
     assert tru_messages == exp_messages
+
+
+@pytest.mark.parametrize(
+    ("model_id", "client_args", "exp_points", "exp_key"),
+    [
+        ("litellm_proxy/claude-haiku-4-5", {}, True, False),
+        ("claude-haiku-4-5", {"use_litellm_proxy": True}, True, False),
+        ("azure_ai/claude-sonnet-4-5", {}, True, False),
+        ("amazon.nova-lite-v1:0", {"use_litellm_proxy": True}, False, True),
+        ("litellm_proxy/gpt-4o", {}, False, True),
+        ("litellm_proxy/my-alias", {}, True, False),
+    ],
+    ids=["gateway_claude", "proxy_flag_claude", "azure_ai_claude", "proxy_flag_nova", "gateway_gpt", "unknown_alias"],
+)
+def test_format_request_anthropic_strategy_on_gateways_follows_the_named_model(
+    model_id, client_args, exp_points, exp_key
+):
+    model = LiteLLMModel(
+        model_id=model_id, client_args=client_args, cache_config=CacheConfig(strategy="anthropic", cache_key="k")
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}], system_prompt="s1")
+
+    assert ("cache_control" in json.dumps(request)) is exp_points
+    assert ("prompt_cache_key" in request) is exp_key

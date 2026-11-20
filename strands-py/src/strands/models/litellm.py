@@ -34,7 +34,7 @@ from ._cache_points import (
     with_placed_points_normalized,
     with_point_ttls,
 )
-from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
+from ._model_info import ModelCapabilities, ModelInfo, lookup_model, lookup_model_info
 from ._validation import _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
@@ -483,9 +483,13 @@ class LiteLLMModel(OpenAIModel):
         if prompt_caching == "cache_points":
             return True
         cache_config = self.get_config().get("cache_config")
-        if cache_config is None or cache_config.strategy != "anthropic" or prompt_caching in ("auto", "unsupported"):
+        if cache_config is None or cache_config.strategy != "anthropic" or prompt_caching == "unsupported":
             return False
-        return _may_take_cache_points(self._backend())
+        backend = self._backend()
+        # A Claude id on a gateway reports auto, since the gateway route is not known to take cache_control.
+        if prompt_caching == "auto" and not (backend and "claude" in backend[0].lower()):
+            return False
+        return _may_take_cache_points(backend)
 
     @override
     def _routing_cache_config(self) -> CacheConfig | None:
@@ -888,8 +892,9 @@ def _may_take_cache_points(backend: tuple[str, str] | None) -> bool:
     """Whether a backend can be one that takes cache points, for ``strategy="anthropic"`` to place them on.
 
     A Claude model can, on any provider, and so can anything on ``anthropic/``. Bedrock and Vertex AI also host models
-    that can't (Gemini, Nova), so there the model must be Claude. An unknown backend or a bare gateway alias can; a
-    gateway id naming its backend can only when that is Anthropic. Gemini never can.
+    that can't (Gemini, Nova), so there the model must be Claude. An unknown backend can, and so can a bare gateway
+    alias the shared model info doesn't know; a gateway id naming its backend can only when that is Anthropic.
+    Gemini never can.
     """
     if backend is None:
         return True
@@ -901,8 +906,10 @@ def _may_take_cache_points(backend: tuple[str, str] | None) -> bool:
         return True
     if provider not in _GATEWAY_PROVIDERS:
         return False
-    named = backend_id.split("/", 1)[0] if "/" in backend_id else None
-    return named is None or named == "anthropic"
+    if "/" in backend_id:
+        return backend_id.split("/", 1)[0] == "anthropic"
+    # A bare alias the shared model info knows is that model, not an unknown backend.
+    return lookup_model(backend_id) is None
 
 
 def _litellm_validates_prompt_cache_key() -> bool:
