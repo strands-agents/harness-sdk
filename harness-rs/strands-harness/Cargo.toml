@@ -1,0 +1,66 @@
+[package]
+name = "strands-harness"
+description = "A preconfigured Strands agent in one call"
+readme = "../README.md"
+keywords = ["agents", "ai", "llm", "strands", "harness"]
+categories = ["api-bindings", "asynchronous"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[features]
+default = ["bedrock", "anthropic", "openai", "mantle", "mcp", "cedar", "monty-pool"]
+bedrock = ["strands/bedrock"]
+anthropic = ["strands/anthropic"]
+openai = ["strands/openai"]
+mantle = ["openai", "strands/mantle"]
+mcp = ["strands/mcp"]
+otel = ["strands/otel"]
+cedar = ["strands/cedar"]
+# Runs programmatic_tool_caller code in `monty` worker subprocesses when a worker binary is found.
+monty-pool = ["dep:monty-pool"]
+
+[dependencies]
+strands.workspace = true
+
+async-stream.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bon.workspace = true
+encoding_rs = "0.8"
+futures.workspace = true
+indexmap.workspace = true
+jiff.workspace = true
+monty.workspace = true
+monty-pool = { workspace = true, optional = true }
+monty-types.workspace = true
+rand.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util", "net", "fs"] }
+tracing-subscriber.workspace = true
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio", "service", "server"] }
+http-body-util.workspace = true
+bytes.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
