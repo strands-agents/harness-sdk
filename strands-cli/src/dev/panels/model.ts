@@ -487,8 +487,14 @@ export interface EvalsBrowserState {
   readonly detail?: string
 }
 
+/** Where one place lives, so a caller can hand the developer a link instead of opening a browser for them. */
+export type EvalsBrowserAddress =
+  | { readonly status: 'ready'; readonly url: string; readonly forward?: string }
+  | { readonly status: 'off' | 'starting' | 'unavailable'; readonly detail?: string }
+
 export interface EvalsBrowser {
   subscribe(listener: () => void): () => void
   snapshot(): EvalsBrowserState
   open(place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined>
+  address(place: EvalsBrowserPlace): Promise<EvalsBrowserAddress>
 }

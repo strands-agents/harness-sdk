@@ -345,6 +345,7 @@ describe('TEMPORARY dev chat part', () => {
     ])
     expect(part.tools.map(({ name, readOnly }) => [name, readOnly === true])).toEqual([
       ['strands_dev_status', true],
+      ['strands_dev_evals_ui', false],
       ['strands_dev_evaluators', false],
       ['strands_dev_create_experiment', false],
       ['strands_dev_session_converter', false],

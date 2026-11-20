@@ -6,7 +6,13 @@ import { URL } from 'node:url'
 
 import { containsPath } from '../../paths.js'
 import { errorMessage } from '../../terminal/text.js'
-import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace, EvalsBrowserState } from '../panels/model.js'
+import type {
+  EvalsBrowser,
+  EvalsBrowserAddress,
+  EvalsBrowserNotice,
+  EvalsBrowserPlace,
+  EvalsBrowserState,
+} from '../panels/model.js'
 import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions } from './environment.js'
 import { temporaryEvalsEnvironment, temporaryWorkspaceDirectory } from './evals-process.js'
 import { announce, type TemporaryHost } from './host.js'
@@ -133,6 +139,27 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     if (!this.url) return undefined
     const address = new URL(this.url)
     return `${address.origin}${this.route(place, runFolder)}?t=${address.searchParams.get('t') ?? ''}`
+  }
+
+  /** The address of one place, started if it is off, for a caller that shows the link rather than opening it. */
+  address = async (place: EvalsBrowserPlace): Promise<EvalsBrowserAddress> => {
+    const { state } = this
+    if (state.status === 'off' || state.status === 'unavailable') this.start()
+    const { status, detail } = this.state
+    if (status !== 'ready' || this.port === undefined)
+      return { status: status === 'ready' ? 'starting' : status, ...(detail === undefined ? {} : { detail }) }
+    const runFolder =
+      place.view === 'optimization' ? await temporaryRunFolder(place.record).catch(() => undefined) : undefined
+    const url = this.link(place, runFolder)
+    if (!url) return { status: 'unavailable', detail: 'strands dev has no address for the evals UI yet' }
+    const environment = this.dependencies.environment ?? process.env
+    return {
+      status: 'ready',
+      url,
+      ...(isRemote(environment)
+        ? { forward: `ssh -N -L ${this.port}:127.0.0.1:${this.port} ${(this.dependencies.machine ?? hostname)()}` }
+        : {}),
+    }
   }
 
   open = async (place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined> => {

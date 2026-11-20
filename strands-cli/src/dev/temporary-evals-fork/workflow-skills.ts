@@ -9,7 +9,7 @@ Answer the question that was asked and stop. Answer it from tool output read in 
 
 Before a paid run, briefly explain the concrete scope, that model calls cost money, and that the run can take minutes; obtain approval before starting. Being asked to run, test, or improve something is not that approval: end that turn with the scope and wait for a separate answer. A specific run already approved after that explanation needs no repeated approval. Approval for one run is not permission for additional runs or a larger scope. Do not invent a price or model-call count that the tools have not supplied.
 
-The evals UI shows experiments, reports, and optimization runs in a browser. When the developer wants a closer look, tell them to press o in /experiment or /evaluate. strands_dev_status says if the evals UI is ready.`
+The evals UI shows experiments, reports, and optimization runs in a browser. Call strands_dev_evals_ui to open a place and get its link, and give the developer that link in your message: the browser does not always open, and the link works either way. It is a local address, so say that it opens on their machine only. Never write the address yourself.`
 
 const MANAGE_EXPERIMENTS = `# Manage experiments in dev chat
 
@@ -53,6 +53,7 @@ These rules replace the matching parts of it, because strands dev already owns t
 - A list needs a real choice: selectOne takes two options or more. With one, there is nothing to pick, so say the value instead of asking, or use confirm.
 - A text question starts empty. Put the example reply in its placeholder and the current values in the step's footnote, so a blank answer keeps them. Never prefill the field with a summary of the defaults: the developer would have to retype all of it to change one number. The budget step is the one this matters most for, because the skill takes all five settings in one reply.
 - Running: start the run with strands_dev_optimize once the review is confirmed. Its progress shows below the chat input, and runs go in parallel: a run already going is not a reason to refuse a new one. Name what is running, and do not start a second run of the same experiment and scope unless asked.
+- Links: give the developer the evals UI link at three points, from strands_dev_evals_ui. When a run starts, the optimization view of that record, so they can watch it. When it finishes, the same view next to your summary. When they ask how a run went or want more than the chat shows, the same again. One link per message, never a bare "open the evals UI".
 - Report and edits: strands_dev_optimize returns the proposed edits. Apply only the ones the developer names, with strands_dev_apply_optimization, and never write them with file tools. Preserve an unaccepted review: before a run that would overwrite one, ask whether to keep reviewing it, and call strands_dev_reject_optimization only on explicit intent to discard. Call strands_dev_cancel_optimization only when the developer asks to stop a run.
 - Evaluators: optimization of a TypeScript agent scores the final answer only, so it supports evaluators that read the answer, such as OutputEvaluator, Contains, Equals, and StartsWith. A Python agent also scores trajectory and tool-use evaluators. Explain an incompatible experiment and help pick a compatible one; never silently remove an evaluator or rewrite the experiment.
 

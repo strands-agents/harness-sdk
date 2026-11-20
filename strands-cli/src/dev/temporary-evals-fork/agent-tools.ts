@@ -19,6 +19,7 @@ import type {
   TestCheck,
   TestResults,
   TestRun,
+  EvalsBrowserPlace,
 } from '../panels/model.js'
 import { askTool } from './ask-tool.js'
 import { temporaryWorkflowSkills } from './workflow-skills.js'
@@ -614,6 +615,63 @@ const objectiveFor = async (experiment: ExperimentSummary, input: Input): Promis
   return chosen
 }
 
+const evalsUiTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_evals_ui',
+  description:
+    'Open the local evals UI at one place and get its link, for a closer look at an experiment, a report, or an ' +
+    'optimization run than the chat can give. Call it when the developer asks to see something in a browser, and ' +
+    'when you report a finished run or a saved experiment: give them the link either way, because the browser may ' +
+    'not open on its own and the link still works. view runs lists the evaluation runs, opt-runs the optimization ' +
+    'runs, experiment or report opens one experiment by name, and optimization opens one run by its record id.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      view: {
+        type: 'string',
+        enum: ['runs', 'opt-runs', 'experiment', 'report', 'optimization'],
+        description: 'Which page to open.',
+      },
+      experiment: { type: 'string', description: 'With experiment or report: the saved experiment name.' },
+      case: { type: 'string', description: 'With experiment: one case of it, by name.' },
+      record: { type: 'string', description: 'With optimization: the run record id, as the run reports it.' },
+    },
+    required: ['view'],
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const { ui } = sessions()
+    const view = requiredText(input, 'view')
+    const place = ((): EvalsBrowserPlace => {
+      if (view === 'runs' || view === 'opt-runs') return { view }
+      if (view === 'optimization') return { view, record: requiredText(input, 'record') }
+      if (view !== 'experiment' && view !== 'report')
+        throw new Error('view must be one of runs, opt-runs, experiment, report, optimization.')
+      const name = requiredText(input, 'experiment')
+      const chosen = text(input, 'case')
+      return { view, experiment: name, ...(chosen ? { case: chosen } : {}) }
+    })()
+    const address = await ui.address(place)
+    if (address.status !== 'ready')
+      return reply(
+        defined({
+          status: address.status,
+          detail: address.detail,
+          next: 'The evals UI is not ready. Say so, and offer to try again in a moment.',
+        })
+      )
+    const notice = await ui.open(place)
+    return reply(
+      defined({
+        status: 'ready',
+        url: address.url,
+        forward: address.forward,
+        opened: notice === undefined,
+        next: 'Give the developer the url. It is a local address, so it only opens on their own machine.',
+      })
+    )
+  },
+})
+
 const planTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_optimization_plan',
   description:
@@ -985,6 +1043,7 @@ export const temporaryDevChatPart = ({ sessions, evaluators, history }: Temporar
   skills: [temporaryCreateExperimentSkill(), ...temporaryWorkflowSkills()],
   tools: [
     statusTool(sessions, history),
+    evalsUiTool(sessions),
     evaluatorsTool(once(evaluators)),
     createTool(sessions),
     sessionConverterTool(history),
