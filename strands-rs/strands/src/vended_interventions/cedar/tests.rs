@@ -961,3 +961,50 @@ fn skips_validation_for_an_empty_schema_file() {
     });
     assert_eq!(decide(&handler, &local_agent(), "search", json!({})), "proceed");
 }
+
+#[tokio::test]
+async fn gives_a_subagent_child_its_own_call_counts() {
+    let handler = rate_limit(3);
+    let senders: Arc<std::sync::Mutex<Vec<crate::agent::ToolAgent>>> = Arc::default();
+    let recorded = senders.clone();
+    let send_email = MockTool::new("send_email").with_result(move |context| {
+        recorded.lock().unwrap().push(context.agent().clone());
+        ToolOutcome::Result(ToolResultBlock::success(context.tool_use().tool_use_id.clone(), vec![]))
+    });
+    // The child inherits the parent's model, so turns are consumed in order across both agents.
+    let model = MockModel::new()
+        .with_turn(tool_use_turn("send_email", "p1", json!({})))
+        .with_turn(tool_use_turn("subagent", "p2", json!({"task": "Send 3 emails"})))
+        .with_turn(tool_use_turn("send_email", "c1", json!({})))
+        .with_turn(tool_use_turn("send_email", "c2", json!({})))
+        .with_turn(tool_use_turn("send_email", "c3", json!({})))
+        .with_turn("Child done")
+        .with_turn(tool_use_turn("send_email", "p3", json!({})))
+        .with_turn("Parent done");
+    let mut parent = Agent::builder()
+        .model(model)
+        .tools([send_email])
+        .tools([crate::vended_tools::subagent::subagent()])
+        .interventions([handler])
+        .printer(false)
+        .build()
+        .unwrap();
+
+    parent
+        .invoke("Send an email, delegate 3 more, then send another")
+        .await
+        .unwrap();
+
+    // Each agent may send twice: the child's third call is denied and the parent's second is allowed.
+    let senders = senders.lock().unwrap();
+    let ids: Vec<&str> = senders.iter().map(crate::agent::ToolAgent::id).collect();
+    assert_eq!(ids, ["agent", "subagent", "subagent", "agent"]);
+    assert_eq!(
+        senders[1].app_state().get_value(CEDAR_AUTHORIZATION_STATE_KEY),
+        Some(json!({"send_email": 2}))
+    );
+    assert_eq!(
+        parent.app_state().get_value(CEDAR_AUTHORIZATION_STATE_KEY),
+        Some(json!({"send_email": 2, "subagent": 1}))
+    );
+}
