@@ -302,3 +302,8 @@
   name: Mehul Jaiswal
   role: "Software Engineer, AWS"
   bio: Mehul Jaiswal is a Software Engineer at AWS working on platform services.
+
+- id: sundar-raghavan
+  name: Sundar Raghavan
+  role: "Sr Solutions Architect, AWS"
+  bio: Sundar Raghavan is a Sr Solutions Architect at AWS on the Agentic AI Foundations team. He focuses on how developers build, deploy, and scale production AI agents on AWS, and is extending that into physical AI through Strands Robots.
