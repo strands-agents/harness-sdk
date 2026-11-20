@@ -1471,7 +1471,7 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
     test: new TemporaryTest(current, experiments),
     optimize: new TemporaryOptimize(current, experiments),
     ui: new TemporaryEvalsUi(current, host.evalsUi),
-    ask: new WizardBroker(),
+    ask: new WizardBroker(host.autofill?.() ?? false),
   }
   registry.set(key, {
     use: (next) => {

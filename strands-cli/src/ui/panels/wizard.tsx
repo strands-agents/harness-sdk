@@ -104,6 +104,8 @@ export interface WizardProps {
   // Read at keypress time, so a view that onFinish opens also swallows the rest of that input burst.
   readonly blocked?: () => boolean
   readonly position?: WizardPosition
+  /** Shown on every component so the developer can hand the next question to the agent. */
+  readonly autofill?: { readonly on: boolean; readonly set: (on: boolean) => void }
 }
 
 const LABEL_WIDTH = 12
@@ -365,6 +367,7 @@ export const Wizard = ({
   active = true,
   blocked,
   position,
+  autofill,
 }: WizardProps): ReactElement => {
   const own = useWizardPosition()
   const at = position?.step ?? own.step
@@ -429,7 +432,8 @@ export const Wizard = ({
         return
       }
       const row = rows[cursor.current()]
-      if (key.escape) onCancel()
+      if (key.ctrl && input === 'a') autofill?.set(!autofill.on)
+      else if (key.escape) onCancel()
       else if (key.tab) stepTo(key.shift ? -1 : 1, [])
       else if (key.upArrow) cursor.move(-1)
       else if (key.downArrow) cursor.move(1)
@@ -541,6 +545,11 @@ export const Wizard = ({
         <Line tone="muted">{`${' '.repeat(LABEL_WIDTH + 2)}${step.footnote}`}</Line>
       ) : null}
       {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : compact ? null : <Gap />}
+      {autofill ? (
+        <Line tone="muted">
+          {`  autofill: ${autofill.on ? 'on · the agent answers the next one itself' : 'off'} · ctrl+a`}
+        </Line>
+      ) : null}
       <WizardButtons
         buttons={buttons}
         ready={ready}

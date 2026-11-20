@@ -143,17 +143,33 @@ export class WizardBroker {
   private readonly _queue: PendingWizard[] = []
   private _active: PendingWizard | undefined
   private _open: (() => boolean) | undefined
+  private _autofill: boolean
   private _next = 1
   private _disposed = false
+
+  /** `autofill` starts from the saved setting and lasts for this session only. */
+  constructor(autofill = false) {
+    this._autofill = autofill
+  }
 
   /** The panel command registers this, so asking also brings the panel on screen. */
   attachOpener(open: () => boolean): void {
     this._open = open
   }
 
+  autofill(): boolean {
+    return this._autofill
+  }
+
+  setAutofill(on: boolean): void {
+    this._autofill = on
+    this._notify(this._active?.request)
+  }
+
   ask(spec: WizardRequestSpec): Promise<WizardOutcome> {
     if (this._disposed || spec.steps.length === 0) return Promise.resolve(undefined)
     const request = cleanRequest({ ...spec, id: `strands-wizard-${this._next++}` })
+    if (this._autofill) return Promise.resolve(defaultAnswers(request.steps))
     return new Promise((resolve) => {
       this._queue.push({ request, resolve })
       this._activateNext()

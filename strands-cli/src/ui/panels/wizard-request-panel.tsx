@@ -129,11 +129,13 @@ const toStep = (
 const RequestView = ({
   request,
   broker,
+  autofill,
   width,
   height,
 }: {
   request: WizardRequest
   broker: WizardBroker
+  autofill: boolean
   width: number
   height: number
 }): ReactElement => {
@@ -156,13 +158,22 @@ const RequestView = ({
       onFinish={() => broker.respond(request.id, { ...answers.current() })}
       onCancel={() => broker.respond(request.id, undefined)}
       position={position}
+      autofill={{ on: autofill, set: (on) => broker.setAutofill(on) }}
     />
   )
 }
 
 export const WizardRequestPanel = ({ broker, width, height, close }: WizardRequestPanelProps): ReactElement => {
   const [request, setRequest] = useState(() => broker.pending())
-  useEffect(() => broker.subscribe(setRequest), [broker])
+  const [autofill, setAutofill] = useState(() => broker.autofill())
+  useEffect(
+    () =>
+      broker.subscribe((pending) => {
+        setRequest(pending)
+        setAutofill(broker.autofill())
+      }),
+    [broker]
+  )
   useEffect(() => {
     if (!request) close()
   }, [request, close])
@@ -174,5 +185,7 @@ export const WizardRequestPanel = ({ broker, width, height, close }: WizardReque
       </>
     )
   // Remount on a new request so its answers start from that request's own defaults.
-  return <RequestView key={request.id} request={request} broker={broker} width={width} height={height} />
+  return (
+    <RequestView key={request.id} request={request} broker={broker} autofill={autofill} width={width} height={height} />
+  )
 }

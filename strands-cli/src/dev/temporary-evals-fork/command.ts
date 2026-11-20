@@ -201,10 +201,16 @@ export const temporaryDevChatPart = (
 export const temporaryDevCommands = (
   workspace: DevWorkspace,
   project: ImportedAgentProject,
-  agent: () => TemporaryAgentFacts = () => ({})
+  agent: () => TemporaryAgentFacts = () => ({}),
+  autofill?: () => boolean
 ): DevChatCommand[] => {
   const target = targetWorkspace(workspace, project)
   const sessions: Sessions = (context) =>
-    temporaryDevSessions({ workspace: target, agent, ...(context ? { context } : {}) })
+    temporaryDevSessions({
+      workspace: target,
+      agent,
+      ...(autofill ? { autofill } : {}),
+      ...(context ? { context } : {}),
+    })
   return [...PANEL_COMMANDS.map((make) => make(sessions)), askCommand(sessions)]
 }

@@ -142,6 +142,31 @@ describe('WizardBroker', () => {
     expect(defaultAnswers(blocked)).toEqual({ tools: false })
   })
 
+  it('shouldAnswerWithTheDefaultsWithoutShowingAnythingWhenAutofillIsOn', async () => {
+    const broker = new WizardBroker(true)
+    const open = vi.fn(() => true)
+    broker.attachOpener(open)
+
+    await expect(broker.ask(request())).resolves.toEqual({ instructions: true, effort: false, steps: '4' })
+    expect(broker.pending()).toBeUndefined()
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('shouldStartWithAutofillOffWhenTheSettingIsNotGiven', () => {
+    expect(new WizardBroker().autofill()).toBe(false)
+  })
+
+  it('shouldAutofillTheNextQuestionOnceTheToggleGoesOn', async () => {
+    const broker = new WizardBroker()
+    const first = broker.ask(request())
+
+    broker.setAutofill(true)
+    broker.respond(broker.pending()!.id, { instructions: true })
+    await first
+
+    await expect(broker.ask(request())).resolves.toEqual({ instructions: true, effort: false, steps: '4' })
+  })
+
   it('shouldResolveWithNothingWhenTheBrokerIsCancelled', async () => {
     const broker = new WizardBroker()
     const asked = broker.ask(request())
@@ -343,6 +368,25 @@ describe('WizardRequestPanel', () => {
     await press(ENTER)
 
     await expect(asked).resolves.toEqual({ tune: [] })
+  })
+
+  it('shouldShowTheAutofillToggleOnEveryQuestion', async () => {
+    const broker = new WizardBroker()
+    void broker.ask(request())
+    const { text } = await panel(broker)
+
+    expect(text()).toContain('autofill: off · ctrl+a')
+  })
+
+  it('shouldTurnAutofillOnWhenTheUserPressesCtrlA', async () => {
+    const broker = new WizardBroker()
+    void broker.ask(request())
+    const { text, press } = await panel(broker)
+
+    await press('\u0001')
+
+    expect(broker.autofill()).toBe(true)
+    expect(text()).toContain('autofill: on · the agent answers the next one itself')
   })
 
   it('shouldSayWhenNoQuestionIsWaiting', async () => {
