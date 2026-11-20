@@ -643,6 +643,12 @@ class TestRetrievalTool:
         assert result == large_text
 
     @pytest.mark.asyncio
+    async def test_retrieve_trims_reference(self, plugin, storage, tool_context):
+        ref = await storage.store("key_1", b"hello world", "text/plain")
+        result = await plugin.retrieve_offloaded_content(reference=f" {ref}\n", tool_context=tool_context)
+        assert result == "hello world"
+
+    @pytest.mark.asyncio
     async def test_retrieve_missing_reference(self, plugin, tool_context):
         with pytest.raises(ValueError, match="reference not found: nonexistent"):
             await plugin.retrieve_offloaded_content(reference="nonexistent", tool_context=tool_context)
@@ -899,13 +905,34 @@ class TestRetrievalToolErrorStatus:
         return events[-1].tool_result
 
     @pytest.mark.asyncio
-    async def test_missing_reference_reports_error_status(self, plugin, mock_agent, alist):
-        tru_result = await self._tool_result(plugin, mock_agent, alist, {"reference": "nope"})
+    async def test_missing_reference_is_terminal_only_once_passed_as_listed(self, plugin, mock_agent, alist):
+        tru_result = await self._tool_result(plugin, mock_agent, alist, {"reference": " mem_1_k1 "})
 
         exp_result = {
             "toolUseId": "retrieve_1",
             "status": "error",
-            "content": [{"text": "Error: reference not found: nope"}],
+            "content": [
+                {
+                    "text": (
+                        "Error: reference not found: mem_1_k1. Pass the reference exactly as the placeholder lists "
+                        "it. If that is what you passed, the content is unavailable — do not retry."
+                    )
+                }
+            ],
+        }
+        assert tru_result == exp_result
+
+    @pytest.mark.asyncio
+    async def test_storage_failure_that_is_not_a_missing_key_reports_itself(self, plugin, storage, mock_agent, alist):
+        """A throttle is recoverable: told "do not retry" the model abandons content the next call would fetch."""
+        storage.retrieve = AsyncMock(side_effect=RuntimeError("ThrottlingException: Rate exceeded"))
+
+        tru_result = await self._tool_result(plugin, mock_agent, alist, {"reference": "mem_1_k1"})
+
+        exp_result = {
+            "toolUseId": "retrieve_1",
+            "status": "error",
+            "content": [{"text": "Error: RuntimeError - ThrottlingException: Rate exceeded"}],
         }
         assert tru_result == exp_result
 
