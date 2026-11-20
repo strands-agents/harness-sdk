@@ -198,9 +198,27 @@ class StrandsTelemetry:
         return self
 
     def setup_meter(
-        self, enable_console_exporter: bool = False, enable_otlp_exporter: bool = False
+        self,
+        enable_console_exporter: bool = False,
+        enable_otlp_exporter: bool = False,
+        **provider_kwargs: Any,
     ) -> "StrandsTelemetry":
-        """Initialize the OpenTelemetry Meter."""
+        """Initialize the OpenTelemetry Meter.
+
+        Args:
+            enable_console_exporter: When True, attach a console metrics exporter.
+            enable_otlp_exporter: When True, attach an OTLP metrics exporter.
+            **provider_kwargs: Optional keyword arguments passed directly to
+                OpenTelemetry's MeterProvider initializer (e.g., views,
+                shutdown_on_exit). Passing resource or metric_readers raises
+                TypeError because this method supplies them.
+
+        Returns:
+            self: Enables method chaining.
+
+        Raises:
+            TypeError: If resource or metric_readers is passed in provider_kwargs.
+        """
         logger.info("Initializing meter")
         metrics_readers = []
         try:
@@ -217,7 +235,11 @@ class StrandsTelemetry:
         except Exception as e:
             logger.exception("error=<%s> | Failed to configure OTLP metrics exporter", e)
 
-        self.meter_provider = metrics_sdk.MeterProvider(resource=self.resource, metric_readers=metrics_readers)
+        self.meter_provider = metrics_sdk.MeterProvider(
+            resource=self.resource,
+            metric_readers=metrics_readers,
+            **provider_kwargs,
+        )
 
         # Set as global tracer provider
         metrics_api.set_meter_provider(self.meter_provider)
