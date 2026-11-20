@@ -139,43 +139,44 @@ async def test_cancellation_kills_the_process():
         pytest.fail("process survived cancellation")
 
 
-async def _assert_exits(pid: int) -> None:
-    for _ in range(50):
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return
-        await asyncio.sleep(0.02)
-    pytest.fail(f"process {pid} survived")
+async def _assert_child_was_killed(marker) -> None:
+    """The backgrounded child touches ``marker`` after 0.5s unless it was killed first."""
+    await asyncio.sleep(0.8)
+    assert not marker.exists()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "command",
-    [
-        "sleep 60 & echo $!; wait",
-        # The shell exits at once; only the backgrounded child keeps the pipes open.
-        "sleep 60 & echo $!",
-    ],
-)
-async def test_cancel_signal_kills_the_process_tree_and_raises_abort(command):
+# Without ``wait`` the shell exits at once and only the backgrounded child keeps the pipes open.
+@pytest.mark.parametrize("tail", ["; wait", ""])
+async def test_cancel_signal_kills_the_process_tree_and_raises_abort(tmp_path, tail):
     cancel_signal = threading.Event()
-    pid = None
+    marker = tmp_path / "ran"
+    command = f"(sleep 0.5; touch {marker}) & echo started{tail}"
 
     with pytest.raises(SandboxAbortError, match="Execution aborted"):
-        async for item in _stream_process("sh", ["-c", command], timeout=30, cancel_signal=cancel_signal):
-            if isinstance(item, StreamChunk):
-                pid = int(item.data.strip())
-                cancel_signal.set()
+        async for _ in _stream_process("sh", ["-c", command], timeout=30, cancel_signal=cancel_signal):
+            cancel_signal.set()
 
-    await _assert_exits(pid)
+    await _assert_child_was_killed(marker)
 
 
 @pytest.mark.asyncio
-async def test_timeout_fires_when_only_a_backgrounded_child_is_left():
-    with pytest.raises(SandboxTimeoutError) as exc_info:
-        await _collect(_stream_process("sh", ["-c", "sleep 60 & echo $!"], timeout=0.3))
-    await _assert_exits(int(exc_info.value.stdout.strip()))
+async def test_timeout_fires_when_only_a_backgrounded_child_is_left(tmp_path):
+    marker = tmp_path / "ran"
+    with pytest.raises(SandboxTimeoutError):
+        await _collect(_stream_process("sh", ["-c", f"(sleep 0.5; touch {marker}) & echo started"], timeout=0.1))
+    await _assert_child_was_killed(marker)
+
+
+@pytest.mark.asyncio
+async def test_closing_the_generator_kills_a_backgrounded_child(tmp_path):
+    marker = tmp_path / "ran"
+    gen = _stream_process("sh", ["-c", f"(sleep 0.5; touch {marker}) & echo started"])
+    async for _ in gen:
+        break
+    await asyncio.sleep(0.2)  # let the shell itself exit, leaving only the child
+    await gen.aclose()
+    await _assert_child_was_killed(marker)
 
 
 @pytest.mark.asyncio
