@@ -959,6 +959,32 @@ class TestServerSideSummary:
         assert log in caplog.text
 
     @pytest.mark.asyncio
+    async def test_leaves_the_summary_unplaced_when_the_messages_it_covers_leave_the_history(self, mock_agent, caplog):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        messages = self._messages()
+        mock_agent.messages = messages
+
+        async def summarize(*_args, **_kwargs):
+            # The messages the summary covers leave the history while the provider is writing it.
+            del messages[1:3]
+            return _summary("compacted", "anthropic")
+
+        mock_agent.model.summarize = unittest.mock.AsyncMock(side_effect=summarize)
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
+
+        assert "leaving the summary unplaced" in caplog.text
+        # A summary stands in for the conversation's exact start, so placing it over a shortened history would take
+        # the message the next model call responds to.
+        assert without_tracking_ids(messages) == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="old3")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
+
+    @pytest.mark.asyncio
     async def test_warns_that_a_client_side_summary_drops_kept_thinking(self, mock_agent, caplog):
         mock_agent.model.model_info.capabilities.server_side_summary = True
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("written client-side"))
