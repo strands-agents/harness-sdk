@@ -29,6 +29,21 @@ describe('classifyOpenAIError', () => {
     expect(classifyOpenAIError(err)).toBe('contextOverflow')
   })
 
+  it('classifies a server_error code as serverError', () => {
+    const err = Object.assign(new Error('The server had an error while processing your request. Sorry about that!'), {
+      code: 'server_error',
+    })
+    expect(classifyOpenAIError(err)).toBe('serverError')
+  })
+
+  it.each([500, 502, 503])('classifies HTTP %p as serverError', (status) => {
+    expect(classifyOpenAIError(Object.assign(new Error('upstream failed'), { status }))).toBe('serverError')
+  })
+
+  it('does not classify a 4xx as serverError', () => {
+    expect(classifyOpenAIError(Object.assign(new Error('bad request'), { status: 400 }))).toBeUndefined()
+  })
+
   it('returns undefined for unrelated errors', () => {
     expect(classifyOpenAIError(new Error('a totally unrelated failure'))).toBeUndefined()
   })

@@ -16,7 +16,7 @@ import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
 import type { ChatCompletionsTools } from '../model-info.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelNetworkError, ModelThrottledError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from '../defaults.js'
@@ -355,6 +355,12 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
 
     if (kind === 'contextOverflow') {
       return new ContextWindowOverflowError(err.message)
+    }
+
+    if (kind === 'serverError') {
+      const message = err.message ?? 'The model provider had a server error'
+      logger.debug(`server error | error_message=<${message}>`)
+      return new ModelNetworkError(message, { cause: err })
     }
 
     return error

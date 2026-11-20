@@ -30,7 +30,7 @@ const CONTEXT_WINDOW_OVERFLOW_PATTERNS = [
  */
 const RATE_LIMIT_PATTERNS = ['rate_limit_exceeded', 'rate limit', 'too many requests']
 
-export type OpenAIErrorKind = 'contextOverflow' | 'throttling'
+export type OpenAIErrorKind = 'contextOverflow' | 'throttling' | 'serverError'
 
 /**
  * Classifies an OpenAI SDK error.
@@ -50,6 +50,12 @@ export function classifyOpenAIError(err: Error & { status?: number; code?: strin
 
   if (code === 'context_length_exceeded' || CONTEXT_WINDOW_OVERFLOW_PATTERNS.some((p) => message.includes(p))) {
     return 'contextOverflow'
+  }
+
+  // A Responses stream reports a provider fault as an `error` or `response.failed` event with
+  // `code: 'server_error'`. It arrives after HTTP 200, so the OpenAI client does not retry it.
+  if (code === 'server_error' || (err.status !== undefined && err.status >= 500)) {
+    return 'serverError'
   }
 
   return undefined
