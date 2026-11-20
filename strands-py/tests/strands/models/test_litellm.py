@@ -1,7 +1,10 @@
 import unittest.mock
+import warnings
 from types import SimpleNamespace
 from unittest.mock import call
 
+import httpx
+import litellm
 import pydantic
 import pytest
 from litellm import Usage
@@ -95,6 +98,118 @@ async def test_stream_derives_prompt_cache_key_from_agent_session(litellm_acompl
     await alist(model.stream([{"role": "user", "content": []}], agent_metadata=AgentMetadata(session_id="s1")))
 
     assert litellm_acompletion.call_args.kwargs["prompt_cache_key"] == "strands-s1"
+
+
+@pytest.fixture
+def litellm_supported_params():
+    """Pin what LiteLLM reports as supported, independent of the installed LiteLLM version."""
+    with (
+        unittest.mock.patch.object(
+            strands.models.litellm.litellm, "OPENAI_CHAT_COMPLETION_PARAMS", ["prompt_cache_key"]
+        ),
+        unittest.mock.patch.object(strands.models.litellm.litellm, "get_supported_openai_params") as mock_supported,
+    ):
+        mock_supported.return_value = ["temperature"]
+        yield mock_supported
+
+
+def test_format_request_drops_session_cache_key_litellm_rejects(litellm_supported_params, messages):
+    model = LiteLLMModel(client_args={"custom_llm_provider": "bedrock"}, model_id="claude", cache_config=CacheConfig())
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
+    litellm_supported_params.assert_called_once_with(model="claude", custom_llm_provider="bedrock")
+
+
+def test_format_request_drops_configured_cache_key_litellm_rejects_with_warning(litellm_supported_params, messages):
+    _ = litellm_supported_params
+    model = LiteLLMModel(model_id="bedrock/claude", cache_config=CacheConfig(cache_key="tenant-42"))
+
+    with pytest.warns(UserWarning, match="cache_config.cache_key has no effect on bedrock/claude"):
+        request = model.format_request(messages)
+
+    assert "prompt_cache_key" not in request
+
+
+@pytest.mark.parametrize("supported_params", [["prompt_cache_key"], None])
+def test_format_request_keeps_cache_key_litellm_accepts_or_does_not_map(
+    litellm_supported_params, supported_params, messages
+):
+    litellm_supported_params.return_value = supported_params
+    model = LiteLLMModel(model_id="openai/gpt-4o", cache_config=CacheConfig(cache_key="tenant-42"))
+
+    assert model.format_request(messages)["prompt_cache_key"] == "tenant-42"
+
+
+def test_format_request_keeps_cache_key_litellm_version_does_not_validate(litellm_supported_params, messages):
+    _ = litellm_supported_params
+    model = LiteLLMModel(model_id="openai/gpt-4o", cache_config=CacheConfig(cache_key="tenant-42"))
+
+    with unittest.mock.patch.object(strands.models.litellm.litellm, "OPENAI_CHAT_COMPLETION_PARAMS", []):
+        request = model.format_request(messages)
+
+    assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_format_request_keeps_prompt_cache_key_set_in_params(litellm_supported_params, messages):
+    _ = litellm_supported_params
+    model = LiteLLMModel(model_id="bedrock/claude", params={"prompt_cache_key": "explicit"}, cache_config=CacheConfig())
+
+    assert model.format_request(messages)["prompt_cache_key"] == "explicit"
+
+
+def test_format_request_keeps_cache_key_allowed_in_client_args(litellm_supported_params, messages):
+    _ = litellm_supported_params
+    model = LiteLLMModel(
+        client_args={"allowed_openai_params": ["prompt_cache_key"]},
+        model_id="mistral/mistral-large-latest",
+        cache_config=CacheConfig(cache_key="tenant-42"),
+    )
+
+    assert model.format_request(messages)["prompt_cache_key"] == "tenant-42"
+
+
+@pytest.mark.parametrize("model_id", ["openai/gpt-4o", "azure/gpt-4o", "litellm_proxy/claude"])
+def test_format_request_keeps_cache_key_for_openai_family(model_id, messages):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    assert model.format_request(messages)["prompt_cache_key"] == "tenant-42"
+
+
+@pytest.mark.skipif(
+    "prompt_cache_key" not in litellm.OPENAI_CHAT_COMPLETION_PARAMS,
+    reason="this LiteLLM version forwards prompt_cache_key without validating it",
+)
+@pytest.mark.asyncio
+async def test_stream_session_cache_key_passes_litellm_validation(messages, alist):
+    """Runs LiteLLM's own parameter validation: only the HTTP transport is stubbed."""
+    converse_response = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+    }
+    sent_requests = []
+
+    async def send(_client, request, **_kwargs):
+        sent_requests.append(request)
+        return httpx.Response(200, json=converse_response, request=request)
+
+    model = LiteLLMModel(
+        client_args={"aws_access_key_id": "a1", "aws_secret_access_key": "s1", "aws_region_name": "us-west-2"},
+        model_id="bedrock/converse/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        stream=False,
+        cache_config=CacheConfig(),
+    )
+
+    with unittest.mock.patch.object(httpx.AsyncClient, "send", send):
+        events = await alist(model.stream(messages, agent_metadata=AgentMetadata(session_id="s1")))
+
+    assert len(sent_requests) == 1
+    assert b"prompt_cache_key" not in sent_requests[0].content
+    assert {"contentBlockDelta": {"delta": {"text": "ok"}}} in events
 
 
 @pytest.mark.parametrize(
