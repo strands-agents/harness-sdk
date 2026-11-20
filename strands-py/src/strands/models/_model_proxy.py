@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from ..event_loop.streaming import _normalize_messages, process_stream
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.tools import ToolSpec
+from ._provider_name import _model_key
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -109,7 +110,8 @@ class ModelProxy:
             agent_metadata=agent_metadata,
             **optional_kwargs,
         )
-        async for event in process_stream(chunks, start_time, cancel_signal, invocation_context):
+        model_key = _model_key(self._model)
+        async for event in process_stream(chunks, start_time, cancel_signal, invocation_context, model_key):
             yield event
 
     def structured_output(
