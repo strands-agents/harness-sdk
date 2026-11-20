@@ -7,6 +7,7 @@ import type { BackgroundAgentActivity } from '../agent/background.js'
 import { DEFAULT_CHAT_SETTINGS, type ThemeColors } from './chat/types.js'
 import { modelDisplayName } from '../model/metadata.js'
 import { escapePermissionText } from './chat/panel-state.js'
+import { diffRows, type DiffRow } from './diff-rows.js'
 import { FILE_TOOLS } from '../agent/permission-rules.js'
 import { permissionModeDisplayLabel } from './permission-options.js'
 import {
@@ -58,6 +59,12 @@ export interface PermissionLine {
   dimColor?: boolean
 }
 
+const diffRowStyle = (row: DiffRow, palette: ThemeColors): Omit<PermissionLine, 'label' | 'text'> => {
+  if (row.tone === 'success') return { color: palette.success }
+  if (row.tone === 'error') return { color: palette.error }
+  return row.tone === 'muted' ? { dimColor: true } : {}
+}
+
 export const PERMISSION_LABEL_WIDTH = 9
 
 export function permissionLines(
@@ -88,16 +95,8 @@ export function permissionLines(
   if (diff && !FILE_TOOLS.has(request.toolName)) {
     field('File', diff.path)
   }
-  const added = diff?.lines.filter((line) => line.kind === 'add').length ?? 0
-  const removed = diff?.lines.filter((line) => line.kind === 'remove').length ?? 0
-  if (added + removed > 0) {
-    field('Changes', `+${added} -${removed} lines${diff?.truncated ? ' (preview truncated)' : ''}`, { dimColor: true })
-  }
-  for (const line of diff?.lines ?? []) {
-    field(line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : '', escapePermissionText(line.text), {
-      ...(line.kind === 'add' ? { color: palette.success } : line.kind === 'remove' ? { color: palette.error } : {}),
-      dimColor: line.kind === 'header',
-    })
+  for (const row of diff ? diffRows(diff) : []) {
+    field(row.label, row.text, diffRowStyle(row, palette))
   }
   if (!diff || diff.truncated) {
     field('Input', panel.body ?? '')

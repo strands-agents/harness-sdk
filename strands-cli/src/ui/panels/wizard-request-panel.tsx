@@ -67,6 +67,7 @@ const toField = (
   update: (key: string, value: WizardAnswer) => void
 ): WizardField => {
   if (spec.kind === 'select') throw new Error('A select spec expands into several fields.')
+  if (spec.kind === 'diff') throw new Error('A diff spec renders as rows to read, not as a field.')
   if (spec.kind === 'toggle')
     return {
       kind: 'toggle',

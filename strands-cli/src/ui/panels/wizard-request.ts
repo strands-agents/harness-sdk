@@ -1,4 +1,5 @@
 import { sanitizeTerminalText } from '../../terminal/text.js'
+import type { ChatDiffPreview } from '../../agent/types.js'
 import type { Tone } from './kit.js'
 
 export type WizardAnswer = string | boolean | readonly string[]
@@ -46,7 +47,30 @@ export interface WizardTextSpec {
   readonly placeholder?: string
 }
 
-export type WizardFieldSpec = WizardChoiceSpec | WizardToggleSpec | WizardTextSpec | WizardSelectSpec
+/**
+ * A file change to read, not answer: the panel draws it and steps over it, and a sibling field holds the verdict.
+ * `proposed` is the whole new text of `path`, so accepting it pre-approves the write that applies it.
+ */
+export interface WizardDiffSpec {
+  readonly kind: 'diff'
+  readonly key: string
+  readonly label: string
+  readonly path: string
+  readonly proposed: string
+  readonly diff: ChatDiffPreview
+}
+
+export type WizardFieldSpec =
+  | WizardChoiceSpec
+  | WizardToggleSpec
+  | WizardTextSpec
+  | WizardSelectSpec
+  | WizardDiffSpec
+
+export type WizardAnswerableFieldSpec = Exclude<WizardFieldSpec, WizardDiffSpec>
+
+/** A diff carries no answer, so the focus walk and the outcome record both step over it. */
+export const isAnswerableField = (field: WizardFieldSpec): field is WizardAnswerableFieldSpec => field.kind !== 'diff'
 
 export interface WizardStepSpec {
   readonly key: string
@@ -149,6 +173,7 @@ export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string,
   const answers: Record<string, WizardAnswer> = {}
   for (const step of steps)
     for (const field of step.fields) {
+      if (!isAnswerableField(field)) continue
       if (field.kind === 'select') {
         const open = field.options.filter(({ unavailable }) => unavailable === undefined).map(({ value }) => value)
         const picked = (field.selected ?? []).filter((value) => open.includes(value))
