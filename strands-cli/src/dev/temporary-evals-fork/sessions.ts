@@ -192,19 +192,20 @@ export const temporaryTestJobs = ({ runs }: TestState): DevChatJob[] =>
     run.status === 'running' ? [{ id: experiment.path, label: experiment.name, done: run.done, total: run.cases }] : []
   )
 
+/** A finished run stays listed, with its work complete, so its edits can be opened after it ends. */
 export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[] =>
-  runs.flatMap(({ id, state }) =>
-    state.step === 'running'
-      ? [
-          {
-            id,
-            label: state.progress.run,
-            done: measuredVersions(state.progress),
-            total: state.progress.planned,
-          },
-        ]
-      : []
-  )
+  runs.flatMap(({ id, state }) => {
+    if (state.step === 'running') {
+      const done = measuredVersions(state.progress)
+      return [{ id, label: state.progress.run, done, total: state.progress.planned }]
+    }
+    if (state.step === 'review') {
+      const edits = state.review.edits?.length ?? 0
+      const label = edits === 0 ? `${state.review.run} · no edits` : `${state.review.run} · ${edits} to review`
+      return [{ id, label, done: 1, total: 1 }]
+    }
+    return []
+  })
 
 type EditWriter = (after: string) => Promise<void>
 

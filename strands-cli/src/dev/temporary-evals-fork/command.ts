@@ -20,7 +20,12 @@ import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
 import { temporarySessionHistory } from './session-converter.js'
-import { temporaryDevSessions, temporaryTestJobs, type TemporaryDevSessions } from './sessions.js'
+import {
+  temporaryDevSessions,
+  temporaryOptimizeJobs,
+  temporaryTestJobs,
+  type TemporaryDevSessions,
+} from './sessions.js'
 
 interface PanelSession<State> extends TemporaryStore<State> {
   show(): void
@@ -156,6 +161,10 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
     opened.ask.attachOpener(() => context.openPanel('ask'))
     void opened.optimize.resume()
   },
+  jobs: temporaryJobsFeed(
+    { subscribe: sessions().optimize.subscribe, snapshot: sessions().optimize.snapshot },
+    temporaryOptimizeJobs
+  ),
 })
 
 const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject): DevWorkspace => ({
