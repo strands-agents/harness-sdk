@@ -409,6 +409,16 @@ class TestAsk:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
     @pytest.mark.asyncio
+    async def test_reads_the_error_detail_from_an_error_body_with_a_utf8_bom(self, provider: _ProviderCase):
+        client = _fake_text_client('\ufeff{"detail": "bad request"}', status=400)
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+
+        with pytest.raises(httpx.HTTPStatusError) as caught:
+            await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+        assert str(caught.value) == f"{provider.provider_name} decision request failed with HTTP 400: bad request"
+
+    @pytest.mark.asyncio
     async def test_propagates_transport_failures(self, provider: _ProviderCase):
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("offline")
@@ -428,6 +438,15 @@ class TestAsk:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
         assert isinstance(caught.value.__cause__, json.JSONDecodeError)
+
+    @pytest.mark.asyncio
+    async def test_accepts_a_response_body_with_a_utf8_bom(self, provider: _ProviderCase):
+        body = "\ufeff" + json.dumps(_response_body({"q": {"type": "noul", "noul": 1}}))
+        decision = provider.model_cls(api_key="test-key", http_client=_fake_text_client(body))
+
+        result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+        assert result.answers == {"q": True}
 
     @pytest.mark.asyncio
     async def test_rejects_an_empty_success_response(self, provider: _ProviderCase):

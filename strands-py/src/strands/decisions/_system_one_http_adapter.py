@@ -231,7 +231,8 @@ def _to_wire_questions(questions: dict[str, Question]) -> dict[str, dict[str, An
 
 
 def _read_payload(response: httpx.Response) -> Any:
-    text = response.text
+    # httpx keeps a leading UTF-8 BOM, which json.loads rejects.
+    text = response.text.removeprefix("\ufeff")
     if not text:
         return None
     try:

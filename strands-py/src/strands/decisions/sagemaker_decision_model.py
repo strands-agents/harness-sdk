@@ -183,7 +183,7 @@ def _is_context_overflow_message(original_message: Any) -> bool:
     if not isinstance(original_message, str):
         return False
     try:
-        parsed = json.loads(original_message)
+        parsed = json.loads(original_message, parse_constant=_reject_json_constant)
     except ValueError:
         return False
     detail = parsed.get("detail") if isinstance(parsed, dict) else None
