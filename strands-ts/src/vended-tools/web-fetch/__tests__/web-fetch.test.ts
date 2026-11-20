@@ -39,10 +39,13 @@ describe('webFetch tool', () => {
     globalThis.fetch = originalFetch
   })
 
-  function mockFetch(body: string, options: { status?: number; statusText?: string; contentType?: string } = {}): void {
+  function mockFetch(
+    body: string | Uint8Array,
+    options: { status?: number; statusText?: string; contentType?: string | null } = {}
+  ): void {
     const { status = 200, statusText = 'OK', contentType = 'text/plain' } = options
-    const headers = new Map<string, string>([['content-type', contentType]])
-    const encoded = new TextEncoder().encode(body)
+    const headers = new Map<string, string>(contentType === null ? [] : [['content-type', contentType]])
+    const encoded = typeof body === 'string' ? new TextEncoder().encode(body) : body
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: status < 400,
       status,
@@ -248,6 +251,83 @@ describe('webFetch tool', () => {
           headers: expect.objectContaining({ 'User-Agent': 'strands-agents-web-fetch/1.0' }),
         })
       )
+    })
+  })
+
+  describe('binary content', () => {
+    // PNG signature + every byte value 188 times: 48,136 bytes, NULs and about half undecodable as UTF-8
+    const binaryBody = new Uint8Array([
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+      ...Array(188)
+        .fill([...Array(256).keys()])
+        .flat(),
+    ])
+
+    it.each([
+      ['image/png', binaryBody, '[binary image/png, 48,136 bytes; not shown]'],
+      [
+        'Audio/MPEG; foo=bar',
+        new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0]),
+        '[binary audio/mpeg, 10 bytes; not shown]',
+      ],
+      ['application/octet-stream', binaryBody, '[binary application/octet-stream, 48,136 bytes; not shown]'],
+      [
+        'application/pdf; charset=iso-8859-1',
+        new Uint8Array([...new TextEncoder().encode('%PDF-1.7\n'), 0, 0xe2, 0xe3]),
+        '[binary application/pdf, 12 bytes; not shown]',
+      ],
+      ['text/html; charset=utf-8', binaryBody, '[undecodable text/html, 48,136 bytes; not shown]'],
+      [
+        'text/plain',
+        new Uint8Array([...Array(6).fill(0x61), ...Array(4).fill(0xff)]),
+        '[undecodable text/plain, 10 bytes; not shown]',
+      ],
+      [null, new Uint8Array([0, 1, 0, 2]), '[binary content, 4 bytes; not shown]'],
+    ])('%s body returns a marker', async (contentType, body, expected) => {
+      mockFetch(body, { contentType })
+      const result = await makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/file' })
+      expect(result).toBe(expected)
+    })
+
+    it.each([
+      ['application/octet-stream', new TextEncoder().encode('plain notes'), 'plain notes'],
+      ['audio/mpegurl', new TextEncoder().encode('#EXTM3U\nsegment1.ts\n'), '#EXTM3U\nsegment1.ts\n'],
+      [
+        'text/plain',
+        new Uint8Array([0x63, 0x61, 0x66, 0xe9, 0x20, ...Array(20).fill(0x61)]),
+        'caf\ufffd ' + 'a'.repeat(20),
+      ],
+      [
+        'text/plain',
+        new Uint8Array([...Array(7).fill(0x61), ...Array(3).fill(0xff)]),
+        'a'.repeat(7) + '\ufffd'.repeat(3),
+      ],
+      [
+        'text/plain',
+        new Uint8Array([...Array(30).fill(0xff), ...new TextEncoder().encode('\u{1f600}'.repeat(35))]),
+        '\ufffd'.repeat(30) + '\u{1f600}'.repeat(35),
+      ],
+    ])('%s text body is returned as text', async (contentType, body, expected) => {
+      mockFetch(body, { contentType })
+      const result = await makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/file' })
+      expect(result).toBe(expected)
+    })
+
+    it('agentic mode returns the marker without running the analyst', async () => {
+      mockFetch(binaryBody, { contentType: 'image/png' })
+      const result = await makeWebFetch({ mode: 'agentic', model: {} as LocalAgent['model'] }).invoke({
+        url: 'https://example.com/a.png',
+        prompt: 'Describe it',
+      })
+      expect(result).toBe('[binary image/png, 48,136 bytes; not shown]')
+      expect(Agent).not.toHaveBeenCalled()
     })
   })
 

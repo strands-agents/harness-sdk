@@ -82,6 +82,8 @@ Throws if `maxBytes` or `maxContentChars` is not a positive number.
 
 **`agentic`** — Fetches the URL and routes the content through a dedicated analyst agent that answers the `prompt` about the page. The full page content never enters the main agent's context window — only the analyst's answer is returned.
 
+In both modes a body that contains NUL bytes or largely fails to decode (images, PDFs, archives) is not shown: the tool returns a short marker such as `[binary image/png, 48,213 bytes; not shown]` (`[undecodable text/...]` for text types) without calling the analyst.
+
 ### Input — markdown mode
 
 | Property | Type     | Required | Description                                    |
