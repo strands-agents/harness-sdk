@@ -326,7 +326,8 @@ export {
 
 // Context Manager
 // Note: the context manager is intentionally not exported here — its surface lives at
-// '@strands-agents/sdk/context-manager', mirroring Python's `strands.context_manager`.
+// '@strands-agents/sdk/context-manager'. Python keeps it in a submodule too, currently
+// `strands.experimental.context_manager`.
 
 // Conversation Manager
 export {

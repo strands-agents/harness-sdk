@@ -129,4 +129,10 @@ export interface ContextManagerConfig {
    * - `false` → archive disabled (no persistence, no retrieval tool)
    */
   archive?: ArchiveConfig | boolean
+
+  /**
+   * @deprecated Renamed to `archive`. Honored when `archive` is omitted, with a warning. Removed in
+   * the next minor.
+   */
+  stash?: ArchiveConfig | boolean
 }

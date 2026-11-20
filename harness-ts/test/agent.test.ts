@@ -22,7 +22,9 @@ import {
   tool,
   type ToolContext,
 } from '@strands-agents/sdk'
-import { ContextManager } from '@strands-agents/sdk/context-manager'
+// harness-ts installs the SDK from its lockfile, which predates the './context-manager' subpath
+// and the archive rename, so these stay on names both versions resolve.
+import { ContextManager } from '@strands-agents/sdk/experimental'
 import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { BedrockAgentCoreClient } from '@aws-sdk/client-bedrock-agentcore'
@@ -737,12 +739,15 @@ describe('createHarness', () => {
     await agent.invoke('Read the document.', { limits: { turns: 4 } })
 
     expect(model.seenToolResults).toEqual([expect.stringMatching(/^\[Truncated:/), LARGE_RESULT])
-    expect(agent.contextManager?.archiveIsDurable).toBe(true)
+    expect(agent.contextManager?.stashIsDurable).toBe(true)
     const agentScope = join('scopes', 'agent', agent.id)
     const snapshot = JSON.parse(
       readFileSync(join(dir, 'retrieval', agentScope, 'snapshots', 'snapshot_latest.json'), 'utf8')
     )
-    expect(snapshot.data.archive).toEqual({ location: 'external', storageType: 'LocalFileStorage' })
+    expect(snapshot.data.archive ?? snapshot.data.stash).toEqual({
+      location: 'external',
+      storageType: 'LocalFileStorage',
+    })
     expect(existsSync(join(dir, 'retrieval', 'context', 'retrieval', agentScope, 'tooluse-0_0'))).toBe(true)
     // Every folder under the session dir is read as a session, so the archive stays inside this one.
     expect(readdirSync(dir)).toEqual(['retrieval'])
@@ -766,7 +771,7 @@ describe('createHarness', () => {
     const agent = await createHarness(buildOptions())
     await agent.initialize()
     expect(agent.storage).toBeUndefined()
-    expect(agent.contextManager?.archiveIsDurable).toBe(false)
+    expect(agent.contextManager?.stashIsDurable).toBe(false)
   })
 
   it('backs the archive with an explicit storage', async () => {
@@ -774,7 +779,7 @@ describe('createHarness', () => {
     const agent = await createHarness({ storage, session: { dir: makeTempDir() } })
     await agent.initialize()
     expect(agent.storage).toBe(storage)
-    expect(agent.contextManager?.archiveIsDurable).toBe(false)
+    expect(agent.contextManager?.stashIsDurable).toBe(false)
   })
 
   it('loads skills from the skills directory', async () => {

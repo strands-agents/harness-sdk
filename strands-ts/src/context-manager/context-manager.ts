@@ -92,7 +92,10 @@ export class ContextManager implements Plugin {
   constructor(config?: ContextManagerConfig) {
     const userStrategies = config?.strategies ? resolveStrategies(config.strategies) : PRESET_STRATEGIES.auto()
     this._strategies = [...userStrategies, new EmergencyTruncateStrategy()]
-    const archiveConfig = config?.archive
+    const archiveConfig = config?.archive ?? config?.stash
+    if (config?.archive === undefined && config?.stash !== undefined) {
+      logger.warn('config_key=<stash> | stash was renamed to archive, the stash key is removed in the next minor')
+    }
     const archiveObj = typeof archiveConfig === 'object' ? archiveConfig : undefined
     this._archiveStorage = archiveConfig === false ? false : archiveObj?.storage
     this._enableRetrievalTool = archiveConfig !== false && archiveObj?.retrievalTool !== false
@@ -203,6 +206,22 @@ export class ContextManager implements Plugin {
    * @returns true if the archive storage is not ephemeral
    */
   get archiveIsDurable(): boolean {
+    return this._archiveIsDurable
+  }
+
+  /**
+   * @deprecated Renamed to {@link ContextManager.archive}. Removed in the next minor.
+   * @returns The archive, or undefined if archive is disabled or initAgent has not run
+   */
+  get stash(): Archive | undefined {
+    return this._archive
+  }
+
+  /**
+   * @deprecated Renamed to {@link ContextManager.archiveIsDurable}. Removed in the next minor.
+   * @returns true if the archive storage is not ephemeral
+   */
+  get stashIsDurable(): boolean {
     return this._archiveIsDurable
   }
 

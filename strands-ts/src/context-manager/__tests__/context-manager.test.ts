@@ -82,6 +82,41 @@ describe('ContextManager', () => {
     })
   })
 
+  describe('deprecated stash surface', () => {
+    it('honors the stash config key when archive is omitted', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      await cm.initAgent(makeMockAgent())
+      await cm.archive!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+
+    it('honors stash: false', async () => {
+      const cm = new ContextManager({ stash: false })
+      await cm.initAgent(makeMockAgent())
+
+      expect(cm.archive).toBeUndefined()
+    })
+
+    it('prefers archive when both keys are set', async () => {
+      const cm = new ContextManager({ archive: false, stash: true })
+      await cm.initAgent(makeMockAgent())
+
+      expect(cm.archive).toBeUndefined()
+    })
+
+    it('resolves the stash getters to the archive', async () => {
+      const cm = new ContextManager()
+      await cm.initAgent(makeMockAgent())
+
+      // The published CLI reads these through optional chaining, so a missing getter loses the
+      // archive on fork without throwing.
+      expect(cm.stash).toBe(cm.archive)
+      expect(cm.stashIsDurable).toBe(cm.archiveIsDurable)
+    })
+  })
+
   describe('from', () => {
     it('returns a ContextManager instance as-is', () => {
       const cm = new ContextManager({ strategies: [{ name: 'custom', apply: async () => false }] })
