@@ -86,7 +86,11 @@ def _builtin_tools(parent_config: dict[str, Any], web_search: str | None) -> dic
     that is its mode (``_web_search_mode``) and the Exa tool otherwise."""
     enabled = parent_config["builtin_tools"]
     web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
-    web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
+    web_fetch_model = resolve_web_fetch_model(
+        parent_config["model"],
+        web_fetch_config.pop("model", None),
+        warn_unmapped_family=not web_fetch_config.pop("quiet_fallback", False),
+    )
     tools = (
         make_shell(**_builtin_tool_config(enabled, "shell")),
         make_read(**{"media": _supports_media(parent_config["model"]), **_builtin_tool_config(enabled, "read")}),
