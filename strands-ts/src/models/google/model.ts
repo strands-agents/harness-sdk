@@ -172,6 +172,10 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     return ModelInfo.merge(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, this._config.modelInfo)
   }
 
+  override get genAIProviderName(): string {
+    return 'gcp.gen_ai'
+  }
+
   /**
    * Count tokens using Gemini's native countTokens API.
    *

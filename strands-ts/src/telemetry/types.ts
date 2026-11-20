@@ -56,6 +56,8 @@ export interface StartModelInvokeSpanOptions {
   messages: Message[]
   /** Model identifier being invoked. */
   modelId?: string
+  /** GenAI provider recorded as gen_ai.provider.name (or gen_ai.system); omitted when undefined. */
+  genAIProviderName?: string
   /** System prompt provided to the model for this invocation. */
   systemPrompt?: SystemPrompt
 }

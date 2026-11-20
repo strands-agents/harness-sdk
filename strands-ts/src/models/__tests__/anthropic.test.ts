@@ -210,6 +210,10 @@ describe('AnthropicModel', () => {
   })
 
   describe('info', () => {
+    it('reports its gen_ai provider name', () => {
+      expect(new AnthropicModel({ apiKey: 'sk-ant-test' }).genAIProviderName).toBe('anthropic')
+    })
+
     it('reads cache points from the shared model info', () => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' })
       expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')

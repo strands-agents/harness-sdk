@@ -621,6 +621,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     )
   }
 
+  override get genAIProviderName(): string {
+    return 'aws.bedrock'
+  }
+
   /**
    * Returns the cache strategy for this model based on its model ID.
    * Returns the appropriate cache strategy name, or null if automatic caching is not supported.

@@ -182,6 +182,12 @@ describe('GoogleModel', () => {
     })
   })
 
+  describe('info', () => {
+    it('reports its gen_ai provider name', () => {
+      expect(new GoogleModel({ apiKey: 'test-key' }).genAIProviderName).toBe('gcp.gen_ai')
+    })
+  })
+
   describe('getConfig', () => {
     it('returns the current configuration', () => {
       const provider = new GoogleModel({

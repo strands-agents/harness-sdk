@@ -77,6 +77,22 @@ const CONTEXT_WINDOW_OVERFLOW_PATTERNS = [
 ]
 
 /**
+ * OTel `gen_ai.provider.name` value per Vercel provider namespace (the `provider` prefix before the first dot).
+ * Unmapped namespaces report no provider; `azure` is absent because it serves more than one vendor's models.
+ */
+const VERCEL_GEN_AI_PROVIDER_NAMES: ReadonlyMap<string, string> = new Map([
+  ['amazon-bedrock', 'aws.bedrock'],
+  ['anthropic', 'anthropic'],
+  ['openai', 'openai'],
+  ['google', 'gcp.gen_ai'],
+  ['xai', 'x_ai'],
+  ['mistral', 'mistral_ai'],
+  ['groq', 'groq'],
+  ['cohere', 'cohere'],
+  ['deepseek', 'deepseek'],
+])
+
+/**
  * Call option fields from LanguageModelV3CallOptions that can be configured.
  * Excludes prompt, tools, and toolChoice which are managed by the agent loop.
  */
@@ -183,6 +199,11 @@ export class VercelModel extends Model<VercelModelConfig> {
       bedrock ? bedrockCacheModelInfo(this.modelId) : undefined,
       this._config.modelInfo
     )
+  }
+
+  /** Maps the wrapped provider's namespace to its OTel value; `undefined` for an unmapped namespace. */
+  override get genAIProviderName(): string | undefined {
+    return VERCEL_GEN_AI_PROVIDER_NAMES.get(this._provider.provider.split('.')[0]!)
   }
 
   updateConfig(config: VercelModelConfig): void {

@@ -84,7 +84,6 @@ describe('Tracer', () => {
       expect(spanName).toBe('invoke_agent test-agent')
       expect(options.attributes).toMatchObject({
         'gen_ai.operation.name': 'invoke_agent',
-        'gen_ai.system': expect.any(String),
         'gen_ai.agent.name': 'test-agent',
         'gen_ai.request.model': 'model-123',
         name: 'invoke_agent test-agent',
@@ -229,27 +228,6 @@ describe('Tracer', () => {
         { role: 'user', parts: [{ type: 'text', content: '[Dropped] [ref: tu-1]' }] },
       ])
     })
-
-    it('uses gen_ai.provider.name with latest conventions', () => {
-      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
-      const tracer = new Tracer()
-
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hello')], agentName: 'test-agent' })
-
-      const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.provider.name']).toBeDefined()
-      expect(options.attributes['gen_ai.system']).toBeUndefined()
-    })
-
-    it('uses gen_ai.system with stable conventions', () => {
-      const tracer = new Tracer()
-
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hello')], agentName: 'test-agent' })
-
-      const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.system']).toBeDefined()
-      expect(options.attributes['gen_ai.provider.name']).toBeUndefined()
-    })
   })
 
   describe('endAgentSpan', () => {
@@ -354,15 +332,35 @@ describe('Tracer', () => {
     it('creates span with chat operation name and model id', () => {
       const tracer = new Tracer()
 
-      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')], modelId: 'claude-3' })
+      tracer.startModelInvokeSpan({
+        messages: [textMessage('user', 'Hello')],
+        modelId: 'claude-3',
+        genAIProviderName: 'anthropic',
+      })
 
       const [spanName, options] = getStartSpanCall()
       expect(spanName).toBe('chat')
       expect(options.attributes).toMatchObject({
         'gen_ai.operation.name': 'chat',
+        'gen_ai.system': 'anthropic',
         'gen_ai.request.model': 'claude-3',
       })
     })
+
+    it.each([[''], ['gen_ai_latest_experimental']])(
+      'omits the provider attribute when genAIProviderName is undefined (opt-in: %j)',
+      (optIn) => {
+        vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', optIn)
+        vi.stubEnv('OTEL_SERVICE_NAME', 'my-custom-service')
+        const tracer = new Tracer()
+
+        tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')] })
+
+        const [, options] = getStartSpanCall()
+        expect(options.attributes).not.toHaveProperty('gen_ai.system')
+        expect(options.attributes).not.toHaveProperty('gen_ai.provider.name')
+      }
+    )
 
     it('adds message events to span', () => {
       const tracer = new Tracer()
@@ -1330,30 +1328,55 @@ describe('Tracer', () => {
       const toolsConfig = { calc: { name: 'calc', description: 'Calculator' } }
 
       tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent', toolsConfig })
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')], genAIProviderName: 'aws.bedrock' })
 
-      const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.provider.name']).toBeDefined()
-      expect(options.attributes['gen_ai.tool.definitions']).toBeDefined()
+      const [agentOptions, modelOptions] = mockStartSpan.mock.calls.map(
+        ([, options]) => (options as { attributes: Record<string, SpanAttributeValue | undefined> }).attributes
+      )
+      expect(agentOptions!['gen_ai.tool.definitions']).toBeDefined()
+      expect(modelOptions!['gen_ai.provider.name']).toBe('aws.bedrock')
     })
 
     it('handles whitespace in opt-in values', () => {
       vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', ' gen_ai_latest_experimental , gen_ai_tool_definitions ')
       const tracer = new Tracer()
 
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')], genAIProviderName: 'aws.bedrock' })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.provider.name']).toBeDefined()
+      expect(options.attributes['gen_ai.provider.name']).toBe('aws.bedrock')
+      expect(options.attributes).not.toHaveProperty('gen_ai.system')
     })
 
     it('defaults to stable conventions when env var is empty', () => {
       const tracer = new Tracer()
 
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')], genAIProviderName: 'aws.bedrock' })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.system']).toBeDefined()
-      expect(options.attributes['gen_ai.provider.name']).toBeUndefined()
+      expect(options.attributes['gen_ai.system']).toBe('aws.bedrock')
+      expect(options.attributes).not.toHaveProperty('gen_ai.provider.name')
+    })
+  })
+
+  describe('spans without a model', () => {
+    it.each([[''], ['gen_ai_latest_experimental']])('omit the provider attribute (opt-in: %j)', (optIn) => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', optIn)
+      vi.stubEnv('OTEL_SERVICE_NAME', 'my-custom-service')
+      const tracer = new Tracer()
+
+      tracer.startAgentSpan({ messages: [textMessage('user', 'Hello')], agentName: 'test-agent' })
+      tracer.startToolCallSpan({ tool: { name: 'calculator', toolUseId: 'call-1', input: {} } })
+      tracer.startMultiAgentSpan({ orchestratorId: 'graph-1', orchestratorType: 'graph' })
+      tracer.startNodeSpan({ nodeId: 'node-1', nodeType: 'agent' })
+      tracer.startMemorySearchSpan({ query: 'q', storeNames: ['personal'], maxSearchResults: 1 })
+
+      const providerKeys = mockStartSpan.mock.calls.map(([, options]) =>
+        Object.keys((options as { attributes: Record<string, unknown> }).attributes).filter(
+          (key) => key === 'gen_ai.system' || key === 'gen_ai.provider.name'
+        )
+      )
+      expect(providerKeys).toEqual([[], [], [], [], []])
     })
   })
 

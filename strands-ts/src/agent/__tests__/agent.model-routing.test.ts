@@ -13,6 +13,7 @@ import { ConstantBackoff } from '../../retry/backoff-strategy.js'
 import { DefaultModelRetryStrategy } from '../../retry/default-model-retry-strategy.js'
 import { SessionManager } from '../../session/session-manager.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { Tracer } from '../../telemetry/tracer.js'
 import type { Message } from '../../types/messages.js'
 import { Agent } from '../agent.js'
 
@@ -27,6 +28,16 @@ class RecordingModel extends MockMessageModel {
     this.calls += 1
     this.receivedOptions.push(options ?? {})
     yield* super.stream(messages, options)
+  }
+}
+
+class ProviderRecordingModel extends RecordingModel {
+  constructor(private readonly _genAIProviderName: string) {
+    super()
+  }
+
+  override get genAIProviderName(): string {
+    return this._genAIProviderName
   }
 }
 
@@ -51,6 +62,7 @@ function responseModel(text: string): RecordingModel {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 describe('Agent model routing', () => {
   it('invokes the opening selection while retaining the default model', async () => {
@@ -77,8 +89,9 @@ describe('Agent model routing', () => {
   })
 
   it('falls back after a non-retryable failure and resets the attempt count', async () => {
-    const first = new RecordingModel().addTurn(new Error('primary down'))
-    const second = responseModel('recovered')
+    const first = new ProviderRecordingModel('aws.bedrock').addTurn(new Error('primary down'))
+    const second = new ProviderRecordingModel('openai').addTurn({ type: 'textBlock', text: 'recovered' })
+    const startModelInvokeSpan = vi.spyOn(Tracer.prototype, 'startModelInvokeSpan')
     const agent = new Agent({ model: new ModelRouter([first, second]), retryStrategy: null, printer: false })
     const attempts: { model: unknown; attemptCount: number; retry?: boolean }[] = []
     agent.addHook(
@@ -99,6 +112,10 @@ describe('Agent model routing', () => {
     expect(attempts).toEqual([
       { model: first, attemptCount: 1, retry: true },
       { model: second, attemptCount: 1 },
+    ])
+    expect(startModelInvokeSpan.mock.calls.map(([options]) => options.genAIProviderName)).toEqual([
+      'aws.bedrock',
+      'openai',
     ])
   })
 

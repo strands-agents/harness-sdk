@@ -56,6 +56,10 @@ The base class also provides optional methods you can override:
 - `countTokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimateUtilization()`: Compute the ratio of input tokens to `contextWindowLimit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
 - `modelInfo`: Report what your service supports, such as turning off server-side summary. See [Model info](#model-info).
+- `genAIProviderName`: Report your provider's OpenTelemetry `gen_ai.provider.name` value
+  (for example `aws.bedrock`). Model-call (`chat`) spans record it as `gen_ai.system` by
+  default, or as `gen_ai.provider.name` with
+  `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`, and omit it when `undefined`.
 </Tab>
 </Tabs>
 
