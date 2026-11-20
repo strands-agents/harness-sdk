@@ -920,7 +920,12 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
 
     assert len(model.seen_tool_results) == 2
     assert model.seen_tool_results[0].startswith("[Truncated:")
-    assert model.seen_tool_results[1] == _LARGE_RESULT
+    retrieved = model.seen_tool_results[1]
+    # strands-agents 1.65.0 returns the stashed block serialized to JSON; the SDK returns its text from #6101 on.
+    # TODO: drop the JSON case once harness-py requires a strands-agents release that includes #6101.
+    if retrieved.startswith("{"):
+        retrieved = json.loads(retrieved)["text"]
+    assert retrieved == _LARGE_RESULT
     assert agent.context_manager.stash_is_durable is True
     agent_scope = Path("scopes", "agent", agent.agent_id)
     snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"
