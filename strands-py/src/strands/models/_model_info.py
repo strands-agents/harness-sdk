@@ -21,6 +21,9 @@ PromptCaching: TypeAlias = Literal["unsupported", "auto", "cache_points"]
 # Internal: the values of ``capabilities.chatCompletionsTools`` in the data, which ModelCapabilities does not carry.
 ChatCompletionsTools: TypeAlias = Literal["reasoningOff", "unsupported"]
 
+# Internal: the values of ``capabilities.systemPromptPlacement`` in the data, which ModelCapabilities does not carry.
+SystemPromptPlacement: TypeAlias = Literal["message"]
+
 
 @dataclass(frozen=True, kw_only=True)
 class ModelCapabilities:
@@ -167,10 +170,11 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     return section(**known)
 
 
-def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTools]]:
+def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTools], dict[str, SystemPromptPlacement]]:
     """Read the shared model info data, re-casing its camelCase keys onto the record fields.
 
-    The third item is ``capabilities.chatCompletionsTools`` by entry, which ``ModelCapabilities`` does not carry.
+    The third and fourth items are ``capabilities.chatCompletionsTools`` and ``capabilities.systemPromptPlacement``
+    by entry, which ``ModelCapabilities`` does not carry.
     """
     package_copy = resources.files("strands.models").joinpath("model_info.json")
     try:
@@ -196,7 +200,12 @@ def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTo
             for model_id, entry in data["models"].items()
             if isinstance(entry.get("capabilities"), dict) and "chatCompletionsTools" in entry["capabilities"]
         }
-        return data["defaults"]["limits"]["contextWindow"], models, chat_completions_tools
+        system_prompt_placement: dict[str, SystemPromptPlacement] = {
+            model_id: entry["capabilities"]["systemPromptPlacement"]
+            for model_id, entry in data["models"].items()
+            if isinstance(entry.get("capabilities"), dict) and "systemPromptPlacement" in entry["capabilities"]
+        }
+        return data["defaults"]["limits"]["contextWindow"], models, chat_completions_tools, system_prompt_placement
     except (ValueError, KeyError, TypeError) as error:
         raise ValueError(
             f"The model info data in the installed package is malformed: {package_copy}. "
@@ -205,7 +214,7 @@ def _load_data() -> tuple[int, dict[str, ModelInfo], dict[str, ChatCompletionsTo
 
 
 # Context window limit (in tokens) assumed for a model whose window is unknown, and the known models.
-DEFAULT_CONTEXT_WINDOW_LIMIT, _MODELS, _CHAT_COMPLETIONS_TOOLS = _load_data()
+DEFAULT_CONTEXT_WINDOW_LIMIT, _MODELS, _CHAT_COMPLETIONS_TOOLS, _SYSTEM_PROMPT_PLACEMENT = _load_data()
 
 
 def lookup_model(model_id: str) -> ModelInfo | None:
@@ -253,6 +262,19 @@ def lookup_chat_completions_tools(model_id: str) -> ChatCompletionsTools | None:
     """
     key = _lookup_key(model_id)
     return None if key is None else _CHAT_COMPLETIONS_TOOLS.get(key)
+
+
+def lookup_system_prompt_placement(model_id: str) -> SystemPromptPlacement | None:
+    """Report where a model's system prompt goes, when not in the provider's system prompt field.
+
+    Args:
+        model_id: The model id to look up.
+
+    Returns:
+        ``"message"`` when it goes at the start of the messages, None when the data does not say.
+    """
+    key = _lookup_key(model_id)
+    return None if key is None else _SYSTEM_PROMPT_PLACEMENT.get(key)
 
 
 def lookup_model_info(model_id: object) -> ModelInfo:
