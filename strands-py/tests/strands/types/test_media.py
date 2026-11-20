@@ -23,6 +23,10 @@ from strands.types.media import (
             ImageBlock(format="jpeg", source={"bytes": b"\xff\xd8"}),
             {"image": {"format": "jpeg", "source": {"bytes": b"\xff\xd8"}}},
         ),
+        (
+            ImageBlock(format="jpeg", source={"bytes": b"\xff\xd8"}, detail="low"),
+            {"image": {"format": "jpeg", "source": {"bytes": b"\xff\xd8"}, "detail": "low"}},
+        ),
     ],
 )
 def test_block_to_dict(block, exp_content):
