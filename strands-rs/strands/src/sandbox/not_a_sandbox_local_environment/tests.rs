@@ -414,10 +414,9 @@ fn wraps_the_command_in_a_utf8_script_that_mirrors_sh_exit_codes() {
     let args = powershell_args("Write-Output 'hi'");
     assert_eq!(&args[..3], ["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
     let bytes = STANDARD.decode(&args[3]).unwrap();
-    let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-        .collect();
+    let (pairs, rest) = bytes.as_chunks::<2>();
+    assert!(rest.is_empty());
+    let units: Vec<u16> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
     assert_eq!(
         String::from_utf16(&units).unwrap(),
         "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n\
