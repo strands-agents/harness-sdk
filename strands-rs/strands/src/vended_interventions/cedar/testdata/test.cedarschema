@@ -1,0 +1,13 @@
+entity User = {
+  role: String,
+};
+entity Resource;
+
+action "search" appliesTo {
+  principal: [User],
+  resource: [Resource],
+  context: {
+    input: { query: String },
+    session: { hour_utc: Long, call_count: Long, environment: String },
+  },
+};
