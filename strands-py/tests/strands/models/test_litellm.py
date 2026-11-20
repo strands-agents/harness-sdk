@@ -13,7 +13,7 @@ from litellm.exceptions import ContextWindowExceededError
 
 import strands
 from strands.agent import AgentMetadata
-from strands.models import CacheConfig
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo
 from strands.models.litellm import LiteLLMModel
 from strands.types.exceptions import ContextWindowOverflowException
 
@@ -1282,11 +1282,45 @@ def test_format_request_messages_turns_a_message_cache_point_into_cache_control_
         }
     ]
 
-    formatted = LiteLLMModel.format_request_messages(messages)
+    tru_messages = LiteLLMModel.format_request_messages(messages)
 
-    assert [message["role"] for message in formatted] == ["tool", "user"]
-    assert formatted[0]["content"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-    assert formatted[1]["content"] == [{"type": "text", "text": "Current time: 1 ms"}]
+    exp_messages = [
+        {
+            "role": "tool",
+            "tool_call_id": "t1",
+            "content": [{"type": "text", "text": "s1", "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
+        },
+        {"role": "user", "content": [{"text": "Current time: 1 ms", "type": "text"}]},
+    ]
+    assert tru_messages == exp_messages
+
+
+def test_format_request_messages_keeps_tool_messages_together_around_a_cache_point():
+    image = {"image": {"format": "png", "source": {"bytes": b"png"}}}
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "a", "status": "success", "content": [image]}},
+                {"cachePoint": {"type": "default"}},
+                {"toolResult": {"toolUseId": "b", "status": "success", "content": [{"text": "r"}]}},
+            ],
+        }
+    ]
+
+    tru_messages = LiteLLMModel.format_request_messages(messages)
+
+    assert [(message["role"], message.get("tool_call_id")) for message in tru_messages] == [
+        ("tool", "a"),
+        ("tool", "b"),
+        ("user", None),
+    ]
+    assert tru_messages[0]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert all("cache_control" not in part for message in tru_messages[1:] for part in _parts(message))
+
+
+def _parts(message):
+    return message["content"] if isinstance(message.get("content"), list) else []
 
 
 @pytest.mark.parametrize(
@@ -1351,13 +1385,25 @@ def test_format_request_keeps_cache_points_within_the_limit_keeping_the_first_an
     model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig())
     point = {"cachePoint": {"type": "default"}}
     system_prompt_content = [{"text": "a"}, point, {"text": "b"}, point, {"text": "c"}, point, {"text": "d"}, point]
-    messages = [{"role": "user", "content": [{"text": "q"}, point]}]
 
-    request = model.format_request(messages, system_prompt_content=system_prompt_content)
+    tru_messages = model.format_request(
+        [{"role": "user", "content": [{"text": "q"}, point]}], system_prompt_content=system_prompt_content
+    )["messages"]
 
-    system_marks = ["cache_control" in part for part in request["messages"][0]["content"]]
-    assert system_marks == [True, True, True, False]
-    assert "cache_control" in request["messages"][-1]["content"][-1]
+    marked = {"cache_control": {"type": "ephemeral"}}
+    exp_messages = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "a", **marked},
+                {"type": "text", "text": "b", **marked},
+                {"type": "text", "text": "c", **marked},
+                {"type": "text", "text": "d"},
+            ],
+        },
+        {"role": "user", "content": [{"text": "q", "type": "text", **marked}]},
+    ]
+    assert tru_messages == exp_messages
 
 
 def test_format_request_drops_message_cache_points_for_a_backend_without_them():
@@ -1411,10 +1457,25 @@ def test_format_request_places_cache_points_ahead_of_rebuilt_trailing_blocks(inj
     model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig())
     original = copy.deepcopy(injected_loop_messages)
 
-    request = model.format_request(injected_loop_messages, system_prompt="s1", dynamic_trailing_blocks=1)
+    tru_messages = model.format_request(injected_loop_messages, system_prompt="s1", dynamic_trailing_blocks=1)[
+        "messages"
+    ]
 
-    assert _marked(request) == [("system", "s1"), ("tool", "s1")]
-    assert request["messages"][-1] == {"role": "user", "content": [{"type": "text", "text": "Current time: 1 ms"}]}
+    exp_messages = [
+        {"role": "system", "content": [{"type": "text", "text": "s1", "cache_control": {"type": "ephemeral"}}]},
+        {"role": "user", "content": [{"text": "read section 1", "type": "text"}]},
+        {
+            "role": "assistant",
+            "tool_calls": [{"function": {"arguments": '{"n": 1}', "name": "read"}, "id": "t1", "type": "function"}],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "t1",
+            "content": [{"type": "text", "text": "s1", "cache_control": {"type": "ephemeral"}}],
+        },
+        {"role": "user", "content": [{"text": "Current time: 1 ms", "type": "text"}]},
+    ]
+    assert tru_messages == exp_messages
     assert injected_loop_messages == original
 
 
@@ -1476,22 +1537,37 @@ async def test_stream_passes_dynamic_trailing_blocks_to_format_request(messages)
     assert model.format_request.call_args.kwargs["dynamic_trailing_blocks"] == 2
 
 
-def test_format_request_steps_the_bedrock_point_back_over_a_trailing_non_pdf_document():
-    model = LiteLLMModel(model_id="bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0", cache_config=CacheConfig())
+@pytest.mark.parametrize(
+    ("model_id", "model_info"),
+    [
+        ("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0", None),
+        ("litellm_proxy/claude-alias", ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points"))),
+    ],
+    ids=["bedrock", "declared_proxy_alias"],
+)
+def test_format_request_steps_the_point_back_over_a_trailing_non_pdf_document(model_id, model_info):
+    extra = {"model_info": model_info} if model_info else {}
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(system_prompt_ttl=False), **extra)
     document = {"document": {"format": "txt", "name": "notes", "source": {"bytes": b"hello"}}}
 
-    request = model.format_request([{"role": "user", "content": [{"text": "read this"}, document]}])
+    tru_messages = model.format_request([{"role": "user", "content": [{"text": "read this"}, document]}])["messages"]
 
-    assert ["cache_control" in part for part in request["messages"][-1]["content"]] == [True, False]
+    assert tru_messages[-1]["content"][0] == {
+        "text": "read this",
+        "type": "text",
+        "cache_control": {"type": "ephemeral"},
+    }
+    assert "cache_control" not in tru_messages[-1]["content"][-1]
 
 
 def test_format_request_keeps_the_anthropic_point_after_a_trailing_document():
-    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig())
+    model = LiteLLMModel(model_id="anthropic/claude-haiku-4-5", cache_config=CacheConfig(system_prompt_ttl=False))
     document = {"document": {"format": "txt", "name": "notes", "source": {"bytes": b"hello"}}}
 
-    request = model.format_request([{"role": "user", "content": [{"text": "read this"}, document]}])
+    tru_messages = model.format_request([{"role": "user", "content": [{"text": "read this"}, document]}])["messages"]
 
-    assert ["cache_control" in part for part in request["messages"][-1]["content"]] == [False, True]
+    assert tru_messages[-1]["content"][0] == {"text": "read this", "type": "text"}
+    assert tru_messages[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_format_request_fills_the_ttl_into_the_callers_message_cache_points():
@@ -1502,14 +1578,16 @@ def test_format_request_fills_the_ttl_into_the_callers_message_cache_points():
         {"role": "user", "content": [{"text": "c"}]},
     ]
 
-    request = model.format_request(messages, system_prompt="s1")
+    tru_messages = model.format_request(messages, system_prompt="s1")["messages"]
 
-    ttls = [part["cache_control"].get("ttl") for part in _request_parts_of(request) if "cache_control" in part]
-    assert ttls == ["1h", "1h", "1h"]
-
-
-def _request_parts_of(request):
-    return [part for m in request["messages"] if isinstance(m.get("content"), list) for part in m["content"]]
+    marked = {"cache_control": {"type": "ephemeral", "ttl": "1h"}}
+    exp_messages = [
+        {"role": "system", "content": [{"type": "text", "text": "s1", **marked}]},
+        {"role": "user", "content": [{"text": "a", "type": "text", **marked}]},
+        {"role": "assistant", "content": [{"text": "b", "type": "text"}]},
+        {"role": "user", "content": [{"text": "c", "type": "text", **marked}]},
+    ]
+    assert tru_messages == exp_messages
 
 
 @pytest.mark.parametrize(
@@ -1543,9 +1621,17 @@ def test_format_request_marks_the_message_before_an_empty_tool_result():
         {"role": "user", "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": []}}]},
     ]
 
-    request = model.format_request(messages)
+    tru_messages = model.format_request(messages)["messages"]
 
-    assert [m["role"] for m in request["messages"] if any("cache_control" in p for p in m.get("content") or [])]
+    exp_messages = [
+        {"role": "user", "content": [{"text": "read", "type": "text", "cache_control": {"type": "ephemeral"}}]},
+        {
+            "role": "assistant",
+            "tool_calls": [{"function": {"arguments": "{}", "name": "read"}, "id": "t1", "type": "function"}],
+        },
+        {"role": "tool", "tool_call_id": "t1", "content": ""},
+    ]
+    assert tru_messages == exp_messages
 
 
 def test_format_request_does_not_mark_the_callers_tool_dicts(read_tool_spec):

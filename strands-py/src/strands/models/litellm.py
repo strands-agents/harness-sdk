@@ -43,6 +43,10 @@ logger = logging.getLogger(__name__)
 # LiteLLM backends that turn an OpenAI-format ``cache_control`` part into their own cache points.
 _CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "bedrock", "vertex_ai"})
 
+# Backends known to accept a cache point directly after a non-PDF document; on any other, such as Bedrock or a proxy
+# alias whose backend the id does not name, the point steps back over the document.
+_AFTER_DOCUMENT_PROVIDERS = frozenset({"anthropic", "vertex_ai"})
+
 _LITELLM_PROVIDERS = frozenset(str(getattr(provider, "value", provider)) for provider in litellm.provider_list)
 
 
@@ -325,12 +329,29 @@ class LiteLLMModel(OpenAIModel):
         if index is None:
             formatted.extend(cls._format_regular_messages([message]))
             return
-        durable = cls._format_regular_messages([{"role": message["role"], "content": content[:index]}])
-        formatted.extend(durable)
-        _mark_last_part(formatted, content[index]["cachePoint"])
+        point = content[index]["cachePoint"]
         tail = [block for block in content[index + 1 :] if "cachePoint" not in block]
+        if any("toolResult" in block for block in tail):
+            formatted.extend(cls._format_marking_tool_results(message["role"], content[:index], tail, point))
+            return
+        formatted.extend(cls._format_regular_messages([{"role": message["role"], "content": content[:index]}]))
+        _mark_last_part(formatted, point)
         if tail:
             _append_tail(formatted, cls._format_regular_messages([{"role": message["role"], "content": tail}]))
+
+    @classmethod
+    def _format_marking_tool_results(
+        cls, role: Any, durable: list[ContentBlock], tail: list[ContentBlock], point: CachePoint
+    ) -> list[dict[str, Any]]:
+        """Format a message whose cache point sits between tool results, marking the last durable tool result.
+
+        The message is formatted whole, since formatting the halves apart would put a durable tool result's image
+        message between tool messages. Without a durable tool result there is no part to mark, so none is.
+        """
+        whole = cls._format_regular_messages([{"role": role, "content": [*durable, *tail]}])
+        durable_ids = {block["toolResult"]["toolUseId"] for block in durable if "toolResult" in block}
+        _mark_last_part([item for item in whole if item.get("tool_call_id") in durable_ids], point)
+        return whole
 
     @override
     def format_chunk(self, event: dict[str, Any], **kwargs: Any) -> StreamEvent:
@@ -420,7 +441,7 @@ class LiteLLMModel(OpenAIModel):
                 system_prompt_content,
                 messages,
                 dynamic_trailing_blocks,
-                after_documents=backend is None or backend[1] != "bedrock",
+                after_documents=backend is not None and backend[1] in _AFTER_DOCUMENT_PROVIDERS,
             )
         request = super().format_request(
             messages,
@@ -947,8 +968,8 @@ def _with_cache_points(
         system_prompt_content: The system prompt content blocks.
         messages: The messages to send.
         dynamic_trailing_blocks: How many trailing blocks of the latest user message are rebuilt on every call.
-        after_documents: Whether a point may directly follow a non-PDF document. Bedrock rejects that, so its point
-            steps back over them.
+        after_documents: Whether a point may directly follow a non-PDF document. Bedrock rejects that, so elsewhere
+            the point steps back over them.
 
     Returns:
         The system prompt content and the messages to send.
